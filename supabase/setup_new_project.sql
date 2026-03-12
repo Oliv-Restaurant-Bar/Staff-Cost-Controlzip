@@ -88,6 +88,14 @@ CREATE POLICY "auth_settings_insert" ON public.app_settings FOR INSERT TO authen
 CREATE POLICY "auth_settings_update" ON public.app_settings FOR UPDATE TO authenticated USING (true);
 CREATE POLICY "auth_settings_delete" ON public.app_settings FOR DELETE TO authenticated USING (true);
 
+-- Zugriffsrechte für eingeloggte Benutzer (GRANT muss immer gesetzt werden!)
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.employees        TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.schedule_entries TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.actual_hours     TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.app_settings     TO authenticated;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+
 -- Indizes für schnellere Abfragen
 CREATE INDEX IF NOT EXISTS idx_schedule_employee_date ON public.schedule_entries(employee_id, date);
 CREATE INDEX IF NOT EXISTS idx_schedule_date ON public.schedule_entries(date);
