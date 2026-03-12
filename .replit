@@ -41,6 +41,6 @@ externalPort = 80
 [userenv]
 
 [userenv.shared]
-VITE_SUPABASE_URL = "https://wqmhuymnkcssmjusmqqn.supabase.co"
-VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndxbWh1eW1ua2Nzc21qdXNtcXFuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5OTAzNzAsImV4cCI6MjA4NDU2NjM3MH0.rAzt0v9A-awGIgmTmWqC6x5PHXmU3laDXaGXPf8G-Hc"
-VITE_SUPABASE_PROJECT_ID = "wqmhuymnkcssmjusmqqn"
+VITE_SUPABASE_URL = "https://ajflrvuzmkfspsxkdyfe.supabase.co"
+VITE_SUPABASE_ANON_KEY = "sb_publishable_QXf-21IX_EQ_cwLGqNc24w_-fFS23ht"
+VITE_SUPABASE_PROJECT_ID = "ajflrvuzmkfspsxkdyfe"
