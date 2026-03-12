@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   loadEmployees,
   upsertEmployee,
@@ -122,7 +122,17 @@ type CalendarView = 'month' | 'week';
 
 const SchedulePlanner = () => {
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
-  const { isAdmin, isServiceManager, isKuecheManager } = useAuth();
+  const {
+    isAdmin,
+    isServiceManager,
+    isKuecheManager,
+    canSeeHourlyWages,
+    canSeePersonnelCostTotals,
+    canToggleCostView,
+    canEditEmployees,
+    canSwitchDepartment,
+    canAccessSettings,
+  } = usePermissions();
   
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [employees, setEmployees] = useState<Employee[]>(defaultEmployees);
@@ -168,7 +178,7 @@ const SchedulePlanner = () => {
   }, [isServiceManager, isKuecheManager]);
 
   // Manager sehen niemals Einzellöhne – effectiveShowCosts ist für sie immer false
-  const effectiveShowCosts = isAdmin && showCosts;
+  const effectiveShowCosts = canSeeHourlyWages && showCosts;
   // ─────────────────────────────────────────────────────────────────────────
 
   // Use same password as admin/overview
@@ -1035,8 +1045,8 @@ const SchedulePlanner = () => {
         {/* Month/Week Navigation */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {/* Cost Button - nur für Admin sichtbar */}
-            {isAdmin && (
+            {/* Cost Button - nur für User mit Lohn-Berechtigung */}
+            {canToggleCostView && (
               <Button
                 variant={showCosts ? 'default' : 'outline'}
                 size="sm"
@@ -1160,8 +1170,8 @@ const SchedulePlanner = () => {
           </div>
         </div>
 
-        {/* Department Toggle – nur für Admin schaltbar */}
-        {isAdmin ? (
+        {/* Department Toggle – nur für User mit Abteilungs-Berechtigung schaltbar */}
+        {canSwitchDepartment ? (
           <div className="flex items-center justify-center gap-2 flex-wrap">
             <Button
               variant={activeDepartment === 'service' ? 'default' : 'outline'}
