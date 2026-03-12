@@ -1,0 +1,22 @@
+project_id = "wqmhuymnkcssmjusmqqn"
+
+[functions.send-backup-email]
+verify_jwt = false
+
+[functions.send-department-notification]
+verify_jwt = false
+
+[functions.send-event-notifications]
+verify_jwt = false
+
+[functions.sync-fortelable]
+verify_jwt = false
+
+[functions.parse-reservation-email]
+verify_jwt = false
+
+[functions.fetch-imap-emails]
+verify_jwt = false
+
+[functions.import-reservations]
+verify_jwt = false

@@ -1,0 +1,237 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 97%;
+    --foreground: 220 25% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 10%;
+
+    --primary: 220 70% 50%;
+    --primary-rgb: 51, 102, 204;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 15% 92%;
+    --secondary-foreground: 220 25% 20%;
+
+    --muted: 220 15% 95%;
+    --muted-foreground: 220 10% 45%;
+
+    --accent: 220 70% 96%;
+    --accent-foreground: 220 70% 40%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 72% 40%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 220 70% 50%;
+
+    --radius: 0.75rem;
+
+    --chart-positive: 142 72% 40%;
+    --chart-negative: 0 72% 51%;
+    --chart-neutral: 220 15% 60%;
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 25% 10%;
+    --sidebar-primary: 220 70% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 70% 96%;
+    --sidebar-accent-foreground: 220 70% 40%;
+    --sidebar-border: 220 15% 88%;
+    --sidebar-ring: 220 70% 50%;
+  }
+
+  .dark {
+    --background: 222 30% 8%;
+    --foreground: 220 20% 95%;
+
+    --card: 222 25% 12%;
+    --card-foreground: 220 20% 95%;
+
+    --popover: 222 25% 12%;
+    --popover-foreground: 220 20% 95%;
+
+    --primary: 220 75% 55%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 222 20% 18%;
+    --secondary-foreground: 220 20% 85%;
+
+    --muted: 222 20% 16%;
+    --muted-foreground: 220 15% 55%;
+
+    --accent: 222 30% 20%;
+    --accent-foreground: 220 75% 65%;
+
+    --destructive: 0 65% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 65% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 85% 55%;
+    --warning-foreground: 0 0% 0%;
+
+    --border: 222 20% 20%;
+    --input: 222 20% 20%;
+    --ring: 220 75% 55%;
+
+    --sidebar-background: 222 25% 10%;
+    --sidebar-foreground: 220 20% 95%;
+    --sidebar-primary: 220 75% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 30% 18%;
+    --sidebar-accent-foreground: 220 75% 65%;
+    --sidebar-border: 222 20% 20%;
+    --sidebar-ring: 220 75% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@layer components {
+  .stat-card {
+    @apply bg-card rounded-xl border border-border p-6 shadow-sm transition-all duration-200 hover:shadow-md;
+  }
+
+  .stat-value {
+    @apply text-3xl font-bold tracking-tight;
+  }
+
+  .stat-label {
+    @apply text-sm font-medium text-muted-foreground;
+  }
+
+  .stat-positive {
+    @apply text-success;
+  }
+
+  .stat-negative {
+    @apply text-destructive;
+  }
+
+  .data-table {
+    @apply w-full border-collapse;
+  }
+
+  .data-table th {
+    @apply text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 bg-muted/50;
+  }
+
+  .data-table td {
+    @apply px-4 py-3 border-b border-border text-sm;
+  }
+
+  .data-table tr:hover td {
+    @apply bg-muted/30;
+  }
+
+  .input-currency {
+    @apply font-mono text-right;
+  }
+
+  .budget-bar {
+    @apply h-2 rounded-full overflow-hidden bg-muted;
+  }
+
+  .budget-bar-fill {
+    @apply h-full rounded-full transition-all duration-500;
+  }
+
+  .budget-bar-fill.under {
+    @apply bg-success;
+  }
+
+  .budget-bar-fill.over {
+    @apply bg-destructive;
+  }
+
+  .badge-employment {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-fulltime {
+    background-color: hsl(var(--primary) / 0.1);
+    color: hsl(var(--primary));
+  }
+
+  .badge-parttime {
+    background-color: hsl(var(--accent));
+    color: hsl(var(--accent-foreground));
+  }
+
+  .badge-minijob {
+    background-color: hsl(var(--warning) / 0.1);
+    color: hsl(var(--warning));
+  }
+}
+
+@layer utilities {
+  .text-success {
+    color: hsl(var(--success));
+  }
+
+  .text-warning {
+    color: hsl(var(--warning));
+  }
+
+  .bg-success {
+    background-color: hsl(var(--success));
+  }
+
+  .bg-warning {
+    background-color: hsl(var(--warning));
+  }
+
+  .border-success {
+    border-color: hsl(var(--success));
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .glass-effect {
+    @apply backdrop-blur-sm bg-card/80;
+  }
+}

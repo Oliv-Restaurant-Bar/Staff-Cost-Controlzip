@@ -1,0 +1,133 @@
+export type EmploymentType = 'vollzeit' | 'teilzeit' | 'minijob' | 'aushilfe';
+
+export type Department = 'service' | 'küche';
+
+export type DayOfWeek = 'montag' | 'dienstag' | 'mittwoch' | 'donnerstag' | 'freitag' | 'samstag' | 'sonntag';
+
+export interface Employee {
+  id: string;
+  name: string;
+  department: Department;
+  employmentType: EmploymentType;
+  hourlyWage: number;
+  weeklyHours?: number;
+  daysOff?: DayOfWeek[];
+  preferredWorkDays?: DayOfWeek[];
+  monthlySalary?: number; // Monatslohn (nur bei Vollzeit)
+  monthlySalaryWith13th?: number; // Monatslohn inkl. 13. Monatslohn
+  hoursBalance?: number; // Stundensaldo (Überstunden/Minusstunden)
+  vacationBalance?: number; // Feriensaldo (verbleibende Ferientage)
+  vacationDaysPerYear?: number; // Ferientage pro Jahr gemäss Vertrag
+}
+
+export interface TimeEntry {
+  id: string;
+  employeeId: string;
+  date: string;
+  plannedStart: string;
+  plannedEnd: string;
+  plannedHours: number;
+  actualStart?: string;
+  actualEnd?: string;
+  actualHours?: number;
+  break?: number;
+}
+
+export interface HourlyRevenue {
+  hour: number; // 0-23
+  revenue: number;
+  food?: number; // Revenue from food (Speisen) - relevant for Küche
+  beverage?: number; // Revenue from beverages (Getränke) - relevant for Service
+}
+
+export interface DailyBudget {
+  date: string;
+  plannedRevenue: number;
+  actualRevenue: number;
+  previousYearRevenue: number;
+  plannedLaborCost: number;
+  actualLaborCost: number;
+  hourlyRevenue?: HourlyRevenue[]; // Revenue per hour for analysis
+  fixedBudget?: number; // Fixes Startbudget vom Monatsplan (bleibt konstant)
+  takeawayRevenue?: number; // Take Away Umsatz (separate MWST: 2.6%)
+}
+
+// MWST rates for revenue calculation
+export const VAT_RATES = {
+  standard: 0.081, // 8.1% for regular revenue
+  takeaway: 0.026, // 2.6% for takeaway revenue
+};
+
+// Helper to convert gross to net revenue
+export const grossToNet = (
+  grossRevenue: number, 
+  takeawayRevenue: number = 0
+): number => {
+  const regularRevenue = grossRevenue - takeawayRevenue;
+  const regularNet = regularRevenue / (1 + VAT_RATES.standard);
+  const takeawayNet = takeawayRevenue / (1 + VAT_RATES.takeaway);
+  return regularNet + takeawayNet;
+};
+
+// Helper to convert net to gross revenue
+export const netToGross = (
+  netRevenue: number,
+  takeawayNetRevenue: number = 0
+): number => {
+  const regularNet = netRevenue - takeawayNetRevenue;
+  const regularGross = regularNet * (1 + VAT_RATES.standard);
+  const takeawayGross = takeawayNetRevenue * (1 + VAT_RATES.takeaway);
+  return regularGross + takeawayGross;
+};
+
+export interface TimeSlot {
+  start: string;
+  end: string;
+}
+
+export interface DaySchedule {
+  früh?: TimeSlot | null;
+  spät?: TimeSlot | null;
+  frühAbsence?: string | null;
+  spätAbsence?: string | null;
+}
+
+export interface DailySummary {
+  date: string;
+  totalPlannedHours: number;
+  totalActualHours: number;
+  totalPlannedCost: number;
+  totalActualCost: number;
+  plannedRevenue: number;
+  actualRevenue: number;
+  laborCostPercentage: number;
+  variance: number;
+}
+
+export interface MirusImportEntry {
+  name: string;
+  department: Department;
+  hours: number;
+}
+
+export interface MirusDailyImportEntry {
+  name: string;
+  department: Department;
+  date: string;
+  hours: number;
+}
+
+export interface ScheduleImportEntry {
+  name: string;
+  department: Department;
+  date: string;
+  plannedHours: number;
+  plannedStart?: string;
+  plannedEnd?: string;
+}
+
+export interface RevenueImportEntry {
+  date: string;
+  revenue: number;
+  type: 'planned' | 'actual' | 'previousYear';
+}
