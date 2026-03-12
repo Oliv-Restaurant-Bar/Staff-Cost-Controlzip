@@ -601,17 +601,17 @@ const Dashboard = () => {
               </Link>
 
               {isAdmin && (
-                <Link to="/settings">
+                <Link to="/personal-stamm">
                   <Card className="hover:shadow-md transition-shadow cursor-pointer border-border hover:border-primary/40">
                     <CardHeader className="pb-2 pt-4">
                       <CardTitle className="text-sm flex items-center gap-2">
                         <Users className="h-4 w-4 text-muted-foreground" />
-                        Personalstamm & Einstellungen
+                        Personalstamm
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pb-4">
                       <p className="text-xs text-muted-foreground">
-                        Mitarbeiter, Schwellenwerte und Systemkonfiguration.
+                        Mitarbeiterdaten, Löhne, Verträge und Stammdaten verwalten.
                       </p>
                     </CardContent>
                   </Card>
