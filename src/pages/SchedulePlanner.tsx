@@ -977,7 +977,7 @@ const SchedulePlanner = () => {
                 <Printer className="h-4 w-4 mr-2" />
                 Drucken
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setCopyWeekDialogOpen(true)}>
+              <Button variant="secondary" size="sm" onClick={() => setCopyWeekDialogOpen(true)} className="border border-border font-medium">
                 <Copy className="h-4 w-4 mr-2" />
                 Woche kopieren
               </Button>
@@ -1232,187 +1232,201 @@ const SchedulePlanner = () => {
           </Card>
         </div>
 
-        {/* ── Feature 1: Personalkostenquote ── */}
+        {/* ══════════════════════════════════════════════════════════════════
+            FUNKTION 1: Personalkostenquote
+        ══════════════════════════════════════════════════════════════════ */}
         <Card className={cn(
           "border-2",
-          costRatioStatus === 'good'    && "border-green-500/50 bg-green-50/50 dark:bg-green-950/20",
-          costRatioStatus === 'ok'      && "border-yellow-500/50 bg-yellow-50/50 dark:bg-yellow-950/20",
-          costRatioStatus === 'high'    && "border-red-500/50 bg-red-50/50 dark:bg-red-950/20",
-          costRatioStatus === 'unknown' && "border-border bg-muted/30"
+          costRatioStatus === 'good'    && "border-green-500 bg-green-50/60 dark:bg-green-950/30",
+          costRatioStatus === 'ok'      && "border-yellow-500 bg-yellow-50/60 dark:bg-yellow-950/30",
+          costRatioStatus === 'high'    && "border-red-500 bg-red-50/60 dark:bg-red-950/30",
+          costRatioStatus === 'unknown' && "border-blue-300 bg-blue-50/40 dark:bg-blue-950/20"
         )}>
-          <CardContent className="pt-4 pb-4">
-            <div className="flex items-center justify-between flex-wrap gap-4">
-              <div className="flex items-center gap-3">
-                <div className={cn(
-                  "w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold",
-                  costRatioStatus === 'good'    && "bg-green-500 text-white",
-                  costRatioStatus === 'ok'      && "bg-yellow-500 text-white",
-                  costRatioStatus === 'high'    && "bg-red-500 text-white",
-                  costRatioStatus === 'unknown' && "bg-muted text-muted-foreground"
+          <CardHeader className="pb-2 pt-4">
+            <CardTitle className="text-base font-bold flex items-center gap-2">
+              <Euro className="h-5 w-5" />
+              Personalkostenquote – Planung
+              <span className={cn(
+                "ml-auto text-xs font-medium px-2 py-0.5 rounded-full",
+                costRatioStatus === 'good'    && "bg-green-500 text-white",
+                costRatioStatus === 'ok'      && "bg-yellow-500 text-white",
+                costRatioStatus === 'high'    && "bg-red-500 text-white",
+                costRatioStatus === 'unknown' && "bg-blue-400 text-white"
+              )}>
+                {costRatioStatus === 'good'    && '✓ GUT'}
+                {costRatioStatus === 'ok'      && '⚠ KNAPP'}
+                {costRatioStatus === 'high'    && '✗ ZU HOCH'}
+                {costRatioStatus === 'unknown' && 'KEIN BUDGET'}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pb-4">
+            <div className="flex items-center justify-between flex-wrap gap-6">
+              {/* Big ratio number */}
+              <div className="flex items-center gap-4">
+                <p className={cn(
+                  "text-5xl font-black",
+                  costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
+                  costRatioStatus === 'ok'      && "text-yellow-700 dark:text-yellow-400",
+                  costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
+                  costRatioStatus === 'unknown' && "text-blue-500"
                 )}>
-                  {costRatioStatus === 'good'    && <CheckCircle className="h-5 w-5" />}
-                  {costRatioStatus === 'ok'      && <AlertTriangle className="h-5 w-5" />}
-                  {costRatioStatus === 'high'    && <AlertTriangle className="h-5 w-5" />}
-                  {costRatioStatus === 'unknown' && <Euro className="h-5 w-5" />}
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-muted-foreground">Geplante Personalkostenquote</p>
-                  <p className={cn(
-                    "text-2xl font-bold",
-                    costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
-                    costRatioStatus === 'ok'      && "text-yellow-700 dark:text-yellow-400",
-                    costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
-                    costRatioStatus === 'unknown' && "text-muted-foreground"
-                  )}>
-                    {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '– %'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {costRatioStatus === 'good'    && `✓ Gut (Ziel: ≤ ${laborCostThreshold} %)`}
-                    {costRatioStatus === 'ok'      && `⚠ Knapp (Ziel: ≤ ${laborCostThreshold} %)`}
-                    {costRatioStatus === 'high'    && `✗ Zu hoch (Ziel: ≤ ${laborCostThreshold} %)`}
-                    {costRatioStatus === 'unknown' && 'Kein Umsatzbudget hinterlegt'}
-                  </p>
+                  {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)}%` : '–%'}
+                </p>
+                <div className="text-sm text-muted-foreground">
+                  {costRatioStatus === 'good'    && <p>Personalkosten liegen <strong className="text-green-700">unter dem Ziel</strong> von {laborCostThreshold}%</p>}
+                  {costRatioStatus === 'ok'      && <p>Personalkosten sind <strong className="text-yellow-700">knapp über dem Ziel</strong> von {laborCostThreshold}%</p>}
+                  {costRatioStatus === 'high'    && <p>Personalkosten sind <strong className="text-red-700">zu hoch</strong> – Ziel ist {laborCostThreshold}%</p>}
+                  {costRatioStatus === 'unknown' && <p>Bitte <strong>Umsatzbudget</strong> in der Übersicht eintragen, damit die Quote berechnet werden kann.</p>}
                 </div>
               </div>
-              <div className="flex gap-6 text-sm flex-wrap">
-                <div>
-                  <p className="text-muted-foreground text-xs">Geplante Personalkosten</p>
-                  <p className="font-semibold">
+              {/* Detail numbers */}
+              <div className="flex gap-8 text-sm flex-wrap">
+                <div className="text-center">
+                  <p className="text-2xl font-bold">
                     {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedLaborCost)}
                   </p>
+                  <p className="text-xs text-muted-foreground">Geplante Personalkosten</p>
                 </div>
-                <div>
-                  <p className="text-muted-foreground text-xs">Geplanter Umsatz</p>
-                  <p className="font-semibold">
+                <div className="text-center">
+                  <p className="text-2xl font-bold">
                     {totalPlannedRevenue > 0
                       ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedRevenue)
                       : '–'}
                   </p>
+                  <p className="text-xs text-muted-foreground">Geplanter Umsatz</p>
                 </div>
-                <div>
-                  <p className="text-muted-foreground text-xs">Grenzwert</p>
-                  <p className="font-semibold">{laborCostThreshold} %</p>
+                <div className="text-center">
+                  <p className="text-2xl font-bold">{laborCostThreshold}%</p>
+                  <p className="text-xs text-muted-foreground">Zielwert</p>
                 </div>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* ── Feature 3: Soll/Ist-Vergleich ── */}
-        {(hasActualHours || hasActualRevenue) && (
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <Clock className="h-4 w-4" />
-                Soll / Ist – Vergleich {format(currentMonth, 'MMMM yyyy', { locale: de })}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* ══════════════════════════════════════════════════════════════════
+            FUNKTION 3: Soll / Ist – Vergleich (immer sichtbar)
+        ══════════════════════════════════════════════════════════════════ */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-bold flex items-center gap-2">
+              <Clock className="h-5 w-5" />
+              Soll / Ist – Vergleich
+              <span className="text-sm font-normal text-muted-foreground ml-1">
+                {format(currentMonth, 'MMMM yyyy', { locale: de })}
+              </span>
+              {!hasActualHours && (
+                <span className="ml-auto text-xs font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border">
+                  Noch keine Ist-Stunden eingetragen
+                </span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {!hasActualHours ? (
+              <div className="text-sm text-muted-foreground py-3 px-4 rounded-lg bg-muted/40 border border-dashed border-border">
+                <p className="font-medium mb-1">So fügen Sie Ist-Stunden hinzu:</p>
+                <p>Gehen Sie im Dienstplan auf den Tab <strong>„Ist"</strong> (neben „Plan") und tragen Sie die tatsächlich geleisteten Stunden ein. Danach erscheint hier automatisch der Vergleich.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                 {/* Hours */}
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Stunden</p>
-                  <div className="flex items-end gap-2">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Soll</p>
-                      <p className="text-lg font-bold">{totalPlannedHoursAll.toFixed(1)} h</p>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Stunden</p>
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-xs text-muted-foreground">Soll</span>
+                      <span className="font-bold">{totalPlannedHoursAll.toFixed(1)} h</span>
                     </div>
-                    <div className="text-muted-foreground pb-0.5">→</div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Ist</p>
-                      <p className="text-lg font-bold">{totalActualHoursAll.toFixed(1)} h</p>
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-xs text-muted-foreground">Ist</span>
+                      <span className="font-bold">{totalActualHoursAll.toFixed(1)} h</span>
+                    </div>
+                    <div className="flex justify-between items-baseline border-t pt-1">
+                      <span className="text-xs text-muted-foreground">Differenz</span>
+                      <span className={cn(
+                        "font-bold text-sm",
+                        hoursVariance > 0 ? "text-red-600" : hoursVariance < 0 ? "text-green-600" : "text-muted-foreground"
+                      )}>
+                        {hoursVariance > 0 ? `+${hoursVariance.toFixed(1)} h` : `${hoursVariance.toFixed(1)} h`}
+                      </span>
                     </div>
                   </div>
-                  <p className={cn(
-                    "text-xs font-medium",
-                    hoursVariance > 0 ? "text-red-600" : hoursVariance < 0 ? "text-green-600" : "text-muted-foreground"
-                  )}>
-                    {hoursVariance > 0 ? `+${hoursVariance.toFixed(1)} h Mehrarbeit` :
-                     hoursVariance < 0 ? `${hoursVariance.toFixed(1)} h weniger` : 'Genau geplant'}
-                  </p>
                 </div>
 
-                {/* Planned costs */}
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Personalkosten</p>
-                  <div className="flex items-end gap-2">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Soll</p>
-                      <p className="text-lg font-bold">
-                        {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedLaborCost)}
-                      </p>
+                {/* Costs */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Personalkosten</p>
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-xs text-muted-foreground">Soll</span>
+                      <span className="font-bold">{new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedLaborCost)}</span>
                     </div>
-                    {hasActualHours && (
-                      <>
-                        <div className="text-muted-foreground pb-0.5">→</div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">Ist (geschätzt)</p>
-                          <p className="text-lg font-bold">
-                            {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalActualLaborCost)}
-                          </p>
-                        </div>
-                      </>
-                    )}
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-xs text-muted-foreground">Ist (geschätzt)</span>
+                      <span className="font-bold">{new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalActualLaborCost)}</span>
+                    </div>
+                    <div className="flex justify-between items-baseline border-t pt-1">
+                      <span className="text-xs text-muted-foreground">Differenz</span>
+                      <span className={cn(
+                        "font-bold text-sm",
+                        (totalActualLaborCost - totalPlannedLaborCost) > 0 ? "text-red-600" : "text-green-600"
+                      )}>
+                        {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalActualLaborCost - totalPlannedLaborCost)}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
                 {/* Revenue */}
-                {hasActualRevenue && (
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Umsatz</p>
-                    <div className="flex items-end gap-2">
-                      <div>
-                        <p className="text-xs text-muted-foreground">Soll</p>
-                        <p className="text-lg font-bold">
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Umsatz</p>
+                  {hasActualRevenue ? (
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-xs text-muted-foreground">Soll</span>
+                        <span className="font-bold">
                           {totalPlannedRevenue > 0
                             ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedRevenue)
                             : '–'}
-                        </p>
+                        </span>
                       </div>
-                      <div className="text-muted-foreground pb-0.5">→</div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Ist</p>
-                        <p className="text-lg font-bold">
-                          {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalActualRevenue)}
-                        </p>
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-xs text-muted-foreground">Ist</span>
+                        <span className="font-bold">{new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalActualRevenue)}</span>
                       </div>
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <p className="text-xs text-muted-foreground italic">Kein Ist-Umsatz eingetragen</p>
+                  )}
+                </div>
 
-                {/* Cost ratio comparison */}
-                {(hasActualRevenue && hasActualHours) && (
+                {/* Cost ratio */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Kostenquote</p>
                   <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Kostenquote</p>
-                    <div className="flex items-end gap-2">
-                      <div>
-                        <p className="text-xs text-muted-foreground">Soll</p>
-                        <p className="text-lg font-bold">
-                          {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '–'}
-                        </p>
-                      </div>
-                      {actualCostRatio !== null && (
-                        <>
-                          <div className="text-muted-foreground pb-0.5">→</div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Ist</p>
-                            <p className={cn(
-                              "text-lg font-bold",
-                              actualCostRatio <= laborCostThreshold ? "text-green-600" :
-                              actualCostRatio <= laborCostThreshold + 5 ? "text-yellow-600" : "text-red-600"
-                            )}>
-                              {actualCostRatio.toFixed(1)} %
-                            </p>
-                          </div>
-                        </>
-                      )}
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-xs text-muted-foreground">Soll</span>
+                      <span className="font-bold">{plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)}%` : '–'}</span>
+                    </div>
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-xs text-muted-foreground">Ist</span>
+                      <span className={cn(
+                        "font-bold",
+                        actualCostRatio === null ? "text-muted-foreground" :
+                        actualCostRatio <= laborCostThreshold ? "text-green-600" :
+                        actualCostRatio <= laborCostThreshold + 5 ? "text-yellow-600" : "text-red-600"
+                      )}>
+                        {actualCostRatio !== null ? `${actualCostRatio.toFixed(1)}%` : '–'}
+                      </span>
                     </div>
                   </div>
-                )}
+                </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
+            )}
+          </CardContent>
+        </Card>
 
         {/* Overhours Warning */}
         {overhoursEmployees.length > 0 && (
