@@ -82,6 +82,7 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 | `/schedule-planner` | `SchedulePlanner.tsx` | Alle |
 
 ## Wichtige Dateien
+- `src/components/AppNav.tsx` — Zentrale Sidebar-Navigation (Desktop) + Bottom-Bar (Mobile); rollenbasiert gefiltert
 - `src/pages/Dashboard.tsx` — Neue Dashboard-Startseite (rollenbasierte KPI-Karten)
 - `src/pages/SchedulePlanner.tsx` — Hauptseite Dienstplan (~2000 Zeilen)
 - `src/pages/Index.tsx` — Legacy Übersicht (unter /overview erreichbar)
