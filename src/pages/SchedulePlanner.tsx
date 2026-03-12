@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '@/hooks/useAuth';
 import {
   loadEmployees,
   upsertEmployee,
@@ -121,6 +122,7 @@ type CalendarView = 'month' | 'week';
 
 const SchedulePlanner = () => {
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
+  const { isAdmin, isServiceManager, isKuecheManager } = useAuth();
   
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [employees, setEmployees] = useState<Employee[]>(defaultEmployees);
@@ -156,7 +158,19 @@ const SchedulePlanner = () => {
   // New state for Plan/Ist toggle
   const [scheduleMode, setScheduleMode] = useState<'plan' | 'ist'>('plan');
   const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string }>>({});
-  
+
+  // ── Rollenbasierter Zugriff ───────────────────────────────────────────────
+  // Wenn der User kein Admin ist, wird die Abteilung automatisch gesetzt
+  // und kann nicht verändert werden.
+  useEffect(() => {
+    if (isServiceManager) setActiveDepartment('service');
+    else if (isKuecheManager) setActiveDepartment('küche');
+  }, [isServiceManager, isKuecheManager]);
+
+  // Manager sehen niemals Einzellöhne – effectiveShowCosts ist für sie immer false
+  const effectiveShowCosts = isAdmin && showCosts;
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Use same password as admin/overview
   const ADMIN_PASSWORD_KEY = 'admin_password';
   const DEFAULT_ADMIN_PASSWORD = 'admin123';
@@ -1021,23 +1035,25 @@ const SchedulePlanner = () => {
         {/* Month/Week Navigation */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {/* Cost Button - Password Protected */}
-            <Button
-              variant={showCosts ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => {
-                if (showCosts) {
-                  setShowCosts(false);
-                } else {
-                  setCostPasswordDialogOpen(true);
-                }
-              }}
-              className="gap-1"
-              title={showCosts ? 'Kosten ausblenden' : 'Kosten einblenden (Passwort erforderlich)'}
-            >
-              {showCosts ? <Euro className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
-              <span className="hidden sm:inline">{showCosts ? 'Kosten' : 'Kosten'}</span>
-            </Button>
+            {/* Cost Button - nur für Admin sichtbar */}
+            {isAdmin && (
+              <Button
+                variant={showCosts ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  if (showCosts) {
+                    setShowCosts(false);
+                  } else {
+                    setCostPasswordDialogOpen(true);
+                  }
+                }}
+                className="gap-1"
+                title={showCosts ? 'Kosten ausblenden' : 'Kosten einblenden (Passwort erforderlich)'}
+              >
+                {showCosts ? <Euro className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+                <span className="hidden sm:inline">{showCosts ? 'Kosten' : 'Kosten'}</span>
+              </Button>
+            )}
             
             <div className="w-px h-6 bg-border mx-1" />
             
@@ -1144,42 +1160,61 @@ const SchedulePlanner = () => {
           </div>
         </div>
 
-        {/* Department Toggle */}
-        <div className="flex items-center justify-center gap-2 flex-wrap">
-          <Button
-            variant={activeDepartment === 'service' ? 'default' : 'outline'}
-            onClick={() => setActiveDepartment('service')}
-            className="min-w-[100px]"
-            size="sm"
-          >
-            <span className={cn(
-              "w-2 h-2 rounded-full mr-2",
-              activeDepartment === 'service' ? "bg-white" : "bg-blue-500"
-            )} />
-            Service
-          </Button>
-          <Button
-            variant={activeDepartment === 'küche' ? 'default' : 'outline'}
-            onClick={() => setActiveDepartment('küche')}
-            className="min-w-[100px]"
-            size="sm"
-          >
-            <span className={cn(
-              "w-2 h-2 rounded-full mr-2",
-              activeDepartment === 'küche' ? "bg-white" : "bg-orange-500"
-            )} />
-            Küche
-          </Button>
-          <Button
-            variant={activeDepartment === 'all' ? 'default' : 'outline'}
-            onClick={() => setActiveDepartment('all' as Department)}
-            className="min-w-[120px]"
-            size="sm"
-          >
-            <Users className="h-4 w-4 mr-2" />
-            Alle ({employees.length})
-          </Button>
-        </div>
+        {/* Department Toggle – nur für Admin schaltbar */}
+        {isAdmin ? (
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <Button
+              variant={activeDepartment === 'service' ? 'default' : 'outline'}
+              onClick={() => setActiveDepartment('service')}
+              className="min-w-[100px]"
+              size="sm"
+            >
+              <span className={cn(
+                "w-2 h-2 rounded-full mr-2",
+                activeDepartment === 'service' ? "bg-white" : "bg-blue-500"
+              )} />
+              Service
+            </Button>
+            <Button
+              variant={activeDepartment === 'küche' ? 'default' : 'outline'}
+              onClick={() => setActiveDepartment('küche')}
+              className="min-w-[100px]"
+              size="sm"
+            >
+              <span className={cn(
+                "w-2 h-2 rounded-full mr-2",
+                activeDepartment === 'küche' ? "bg-white" : "bg-orange-500"
+              )} />
+              Küche
+            </Button>
+            <Button
+              variant={activeDepartment === 'all' ? 'default' : 'outline'}
+              onClick={() => setActiveDepartment('all' as Department)}
+              className="min-w-[120px]"
+              size="sm"
+            >
+              <Users className="h-4 w-4 mr-2" />
+              Alle ({employees.length})
+            </Button>
+          </div>
+        ) : (
+          // Manager: zeigt nur die eigene Abteilung als Hinweis
+          <div className="flex items-center justify-center">
+            <div className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border",
+              isServiceManager && "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-700",
+              isKuecheManager  && "border-orange-300 bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:border-orange-700"
+            )}>
+              <span className={cn(
+                "w-2.5 h-2.5 rounded-full",
+                isServiceManager && "bg-blue-500",
+                isKuecheManager  && "bg-orange-500"
+              )} />
+              {isServiceManager ? 'Service-Ansicht' : 'Küchen-Ansicht'}
+              <Lock className="h-3.5 w-3.5 ml-1 opacity-60" />
+            </div>
+          </div>
+        )}
 
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1423,7 +1458,7 @@ const SchedulePlanner = () => {
                           getWeeklyTargetHours={getWeeklyTargetHours}
                           onDayClick={handleDayClick}
                           showFooter={showFooter}
-                          showCosts={showCosts}
+                          showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
                         />
                       </div>
@@ -1448,7 +1483,7 @@ const SchedulePlanner = () => {
                           getWeeklyTargetHours={getWeeklyTargetHours}
                           onDayClick={handleDayClick}
                           showFooter={showFooter}
-                          showCosts={showCosts}
+                          showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
                         />
                       </div>
@@ -1468,7 +1503,7 @@ const SchedulePlanner = () => {
                       getWeeklyTargetHours={getWeeklyTargetHours}
                       onDayClick={handleDayClick}
                       showFooter={showFooter}
-                      showCosts={showCosts}
+                      showCosts={effectiveShowCosts}
                       dailyBudgets={dailyBudgets}
                     />
                   )}
@@ -1498,7 +1533,7 @@ const SchedulePlanner = () => {
                           onHoursChange={handleActualHoursChange}
                           getEmployeeActualHours={calculateEmployeeActualHours}
                           getTargetHours={getMonthlyTargetHours}
-                          showCosts={showCosts}
+                          showCosts={effectiveShowCosts}
                         />
                       </div>
                       
@@ -1515,7 +1550,7 @@ const SchedulePlanner = () => {
                           onHoursChange={handleActualHoursChange}
                           getEmployeeActualHours={calculateEmployeeActualHours}
                           getTargetHours={getMonthlyTargetHours}
-                          showCosts={showCosts}
+                          showCosts={effectiveShowCosts}
                         />
                       </div>
                     </div>
@@ -1527,7 +1562,7 @@ const SchedulePlanner = () => {
                       onHoursChange={handleActualHoursChange}
                       getEmployeeActualHours={calculateEmployeeActualHours}
                       getTargetHours={getMonthlyTargetHours}
-                      showCosts={showCosts}
+                      showCosts={effectiveShowCosts}
                     />
                   )}
                 </>
@@ -1687,7 +1722,7 @@ const SchedulePlanner = () => {
           scheduleData={scheduleData}
           dailyBudgets={dailyBudgets}
           currentMonth={currentMonth}
-          showCosts={showCosts}
+          showCosts={effectiveShowCosts}
         />
 
         {/* Labor Cost Comparison Charts */}
@@ -1696,14 +1731,14 @@ const SchedulePlanner = () => {
           scheduleData={scheduleData}
           dailyBudgets={dailyBudgets}
           currentMonth={currentMonth}
-          showCosts={showCosts}
+          showCosts={effectiveShowCosts}
         />
 
         {/* Employee Hours Summary */}
         <EmployeeHoursSummary summaries={departmentSummaries} />
 
         {/* Employees List - Password Protected for hourly wages */}
-        {showCosts && (
+        {effectiveShowCosts && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
