@@ -74,6 +74,7 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 | Pfad | Seite | Zugriff |
 |---|---|---|
 | `/` | `Dashboard.tsx` | Alle (rollenbasiert) |
+| `/analyse` | `SollIstAnalyse.tsx` | Alle (rollenbasiert) |
 | `/personal` | `SchedulePlanner.tsx` | Alle (rollenbasiert) |
 | `/overview` | `Index.tsx` | Alle (Legacy) |
 | `/settings` | `Settings.tsx` | Nur Admin |

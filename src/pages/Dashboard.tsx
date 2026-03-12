@@ -9,7 +9,7 @@ import {
   TrendingUp, TrendingDown, Minus,
   Users, Clock, ChefHat, Utensils,
   CalendarDays, AlertTriangle, CheckCircle2,
-  LayoutDashboard, Calendar,
+  LayoutDashboard, Calendar, BarChart2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -567,7 +567,7 @@ const Dashboard = () => {
 
             {/* ── Schnellzugriff ───────────────────────────────────────────── */}
             <SectionTitle>Schnellzugriff</SectionTitle>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <Link to="/personal">
                 <Card className="hover:shadow-md transition-shadow cursor-pointer border-border hover:border-primary/40">
                   <CardHeader className="pb-2 pt-4">
@@ -579,6 +579,22 @@ const Dashboard = () => {
                   <CardContent className="pb-4">
                     <p className="text-xs text-muted-foreground">
                       Plan- und Ist-Dienstplan verwalten, Stunden erfassen.
+                    </p>
+                  </CardContent>
+                </Card>
+              </Link>
+
+              <Link to="/analyse">
+                <Card className="hover:shadow-md transition-shadow cursor-pointer border-border hover:border-primary/40">
+                  <CardHeader className="pb-2 pt-4">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <BarChart2 className="h-4 w-4 text-muted-foreground" />
+                      Soll / Ist Analyse
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pb-4">
+                    <p className="text-xs text-muted-foreground">
+                      Stunden, Kosten und Umsatz im Vergleich — Tag, Woche oder Monat.
                     </p>
                   </CardContent>
                 </Card>

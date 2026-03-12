@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { LogOut, Loader2, ShieldCheck, Users, ChefHat } from "lucide-react";
 import Dashboard from "./pages/Dashboard";
+import SollIstAnalyse from "./pages/SollIstAnalyse";
 import Index from "./pages/Index";
 import SchedulePlanner from "./pages/SchedulePlanner";
 import Settings from "./pages/Settings";
@@ -72,6 +73,7 @@ const AppContent = () => {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/analyse" element={<SollIstAnalyse />} />
           <Route path="/overview" element={<Index />} />
           <Route path="/personal" element={<SchedulePlanner />} />
           <Route path="/schedule-planner" element={<SchedulePlanner />} />
