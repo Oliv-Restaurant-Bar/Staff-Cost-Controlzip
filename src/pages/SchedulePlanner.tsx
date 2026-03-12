@@ -927,14 +927,19 @@ const SchedulePlanner = () => {
   // ── Feature 1: Personalkostenquote ──────────────────────────────────────
   const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 35);
 
-  // Planned cost: salary for fixed employees, hours × wage for hourly
-  const totalPlannedLaborCost = employees.reduce((sum, emp) => {
+  // Kosten und Stunden werden auf die sichtbare Abteilung gefiltert.
+  // Ein Manager sieht nur die Zahlen seiner eigenen Abteilung.
+  const visibleEmployees = filteredEmployees; // enthält schon die Rollen-Filterung
+
+  const totalPlannedLaborCost = visibleEmployees.reduce((sum, emp) => {
     const hrs = calculateEmployeeHours(emp.id);
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
       return sum + emp.monthlySalary;
     }
     return sum + hrs * emp.hourlyWage;
   }, 0);
+
+  const visibleEmployeeIds = new Set(visibleEmployees.map(e => e.id));
 
   const monthDateSet = new Set(daysInMonth.map(d => format(d, 'yyyy-MM-dd')));
   const totalPlannedRevenue = Object.entries(dailyBudgets)
@@ -949,16 +954,21 @@ const SchedulePlanner = () => {
     plannedCostRatio <= laborCostThreshold + 5 ? 'ok' : 'high';
 
   // ── Feature 3: Soll/Ist-Vergleich ────────────────────────────────────────
-  const totalPlannedHoursAll = employeeSummaries.reduce((sum, s) => sum + s.plannedHours, 0);
+  // Stunden ebenfalls nur für die sichtbare Abteilung
+  const totalPlannedHoursAll = departmentSummaries.reduce((sum, s) => sum + s.plannedHours, 0);
   const totalActualHoursAll = Object.entries(actualHoursData)
-    .filter(([key]) => monthDateSet.has(key.slice(-10)))
+    .filter(([key]) => {
+      const dateStr = key.slice(-10);
+      const empId   = key.slice(0, key.length - 11); // format: "empId-yyyy-MM-dd"
+      return monthDateSet.has(dateStr) && visibleEmployeeIds.has(empId);
+    })
     .reduce((sum, [, e]) => sum + e.hours, 0);
   const hoursVariance = totalActualHoursAll - totalPlannedHoursAll;
 
   const totalActualRevenue = Object.entries(dailyBudgets)
     .filter(([date]) => monthDateSet.has(date))
     .reduce((sum, [, b]) => sum + (b.actualRevenue || 0), 0);
-  const totalActualLaborCost = employees.reduce((sum, emp) => {
+  const totalActualLaborCost = visibleEmployees.reduce((sum, emp) => {
     const actualHrs = Object.entries(actualHoursData)
       .filter(([key]) => monthDateSet.has(key.slice(-10)) && key.startsWith(`${emp.id}-`))
       .reduce((s, [, e]) => s + e.hours, 0);
@@ -1728,7 +1738,7 @@ const SchedulePlanner = () => {
 
         {/* Monthly Cost Summary - only shows when costs are enabled */}
         <MonthlyCostSummary
-          employees={employees}
+          employees={visibleEmployees}
           scheduleData={scheduleData}
           dailyBudgets={dailyBudgets}
           currentMonth={currentMonth}
@@ -1737,7 +1747,7 @@ const SchedulePlanner = () => {
 
         {/* Labor Cost Comparison Charts */}
         <LaborCostComparison
-          employees={employees}
+          employees={visibleEmployees}
           scheduleData={scheduleData}
           dailyBudgets={dailyBudgets}
           currentMonth={currentMonth}
