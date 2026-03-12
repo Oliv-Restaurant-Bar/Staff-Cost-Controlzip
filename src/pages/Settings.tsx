@@ -22,6 +22,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { DepartmentTokenManager } from '@/components/DepartmentTokenManager';
 import { CronJobOverview } from '@/components/CronJobOverview';
 import { migrateLocalStorageToSupabase } from '@/hooks/useSupabaseSchedule';
+import { saveSetting } from '@/lib/supabase-db';
 import { CapacitySettingsCard } from '@/components/CapacitySettingsCard';
 
 const DEFAULT_PASSWORD = 'admin123';
@@ -575,12 +576,14 @@ const Settings = () => {
       return;
     }
     localStorage.setItem(WEEKDAY_PERCENTAGES_KEY, JSON.stringify(weekdayPercentages));
+    saveSetting(WEEKDAY_PERCENTAGES_KEY, weekdayPercentages);
     toast.success('Umsatzverteilung gespeichert');
   };
 
   const resetPercentages = () => {
     setWeekdayPercentages(DEFAULT_WEEKDAY_PERCENTAGES);
     localStorage.setItem(WEEKDAY_PERCENTAGES_KEY, JSON.stringify(DEFAULT_WEEKDAY_PERCENTAGES));
+    saveSetting(WEEKDAY_PERCENTAGES_KEY, DEFAULT_WEEKDAY_PERCENTAGES);
     toast.success('Umsatzverteilung auf Standard zurückgesetzt');
   };
 
@@ -590,6 +593,7 @@ const Settings = () => {
       return;
     }
     localStorage.setItem(LABOR_COST_THRESHOLD_KEY, laborCostThreshold.toString());
+    saveSetting(LABOR_COST_THRESHOLD_KEY, laborCostThreshold);
     toast.success('Personalkostenquote-Schwellenwert gespeichert');
   };
 

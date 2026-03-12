@@ -1,4 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import {
+  loadEmployees,
+  upsertEmployee,
+  upsertAllEmployees,
+  deleteEmployee as dbDeleteEmployee,
+  loadScheduleForMonth,
+  saveScheduleEntry,
+  saveFullScheduleForMonth,
+  loadActualHoursForMonth,
+  saveActualHourEntry,
+} from '@/lib/supabase-db';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -150,54 +161,48 @@ const SchedulePlanner = () => {
   const ADMIN_PASSWORD_KEY = 'admin_password';
   const DEFAULT_ADMIN_PASSWORD = 'admin123';
   
-  // Load schedule data and daily budgets from localStorage
-  useEffect(() => {
+  // Load schedule data from Supabase (with localStorage fallback)
+  const loadMonthData = useCallback(async () => {
     const monthKey = format(currentMonth, 'yyyy-MM');
-    const savedSchedule = localStorage.getItem(`schedule-v2-${monthKey}`);
-    const savedEmployees = localStorage.getItem('schedule-employees');
-    const savedBudgets = localStorage.getItem('dailyBudgets');
-    const savedActualHours = localStorage.getItem(`actual-hours-${monthKey}`);
-    
-    if (savedSchedule) {
-      setScheduleData(JSON.parse(savedSchedule));
+
+    // --- Mitarbeiter laden ---
+    const supabaseEmployees = await loadEmployees();
+    if (supabaseEmployees && supabaseEmployees.length > 0) {
+      setEmployees(supabaseEmployees);
     } else {
-      setScheduleData({});
-    }
-    
-    if (savedActualHours) {
-      setActualHoursData(JSON.parse(savedActualHours));
-    } else {
-      setActualHoursData({});
-    }
-    
-    if (savedEmployees) {
-      let loadedEmployees: Employee[] = JSON.parse(savedEmployees);
-      
-      // One-time cleanup: Remove imported duplicates with 25 CHF hourly wage
-      // These are employees that were incorrectly imported
-      const duplicateNames = ['mendim', 'artin', 'joana', 'husein', 'edi', 'nahuel', 'carlos', 'arber', 'marion', 'isabella', 'david', 'saad'];
-      const cleanedEmployees = loadedEmployees.filter(emp => {
-        // Keep if not a 25 CHF import duplicate
-        const nameLower = emp.name.toLowerCase();
-        const isImportedDuplicate = emp.hourlyWage === 25 && 
-          emp.id.startsWith('imported-') &&
-          duplicateNames.some(dup => nameLower.includes(dup));
-        return !isImportedDuplicate;
-      });
-      
-      // Save cleaned list if we removed any
-      if (cleanedEmployees.length < loadedEmployees.length) {
-        localStorage.setItem('schedule-employees', JSON.stringify(cleanedEmployees));
-        console.log(`Bereinigt: ${loadedEmployees.length - cleanedEmployees.length} doppelte Mitarbeiter entfernt`);
+      const savedEmployees = localStorage.getItem('schedule-employees');
+      if (savedEmployees) {
+        const parsed: Employee[] = JSON.parse(savedEmployees);
+        setEmployees(parsed);
       }
-      
-      setEmployees(cleanedEmployees);
     }
-    
-    if (savedBudgets) {
-      setDailyBudgets(JSON.parse(savedBudgets));
+
+    // --- Dienstplan laden ---
+    const supabaseSchedule = await loadScheduleForMonth(currentMonth);
+    if (supabaseSchedule !== null) {
+      setScheduleData(supabaseSchedule);
+    } else {
+      const savedSchedule = localStorage.getItem(`schedule-v2-${monthKey}`);
+      setScheduleData(savedSchedule ? JSON.parse(savedSchedule) : {});
     }
+
+    // --- Ist-Stunden laden ---
+    const supabaseActual = await loadActualHoursForMonth(currentMonth);
+    if (supabaseActual !== null) {
+      setActualHoursData(supabaseActual);
+    } else {
+      const savedActualHours = localStorage.getItem(`actual-hours-${monthKey}`);
+      setActualHoursData(savedActualHours ? JSON.parse(savedActualHours) : {});
+    }
+
+    // --- Tagesbudgets (noch localStorage) ---
+    const savedBudgets = localStorage.getItem('dailyBudgets');
+    if (savedBudgets) setDailyBudgets(JSON.parse(savedBudgets));
   }, [currentMonth]);
+
+  useEffect(() => {
+    loadMonthData();
+  }, [loadMonthData]);
 
   // Get days in current month
   const monthStart = startOfMonth(currentMonth);
@@ -467,25 +472,31 @@ const SchedulePlanner = () => {
         const newState = { ...prev };
         delete newState[cellKey];
         
-        // Auto-save to localStorage
+        // Save to Supabase
+        const date = cellKey.slice(-10);
+        const employeeId = cellKey.slice(0, -11);
+        saveScheduleEntry(employeeId, date, null);
+        
+        // Keep localStorage as backup
         const monthKey = format(currentMonth, 'yyyy-MM');
         localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(newState));
         
-        // Dispatch custom event for immediate sync
         window.dispatchEvent(new CustomEvent('schedule-updated'));
-        
         return newState;
       }
       
       const newState = { ...prev, [cellKey]: updated };
       
-      // Auto-save to localStorage for immediate sync with overview
+      // Save to Supabase
+      const date = cellKey.slice(-10);
+      const employeeId = cellKey.slice(0, -11);
+      saveScheduleEntry(employeeId, date, updated);
+      
+      // Keep localStorage as backup
       const monthKey = format(currentMonth, 'yyyy-MM');
       localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(newState));
       
-      // Dispatch custom event for immediate sync
       window.dispatchEvent(new CustomEvent('schedule-updated'));
-      
       return newState;
     });
   };
@@ -497,6 +508,7 @@ const SchedulePlanner = () => {
     };
     const updatedEmployees = [...employees, newEmployee];
     setEmployees(updatedEmployees);
+    upsertEmployee(newEmployee);
     localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
     toast.success(`${employee.name} hinzugefügt`);
   };
@@ -505,22 +517,27 @@ const SchedulePlanner = () => {
     const emp = employees.find(e => e.id === employeeId);
     const updatedEmployees = employees.filter(e => e.id !== employeeId);
     setEmployees(updatedEmployees);
+    dbDeleteEmployee(employeeId);
     localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
     if (emp) {
       toast.success(`${emp.name} entfernt`);
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const monthKey = format(currentMonth, 'yyyy-MM');
+    
+    // Save to Supabase
+    await saveFullScheduleForMonth(currentMonth, scheduleData);
+    await upsertAllEmployees(employees);
+    
+    // Keep localStorage as backup
     localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(scheduleData));
     localStorage.setItem('schedule-employees', JSON.stringify(employees));
     localStorage.setItem('dailyBudgets', JSON.stringify(dailyBudgets));
     localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(actualHoursData));
     
-    // Dispatch custom event for immediate sync with overview
     window.dispatchEvent(new CustomEvent('schedule-updated'));
-    
     toast.success(`Dienstplan für ${format(currentMonth, 'MMMM yyyy', { locale: de })} gespeichert`);
   };
 
@@ -547,7 +564,7 @@ const SchedulePlanner = () => {
         const newState = { ...prev };
         delete newState[cellKey];
         
-        // Auto-save
+        saveActualHourEntry(employeeId, date, null);
         const monthKey = format(currentMonth, 'yyyy-MM');
         localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(newState));
         window.dispatchEvent(new CustomEvent('schedule-updated'));
@@ -557,7 +574,7 @@ const SchedulePlanner = () => {
       
       const newState = { ...prev, [cellKey]: entry };
       
-      // Auto-save
+      saveActualHourEntry(employeeId, date, entry);
       const monthKey = format(currentMonth, 'yyyy-MM');
       localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(newState));
       window.dispatchEvent(new CustomEvent('schedule-updated'));
@@ -663,10 +680,12 @@ const SchedulePlanner = () => {
 
   const applyImportResult = (newScheduleData: Record<string, DaySchedule>, newEmployees: Employee[]) => {
     setScheduleData(newScheduleData);
+    saveFullScheduleForMonth(currentMonth, newScheduleData);
 
     if (newEmployees && newEmployees.length > 0) {
       const updatedEmployees = [...employees, ...newEmployees];
       setEmployees(updatedEmployees);
+      newEmployees.forEach(emp => upsertEmployee(emp));
       localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
       toast.success(`${newEmployees.length} neue Mitarbeiter hinzugefügt: ${newEmployees.map(e => e.name).join(', ')}`);
     } else {
@@ -767,6 +786,8 @@ const SchedulePlanner = () => {
       emp.id === employeeId ? { ...emp, daysOff } : emp
     );
     setEmployees(updatedEmployees);
+    const updated = updatedEmployees.find(e => e.id === employeeId);
+    if (updated) upsertEmployee(updated);
     localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
     toast.success('Freie Tage gespeichert');
   };
@@ -794,6 +815,8 @@ const SchedulePlanner = () => {
           : emp
       );
       setEmployees(updatedEmployees);
+      const updated = updatedEmployees.find(e => e.id === selectedEmployeeFor8Hours.id);
+      if (updated) upsertEmployee(updated);
       localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
       toast.success(`8.5h für ${selectedEmployeeFor8Hours.name} eingetragen (${selectedDays.length} Tage) - Bevorzugte Tage gespeichert`);
     } else {
@@ -811,10 +834,12 @@ const SchedulePlanner = () => {
   const handleEmployeeFormSubmit = (employeeData: Omit<Employee, 'id'> | Employee) => {
     if ('id' in employeeData) {
       // Update existing employee
+      const merged = { ...employees.find(e => e.id === employeeData.id)!, ...employeeData };
       const updatedEmployees = employees.map(emp =>
-        emp.id === employeeData.id ? { ...emp, ...employeeData } : emp
+        emp.id === employeeData.id ? merged : emp
       );
       setEmployees(updatedEmployees);
+      upsertEmployee(merged);
       localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
       toast.success(`${employeeData.name} aktualisiert`);
     } else {
@@ -825,6 +850,7 @@ const SchedulePlanner = () => {
       };
       const updatedEmployees = [...employees, newEmployee];
       setEmployees(updatedEmployees);
+      upsertEmployee(newEmployee);
       localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
       toast.success(`${employeeData.name} hinzugefügt`);
     }

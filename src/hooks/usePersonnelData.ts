@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Employee, TimeEntry, DailyBudget, MirusImportEntry, MirusDailyImportEntry, ScheduleImportEntry, RevenueImportEntry, HourlyRevenue } from '@/types/personnel';
 import { calculateHours, calculateDailySummary } from '@/lib/personnel-utils';
 import { toast } from 'sonner';
+import { upsertAllEmployees } from '@/lib/supabase-db';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, eachMonthOfInterval, subMonths, addMonths } from 'date-fns';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { supabase } from '@/integrations/supabase/client';
@@ -524,10 +525,11 @@ export const usePersonnelData = () => {
     return () => window.removeEventListener('storage', onStorage);
   }, [syncFromSupabase]);
 
-  // Sync employees to localStorage whenever they change (after initial load)
+  // Sync employees to localStorage and Supabase whenever they change (after initial load)
   useEffect(() => {
     if (isInitialized) {
       localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(employees));
+      upsertAllEmployees(employees);
     }
   }, [employees, isInitialized]);
 
