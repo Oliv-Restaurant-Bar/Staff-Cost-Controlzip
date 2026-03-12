@@ -900,6 +900,52 @@ const SchedulePlanner = () => {
 
   const overhoursEmployees = employeeSummaries.filter(s => s.status === 'over');
 
+  // ── Feature 1: Personalkostenquote ──────────────────────────────────────
+  const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 35);
+
+  // Planned cost: salary for fixed employees, hours × wage for hourly
+  const totalPlannedLaborCost = employees.reduce((sum, emp) => {
+    const hrs = calculateEmployeeHours(emp.id);
+    if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
+      return sum + emp.monthlySalary;
+    }
+    return sum + hrs * emp.hourlyWage;
+  }, 0);
+
+  const monthDateSet = new Set(daysInMonth.map(d => format(d, 'yyyy-MM-dd')));
+  const totalPlannedRevenue = Object.entries(dailyBudgets)
+    .filter(([date]) => monthDateSet.has(date))
+    .reduce((sum, [, b]) => sum + (b.plannedRevenue || 0), 0);
+  const plannedCostRatio = totalPlannedRevenue > 0
+    ? (totalPlannedLaborCost / totalPlannedRevenue) * 100
+    : null;
+  const costRatioStatus: 'good' | 'ok' | 'high' | 'unknown' =
+    plannedCostRatio === null ? 'unknown' :
+    plannedCostRatio <= laborCostThreshold ? 'good' :
+    plannedCostRatio <= laborCostThreshold + 5 ? 'ok' : 'high';
+
+  // ── Feature 3: Soll/Ist-Vergleich ────────────────────────────────────────
+  const totalPlannedHoursAll = employeeSummaries.reduce((sum, s) => sum + s.plannedHours, 0);
+  const totalActualHoursAll = Object.entries(actualHoursData)
+    .filter(([key]) => monthDateSet.has(key.slice(-10)))
+    .reduce((sum, [, e]) => sum + e.hours, 0);
+  const hoursVariance = totalActualHoursAll - totalPlannedHoursAll;
+
+  const totalActualRevenue = Object.entries(dailyBudgets)
+    .filter(([date]) => monthDateSet.has(date))
+    .reduce((sum, [, b]) => sum + (b.actualRevenue || 0), 0);
+  const totalActualLaborCost = employees.reduce((sum, emp) => {
+    const actualHrs = Object.entries(actualHoursData)
+      .filter(([key]) => monthDateSet.has(key.slice(-10)) && key.startsWith(`${emp.id}-`))
+      .reduce((s, [, e]) => s + e.hours, 0);
+    return sum + actualHrs * emp.hourlyWage;
+  }, 0);
+  const actualCostRatio = totalActualRevenue > 0 && totalActualLaborCost > 0
+    ? (totalActualLaborCost / totalActualRevenue) * 100
+    : null;
+  const hasActualHours = totalActualHoursAll > 0;
+  const hasActualRevenue = totalActualRevenue > 0;
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -1185,6 +1231,188 @@ const SchedulePlanner = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* ── Feature 1: Personalkostenquote ── */}
+        <Card className={cn(
+          "border-2",
+          costRatioStatus === 'good'    && "border-green-500/50 bg-green-50/50 dark:bg-green-950/20",
+          costRatioStatus === 'ok'      && "border-yellow-500/50 bg-yellow-50/50 dark:bg-yellow-950/20",
+          costRatioStatus === 'high'    && "border-red-500/50 bg-red-50/50 dark:bg-red-950/20",
+          costRatioStatus === 'unknown' && "border-border bg-muted/30"
+        )}>
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold",
+                  costRatioStatus === 'good'    && "bg-green-500 text-white",
+                  costRatioStatus === 'ok'      && "bg-yellow-500 text-white",
+                  costRatioStatus === 'high'    && "bg-red-500 text-white",
+                  costRatioStatus === 'unknown' && "bg-muted text-muted-foreground"
+                )}>
+                  {costRatioStatus === 'good'    && <CheckCircle className="h-5 w-5" />}
+                  {costRatioStatus === 'ok'      && <AlertTriangle className="h-5 w-5" />}
+                  {costRatioStatus === 'high'    && <AlertTriangle className="h-5 w-5" />}
+                  {costRatioStatus === 'unknown' && <Euro className="h-5 w-5" />}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-muted-foreground">Geplante Personalkostenquote</p>
+                  <p className={cn(
+                    "text-2xl font-bold",
+                    costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
+                    costRatioStatus === 'ok'      && "text-yellow-700 dark:text-yellow-400",
+                    costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
+                    costRatioStatus === 'unknown' && "text-muted-foreground"
+                  )}>
+                    {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '– %'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {costRatioStatus === 'good'    && `✓ Gut (Ziel: ≤ ${laborCostThreshold} %)`}
+                    {costRatioStatus === 'ok'      && `⚠ Knapp (Ziel: ≤ ${laborCostThreshold} %)`}
+                    {costRatioStatus === 'high'    && `✗ Zu hoch (Ziel: ≤ ${laborCostThreshold} %)`}
+                    {costRatioStatus === 'unknown' && 'Kein Umsatzbudget hinterlegt'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-6 text-sm flex-wrap">
+                <div>
+                  <p className="text-muted-foreground text-xs">Geplante Personalkosten</p>
+                  <p className="font-semibold">
+                    {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedLaborCost)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Geplanter Umsatz</p>
+                  <p className="font-semibold">
+                    {totalPlannedRevenue > 0
+                      ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedRevenue)
+                      : '–'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Grenzwert</p>
+                  <p className="font-semibold">{laborCostThreshold} %</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* ── Feature 3: Soll/Ist-Vergleich ── */}
+        {(hasActualHours || hasActualRevenue) && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Clock className="h-4 w-4" />
+                Soll / Ist – Vergleich {format(currentMonth, 'MMMM yyyy', { locale: de })}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {/* Hours */}
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Stunden</p>
+                  <div className="flex items-end gap-2">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Soll</p>
+                      <p className="text-lg font-bold">{totalPlannedHoursAll.toFixed(1)} h</p>
+                    </div>
+                    <div className="text-muted-foreground pb-0.5">→</div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Ist</p>
+                      <p className="text-lg font-bold">{totalActualHoursAll.toFixed(1)} h</p>
+                    </div>
+                  </div>
+                  <p className={cn(
+                    "text-xs font-medium",
+                    hoursVariance > 0 ? "text-red-600" : hoursVariance < 0 ? "text-green-600" : "text-muted-foreground"
+                  )}>
+                    {hoursVariance > 0 ? `+${hoursVariance.toFixed(1)} h Mehrarbeit` :
+                     hoursVariance < 0 ? `${hoursVariance.toFixed(1)} h weniger` : 'Genau geplant'}
+                  </p>
+                </div>
+
+                {/* Planned costs */}
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Personalkosten</p>
+                  <div className="flex items-end gap-2">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Soll</p>
+                      <p className="text-lg font-bold">
+                        {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedLaborCost)}
+                      </p>
+                    </div>
+                    {hasActualHours && (
+                      <>
+                        <div className="text-muted-foreground pb-0.5">→</div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Ist (geschätzt)</p>
+                          <p className="text-lg font-bold">
+                            {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalActualLaborCost)}
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Revenue */}
+                {hasActualRevenue && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Umsatz</p>
+                    <div className="flex items-end gap-2">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Soll</p>
+                        <p className="text-lg font-bold">
+                          {totalPlannedRevenue > 0
+                            ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedRevenue)
+                            : '–'}
+                        </p>
+                      </div>
+                      <div className="text-muted-foreground pb-0.5">→</div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Ist</p>
+                        <p className="text-lg font-bold">
+                          {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalActualRevenue)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Cost ratio comparison */}
+                {(hasActualRevenue && hasActualHours) && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Kostenquote</p>
+                    <div className="flex items-end gap-2">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Soll</p>
+                        <p className="text-lg font-bold">
+                          {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '–'}
+                        </p>
+                      </div>
+                      {actualCostRatio !== null && (
+                        <>
+                          <div className="text-muted-foreground pb-0.5">→</div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Ist</p>
+                            <p className={cn(
+                              "text-lg font-bold",
+                              actualCostRatio <= laborCostThreshold ? "text-green-600" :
+                              actualCostRatio <= laborCostThreshold + 5 ? "text-yellow-600" : "text-red-600"
+                            )}>
+                              {actualCostRatio.toFixed(1)} %
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Overhours Warning */}
         {overhoursEmployees.length > 0 && (
@@ -1559,7 +1787,10 @@ const SchedulePlanner = () => {
         employeeIds={filteredEmployees.map(e => e.id)}
         onCopy={(newScheduleData) => {
           setScheduleData(newScheduleData);
-          toast.success('Woche erfolgreich kopiert!');
+          saveFullScheduleForMonth(currentMonth, newScheduleData);
+          const monthKey = format(currentMonth, 'yyyy-MM');
+          localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(newScheduleData));
+          toast.success('Woche erfolgreich kopiert und gespeichert!');
         }}
       />
 
