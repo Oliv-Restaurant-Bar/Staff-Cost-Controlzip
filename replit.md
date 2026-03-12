@@ -70,18 +70,43 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 - Tagesbudgets: noch localStorage
 - UI-Präferenzen: bewusst in localStorage (nutzerspezifisch)
 
+## Routing
+| Pfad | Seite | Zugriff |
+|---|---|---|
+| `/` | `Dashboard.tsx` | Alle (rollenbasiert) |
+| `/personal` | `SchedulePlanner.tsx` | Alle (rollenbasiert) |
+| `/overview` | `Index.tsx` | Alle (Legacy) |
+| `/settings` | `Settings.tsx` | Nur Admin |
+| `/schedule-planner` | `SchedulePlanner.tsx` | Alle |
+
 ## Wichtige Dateien
+- `src/pages/Dashboard.tsx` — Neue Dashboard-Startseite (rollenbasierte KPI-Karten)
 - `src/pages/SchedulePlanner.tsx` — Hauptseite Dienstplan (~2000 Zeilen)
+- `src/pages/Index.tsx` — Legacy Übersicht (unter /overview erreichbar)
 - `src/hooks/usePermissions.ts` — Zentrales Berechtigungssystem
-- `src/hooks/usePersonnelData.ts` — Mitarbeiter + Zeiteinträge
+- `src/hooks/usePersonnelData.ts` — Mitarbeiter + Zeiteinträge (localStorage)
 - `src/hooks/useShiftConfig.ts` — Schichtkonfiguration
 - `src/pages/Settings.tsx` — Einstellungen (nur Admin)
 - `src/contexts/AuthContext.tsx` — Supabase Auth + Rollenladung
 - `src/App.tsx` — Routing + Routen-Schutz
 
-## Nächste Schritte (Phase 2)
+## Dashboard (src/pages/Dashboard.tsx)
+Lädt direkt aus Supabase (Mitarbeiter, Dienstplan, Ist-Stunden) + localStorage (dailyBudgets).
+Rollenbasierte Ansicht:
+
+| Bereich | Admin | Service-Mgr | Küchen-Mgr |
+|---|:---:|:---:|:---:|
+| Umsatz heute/KW/Monat | ✅ | ❌ | ❌ |
+| Budget vs. Ist Umsatz | ✅ | ❌ | ❌ |
+| Vorjahresvergleich | ✅ | ❌ | ❌ |
+| Personalkosten (Gesamt) | ✅ | Service | Küche |
+| Kostenquote | ✅ | Service | Küche |
+| Stunden Soll/Ist | ✅ | Service | Küche |
+| Warnung bei Kostenüberschreitung | ✅ | ✅ | ✅ |
+
+## Nächste Schritte
 1. SQL-Skript `supabase/add_user_roles.sql` im Supabase SQL-Editor ausführen
 2. Manager-Accounts in Supabase Authentication erstellen
 3. Rollen via SQL den neuen Accounts zuweisen
-4. Dashboard-Seite (/) rollengerecht anpassen (Manager sehen nur ihre KPIs)
-5. Soll/Ist-Analyse als eigene Seite auslagern
+4. Soll/Ist-Analyse als eigene Seite auslagern (Modul 3)
+5. Personalstamm-Modul (nur Admin)
