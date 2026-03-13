@@ -19,6 +19,7 @@
  */
 
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -39,7 +40,7 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
   Truck, Plus, Trash2, Edit3, Info, AlertTriangle, ChevronDown,
-  ShoppingCart, Package, Wine, ArrowUpDown, CheckCircle2,
+  ShoppingCart, Package, Wine, ArrowUpDown, CheckCircle2, Scale,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -415,6 +416,11 @@ export default function SupplierDocumentsPage() {
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="text-purple-700 border-purple-300 bg-purple-50">Admin</Badge>
+          <Link to="/lieferanten-vergleich">
+            <Button variant="outline" size="sm" className="gap-1 text-xs">
+              <Scale className="h-3.5 w-3.5" /> Vergleich / Kontrolle
+            </Button>
+          </Link>
           <Button onClick={openAdd} size="sm" className="gap-1">
             <Plus className="h-4 w-4" /> Beleg erfassen
           </Button>

@@ -21,12 +21,14 @@ import {
   CostComparisonRecord,
   SupplierCostSummary,
   SupplierCostComparison,
+  AccountToSupplierMapping,
 } from '@/types/supplier-documents';
 import { loadMonth } from '@/lib/reporting-store';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'supplier_docs_v1';
+const STORAGE_KEY         = 'supplier_docs_v1';
+const MAPPING_KEY         = 'supplier_account_mapping_v1';
 
 // ─── Persistenz ───────────────────────────────────────────────────────────────
 
@@ -312,19 +314,90 @@ export function getSupplierCostSummaries(year: number, month: number): SupplierC
  *   3. Berechne Anteil (allocationPct) und befülle accountingTotal + diff
  */
 export function buildSupplierCostComparisons(year: number, month: number): SupplierCostComparison[] {
-  const summaries = getSupplierCostSummaries(year, month);
+  const summaries  = getSupplierCostSummaries(year, month);
+  const mappings   = loadSupplierMappings();
+  const accounting = loadMonth(year, month);
 
-  return summaries.map(s => ({
-    supplier:               s.supplier,
-    month:                  s.month,
-    year:                   s.year,
-    operationalTotal:       s.totalCost,
-    operationalFoodCost:    s.foodCost,
-    operationalBeverageCost: s.beverageCost,
-    operationalOtherCost:   s.otherCost,
-    accountingTotal:        undefined,
-    diff:                   undefined,
-    diffPct:                undefined,
-    hasAccountingData:      false,
-  }));
+  const accountAmounts = new Map<string, number>();
+  for (const cat of accounting.expenseCategories) {
+    const id = cat.categoryId ?? '';
+    if (/^\d{3,5}$/.test(id)) {
+      accountAmounts.set(id, (accountAmounts.get(id) ?? 0) + (cat.amount ?? 0));
+    }
+    const humanMap: Record<string, string> = {
+      wareneinsatz_kueche: '4400', warenaufwand_kueche: '4400', food_cost: '4400',
+      wareneinsatz_bar: '4100', wareneinsatz_getraenke: '4100', beverage_cost: '4100',
+      wareneinsatz_diverses: '4300', warenaufwand_diverses: '4300',
+    };
+    if (humanMap[id]) {
+      const key = humanMap[id];
+      accountAmounts.set(key, (accountAmounts.get(key) ?? 0) + (cat.amount ?? 0));
+    }
+  }
+
+  return summaries.map(s => {
+    const mapping = mappings.find(m => m.supplier === s.supplier);
+    if (!mapping) {
+      return {
+        supplier: s.supplier, month: s.month, year: s.year,
+        operationalTotal: s.totalCost,
+        operationalFoodCost: s.foodCost,
+        operationalBeverageCost: s.beverageCost,
+        operationalOtherCost: s.otherCost,
+        accountingTotal: undefined, diff: undefined, diffPct: undefined,
+        hasAccountingData: false,
+      };
+    }
+    const pct      = (mapping.allocationPct ?? 100) / 100;
+    const rawAcc   = accountAmounts.get(mapping.accountId) ?? 0;
+    const accTotal = rawAcc * pct;
+    const has      = accountAmounts.has(mapping.accountId);
+    const diff     = has ? s.totalCost - accTotal : undefined;
+    return {
+      supplier: s.supplier, month: s.month, year: s.year,
+      operationalTotal: s.totalCost,
+      operationalFoodCost: s.foodCost,
+      operationalBeverageCost: s.beverageCost,
+      operationalOtherCost: s.otherCost,
+      accountingTotal:  has ? accTotal : undefined,
+      diff,
+      diffPct: has && accTotal !== 0 ? (diff! / Math.abs(accTotal)) * 100 : undefined,
+      hasAccountingData: has,
+    };
+  });
+}
+
+// ─── Supplier → Account Mapping ───────────────────────────────────────────────
+
+export function loadSupplierMappings(): AccountToSupplierMapping[] {
+  try {
+    const raw = localStorage.getItem(MAPPING_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+export function saveSupplierMappings(mappings: AccountToSupplierMapping[]): void {
+  localStorage.setItem(MAPPING_KEY, JSON.stringify(mappings));
+}
+
+export function upsertSupplierMapping(mapping: AccountToSupplierMapping): void {
+  const all = loadSupplierMappings().filter(m => m.supplier !== mapping.supplier);
+  all.push(mapping);
+  saveSupplierMappings(all);
+}
+
+export function deleteSupplierMapping(supplier: string): void {
+  saveSupplierMappings(loadSupplierMappings().filter(m => m.supplier !== supplier));
+}
+
+/**
+ * Alle Kontonummern aus expenseCategories eines Monats (für Autocomplete).
+ */
+export function getAccountingAccountsForMonth(year: number, month: number): string[] {
+  const rec = loadMonth(year, month);
+  return [...new Set(
+    rec.expenseCategories
+      .map(c => c.categoryId ?? '')
+      .filter(id => /^\d{3,5}$/.test(id))
+  )].sort();
 }
