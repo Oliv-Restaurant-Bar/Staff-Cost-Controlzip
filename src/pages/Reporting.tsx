@@ -19,7 +19,7 @@ import { Link } from 'react-router-dom';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Plus,
   Edit3, Upload, CheckCircle2, AlertCircle, Clock,
-  Info, Save, X, FileText, BarChart2, RefreshCw,
+  Info, Save, X, FileText, BarChart2, RefreshCw, Settings2,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -553,6 +553,14 @@ const Reporting = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Kontenplan-Link */}
+            <Link to="/kontenplan">
+              <Button variant="outline" size="sm" className="h-8 text-xs gap-1">
+                <Settings2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Kontenplan</span>
+              </Button>
+            </Link>
+
             {/* Jahr-Selector */}
             <Select value={String(year)} onValueChange={v => handleYearChange(Number(v))}>
               <SelectTrigger className="h-8 w-28 text-xs">

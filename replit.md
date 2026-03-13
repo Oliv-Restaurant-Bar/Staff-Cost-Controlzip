@@ -77,6 +77,7 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 | `/analyse` | `SollIstAnalyse.tsx` | Alle (rollenbasiert) |
 | `/personal-stamm` | `Personalstamm.tsx` | Alle (rollenbasiert, Admin voll) |
 | `/reporting` | `Reporting.tsx` | Nur Admin |
+| `/kontenplan` | `AccountMapping.tsx` | Nur Admin |
 | `/personal` | `SchedulePlanner.tsx` | Alle (rollenbasiert) |
 | `/overview` | `Index.tsx` | Alle (Legacy) |
 | `/settings` | `Settings.tsx` | Nur Admin |
@@ -86,6 +87,9 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 - `src/components/AppNav.tsx` — Zentrale Sidebar-Navigation (Desktop) + Bottom-Bar (Mobile); rollenbasiert gefiltert
 - `src/types/reporting.ts` — Typen für Finanzmodul (MonthlyFinancialRecord, ExpenseCategory, ImportRecord)
 - `src/lib/reporting-store.ts` — Datenzugriff Reporting (localStorage, Supabase-migrationsbereit), Import-Deduplication-Logik
+- `src/types/account-mapping.ts` — P&L-Typen: PLCategory, PLSection, AccountMapping, AccountRange, AccountSign, DepartmentHint
+- `src/lib/account-mapping-store.ts` — Swiss KMU Kontenrahmen (40+ Gastro-Konten 3xxx–6xxx), Lookup-Logik (exakt/Bereich/kein Treffer), CRUD für Custom-Mappings
+- `src/pages/AccountMapping.tsx` — Admin-Übersicht Kontenplan: Tabelle nach P&L-Abschnitt gruppiert, Edit-Dialog, Matching-Test-Panel
 - `src/pages/Dashboard.tsx` — Neue Dashboard-Startseite (rollenbasierte KPI-Karten)
 - `src/pages/SchedulePlanner.tsx` — Hauptseite Dienstplan (~2000 Zeilen)
 - `src/pages/Index.tsx` — Legacy Übersicht (unter /overview erreichbar)
