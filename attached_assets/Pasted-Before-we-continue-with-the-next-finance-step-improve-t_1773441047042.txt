@@ -1,0 +1,64 @@
+Before we continue with the next finance step, improve the Budget-Planung page again.
+
+Goal:
+The budget page must behave even closer to the uploaded template and become fully usable for yearly planning.
+
+Important:
+Do not remove the current budget logic.
+Improve the existing budget page structure and usability.
+
+Please implement the following:
+
+1. Complete visibility of structure
+Make sure all main categories, all subcategories, all intermediate results, and the final result are fully visible in the budget page.
+
+Examples that must be visible in the correct hierarchy:
+- Betriebsertrag netto
+- Direkter Warenaufwand
+- Bruttogewinn 1
+- Personal
+- Sozialleistungen
+- übriger Personalaufwand
+- Total Personal
+- Bruttogewinn 2
+- Raumaufwand
+- Unterhalt & Reinigung
+- Versicherungen / Verwaltung / Übriges
+- EBITDA / Betriebsergebnis
+
+2. Add-entry control on the left side
+At the left area near account number and description, add a visible “+” action so the admin can add a new position directly where it belongs.
+
+The add dialog must allow:
+- name
+- 4-digit account number
+- parent category
+- type = CHF or %
+- optional department = Küche / Service / Allgemein
+
+3. Add cumulative yearly column before January
+Add a “Kumuliert” column before January.
+
+This column should show the total yearly value for that row.
+
+4. Distribute yearly value across all months
+If the user enters a value in the “Kumuliert” yearly column, provide an option like:
+- “gleichmässig auf alle Monate verteilen”
+
+If selected:
+- the yearly amount should be divided automatically across January to December
+- all month fields should be filled automatically
+- rounding should be handled cleanly so the yearly total stays correct
+
+5. Keep intermediate results and final result automatic
+Intermediate result rows and the final result must automatically recalculate after any monthly or cumulative change.
+
+6. Keep the UI readable
+The budget page should still feel like a finance-style planning table, not a generic spreadsheet.
+
+7. Explain in simple German:
+- what was added
+- where the new plus action is
+- how the cumulative column works
+- how the yearly distribute-across-months function works
+- what I should test now
