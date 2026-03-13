@@ -31,7 +31,15 @@ export interface TimeEntry {
   actualEnd?: string;
   actualHours?: number;
   break?: number;
+  /**
+   * Woher kommt der Ist-Stunden-Wert?
+   * 'mirus'  = aus Mirus XLS-Import
+   * 'manual' = manuell erfasst im System
+   * undefined = ältere Einträge ohne Herkunft
+   */
+  importSource?: 'mirus' | 'manual';
 }
+
 
 export interface HourlyRevenue {
   hour: number; // 0-23
@@ -116,6 +124,19 @@ export interface MirusDailyImportEntry {
   date: string;
   hours: number;
 }
+
+/**
+ * Import-Modus für Mirus Ist-Stunden-Import:
+ *   'replace' → Alle bestehenden Mirus-Einträge für den Zeitraum werden
+ *               zuerst gelöscht, dann werden die neuen Einträge eingefügt.
+ *               Verwenden wenn: neuer Mirus-Export, Daten sollen komplett ersetzt werden.
+ *
+ *   'update'  → Bestehende Einträge für dieselbe Person / dasselbe Datum
+ *               werden überschrieben. Einträge für andere Tage bleiben erhalten.
+ *               Verwenden wenn: Teilperioden-Nachtrag, manuelle Korrekturen nicht überschreiben.
+ */
+export type MirusImportMode = 'replace' | 'update';
+
 
 export interface ScheduleImportEntry {
   name: string;

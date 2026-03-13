@@ -721,11 +721,15 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
         continue;
       }
 
-      // Skip totals / headers
+      // Skip totals / headers / section footers
       if (rowText.includes('tägliche stunden') || rowText.includes('restaurant') || rowText.includes('waisenhausplatz')) {
         continue;
       }
+      // Skip all total / subtotal / sum rows (various Mirus export variants)
       if (rowText.includes('total stunden')) continue;
+      if (/^\s*(total|summe|gesamt|zwischensumme|sub[- ]?total)\b/i.test(rowText)) continue;
+      if (/\btotal\s+stunden\b|\bgesamt\s*stunden\b/i.test(rowText)) continue;
+      if (/\btotal\b/.test(rowText) && /^\s*(total|\d*\s*total)/i.test(c0 + ' ' + c1)) continue;
 
       // Name is often in column 2, fallback to col1/col0
       const c2 = String(row[2] || '').trim();

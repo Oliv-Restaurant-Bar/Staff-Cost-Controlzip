@@ -36,7 +36,7 @@ interface PersonnelTabProps {
   selectedDate: Date;
   dailySummary: any;
   onImportPlannedHours: (data: any) => void;
-  onImportActualHours: (data: any) => void;
+  onImportActualHours: (data: any, mode?: 'replace' | 'update') => void;
   onImportRevenue: (data: any) => void;
   onUpdateTimeEntry: (id: string, field: string, value: any) => void;
   onUpdatePlannedTime: (entryId: string, field: 'plannedStart' | 'plannedEnd' | 'plannedHours', value: string | number) => void;
@@ -86,7 +86,7 @@ export const PersonnelTab = ({
           employees={employees}
         />
         <PlannedHoursImportButton onImport={onImportPlannedHours} employees={employees} />
-        <ActualHoursImportButton onImport={onImportActualHours} employees={employees} existingTimeEntries={timeEntries} />
+        <ActualHoursImportButton onImport={(entries, mode) => onImportActualHours(entries, mode)} employees={employees} existingTimeEntries={timeEntries} />
         <Button
           onClick={onAddNewEmployee}
           variant="outline"

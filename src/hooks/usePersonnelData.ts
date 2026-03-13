@@ -1095,8 +1095,13 @@ export const usePersonnelData = () => {
   // Import daily Mirus data (individual hours per day per employee)
   // IMPORTANT: This only updates actualHours - it preserves any existing plannedHours
   // DEDUPLICATION: Overwrites existing data for the same employee/date - no duplicates
+  // MODE:
+  //   'replace' → clears ALL Mirus-tagged entries for the imported date range first,
+  //               then inserts the new data fresh.  Use for a full month re-import.
+  //   'update'  → merges into existing data; only entries for the same employee+date
+  //               are overwritten.  Planned hours are always preserved regardless of mode.
   const importMirusDailyData = useCallback(
-    (entries: MirusDailyImportEntry[]) => {
+    (entries: MirusDailyImportEntry[], mode: 'replace' | 'update' = 'update') => {
       let matchedCount = 0;
       let updatedCount = 0;
       let createdCount = 0;
@@ -1136,6 +1141,48 @@ export const usePersonnelData = () => {
         }
       });
 
+      // ── REPLACE MODE: clear all Mirus actual-hours for the affected date range ──
+      if (mode === 'replace') {
+        const importedDates = new Set(entries.map(e => e.date));
+        // In replace mode: reset actualHours (and importSource) for all existing
+        // Mirus entries that fall within the imported date range.
+        // Planned hours (plannedStart/plannedEnd/plannedHours) are never touched.
+        setManualTimeEntries(prev =>
+          prev.map(te =>
+            importedDates.has(te.date) && (te.importSource === 'mirus' || te.importSource === undefined)
+              ? { ...te, actualHours: undefined, importSource: undefined }
+              : te,
+          ),
+        );
+        setTimeEntries(prev =>
+          prev.map(te =>
+            importedDates.has(te.date) && (te.importSource === 'mirus' || te.importSource === undefined)
+              ? { ...te, actualHours: undefined, importSource: undefined }
+              : te,
+          ),
+        );
+        // Also clear the monthly actual-hours localStorage cache for affected months
+        const affectedMonths = new Set([...importedDates].map(d => d.slice(0, 7)));
+        for (const monthKey of affectedMonths) {
+          const storageKey = `actual-hours-${monthKey}`;
+          try {
+            const existing: Record<string, unknown> = JSON.parse(localStorage.getItem(storageKey) || '{}');
+            for (const cellKey of Object.keys(existing)) {
+              const [, cellDate] = cellKey.split('-').length >= 3
+                ? [cellKey.slice(0, cellKey.lastIndexOf('-')), cellKey.slice(cellKey.lastIndexOf('-') + 1)]
+                : [cellKey, ''];
+              const fullDate = `${cellDate}`;
+              // The cell key is `${employeeId}-${date}` – date is the last 10 chars (YYYY-MM-DD)
+              const dateFromKey = cellKey.length >= 10 ? cellKey.slice(-10) : '';
+              if (importedDates.has(dateFromKey)) {
+                delete existing[cellKey];
+              }
+            }
+            localStorage.setItem(storageKey, JSON.stringify(existing));
+          } catch { /* ignore */ }
+        }
+      }
+
       // Process deduplicated entries
       deduplicatedEntries.forEach(({ entry, employee }, key) => {
         // Update or create in manual entries (preserving existing planned data)
@@ -1143,11 +1190,11 @@ export const usePersonnelData = () => {
           const existingIdx = prev.findIndex((e) => `${e.employeeId}-${e.date}` === key);
           
           if (existingIdx >= 0) {
-            // Update only actualHours, preserve everything else
+            // Update only actualHours + importSource, preserve everything else
             updatedCount++;
             return prev.map((e, idx) => 
               idx === existingIdx 
-                ? { ...e, actualHours: entry.hours }
+                ? { ...e, actualHours: entry.hours, importSource: 'mirus' }
                 : e
             );
           } else {
@@ -1161,6 +1208,7 @@ export const usePersonnelData = () => {
               plannedEnd: '',
               plannedHours: 0,
               actualHours: entry.hours,
+              importSource: 'mirus',
             };
             return [...prev, newEntry];
           }
@@ -1171,10 +1219,10 @@ export const usePersonnelData = () => {
           const existingIdx = prev.findIndex((te) => te.employeeId === employee.id && te.date === entry.date);
           
           if (existingIdx >= 0) {
-            // Update only actualHours, preserve planned data - NO DUPLICATE
+            // Update only actualHours + importSource, preserve planned data - NO DUPLICATE
             return prev.map((te, idx) =>
               idx === existingIdx
-                ? { ...te, actualHours: entry.hours }
+                ? { ...te, actualHours: entry.hours, importSource: 'mirus' }
                 : te
             );
           } else {
@@ -1190,6 +1238,7 @@ export const usePersonnelData = () => {
                 plannedEnd: '',
                 plannedHours: 0,
                 actualHours: entry.hours,
+                importSource: 'mirus' as const,
               },
             ];
           }

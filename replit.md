@@ -102,6 +102,10 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 - `src/types/supplier-documents.ts` — Typen: SupplierDocument, DocumentType/Category, SupplierMonthSummary, CostComparisonRecord
 - `src/lib/supplier-documents-store.ts` — Store (localStorage supplier_docs_v1): CRUD, Monatsaggregation, Buchhaltungsvergleich (baut CostComparisonRecord aus beiden Stores ohne den reporting-store zu verändern)
 - `src/pages/SupplierDocuments.tsx` — Lieferantendokumente-Seite: Beleg erfassen, Monatsselektor, Zusammenfassungskarten, Tabellenansicht, Buchhaltungsvergleich-Vorbereitung (Admin only)
+- `src/lib/mirus-name-mapping-store.ts` — Persistente Mirus-Namenszuordnungen (localStorage mirus_name_mappings_v1): save/load/lookup/clear
+- `src/types/personnel.ts` — TimeEntry ergänzt mit importSource ('mirus'|'manual'); MirusImportMode Typ ('replace'|'update')
+- `src/hooks/usePersonnelData.ts` — importMirusDailyData: mode-Parameter (replace/update), replace löscht Mirus-Einträge für den Zeitraum, source='mirus' wird gespeichert
+- `src/components/ActualHoursImportButton.tsx` — Neu: Import-Modus-Selektor (Replace/Update), persistente Namenszuordnungen, unresolved Warnung, source-Tagging
 - `src/pages/Dashboard.tsx` — Neue Dashboard-Startseite (rollenbasierte KPI-Karten)
 - `src/pages/SchedulePlanner.tsx` — Hauptseite Dienstplan (~2000 Zeilen)
 - `src/pages/Index.tsx` — Legacy Übersicht (unter /overview erreichbar)
