@@ -1,0 +1,80 @@
+The current budget page is not structured correctly yet.
+
+It must be rebuilt to match the logic of the uploaded budget template much more closely.
+
+Important:
+Do not remove the existing budget data model.
+Improve the structure and presentation so it works like a true budget P&L.
+
+Please implement the following:
+
+1. Budget structure like the template
+The budget page must no longer be a flat list.
+It should be structured like a real P&L / Erfolgsrechnung with:
+
+- main categories
+- subcategories
+- intermediate results
+- final result at the bottom
+
+2. Main categories with subcategories
+Examples:
+- Betriebsertrag netto
+  - Wein
+  - Bier
+  - Spirituosen
+  - Küche
+  - Kaffee
+
+- Direkter Warenaufwand
+  - Wein Warenaufwand
+  - Bier Warenaufwand
+  - Spirituosen Warenaufwand
+  - Mineral Warenaufwand
+  - Küche Warenaufwand
+
+- Personal
+  - Lohn Fix
+  - Lohn Flex
+  - 13. Monatslohn
+  - Lohn Zulagen
+
+- Sozialleistungen
+- übriger Personalaufwand
+- Raumaufwand
+- Unterhalt
+- Versicherungen / Gebühren / Verwaltung / übriger Aufwand
+
+3. Intermediate results
+Show proper calculated intermediate result rows such as:
+- Betriebsertrag netto
+- Direkter Warenaufwand
+- Bruttogewinn 1
+- Total Personal
+- Total Raumaufwand
+- EBITDA / Betriebsergebnis
+
+4. Final result
+At the bottom, show the final result clearly, just like in the template.
+
+5. Manual subcategory creation
+Admin must be able to add subcategories manually with:
+- name
+- 4-digit account number
+- parent category
+- type = CHF or %
+- optional department = Küche / Service / Allgemein
+
+This is important so the budget structure matches the real accounting structure later.
+
+6. Matching readiness
+The budget subcategories should align with the same 4-digit account logic used in accounting imports, so budget vs actual can later compare correctly.
+
+7. Keep the UI readable
+The page should visually feel like a real budget P&L, not just a spreadsheet list.
+
+8. Explain in simple German:
+- what was changed
+- how the structure now matches the template
+- where I can add subcategories
+- how intermediate results and final result are calculated

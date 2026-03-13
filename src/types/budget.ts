@@ -171,7 +171,7 @@ export interface BudgetRule {
 export interface BudgetYear {
   /** Jahreszahl, z.B. 2026 */
   year: number;
-  /** Alle Budgetpositionen dieses Jahres */
+  /** Alle Budgetpositionen dieses Jahres (Legacy-Kompatibilität) */
   positions: BudgetPosition[];
   /** Automatische Anpassungsregeln */
   rules: BudgetRule[];
@@ -184,6 +184,11 @@ export interface BudgetYear {
   wasAutoCalculated: boolean;
   createdAt: string;
   updatedAt: string;
+
+  /** P&L Struktur: Kategorien (optional – wird beim ersten Öffnen initialisiert) */
+  plCategories?: BudgetPLCategory[];
+  /** P&L Struktur: Einzelpositionen / Unterkonten */
+  plLineItems?: BudgetPLLineItem[];
 }
 
 // ─── Berechnete Werte ─────────────────────────────────────────────────────────
@@ -231,3 +236,118 @@ export const BUDGET_MONTH_NAMES_FULL = [
   'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
 ];
+
+// ─── P&L Strukturtypen (Budget-Erfolgsrechnung) ───────────────────────────────
+
+/**
+ * Ein P&L-Abschnitt (Hauptkategorie wie "Betriebsertrag", "Personal", etc.)
+ * type='items'  → enthält einzelne Positionen (Zeilen)
+ * type='result' → wird berechnet (Summenzeile / Zwischenergebnis)
+ */
+export interface BudgetPLCategory {
+  id: string;
+  label: string;
+  type: 'items' | 'result';
+  isExpense: boolean;
+  sortOrder: number;
+  color: 'green' | 'blue' | 'orange' | 'amber' | 'red' | 'gray' | 'purple';
+  /** Nur für type='result': Welche Kategorien werden addiert/subtrahiert? */
+  resultFormula?: Array<{ sign: 1 | -1; categoryId: string }>;
+}
+
+/**
+ * Eine einzelne Budgetposition (Unterkategorie / Konto)
+ * Gehört zu einer BudgetPLCategory.
+ */
+export interface BudgetPLLineItem {
+  id: string;
+  categoryId: string;
+  accountNumber: string;
+  label: string;
+  valueType: 'chf' | 'percent';
+  department?: 'küche' | 'service' | 'allgemein';
+  monthlyValues: [number, number, number, number, number, number,
+                  number, number, number, number, number, number];
+  sortOrder: number;
+  isDefault?: boolean;
+}
+
+// ─── Standard P&L Kategorien für oLiv ────────────────────────────────────────
+
+export const DEFAULT_PL_CATEGORIES: BudgetPLCategory[] = [
+  { id: 'pl_revenue',          label: 'Betriebsertrag netto',              type: 'items',  isExpense: false, sortOrder: 10, color: 'green'  },
+  { id: 'pl_goods_cost',       label: 'Direkter Warenaufwand',             type: 'items',  isExpense: true,  sortOrder: 20, color: 'orange' },
+  { id: 'pl_gross_1',          label: 'Bruttogewinn 1',                    type: 'result', isExpense: false, sortOrder: 30, color: 'green',
+    resultFormula: [{ sign:  1, categoryId: 'pl_revenue' }, { sign: -1, categoryId: 'pl_goods_cost' }] },
+  { id: 'pl_wages',            label: 'Löhne & Gehälter',                  type: 'items',  isExpense: true,  sortOrder: 40, color: 'blue'   },
+  { id: 'pl_social',           label: 'Sozialleistungen',                  type: 'items',  isExpense: true,  sortOrder: 50, color: 'blue'   },
+  { id: 'pl_personnel_other',  label: 'Übriger Personalaufwand',           type: 'items',  isExpense: true,  sortOrder: 60, color: 'blue'   },
+  { id: 'pl_total_personnel',  label: 'Total Personal',                    type: 'result', isExpense: true,  sortOrder: 70, color: 'blue',
+    resultFormula: [{ sign: 1, categoryId: 'pl_wages' }, { sign: 1, categoryId: 'pl_social' }, { sign: 1, categoryId: 'pl_personnel_other' }] },
+  { id: 'pl_gross_2',          label: 'Bruttogewinn 2',                    type: 'result', isExpense: false, sortOrder: 80, color: 'green',
+    resultFormula: [{ sign: 1, categoryId: 'pl_gross_1' }, { sign: -1, categoryId: 'pl_total_personnel' }] },
+  { id: 'pl_rent',             label: 'Raumaufwand',                       type: 'items',  isExpense: true,  sortOrder: 90, color: 'gray'   },
+  { id: 'pl_maintenance',      label: 'Unterhalt & Reinigung',             type: 'items',  isExpense: true,  sortOrder: 100, color: 'gray'  },
+  { id: 'pl_admin',            label: 'Versicherungen / Verwaltung / Übriges', type: 'items', isExpense: true, sortOrder: 110, color: 'gray' },
+  { id: 'pl_ebitda',           label: 'EBITDA / Betriebsergebnis',         type: 'result', isExpense: false, sortOrder: 120, color: 'purple',
+    resultFormula: [
+      { sign:  1, categoryId: 'pl_gross_2' },
+      { sign: -1, categoryId: 'pl_rent' },
+      { sign: -1, categoryId: 'pl_maintenance' },
+      { sign: -1, categoryId: 'pl_admin' },
+    ] },
+];
+
+// ─── Standard P&L Positionen (Unterkonten) ────────────────────────────────────
+
+const Z12: BudgetPLLineItem['monthlyValues'] = [0,0,0,0,0,0,0,0,0,0,0,0];
+
+export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = [
+  // Betriebsertrag
+  { id: 'pli_wein',           categoryId: 'pl_revenue',         accountNumber: '3000', label: 'Wein',                       valueType: 'chf',     sortOrder: 1  },
+  { id: 'pli_bier',           categoryId: 'pl_revenue',         accountNumber: '3100', label: 'Bier',                       valueType: 'chf',     sortOrder: 2  },
+  { id: 'pli_spirituosen',    categoryId: 'pl_revenue',         accountNumber: '3200', label: 'Spirituosen',                valueType: 'chf',     sortOrder: 3  },
+  { id: 'pli_kueche_ertrag',  categoryId: 'pl_revenue',         accountNumber: '3300', label: 'Küche',                      valueType: 'chf',     sortOrder: 4,  department: 'küche'   },
+  { id: 'pli_kaffee',         categoryId: 'pl_revenue',         accountNumber: '3400', label: 'Kaffee / Non-Alc',           valueType: 'chf',     sortOrder: 5  },
+
+  // Warenaufwand
+  { id: 'pli_waren_wein',     categoryId: 'pl_goods_cost',      accountNumber: '4000', label: 'Wein Warenaufwand',          valueType: 'percent', sortOrder: 1  },
+  { id: 'pli_waren_bier',     categoryId: 'pl_goods_cost',      accountNumber: '4100', label: 'Bier Warenaufwand',          valueType: 'percent', sortOrder: 2  },
+  { id: 'pli_waren_spirit',   categoryId: 'pl_goods_cost',      accountNumber: '4200', label: 'Spirituosen Warenaufwand',   valueType: 'percent', sortOrder: 3  },
+  { id: 'pli_waren_mineral',  categoryId: 'pl_goods_cost',      accountNumber: '4300', label: 'Mineral / Softdrinks',       valueType: 'percent', sortOrder: 4  },
+  { id: 'pli_waren_kueche',   categoryId: 'pl_goods_cost',      accountNumber: '4400', label: 'Küche Warenaufwand',         valueType: 'percent', sortOrder: 5,  department: 'küche'   },
+
+  // Löhne
+  { id: 'pli_lohn_fix',       categoryId: 'pl_wages',           accountNumber: '5000', label: 'Lohn Fix',                   valueType: 'chf',     sortOrder: 1  },
+  { id: 'pli_lohn_flex',      categoryId: 'pl_wages',           accountNumber: '5100', label: 'Lohn Flex',                  valueType: 'chf',     sortOrder: 2  },
+  { id: 'pli_lohn_13',        categoryId: 'pl_wages',           accountNumber: '5200', label: '13. Monatslohn',             valueType: 'chf',     sortOrder: 3  },
+  { id: 'pli_lohn_zulagen',   categoryId: 'pl_wages',           accountNumber: '5300', label: 'Lohn Zulagen',               valueType: 'chf',     sortOrder: 4  },
+
+  // Sozialleistungen
+  { id: 'pli_ahv',            categoryId: 'pl_social',          accountNumber: '5400', label: 'AHV / IV / EO / ALV',        valueType: 'chf',     sortOrder: 1  },
+  { id: 'pli_bvg',            categoryId: 'pl_social',          accountNumber: '5500', label: 'BVG / Pensionskasse',         valueType: 'chf',     sortOrder: 2  },
+  { id: 'pli_uvg',            categoryId: 'pl_social',          accountNumber: '5600', label: 'UVG / Krankentaggeld',        valueType: 'chf',     sortOrder: 3  },
+
+  // Übriger Personalaufwand
+  { id: 'pli_weiterbildung',  categoryId: 'pl_personnel_other', accountNumber: '5700', label: 'Aus- und Weiterbildung',      valueType: 'chf',     sortOrder: 1  },
+  { id: 'pli_personalverpf',  categoryId: 'pl_personnel_other', accountNumber: '5800', label: 'Personalverpflegung / übriges', valueType: 'chf',  sortOrder: 2  },
+
+  // Raumaufwand
+  { id: 'pli_miete',          categoryId: 'pl_rent',            accountNumber: '6000', label: 'Miete',                      valueType: 'chf',     sortOrder: 1  },
+  { id: 'pli_nebenkosten',    categoryId: 'pl_rent',            accountNumber: '6100', label: 'Nebenkosten',                valueType: 'chf',     sortOrder: 2  },
+
+  // Unterhalt
+  { id: 'pli_unterhalt',      categoryId: 'pl_maintenance',     accountNumber: '6200', label: 'Unterhalt Gebäude/Einrichtung', valueType: 'chf',  sortOrder: 1  },
+  { id: 'pli_reinigung',      categoryId: 'pl_maintenance',     accountNumber: '6300', label: 'Reinigung',                  valueType: 'chf',     sortOrder: 2  },
+
+  // Versicherungen/Verwaltung
+  { id: 'pli_versicherungen', categoryId: 'pl_admin',           accountNumber: '6400', label: 'Versicherungen',             valueType: 'chf',     sortOrder: 1  },
+  { id: 'pli_verwaltung',     categoryId: 'pl_admin',           accountNumber: '6500', label: 'Verwaltungskosten',          valueType: 'chf',     sortOrder: 2  },
+  { id: 'pli_uebrig_aufwand', categoryId: 'pl_admin',           accountNumber: '6600', label: 'Übriger Betriebsaufwand',    valueType: 'chf',     sortOrder: 3  },
+];
+
+export function createDefaultPLLineItem(
+  def: Omit<BudgetPLLineItem, 'monthlyValues'>,
+): BudgetPLLineItem {
+  return { ...def, monthlyValues: [...Z12] as BudgetPLLineItem['monthlyValues'], isDefault: true };
+}

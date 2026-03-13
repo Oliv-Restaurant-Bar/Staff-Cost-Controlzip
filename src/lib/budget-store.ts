@@ -24,6 +24,11 @@ import {
   BudgetYearResolved,
   DEFAULT_BUDGET_POSITIONS,
   createDefaultPosition,
+  BudgetPLCategory,
+  BudgetPLLineItem,
+  DEFAULT_PL_CATEGORIES,
+  DEFAULT_PL_LINE_ITEMS,
+  createDefaultPLLineItem,
 } from '@/types/budget';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
@@ -358,4 +363,234 @@ export function removeBudgetRule(year: number, ruleId: string): BudgetYear {
   };
   saveBudgetYear(updated);
   return updated;
+}
+
+// ─── P&L Struktur (neue Budget-Erfolgsrechnung) ───────────────────────────────
+
+/**
+ * Initialisiert die P&L-Struktur in einem BudgetYear, falls noch nicht vorhanden.
+ * Erstellt Standardkategorien und Standardpositionen.
+ * Das bestehende Budget wird NICHT verändert.
+ */
+function initPLStructure(budget: BudgetYear): BudgetYear {
+  if (budget.plCategories && budget.plLineItems) return budget;
+
+  const categories: BudgetPLCategory[]  = [...DEFAULT_PL_CATEGORIES];
+  const lineItems: BudgetPLLineItem[]    = DEFAULT_PL_LINE_ITEMS.map(createDefaultPLLineItem);
+
+  return { ...budget, plCategories: categories, plLineItems: lineItems };
+}
+
+/**
+ * Budgetjahr laden und P&L-Struktur sicherstellen.
+ * Wenn noch keine P&L-Struktur vorhanden → Standardstruktur erstellen + speichern.
+ */
+export function loadBudgetWithPL(year: number): BudgetYear {
+  let budget = loadBudgetYear(year);
+  if (!budget.plCategories || !budget.plLineItems) {
+    budget = initPLStructure(budget);
+    saveBudgetYear(budget);
+  }
+  return budget;
+}
+
+/**
+ * Berechnet monatliche Gesamtsummen pro Kategorie (CHF).
+ *
+ * Für %-Positionen: Wert = % × revenue_total[m] / 100
+ * Für CHF-Positionen: Wert direkt
+ *
+ * Gibt ein Record<categoryId, number[12]> zurück.
+ */
+export function computePLCategoryTotals(
+  lineItems: BudgetPLLineItem[],
+): Record<string, number[]> {
+  // Zuerst Revenue berechnen (wird als Basis für %-Positionen benötigt)
+  const revenueTotals = Array(12).fill(0) as number[];
+  lineItems
+    .filter(item => item.categoryId === 'pl_revenue')
+    .forEach(item => {
+      item.monthlyValues.forEach((v, m) => { revenueTotals[m] += v; });
+    });
+
+  const totals: Record<string, number[]> = {};
+
+  // Für jede Kategorie die Positionen summieren
+  const categoryIds = [...new Set(lineItems.map(i => i.categoryId))];
+  for (const catId of categoryIds) {
+    const monthly = Array(12).fill(0) as number[];
+    lineItems
+      .filter(item => item.categoryId === catId)
+      .forEach(item => {
+        item.monthlyValues.forEach((v, m) => {
+          if (item.valueType === 'percent') {
+            monthly[m] += Math.round((v / 100) * revenueTotals[m]);
+          } else {
+            monthly[m] += v;
+          }
+        });
+      });
+    totals[catId] = monthly;
+  }
+
+  return totals;
+}
+
+/**
+ * Berechnet Zwischenergebnis-Zeilen (type='result') anhand der Formel.
+ */
+export function computePLResultTotals(
+  categories:    BudgetPLCategory[],
+  categoryTotals: Record<string, number[]>,
+): Record<string, number[]> {
+  const results: Record<string, number[]> = {};
+
+  const resultCats = categories
+    .filter(c => c.type === 'result')
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+
+  for (const cat of resultCats) {
+    const monthly = Array(12).fill(0) as number[];
+    for (const term of (cat.resultFormula ?? [])) {
+      const source = categoryTotals[term.categoryId] ?? results[term.categoryId] ?? Array(12).fill(0);
+      source.forEach((v, m) => { monthly[m] += term.sign * v; });
+    }
+    results[cat.id] = monthly;
+  }
+
+  return results;
+}
+
+/**
+ * Speichert eine einzelne P&L-Zeile (update oder insert).
+ */
+export function savePLLineItem(year: number, item: BudgetPLLineItem): BudgetYear {
+  const budget = loadBudgetWithPL(year);
+  const exists = budget.plLineItems!.some(i => i.id === item.id);
+  const lineItems = exists
+    ? budget.plLineItems!.map(i => i.id === item.id ? item : i)
+    : [...budget.plLineItems!, item];
+
+  const updated = syncPLToLegacyPositions({ ...budget, plLineItems: lineItems });
+  saveBudgetYear(updated);
+  return updated;
+}
+
+/**
+ * Fügt eine neue benutzerdefinierte P&L-Zeile hinzu.
+ */
+export function addCustomPLLineItem(
+  year: number,
+  item: Omit<BudgetPLLineItem, 'id' | 'isDefault'>,
+): BudgetYear {
+  const budget = loadBudgetWithPL(year);
+  const newItem: BudgetPLLineItem = {
+    ...item,
+    monthlyValues: [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'],
+    id: uuidv4(),
+    isDefault: false,
+  };
+  const updated = syncPLToLegacyPositions({
+    ...budget,
+    plLineItems: [...budget.plLineItems!, newItem],
+  });
+  saveBudgetYear(updated);
+  return updated;
+}
+
+/**
+ * Entfernt eine benutzerdefinierte P&L-Zeile (nur nicht-Standard-Zeilen).
+ */
+export function removeCustomPLLineItem(year: number, itemId: string): BudgetYear {
+  const budget = loadBudgetWithPL(year);
+  const item   = budget.plLineItems!.find(i => i.id === itemId);
+  if (item?.isDefault) {
+    throw new Error('Standard-Positionen können nicht gelöscht werden.');
+  }
+  const updated = syncPLToLegacyPositions({
+    ...budget,
+    plLineItems: budget.plLineItems!.filter(i => i.id !== itemId),
+  });
+  saveBudgetYear(updated);
+  return updated;
+}
+
+/**
+ * Synchronisiert P&L-Gesamtsummen in die Legacy-Positionen.
+ * Diese werden vom Dashboard und der Soll/Ist-Analyse verwendet.
+ *
+ * Mapping:
+ *   pl_revenue            → budget_revenue
+ *   pl_goods_cost(küche)  → budget_food_cost
+ *   pl_goods_cost(rest)   → budget_bev_cost
+ *   pl_wages + pl_social + pl_personnel_other → budget_personnel
+ *   pl_rent               → budget_rent
+ *   pl_maintenance        → budget_maintenance
+ *   pl_admin              → budget_insurance + budget_other
+ */
+export function syncPLToLegacyPositions(budget: BudgetYear): BudgetYear {
+  if (!budget.plLineItems) return budget;
+
+  const items     = budget.plLineItems;
+  const positions = budget.positions.map(p => ({ ...p, monthlyValues: [...p.monthlyValues] as BudgetPosition['monthlyValues'] }));
+  const setPos    = (id: string, vals: number[]) => {
+    const pos = positions.find(p => p.id === id);
+    if (pos) { pos.monthlyValues = vals as BudgetPosition['monthlyValues']; pos.valueType = 'chf'; }
+  };
+
+  // Revenue total per month
+  const revTotal = Array(12).fill(0) as number[];
+  items.filter(i => i.categoryId === 'pl_revenue').forEach(i => {
+    i.monthlyValues.forEach((v, m) => { revTotal[m] += v; });
+  });
+  setPos('budget_revenue', revTotal);
+
+  // Food cost (Küche Warenaufwand = account 4400)
+  const foodCost = Array(12).fill(0) as number[];
+  items.filter(i => i.categoryId === 'pl_goods_cost' && i.accountNumber === '4400').forEach(i => {
+    i.monthlyValues.forEach((v, m) => {
+      foodCost[m] += i.valueType === 'percent' ? Math.round((v / 100) * revTotal[m]) : v;
+    });
+  });
+  setPos('budget_food_cost', foodCost);
+
+  // Beverage cost (all other goods cost)
+  const bevCost = Array(12).fill(0) as number[];
+  items.filter(i => i.categoryId === 'pl_goods_cost' && i.accountNumber !== '4400').forEach(i => {
+    i.monthlyValues.forEach((v, m) => {
+      bevCost[m] += i.valueType === 'percent' ? Math.round((v / 100) * revTotal[m]) : v;
+    });
+  });
+  setPos('budget_bev_cost', bevCost);
+
+  // Personnel (wages + social + other)
+  const personnelTotal = Array(12).fill(0) as number[];
+  items.filter(i => ['pl_wages', 'pl_social', 'pl_personnel_other'].includes(i.categoryId)).forEach(i => {
+    i.monthlyValues.forEach((v, m) => { personnelTotal[m] += v; });
+  });
+  // If legacy personnel is % type, switch to CHF
+  setPos('budget_personnel', personnelTotal);
+
+  // Rent
+  const rentTotal = Array(12).fill(0) as number[];
+  items.filter(i => i.categoryId === 'pl_rent').forEach(i => {
+    i.monthlyValues.forEach((v, m) => { rentTotal[m] += v; });
+  });
+  setPos('budget_rent', rentTotal);
+
+  // Maintenance
+  const maintTotal = Array(12).fill(0) as number[];
+  items.filter(i => i.categoryId === 'pl_maintenance').forEach(i => {
+    i.monthlyValues.forEach((v, m) => { maintTotal[m] += v; });
+  });
+  setPos('budget_maintenance', maintTotal);
+
+  // Admin (insurance + other)
+  const adminTotal = Array(12).fill(0) as number[];
+  items.filter(i => i.categoryId === 'pl_admin').forEach(i => {
+    i.monthlyValues.forEach((v, m) => { adminTotal[m] += v; });
+  });
+  setPos('budget_insurance', adminTotal);
+
+  return { ...budget, positions, updatedAt: new Date().toISOString() };
 }
