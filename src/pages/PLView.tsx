@@ -35,7 +35,9 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { loadYear } from '@/lib/reporting-store';
 import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE } from '@/lib/pl-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
-import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE } from '@/types/reporting';
+import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
+import { loadBudgetWithPL } from '@/lib/budget-store';
+import { BudgetYear, BudgetPLCategory } from '@/types/budget';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -466,13 +468,378 @@ const YearView = ({
   );
 };
 
+// ─── Budget P&L Vergleich ─────────────────────────────────────────────────────
+
+interface BPLCell {
+  budget: number;
+  actual: number;
+  prevYear: number;
+  vsBudget: number;
+  vsBudgetPct?: number;
+  vsPrevYear: number;
+  vsPrevYearPct?: number;
+}
+
+interface BPLRow {
+  catId: string;
+  catLabel: string;
+  catType: 'items' | 'result';
+  isExpense: boolean;
+  isCategory: boolean;
+  itemLabel?: string;
+  itemAccountNumber?: string;
+  itemId?: string;
+}
+
+interface BPLRowWithValues extends BPLRow {
+  values: BPLCell;
+}
+
+function getCatActual(catId: string, rec: MonthlyFinancialRecord | undefined): number {
+  if (!rec) return 0;
+  if (catId === 'pl_revenue') return rec.revenueActual ?? (rec as any).revenue ?? 0;
+  if (catId === 'pl_wages')   return (rec as any).personnel_actual ?? 0;
+  const ranges: Record<string, [number, number]> = {
+    pl_goods_cost:      [4000, 4499],
+    pl_social:          [5400, 5699],
+    pl_personnel_other: [5700, 5899],
+    pl_rent:            [6000, 6199],
+    pl_maintenance:     [6200, 6399],
+    pl_admin:           [6400, 6999],
+  };
+  const r = ranges[catId];
+  if (!r) return 0;
+  return (rec.expenseCategories ?? [])
+    .filter(c => { const n = parseInt(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
+    .reduce((s, c) => s + (c.amount ?? 0), 0);
+}
+
+function getCatPY(catId: string, rec: MonthlyFinancialRecord | undefined): number {
+  if (!rec) return 0;
+  if (catId === 'pl_revenue') return (rec as any).revenuePreviousYear ?? 0;
+  if (catId === 'pl_wages')   return (rec as any).personnelCostPreviousYear ?? 0;
+  const ranges: Record<string, [number, number]> = {
+    pl_goods_cost:      [4000, 4499],
+    pl_social:          [5400, 5699],
+    pl_personnel_other: [5700, 5899],
+    pl_rent:            [6000, 6199],
+    pl_maintenance:     [6200, 6399],
+    pl_admin:           [6400, 6999],
+  };
+  const r = ranges[catId];
+  if (!r) return 0;
+  return (rec.expenseCategoriesPreviousYear ?? [])
+    .filter(c => { const n = parseInt(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
+    .reduce((s, c) => s + (c.amount ?? 0), 0);
+}
+
+function makeCell(actual: number, budget: number, prevYear: number, isExpense: boolean): BPLCell {
+  const vsBudget   = isExpense ? budget - actual   : actual - budget;
+  const vsPrevYear = isExpense ? prevYear - actual  : actual - prevYear;
+  return {
+    actual, budget, prevYear,
+    vsBudget,
+    vsBudgetPct:   budget    !== 0 ? (vsBudget   / Math.abs(budget))    * 100 : undefined,
+    vsPrevYear,
+    vsPrevYearPct: prevYear  !== 0 ? (vsPrevYear / Math.abs(prevYear))  * 100 : undefined,
+  };
+}
+
+function computeBPLRows(
+  budget: BudgetYear,
+  rec: MonthlyFinancialRecord | undefined,
+  mIdx: number,
+): BPLRowWithValues[] {
+  const cats  = (budget.plCategories ?? []).sort((a, b) => a.sortOrder - b.sortOrder);
+  const items = budget.plLineItems ?? [];
+  const rows: BPLRowWithValues[] = [];
+
+  const catB: Record<string, number> = {};
+  const catA: Record<string, number> = {};
+  const catP: Record<string, number> = {};
+
+  for (const cat of cats) {
+    if (cat.type === 'items') {
+      const its = items.filter(i => i.categoryId === cat.id);
+      catB[cat.id] = its.reduce((s, i) => s + (i.monthlyValues[mIdx] ?? 0), 0);
+      catA[cat.id] = getCatActual(cat.id, rec);
+      catP[cat.id] = getCatPY(cat.id, rec);
+    }
+  }
+  for (const cat of cats) {
+    if (cat.type === 'result' && cat.resultFormula) {
+      catB[cat.id] = cat.resultFormula.reduce((s, f) => s + f.sign * (catB[f.categoryId] ?? 0), 0);
+      catA[cat.id] = cat.resultFormula.reduce((s, f) => s + f.sign * (catA[f.categoryId] ?? 0), 0);
+      catP[cat.id] = cat.resultFormula.reduce((s, f) => s + f.sign * (catP[f.categoryId] ?? 0), 0);
+    }
+  }
+
+  for (const cat of cats) {
+    if (cat.type === 'items') {
+      rows.push({
+        catId: cat.id, catLabel: cat.label, catType: 'items',
+        isExpense: cat.isExpense, isCategory: true,
+        values: makeCell(catA[cat.id] ?? 0, catB[cat.id] ?? 0, catP[cat.id] ?? 0, cat.isExpense),
+      });
+      const its = items.filter(i => i.categoryId === cat.id).sort((a, b) => a.sortOrder - b.sortOrder);
+      for (const item of its) {
+        const iB = item.monthlyValues[mIdx] ?? 0;
+        const iA = (rec?.expenseCategories ?? []).find(c => c.categoryId === item.accountNumber)?.amount ?? 0;
+        const iP = (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === item.accountNumber)?.amount ?? 0;
+        rows.push({
+          catId: cat.id, catLabel: cat.label, catType: 'items',
+          isExpense: cat.isExpense, isCategory: false,
+          itemId: item.id, itemLabel: item.label, itemAccountNumber: item.accountNumber,
+          values: makeCell(iA, iB, iP, cat.isExpense),
+        });
+      }
+    } else if (cat.type === 'result') {
+      rows.push({
+        catId: cat.id, catLabel: cat.label, catType: 'result',
+        isExpense: cat.isExpense, isCategory: true,
+        values: makeCell(catA[cat.id] ?? 0, catB[cat.id] ?? 0, catP[cat.id] ?? 0, false),
+      });
+    }
+  }
+  return rows;
+}
+
+const BPLVarCell = ({ value, pct }: { value: number; pct?: number }) => {
+  const pos     = value > 0;
+  const neutral = Math.abs(value) < 0.5;
+  return (
+    <td className={cn(
+      'px-2 py-1 text-right text-xs whitespace-nowrap tabular-nums',
+      neutral ? 'text-muted-foreground' :
+      pos     ? 'text-emerald-600 dark:text-emerald-400 font-semibold' :
+                'text-red-600 dark:text-red-400 font-semibold',
+    )}>
+      <span className="flex items-center justify-end gap-0.5">
+        {!neutral && (pos
+          ? <ArrowUpRight className="h-3 w-3" />
+          : <ArrowDownRight className="h-3 w-3" />
+        )}
+        {value > 0 ? '+' : ''}{fmt(value)}
+        {pct !== undefined && (
+          <span className="ml-0.5 opacity-70">
+            ({value > 0 ? '+' : ''}{fmtPct(pct)})
+          </span>
+        )}
+      </span>
+    </td>
+  );
+};
+
+const BPLRowComp = ({ row, onClick }: { row: BPLRowWithValues; onClick: () => void }) => {
+  const { values: v } = row;
+
+  if (row.catType === 'result') {
+    const isPos = v.actual >= 0;
+    return (
+      <tr className="bg-slate-100 dark:bg-slate-800/80 font-bold border-t-2 border-b-2 border-slate-400 dark:border-slate-500">
+        <td className="px-3 py-2.5 text-sm" colSpan={2}>{row.catLabel}</td>
+        <td className={cn('px-2 py-2.5 text-right text-sm font-mono tabular-nums font-bold',
+          isPos ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600'
+        )}>{fmt(v.actual)}</td>
+        <td className="px-2 py-2.5 text-right text-sm font-mono tabular-nums text-muted-foreground">{fmt(v.budget)}</td>
+        <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
+        <td className="px-2 py-2.5 text-right text-sm font-mono tabular-nums text-muted-foreground">{fmt(v.prevYear)}</td>
+        <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />
+      </tr>
+    );
+  }
+
+  if (row.isCategory) {
+    return (
+      <tr
+        className="bg-slate-700 text-white dark:bg-slate-800 cursor-pointer hover:bg-slate-600 transition-colors"
+        onClick={onClick}
+        title="Klicken für Details"
+      >
+        <td className="px-3 py-2 text-xs font-bold tracking-wider" colSpan={2}>{row.catLabel}</td>
+        <td className="px-2 py-2 text-right text-sm font-mono tabular-nums">{fmt(v.actual)}</td>
+        <td className="px-2 py-2 text-right text-sm font-mono tabular-nums opacity-75">{fmt(v.budget)}</td>
+        <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
+        <td className="px-2 py-2 text-right text-sm font-mono tabular-nums opacity-65">{fmt(v.prevYear)}</td>
+        <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />
+      </tr>
+    );
+  }
+
+  return (
+    <tr
+      className="hover:bg-muted/30 cursor-pointer border-b border-slate-100 dark:border-slate-800 transition-colors"
+      onClick={onClick}
+      title="Klicken für Details"
+    >
+      <td className="px-3 py-1.5 pl-9 text-sm">
+        <span className="text-[10px] text-muted-foreground/50 font-mono mr-1.5">{row.itemAccountNumber}</span>
+        {row.itemLabel}
+      </td>
+      <td className="px-2 py-1.5 w-5">
+        <ChevronDown className="h-3 w-3 text-muted-foreground opacity-30" />
+      </td>
+      <td className="px-2 py-1.5 text-right text-sm font-mono tabular-nums">{v.actual > 0 ? fmt(v.actual) : <span className="text-muted-foreground/40">—</span>}</td>
+      <td className="px-2 py-1.5 text-right text-sm font-mono tabular-nums text-muted-foreground">{v.budget > 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>
+      <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
+      <td className="px-2 py-1.5 text-right text-sm font-mono tabular-nums text-muted-foreground">{v.prevYear > 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>
+      <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />
+    </tr>
+  );
+};
+
+const BudgetPLView = ({
+  rows,
+  onRowClick,
+}: {
+  rows: BPLRowWithValues[];
+  onRowClick: (row: BPLRowWithValues) => void;
+}) => (
+  <div className="overflow-x-auto">
+    <table className="w-full text-sm border-collapse min-w-[820px]">
+      <thead>
+        <tr className="bg-slate-900 text-white text-xs">
+          <th className="text-left px-3 py-2.5 min-w-[230px]">Position</th>
+          <th className="w-5 py-2.5" />
+          <th className="text-right px-2 py-2.5 min-w-[100px]">Ist (CHF)</th>
+          <th className="text-right px-2 py-2.5 min-w-[100px]">Budget (CHF)</th>
+          <th className="text-right px-2 py-2.5 min-w-[130px]">Abw. Budget</th>
+          <th className="text-right px-2 py-2.5 min-w-[100px]">Vorjahr (CHF)</th>
+          <th className="text-right px-2 py-2.5 min-w-[120px]">Abw. VJ</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, i) => (
+          <BPLRowComp
+            key={`${row.catId}-${row.itemId ?? 'cat'}-${i}`}
+            row={row}
+            onClick={() => onRowClick(row)}
+          />
+        ))}
+      </tbody>
+    </table>
+  </div>
+);
+
+const BudgetPLDrilldownDialog = ({
+  row,
+  month,
+  year,
+  onClose,
+}: {
+  row: BPLRowWithValues;
+  month: number;
+  year: number;
+  onClose: () => void;
+}) => {
+  const label   = row.itemLabel ?? row.catLabel;
+  const account = row.itemAccountNumber;
+  const v       = row.values;
+
+  return (
+    <Dialog open onOpenChange={() => onClose()}>
+      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-sm">
+            <Database className="h-4 w-4 text-muted-foreground" />
+            {label}
+            <span className="text-muted-foreground font-normal text-xs">
+              – {MONTH_NAMES_DE[month]} {year}
+            </span>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-2">
+          {account && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>Kontonummer:</span>
+              <span className="font-mono font-bold text-foreground bg-muted px-1.5 py-0.5 rounded">{account}</span>
+            </div>
+          )}
+
+          {/* Zusammenfassung */}
+          <div className="rounded-lg bg-muted/40 border border-border p-3 grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <p className="text-muted-foreground mb-0.5">Ist (CHF)</p>
+              <p className="font-bold text-lg">{fmtCHF(v.actual)}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground mb-0.5">Budget (CHF)</p>
+              <p className="font-semibold text-base">{fmtCHF(v.budget)}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground mb-0.5">Abw. Budget (CHF / %)</p>
+              <p className={cn('font-semibold',
+                v.vsBudget >= 0 ? 'text-emerald-600' : 'text-red-600'
+              )}>
+                {v.vsBudget >= 0 ? '+' : ''}{fmtCHF(v.vsBudget)}
+                {v.vsBudgetPct !== undefined && (
+                  <span className="ml-1 text-xs opacity-80">
+                    ({v.vsBudgetPct >= 0 ? '+' : ''}{fmtPct(v.vsBudgetPct)})
+                  </span>
+                )}
+              </p>
+            </div>
+            <div>
+              <p className="text-muted-foreground mb-0.5">Vorjahr (CHF)</p>
+              <p className="font-semibold text-base">{fmtCHF(v.prevYear)}</p>
+            </div>
+            <div className="col-span-2">
+              <p className="text-muted-foreground mb-0.5">Abw. Vorjahr (CHF / %)</p>
+              <p className={cn('font-semibold',
+                v.vsPrevYear >= 0 ? 'text-emerald-600' : 'text-red-600'
+              )}>
+                {v.vsPrevYear >= 0 ? '+' : ''}{fmtCHF(v.vsPrevYear)}
+                {v.vsPrevYearPct !== undefined && (
+                  <span className="ml-1 text-xs opacity-80">
+                    ({v.vsPrevYearPct >= 0 ? '+' : ''}{fmtPct(v.vsPrevYearPct)})
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          {/* Varianz-Erklärung */}
+          <div className="text-xs text-muted-foreground space-y-1 border-t border-border pt-3">
+            <p className="font-semibold text-foreground mb-1">Wie werden die Abweichungen berechnet?</p>
+            {row.isExpense ? (
+              <p>Bei Aufwand-Positionen: <strong>Abw. = Budget − Ist</strong>.
+                Ein positiver Wert (grün) bedeutet: weniger ausgegeben als budgetiert = gut.
+                Negativ (rot) = Budgetüberschreitung.</p>
+            ) : (
+              <p>Bei Ertrags-Positionen: <strong>Abw. = Ist − Budget</strong>.
+                Ein positiver Wert (grün) bedeutet: mehr eingenommen als geplant = gut.
+                Negativ (rot) = unter Plan.</p>
+            )}
+          </div>
+
+          {/* Quellenhinweis */}
+          <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/20 p-3 flex items-start gap-2">
+            <Info className="h-3.5 w-3.5 text-blue-600 mt-0.5 flex-shrink-0" />
+            <p className="text-[11px] text-blue-700 dark:text-blue-300">
+              {v.actual > 0 && account
+                ? `Ist-Wert aus Buchhaltungs-Import, Kontonummer ${account}.`
+                : v.actual > 0
+                ? 'Ist-Wert aus manueller Reporting-Erfassung.'
+                : 'Noch kein Ist-Wert für diesen Monat – bitte Daten importieren oder manuell erfassen.'}
+              {v.budget > 0
+                ? ` Budget stammt aus der Budget-Planung für ${MONTH_NAMES_DE[month]} ${year}.`
+                : ' Kein Budget für diesen Monat hinterlegt.'}
+            </p>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 // ─── Haupt-Seite ──────────────────────────────────────────────────────────────
 
 const currentYear  = new Date().getFullYear();
 const currentMonth = new Date().getMonth() + 1;
 const years = [currentYear - 1, currentYear, currentYear + 1];
 
-type ViewMode = 'monthly' | 'yearly';
+type ViewMode = 'monthly' | 'yearly' | 'budget_pl';
 
 const PLViewPage = () => {
   const { isAdmin } = usePermissions();
@@ -480,8 +847,9 @@ const PLViewPage = () => {
 
   const [year,   setYear]   = useState(currentYear);
   const [month,  setMonth]  = useState(currentMonth);
-  const [mode,   setMode]   = useState<ViewMode>('monthly');
-  const [drilldown, setDrilldown] = useState<PLDrilldown | null>(null);
+  const [mode,   setMode]   = useState<ViewMode>('budget_pl');
+  const [drilldown,    setDrilldown]    = useState<PLDrilldown | null>(null);
+  const [bplDrilldown, setBplDrilldown] = useState<BPLRowWithValues | null>(null);
 
   // Daten laden & P&L berechnen
   const records = useMemo(() => loadYear(year), [year, month]);
@@ -494,6 +862,14 @@ const PLViewPage = () => {
   const yearResult = useMemo(
     () => computePLForYear(records),
     [records],
+  );
+
+  // Budget P&L laden
+  const budgetData = useMemo(() => loadBudgetWithPL(year), [year]);
+
+  const bplRows = useMemo(
+    () => computeBPLRows(budgetData, records[month - 1], month - 1),
+    [budgetData, records, month],
   );
 
   const handleDrilldown = useCallback((rowId: string) => {
@@ -555,11 +931,19 @@ const PLViewPage = () => {
             <div className="flex rounded-md border border-border overflow-hidden text-xs">
               <button
                 className={cn('px-3 py-1.5 flex items-center gap-1',
+                  mode === 'budget_pl' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'
+                )}
+                onClick={() => setMode('budget_pl')}
+              >
+                <BarChart2 className="h-3 w-3" /> Budget P&L
+              </button>
+              <button
+                className={cn('px-3 py-1.5 flex items-center gap-1',
                   mode === 'monthly' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'
                 )}
                 onClick={() => setMode('monthly')}
               >
-                <Calendar className="h-3 w-3" /> Monat
+                <Calendar className="h-3 w-3" /> Klassisch
               </button>
               <button
                 className={cn('px-3 py-1.5 flex items-center gap-1',
@@ -579,8 +963,8 @@ const PLViewPage = () => {
               </SelectContent>
             </Select>
 
-            {/* Monat (nur Monatsansicht) */}
-            {mode === 'monthly' && (
+            {/* Monat (Monatsansicht + Budget P&L) */}
+            {(mode === 'monthly' || mode === 'budget_pl') && (
               <Select value={String(month)} onValueChange={v => setMonth(Number(v))}>
                 <SelectTrigger className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -596,8 +980,8 @@ const PLViewPage = () => {
 
       <div className="flex-1 px-4 py-5 space-y-5 pb-20 max-w-full">
 
-        {/* KPI-Karten (nur Monatsansicht) */}
-        {mode === 'monthly' && (
+        {/* KPI-Karten (Monatsansicht + Budget P&L) */}
+        {(mode === 'monthly' || mode === 'budget_pl') && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {kpis.map(kpi => {
               const val = kpi.values?.actual;
@@ -629,7 +1013,7 @@ const PLViewPage = () => {
         )}
 
         {/* Datenvollständigkeit-Hinweis */}
-        {mode === 'monthly' && !monthResult.hasData && (
+        {(mode === 'monthly' || mode === 'budget_pl') && !monthResult.hasData && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-4 flex items-start gap-3">
             <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
             <div className="text-xs text-amber-800 dark:text-amber-300">
@@ -648,45 +1032,67 @@ const PLViewPage = () => {
           <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between">
             <div>
               <h2 className="text-sm font-bold">
-                {mode === 'monthly'
+                {mode === 'budget_pl'
+                  ? `Budget-P&L Vergleich – ${MONTH_NAMES_DE[month]} ${year}`
+                  : mode === 'monthly'
                   ? `Erfolgsrechnung – ${MONTH_NAMES_DE[month]} ${year}`
                   : `Erfolgsrechnung – Jahresübersicht ${year}`}
               </h2>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                {mode === 'monthly'
+                {mode === 'budget_pl'
+                  ? 'Ist · Budget · Vorjahr · Abweichungen – Budget-Hierarchie mit Kontonummern'
+                  : mode === 'monthly'
                   ? 'Ist / Budget / Vorjahr inkl. Abweichungen'
                   : 'Alle 12 Monate + Jahressumme · Klick auf Monatsspalte → Monatsansicht'}
               </p>
             </div>
             <div className="text-[10px] text-slate-400">
-              {mode === 'monthly' && monthResult.hasData && (
+              {(mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && (
                 <span className="flex items-center gap-1">
                   <CheckCircle2 className="h-3 w-3 text-emerald-400" />
-                  Daten vorhanden
+                  Ist-Daten vorhanden
                 </span>
               )}
             </div>
           </div>
 
           {/* Tabelle */}
-          {mode === 'monthly'
+          {mode === 'budget_pl'
+            ? <BudgetPLView rows={bplRows} onRowClick={row => setBplDrilldown(row)} />
+            : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
             : <YearView results={yearResult.months} onClickMonth={handleYearMonthClick} />
           }
         </div>
 
         {/* Legende */}
-        {mode === 'monthly' && monthResult.hasData && (
+        {(mode === 'monthly' || mode === 'budget_pl') && (
           <p className="text-[11px] text-muted-foreground flex items-center gap-1">
             <Info className="h-3 w-3" />
             Klicken Sie auf eine Zeilenposition für Quelldaten und Details.
+            {mode === 'budget_pl' && (
+              <span className="ml-1">
+                · <span className="text-emerald-600 font-semibold">Grün</span> = besser als geplant
+                · <span className="text-red-600 font-semibold">Rot</span> = schlechter als geplant
+              </span>
+            )}
           </p>
         )}
       </div>
 
-      {/* Drilldown-Dialog */}
+      {/* Drilldown-Dialog (klassische Ansicht) */}
       {drilldown && (
         <DrilldownDialog drilldown={drilldown} onClose={() => setDrilldown(null)} />
+      )}
+
+      {/* Drilldown-Dialog (Budget P&L) */}
+      {bplDrilldown && (
+        <BudgetPLDrilldownDialog
+          row={bplDrilldown}
+          month={month}
+          year={year}
+          onClose={() => setBplDrilldown(null)}
+        />
       )}
     </div>
   );
