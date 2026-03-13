@@ -204,6 +204,18 @@ const YearRow = ({
       )}>
         {def.label}
       </td>
+      {/* Jahressumme (vor den Monaten) */}
+      <td className={cn(
+        'px-2 py-1.5 text-right text-sm font-mono border-r-2 border-slate-300 dark:border-slate-600',
+        def.type === 'result' ? 'font-bold' : 'font-semibold',
+      )}>
+        {(() => {
+          const vals = rows
+            .map(r => r[rowIndex]?.values.actual)
+            .filter((v): v is number => v !== undefined);
+          return vals.length > 0 ? fmt(vals.reduce((a, b) => a + b, 0)) : '—';
+        })()}
+      </td>
       {/* Monatswerte */}
       {rows.map((monthRows, mIdx) => {
         const row = monthRows[rowIndex];
@@ -223,21 +235,6 @@ const YearRow = ({
           </td>
         );
       })}
-      {/* Jahressumme */}
-      <td className={cn(
-        'px-2 py-1.5 text-right text-sm font-mono border-l-2 border-slate-300 dark:border-slate-600',
-        def.type === 'result' ? 'font-bold' : 'font-semibold',
-      )}>
-        {(() => {
-          const totalActual = rows
-            .map(r => r[rowIndex]?.values.actual)
-            .filter(v => v !== undefined)
-            .reduce((a, b) => a! + b!, 0);
-          return totalActual !== undefined && rows.some(r => r[rowIndex]?.values.actual !== undefined)
-            ? fmt(totalActual)
-            : '—';
-        })()}
-      </td>
     </tr>
   );
 };
@@ -438,6 +435,9 @@ const YearView = ({
         <thead>
           <tr className="bg-slate-800 text-white text-xs">
             <th className="text-left px-3 py-2 sticky left-0 bg-slate-800 z-10 min-w-[180px]">Position</th>
+            <th className="text-right px-2 py-2 border-r-2 border-slate-500 whitespace-nowrap font-bold bg-slate-700">
+              Total
+            </th>
             {MONTH_NAMES_SHORT_DE.slice(1).map((m, i) => (
               <th
                 key={i}
@@ -448,9 +448,6 @@ const YearView = ({
                 {m}
               </th>
             ))}
-            <th className="text-right px-2 py-2 border-l-2 border-slate-500 whitespace-nowrap font-bold">
-              Total
-            </th>
           </tr>
         </thead>
         <tbody>
