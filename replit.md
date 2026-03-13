@@ -84,6 +84,7 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 | `/overview` | `Index.tsx` | Alle (Legacy) |
 | `/settings` | `Settings.tsx` | Nur Admin |
 | `/schedule-planner` | `SchedulePlanner.tsx` | Alle |
+| `/budget` | `Budget.tsx` | Nur Admin |
 
 ## Wichtige Dateien
 - `src/components/AppNav.tsx` — Zentrale Sidebar-Navigation (Desktop) + Bottom-Bar (Mobile); rollenbasiert gefiltert
@@ -102,6 +103,9 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 - `src/types/supplier-documents.ts` — Typen: SupplierDocument, DocumentType/Category, SupplierMonthSummary, CostComparisonRecord
 - `src/lib/supplier-documents-store.ts` — Store (localStorage supplier_docs_v1): CRUD, Monatsaggregation, Buchhaltungsvergleich (baut CostComparisonRecord aus beiden Stores ohne den reporting-store zu verändern)
 - `src/pages/SupplierDocuments.tsx` — Lieferantendokumente-Seite: Beleg erfassen, Monatsselektor, Zusammenfassungskarten, Tabellenansicht, Buchhaltungsvergleich-Vorbereitung (Admin only)
+- `src/types/budget.ts` — Budget-Typen: BudgetPosition, BudgetRule, BudgetRuleType, BudgetYear, BudgetYearResolved; DEFAULT_BUDGET_POSITIONS (aligned auf P&L-Struktur)
+- `src/lib/budget-store.ts` — Budget-Store (localStorage budget_v1): loadBudgetYear, saveBudgetYear, copyBudgetYear, applyRulesToBudget (Rule-Engine), resolveBudgetYear (% → CHF), CRUD für Positionen + Regeln
+- `src/pages/Budget.tsx` — Budget-Planungsseite (nur Admin): Monatstabelle (CHF/%), Inline-Editor, Jahreswechsel, Jahr-Kopie-Dialog, Regel-Engine-Dialog
 - `src/lib/mirus-name-mapping-store.ts` — Persistente Mirus-Namenszuordnungen (localStorage mirus_name_mappings_v1): save/load/lookup/clear
 - `src/types/personnel.ts` — TimeEntry ergänzt mit importSource ('mirus'|'manual'); MirusImportMode Typ ('replace'|'update')
 - `src/hooks/usePersonnelData.ts` — importMirusDailyData: mode-Parameter (replace/update), replace löscht Mirus-Einträge für den Zeitraum, source='mirus' wird gespeichert

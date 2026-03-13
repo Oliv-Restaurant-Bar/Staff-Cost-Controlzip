@@ -14,7 +14,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, BarChart2, Users,
   Settings, LogOut, ChefHat, Utensils, ShieldCheck,
-  TrendingUp, Upload, Truck,
+  TrendingUp, Upload, Truck, Calculator,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -94,6 +94,13 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Lieferanten',
     shortLabel: 'Lief.',
     icon: Truck,
+    adminOnly: true,
+  },
+  {
+    path: '/budget',
+    label: 'Budget-Planung',
+    shortLabel: 'Budget',
+    icon: Calculator,
     adminOnly: true,
   },
 ];
