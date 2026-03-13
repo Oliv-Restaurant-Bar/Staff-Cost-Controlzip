@@ -10,12 +10,14 @@ import {
   Users, Clock, ChefHat, Utensils,
   CalendarDays, AlertTriangle, CheckCircle2,
   LayoutDashboard, Calendar, BarChart2,
+  BookOpen, Target,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import {
   loadEmployees,
   loadScheduleForMonth,
@@ -208,6 +210,11 @@ const Dashboard = () => {
 
   const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 35);
 
+  // ── Budget-Daten (aus Budget-Modul, budget_v1) ───────────────────────────────
+  const currentYear  = today.getFullYear();
+  const currentMonth = today.getMonth() + 1;
+  const budgetData   = useBudgetMonth(currentYear, currentMonth);
+
   // ── Mitarbeiter nach Abteilung filtern ──────────────────────────────────────
   const visibleEmployees = useMemo(() => {
     if (isAdmin) return employees;
@@ -323,6 +330,42 @@ const Dashboard = () => {
     : 'default';
 
   const monthName = format(today, 'MMMM yyyy', { locale: de });
+
+  // ── Budget-Vergleichs-Berechnungen ───────────────────────────────────────────
+  // Abweichung Umsatz: Ist (aus dailyBudgets) vs. Jahresbudget
+  const revVsBudgetAbs = budgetData.revenueBudget > 0
+    ? revenueMonth - budgetData.revenueBudget
+    : null;
+  const revVsBudgetPct = budgetData.revenueBudget > 0
+    ? ((revenueMonth - budgetData.revenueBudget) / budgetData.revenueBudget) * 100
+    : null;
+
+  // Abweichung Personalkosten: Ist vs. Jahresbudget
+  const laborVsBudgetAbs = budgetData.personnelBudget > 0
+    ? actualLaborCost - budgetData.personnelBudget
+    : null;
+  const laborVsBudgetPct = budgetData.personnelBudget > 0
+    ? ((actualLaborCost - budgetData.personnelBudget) / budgetData.personnelBudget) * 100
+    : null;
+
+  // Ist-Personalkostenquote (vs. budgetiertem Umsatz)
+  const actualRatioVsBudgetRevenue = budgetData.revenueBudget > 0 && actualLaborCost > 0
+    ? (actualLaborCost / budgetData.revenueBudget) * 100
+    : null;
+
+  // Budget-Betriebsergebnis-Vergleich: Ist-Ergebnis = Ist-Umsatz - Ist-Personalkosten
+  const actualOperatingApprox = revenueMonth - actualLaborCost;
+  const budgetResultVariance   = budgetData.operatingResultBudget !== 0
+    ? actualOperatingApprox - budgetData.operatingResultBudget
+    : null;
+
+  // Hilfsfunktion: Ratio-Statusfarbe (Budget-Target als Basis)
+  const budgetRatioColor = (ratio: number | null, target: number | null): 'green' | 'yellow' | 'red' | 'default' => {
+    if (ratio === null || target === null) return 'default';
+    if (ratio <= target)     return 'green';
+    if (ratio <= target + 5) return 'yellow';
+    return 'red';
+  };
 
   // ─── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -469,6 +512,144 @@ const Dashboard = () => {
                   </div>
                 )}
               </>
+            )}
+
+            {/* ── Jahresbudget-Vergleich ───────────────────────────────────── */}
+            {budgetData.hasBudget && (
+              <>
+                <SectionTitle icon={<BookOpen className="h-4 w-4" />}>
+                  Jahresbudget-Vergleich · {monthName}
+                </SectionTitle>
+
+                {/* Umsatz: Budget vs. Ist (nur Admin) */}
+                {isAdmin && (
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <KpiCard
+                      title="Budget Umsatz"
+                      value={formatCHF(budgetData.revenueBudget)}
+                      subtitle={`Jahresplanung ${currentYear}`}
+                      icon={<BookOpen className="h-5 w-5" />}
+                      color="blue"
+                    />
+                    <KpiCard
+                      title="Ist Umsatz"
+                      value={revenueMonth > 0 ? formatCHF(revenueMonth) : '–'}
+                      subtitle="Tatsächlich erfasst"
+                      icon={<TrendingUp className="h-5 w-5" />}
+                      color={
+                        revVsBudgetPct === null ? 'default' :
+                        revVsBudgetPct >= 0 ? 'green' : 'red'
+                      }
+                      delta={revVsBudgetPct}
+                      deltaLabel="% vs. Budget"
+                    />
+                    {revVsBudgetAbs !== null && (
+                      <KpiCard
+                        title="Abweichung CHF"
+                        value={`${revVsBudgetAbs >= 0 ? '+' : ''}${formatCHF(revVsBudgetAbs)}`}
+                        subtitle={revVsBudgetAbs >= 0 ? 'Über Budget' : 'Unter Budget'}
+                        icon={revVsBudgetAbs >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
+                        color={revVsBudgetAbs >= 0 ? 'green' : 'red'}
+                        badge={revVsBudgetAbs >= 0 ? '✓ Über Budget' : '↓ Unter Budget'}
+                        badgeColor={
+                          revVsBudgetAbs >= 0
+                            ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
+                            : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
+                        }
+                      />
+                    )}
+                    {budgetData.operatingResultBudget !== 0 && (
+                      <KpiCard
+                        title="Ergebnis Budget"
+                        value={formatCHF(budgetData.operatingResultBudget)}
+                        subtitle="Geplantes Betriebsergebnis"
+                        icon={<Target className="h-5 w-5" />}
+                        color="default"
+                        delta={budgetResultVariance}
+                        deltaLabel="CHF Abw."
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Personalkosten: Budget vs. Ist */}
+                {canSeePersonnelCostTotals && budgetData.personnelBudget > 0 && (
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
+                    <KpiCard
+                      title="Budget Personalkosten"
+                      value={formatCHF(budgetData.personnelBudget)}
+                      subtitle="Aus Jahresplanung"
+                      icon={<BookOpen className="h-5 w-5" />}
+                      color="blue"
+                    />
+                    {actualLaborCost > 0 && (
+                      <KpiCard
+                        title="Ist Personalkosten"
+                        value={formatCHF(actualLaborCost)}
+                        subtitle="Effektive Kosten"
+                        icon={<Users className="h-5 w-5" />}
+                        color={laborVsBudgetAbs !== null && laborVsBudgetAbs <= 0 ? 'green' : 'red'}
+                        delta={laborVsBudgetPct}
+                        deltaLabel="% vs. Budget"
+                      />
+                    )}
+                    {budgetData.personnelRatioTarget !== null && (
+                      <KpiCard
+                        title="Budget-Zielquote"
+                        value={`${budgetData.personnelRatioTarget.toFixed(1)} %`}
+                        subtitle="Personalkostenquote Budget"
+                        icon={<Target className="h-5 w-5" />}
+                        color="blue"
+                      />
+                    )}
+                    {actualRatioVsBudgetRevenue !== null && budgetData.personnelRatioTarget !== null && (
+                      <KpiCard
+                        title="Ist-Quote vs. Budget"
+                        value={`${actualRatioVsBudgetRevenue.toFixed(1)} %`}
+                        subtitle={`Ziel: ≤ ${budgetData.personnelRatioTarget.toFixed(1)} %`}
+                        icon={<Target className="h-5 w-5" />}
+                        color={budgetRatioColor(actualRatioVsBudgetRevenue, budgetData.personnelRatioTarget)}
+                        badge={
+                          actualRatioVsBudgetRevenue <= budgetData.personnelRatioTarget
+                            ? '✓ Im Ziel'
+                            : actualRatioVsBudgetRevenue <= budgetData.personnelRatioTarget + 5
+                            ? '~ Grenzwertig'
+                            : '↑ Über Ziel'
+                        }
+                        badgeColor={
+                          actualRatioVsBudgetRevenue <= budgetData.personnelRatioTarget
+                            ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
+                            : actualRatioVsBudgetRevenue <= budgetData.personnelRatioTarget + 5
+                            ? 'bg-yellow-50 text-yellow-700 border-yellow-300 dark:bg-yellow-950/30'
+                            : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
+                        }
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Hinweis falls kein Budget-Betrag eingetragen */}
+                {!isAdmin && !canSeePersonnelCostTotals && (
+                  <p className="text-xs text-muted-foreground italic">
+                    Budget-Werte sind eingetragen – Details nur für Administrator und Manager sichtbar.
+                  </p>
+                )}
+              </>
+            )}
+
+            {/* Kein Budget vorhanden → Link zum Budget-Modul (nur Admin) */}
+            {!budgetData.hasBudget && isAdmin && (
+              <div className="flex items-start gap-3 rounded-lg border border-dashed border-border bg-muted/10 p-4">
+                <BookOpen className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-foreground">
+                    Kein Jahresbudget für {currentYear}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Erstelle ein Budget unter «Budget-Planung», um hier Soll/Budget-Vergleiche zu sehen.
+                  </p>
+                </div>
+              </div>
             )}
 
             {/* ── Personalkosten ───────────────────────────────────────────── */}

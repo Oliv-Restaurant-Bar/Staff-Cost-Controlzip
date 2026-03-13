@@ -22,13 +22,14 @@ import { de } from 'date-fns/locale';
 import {
   ChevronLeft, ChevronRight, LayoutDashboard, Calendar,
   Clock, Users, TrendingUp, Target, ChefHat, Utensils,
-  ArrowUp, ArrowDown, Minus,
+  ArrowUp, ArrowDown, Minus, BookOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import {
   loadEmployees,
   loadScheduleForMonth,
@@ -335,6 +336,11 @@ const SollIstAnalyse = () => {
 
   const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 35);
 
+  // ── Budget-Daten für den gewählten Monat ─────────────────────────────────────
+  const budgetYear  = selDate.getFullYear();
+  const budgetMonth = selDate.getMonth() + 1;
+  const budgetData  = useBudgetMonth(budgetYear, budgetMonth);
+
   // ── Mitarbeiter filtern ─────────────────────────────────────────────────────
   const visibleEmployees = useMemo(() => {
     if (activeDept === 'all') return employees;
@@ -480,6 +486,33 @@ const SollIstAnalyse = () => {
     ? (plannedLaborCost / plannedRevenue) * 100 : null;
   const actualRatio  = actualRevenue > 0 && actualLaborCost > 0
     ? (actualLaborCost  / actualRevenue)  * 100 : null;
+
+  // ── Budget-Vergleichs-Berechnungen (nur Monat-Periode) ────────────────────
+  // Ist-Umsatz vs. Budget-Umsatz
+  const budgetRevVariance    = budgetData.revenueBudget > 0 && hasActualRevenue
+    ? actualRevenue - budgetData.revenueBudget : null;
+  const budgetRevVariancePct = budgetData.revenueBudget > 0 && hasActualRevenue
+    ? pctVariance(budgetData.revenueBudget, actualRevenue) : null;
+
+  // Ist-Personalkosten vs. Budget-Personalkosten
+  const budgetLaborVariance    = budgetData.personnelBudget > 0 && hasActualHours
+    ? actualLaborCost - budgetData.personnelBudget : null;
+  const budgetLaborVariancePct = budgetData.personnelBudget > 0 && hasActualHours
+    ? pctVariance(budgetData.personnelBudget, actualLaborCost) : null;
+
+  // Ist-Personalkostenquote vs. Budget-Zielquote
+  // Basis: Ist-Umsatz (wenn vorhanden), sonst Budget-Umsatz
+  const budgetRatioActual = budgetData.revenueBudget > 0 && actualLaborCost > 0
+    ? (actualLaborCost / (actualRevenue > 0 ? actualRevenue : budgetData.revenueBudget)) * 100
+    : actualRatio;
+
+  // Ampelfarbe für Ratio
+  const budgetRatioStatus = (ratio: number | null): 'good' | 'ok' | 'high' | 'none' => {
+    if (ratio === null || budgetData.personnelRatioTarget === null) return 'none';
+    if (ratio <= budgetData.personnelRatioTarget)     return 'good';
+    if (ratio <= budgetData.personnelRatioTarget + 5) return 'ok';
+    return 'high';
+  };
 
   // ── Abteilungs-Label ────────────────────────────────────────────────────────
   const deptLabel = activeDept === 'service' ? 'Service'
@@ -737,7 +770,163 @@ const SollIstAnalyse = () => {
               </section>
             )}
 
-            {/* ── 4. KOSTENQUOTE DETAIL (nur sichtbar wenn Revenue vorhanden) ── */}
+            {/* ── 4. JAHRESBUDGET-VERGLEICH (nur Monat-Ansicht) ─────────────── */}
+            {period === 'monat' && budgetData.hasBudget && (
+              <section>
+                <h2 className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3 flex items-center gap-2">
+                  <BookOpen className="h-3.5 w-3.5" />
+                  Jahresbudget {budgetYear} · Vergleich
+                  <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700">
+                    Budget-Modul
+                  </span>
+                </h2>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+
+                  {/* Budget-Umsatz vs. Ist (nur Admin) */}
+                  {canSeeFullFinancials && budgetData.revenueBudget > 0 && (
+                    <ComparisonCard
+                      title="Umsatz Budget vs. Ist"
+                      icon={<TrendingUp className="h-4 w-4" />}
+                      planLabel="Budget"
+                      plan={formatCHF(budgetData.revenueBudget)}
+                      istLabel="Ist"
+                      ist={hasActualRevenue ? formatCHF(actualRevenue) : '–'}
+                      varianceFmt={
+                        budgetRevVariance !== null
+                          ? formatCHF(Math.abs(budgetRevVariance))
+                          : '–'
+                      }
+                      variancePct={
+                        budgetRevVariancePct !== null
+                          ? fmtPct(Math.abs(budgetRevVariancePct))
+                          : undefined
+                      }
+                      rawVariance={budgetRevVariance}
+                      goodIfPositive
+                      noIst={!hasActualRevenue}
+                    />
+                  )}
+
+                  {/* Budget-Personalkosten vs. Ist */}
+                  {canSeePersonnelCostTotals && budgetData.personnelBudget > 0 && (
+                    <ComparisonCard
+                      title="Personalkosten Budget vs. Ist"
+                      icon={<Users className="h-4 w-4" />}
+                      planLabel="Budget"
+                      plan={formatCHF(budgetData.personnelBudget)}
+                      istLabel="Ist"
+                      ist={hasActualHours && actualLaborCost > 0 ? formatCHF(actualLaborCost) : '–'}
+                      varianceFmt={
+                        budgetLaborVariance !== null
+                          ? formatCHF(Math.abs(budgetLaborVariance))
+                          : '–'
+                      }
+                      variancePct={
+                        budgetLaborVariancePct !== null
+                          ? fmtPct(Math.abs(budgetLaborVariancePct))
+                          : undefined
+                      }
+                      rawVariance={budgetLaborVariance}
+                      goodIfNegative
+                      noIst={!hasActualHours}
+                    />
+                  )}
+
+                  {/* Budget-Personalkostenquote vs. Ist-Quote */}
+                  {canSeePersonnelCostTotals && budgetData.personnelRatioTarget !== null && (
+                    <Card className="border border-border hover:shadow-sm transition-shadow">
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Target className="h-4 w-4 text-muted-foreground" />
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            Quote Budget vs. Ist
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 mb-3">
+                          {/* Budget-Zielquote */}
+                          <div className="rounded-md bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-2.5 text-center">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-blue-600 dark:text-blue-400 mb-0.5">Budget</p>
+                            <p className="text-xl font-bold tabular-nums text-blue-700 dark:text-blue-300">
+                              {fmtPct(budgetData.personnelRatioTarget)}
+                            </p>
+                          </div>
+
+                          {/* Ist-Quote */}
+                          <div className={cn('rounded-md border p-2.5 text-center', 'border-border')}>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-0.5">Ist</p>
+                            <p className={cn(
+                              'text-xl font-bold tabular-nums',
+                              budgetRatioStatus(budgetRatioActual) === 'good' ? 'text-green-600 dark:text-green-400' :
+                              budgetRatioStatus(budgetRatioActual) === 'ok'   ? 'text-yellow-600 dark:text-yellow-400' :
+                              budgetRatioStatus(budgetRatioActual) === 'high' ? 'text-red-600 dark:text-red-400' :
+                              'text-muted-foreground',
+                            )}>
+                              {budgetRatioActual !== null ? fmtPct(budgetRatioActual) : '–'}
+                            </p>
+                          </div>
+
+                          {/* Abweichung */}
+                          <div className="rounded-md bg-muted/30 border border-border p-2.5 text-center">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-0.5">Abw.</p>
+                            <p className={cn(
+                              'text-xl font-bold tabular-nums',
+                              budgetRatioActual !== null && budgetRatioActual > budgetData.personnelRatioTarget
+                                ? 'text-red-600 dark:text-red-400'
+                                : 'text-green-600 dark:text-green-400',
+                            )}>
+                              {budgetRatioActual !== null
+                                ? `${(budgetRatioActual - budgetData.personnelRatioTarget) >= 0 ? '+' : ''}${(budgetRatioActual - budgetData.personnelRatioTarget).toFixed(1)} %`
+                                : '–'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Status */}
+                        {budgetRatioActual !== null && (
+                          <div className={cn(
+                            'text-center text-xs font-semibold px-2 py-1 rounded border',
+                            budgetRatioStatus(budgetRatioActual) === 'good'
+                              ? 'bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-300'
+                              : budgetRatioStatus(budgetRatioActual) === 'ok'
+                              ? 'bg-yellow-50 dark:bg-yellow-950/20 border-yellow-200 dark:border-yellow-800 text-yellow-700 dark:text-yellow-300'
+                              : 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300',
+                          )}>
+                            {budgetRatioStatus(budgetRatioActual) === 'good' ? '✓ Im Budget-Ziel'
+                              : budgetRatioStatus(budgetRatioActual) === 'ok' ? '~ Grenzwertig'
+                              : '↑ Über Budget-Ziel'}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+
+                {isManager && (
+                  <p className="text-[11px] text-muted-foreground mt-2 italic">
+                    Budget-Umsatz und Finanzdaten sind nur für den Administrator sichtbar.
+                  </p>
+                )}
+              </section>
+            )}
+
+            {/* Budget-Hinweis: Kein Budget vorhanden (nur Monat + Admin) */}
+            {period === 'monat' && !budgetData.hasBudget && isAdmin && (
+              <div className="flex items-start gap-3 rounded-lg border border-dashed border-border bg-muted/10 p-4">
+                <BookOpen className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-foreground">
+                    Kein Jahresbudget für {budgetYear}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Erstelle ein Budget unter «Budget-Planung», um hier Budget-Soll/Ist-Vergleiche zu sehen.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* ── 5. KOSTENQUOTE DETAIL (nur sichtbar wenn Revenue vorhanden) ── */}
             {canSeePersonnelCostTotals && !canSeeFullFinancials && hasRevenue && (
               <section>
                 <h2 className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3 flex items-center gap-2">
