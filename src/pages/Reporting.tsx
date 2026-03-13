@@ -561,6 +561,14 @@ const Reporting = () => {
               </Button>
             </Link>
 
+            {/* CSV-Import-Link */}
+            <Link to="/csv-import">
+              <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-blue-300 text-blue-700 hover:bg-blue-50">
+                <Upload className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">CSV-Import</span>
+              </Button>
+            </Link>
+
             {/* Kontenplan-Link */}
             <Link to="/kontenplan">
               <Button variant="outline" size="sm" className="h-8 text-xs gap-1">

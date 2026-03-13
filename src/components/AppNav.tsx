@@ -14,7 +14,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, BarChart2, Users,
   Settings, LogOut, ChefHat, Utensils, ShieldCheck,
-  TrendingUp,
+  TrendingUp, Upload,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -80,6 +80,13 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Erfolgsrechnung',
     shortLabel: 'P&L',
     icon: BarChart2,
+    adminOnly: true,
+  },
+  {
+    path: '/csv-import',
+    label: 'CSV-Import',
+    shortLabel: 'Import',
+    icon: Upload,
     adminOnly: true,
   },
 ];

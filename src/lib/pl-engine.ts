@@ -29,6 +29,30 @@ import {
   PLRowDef, PLCellValues, PLComputedRow, PLMonthResult,
   PLYearResult, PLSourceCategory, PLDrilldown,
 } from '@/types/pl';
+import { lookupAccount } from '@/lib/account-mapping-store';
+import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
+
+/**
+ * Gibt die P&L-Zeilen-ID für eine categoryId zurück.
+ * Unterstützt:
+ *   - Human-readable IDs (z.B. 'wareneinsatz_kueche') → CATEGORY_TO_ROW
+ *   - 4-stellige Kontonummern aus CSV-Import → lookupAccount → PLCategory → Row
+ */
+function resolveRowId(categoryId: string): string | null {
+  // Direkt-Mapping (human-readable)
+  const direct = CATEGORY_TO_ROW[categoryId];
+  if (direct) return direct;
+
+  // Account-Nummern-Matching (CSV-Import): 3-5-stellige Zahl
+  if (/^\d{3,5}$/.test(categoryId)) {
+    const result = lookupAccount(categoryId);
+    if (result.mapping) {
+      return PL_CATEGORY_TO_ROW_ID[result.mapping.plCategory] ?? 'other_operating';
+    }
+  }
+
+  return null; // unbekannt → landet in catch-all
+}
 
 // ─── Kategorie-Mapping ────────────────────────────────────────────────────────
 
@@ -331,45 +355,77 @@ export function computePLForMonth(record: MonthlyFinancialRecord): PLMonthResult
   }
 
   // Schritt 3: Expense Categories zuordnen
-  // Zuerst: welche categoryIds sind nicht bekannt → gehen zu other_operating
-  const unmappedCategories: typeof record.expenseCategories = [];
-  for (const cat of record.expenseCategories) {
-    if (!KNOWN_CATEGORY_IDS.has(cat.categoryId)) {
-      unmappedCategories.push(cat);
-    }
+  // Kategorien nach Typ trennen:
+  //   - human-readable IDs (z.B. 'miete') → KNOWN_CATEGORY_IDS-Matching
+  //   - numerische IDs  (z.B. '3000')     → Kontenplan-Lookup via resolveRowId
+  //   - Rest                               → other_operating (catch-all)
+
+  const humanActual     = record.expenseCategories.filter(c =>
+    !(/^\d{3,5}$/.test(c.categoryId))
+  );
+  const numericActual   = record.expenseCategories.filter(c =>
+    /^\d{3,5}$/.test(c.categoryId)
+  );
+  const humanPY         = record.expenseCategoriesPreviousYear.filter(c =>
+    !(/^\d{3,5}$/.test(c.categoryId))
+  );
+  const numericPY       = record.expenseCategoriesPreviousYear.filter(c =>
+    /^\d{3,5}$/.test(c.categoryId)
+  );
+
+  // Unbekannte human-readable IDs → other_operating
+  const unmappedCategories = humanActual.filter(c => !KNOWN_CATEGORY_IDS.has(c.categoryId));
+
+  // Hilfsfunktion: fügt Kategorie zu einer Zeile hinzu
+  function addCategoryToRow(
+    rowId: string,
+    cat: { categoryId: string; label: string; amount?: number },
+    pyCat?: { categoryId: string; label: string; amount?: number } | null,
+    source: 'manual_entry' | 'csv_import' = 'manual_entry',
+  ) {
+    const existing = rowValues.get(rowId) ?? {};
+    rowValues.set(rowId, {
+      ...existing,
+      actual:   (existing.actual ?? 0) + (cat.amount ?? 0),
+      prevYear: pyCat
+        ? (existing.prevYear ?? 0) + (pyCat.amount ?? 0)
+        : existing.prevYear,
+    });
+    const sources = rowSources.get(rowId) ?? [];
+    sources.push({
+      categoryId: cat.categoryId,
+      label: cat.label,
+      actualAmount: cat.amount ?? 0,
+      prevYearAmount: pyCat?.amount,
+      sourceType: source,
+      monthId: record.id,
+    });
+    rowSources.set(rowId, sources);
   }
 
-  // Für alle definierten Zeilen mit categoryIds:
+  // A) Human-readable IDs: wie bisher über PL_STRUCTURE-rowDef.categoryIds
   for (const rowDef of PL_STRUCTURE) {
     if (!rowDef.categoryIds || rowDef.categoryIds.length === 0) continue;
 
-    // Finde passende Kategorien aus record.expenseCategories
-    const matchingActual = record.expenseCategories.filter(c =>
-      rowDef.categoryIds!.includes(c.categoryId)
-    );
-    const matchingPY = record.expenseCategoriesPreviousYear.filter(c =>
-      rowDef.categoryIds!.includes(c.categoryId)
-    );
+    const matchingActual = humanActual.filter(c => rowDef.categoryIds!.includes(c.categoryId));
+    const matchingPY     = humanPY.filter(c => rowDef.categoryIds!.includes(c.categoryId));
 
-    // Für other_operating: unmapped categories auch hinzufügen
     let allActual = matchingActual;
-    let allPY = matchingPY;
+    let allPY     = matchingPY;
     if (rowDef.id === 'other_operating') {
       allActual = [...matchingActual, ...unmappedCategories];
-      const unmappedPY = record.expenseCategoriesPreviousYear.filter(
-        c => !KNOWN_CATEGORY_IDS.has(c.categoryId)
-      );
+      const unmappedPY = humanPY.filter(c => !KNOWN_CATEGORY_IDS.has(c.categoryId));
       allPY = [...matchingPY, ...unmappedPY];
     }
 
-    const actualSum = allActual.reduce((s, c) => s + (c.amount ?? 0), 0) || undefined;
+    const actualSum   = allActual.reduce((s, c) => s + (c.amount ?? 0), 0) || undefined;
     const prevYearSum = allPY.reduce((s, c) => s + (c.amount ?? 0), 0) || undefined;
 
     if (actualSum !== undefined || prevYearSum !== undefined) {
       const existing = rowValues.get(rowDef.id) ?? {};
       rowValues.set(rowDef.id, {
         ...existing,
-        actual:   actualSum !== undefined ? (existing.actual ?? 0) + actualSum : existing.actual,
+        actual:   actualSum   !== undefined ? (existing.actual   ?? 0) + actualSum   : existing.actual,
         prevYear: prevYearSum !== undefined ? (existing.prevYear ?? 0) + prevYearSum : existing.prevYear,
       });
       const sources = rowSources.get(rowDef.id) ?? [];
@@ -386,6 +442,42 @@ export function computePLForMonth(record: MonthlyFinancialRecord): PLMonthResult
       }
       rowSources.set(rowDef.id, sources);
     }
+  }
+
+  // B) Numerische Kontonummern (CSV-Import): via resolveRowId zuordnen
+  for (const cat of numericActual) {
+    const rowId = resolveRowId(cat.categoryId) ?? 'other_operating';
+    // Umsatzkonten (revenue_total) überspringen – bereits via revenueActual gesetzt
+    if (rowId === 'revenue_total' && record.revenueActual !== undefined) continue;
+    // Personalkonten (personnel_wages) überspringen – bereits via personnelCostActual gesetzt
+    if (rowId === 'personnel_wages' && record.personnelCostActual !== undefined) continue;
+
+    const pyMatch = numericPY.find(p => p.categoryId === cat.categoryId);
+    addCategoryToRow(rowId, cat, pyMatch ?? null, 'csv_import');
+  }
+
+  // PY-only numerische Konten (kein Actual-Gegenstück)
+  for (const cat of numericPY) {
+    const hasActualCounterpart = numericActual.some(a => a.categoryId === cat.categoryId);
+    if (hasActualCounterpart) continue;
+    const rowId = resolveRowId(cat.categoryId) ?? 'other_operating';
+    if (rowId === 'revenue_total' && record.revenuePreviousYear !== undefined) continue;
+    if (rowId === 'personnel_wages' && record.personnelCostPreviousYear !== undefined) continue;
+    const existing = rowValues.get(rowId) ?? {};
+    rowValues.set(rowId, {
+      ...existing,
+      prevYear: (existing.prevYear ?? 0) + (cat.amount ?? 0),
+    });
+    const sources = rowSources.get(rowId) ?? [];
+    sources.push({
+      categoryId: cat.categoryId,
+      label: cat.label,
+      actualAmount: 0,
+      prevYearAmount: cat.amount ?? 0,
+      sourceType: 'csv_import',
+      monthId: record.id,
+    });
+    rowSources.set(rowId, sources);
   }
 
   // Schritt 4: Berechnete Zeilen (subtotal / result) mit Topologischer Reihenfolge auflösen

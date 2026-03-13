@@ -17,6 +17,7 @@ import Personalstamm from "./pages/Personalstamm";
 import Reporting from "./pages/Reporting";
 import AccountMappingPage from "./pages/AccountMapping";
 import PLViewPage from "./pages/PLView";
+import CSVImportPage from "./pages/CSVImport";
 import Index from "./pages/Index";
 import SchedulePlanner from "./pages/SchedulePlanner";
 import Settings from "./pages/Settings";
@@ -86,6 +87,7 @@ const AppContent = () => {
             <Route path="/reporting"        element={<Reporting />} />
             <Route path="/kontenplan"       element={<AccountMappingPage />} />
             <Route path="/erfolgsrechnung"  element={<PLViewPage />} />
+            <Route path="/csv-import"       element={<CSVImportPage />} />
 
             {/* Abteilungs-Dienstpläne */}
             <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />
