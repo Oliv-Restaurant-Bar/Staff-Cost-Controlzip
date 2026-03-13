@@ -16,6 +16,7 @@ import SollIstAnalyse from "./pages/SollIstAnalyse";
 import Personalstamm from "./pages/Personalstamm";
 import Reporting from "./pages/Reporting";
 import AccountMappingPage from "./pages/AccountMapping";
+import PLViewPage from "./pages/PLView";
 import Index from "./pages/Index";
 import SchedulePlanner from "./pages/SchedulePlanner";
 import Settings from "./pages/Settings";
@@ -82,8 +83,9 @@ const AppContent = () => {
             />
 
             {/* Reporting: Finanzmodul (nur Admin) */}
-            <Route path="/reporting"   element={<Reporting />} />
-            <Route path="/kontenplan"  element={<AccountMappingPage />} />
+            <Route path="/reporting"        element={<Reporting />} />
+            <Route path="/kontenplan"       element={<AccountMappingPage />} />
+            <Route path="/erfolgsrechnung"  element={<PLViewPage />} />
 
             {/* Abteilungs-Dienstpläne */}
             <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />

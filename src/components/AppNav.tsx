@@ -75,6 +75,13 @@ const NAV_ITEMS: NavItem[] = [
     icon: TrendingUp,
     adminOnly: true,
   },
+  {
+    path: '/erfolgsrechnung',
+    label: 'Erfolgsrechnung',
+    shortLabel: 'P&L',
+    icon: BarChart2,
+    adminOnly: true,
+  },
 ];
 
 // ─── Rollen-Konfiguration ─────────────────────────────────────────────────────

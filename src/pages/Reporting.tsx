@@ -553,6 +553,14 @@ const Reporting = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Erfolgsrechnung-Link */}
+            <Link to="/erfolgsrechnung">
+              <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-emerald-300 text-emerald-700 hover:bg-emerald-50">
+                <BarChart2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">P&L / GuV</span>
+              </Button>
+            </Link>
+
             {/* Kontenplan-Link */}
             <Link to="/kontenplan">
               <Button variant="outline" size="sm" className="h-8 text-xs gap-1">
