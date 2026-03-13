@@ -76,6 +76,7 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 | `/` | `Dashboard.tsx` | Alle (rollenbasiert) |
 | `/analyse` | `SollIstAnalyse.tsx` | Alle (rollenbasiert) |
 | `/personal-stamm` | `Personalstamm.tsx` | Alle (rollenbasiert, Admin voll) |
+| `/reporting` | `Reporting.tsx` | Nur Admin |
 | `/personal` | `SchedulePlanner.tsx` | Alle (rollenbasiert) |
 | `/overview` | `Index.tsx` | Alle (Legacy) |
 | `/settings` | `Settings.tsx` | Nur Admin |
@@ -83,6 +84,8 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 
 ## Wichtige Dateien
 - `src/components/AppNav.tsx` — Zentrale Sidebar-Navigation (Desktop) + Bottom-Bar (Mobile); rollenbasiert gefiltert
+- `src/types/reporting.ts` — Typen für Finanzmodul (MonthlyFinancialRecord, ExpenseCategory, ImportRecord)
+- `src/lib/reporting-store.ts` — Datenzugriff Reporting (localStorage, Supabase-migrationsbereit), Import-Deduplication-Logik
 - `src/pages/Dashboard.tsx` — Neue Dashboard-Startseite (rollenbasierte KPI-Karten)
 - `src/pages/SchedulePlanner.tsx` — Hauptseite Dienstplan (~2000 Zeilen)
 - `src/pages/Index.tsx` — Legacy Übersicht (unter /overview erreichbar)

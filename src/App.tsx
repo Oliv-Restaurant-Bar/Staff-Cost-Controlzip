@@ -14,6 +14,7 @@ import { AppNav } from "@/components/AppNav";
 import Dashboard from "./pages/Dashboard";
 import SollIstAnalyse from "./pages/SollIstAnalyse";
 import Personalstamm from "./pages/Personalstamm";
+import Reporting from "./pages/Reporting";
 import Index from "./pages/Index";
 import SchedulePlanner from "./pages/SchedulePlanner";
 import Settings from "./pages/Settings";
@@ -79,8 +80,8 @@ const AppContent = () => {
               element={canAccessSettings ? <Settings /> : <Navigate to="/" replace />}
             />
 
-            {/* Reporting: Platzhalter – noch nicht implementiert */}
-            <Route path="/reporting" element={<Navigate to="/" replace />} />
+            {/* Reporting: Finanzmodul (nur Admin) */}
+            <Route path="/reporting" element={<Reporting />} />
 
             {/* Abteilungs-Dienstpläne */}
             <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />

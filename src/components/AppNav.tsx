@@ -68,14 +68,12 @@ const NAV_ITEMS: NavItem[] = [
     icon: Settings,
     adminOnly: true,
   },
-  // Vorbereitung: Reporting (zukünftiges Modul)
   {
     path: '/reporting',
     label: 'Reporting',
     shortLabel: 'Report',
     icon: TrendingUp,
     adminOnly: true,
-    comingSoon: true,
   },
 ];
 
