@@ -10,7 +10,6 @@
  *
  * Noch nicht implementiert (nächste Phasen):
  *   - PDF-Parsing / OCR-Import
- *   - Diagramme & Visualisierungen
  *   - Export-Funktion (Excel/PDF)
  *   - Mehrjahresvergleich
  */
@@ -22,6 +21,11 @@ import {
   Edit3, Upload, CheckCircle2, AlertCircle, Clock,
   Info, Save, X, FileText, BarChart2, RefreshCw,
 } from 'lucide-react';
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip as ReTooltip, Legend, ReferenceLine, ComposedChart,
+  Line, Cell,
+} from 'recharts';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -65,6 +69,221 @@ function formatVariance(actual?: number, previous?: number): string {
   const pct = ((actual - previous) / previous) * 100;
   return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)} %`;
 }
+
+// ─── Chart-Datenaufbereitung ──────────────────────────────────────────────────
+
+interface ChartRow {
+  monat: string;
+  umsatzIst:     number | null;
+  umsatzBudget:  number | null;
+  umsatzVorjahr: number | null;
+  pkIst:         number | null;
+  pkGeplant:     number | null;
+  pkQuote:       number | null; // Personalkosten / Umsatz Ist in %
+}
+
+function buildChartData(months: MonthlyFinancialRecord[]): ChartRow[] {
+  return months.map(m => {
+    const pkQuote =
+      m.personnelCostActual && m.revenueActual && m.revenueActual > 0
+        ? parseFloat(((m.personnelCostActual / m.revenueActual) * 100).toFixed(1))
+        : null;
+    return {
+      monat:        MONTH_NAMES_SHORT_DE[m.month],
+      umsatzIst:    m.revenueActual        ?? null,
+      umsatzBudget: m.revenueBudget        ?? null,
+      umsatzVorjahr:m.revenuePreviousYear  ?? null,
+      pkIst:        m.personnelCostActual  ?? null,
+      pkGeplant:    m.personnelCostPlanned ?? null,
+      pkQuote,
+    };
+  });
+}
+
+/** CHF-Tooltip-Formatter */
+const chfFormatter = (value: number | null) =>
+  value != null
+    ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(value)
+    : '–';
+
+/** Custom Tooltip für CHF-Charts */
+const ChfTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-card border border-border shadow-lg rounded-lg px-3 py-2 text-xs space-y-1">
+      <p className="font-bold text-foreground mb-1">{label}</p>
+      {payload.map(p => (
+        <div key={p.name} className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: p.color }} />
+          <span className="text-muted-foreground">{p.name}:</span>
+          <span className="font-semibold">{chfFormatter(p.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/** Custom Tooltip für Prozent-Charts */
+const PctTooltip = ({ active, payload, label, threshold }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string; threshold: number }) => {
+  if (!active || !payload?.length) return null;
+  const ratio = payload.find(p => p.name === 'PK-Quote');
+  return (
+    <div className="bg-card border border-border shadow-lg rounded-lg px-3 py-2 text-xs space-y-1">
+      <p className="font-bold text-foreground mb-1">{label}</p>
+      {ratio && (
+        <div className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: ratio.color }} />
+          <span className="text-muted-foreground">PK-Quote:</span>
+          <span className="font-semibold">{ratio.value.toFixed(1)} %</span>
+          <span className={cn('font-bold', ratio.value <= threshold ? 'text-green-600' : 'text-red-600')}>
+            {ratio.value <= threshold ? '✓' : '↑'}
+          </span>
+        </div>
+      )}
+      <div className="text-muted-foreground/70">Ziel: ≤ {threshold} %</div>
+    </div>
+  );
+};
+
+const AXIS_STYLE = { fontSize: 11, fill: 'hsl(var(--muted-foreground))' };
+const GRID_STROKE = 'hsl(var(--border))';
+
+// Farben
+const C_ACTUAL   = '#4f46e5'; // indigo-600
+const C_BUDGET   = '#d97706'; // amber-600
+const C_PREV     = '#94a3b8'; // slate-400
+const C_PK       = '#ea580c'; // orange-600
+const C_GREEN    = '#16a34a'; // green-600
+const C_AMBER    = '#d97706'; // amber-600
+const C_RED      = '#dc2626'; // red-600
+
+/** Balkenfarbe für PK-Quote je nach Schwellenwert */
+function pkBarColor(value: number | null, threshold: number): string {
+  if (!value) return C_PREV;
+  if (value <= threshold - 2) return C_GREEN;
+  if (value <= threshold + 2) return C_AMBER;
+  return C_RED;
+}
+
+// ─── Diagramm 1: Umsatzvergleich ─────────────────────────────────────────────
+
+interface ChartProps { data: ChartRow[]; threshold: number }
+
+const NoDataOverlay = ({ message }: { message: string }) => (
+  <div className="h-[220px] flex items-center justify-center text-xs text-muted-foreground/60 italic">
+    {message}
+  </div>
+);
+
+const RevenueComparisonChart = ({ data }: ChartProps) => {
+  const hasData = data.some(d => d.umsatzIst || d.umsatzBudget || d.umsatzVorjahr);
+  if (!hasData) return <NoDataOverlay message="Noch keine Umsatzdaten vorhanden – bitte Monate erfassen." />;
+
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <BarChart data={data} barGap={2} barCategoryGap="28%">
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+        <XAxis dataKey="monat" tick={AXIS_STYLE} axisLine={false} tickLine={false} />
+        <YAxis
+          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={68}
+          tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
+        />
+        <ReTooltip content={<ChfTooltip />} cursor={{ fill: 'hsl(var(--muted)/0.4)' }} />
+        <Legend
+          iconType="square" iconSize={10}
+          wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+          formatter={v => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{v}</span>}
+        />
+        <Bar dataKey="umsatzIst"     name="Umsatz Ist"    fill={C_ACTUAL} radius={[3,3,0,0]} />
+        <Bar dataKey="umsatzBudget"  name="Budget"        fill={C_BUDGET} radius={[3,3,0,0]} />
+        <Bar dataKey="umsatzVorjahr" name="Vorjahr"       fill={C_PREV}   radius={[3,3,0,0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+};
+
+// ─── Diagramm 2: PK-Quote-Verlauf ────────────────────────────────────────────
+
+const PKRatioChart = ({ data, threshold }: ChartProps) => {
+  const hasData = data.some(d => d.pkQuote !== null);
+  if (!hasData) return <NoDataOverlay message="Noch keine PK-Quote berechenbar – bitte Umsatz und Personalkosten erfassen." />;
+
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <ComposedChart data={data} barCategoryGap="28%">
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+        <XAxis dataKey="monat" tick={AXIS_STYLE} axisLine={false} tickLine={false} />
+        <YAxis
+          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={44}
+          tickFormatter={v => `${v}%`}
+          domain={[0, Math.max(threshold + 10, 45)]}
+        />
+        <ReTooltip content={<PctTooltip threshold={threshold} />} cursor={{ fill: 'hsl(var(--muted)/0.4)' }} />
+
+        {/* Ziellinie */}
+        <ReferenceLine
+          y={threshold}
+          stroke={C_RED}
+          strokeDasharray="6 3"
+          strokeWidth={1.5}
+          label={{
+            value: `Ziel ${threshold}%`,
+            position: 'insideTopRight',
+            fontSize: 10,
+            fill: C_RED,
+            dy: -4,
+          }}
+        />
+
+        {/* PK-Quote als farbige Balken */}
+        <Bar dataKey="pkQuote" name="PK-Quote" radius={[3,3,0,0]}>
+          {data.map((entry, i) => (
+            <Cell key={i} fill={pkBarColor(entry.pkQuote, threshold)} />
+          ))}
+        </Bar>
+
+        {/* Verbindungslinie zwischen Balken */}
+        <Line
+          dataKey="pkQuote"
+          name="PK-Quote"
+          dot={{ r: 3, fill: C_ACTUAL, stroke: 'white', strokeWidth: 1.5 }}
+          stroke={C_ACTUAL}
+          strokeWidth={2}
+          connectNulls
+          legendType="none"
+        />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+};
+
+// ─── Diagramm 3: Umsatz vs. Personalkosten ───────────────────────────────────
+
+const RevenuePKChart = ({ data }: ChartProps) => {
+  const hasData = data.some(d => d.umsatzIst || d.pkIst);
+  if (!hasData) return <NoDataOverlay message="Noch keine Daten für dieses Diagramm vorhanden." />;
+
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <BarChart data={data} barGap={3} barCategoryGap="28%">
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+        <XAxis dataKey="monat" tick={AXIS_STYLE} axisLine={false} tickLine={false} />
+        <YAxis
+          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={68}
+          tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
+        />
+        <ReTooltip content={<ChfTooltip />} cursor={{ fill: 'hsl(var(--muted)/0.4)' }} />
+        <Legend
+          iconType="square" iconSize={10}
+          wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+          formatter={v => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{v}</span>}
+        />
+        <Bar dataKey="umsatzIst" name="Umsatz Ist"       fill={C_ACTUAL} radius={[3,3,0,0]} />
+        <Bar dataKey="pkIst"     name="Personalkosten"   fill={C_PK}     radius={[3,3,0,0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+};
 
 // ─── Vollständigkeits-Badge ───────────────────────────────────────────────────
 
@@ -291,6 +510,11 @@ const Reporting = () => {
   const [editRecord, setEditRecord] = useState<MonthlyFinancialRecord | null>(null);
 
   const summary = useMemo(() => calcAnnualSummary(year), [year, months]);
+  const chartData = useMemo(() => buildChartData(months), [months]);
+  const threshold = useMemo(
+    () => parseInt(localStorage.getItem('labor_cost_threshold') || '35'),
+    [],
+  );
 
   const reload = useCallback(() => {
     setMonths(loadYear(year));
@@ -401,6 +625,64 @@ const Reporting = () => {
             </div>
           </section>
         )}
+
+        {/* ── Diagramme ─────────────────────────────────────────────────── */}
+        <section className="space-y-4">
+          <h2 className="text-sm font-bold">Diagramme {year}</h2>
+
+          {/* Diagramm 1: Umsatzvergleich */}
+          <Card>
+            <CardHeader className="pb-2 pt-4">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <BarChart2 className="h-4 w-4 text-muted-foreground" />
+                Umsatzvergleich – Ist / Budget / Vorjahr
+              </CardTitle>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Zeigt, welche Monate über oder unter Budget lagen und wie das Jahr im Vorjahresvergleich abschneidet.
+              </p>
+            </CardHeader>
+            <CardContent className="pt-0 pr-2">
+              <RevenueComparisonChart data={chartData} threshold={threshold} />
+            </CardContent>
+          </Card>
+
+          {/* Diagramm 2: PK-Quote */}
+          <Card>
+            <CardHeader className="pb-2 pt-4">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                Personalkosten-Quote pro Monat
+                <span className="ml-auto text-[10px] font-normal text-muted-foreground">
+                  Ziel: ≤ {threshold} %
+                </span>
+              </CardTitle>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                <span className="inline-flex items-center gap-1 text-green-600 font-medium">■ Grün</span> = unter Ziel ·
+                <span className="inline-flex items-center gap-1 text-amber-600 font-medium ml-2">■ Gelb</span> = nahe Ziel ·
+                <span className="inline-flex items-center gap-1 text-red-600 font-medium ml-2">■ Rot</span> = über Ziel
+              </p>
+            </CardHeader>
+            <CardContent className="pt-0 pr-2">
+              <PKRatioChart data={chartData} threshold={threshold} />
+            </CardContent>
+          </Card>
+
+          {/* Diagramm 3: Umsatz vs. Personalkosten */}
+          <Card>
+            <CardHeader className="pb-2 pt-4">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <BarChart2 className="h-4 w-4 text-muted-foreground" />
+                Umsatz vs. Personalkosten
+              </CardTitle>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Zeigt, ob Personalkosten schneller wachsen als der Umsatz – wichtig für die Wirtschaftlichkeit.
+              </p>
+            </CardHeader>
+            <CardContent className="pt-0 pr-2">
+              <RevenuePKChart data={chartData} threshold={threshold} />
+            </CardContent>
+          </Card>
+        </section>
 
         {/* Monatstabelle */}
         <section>
