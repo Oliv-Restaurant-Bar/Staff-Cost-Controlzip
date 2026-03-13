@@ -561,11 +561,11 @@ const Reporting = () => {
               </Button>
             </Link>
 
-            {/* CSV-Import-Link */}
+            {/* Import-Link */}
             <Link to="/csv-import">
               <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-blue-300 text-blue-700 hover:bg-blue-50">
                 <Upload className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">CSV-Import</span>
+                <span className="hidden sm:inline">CSV / PDF</span>
               </Button>
             </Link>
 

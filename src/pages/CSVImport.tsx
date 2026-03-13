@@ -1,12 +1,16 @@
 /**
- * CSV-Import-Seite – Buchhaltungs-CSV einlesen und in die P&L speichern
- * =====================================================================
- * Nur für Administratoren zugänglich.
+ * Buchhaltungs-Import – CSV und PDF
+ * ===================================
+ * Einheitlicher Import-Wizard für:
+ *   - CSV-Dateien (Banana, AbaNinja, Bexio, Sage, Excel-Export)
+ *   - PDF-Kontoblätter (Banana, AbaNinja, Bexio, Sage)
  *
- * 3-Schritte-Wizard:
+ * Ablauf:
  *   1. Datei hochladen + Konfiguration (Jahr, Monat, Typ, Modus)
  *   2. Vorschau (gematchte / nicht gematchte Zeilen)
  *   3. Bestätigen → Speichern
+ *
+ * Nur für Administratoren zugänglich.
  */
 
 import { useState, useCallback, useRef } from 'react';
@@ -26,12 +30,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import {
   Upload, CheckCircle2, AlertTriangle, XCircle, FileText,
-  ChevronRight, ChevronLeft, Save, RefreshCw, Info,
+  ChevronRight, ChevronLeft, Save, RefreshCw, Info, FileType,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
-  processCSV, buildMonthRecord, CSVParseResult, MatchedCSVRow, ImportConfig,
+  processCSV, matchCSVRows, buildMonthRecord,
+  CSVParseResult, MatchedCSVRow, ImportConfig,
 } from '@/lib/csv-import-engine';
+import { parsePDF, detectMonthYear } from '@/lib/pdf-import-engine';
 import { saveMonth } from '@/lib/reporting-store';
 import { toast } from 'sonner';
 
@@ -46,6 +53,7 @@ const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2];
 
 type Step = 'upload' | 'preview' | 'done';
+type FileKind = 'csv' | 'pdf';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -56,61 +64,98 @@ function formatAmount(n: number) {
 }
 
 function statusBadge(status: MatchedCSVRow['status']) {
-  if (status === 'exact')      return <Badge className="bg-green-100 text-green-800 border-green-200">Exakt</Badge>;
-  if (status === 'range')      return <Badge className="bg-blue-100 text-blue-800 border-blue-200">Bereich</Badge>;
+  if (status === 'exact') return (
+    <Badge className="bg-green-100 text-green-800 border-green-200">Exakt</Badge>
+  );
+  if (status === 'range') return (
+    <Badge className="bg-blue-100 text-blue-800 border-blue-200">Bereich</Badge>
+  );
   return <Badge className="bg-red-100 text-red-800 border-red-200">Unbekannt</Badge>;
+}
+
+function fileKindBadge(kind: FileKind) {
+  if (kind === 'pdf') return (
+    <Badge className="bg-orange-100 text-orange-800 border-orange-200 text-[10px]">PDF</Badge>
+  );
+  return (
+    <Badge className="bg-sky-100 text-sky-800 border-sky-200 text-[10px]">CSV</Badge>
+  );
 }
 
 // ─── Upload-Zone ──────────────────────────────────────────────────────────────
 
 interface UploadZoneProps {
-  onFile: (name: string, content: string) => void;
+  onFile: (name: string, kind: FileKind, buffer: ArrayBuffer) => void;
+  parsing: boolean;
 }
 
-function UploadZone({ onFile }: UploadZoneProps) {
+function UploadZone({ onFile, parsing }: UploadZoneProps) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (file: File) => {
+    const ext  = file.name.split('.').pop()?.toLowerCase();
+    const kind: FileKind = ext === 'pdf' ? 'pdf' : 'csv';
     const reader = new FileReader();
     reader.onload = e => {
-      const text = e.target?.result as string;
-      onFile(file.name, text);
+      const buf = e.target?.result as ArrayBuffer;
+      onFile(file.name, kind, buf);
     };
-    reader.readAsText(file, 'utf-8');
+    reader.readAsArrayBuffer(file);
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
     const file = e.dataTransfer.files[0];
-    if (file && file.name.toLowerCase().endsWith('.csv')) handleFile(file);
+    if (file) handleFile(file);
   }, []);
+
+  if (parsing) {
+    return (
+      <div className="border-2 border-dashed rounded-xl p-12 text-center border-primary/30 bg-primary/5">
+        <Loader2 className="h-10 w-10 mx-auto mb-3 text-primary animate-spin" />
+        <p className="font-medium text-sm text-primary">PDF wird analysiert…</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Text wird extrahiert und Kontonummern werden zugeordnet
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div
       className={cn(
         'border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors',
-        dragging ? 'border-primary bg-primary/5' : 'border-muted-foreground/30 hover:border-primary/50 hover:bg-muted/30',
+        dragging
+          ? 'border-primary bg-primary/5'
+          : 'border-muted-foreground/30 hover:border-primary/50 hover:bg-muted/30',
       )}
       onDragOver={e => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
       onClick={() => inputRef.current?.click()}
     >
-      <Upload className="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
-      <p className="font-medium text-sm">CSV-Datei hier ablegen oder klicken</p>
+      <div className="flex justify-center gap-3 mb-3">
+        <FileText className="h-9 w-9 text-sky-400" />
+        <FileType className="h-9 w-9 text-orange-400" />
+      </div>
+      <p className="font-medium text-sm">CSV oder PDF hier ablegen oder klicken</p>
       <p className="text-xs text-muted-foreground mt-1">
-        Unterstützt: Banana Accounting, AbaNinja, Bexio, Sage 50, Excel-Export (als .csv)
+        CSV: Banana, AbaNinja, Bexio, Sage 50, Excel-Export
+      </p>
+      <p className="text-xs text-muted-foreground">
+        PDF: Kontenblatt-Export (Text-PDF, kein Scan)
       </p>
       <input
         ref={inputRef}
         type="file"
-        accept=".csv,text/csv"
+        accept=".csv,text/csv,.pdf,application/pdf"
         className="hidden"
         onChange={e => {
           const file = e.target.files?.[0];
           if (file) handleFile(file);
+          e.target.value = '';
         }}
       />
     </div>
@@ -130,7 +175,6 @@ function PreviewTable({ rows, emptyLabel }: PreviewTableProps) {
       <div className="py-10 text-center text-muted-foreground text-sm">{emptyLabel}</div>
     );
   }
-
   return (
     <div className="overflow-auto max-h-96">
       <Table>
@@ -172,26 +216,21 @@ function PreviewTable({ rows, emptyLabel }: PreviewTableProps) {
 // ─── Haupt-Komponente ─────────────────────────────────────────────────────────
 
 export default function CSVImportPage() {
-  const navigate = useNavigate();
+  const navigate    = useNavigate();
   const { isAdmin } = usePermissions();
 
-  // Schritte
-  const [step, setStep] = useState<Step>('upload');
-
-  // Datei-State
-  const [fileName, setFileName] = useState('');
-  const [parseResult, setParseResult] = useState<CSVParseResult | null>(null);
-  const [warnings, setWarnings]       = useState<string[]>([]);
-
-  // Import-Konfiguration
-  const [year, setYear]     = useState<number>(CURRENT_YEAR);
-  const [month, setMonth]   = useState<number>(new Date().getMonth() + 1);
-  const [dataType, setDataType] = useState<'actual' | 'previous_year'>('actual');
-  const [importMode, setImportMode] = useState<'replace' | 'update'>('update');
-
-  // Ergebnis
-  const [savedMonth, setSavedMonth] = useState<{ year: number; month: number } | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [step, setStep]                     = useState<Step>('upload');
+  const [fileName, setFileName]             = useState('');
+  const [fileKind, setFileKind]             = useState<FileKind>('csv');
+  const [parsing, setParsing]               = useState(false);
+  const [parseResult, setParseResult]       = useState<CSVParseResult | null>(null);
+  const [warnings, setWarnings]             = useState<string[]>([]);
+  const [year, setYear]                     = useState<number>(CURRENT_YEAR);
+  const [month, setMonth]                   = useState<number>(new Date().getMonth() + 1);
+  const [dataType, setDataType]             = useState<'actual' | 'previous_year'>('actual');
+  const [importMode, setImportMode]         = useState<'replace' | 'update'>('update');
+  const [savedMonth, setSavedMonth]         = useState<{ year: number; month: number } | null>(null);
+  const [loading, setLoading]               = useState(false);
 
   if (!isAdmin) {
     return (
@@ -201,13 +240,46 @@ export default function CSVImportPage() {
     );
   }
 
-  // ─── Schritt 1: Datei verarbeiten ──────────────────────────────────────────
+  // ─── Datei-Handling ──────────────────────────────────────────────────────────
 
-  function handleFile(name: string, content: string) {
+  async function handleFile(name: string, kind: FileKind, buffer: ArrayBuffer) {
     setFileName(name);
-    const { parseResult: result, warnings: w } = processCSV(content);
-    setParseResult(result);
-    setWarnings(w);
+    setFileKind(kind);
+    setWarnings([]);
+    setParseResult(null);
+
+    if (kind === 'pdf') {
+      // Asynchrone PDF-Extraktion
+      setParsing(true);
+      try {
+        const pdfResult = await parsePDF(buffer);
+        const matchResult = matchCSVRows(pdfResult.rows);
+        matchResult.warnings.push(...pdfResult.warnings);
+
+        setParseResult(matchResult);
+        setWarnings(matchResult.warnings);
+
+        // Erkannten Monat/Jahr vorbelegen
+        if (pdfResult.detectedYear) setYear(pdfResult.detectedYear);
+        if (pdfResult.detectedMonth) setMonth(pdfResult.detectedMonth);
+
+        if (pdfResult.detectedMonth || pdfResult.detectedYear) {
+          toast.info(
+            `Zeitraum erkannt: ${pdfResult.detectedMonth ? MONTHS[pdfResult.detectedMonth - 1] : ''} ${pdfResult.detectedYear ?? ''}`.trim(),
+          );
+        }
+      } catch (e) {
+        setWarnings([`PDF-Verarbeitung fehlgeschlagen: ${String(e)}`]);
+      } finally {
+        setParsing(false);
+      }
+    } else {
+      // Synchrone CSV-Verarbeitung
+      const text = new TextDecoder('utf-8').decode(buffer);
+      const { parseResult: result, warnings: w } = processCSV(text);
+      setParseResult(result);
+      setWarnings(w);
+    }
   }
 
   function resetFile() {
@@ -217,17 +289,17 @@ export default function CSVImportPage() {
     setStep('upload');
   }
 
-  // ─── Schritt 2: Vorschau anzeigen ──────────────────────────────────────────
+  // ─── Vorschau ─────────────────────────────────────────────────────────────
 
   function goToPreview() {
     if (!parseResult || parseResult.totalRows === 0) {
-      toast.error('Keine gültigen Zeilen gefunden – bitte CSV prüfen');
+      toast.error('Keine gültigen Zeilen gefunden – bitte Datei prüfen');
       return;
     }
     setStep('preview');
   }
 
-  // ─── Schritt 3: Speichern ──────────────────────────────────────────────────
+  // ─── Speichern ────────────────────────────────────────────────────────────
 
   function handleSave() {
     if (!parseResult) return;
@@ -239,9 +311,12 @@ export default function CSVImportPage() {
     try {
       saveMonth(
         { ...record, year, month },
-        'csv_import',
+        fileKind === 'pdf' ? 'csv_import' : 'csv_import',
         importMode,
-        { fileName, note: `CSV-Import: ${parseResult.matchedCount} zugeordnet, ${parseResult.unresolvedCount} unbekannt` },
+        {
+          fileName,
+          note: `${fileKind.toUpperCase()}-Import: ${parseResult.matchedCount} zugeordnet, ${parseResult.unresolvedCount} unbekannt`,
+        },
       );
       setSavedMonth({ year, month });
       setStep('done');
@@ -253,21 +328,16 @@ export default function CSVImportPage() {
     }
   }
 
-  // ─── Zusammenfassung ───────────────────────────────────────────────────────
+  // ─── Hilfswerte ───────────────────────────────────────────────────────────
 
   const revenueTotal = parseResult
-    ? parseResult.matched
-        .filter(r => r.sign === 'income')
-        .reduce((s, r) => s + r.parsed.amount, 0)
+    ? parseResult.matched.filter(r => r.sign === 'income').reduce((s, r) => s + r.parsed.amount, 0)
     : 0;
-
   const expenseTotal = parseResult
-    ? parseResult.matched
-        .filter(r => r.sign !== 'income')
-        .reduce((s, r) => s + r.parsed.amount, 0)
+    ? parseResult.matched.filter(r => r.sign !== 'income').reduce((s, r) => s + r.parsed.amount, 0)
     : 0;
 
-  // ─── Render ────────────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">
@@ -276,11 +346,11 @@ export default function CSVImportPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <FileText className="h-6 w-6" />
-            CSV Buchhaltungs-Import
+            <Upload className="h-6 w-6" />
+            Buchhaltungs-Import
           </h1>
           <p className="text-muted-foreground text-sm mt-0.5">
-            Monatliche Buchhaltungsdaten aus dem Buchhaltungsprogramm importieren
+            CSV oder PDF aus dem Buchhaltungsprogramm importieren – automatische Kontozuordnung
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => navigate('/reporting')}>
@@ -290,55 +360,55 @@ export default function CSVImportPage() {
 
       {/* Fortschritts-Indicator */}
       <div className="flex items-center gap-2 text-sm">
-        {(['upload', 'preview', 'done'] as Step[]).map((s, i) => (
-          <div key={s} className="flex items-center gap-2">
-            <div className={cn(
-              'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors',
-              step === s
-                ? 'border-primary bg-primary text-white'
-                : i < (['upload','preview','done'] as Step[]).indexOf(step)
-                ? 'border-green-500 bg-green-500 text-white'
-                : 'border-muted-foreground/30 text-muted-foreground',
-            )}>
-              {i < (['upload','preview','done'] as Step[]).indexOf(step)
-                ? <CheckCircle2 className="h-4 w-4" />
-                : i + 1}
+        {(['upload', 'preview', 'done'] as Step[]).map((s, i) => {
+          const steps: Step[] = ['upload', 'preview', 'done'];
+          const currentIdx = steps.indexOf(step);
+          return (
+            <div key={s} className="flex items-center gap-2">
+              <div className={cn(
+                'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors',
+                step === s
+                  ? 'border-primary bg-primary text-white'
+                  : i < currentIdx
+                  ? 'border-green-500 bg-green-500 text-white'
+                  : 'border-muted-foreground/30 text-muted-foreground',
+              )}>
+                {i < currentIdx ? <CheckCircle2 className="h-4 w-4" /> : i + 1}
+              </div>
+              <span className={cn('hidden sm:inline', step === s ? 'font-medium' : 'text-muted-foreground')}>
+                {s === 'upload' ? '1. Datei & Einstellungen' : s === 'preview' ? '2. Vorschau' : '3. Fertig'}
+              </span>
+              {i < 2 && <ChevronRight className="h-4 w-4 text-muted-foreground" />}
             </div>
-            <span className={cn(
-              'hidden sm:inline',
-              step === s ? 'font-medium' : 'text-muted-foreground',
-            )}>
-              {s === 'upload' ? '1. Datei & Einstellungen' : s === 'preview' ? '2. Vorschau' : '3. Fertig'}
-            </span>
-            {i < 2 && <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {/* ── SCHRITT 1: Upload + Konfiguration ── */}
+      {/* ── SCHRITT 1 ── */}
       {step === 'upload' && (
         <div className="space-y-6">
-
-          {/* Datei-Upload */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">CSV-Datei</CardTitle>
+              <CardTitle className="text-base">Datei hochladen</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {!fileName ? (
-                <UploadZone onFile={handleFile} />
+              {!fileName || parsing ? (
+                <UploadZone onFile={handleFile} parsing={parsing} />
               ) : (
                 <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border">
                   <div className="flex items-center gap-3">
                     <FileText className="h-5 w-5 text-primary" />
                     <div>
-                      <p className="font-medium text-sm">{fileName}</p>
+                      <p className="font-medium text-sm flex items-center gap-2">
+                        {fileName}
+                        {fileKindBadge(fileKind)}
+                      </p>
                       {parseResult && (
                         <p className="text-xs text-muted-foreground">
                           {parseResult.totalRows} Zeilen gelesen
                           · {parseResult.matchedCount} zugeordnet
                           · {parseResult.unresolvedCount} unbekannt
-                          · Trennzeichen: {parseResult.detectedSeparator}
+                          {fileKind === 'csv' && ` · Trennzeichen: ${parseResult.detectedSeparator}`}
                         </p>
                       )}
                     </div>
@@ -349,9 +419,8 @@ export default function CSVImportPage() {
                 </div>
               )}
 
-              {/* Warnungen */}
               {warnings.length > 0 && (
-                <Alert variant="destructive" className="text-sm">
+                <Alert variant={parseResult?.totalRows === 0 ? 'destructive' : 'default'} className="text-sm">
                   <AlertTriangle className="h-4 w-4" />
                   <AlertDescription>
                     <ul className="list-disc list-inside space-y-0.5">
@@ -360,22 +429,29 @@ export default function CSVImportPage() {
                   </AlertDescription>
                 </Alert>
               )}
+
+              {/* PDF-Hinweis */}
+              {!fileName && (
+                <Alert className="text-sm">
+                  <Info className="h-4 w-4" />
+                  <AlertDescription>
+                    <strong>PDF-Hinweis:</strong> Nur Text-PDFs werden unterstützt (direkt aus dem Buchhaltungsprogramm exportiert).
+                    Gescannte oder fotografierte PDFs enthalten keinen auswertbaren Text – bitte stattdessen als CSV exportieren.
+                  </AlertDescription>
+                </Alert>
+              )}
             </CardContent>
           </Card>
 
-          {/* Import-Konfiguration */}
+          {/* Konfiguration */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Import-Einstellungen</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-
-                {/* Jahr */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    Jahr
-                  </label>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Jahr</label>
                   <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -383,14 +459,10 @@ export default function CSVImportPage() {
                     </SelectContent>
                   </Select>
                 </div>
-
-                {/* Monat */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    Monat
-                  </label>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Monat</label>
                   <Select value={String(month)} onValueChange={v => setMonth(Number(v))}>
-                    <SelectTrigger><SelectValue placeholder="Monat…" /></SelectTrigger>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {MONTHS.map((m, i) => (
                         <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
@@ -398,12 +470,8 @@ export default function CSVImportPage() {
                     </SelectContent>
                   </Select>
                 </div>
-
-                {/* Datentyp */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    Datenjahr
-                  </label>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Datenjahr</label>
                   <Select value={dataType} onValueChange={v => setDataType(v as 'actual' | 'previous_year')}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -412,12 +480,8 @@ export default function CSVImportPage() {
                     </SelectContent>
                   </Select>
                 </div>
-
-                {/* Importmodus */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    Import-Modus
-                  </label>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Import-Modus</label>
                   <Select value={importMode} onValueChange={v => setImportMode(v as 'replace' | 'update')}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -428,20 +492,13 @@ export default function CSVImportPage() {
                 </div>
               </div>
 
-              {/* Modus-Erklärung */}
               <Alert className="mt-4 text-sm">
                 <Info className="h-4 w-4" />
                 <AlertDescription>
                   {importMode === 'update' ? (
-                    <>
-                      <strong>Aktualisieren:</strong> Bestehende Werte für diesen Monat werden mit den CSV-Daten ergänzt
-                      oder überschrieben. Manuell erfasste Daten bleiben erhalten, sofern sie nicht im CSV enthalten sind.
-                    </>
+                    <><strong>Aktualisieren:</strong> Bestehende Werte werden ergänzt/überschrieben. Manuell erfasste Daten bleiben erhalten.</>
                   ) : (
-                    <>
-                      <strong>Ersetzen:</strong> Alle bisherigen Daten für {MONTHS[month - 1]} {year} werden vollständig
-                      gelöscht und durch die CSV-Daten ersetzt. Manuell erfasste Werte gehen verloren.
-                    </>
+                    <><strong>Ersetzen:</strong> Alle bisherigen Daten für {MONTHS[month - 1]} {year} werden gelöscht und neu gesetzt.</>
                   )}
                 </AlertDescription>
               </Alert>
@@ -451,7 +508,7 @@ export default function CSVImportPage() {
           <div className="flex justify-end">
             <Button
               onClick={goToPreview}
-              disabled={!parseResult || parseResult.totalRows === 0}
+              disabled={!parseResult || parseResult.totalRows === 0 || parsing}
               size="lg"
             >
               Vorschau anzeigen <ChevronRight className="h-4 w-4 ml-1" />
@@ -463,7 +520,6 @@ export default function CSVImportPage() {
       {/* ── SCHRITT 2: Vorschau ── */}
       {step === 'preview' && parseResult && (
         <div className="space-y-6">
-
           {/* Zusammenfassung */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Card className="bg-muted/30">
@@ -497,38 +553,34 @@ export default function CSVImportPage() {
             </Card>
           </div>
 
-          {/* Import-Ziel */}
+          {/* Ziel-Info */}
           <Card>
             <CardContent className="pt-4 pb-4">
-              <div className="flex flex-wrap gap-3 text-sm">
+              <div className="flex flex-wrap gap-3 text-sm items-center">
                 <span className="text-muted-foreground">Ziel:</span>
-                <Badge variant="outline" className="font-normal">
-                  {MONTHS[month - 1]} {year}
-                </Badge>
+                <Badge variant="outline" className="font-normal">{MONTHS[month - 1]} {year}</Badge>
                 <Badge variant="outline" className="font-normal">
                   {dataType === 'actual' ? 'Ist-Daten' : 'Vorjahresdaten'}
                 </Badge>
                 <Badge variant="outline" className="font-normal">
                   {importMode === 'update' ? 'Aktualisieren' : 'Ersetzen'}
                 </Badge>
-                <span className="text-muted-foreground ml-2">Datei: {fileName}</span>
+                {fileKindBadge(fileKind)}
+                <span className="text-muted-foreground">{fileName}</span>
               </div>
             </CardContent>
           </Card>
 
-          {/* Unresolved-Warnung */}
           {parseResult.unresolvedCount > 0 && (
             <Alert variant="destructive" className="text-sm">
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                <strong>{parseResult.unresolvedCount} Kontonummer(n)</strong> konnten nicht zugeordnet werden.
-                Diese Beträge werden als «Nicht zugeordnet» gespeichert und erscheinen in der P&L unter
-                «Übrige Betriebskosten». Bitte im Kontenplan die fehlenden Konten anlegen und danach neu importieren.
+                <strong>{parseResult.unresolvedCount} Konto(s)</strong> konnten nicht zugeordnet werden.
+                Sie werden unter «Übrige Betriebskosten» gespeichert. Bitte im Kontenplan die fehlenden Konten anlegen und danach neu importieren.
               </AlertDescription>
             </Alert>
           )}
 
-          {/* Tabellenansicht */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Buchungszeilen</CardTitle>
@@ -536,10 +588,11 @@ export default function CSVImportPage() {
             <CardContent className="p-0">
               <Tabs defaultValue="matched">
                 <TabsList className="mx-4 mt-2">
-                  <TabsTrigger value="matched">
-                    Zugeordnet ({parseResult.matchedCount})
-                  </TabsTrigger>
-                  <TabsTrigger value="unresolved" className={parseResult.unresolvedCount > 0 ? 'text-red-600' : ''}>
+                  <TabsTrigger value="matched">Zugeordnet ({parseResult.matchedCount})</TabsTrigger>
+                  <TabsTrigger
+                    value="unresolved"
+                    className={parseResult.unresolvedCount > 0 ? 'text-red-600' : ''}
+                  >
                     Nicht zugeordnet ({parseResult.unresolvedCount})
                   </TabsTrigger>
                 </TabsList>
@@ -547,7 +600,7 @@ export default function CSVImportPage() {
                   <PreviewTable rows={parseResult.matched} emptyLabel="Keine zugeordneten Zeilen" />
                 </TabsContent>
                 <TabsContent value="unresolved" className="mt-0">
-                  <PreviewTable rows={parseResult.unresolved} emptyLabel="Alle Zeilen wurden erfolgreich zugeordnet" />
+                  <PreviewTable rows={parseResult.unresolved} emptyLabel="Alle Zeilen wurden zugeordnet" />
                 </TabsContent>
               </Tabs>
             </CardContent>
@@ -561,7 +614,7 @@ export default function CSVImportPage() {
             </Button>
             <Button onClick={handleSave} disabled={loading} size="lg" className="min-w-40">
               {loading
-                ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Speichern…</>
+                ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Speichern…</>
                 : <><Save className="h-4 w-4 mr-2" /> Jetzt importieren</>
               }
             </Button>
@@ -586,7 +639,7 @@ export default function CSVImportPage() {
                 </p>
               )}
             </div>
-            <div className="flex justify-center gap-3 pt-2">
+            <div className="flex justify-center gap-3 pt-2 flex-wrap">
               <Button variant="outline" onClick={() => {
                 setStep('upload');
                 setFileName('');

@@ -1,0 +1,309 @@
+/**
+ * PDF-Import-Engine – Kontenblatt-PDF einlesen und Buchungszeilen extrahieren
+ * ===========================================================================
+ *
+ * Unterstützte Quellen:
+ *   - Banana Accounting (Kontenblatt-Export)
+ *   - AbaNinja / Abacus (Buchungsjournal als PDF)
+ *   - Bexio Kontenblatt
+ *   - Sage 50 Kontoauszug
+ *   - Generische Buchungs-PDFs mit 4-stelliger Kontonummer am Zeilenanfang
+ *
+ * Algorithmus:
+ *   1. PDF → Text-Items mit Position (x, y) via pdfjs-dist
+ *   2. Items nach Y-Koordinate gruppieren → Zeilen rekonstruieren
+ *   3. Zeilen nach Muster scannen:
+ *      Kontonummer (3–5 Stellen) + Bezeichnung + Betrag(Saldo)
+ *   4. Monat/Jahr aus Kopfzeilen/Datum-Mustern erkennen
+ *   5. ParsedCSVRow[] zurückgeben → gleiche Matching-Pipeline wie CSV
+ *
+ * Wichtig:
+ *   Die Rückgabe ist kompatibel mit ParsedCSVRow aus csv-import-engine.ts.
+ *   Dadurch wird dieselbe Matching- und Speicher-Logik wiederverwendet.
+ */
+
+import * as pdfjsLib from 'pdfjs-dist';
+import type { ParsedCSVRow } from './csv-import-engine';
+import { parseAmount } from './csv-import-engine';
+
+// ─── Worker-Konfiguration ─────────────────────────────────────────────────────
+
+// Wir nutzen den CDN-Worker, um Bundler-Kompatibilitätsprobleme zu vermeiden.
+// Version muss zur installierten pdfjs-dist-Version passen.
+if (typeof window !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+}
+
+// ─── Typen ────────────────────────────────────────────────────────────────────
+
+interface TextLine {
+  y: number;          // Y-Koordinate (gerundet für Gruppierung)
+  items: { x: number; text: string }[];
+  text: string;       // Zusammengefügter Zeilentext
+}
+
+export interface PDFParseResult {
+  rows: ParsedCSVRow[];
+  detectedYear?: number;
+  detectedMonth?: number;
+  pageCount: number;
+  rawLines: string[];    // Alle extrahierten Textzeilen (für Debug)
+  warnings: string[];
+}
+
+// ─── Monats-Erkennung ─────────────────────────────────────────────────────────
+
+const MONTH_NAMES: Record<string, number> = {
+  januar: 1, january: 1, jan: 1,
+  februar: 2, february: 2, feb: 2,
+  märz: 3, maerz: 3, march: 3, mar: 3,
+  april: 4, apr: 4,
+  mai: 5, may: 5,
+  juni: 6, june: 6, jun: 6,
+  juli: 7, july: 7, jul: 7,
+  august: 8, aug: 8,
+  september: 9, sep: 9, sept: 9,
+  oktober: 10, october: 10, oct: 10, okt: 10,
+  november: 11, nov: 11,
+  dezember: 12, december: 12, dec: 12, dez: 12,
+};
+
+/**
+ * Versucht, Monat und Jahr aus einem Textblock zu extrahieren.
+ * Scannt alle Zeilen und gibt das erste zuverlässige Ergebnis zurück.
+ */
+export function detectMonthYear(lines: string[]): {
+  month?: number;
+  year?: number;
+} {
+  const fullText = lines.slice(0, 30).join(' ').toLowerCase();
+
+  // Muster 1: "Periode: 01.01.2026 – 31.01.2026" → Monat aus Startdatum
+  const periodeMatch = fullText.match(
+    /periode[:\s]+(\d{1,2})\.(\d{1,2})\.(\d{4})/i,
+  );
+  if (periodeMatch) {
+    return { month: parseInt(periodeMatch[2]), year: parseInt(periodeMatch[3]) };
+  }
+
+  // Muster 2: "01.2026" oder "01/2026"
+  const mmYearMatch = fullText.match(/\b(0?[1-9]|1[0-2])[./](20\d{2})\b/);
+  if (mmYearMatch) {
+    return { month: parseInt(mmYearMatch[1]), year: parseInt(mmYearMatch[2]) };
+  }
+
+  // Muster 3: "Januar 2026" / "January 2026" / "Jan. 2026"
+  for (const [name, num] of Object.entries(MONTH_NAMES)) {
+    const re = new RegExp(`\\b${name}\\.?\\s+(20\\d{2})\\b`, 'i');
+    const m = fullText.match(re);
+    if (m) return { month: num, year: parseInt(m[1]) };
+  }
+
+  // Muster 4: Nur Jahr erkennen "2026"
+  const yearMatch = fullText.match(/\b(20\d{2})\b/);
+  if (yearMatch) return { year: parseInt(yearMatch[1]) };
+
+  return {};
+}
+
+// ─── Zeilen-Rekonstruktion aus PDF-Text-Items ─────────────────────────────────
+
+/**
+ * Gruppiert pdfjs TextItems nach Y-Koordinate (Toleranz: 3 Punkte),
+ * sortiert sie horizontal und gibt rekonstruierte Textzeilen zurück.
+ */
+async function extractLinesFromPage(
+  page: pdfjsLib.PDFPageProxy,
+): Promise<TextLine[]> {
+  const textContent = await page.getTextContent();
+
+  // Map: gerundete Y → Einzel-Items
+  const lineMap = new Map<number, { x: number; text: string }[]>();
+
+  for (const rawItem of textContent.items) {
+    if (!('str' in rawItem)) continue;
+    const item = rawItem as pdfjsLib.TextItem;
+    if (!item.str.trim()) continue;
+
+    const x    = item.transform[4];
+    const yRaw = item.transform[5];
+
+    // Suche eine bereits vorhandene Zeile in ±3-Punkt-Nähe
+    let matchedY: number | null = null;
+    for (const existY of lineMap.keys()) {
+      if (Math.abs(existY - yRaw) <= 3) {
+        matchedY = existY;
+        break;
+      }
+    }
+    const key = matchedY ?? Math.round(yRaw);
+    if (!lineMap.has(key)) lineMap.set(key, []);
+    lineMap.get(key)!.push({ x, text: item.str });
+  }
+
+  // Y absteigend sortieren (PDF-Koordinatensystem: Y wächst nach oben)
+  const sortedYs = Array.from(lineMap.keys()).sort((a, b) => b - a);
+
+  return sortedYs
+    .map(y => {
+      const items = lineMap.get(y)!.sort((a, b) => a.x - b.x);
+      const text  = items.map(i => i.text).join(' ').replace(/\s{2,}/g, '  ').trim();
+      return { y, items, text };
+    })
+    .filter(l => l.text.length > 0);
+}
+
+// ─── Zeilen-Parser ────────────────────────────────────────────────────────────
+
+/**
+ * Zeilen, die eine Kontonummer (3–5 Stellen) gefolgt von Text und Betrag enthalten.
+ *
+ * Erkannte Muster (nach typischen Schweizer Buchhaltungs-PDFs):
+ *   3000  Speiseumsatz                  12'500.00
+ *   4000  Wareneinsatz Küche    3'800.00   0.00   3'800.00-
+ *   5000  Löhne Service         4'200.00            4'200.00
+ *
+ * Strategie:
+ *   - Suche 3–5-stellige Zahl am Zeilenanfang (ggf. mit führenden Leerzeichen)
+ *   - Überspringe bekannte Aggregat-Zeilen (Total, Summe, etc.)
+ *   - Nimm den letzten Betrag auf der Zeile als "Saldo"
+ *   - Alles dazwischen = Bezeichnung
+ */
+
+// Zeilen, die nicht als Buchungszeilen gelten (Aggregate, Header)
+const SKIP_LINE_RE = /^\s*(total|summe|zwischentotal|ertrag|aufwand|bruttogewinn|ergebnis|seite|page|datum|konto|bezeichn|soll|haben|saldo|debit|kredit)\b/i;
+
+// Kontonummer am Zeilenanfang: 3–5 Ziffern, dann mind. 1 Leerzeichen
+const ACCOUNT_START_RE = /^\s*(\d{3,5})\s+/;
+
+// Sucht die letzte "Geld-Zahl" in einem String (Swiss/EU/Standard-Format)
+// Gültige Formate: 1'234.56, 1.234,56, 1234.56, 1234.56-, -1234.56, (1234.56)
+const MONEY_RE = /(?:^|[\s,;])(-?\d[\d'.,']*(?:[.,]\d{2})?[-+]?|\(\d[\d'.,]*(?:[.,]\d{2})?\))/g;
+
+function findLastAmount(text: string): { raw: string; pos: number } | null {
+  let last: { raw: string; pos: number } | null = null;
+  let m: RegExpExecArray | null;
+  const re = new RegExp(MONEY_RE.source, 'g');
+  while ((m = re.exec(text)) !== null) {
+    const raw = m[1]?.trim() ?? m[0].trim();
+    if (raw && parseAmount(raw) !== null) {
+      last = { raw, pos: m.index };
+    }
+  }
+  return last;
+}
+
+function parseLine(
+  line: TextLine,
+  lineIndex: number,
+): ParsedCSVRow | null {
+  const { text } = line;
+
+  // Zeilen überspringen, die keine Buchungszeilen sind
+  if (SKIP_LINE_RE.test(text)) return null;
+
+  // Kontonummer am Anfang suchen
+  const accountMatch = ACCOUNT_START_RE.exec(text);
+  if (!accountMatch) return null;
+
+  const accountNumber = accountMatch[1].padStart(4, '0');
+  const afterAccount  = text.slice(accountMatch[0].length).trim();
+
+  // Letzten Betrag finden
+  const lastAmt = findLastAmount(afterAccount);
+  if (!lastAmt) return null;
+
+  const amount = parseAmount(lastAmt.raw);
+  if (amount === null || amount === 0) return null;
+
+  // Bezeichnung = Text zwischen Kontonummer und letztem Betrag
+  let accountName = afterAccount.slice(0, lastAmt.pos).trim();
+
+  // Bereinigung: Zwischensummen-Zahlen (Soll/Haben-Spalten) aus Name entfernen
+  // → Entferne alle Tokens die wie Zahlen aussehen, behalte Texttokens
+  accountName = accountName
+    .split(/\s+/)
+    .filter(token => {
+      // Token ist eine Zahl (ggf. mit Apostroph/Punkt als Tausender) → raus
+      return parseAmount(token) === null;
+    })
+    .join(' ')
+    .trim();
+
+  // Mindestlänge der Bezeichnung: 1 Zeichen
+  if (!accountName) accountName = `Konto ${accountNumber}`;
+
+  return {
+    lineIndex,
+    rawLine: text,
+    accountNumber,
+    accountName,
+    rawAmount: lastAmt.raw,
+    amount: Math.abs(amount),
+  };
+}
+
+// ─── Haupt-Parse-Funktion ─────────────────────────────────────────────────────
+
+/**
+ * Liest eine PDF-Datei (als ArrayBuffer) und extrahiert alle Buchungszeilen.
+ * Gibt ein PDFParseResult zurück, das in die CSV-Import-Pipeline eingespeist
+ * werden kann.
+ */
+export async function parsePDF(buffer: ArrayBuffer): Promise<PDFParseResult> {
+  const warnings: string[] = [];
+  const rows: ParsedCSVRow[] = [];
+  const rawLines: string[] = [];
+
+  let pdfDoc: pdfjsLib.PDFDocumentProxy;
+  try {
+    pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
+  } catch (e) {
+    warnings.push(`PDF konnte nicht geöffnet werden: ${String(e)}`);
+    return { rows, pageCount: 0, rawLines, warnings };
+  }
+
+  const pageCount = pdfDoc.numPages;
+  const allLines: TextLine[] = [];
+
+  for (let p = 1; p <= pageCount; p++) {
+    try {
+      const page  = await pdfDoc.getPage(p);
+      const lines = await extractLinesFromPage(page);
+      allLines.push(...lines);
+    } catch (e) {
+      warnings.push(`Seite ${p} konnte nicht gelesen werden: ${String(e)}`);
+    }
+  }
+
+  // Alle Texte für Debug und Monats-Erkennung sammeln
+  allLines.forEach(l => rawLines.push(l.text));
+
+  // Monat/Jahr erkennen
+  const { month: detectedMonth, year: detectedYear } = detectMonthYear(rawLines);
+
+  // Buchungszeilen parsen
+  const seen = new Set<string>(); // Duplikat-Schutz: gleiche Konto+Betrag-Kombination
+
+  for (let i = 0; i < allLines.length; i++) {
+    const parsed = parseLine(allLines[i], i + 1);
+    if (!parsed) continue;
+
+    const dedupeKey = `${parsed.accountNumber}_${parsed.amount.toFixed(2)}`;
+    if (seen.has(dedupeKey)) continue; // Vermeidet z.B. doppelte Gesamt-Saldi
+    seen.add(dedupeKey);
+
+    rows.push(parsed);
+  }
+
+  if (rows.length === 0) {
+    warnings.push(
+      'Keine Buchungszeilen erkannt. Mögliche Ursachen: ' +
+      '(1) Das PDF enthält gescannte Bilder statt Text – bitte als Textdatei exportieren. ' +
+      '(2) Das Format wird noch nicht unterstützt – bitte als CSV exportieren und über CSV-Import hochladen.',
+    );
+  }
+
+  return { rows, detectedMonth, detectedYear, pageCount, rawLines, warnings };
+}
