@@ -99,6 +99,9 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 - `src/lib/pdf-import-engine.ts` — PDF-Parse-Engine: pdfjs-dist Text-Extraktion, Y-Koordinaten-Gruppierung, Kontozeilen-Erkennung, Monats-/Jahres-Erkennung
 - `src/pages/CSVImport.tsx` — Universeller Import-Wizard für CSV+PDF (3 Schritte: Upload/Konfiguration → Vorschau → Bestätigen)
 - `src/lib/connectors/gastronovi-connector.ts` — Gastronovi-Vorbereitung: Typen, CSV-Parser, Kategorie-Mapping, Aggregation, API-Stub (noch nicht aktiv)
+- `src/types/supplier-documents.ts` — Typen: SupplierDocument, DocumentType/Category, SupplierMonthSummary, CostComparisonRecord
+- `src/lib/supplier-documents-store.ts` — Store (localStorage supplier_docs_v1): CRUD, Monatsaggregation, Buchhaltungsvergleich (baut CostComparisonRecord aus beiden Stores ohne den reporting-store zu verändern)
+- `src/pages/SupplierDocuments.tsx` — Lieferantendokumente-Seite: Beleg erfassen, Monatsselektor, Zusammenfassungskarten, Tabellenansicht, Buchhaltungsvergleich-Vorbereitung (Admin only)
 - `src/pages/Dashboard.tsx` — Neue Dashboard-Startseite (rollenbasierte KPI-Karten)
 - `src/pages/SchedulePlanner.tsx` — Hauptseite Dienstplan (~2000 Zeilen)
 - `src/pages/Index.tsx` — Legacy Übersicht (unter /overview erreichbar)

@@ -14,7 +14,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, BarChart2, Users,
   Settings, LogOut, ChefHat, Utensils, ShieldCheck,
-  TrendingUp, Upload,
+  TrendingUp, Upload, Truck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -87,6 +87,13 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Buchh.-Import',
     shortLabel: 'Import',
     icon: Upload,
+    adminOnly: true,
+  },
+  {
+    path: '/lieferanten',
+    label: 'Lieferanten',
+    shortLabel: 'Lief.',
+    icon: Truck,
     adminOnly: true,
   },
 ];

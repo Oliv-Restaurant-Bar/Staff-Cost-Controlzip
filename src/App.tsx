@@ -18,6 +18,7 @@ import Reporting from "./pages/Reporting";
 import AccountMappingPage from "./pages/AccountMapping";
 import PLViewPage from "./pages/PLView";
 import CSVImportPage from "./pages/CSVImport";
+import SupplierDocumentsPage from "./pages/SupplierDocuments";
 import Index from "./pages/Index";
 import SchedulePlanner from "./pages/SchedulePlanner";
 import Settings from "./pages/Settings";
@@ -88,6 +89,7 @@ const AppContent = () => {
             <Route path="/kontenplan"       element={<AccountMappingPage />} />
             <Route path="/erfolgsrechnung"  element={<PLViewPage />} />
             <Route path="/csv-import"       element={<CSVImportPage />} />
+            <Route path="/lieferanten"      element={<SupplierDocumentsPage />} />
 
             {/* Abteilungs-Dienstpläne */}
             <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />
