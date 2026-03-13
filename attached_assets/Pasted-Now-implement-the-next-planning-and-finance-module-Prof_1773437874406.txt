@@ -1,0 +1,69 @@
+Now implement the next planning and finance module:
+
+Professional budget module based on the uploaded budget template structure.
+
+Goal:
+Build a proper budget system that supports yearly budget import, budget copying to a new year, automatic budget adjustments, and mixed logic with CHF-based and revenue-percentage-based budget positions.
+
+Important:
+Do not break the current reporting module.
+Reuse the existing finance and P&L structure where possible.
+
+Please implement the following in a clean first version:
+
+1. Budget import foundation
+Use the uploaded budget template structure as the standard model.
+The budget module should support:
+- one budget year
+- monthly values January to December
+- cumulative logic
+- CHF values
+- percentage values
+- category structure aligned with the P&L structure
+
+2. Budget year copy
+Add a function to copy one full budget year into a new year.
+Example:
+- copy 2026 budget into 2027
+
+3. Budget rule engine
+Prepare and implement a first version of automatic budget adjustments such as:
+- increase revenue next year by X %
+- target personnel cost ratio = X %
+- reduce cost of goods by X %
+- monthly override, e.g. July revenue +20 % because of an event
+
+4. Mixed budget logic
+Each budget position must support either:
+- fixed CHF amount
+or
+- percentage of revenue
+
+This must be stored clearly in the data model.
+
+5. Monthly overrides
+Allow a month-specific adjustment rule for a category or revenue line.
+Examples:
+- July +20 % revenue
+- certain category fixed CHF override
+- certain category percentage override
+
+6. Admin-only budget page
+Create a clear admin-only budget module/page showing:
+- budget years
+- monthly budget values
+- position type (CHF or %)
+- copied years
+- adjustment rules
+- monthly overrides
+
+7. Keep it simple
+Do not build the final perfect UI yet.
+Build the correct structure first so the budget system becomes scalable.
+
+8. Explain in simple German:
+- what budget structure was added
+- how year copy works
+- how CHF vs % logic works
+- how monthly overrides work
+- how I should test it
