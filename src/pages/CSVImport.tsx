@@ -309,9 +309,14 @@ export default function CSVImportPage() {
     const record = buildMonthRecord(parseResult.matched, parseResult.unresolved, config);
 
     try {
+      const source: import('@/types/reporting').ImportSource =
+        fileKind === 'pdf'
+          ? (dataType === 'previous_year' ? 'pdf_previous_year' : 'pdf_current')
+          : (dataType === 'previous_year' ? 'csv_previous_year' : 'csv_current');
+
       saveMonth(
         { ...record, year, month },
-        fileKind === 'pdf' ? 'csv_import' : 'csv_import',
+        source,
         importMode,
         {
           fileName,

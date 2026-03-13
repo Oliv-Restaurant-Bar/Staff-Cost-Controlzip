@@ -126,6 +126,10 @@ const CATEGORY_TO_ROW: Record<string, string> = {
   // Catch-all (alles andere → Sonstiges)
   sonstiges:              'other_operating',
   diverses:               'other_operating',
+  // Gastronovi-Kategorien (Kassensystem-Import)
+  gnv_food:               'revenue_total',
+  gnv_beverage:           'revenue_total',
+  gnv_other:              'revenue_total',
 };
 
 /** Alle categoryIds, die einer definierten Zeile zugeordnet sind */
@@ -140,6 +144,8 @@ export const PL_STRUCTURE: PLRowDef[] = [
     id: 'revenue_total', type: 'line', label: 'Umsatz (netto)',
     indent: 1, showPercent: false, valueRole: 'positive',
     directField: 'revenue',
+    // Gastronovi-Kategorien können zusätzlich zur directField-Summe für Drilldown genutzt werden
+    categoryIds: ['gnv_food', 'gnv_beverage', 'gnv_other'],
   },
   {
     id: 'net_revenue', type: 'result', label: 'Betriebsertrag netto',

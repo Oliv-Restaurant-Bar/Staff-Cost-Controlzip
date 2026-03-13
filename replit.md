@@ -98,6 +98,7 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 - `src/lib/csv-import-engine.ts` — CSV-Parse-Engine: Trennzeichen-Erkennung, Swiss-Betragsformat, Spalten-Heuristik, Konto-Matching via lookupAccount, buildMonthRecord
 - `src/lib/pdf-import-engine.ts` — PDF-Parse-Engine: pdfjs-dist Text-Extraktion, Y-Koordinaten-Gruppierung, Kontozeilen-Erkennung, Monats-/Jahres-Erkennung
 - `src/pages/CSVImport.tsx` — Universeller Import-Wizard für CSV+PDF (3 Schritte: Upload/Konfiguration → Vorschau → Bestätigen)
+- `src/lib/connectors/gastronovi-connector.ts` — Gastronovi-Vorbereitung: Typen, CSV-Parser, Kategorie-Mapping, Aggregation, API-Stub (noch nicht aktiv)
 - `src/pages/Dashboard.tsx` — Neue Dashboard-Startseite (rollenbasierte KPI-Karten)
 - `src/pages/SchedulePlanner.tsx` — Hauptseite Dienstplan (~2000 Zeilen)
 - `src/pages/Index.tsx` — Legacy Übersicht (unter /overview erreichbar)

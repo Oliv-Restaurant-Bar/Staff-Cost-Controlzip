@@ -67,10 +67,11 @@ export type ImportMode = 'replace' | 'update';
 
 export type ImportSource =
   | 'manual'            // Manuelle Eingabe im UI
-  | 'pdf_current'       // PDF/Export: laufendes Geschäftsjahr
-  | 'pdf_previous_year' // PDF/Export: Vorjahresdaten
+  | 'pdf_current'       // PDF-Import: laufendes Geschäftsjahr
+  | 'pdf_previous_year' // PDF-Import: Vorjahresdaten
   | 'csv_current'       // CSV-Import: laufendes Jahr
   | 'csv_previous_year' // CSV-Import: Vorjahr
+  | 'gastronovi'        // Zukünftig: Umsatz-Import aus gastronovi-Kassensystem
   | 'supabase_sync';    // Zukünftig: Sync aus Supabase-Tabelle
 
 export interface ImportRecord {
