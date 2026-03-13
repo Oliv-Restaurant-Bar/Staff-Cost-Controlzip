@@ -61,10 +61,36 @@ export const CATEGORY_COLORS: Record<DocumentCategory, { bg: string; text: strin
   other:    { bg: 'bg-gray-50',   text: 'text-gray-700',   border: 'border-gray-200' },
 };
 
+// ─── Lieferanten-Stammdaten ───────────────────────────────────────────────────
+
+/**
+ * Lieferanten-Stammdatensatz.
+ * Wird einmalig angelegt und dann bei der Belegerfassung ausgewählt.
+ * Gespeichert in localStorage 'supplier_master_v1'.
+ */
+export interface SupplierMaster {
+  /** UUID */
+  id: string;
+  /** Lieferantenname (z.B. 'Pistor AG', 'Transgourmet') */
+  name: string;
+  /** Standard-Warenkategorie (wird im Formular vorbelegt) */
+  defaultCategory?: DocumentCategory;
+  /** Standard-Kontonummer 4-stellig (z.B. '4000') – wird im Formular vorbelegt */
+  defaultAccountNumber?: string;
+  /** Aktiv/Inaktiv – inaktive Lieferanten erscheinen nicht im Dropdown */
+  isActive: boolean;
+  /** Optionale Notiz (Kontaktdaten, Zahlungsziel, etc.) */
+  note?: string;
+  /** Erstellt am (ISO-String) */
+  createdAt: string;
+  /** Zuletzt geändert (ISO-String) */
+  updatedAt: string;
+}
+
 // ─── Hauptdatensatz ───────────────────────────────────────────────────────────
 
 /**
- * Ein einzelner Lieferantenbele (Lieferschein oder Rechnung).
+ * Ein einzelner Lieferantenbeleg (Lieferschein oder Rechnung).
  */
 export interface SupplierDocument {
   /** UUID, eindeutige ID */
@@ -88,6 +114,13 @@ export interface SupplierDocument {
    * (wird im Reporting als operativer Schätzwert behandelt).
    */
   amount: number;
+  /**
+   * Zugeordnete 4-stellige Kontonummer aus dem Kontenplan (optional).
+   * Z.B. '4000' = Warenaufwand Lebensmittel, '4001' = Warenaufwand Getränke.
+   * Dient der Verbindung zwischen operativen Lieferantendokumenten
+   * und dem offiziellen Buchhaltungskontenplan.
+   */
+  accountNumber?: string;
   /** Optionale Notiz, z.B. Bestellnummer, Kommentar */
   note?: string;
   /** Erstellt am (ISO-String) */

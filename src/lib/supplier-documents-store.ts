@@ -15,6 +15,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import {
   SupplierDocument,
+  SupplierMaster,
   DocumentType,
   DocumentCategory,
   SupplierMonthSummary,
@@ -29,6 +30,7 @@ import { loadMonth } from '@/lib/reporting-store';
 
 const STORAGE_KEY         = 'supplier_docs_v1';
 const MAPPING_KEY         = 'supplier_account_mapping_v1';
+const SUPPLIER_MASTER_KEY = 'supplier_master_v1';
 
 // ─── Persistenz ───────────────────────────────────────────────────────────────
 
@@ -58,23 +60,25 @@ export function addDocument(input: {
   date: string;          // YYYY-MM-DD
   category: DocumentCategory;
   amount: number;
+  accountNumber?: string;
   note?: string;
 }): SupplierDocument {
   const all  = loadAll();
   const now  = new Date().toISOString();
   const d    = new Date(input.date);
   const doc: SupplierDocument = {
-    id:           uuidv4(),
-    supplier:     input.supplier.trim(),
-    documentType: input.documentType,
-    date:         input.date,
-    year:         d.getFullYear(),
-    month:        d.getMonth() + 1,
-    category:     input.category,
-    amount:       input.amount,
-    note:         input.note?.trim() || undefined,
-    createdAt:    now,
-    updatedAt:    now,
+    id:            uuidv4(),
+    supplier:      input.supplier.trim(),
+    documentType:  input.documentType,
+    date:          input.date,
+    year:          d.getFullYear(),
+    month:         d.getMonth() + 1,
+    category:      input.category,
+    amount:        input.amount,
+    accountNumber: input.accountNumber?.trim() || undefined,
+    note:          input.note?.trim() || undefined,
+    createdAt:     now,
+    updatedAt:     now,
   };
   all[doc.id] = doc;
   saveAll(all);
@@ -87,7 +91,7 @@ export function addDocument(input: {
 export function updateDocument(
   id: string,
   changes: Partial<Pick<SupplierDocument,
-    'supplier' | 'documentType' | 'date' | 'category' | 'amount' | 'note'
+    'supplier' | 'documentType' | 'date' | 'category' | 'amount' | 'accountNumber' | 'note'
   >>,
 ): SupplierDocument | null {
   const all = loadAll();
@@ -101,11 +105,14 @@ export function updateDocument(
   const updated: SupplierDocument = {
     ...doc,
     ...changes,
-    year:      d.getFullYear(),
-    month:     d.getMonth() + 1,
-    note:      changes.note !== undefined
-               ? (changes.note.trim() || undefined)
-               : doc.note,
+    year:          d.getFullYear(),
+    month:         d.getMonth() + 1,
+    accountNumber: changes.accountNumber !== undefined
+                   ? (changes.accountNumber.trim() || undefined)
+                   : doc.accountNumber,
+    note:          changes.note !== undefined
+                   ? (changes.note.trim() || undefined)
+                   : doc.note,
     updatedAt: now,
   };
   all[id] = updated;
@@ -365,6 +372,61 @@ export function buildSupplierCostComparisons(year: number, month: number): Suppl
       hasAccountingData: has,
     };
   });
+}
+
+// ─── Lieferanten-Stammdaten ───────────────────────────────────────────────────
+
+/**
+ * Alle Lieferanten-Stammdaten laden.
+ */
+export function loadSupplierMasters(): SupplierMaster[] {
+  try {
+    const raw = localStorage.getItem(SUPPLIER_MASTER_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveSupplierMasters(masters: SupplierMaster[]): void {
+  localStorage.setItem(SUPPLIER_MASTER_KEY, JSON.stringify(masters));
+}
+
+/**
+ * Einen Lieferanten-Stammdatensatz anlegen oder aktualisieren (upsert nach id).
+ */
+export function upsertSupplierMaster(master: Omit<SupplierMaster, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): SupplierMaster {
+  const all  = loadSupplierMasters();
+  const now  = new Date().toISOString();
+  const existing = master.id ? all.find(m => m.id === master.id) : undefined;
+  const result: SupplierMaster = {
+    id:        existing?.id ?? uuidv4(),
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+    isActive:  master.isActive ?? true,
+    name:      master.name.trim(),
+    defaultCategory:      master.defaultCategory,
+    defaultAccountNumber: master.defaultAccountNumber?.trim() || undefined,
+    note:                 master.note?.trim() || undefined,
+  };
+  const updated = all.filter(m => m.id !== result.id);
+  updated.push(result);
+  saveSupplierMasters(updated);
+  return result;
+}
+
+/**
+ * Einen Lieferanten-Stammdatensatz löschen.
+ */
+export function deleteSupplierMaster(id: string): void {
+  saveSupplierMasters(loadSupplierMasters().filter(m => m.id !== id));
+}
+
+/**
+ * Lieferanten-Stammdaten nach Name suchen.
+ */
+export function findSupplierMasterByName(name: string): SupplierMaster | undefined {
+  return loadSupplierMasters().find(m =>
+    m.name.toLowerCase() === name.toLowerCase(),
+  );
 }
 
 // ─── Supplier → Account Mapping ───────────────────────────────────────────────
