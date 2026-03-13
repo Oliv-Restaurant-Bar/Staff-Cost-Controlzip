@@ -19,6 +19,8 @@ import {
   DocumentCategory,
   SupplierMonthSummary,
   CostComparisonRecord,
+  SupplierCostSummary,
+  SupplierCostComparison,
 } from '@/types/supplier-documents';
 import { loadMonth } from '@/lib/reporting-store';
 
@@ -248,4 +250,81 @@ export function buildCostComparison(year: number, month: number): CostComparison
                              : undefined,
     hasAccountingData:       hasAccData,
   };
+}
+
+// ─── Architektur-Vorbereitung: Per-Lieferanten-Aggregation ───────────────────
+
+/**
+ * Aggregiert alle Lieferantendokumente eines Monats PRO LIEFERANT.
+ *
+ * Vorbereitung für das spätere Modul «Lieferantenvergleich».
+ * Noch nicht in der UI eingebunden – dient als Daten-Fundament.
+ *
+ * Gibt für jeden Lieferanten eine SupplierCostSummary zurück,
+ * sortiert nach Gesamtkosten absteigend.
+ */
+export function getSupplierCostSummaries(year: number, month: number): SupplierCostSummary[] {
+  const docs = loadDocumentsForMonth(year, month);
+  const bySupplier = new Map<string, SupplierCostSummary>();
+
+  for (const doc of docs) {
+    let s = bySupplier.get(doc.supplier);
+    if (!s) {
+      s = {
+        supplier:          doc.supplier,
+        year,
+        month,
+        foodCost:          0,
+        beverageCost:      0,
+        otherCost:         0,
+        totalCost:         0,
+        documentCount:     0,
+        deliveryNoteCount: 0,
+        invoiceCount:      0,
+      };
+      bySupplier.set(doc.supplier, s);
+    }
+
+    if (doc.category === 'food')         s.foodCost     += doc.amount;
+    else if (doc.category === 'beverage') s.beverageCost += doc.amount;
+    else                                  s.otherCost    += doc.amount;
+
+    s.totalCost    += doc.amount;
+    s.documentCount++;
+    if (doc.documentType === 'delivery_note') s.deliveryNoteCount++;
+    else                                      s.invoiceCount++;
+  }
+
+  return [...bySupplier.values()].sort((a, b) => b.totalCost - a.totalCost);
+}
+
+/**
+ * Vorbereitung Vergleich pro Lieferant vs. Buchhaltung.
+ *
+ * STUB: Gibt aktuell nur die operative Seite zurück (hasAccountingData = false),
+ * weil die Konto→Lieferant-Zuordnung (AccountToSupplierMapping) noch nicht
+ * konfiguriert wird. Sobald dieses Mapping eingerichtet ist, wird hier die
+ * Buchhaltungsseite befüllt.
+ *
+ * Spätere Erweiterung:
+ *   1. Lade AccountToSupplierMapping aus localStorage
+ *   2. Lies den Buchhaltungswert des gemappten Kontos aus dem reporting-store
+ *   3. Berechne Anteil (allocationPct) und befülle accountingTotal + diff
+ */
+export function buildSupplierCostComparisons(year: number, month: number): SupplierCostComparison[] {
+  const summaries = getSupplierCostSummaries(year, month);
+
+  return summaries.map(s => ({
+    supplier:               s.supplier,
+    month:                  s.month,
+    year:                   s.year,
+    operationalTotal:       s.totalCost,
+    operationalFoodCost:    s.foodCost,
+    operationalBeverageCost: s.beverageCost,
+    operationalOtherCost:   s.otherCost,
+    accountingTotal:        undefined,
+    diff:                   undefined,
+    diffPct:                undefined,
+    hasAccountingData:      false,
+  }));
 }

@@ -174,3 +174,104 @@ export interface CostComparisonRecord {
    */
   hasAccountingData: boolean;
 }
+
+// ─── Architektur-Vorbereitung: Lieferantenvergleich pro Lieferant ─────────────
+
+/**
+ * Vorbereitung für ein späteres Modul «Lieferantenvergleich».
+ *
+ * Ziel des späteren Moduls:
+ *   Lieferscheine / Rechnungen pro Lieferant
+ *   vs.
+ *   Buchhaltungskosten aus PDF/CSV-Import
+ *   → Abweichung pro Lieferant und Kategorie
+ *
+ * Diese Strukturen sind noch nicht in der UI eingebunden.
+ * Sie definieren nur das Datenmodell für die spätere Implementierung.
+ *
+ * Wichtige Regel (gilt auch hier):
+ *   Buchhaltungswerte sind immer die offiziellen Werte.
+ *   Lieferantendokumente ersetzen niemals Buchhaltungswerte.
+ */
+
+/**
+ * Aggregierte Kosten eines einzelnen Lieferanten für einen Monat.
+ * Wird aus den SupplierDocuments berechnet.
+ */
+export interface SupplierCostSummary {
+  /** Name des Lieferanten */
+  supplier: string;
+  /** Monat (1–12) */
+  month: number;
+  /** Jahr */
+  year: number;
+  /** Gesamtkosten Food (CHF, aus Lieferantendokumenten) */
+  foodCost: number;
+  /** Gesamtkosten Getränke (CHF) */
+  beverageCost: number;
+  /** Gesamtkosten Diverses (CHF) */
+  otherCost: number;
+  /** Gesamtkosten Total (CHF) */
+  totalCost: number;
+  /** Anzahl Belege */
+  documentCount: number;
+  /** Lieferscheine */
+  deliveryNoteCount: number;
+  /** Rechnungen */
+  invoiceCount: number;
+}
+
+/**
+ * Vergleich eines Lieferanten: Lieferantendokumente vs. Buchhaltungsanteil.
+ *
+ * Hinweis zur Buchhaltungsseite:
+ *   Die Buchhaltung kennt keine «Lieferantennamen» in den Kontozeilen –
+ *   sie gruppiert nur nach Kontonummer (4000–4999 Warenaufwand).
+ *   Eine automatische Zuordnung «Pistor AG → Konto 4010» muss später
+ *   manuell konfiguriert werden (AccountToSupplierMapping).
+ *
+ *   Ohne diese Konfiguration zeigt der Vergleich nur die operative Seite.
+ */
+export interface SupplierCostComparison {
+  supplier: string;
+  month: number;
+  year: number;
+  /** Operative Seite: Summe aus Lieferantendokumenten */
+  operationalTotal: number;
+  operationalFoodCost: number;
+  operationalBeverageCost: number;
+  operationalOtherCost: number;
+  /**
+   * Buchhaltungsseite: anteiliger Buchhaltungswert für diesen Lieferanten.
+   * undefined solange keine Konto→Lieferant-Zuordnung konfiguriert ist.
+   */
+  accountingTotal?: number;
+  /** Abweichung: operational − accounting */
+  diff?: number;
+  /** Abweichung in Prozent */
+  diffPct?: number;
+  /** true wenn Buchhaltungsdaten vorhanden und Zuordnung konfiguriert */
+  hasAccountingData: boolean;
+}
+
+/**
+ * Konfigurationseintrag: ordnet einem Lieferantennamen eine Kontonummer zu.
+ * Wird für die spätere automatische Zuordnung in SupplierCostComparison benötigt.
+ * Gespeichert in localStorage 'supplier_account_mapping_v1'.
+ *
+ * Beispiel:
+ *   { supplier: 'Pistor AG', accountId: '4010', category: 'food' }
+ *   { supplier: 'Feldschlösschen', accountId: '4100', category: 'beverage' }
+ */
+export interface AccountToSupplierMapping {
+  /** Lieferantenname (exakt wie im SupplierDocument) */
+  supplier: string;
+  /**
+   * Buchhaltungs-Kontonummer (4-stellig, z.B. '4010')
+   * oder Bereich-ID (z.B. 'wareneinsatz_kueche')
+   */
+  accountId: string;
+  category: DocumentCategory;
+  /** Optionaler Prozentsatz des Kontos der diesem Lieferanten zugeordnet wird (0–100) */
+  allocationPct?: number;
+}
