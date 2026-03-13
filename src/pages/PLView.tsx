@@ -19,7 +19,7 @@ import {
   LayoutDashboard, TrendingUp, ChevronRight, Info,
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight,
-  Minus, Database,
+  Minus, Database, AlignJustify, List,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -627,20 +627,23 @@ const BPLVarCell = ({ value, pct }: { value: number; pct?: number }) => {
   );
 };
 
-const BPLRowComp = ({ row, onClick }: { row: BPLRowWithValues; onClick: () => void }) => {
+const BPLRowComp = ({ row, onClick, compact }: { row: BPLRowWithValues; onClick: () => void; compact: boolean }) => {
   const { values: v } = row;
+  const py = compact ? 'py-1' : 'py-2';
+  const pyResult = compact ? 'py-1' : 'py-2.5';
+  const pyItem = compact ? 'py-0.5' : 'py-1.5';
 
   if (row.catType === 'result') {
     const isPos = v.actual >= 0;
     return (
-      <tr className="bg-slate-100 dark:bg-slate-800/80 font-bold border-t-2 border-b-2 border-slate-400 dark:border-slate-500">
-        <td className="px-3 py-2.5 text-sm" colSpan={2}>{row.catLabel}</td>
-        <td className={cn('px-2 py-2.5 text-right text-sm font-mono tabular-nums font-bold',
+      <tr className="bg-slate-100 dark:bg-slate-800/80 font-bold border-t-2 border-b border-slate-400 dark:border-slate-500">
+        <td className={cn('px-3 text-sm', pyResult)} colSpan={2}>{row.catLabel}</td>
+        <td className={cn('px-2 text-right text-sm font-mono tabular-nums font-bold', pyResult,
           isPos ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600'
         )}>{fmt(v.actual)}</td>
-        <td className="px-2 py-2.5 text-right text-sm font-mono tabular-nums text-muted-foreground">{fmt(v.budget)}</td>
+        <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.budget)}</td>
         <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
-        <td className="px-2 py-2.5 text-right text-sm font-mono tabular-nums text-muted-foreground">{fmt(v.prevYear)}</td>
+        <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.prevYear)}</td>
         <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />
       </tr>
     );
@@ -653,11 +656,11 @@ const BPLRowComp = ({ row, onClick }: { row: BPLRowWithValues; onClick: () => vo
         onClick={onClick}
         title="Klicken für Details"
       >
-        <td className="px-3 py-2 text-xs font-bold tracking-wider" colSpan={2}>{row.catLabel}</td>
-        <td className="px-2 py-2 text-right text-sm font-mono tabular-nums">{fmt(v.actual)}</td>
-        <td className="px-2 py-2 text-right text-sm font-mono tabular-nums opacity-75">{fmt(v.budget)}</td>
+        <td className={cn('px-3 text-xs font-bold tracking-wider', py)} colSpan={2}>{row.catLabel}</td>
+        <td className={cn('px-2 text-right text-sm font-mono tabular-nums', py)}>{fmt(v.actual)}</td>
+        <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-75', py)}>{fmt(v.budget)}</td>
         <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
-        <td className="px-2 py-2 text-right text-sm font-mono tabular-nums opacity-65">{fmt(v.prevYear)}</td>
+        <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-65', py)}>{fmt(v.prevYear)}</td>
         <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />
       </tr>
     );
@@ -669,17 +672,17 @@ const BPLRowComp = ({ row, onClick }: { row: BPLRowWithValues; onClick: () => vo
       onClick={onClick}
       title="Klicken für Details"
     >
-      <td className="px-3 py-1.5 pl-9 text-sm">
+      <td className={cn('px-3 pl-9 text-sm', pyItem)}>
         <span className="text-[10px] text-muted-foreground/50 font-mono mr-1.5">{row.itemAccountNumber}</span>
         {row.itemLabel}
       </td>
-      <td className="px-2 py-1.5 w-5">
+      <td className={cn('px-2 w-5', pyItem)}>
         <ChevronDown className="h-3 w-3 text-muted-foreground opacity-30" />
       </td>
-      <td className="px-2 py-1.5 text-right text-sm font-mono tabular-nums">{v.actual > 0 ? fmt(v.actual) : <span className="text-muted-foreground/40">—</span>}</td>
-      <td className="px-2 py-1.5 text-right text-sm font-mono tabular-nums text-muted-foreground">{v.budget > 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>
+      <td className={cn('px-2 text-right text-sm font-mono tabular-nums', pyItem)}>{v.actual > 0 ? fmt(v.actual) : <span className="text-muted-foreground/40">—</span>}</td>
+      <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyItem)}>{v.budget > 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>
       <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
-      <td className="px-2 py-1.5 text-right text-sm font-mono tabular-nums text-muted-foreground">{v.prevYear > 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>
+      <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyItem)}>{v.prevYear > 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>
       <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />
     </tr>
   );
@@ -688,21 +691,23 @@ const BPLRowComp = ({ row, onClick }: { row: BPLRowWithValues; onClick: () => vo
 const BudgetPLView = ({
   rows,
   onRowClick,
+  compact,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
+  compact: boolean;
 }) => (
   <div className="overflow-x-auto">
     <table className="w-full text-sm border-collapse min-w-[820px]">
       <thead>
         <tr className="bg-slate-900 text-white text-xs">
-          <th className="text-left px-3 py-2.5 min-w-[230px]">Position</th>
-          <th className="w-5 py-2.5" />
-          <th className="text-right px-2 py-2.5 min-w-[100px]">Ist (CHF)</th>
-          <th className="text-right px-2 py-2.5 min-w-[100px]">Budget (CHF)</th>
-          <th className="text-right px-2 py-2.5 min-w-[130px]">Abw. Budget</th>
-          <th className="text-right px-2 py-2.5 min-w-[100px]">Vorjahr (CHF)</th>
-          <th className="text-right px-2 py-2.5 min-w-[120px]">Abw. VJ</th>
+          <th className={cn('text-left px-3 min-w-[230px]', compact ? 'py-1.5' : 'py-2.5')}>Position</th>
+          <th className={cn('w-5', compact ? 'py-1.5' : 'py-2.5')} />
+          <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Ist (CHF)</th>
+          <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Budget (CHF)</th>
+          <th className={cn('text-right px-2 min-w-[130px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. Budget</th>
+          <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Vorjahr (CHF)</th>
+          <th className={cn('text-right px-2 min-w-[120px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. VJ</th>
         </tr>
       </thead>
       <tbody>
@@ -711,6 +716,7 @@ const BudgetPLView = ({
             key={`${row.catId}-${row.itemId ?? 'cat'}-${i}`}
             row={row}
             onClick={() => onRowClick(row)}
+            compact={compact}
           />
         ))}
       </tbody>
@@ -847,6 +853,7 @@ const PLViewPage = () => {
   const [mode,   setMode]   = useState<ViewMode>('budget_pl');
   const [drilldown,    setDrilldown]    = useState<PLDrilldown | null>(null);
   const [bplDrilldown, setBplDrilldown] = useState<BPLRowWithValues | null>(null);
+  const [compact,      setCompact]      = useState(false);
 
   // Daten laden & P&L berechnen
   const records = useMemo(() => loadYear(year), [year, month]);
@@ -971,6 +978,23 @@ const PLViewPage = () => {
                 </SelectContent>
               </Select>
             )}
+
+            {/* Zeilenabstand */}
+            {mode === 'budget_pl' && (
+              <button
+                title={compact ? 'Normaler Zeilenabstand' : 'Kompakter Zeilenabstand'}
+                onClick={() => setCompact(c => !c)}
+                className={cn(
+                  'h-8 px-2 flex items-center gap-1 rounded border text-xs transition-colors',
+                  compact
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-card border-border hover:bg-muted text-muted-foreground',
+                )}
+              >
+                {compact ? <AlignJustify className="h-3.5 w-3.5" /> : <List className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{compact ? 'Normal' : 'Kompakt'}</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -1055,7 +1079,7 @@ const PLViewPage = () => {
 
           {/* Tabelle */}
           {mode === 'budget_pl'
-            ? <BudgetPLView rows={bplRows} onRowClick={row => setBplDrilldown(row)} />
+            ? <BudgetPLView rows={bplRows} onRowClick={row => setBplDrilldown(row)} compact={compact} />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
             : <YearView results={yearResult.months} onClickMonth={handleYearMonthClick} />
