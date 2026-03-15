@@ -1,0 +1,64 @@
+Change the onboarding flow to support self-registration for new employees before an employee record exists.
+
+Goal:
+The onboarding process should start with a generic onboarding link for new employees.
+The employee should first register themselves, and only afterwards the admin should review, complete, and assign the record internally.
+
+Important:
+Do not break the existing personnel module.
+Refactor the onboarding flow cleanly.
+
+Please implement the following:
+
+1. Generic new-employee onboarding link
+Create a way for admin to generate or copy a general onboarding link for new employees.
+This link must not require an existing employee record first.
+
+2. Self-registration flow
+When a new employee opens the onboarding link, they should be able to enter their own data:
+- personal data
+- contact data
+- address
+- nationality
+- AHV number
+- IBAN
+- employment-related base data
+- upload images/documents
+
+3. Create a preliminary employee record
+After submitting the onboarding form, the system should create a new preliminary employee record with a status like:
+- new
+- submitted
+- pending review
+
+4. Admin review step
+In the admin personnel module, show these newly submitted onboarding entries clearly.
+The admin should then be able to:
+- review the self-entered data
+- complete internal fields such as:
+  - department
+  - salary
+  - employer contribution factor
+  - internal hourly cost
+  - role
+- then confirm/activate the employee
+
+5. File handling
+Uploaded files must remain linked to the new employee record.
+
+6. Keep the existing later workflow possible
+This new onboarding-first flow should still prepare for:
+- automatic contract generation
+- sending contract link
+- later confirmation/signature
+- PDF export
+
+7. Security
+The public onboarding link must only expose the onboarding form, never internal admin views.
+
+8. Explain in simple German:
+- what changed in the onboarding flow
+- how I generate the generic onboarding link
+- how a new employee fills it out
+- how the admin completes and activates the record
+- what I should test next

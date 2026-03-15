@@ -42,7 +42,7 @@ import {
   Briefcase, Calendar, Clock, Link as LinkIcon,
 } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
-import { loadEmployees, upsertEmployee, deleteEmployee } from '@/lib/supabase-db';
+import { loadEmployees, upsertEmployee, deleteEmployee, activateEmployee } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
 import { toast } from 'sonner';
 
@@ -393,8 +393,15 @@ const Personalstamm = () => {
   }, []);
 
   // ── Gefilterte Mitarbeiter ─────────────────────────────────────────────────
+  const pendingEmployees = useMemo(() =>
+    isAdmin
+      ? employees.filter(e => e.employeeStatus === 'pending_review')
+      : [],
+  [employees, isAdmin]);
+
   const visibleBase = useMemo(() =>
-    isAdmin ? employees : employees.filter(e => e.department === allowedDepartment),
+    (isAdmin ? employees : employees.filter(e => e.department === allowedDepartment))
+      .filter(e => e.employeeStatus !== 'pending_review'),
   [employees, isAdmin, allowedDepartment]);
 
   const filtered = useMemo(() => {
@@ -573,6 +580,25 @@ const Personalstamm = () => {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
+                onClick={() => {
+                  const link = `${window.location.origin}/onboarding/new`;
+                  navigator.clipboard.writeText(link).then(() => toast.success('Anmelde-Link kopiert!'));
+                }}
+              >
+                <LinkIcon className="h-3.5 w-3.5 mr-1" />
+                Anmelde-Link
+                {pendingEmployees.length > 0 && (
+                  <span className="ml-1.5 bg-amber-500 text-white rounded-full text-[10px] px-1.5 py-0 leading-4 font-bold">
+                    {pendingEmployees.length}
+                  </span>
+                )}
+              </Button>
+            )}
             {canEditEmployees && (
               <Button size="sm" onClick={handleNew} className="h-8">
                 <Plus className="h-3.5 w-3.5 mr-1" />
@@ -666,17 +692,62 @@ const Personalstamm = () => {
             <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
               Wird geladen…
             </div>
-          ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 px-6 text-center gap-2">
-              <Users className="h-8 w-8 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">Keine Mitarbeiter gefunden</p>
-              {canEditEmployees && (
-                <Button variant="outline" size="sm" onClick={handleNew} className="mt-2">
-                  <Plus className="h-3.5 w-3.5 mr-1" /> Neuer Mitarbeiter
-                </Button>
-              )}
-            </div>
           ) : (
+            <>
+              {/* ── Ausstehende Anmeldungen ── */}
+              {isAdmin && pendingEmployees.length > 0 && (
+                <div className="border-b border-amber-200">
+                  <div className="px-4 py-2 bg-amber-50 sticky top-0 z-10 flex items-center gap-2">
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                    <span className="text-xs font-semibold text-amber-800">
+                      Ausstehende Anmeldungen ({pendingEmployees.length})
+                    </span>
+                  </div>
+                  <ul className="divide-y divide-amber-100">
+                    {pendingEmployees.map(emp => {
+                      const isSelected = selectedId === emp.id;
+                      return (
+                        <li key={emp.id}>
+                          <button
+                            onClick={() => selectEmployee(emp)}
+                            className={cn(
+                              'w-full text-left px-4 py-3 hover:bg-amber-50/60 transition-colors flex items-center gap-3',
+                              isSelected && 'bg-amber-100/60 border-l-2 border-amber-500',
+                            )}
+                          >
+                            <div className="w-8 h-8 rounded-full bg-amber-200 flex items-center justify-center shrink-0 text-amber-800 font-semibold text-sm">
+                              {emp.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-slate-800 truncate">{emp.name}</p>
+                              <p className="text-xs text-amber-700 truncate">
+                                {emp.email ?? emp.phone ?? 'Selbst-Anmeldung'}
+                              </p>
+                            </div>
+                            <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 font-semibold shrink-0">
+                              NEU
+                            </span>
+                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {/* ── Reguläre Mitarbeiter ── */}
+              {filtered.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 px-6 text-center gap-2">
+                  <Users className="h-8 w-8 text-muted-foreground/40" />
+                  <p className="text-sm text-muted-foreground">Keine Mitarbeiter gefunden</p>
+                  {canEditEmployees && (
+                    <Button variant="outline" size="sm" onClick={handleNew} className="mt-2">
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Neuer Mitarbeiter
+                    </Button>
+                  )}
+                </div>
+              ) : (
             <ul className="divide-y divide-border">
               {filtered.map(emp => {
                 const local  = getLocalEntry(localData, emp.id);
@@ -733,6 +804,8 @@ const Personalstamm = () => {
                 );
               })}
             </ul>
+              )}
+            </>
           )}
         </aside>
 
@@ -765,6 +838,58 @@ const Personalstamm = () => {
               >
                 <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Zurück
               </Button>
+
+              {/* ── Aktivierungs-Banner für neue Selbst-Anmeldungen ── */}
+              {!editMode && selectedEmp?.employeeStatus === 'pending_review' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start justify-between gap-3 flex-wrap">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-full bg-amber-200 flex items-center justify-center shrink-0 mt-0.5">
+                      <AlertTriangle className="h-4 w-4 text-amber-700" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-amber-900">Neue Selbst-Anmeldung</p>
+                      <p className="text-xs text-amber-700 mt-0.5">
+                        Bitte interne Felder prüfen und ergänzen, dann Mitarbeiter aktivieren.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50"
+                      onClick={async () => {
+                        if (!selectedEmp) return;
+                        if (!window.confirm(`Anmeldung von ${selectedEmp.name} wirklich ablehnen und löschen?`)) return;
+                        await deleteEmployee(selectedEmp.id);
+                        setEmployees(prev => prev.filter(e => e.id !== selectedEmp.id));
+                        setSelectedId(null);
+                        toast.success(`Anmeldung von ${selectedEmp.name} abgelehnt.`);
+                      }}
+                    >
+                      Ablehnen
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
+                      onClick={async () => {
+                        if (!selectedEmp) return;
+                        const ok = await activateEmployee(selectedEmp.id);
+                        if (ok) {
+                          const updated = { ...selectedEmp, employeeStatus: 'active' as const };
+                          setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
+                          toast.success(`${selectedEmp.name} wurde aktiviert!`);
+                        } else {
+                          toast.error('Aktivierung fehlgeschlagen. Bitte nochmals versuchen.');
+                        }
+                      }}
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                      Aktivieren
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {/* Kopfzeile */}
               <div className="flex items-start justify-between gap-3 flex-wrap">

@@ -58,6 +58,8 @@ const employeeToDb = (emp: Employee) => ({
   is_limited_contract:      emp.isLimitedContract       ?? false,
   trial_period_months:      emp.trialPeriodMonths       ?? null,
   // notice_period_weeks entfernt (wird jetzt automatisch abgeleitet)
+  // ── Mitarbeiterstatus ────────────────────────────────────────────────────
+  employee_status:          emp.employeeStatus          ?? 'active',
   // ── Onboarding ───────────────────────────────────────────────────────────
   onboarding_status:        emp.onboardingStatus        ?? 'none',
   onboarding_token:         emp.onboardingToken         ?? null,
@@ -105,6 +107,7 @@ const dbToEmployee = (row: any): Employee => ({
   trialPeriodMonths:      (row.trial_period_months != null ? Number(row.trial_period_months) as 0|1|2|3 : undefined),
   // noticePeriodWeeks wird nicht mehr gelesen – automatisch abgeleitet
   // ── Onboarding ───────────────────────────────────────────────────────────
+  employeeStatus:         row.employee_status           ?? undefined,
   onboardingStatus:       row.onboarding_status         ?? undefined,
   onboardingToken:        row.onboarding_token          ?? undefined,
   onboardingDocuments:    row.onboarding_documents      ?? undefined,
@@ -482,6 +485,69 @@ export async function submitOnboardingData(
     return true;
   } catch (e) {
     console.error('[submitOnboardingData] exception:', e);
+    return false;
+  }
+}
+
+/** Neuen Mitarbeiter aus Selbst-Anmeldung anlegen (pending_review) */
+export async function createPendingEmployee(data: {
+  name: string;
+  employmentType?: string;
+  positionTitle?: string;
+  contractStart?: string;
+  birthDate?: string;
+  nationality?: string;
+  phone?: string;
+  email?: string;
+  addressStreet?: string;
+  addressZip?: string;
+  addressCity?: string;
+  ahvNumber?: string;
+  iban?: string;
+  documents?: OnboardingDoc[];
+}): Promise<string | null> {
+  try {
+    const id = crypto.randomUUID();
+    const { error } = await supabase.from('employees').insert({
+      id,
+      name:                 data.name,
+      department:           'service',
+      employment_type:      data.employmentType ?? 'aushilfe',
+      hourly_wage:          0,
+      employee_status:      'pending_review',
+      onboarding_status:    'completed',
+      position_title:       data.positionTitle  ?? null,
+      contract_start:       data.contractStart  ?? null,
+      birth_date:           data.birthDate       ?? null,
+      nationality:          data.nationality     ?? null,
+      phone:                data.phone           ?? null,
+      email:                data.email           ?? null,
+      address_street:       data.addressStreet   ?? null,
+      address_zip:          data.addressZip      ?? null,
+      address_city:         data.addressCity     ?? null,
+      ahv_number:           data.ahvNumber       ?? null,
+      iban:                 data.iban            ?? null,
+      onboarding_documents: data.documents?.length ? JSON.stringify(data.documents) : null,
+    });
+    if (error) { console.error('[createPendingEmployee] error:', error); return null; }
+    return id;
+  } catch (e) {
+    console.error('[createPendingEmployee] exception:', e);
+    return null;
+  }
+}
+
+/** Mitarbeiter aktivieren (pending_review → active) */
+export async function activateEmployee(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('employees')
+      .update({ employee_status: 'active' })
+      .eq('id', id);
+    if (error) { console.error('[activateEmployee] error:', error); return false; }
+    return true;
+  } catch (e) {
+    console.error('[activateEmployee] exception:', e);
     return false;
   }
 }

@@ -141,11 +141,12 @@ Alle HR-Felder liegen jetzt direkt im `Employee`-Objekt (Supabase):
 - `birthDate`, `nationality`, `phone`, `email`, `addressStreet`, `addressZip`, `addressCity`, `ahvNumber`, `iban`
 - `contractType`, `positionTitle`, `contractStart`, `contractEnd`, `isLimitedContract`, `trialPeriodMonths`, `noticePeriodWeeks`
 - `onboardingStatus` (`none`|`prepared`|`sent`|`in_progress`|`completed`), `onboardingToken`, `onboardingDocuments`
+- `employeeStatus` (`active`|`pending_review`) — `pending_review` = neue Selbst-Anmeldung wartet auf Admin-Aktivierung
 - `socialCostFactor` (Standard: 1.13), `has13thSalary`
 
 **Minijob entfernt:** `EmploymentType` enthält `minijob` weiterhin für bestehende Daten, aber alle SelectItem-Optionen wurden entfernt.
 
-## SQL-Migrationen (beide ausführen!)
+## SQL-Migrationen (alle 3 ausführen — in Reihenfolge!)
 
 **Migration 1:** `supabase/migrations/20260315_hr_fields_extension.sql`
 - Basis-HR-Felder (employment_end_date, trial_period_months, etc.)
@@ -156,26 +157,39 @@ Alle HR-Felder liegen jetzt direkt im `Employee`-Objekt (Supabase):
 - Supabase Storage Bucket `onboarding-docs`
 - RLS-Policies für anonymen Onboarding-Zugriff (nur via Token)
 
+**Migration 3:** `supabase/migrations/20260315_employee_self_registration.sql`
+- `employee_status VARCHAR DEFAULT 'active'` Spalte
+- RLS-Policy für anonymen INSERT mit `pending_review` Status
+
 ## Onboarding-Link-Flow
 
 Public Route: `/onboarding/:token` — ohne Login erreichbar (BrowserRouter ist jetzt auf App-Ebene)
 
-Datei: `src/pages/OnboardingForm.tsx` — Employee-seitige öffentliche Seite
-- Token-Validierung beim Laden
+**Modus 1: Bestehender Mitarbeiter** (`/onboarding/<uuid-token>`)
+- Token-Validierung beim Laden → Daten vorbefüllt
 - Setzt Status automatisch auf `in_progress` wenn Link geöffnet wird
-- 5 Sektionen: Persönliche Daten, Kontakt, Adresse, Bankdaten, Dokumente
-- File-Upload via Supabase Storage Bucket `onboarding-docs`
-- Speichert Daten zurück in employee record und setzt Status auf `completed`
+- Speichert Daten zurück in bestehendem employee record, Status → `completed`
 
-Datei: `src/lib/supabase-db.ts` — neue Funktionen:
+**Modus 2: Neue Selbst-Anmeldung** (`/onboarding/new`)
+- Generischer Link ohne Mitarbeiter-Record nötig
+- Formular inkl. Name, Stellenwunsch, Eintrittstermin, Beschäftigungsart
+- Erstellt neuen Employee-Record mit `employee_status = 'pending_review'`
+- Admin-seitige Aktivierung oder Ablehnung in Personalstamm
+
+Datei: `src/lib/supabase-db.ts` — Funktionen:
 - `findEmployeeByToken(token)` — Employee per Token laden (anon)
 - `markOnboardingInProgress(id)` — Status → in_progress
 - `submitOnboardingData(id, formData, docs)` — Daten speichern + completed
 - `uploadOnboardingFile(id, file, type)` — Datei in Storage hochladen
+- `createPendingEmployee(data)` — Neuer Employee mit `pending_review` anlegen
+- `activateEmployee(id)` — `employee_status` → `active`
 
-Admin-Sicht (Personalstamm): Echter Link-URL wird angezeigt, Copy + "Link testen" Buttons
+**Admin-Sicht (Personalstamm):**
+- "Anmelde-Link"-Button im Header mit Badge-Zähler für pending Einträge
+- "Ausstehende Anmeldungen" Sektion oben in der Mitarbeiterliste (orange)
+- Detail-Banner für pending Employee: Prüfen → "Ablehnen" oder "Aktivieren"
 
 ## Nächste Schritte
-1. **KRITISCH**: Beide SQL-Migrationen im Supabase SQL-Editor ausführen (in Reihenfolge)
+1. **KRITISCH**: Alle 3 SQL-Migrationen im Supabase SQL-Editor ausführen (in Reihenfolge)
 2. Manager-Accounts in Supabase Authentication erstellen
 3. E-Mail-Versand für Onboarding-Link hinzufügen

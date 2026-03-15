@@ -45,6 +45,9 @@ export interface Employee {
   // noticePeriodWeeks entfernt – wird automatisch aus Probezeit abgeleitet:
   //   Während Probezeit: 3 Arbeitstage | Nach Probezeit: 1 Monat auf Monatsende
 
+  // ─── Mitarbeiterstatus ──────────────────────────────────────────────────
+  employeeStatus?: 'active' | 'pending_review'; // pending_review = neue Selbst-Anmeldung (noch nicht aktiviert)
+
   // ─── Onboarding ────────────────────────────────────────────────────────
   onboardingStatus?: 'none' | 'prepared' | 'sent' | 'in_progress' | 'completed';
   onboardingToken?: string;         // UUID-Token für persönlichen Onboarding-Link
