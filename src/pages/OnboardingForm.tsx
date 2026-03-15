@@ -34,6 +34,9 @@ import {
   CreditCard,
   Paperclip,
   Briefcase,
+  Shield,
+  Info,
+  Heart,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -51,6 +54,10 @@ interface PendingFile {
 interface SharedFormData {
   birthDate: string;
   nationality: string;
+  permitType: string;   // 'swiss' | 'C' | 'B' | 'L' | 'G' | 'other' | ''
+  maritalStatus: string; // 'single' | 'married' | 'divorced' | 'widowed' | ''
+  spouseEmployed: string;            // 'yes' | 'no' | ''
+  spouseLivesInSwitzerland: string;  // 'yes' | 'no' | ''
   phone: string;
   email: string;
   addressStreet: string;
@@ -94,7 +101,9 @@ export default function OnboardingForm() {
   const [submitting, setSubmitting] = useState(false);
 
   const [formData, setFormData] = useState<SharedFormData>({
-    birthDate: '', nationality: '', phone: '', email: '',
+    birthDate: '', nationality: '', permitType: '', maritalStatus: '',
+    spouseEmployed: '', spouseLivesInSwitzerland: '',
+    phone: '', email: '',
     addressStreet: '', addressZip: '', addressCity: '',
     ahvNumber: '', iban: '',
   });
@@ -130,15 +139,19 @@ export default function OnboardingForm() {
       }
       setEmployee(emp);
       setFormData({
-        birthDate:     emp.birthDate     ?? '',
-        nationality:   emp.nationality   ?? '',
-        phone:         emp.phone         ?? '',
-        email:         emp.email         ?? '',
-        addressStreet: emp.addressStreet ?? '',
-        addressZip:    emp.addressZip    ?? '',
-        addressCity:   emp.addressCity   ?? '',
-        ahvNumber:     emp.ahvNumber     ?? '',
-        iban:          emp.iban          ?? '',
+        birthDate:               emp.birthDate     ?? '',
+        nationality:             emp.nationality   ?? '',
+        permitType:              emp.permitType    ?? '',
+        maritalStatus:           emp.maritalStatus ?? '',
+        spouseEmployed:          emp.spouseEmployed === true ? 'yes' : emp.spouseEmployed === false ? 'no' : '',
+        spouseLivesInSwitzerland: emp.spouseLivesInSwitzerland === true ? 'yes' : emp.spouseLivesInSwitzerland === false ? 'no' : '',
+        phone:                   emp.phone         ?? '',
+        email:                   emp.email         ?? '',
+        addressStreet:           emp.addressStreet ?? '',
+        addressZip:              emp.addressZip    ?? '',
+        addressCity:             emp.addressCity   ?? '',
+        ahvNumber:               emp.ahvNumber     ?? '',
+        iban:                    emp.iban          ?? '',
       });
       if (emp.onboardingStatus !== 'in_progress') {
         await markOnboardingInProgress(emp.id);
@@ -197,6 +210,10 @@ export default function OnboardingForm() {
     return docs;
   };
 
+  // ── Helper: convert 'yes'/'no'/'' to boolean|null ─────────────────────────
+  const toBool = (v: string): boolean | null =>
+    v === 'yes' ? true : v === 'no' ? false : null;
+
   // ── Submit: NEW employee registration ─────────────────────────────────────
   const handleSubmitNew = async () => {
     const fullName = `${newExtras.firstName.trim()} ${newExtras.lastName.trim()}`.trim();
@@ -207,25 +224,28 @@ export default function OnboardingForm() {
     setSubmitting(true);
     setErrorMsg('');
 
-    // Create a temporary ID for file upload (will be overridden by real record)
     const tempId = crypto.randomUUID();
     const docs = await uploadFiles(tempId);
 
     const newId = await createPendingEmployee({
-      name:                 fullName,
-      employmentType:       newExtras.preferredEmploymentType || 'aushilfe',
-      positionTitle:        newExtras.desiredPosition         || undefined,
-      contractStart:        newExtras.desiredStartDate        || undefined,
-      birthDate:            formData.birthDate                || undefined,
-      nationality:          formData.nationality              || undefined,
-      phone:                formData.phone                    || undefined,
-      email:                formData.email                    || undefined,
-      addressStreet:        formData.addressStreet            || undefined,
-      addressZip:           formData.addressZip               || undefined,
-      addressCity:          formData.addressCity              || undefined,
-      ahvNumber:            formData.ahvNumber                || undefined,
-      iban:                 formData.iban                     || undefined,
-      documents:            docs,
+      name:                    fullName,
+      employmentType:          newExtras.preferredEmploymentType || 'aushilfe',
+      positionTitle:           newExtras.desiredPosition         || undefined,
+      contractStart:           newExtras.desiredStartDate        || undefined,
+      birthDate:               formData.birthDate                || undefined,
+      nationality:             formData.nationality              || undefined,
+      permitType:              formData.permitType               || undefined,
+      maritalStatus:           formData.maritalStatus            || undefined,
+      spouseEmployed:          toBool(formData.spouseEmployed),
+      spouseLivesInSwitzerland: toBool(formData.spouseLivesInSwitzerland),
+      phone:                   formData.phone                    || undefined,
+      email:                   formData.email                    || undefined,
+      addressStreet:           formData.addressStreet            || undefined,
+      addressZip:              formData.addressZip               || undefined,
+      addressCity:             formData.addressCity              || undefined,
+      ahvNumber:               formData.ahvNumber                || undefined,
+      iban:                    formData.iban                     || undefined,
+      documents:               docs,
     });
 
     setSubmitting(false);
@@ -242,7 +262,11 @@ export default function OnboardingForm() {
     setSubmitting(true);
     setErrorMsg('');
     const docs = await uploadFiles(employee.id);
-    const ok = await submitOnboardingData(employee.id, formData, docs);
+    const ok = await submitOnboardingData(employee.id, {
+      ...formData,
+      spouseEmployed:           toBool(formData.spouseEmployed),
+      spouseLivesInSwitzerland: toBool(formData.spouseLivesInSwitzerland),
+    }, docs);
     setSubmitting(false);
     if (ok) {
       setPhase('success');
@@ -381,8 +405,97 @@ export default function OnboardingForm() {
               <Input id="nationality" placeholder="z.B. Schweiz, Deutschland"
                 value={formData.nationality} onChange={setField('nationality')} />
             </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="permitType">Aufenthaltsstatus <span className="text-red-500">*</span></Label>
+              <Select value={formData.permitType}
+                onValueChange={v => setFormData(prev => ({ ...prev, permitType: v }))}>
+                <SelectTrigger id="permitType"><SelectValue placeholder="Bitte wählen…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="swiss">Schweizer Bürger/in</SelectItem>
+                  <SelectItem value="C">Ausweis C – Niederlassungsbewilligung</SelectItem>
+                  <SelectItem value="B">Ausweis B – Aufenthaltsbewilligung</SelectItem>
+                  <SelectItem value="L">Ausweis L – Kurzaufenthaltsbewilligung</SelectItem>
+                  <SelectItem value="G">Ausweis G – Grenzgängerbewilligung</SelectItem>
+                  <SelectItem value="other">Andere / Sonstiges</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="maritalStatus">Zivilstand</Label>
+              <Select value={formData.maritalStatus}
+                onValueChange={v => setFormData(prev => ({ ...prev, maritalStatus: v }))}>
+                <SelectTrigger id="maritalStatus"><SelectValue placeholder="Bitte wählen…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="single">Ledig</SelectItem>
+                  <SelectItem value="married">Verheiratet</SelectItem>
+                  <SelectItem value="divorced">Geschieden</SelectItem>
+                  <SelectItem value="widowed">Verwitwet</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </Section>
+
+        {/* ── Quellensteuer-relevante Angaben (nur wenn B/L/G/other) ── */}
+        {(() => {
+          const isSwissOrC = formData.permitType === 'swiss' || formData.permitType === 'C';
+          if (!formData.permitType || isSwissOrC) return null;
+          const showSpouse = formData.maritalStatus === 'married';
+          return (
+            <Section icon={<Shield className="w-4 h-4" />} title="Quellensteuer-relevante Angaben" color="amber">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                <div className="flex items-start gap-2">
+                  <Info className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
+                  <p className="text-xs text-amber-800">
+                    Als Person ohne Schweizer Bürgerrecht oder Niederlassungsbewilligung C unterliegen Sie in der Schweiz der <strong>Quellensteuer</strong> (direkt vom Lohn abgezogen).
+                    Die folgenden Angaben werden für die Ermittlung des korrekten Quellensteuertarifs benötigt.
+                  </p>
+                </div>
+              </div>
+
+              {showSpouse && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Heart className="w-3.5 h-3.5 text-rose-500" />
+                    <p className="text-xs font-semibold text-slate-700">Angaben zum Ehepartner / zur Ehepartnerin</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="spouseEmployed">Ist Ihr/e Partner/in erwerbstätig?</Label>
+                      <Select value={formData.spouseEmployed}
+                        onValueChange={v => setFormData(prev => ({ ...prev, spouseEmployed: v }))}>
+                        <SelectTrigger id="spouseEmployed"><SelectValue placeholder="Bitte wählen…" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="yes">Ja, erwerbstätig</SelectItem>
+                          <SelectItem value="no">Nein, nicht erwerbstätig</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-slate-500">Relevant für den Tarif (C1 vs. C2)</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="spouseLivesInSwitzerland">Wohnt Ihr/e Partner/in in der Schweiz?</Label>
+                      <Select value={formData.spouseLivesInSwitzerland}
+                        onValueChange={v => setFormData(prev => ({ ...prev, spouseLivesInSwitzerland: v }))}>
+                        <SelectTrigger id="spouseLivesInSwitzerland"><SelectValue placeholder="Bitte wählen…" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="yes">Ja, Wohnsitz in der Schweiz</SelectItem>
+                          <SelectItem value="no">Nein, Wohnsitz im Ausland</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-slate-500">Relevant für Tarifgruppe und Abzüge</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!showSpouse && (
+                <p className="text-xs text-slate-500">
+                  Keine weiteren Angaben nötig. Bei einer zukünftigen Heirat bitte das HR-Team informieren.
+                </p>
+              )}
+            </Section>
+          );
+        })()}
 
         {/* ── Kontaktdaten ── */}
         <Section icon={<Phone className="w-4 h-4" />} title="Kontaktdaten" color="slate">
@@ -448,10 +561,27 @@ export default function OnboardingForm() {
 
         {/* ── Dokumente ── */}
         <Section icon={<Paperclip className="w-4 h-4" />} title="Dokumente hochladen" color="slate">
-          <p className="text-sm text-slate-600 mb-4">
+          <p className="text-sm text-slate-600 mb-3">
             Bitte laden Sie ein Bild oder Scan Ihres Ausweises / Passes hoch.
-            Optional können Sie auch die Aufenthaltsbewilligung und weitere Dokumente beifügen.
           </p>
+          {formData.permitType && formData.permitType !== 'swiss' && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3 flex items-start gap-2">
+              <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+              <p className="text-xs text-blue-800">
+                <strong>Hinweis:</strong> Da Sie einen{' '}
+                {formData.permitType === 'C' ? 'Ausweis C' :
+                 formData.permitType === 'B' ? 'Ausweis B' :
+                 formData.permitType === 'L' ? 'Ausweis L' :
+                 formData.permitType === 'G' ? 'Ausweis G' : 'anderen Aufenthaltstitel'} besitzen,
+                laden Sie bitte auch diesen Aufenthaltstitel hoch (Vorder- und Rückseite).
+              </p>
+            </div>
+          )}
+          {(!formData.permitType || formData.permitType === 'swiss') && (
+            <p className="text-xs text-slate-500 mb-3">
+              Optional können Sie auch weitere Dokumente beifügen.
+            </p>
+          )}
           <FileUploadArea
             files={pendingFiles}
             onSelect={handleFileSelect}

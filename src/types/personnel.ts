@@ -45,6 +45,12 @@ export interface Employee {
   // noticePeriodWeeks entfernt – wird automatisch aus Probezeit abgeleitet:
   //   Während Probezeit: 3 Arbeitstage | Nach Probezeit: 1 Monat auf Monatsende
 
+  // ─── Quellensteuer / Aufenthalt ─────────────────────────────────────────
+  permitType?: 'swiss' | 'C' | 'B' | 'L' | 'G' | 'other'; // Aufenthaltsstatus
+  maritalStatus?: 'single' | 'married' | 'divorced' | 'widowed';  // Zivilstand
+  spouseEmployed?: boolean;              // Ehepartner erwerbstätig?
+  spouseLivesInSwitzerland?: boolean;    // Ehepartner wohnt in CH?
+
   // ─── Mitarbeiterstatus ──────────────────────────────────────────────────
   employeeStatus?: 'active' | 'pending_review'; // pending_review = neue Selbst-Anmeldung (noch nicht aktiviert)
 

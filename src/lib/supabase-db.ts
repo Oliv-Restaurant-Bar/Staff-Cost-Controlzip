@@ -58,6 +58,11 @@ const employeeToDb = (emp: Employee) => ({
   is_limited_contract:      emp.isLimitedContract       ?? false,
   trial_period_months:      emp.trialPeriodMonths       ?? null,
   // notice_period_weeks entfernt (wird jetzt automatisch abgeleitet)
+  // ── Quellensteuer / Aufenthalt ───────────────────────────────────────────
+  permit_type:              emp.permitType              ?? null,
+  marital_status:           emp.maritalStatus           ?? null,
+  spouse_employed:          emp.spouseEmployed          ?? null,
+  spouse_lives_in_switzerland: emp.spouseLivesInSwitzerland ?? null,
   // ── Mitarbeiterstatus ────────────────────────────────────────────────────
   employee_status:          emp.employeeStatus          ?? 'active',
   // ── Onboarding ───────────────────────────────────────────────────────────
@@ -107,6 +112,10 @@ const dbToEmployee = (row: any): Employee => ({
   trialPeriodMonths:      (row.trial_period_months != null ? Number(row.trial_period_months) as 0|1|2|3 : undefined),
   // noticePeriodWeeks wird nicht mehr gelesen – automatisch abgeleitet
   // ── Onboarding ───────────────────────────────────────────────────────────
+  permitType:             row.permit_type               ?? undefined,
+  maritalStatus:          row.marital_status            ?? undefined,
+  spouseEmployed:         row.spouse_employed           ?? undefined,
+  spouseLivesInSwitzerland: row.spouse_lives_in_switzerland ?? undefined,
   employeeStatus:         row.employee_status           ?? undefined,
   onboardingStatus:       row.onboarding_status         ?? undefined,
   onboardingToken:        row.onboarding_token          ?? undefined,
@@ -376,9 +385,13 @@ export interface OnboardingPublicEmployee {
   positionTitle?: string;
   contractStart?: string;
   contractType?: string;
-  // Pre-fillable fields
+  // Pre-fillable personal fields
   birthDate?: string;
   nationality?: string;
+  permitType?: string;
+  maritalStatus?: string;
+  spouseEmployed?: boolean;
+  spouseLivesInSwitzerland?: boolean;
   phone?: string;
   email?: string;
   addressStreet?: string;
@@ -396,7 +409,9 @@ export async function findEmployeeByToken(token: string): Promise<OnboardingPubl
       .select(`
         id, name, department, onboarding_status,
         position_title, contract_start, contract_type,
-        birth_date, nationality, phone, email,
+        birth_date, nationality, permit_type, marital_status,
+        spouse_employed, spouse_lives_in_switzerland,
+        phone, email,
         address_street, address_zip, address_city,
         ahv_number, iban
       `)
@@ -409,22 +424,26 @@ export async function findEmployeeByToken(token: string): Promise<OnboardingPubl
     }
 
     return {
-      id:               data.id,
-      name:             data.name,
-      department:       data.department,
-      onboardingStatus: data.onboarding_status,
-      positionTitle:    data.position_title    ?? undefined,
-      contractStart:    data.contract_start    ?? undefined,
-      contractType:     data.contract_type     ?? undefined,
-      birthDate:        data.birth_date        ?? undefined,
-      nationality:      data.nationality       ?? undefined,
-      phone:            data.phone             ?? undefined,
-      email:            data.email             ?? undefined,
-      addressStreet:    data.address_street    ?? undefined,
-      addressZip:       data.address_zip       ?? undefined,
-      addressCity:      data.address_city      ?? undefined,
-      ahvNumber:        data.ahv_number        ?? undefined,
-      iban:             data.iban              ?? undefined,
+      id:                      data.id,
+      name:                    data.name,
+      department:              data.department,
+      onboardingStatus:        data.onboarding_status,
+      positionTitle:           data.position_title           ?? undefined,
+      contractStart:           data.contract_start           ?? undefined,
+      contractType:            data.contract_type            ?? undefined,
+      birthDate:               data.birth_date               ?? undefined,
+      nationality:             data.nationality              ?? undefined,
+      permitType:              data.permit_type              ?? undefined,
+      maritalStatus:           data.marital_status           ?? undefined,
+      spouseEmployed:          data.spouse_employed          ?? undefined,
+      spouseLivesInSwitzerland: data.spouse_lives_in_switzerland ?? undefined,
+      phone:                   data.phone                    ?? undefined,
+      email:                   data.email                    ?? undefined,
+      addressStreet:           data.address_street           ?? undefined,
+      addressZip:              data.address_zip              ?? undefined,
+      addressCity:             data.address_city             ?? undefined,
+      ahvNumber:               data.ahv_number               ?? undefined,
+      iban:                    data.iban                     ?? undefined,
     };
   } catch (e) {
     console.error('[findEmployeeByToken] exception:', e);
@@ -457,6 +476,10 @@ export async function submitOnboardingData(
     addressCity?: string;
     ahvNumber?: string;
     iban?: string;
+    permitType?: string;
+    maritalStatus?: string;
+    spouseEmployed?: boolean | null;
+    spouseLivesInSwitzerland?: boolean | null;
   },
   documents: OnboardingDoc[]
 ): Promise<boolean> {
@@ -464,17 +487,21 @@ export async function submitOnboardingData(
     const { error } = await supabase
       .from('employees')
       .update({
-        birth_date:           formData.birthDate        || null,
-        nationality:          formData.nationality      || null,
-        phone:                formData.phone            || null,
-        email:                formData.email            || null,
-        address_street:       formData.addressStreet    || null,
-        address_zip:          formData.addressZip       || null,
-        address_city:         formData.addressCity      || null,
-        ahv_number:           formData.ahvNumber        || null,
-        iban:                 formData.iban             || null,
-        onboarding_documents: documents.length > 0 ? JSON.stringify(documents) : null,
-        onboarding_status:    'completed',
+        birth_date:                  formData.birthDate        || null,
+        nationality:                 formData.nationality      || null,
+        phone:                       formData.phone            || null,
+        email:                       formData.email            || null,
+        address_street:              formData.addressStreet    || null,
+        address_zip:                 formData.addressZip       || null,
+        address_city:                formData.addressCity      || null,
+        ahv_number:                  formData.ahvNumber        || null,
+        iban:                        formData.iban             || null,
+        permit_type:                 formData.permitType       || null,
+        marital_status:              formData.maritalStatus    || null,
+        spouse_employed:             formData.spouseEmployed   ?? null,
+        spouse_lives_in_switzerland: formData.spouseLivesInSwitzerland ?? null,
+        onboarding_documents:        documents.length > 0 ? JSON.stringify(documents) : null,
+        onboarding_status:           'completed',
       })
       .eq('id', employeeId);
 
@@ -504,30 +531,38 @@ export async function createPendingEmployee(data: {
   addressCity?: string;
   ahvNumber?: string;
   iban?: string;
+  permitType?: string;
+  maritalStatus?: string;
+  spouseEmployed?: boolean | null;
+  spouseLivesInSwitzerland?: boolean | null;
   documents?: OnboardingDoc[];
 }): Promise<string | null> {
   try {
     const id = crypto.randomUUID();
     const { error } = await supabase.from('employees').insert({
       id,
-      name:                 data.name,
-      department:           'service',
-      employment_type:      data.employmentType ?? 'aushilfe',
-      hourly_wage:          0,
-      employee_status:      'pending_review',
-      onboarding_status:    'completed',
-      position_title:       data.positionTitle  ?? null,
-      contract_start:       data.contractStart  ?? null,
-      birth_date:           data.birthDate       ?? null,
-      nationality:          data.nationality     ?? null,
-      phone:                data.phone           ?? null,
-      email:                data.email           ?? null,
-      address_street:       data.addressStreet   ?? null,
-      address_zip:          data.addressZip      ?? null,
-      address_city:         data.addressCity     ?? null,
-      ahv_number:           data.ahvNumber       ?? null,
-      iban:                 data.iban            ?? null,
-      onboarding_documents: data.documents?.length ? JSON.stringify(data.documents) : null,
+      name:                        data.name,
+      department:                  'service',
+      employment_type:             data.employmentType ?? 'aushilfe',
+      hourly_wage:                 0,
+      employee_status:             'pending_review',
+      onboarding_status:           'completed',
+      position_title:              data.positionTitle  ?? null,
+      contract_start:              data.contractStart  ?? null,
+      birth_date:                  data.birthDate       ?? null,
+      nationality:                 data.nationality     ?? null,
+      phone:                       data.phone           ?? null,
+      email:                       data.email           ?? null,
+      address_street:              data.addressStreet   ?? null,
+      address_zip:                 data.addressZip      ?? null,
+      address_city:                data.addressCity     ?? null,
+      ahv_number:                  data.ahvNumber       ?? null,
+      iban:                        data.iban            ?? null,
+      permit_type:                 data.permitType      ?? null,
+      marital_status:              data.maritalStatus   ?? null,
+      spouse_employed:             data.spouseEmployed  ?? null,
+      spouse_lives_in_switzerland: data.spouseLivesInSwitzerland ?? null,
+      onboarding_documents:        data.documents?.length ? JSON.stringify(data.documents) : null,
     });
     if (error) { console.error('[createPendingEmployee] error:', error); return null; }
     return id;

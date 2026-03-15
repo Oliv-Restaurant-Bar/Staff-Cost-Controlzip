@@ -161,6 +161,12 @@ Alle HR-Felder liegen jetzt direkt im `Employee`-Objekt (Supabase):
 - `employee_status VARCHAR DEFAULT 'active'` Spalte
 - RLS-Policy für anonymen INSERT mit `pending_review` Status
 
+**Migration 4:** `supabase/migrations/20260315_quellensteuer_fields.sql`
+- `permit_type VARCHAR` — Aufenthaltsstatus (swiss/C/B/L/G/other)
+- `marital_status VARCHAR` — Zivilstand (single/married/divorced/widowed)
+- `spouse_employed BOOLEAN` — Ehepartner erwerbstätig?
+- `spouse_lives_in_switzerland BOOLEAN` — Ehepartner wohnt in CH?
+
 ## Onboarding-Link-Flow
 
 Public Route: `/onboarding/:token` — ohne Login erreichbar (BrowserRouter ist jetzt auf App-Ebene)
