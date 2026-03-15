@@ -365,3 +365,63 @@ export const DEPARTMENT_LABELS: Record<string, string> = {
   general: 'Allgemein',
   admin:   'Verwaltung',
 };
+
+// ─── Auto-Zuweisung nach Kontonummer ──────────────────────────────────────────
+
+/**
+ * Automatische Kategorie-/Abschnitts-Zuweisung basierend auf Kontonummern-Bereich.
+ * Wird beim CSV/PDF-Import des Kontenplans verwendet.
+ *
+ *   3000–3999 → Nettoumsatz (Ertrag)
+ *   4000–4999 → Wareneinsatz (Aufwand)
+ *   5000–5999 → Personalkosten (Aufwand)
+ *   6000–6999 → Betriebskosten (Aufwand)
+ */
+export function autoAssignFromNumber(accountNumber: string): {
+  plSection:  PLSection;
+  plCategory: PLCategory;
+  sign:       AccountSign;
+  department: DepartmentHint;
+} {
+  const n = parseInt(accountNumber, 10);
+
+  if (n >= 3000 && n <= 3099) return { plSection: 'net_revenue',       plCategory: 'revenue_food',      sign: 'income',  department: 'kitchen' };
+  if (n >= 3100 && n <= 3199) return { plSection: 'net_revenue',       plCategory: 'revenue_beverage',  sign: 'income',  department: 'service' };
+  if (n >= 3000 && n <= 3899) return { plSection: 'net_revenue',       plCategory: 'revenue_food',      sign: 'income',  department: 'general' };
+  if (n >= 3900 && n <= 3999) return { plSection: 'net_revenue',       plCategory: 'revenue_other',     sign: 'income',  department: 'general' };
+
+  if (n >= 4000 && n <= 4049) return { plSection: 'cogs',              plCategory: 'cogs_food',         sign: 'expense', department: 'kitchen' };
+  if (n >= 4050 && n <= 4099) return { plSection: 'cogs',              plCategory: 'cogs_beverage',     sign: 'expense', department: 'service' };
+  if (n >= 4000 && n <= 4999) return { plSection: 'cogs',              plCategory: 'cogs_other',        sign: 'expense', department: 'general' };
+
+  if (n >= 5000 && n <= 5009) return { plSection: 'personnel',         plCategory: 'personnel_kitchen', sign: 'expense', department: 'kitchen' };
+  if (n >= 5010 && n <= 5019) return { plSection: 'personnel',         plCategory: 'personnel_social',  sign: 'expense', department: 'general' };
+  if (n >= 5000 && n <= 5049) return { plSection: 'personnel',         plCategory: 'personnel_service', sign: 'expense', department: 'service' };
+  if (n >= 5000 && n <= 5999) return { plSection: 'personnel',         plCategory: 'personnel_other',   sign: 'expense', department: 'general' };
+
+  if (n >= 6000 && n <= 6009) return { plSection: 'operating_expenses', plCategory: 'rent',             sign: 'expense', department: 'general' };
+  if (n >= 6010 && n <= 6019) return { plSection: 'operating_expenses', plCategory: 'utilities',        sign: 'expense', department: 'general' };
+  if (n >= 6020 && n <= 6029) return { plSection: 'operating_expenses', plCategory: 'cleaning',         sign: 'expense', department: 'general' };
+  if (n >= 6030 && n <= 6039) return { plSection: 'operating_expenses', plCategory: 'maintenance',      sign: 'expense', department: 'general' };
+  if (n >= 6100 && n <= 6119) return { plSection: 'operating_expenses', plCategory: 'insurance',        sign: 'expense', department: 'general' };
+  if (n >= 6200 && n <= 6299) return { plSection: 'operating_expenses', plCategory: 'marketing',        sign: 'expense', department: 'general' };
+  if (n >= 6300 && n <= 6399) return { plSection: 'operating_expenses', plCategory: 'bank_fees',        sign: 'expense', department: 'admin'   };
+  if (n >= 6400 && n <= 6499) return { plSection: 'operating_expenses', plCategory: 'admin_costs',      sign: 'expense', department: 'admin'   };
+  if (n >= 6900 && n <= 6999) return { plSection: 'depreciation_section', plCategory: 'depreciation',  sign: 'expense', department: 'general' };
+  if (n >= 6000 && n <= 6999) return { plSection: 'operating_expenses', plCategory: 'other_operating',  sign: 'expense', department: 'general' };
+
+  return { plSection: 'operating_expenses', plCategory: 'other_operating', sign: 'expense', department: 'general' };
+}
+
+/**
+ * Mehrere Konten als Custom-Mappings importieren (Batch).
+ * Bestehende Konten werden überschrieben.
+ */
+export function importAccountsBatch(accounts: Omit<AccountMapping, 'source'>[]): number {
+  let count = 0;
+  for (const acc of accounts) {
+    saveMappingCustom({ ...acc, source: 'custom' });
+    count++;
+  }
+  return count;
+}
