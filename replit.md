@@ -145,6 +145,15 @@ Alle HR-Felder liegen jetzt direkt im `Employee`-Objekt (Supabase):
 
 SQL-Migration: `supabase/migrations/20260315_hr_fields_extension.sql` — **muss einmalig im Supabase SQL-Editor ausgeführt werden**.
 
+Neue Felder in Migration (v2):
+- `employment_end_date DATE` — Austrittsdatum (allgemein, unabhängig von Vertragsart)
+- `trial_period_months` mit CHECK (0, 1, 2, 3) — Probezeit-Dropdown
+- `notice_period_weeks` bleibt als Legacy-Spalte erhalten, wird aber nicht mehr befüllt
+
+Kündigungsfrist-Logik (automatisch, kein Freitext-Feld):
+- Während Probezeit: **3 Arbeitstage** (OR Art. 335b)
+- Nach Probezeit: **1 Monat auf Monatsende** (OR Art. 335c)
+
 Automatische localStorage→Supabase-Migration beim ersten Load (einmalig): Wenn alte Daten in localStorage vorhanden (`personalInfo`, `contractFoundation`, `salaryExt`, `onboarding`), werden diese automatisch in Supabase geschrieben und aus localStorage entfernt.
 
 ## Nächste Schritte

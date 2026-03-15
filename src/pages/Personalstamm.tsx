@@ -79,8 +79,7 @@ interface ContractFoundation {
   contractStart?:     string;
   contractEnd?:       string;
   isLimited?:         boolean;
-  noticePeriodWeeks?: number;
-  trialPeriodMonths?: number;
+  trialPeriodMonths?: number;  // 0-3 (alte Werte, werden beim Migrieren auf 0|1|2|3 geclampt)
   probationEndDate?:  string;
 }
 
@@ -208,6 +207,33 @@ function generateToken(): string {
   });
 }
 
+/**
+ * Probezeit-Ende berechnen (contractStart + trialPeriodMonths).
+ * Gibt ISO-Datum zurück oder null.
+ */
+function calcProbationEnd(contractStart?: string, trialPeriodMonths?: 0|1|2|3): string | null {
+  if (!contractStart || !trialPeriodMonths || trialPeriodMonths === 0) return null;
+  const d = new Date(contractStart);
+  d.setMonth(d.getMonth() + trialPeriodMonths);
+  return d.toISOString().split('T')[0];
+}
+
+/** Ist der Mitarbeiter aktuell noch in der Probezeit? */
+function isInProbation(contractStart?: string, trialPeriodMonths?: 0|1|2|3, ref = new Date()): boolean {
+  const end = calcProbationEnd(contractStart, trialPeriodMonths);
+  if (!end) return false;
+  return ref < new Date(end);
+}
+
+/**
+ * Kündigungsfrist anzeigen:
+ * – Während Probezeit: 3 Arbeitstage (OR Art. 335b)
+ * – Nach Probezeit:    1 Monat auf Monatsende (OR Art. 335c)
+ */
+function noticePeriodLabel(inProb: boolean): string {
+  return inProb ? '3 Arbeitstage' : '1 Monat auf Monatsende';
+}
+
 function generateId(existing: Employee[]): string {
   const nums = existing.map(e => parseInt(e.id)).filter(n => !isNaN(n));
   const maxNum = nums.length > 0 ? Math.max(...nums) : 0;
@@ -327,13 +353,12 @@ const Personalstamm = () => {
             const c = loc.contractFoundation;
             updated = {
               ...updated,
-              contractType:       emp.contractType       ?? c.contractType,
-              positionTitle:      emp.positionTitle      ?? c.positionTitle,
-              contractStart:      emp.contractStart      ?? c.contractStart,
-              contractEnd:        emp.contractEnd        ?? c.contractEnd,
-              isLimitedContract:  emp.isLimitedContract  ?? c.isLimited,
-              trialPeriodMonths:  emp.trialPeriodMonths  ?? c.trialPeriodMonths,
-              noticePeriodWeeks:  emp.noticePeriodWeeks  ?? c.noticePeriodWeeks,
+              contractType:      emp.contractType      ?? c.contractType,
+              positionTitle:     emp.positionTitle     ?? c.positionTitle,
+              contractStart:     emp.contractStart     ?? c.contractStart,
+              contractEnd:       emp.contractEnd       ?? c.contractEnd,
+              isLimitedContract: emp.isLimitedContract ?? c.isLimited,
+              trialPeriodMonths: (emp.trialPeriodMonths ?? Math.min(c.trialPeriodMonths ?? 0, 3)) as 0|1|2|3,
             };
           }
           if (hasOnboarding && loc.onboarding) {
@@ -1345,6 +1370,7 @@ const Personalstamm = () => {
                       </Alert>
                       {editMode ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {/* Vertragsart */}
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block">Vertragsart</Label>
                             <Select
@@ -1359,6 +1385,7 @@ const Personalstamm = () => {
                               </SelectContent>
                             </Select>
                           </div>
+                          {/* Stellenbezeichnung */}
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
                               <Briefcase className="h-3 w-3" /> Stellenbezeichnung
@@ -1367,6 +1394,7 @@ const Personalstamm = () => {
                               value={editData?.positionTitle ?? ''}
                               onChange={e => setEditData(d => d ? { ...d, positionTitle: e.target.value || undefined } : d)} />
                           </div>
+                          {/* Eintrittsdatum */}
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
                               <Calendar className="h-3 w-3" /> Eintrittsdatum
@@ -1375,6 +1403,35 @@ const Personalstamm = () => {
                               value={editData?.contractStart ?? ''}
                               onChange={e => setEditData(d => d ? { ...d, contractStart: e.target.value || undefined } : d)} />
                           </div>
+                          {/* Austrittsdatum */}
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Austrittsdatum
+                              <span className="ml-1 text-[10px] opacity-60">falls bekannt</span>
+                            </Label>
+                            <Input type="date" className="h-9 text-sm"
+                              value={editData?.employmentEndDate ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, employmentEndDate: e.target.value || undefined } : d)} />
+                          </div>
+                          {/* Probezeit Dropdown */}
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Clock className="h-3 w-3" /> Probezeit
+                            </Label>
+                            <Select
+                              value={String(editData?.trialPeriodMonths ?? 0)}
+                              onValueChange={v => setEditData(d => d ? { ...d, trialPeriodMonths: parseInt(v) as 0|1|2|3 } : d)}
+                            >
+                              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="0">Keine Probezeit</SelectItem>
+                                <SelectItem value="1">1 Monat</SelectItem>
+                                <SelectItem value="2">2 Monate</SelectItem>
+                                <SelectItem value="3">3 Monate</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {/* Befristeter Vertrag */}
                           <div>
                             <Label className="text-xs text-muted-foreground mb-2 block">Befristeter Vertrag</Label>
                             <label className="flex items-center gap-2 cursor-pointer mb-1">
@@ -1385,42 +1442,101 @@ const Personalstamm = () => {
                               <span className="text-sm">Ja – Vertrag ist befristet</span>
                             </label>
                             {editData?.isLimitedContract && (
-                              <Input type="date" className="h-9 text-sm mt-1"
-                                value={editData?.contractEnd ?? ''}
-                                onChange={e => setEditData(d => d ? { ...d, contractEnd: e.target.value || undefined } : d)} />
+                              <>
+                                <Label className="text-[11px] text-muted-foreground mb-1 block">Vertragsende (befristet)</Label>
+                                <Input type="date" className="h-9 text-sm"
+                                  value={editData?.contractEnd ?? ''}
+                                  onChange={e => setEditData(d => d ? { ...d, contractEnd: e.target.value || undefined } : d)} />
+                              </>
                             )}
                           </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Clock className="h-3 w-3" /> Probezeit (Monate)
-                            </Label>
-                            <Input type="number" min="0" max="12" className="h-9 text-sm"
-                              placeholder="z.B. 3"
-                              value={editData?.trialPeriodMonths ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, trialPeriodMonths: parseInt(e.target.value) || undefined } : d)} />
-                          </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Clock className="h-3 w-3" /> Kündigungsfrist (Wochen)
-                            </Label>
-                            <Input type="number" min="0" max="52" className="h-9 text-sm"
-                              placeholder="z.B. 4"
-                              value={editData?.noticePeriodWeeks ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, noticePeriodWeeks: parseInt(e.target.value) || undefined } : d)} />
+                          {/* Automatische Kündigungsfrist – Info */}
+                          <div className="sm:col-span-2">
+                            <div className="rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/20 p-3 space-y-1 text-xs text-blue-800 dark:text-blue-300">
+                              <p className="font-semibold flex items-center gap-1">
+                                <Info className="h-3.5 w-3.5" /> Kündigungsfrist (automatisch)
+                              </p>
+                              {(() => {
+                                const probEnd = calcProbationEnd(editData?.contractStart, editData?.trialPeriodMonths);
+                                const inProb  = isInProbation(editData?.contractStart, editData?.trialPeriodMonths);
+                                return (
+                                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 mt-1">
+                                    <div className="flex items-center gap-1">
+                                      <span className={cn('w-2 h-2 rounded-full flex-shrink-0', inProb ? 'bg-amber-500' : 'bg-gray-300')} />
+                                      <span className="font-medium">Während Probezeit:</span>
+                                    </div>
+                                    <span>3 Arbeitstage</span>
+                                    <div className="flex items-center gap-1">
+                                      <span className={cn('w-2 h-2 rounded-full flex-shrink-0', !inProb ? 'bg-green-500' : 'bg-gray-300')} />
+                                      <span className="font-medium">Nach Probezeit:</span>
+                                    </div>
+                                    <span>1 Monat auf Monatsende</span>
+                                    {probEnd && (
+                                      <>
+                                        <span className="font-medium text-blue-700 dark:text-blue-400">Probezeit endet am:</span>
+                                        <span>{probEnd}</span>
+                                      </>
+                                    )}
+                                    <span className="font-medium text-blue-700 dark:text-blue-400 col-span-2">
+                                      Aktueller Status: <span className={cn('font-bold', inProb ? 'text-amber-700 dark:text-amber-400' : 'text-green-700 dark:text-green-400')}>
+                                        {(editData?.trialPeriodMonths ?? 0) === 0 ? 'Keine Probezeit' : inProb ? 'In Probezeit' : 'Nach Probezeit'}
+                                      </span>
+                                    </span>
+                                  </div>
+                                );
+                              })()}
+                            </div>
                           </div>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-2 gap-y-2 text-sm">
-                          {selectedEmp?.contractType   && <DataRow label="Vertragsart"       value={selectedEmp.contractType === 'monthly' ? 'Monatslohn-Vertrag' : selectedEmp.contractType === 'hourly' ? 'Stundenlohn-Vertrag' : 'Aushilfe'} />}
-                          {selectedEmp?.positionTitle  && <DataRow label="Stellenbezeichnung" value={selectedEmp.positionTitle} />}
-                          {selectedEmp?.contractStart  && <DataRow label="Eintritt"           value={selectedEmp.contractStart} />}
-                          {selectedEmp?.isLimitedContract && selectedEmp.contractEnd && <DataRow label="Austritt (befristet)" value={selectedEmp.contractEnd} />}
-                          {selectedEmp?.trialPeriodMonths  && <DataRow label="Probezeit"         value={`${selectedEmp.trialPeriodMonths} Monate`} />}
-                          {selectedEmp?.noticePeriodWeeks  && <DataRow label="Kündigungsfrist"   value={`${selectedEmp.noticePeriodWeeks} Wochen`} />}
-                          {!selectedEmp?.contractType && !selectedEmp?.contractStart && (
-                            <p className="col-span-2 text-xs text-muted-foreground italic">Noch keine Vertragsdaten erfasst. Im Bearbeitungsmodus ergänzen.</p>
-                          )}
-                        </div>
+                        /* ── Read-only Vertragsansicht ── */
+                        (() => {
+                          const emp = selectedEmp;
+                          if (!emp) return null;
+                          const probEnd = calcProbationEnd(emp.contractStart, emp.trialPeriodMonths);
+                          const inProb  = isInProbation(emp.contractStart, emp.trialPeriodMonths);
+                          const hasData = emp.contractType || emp.contractStart;
+                          if (!hasData) return (
+                            <p className="text-xs text-muted-foreground italic">Noch keine Vertragsdaten erfasst. Im Bearbeitungsmodus ergänzen.</p>
+                          );
+                          return (
+                            <div className="space-y-3">
+                              <div className="grid grid-cols-2 gap-y-2 text-sm">
+                                {emp.contractType   && <DataRow label="Vertragsart"        value={emp.contractType === 'monthly' ? 'Monatslohn-Vertrag' : emp.contractType === 'hourly' ? 'Stundenlohn-Vertrag' : 'Aushilfe'} />}
+                                {emp.positionTitle  && <DataRow label="Stellenbezeichnung" value={emp.positionTitle} />}
+                                {emp.contractStart  && <DataRow label="Eintritt"           value={emp.contractStart} />}
+                                {emp.employmentEndDate && <DataRow label="Austritt"        value={emp.employmentEndDate} />}
+                                {emp.isLimitedContract && emp.contractEnd && <DataRow label="Vertragsende (befristet)" value={emp.contractEnd} />}
+                                {(emp.trialPeriodMonths ?? 0) > 0
+                                  ? <DataRow label="Probezeit" value={`${emp.trialPeriodMonths} Monat${emp.trialPeriodMonths === 1 ? '' : 'e'}`} />
+                                  : <DataRow label="Probezeit" value="Keine Probezeit" />
+                                }
+                              </div>
+                              {/* Kündigungsfrist-Box */}
+                              <div className="rounded-md border border-border bg-muted/40 p-3 text-xs space-y-1">
+                                <p className="font-semibold flex items-center gap-1">
+                                  <Clock className="h-3.5 w-3.5 text-muted-foreground" /> Kündigungsfrist
+                                </p>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                                  <span className="text-muted-foreground">Während Probezeit:</span>
+                                  <span className="font-medium">3 Arbeitstage</span>
+                                  <span className="text-muted-foreground">Nach Probezeit:</span>
+                                  <span className="font-medium">1 Monat auf Monatsende</span>
+                                  {probEnd && (
+                                    <>
+                                      <span className="text-muted-foreground">Probezeit endet:</span>
+                                      <span className="font-medium">{probEnd}</span>
+                                    </>
+                                  )}
+                                  <span className="text-muted-foreground">Aktuell gilt:</span>
+                                  <span className={cn('font-semibold', inProb ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400')}>
+                                    {noticePeriodLabel(inProb)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()
                       )}
                     </CardContent>
                   )}

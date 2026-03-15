@@ -33,10 +33,11 @@ ALTER TABLE public.employees
   ADD COLUMN IF NOT EXISTS contract_type           TEXT     CHECK (contract_type IN ('monthly', 'hourly', 'irregular') OR contract_type IS NULL),
   ADD COLUMN IF NOT EXISTS position_title          TEXT,
   ADD COLUMN IF NOT EXISTS contract_start          DATE,
-  ADD COLUMN IF NOT EXISTS contract_end            DATE,
+  ADD COLUMN IF NOT EXISTS employment_end_date     DATE,                   -- Austrittsdatum (allgemein)
+  ADD COLUMN IF NOT EXISTS contract_end            DATE,                   -- Vertragsende bei befristetem Vertrag
   ADD COLUMN IF NOT EXISTS is_limited_contract     BOOLEAN  DEFAULT false,
-  ADD COLUMN IF NOT EXISTS trial_period_months     INTEGER,
-  ADD COLUMN IF NOT EXISTS notice_period_weeks     INTEGER;
+  ADD COLUMN IF NOT EXISTS trial_period_months     INTEGER  CHECK (trial_period_months IN (0, 1, 2, 3) OR trial_period_months IS NULL),
+  ADD COLUMN IF NOT EXISTS notice_period_weeks     INTEGER; -- VERALTET: wird nicht mehr verwendet, Kündigungsfrist automatisch aus Probezeit abgeleitet
 
 -- 5. Onboarding-Status und Token (für späteren Self-Service-Link)
 ALTER TABLE public.employees
@@ -52,3 +53,8 @@ COMMENT ON COLUMN public.employees.iban                IS 'IBAN für Lohnzahlung
 COMMENT ON COLUMN public.employees.onboarding_token    IS 'Eindeutiger UUID-Token für späteren Self-Onboarding-Link';
 COMMENT ON COLUMN public.employees.onboarding_status   IS 'Status: none → prepared → sent → completed';
 COMMENT ON COLUMN public.employees.contract_type       IS 'monthly = Monatslohn, hourly = Stundenlohn, irregular = Aushilfe';
+COMMENT ON COLUMN public.employees.contract_start      IS 'Eintrittsdatum';
+COMMENT ON COLUMN public.employees.employment_end_date IS 'Austrittsdatum (allgemeines Beschäftigungsende, unabhängig von Vertragsart)';
+COMMENT ON COLUMN public.employees.contract_end        IS 'Vertragsende bei befristetem Vertrag (is_limited_contract = true)';
+COMMENT ON COLUMN public.employees.trial_period_months IS 'Probezeit in Monaten (0 = keine, 1, 2 oder 3). Kündigungsfrist während Probezeit: 3 Arbeitstage. Danach: 1 Monat auf Monatsende.';
+COMMENT ON COLUMN public.employees.notice_period_weeks IS 'VERALTET – nicht mehr verwendet. Kündigungsfrist wird automatisch aus trial_period_months abgeleitet.';

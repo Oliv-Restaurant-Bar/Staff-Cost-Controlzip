@@ -37,11 +37,13 @@ export interface Employee {
   // ─── Vertragliche Grundlagen ───────────────────────────────────────────
   contractType?: 'monthly' | 'hourly' | 'irregular';
   positionTitle?: string;
-  contractStart?: string;           // ISO-Datum
-  contractEnd?: string;             // ISO-Datum (leer wenn unbefristet)
+  contractStart?: string;           // ISO-Datum – Eintrittsdatum
+  employmentEndDate?: string;       // ISO-Datum – Austrittsdatum / Beschäftigungsende
+  contractEnd?: string;             // ISO-Datum – nur bei befristetem Vertrag
   isLimitedContract?: boolean;
-  trialPeriodMonths?: number;
-  noticePeriodWeeks?: number;
+  trialPeriodMonths?: 0 | 1 | 2 | 3;  // Probezeit-Auswahl (0 = keine)
+  // noticePeriodWeeks entfernt – wird automatisch aus Probezeit abgeleitet:
+  //   Während Probezeit: 3 Arbeitstage | Nach Probezeit: 1 Monat auf Monatsende
 
   // ─── Onboarding ────────────────────────────────────────────────────────
   onboardingStatus?: 'none' | 'prepared' | 'sent' | 'completed';

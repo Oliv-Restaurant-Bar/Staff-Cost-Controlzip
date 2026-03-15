@@ -53,10 +53,11 @@ const employeeToDb = (emp: Employee) => ({
   contract_type:            emp.contractType            ?? null,
   position_title:           emp.positionTitle           ?? null,
   contract_start:           emp.contractStart           ?? null,
+  employment_end_date:      emp.employmentEndDate       ?? null,
   contract_end:             emp.contractEnd             ?? null,
   is_limited_contract:      emp.isLimitedContract       ?? false,
   trial_period_months:      emp.trialPeriodMonths       ?? null,
-  notice_period_weeks:      emp.noticePeriodWeeks       ?? null,
+  // notice_period_weeks entfernt (wird jetzt automatisch abgeleitet)
   // ── Onboarding ───────────────────────────────────────────────────────────
   onboarding_status:        emp.onboardingStatus        ?? 'none',
   onboarding_token:         emp.onboardingToken         ?? null,
@@ -97,10 +98,11 @@ const dbToEmployee = (row: any): Employee => ({
   contractType:           row.contract_type             ?? undefined,
   positionTitle:          row.position_title            ?? undefined,
   contractStart:          row.contract_start            ?? undefined,
+  employmentEndDate:      row.employment_end_date       ?? undefined,
   contractEnd:            row.contract_end              ?? undefined,
   isLimitedContract:      row.is_limited_contract       ?? undefined,
-  trialPeriodMonths:      row.trial_period_months       ?? undefined,
-  noticePeriodWeeks:      row.notice_period_weeks       ?? undefined,
+  trialPeriodMonths:      (row.trial_period_months != null ? Number(row.trial_period_months) as 0|1|2|3 : undefined),
+  // noticePeriodWeeks wird nicht mehr gelesen – automatisch abgeleitet
   // ── Onboarding ───────────────────────────────────────────────────────────
   onboardingStatus:       row.onboarding_status         ?? undefined,
   onboardingToken:        row.onboarding_token          ?? undefined,
