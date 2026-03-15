@@ -1,0 +1,68 @@
+Now implement the next professional HR and employee module phase.
+
+Goal:
+Extend the employee master data and prepare a professional employee onboarding and contract workflow.
+
+Important:
+Do not break the current personnel master module.
+Do this step by step and build the correct foundation first.
+
+Please implement the following:
+
+1. Salary logic extension
+For employees with monthly salary:
+- allow entering monthly gross salary
+- allow entering 13th salary if relevant
+- allow entering employer contribution / social cost factor
+- calculate an internal hourly cost automatically
+
+For employees with hourly salary:
+- allow entering hourly wage
+- allow entering employer contribution / social cost factor
+- calculate internal total hourly cost automatically
+
+2. Clear cost calculation
+The system should show for admin only:
+- gross wage
+- employer contribution factor
+- internal hourly cost including employer contributions
+
+Managers must still not see these values.
+
+3. Employee self-onboarding preparation
+Prepare a structure where a new employee can later receive a personal link and fill in their own data.
+
+Prepare fields for:
+- personal data
+- contact data
+- address
+- employment type
+- contract-related information
+- document upload
+
+4. Contract type preparation
+Prepare the architecture for at least two contract types:
+- monthly salary contract
+- hourly salary / irregular workload contract
+
+5. Contract workflow foundation
+Prepare the structure so that later the system can:
+- generate a contract automatically from the employee data
+- send it by link
+- let the employee confirm / sign it
+- export a PDF copy
+
+Do not build full e-signature yet.
+Only prepare the clean foundation.
+
+6. UI rules
+Keep it admin-friendly and structured.
+Do not redesign everything.
+Make the new salary and cost logic clearly visible in the employee detail view.
+
+7. Explain in simple German:
+- what salary logic was added
+- how internal hourly cost is calculated
+- what is prepared for employee self-onboarding
+- what is prepared for contract generation
+- what the next best step should be

@@ -34,6 +34,13 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Separator } from '@/components/ui/separator';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  Info, Calculator, Clipboard, UserCheck, ChevronDown,
+  Building, Phone, Mail, MapPin, CreditCard, Shield,
+  Briefcase, Calendar, Clock, Link as LinkIcon,
+} from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
 import { loadEmployees, upsertEmployee, deleteEmployee } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
@@ -51,13 +58,64 @@ interface ContractFields {
   source: 'manual' | 'ocr';  // Woher kamen die Daten?
 }
 
+// ─── Erweiterte HR-Strukturen (alle lokal / localStorage) ────────────────────
+
+/** Persönliche Daten für Onboarding-Vorbereitung */
+interface PersonalInfo {
+  birthDate?:     string;
+  phone?:         string;
+  email?:         string;
+  addressStreet?: string;
+  addressZip?:    string;
+  addressCity?:   string;
+  nationality?:   string;
+  ahvNumber?:     string;   // AHV-Nummer
+  iban?:          string;   // Für Lohnzahlung
+}
+
+/** Vertragliche Grundlagen (Architektur für spätere Vertragsgenerierung) */
+interface ContractFoundation {
+  contractType?:        'monthly' | 'hourly' | 'irregular';
+  positionTitle?:       string;
+  contractStart?:       string;  // ISO-Datum
+  contractEnd?:         string;  // ISO-Datum (leer wenn unbefristet)
+  isLimited?:           boolean;
+  noticePeriodWeeks?:   number;  // Kündigungsfrist in Wochen
+  trialPeriodMonths?:   number;  // Probezeit in Monaten
+  probationEndDate?:    string;  // berechnet aus Eintrittsdatum + Probezeit
+}
+
+/** Onboarding-Vorbereitung (Status + Token für spätere Self-Service-Links) */
+interface OnboardingPrep {
+  status:       'none' | 'prepared' | 'sent' | 'completed';
+  token?:       string;   // Eindeutiger Link-Token (UUID)
+  sentAt?:      string;
+  completedAt?: string;
+  notes?:       string;
+}
+
+/** Erweiterte Lohn-/Kostendaten (lokal) */
+interface SalaryExtension {
+  has13thSalary?:       boolean;  // 13. Monatslohn?
+  socialCostFactor?:    number;   // AG-Anteil Sozialkosten (z.B. 1.13 = 13%)
+}
+
 /** Lokal gespeicherte Felder (kein DB-Spalte nötig) */
 interface LocalEmployeeData {
-  active: boolean;
-  notes: string;
-  contract?: ContractFields;
-  contractFileName?: string;
+  active:              boolean;
+  notes:               string;
+  contract?:           ContractFields;
+  contractFileName?:   string;
+  // Neue Felder:
+  personalInfo?:       PersonalInfo;
+  contractFoundation?: ContractFoundation;
+  onboarding?:         OnboardingPrep;
+  salaryExt?:          SalaryExtension;
 }
+
+// ─── Standardwerte ────────────────────────────────────────────────────────────
+
+const DEFAULT_SOCIAL_COST_FACTOR = 1.13; // 13% AG-Anteil (Schweizer Durchschnitt)
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -92,14 +150,63 @@ function formatCHF(v?: number): string {
   }).format(v);
 }
 
+/** Vollständige Lohnkostenberechnung inkl. Sozialkosten */
+interface SalaryCosts {
+  mode:            'monthly' | 'hourly' | 'none';
+  grossMonthly:    number | null;   // Brutto-Monatslohn (inkl. 13. wenn aktiv)
+  annualGross:     number | null;   // Jahresbrutto
+  socialFactor:    number;          // z.B. 1.13
+  socialCostMonthly: number | null; // AG-Sozialkosten pro Monat
+  totalAnnual:     number | null;   // Jahresvollkosten (Brutto * Faktor)
+  internalHourly:  number | null;   // Interner Stundenansatz (für Dienstplan)
+}
+
+function calcSalaryCosts(emp: Employee, salaryExt?: SalaryExtension): SalaryCosts {
+  const factor   = salaryExt?.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
+  const has13th  = salaryExt?.has13thSalary ?? false;
+
+  // Monatslohn-Basis-MA (Vollzeit / Teilzeit)
+  if (emp.monthlySalary && emp.monthlySalary > 0 && emp.weeklyHours && emp.weeklyHours > 0) {
+    // Monatslohn inkl. 13. Monatslohn (1/12 pro Monat)
+    const grossMonthly = has13th
+      ? emp.monthlySalary * (13 / 12)
+      : (emp.monthlySalaryWith13th ?? emp.monthlySalary);
+    const annualGross       = grossMonthly * 12;
+    const totalAnnual       = annualGross * factor;
+    const socialCostMonthly = grossMonthly * (factor - 1);
+    const internalHourly    = totalAnnual / (emp.weeklyHours * 52);
+    return { mode: 'monthly', grossMonthly, annualGross, socialFactor: factor, socialCostMonthly, totalAnnual, internalHourly };
+  }
+
+  // Stundenlohn-MA
+  if (emp.hourlyWage > 0) {
+    const internalHourly    = emp.hourlyWage * factor;
+    const socialCostHourly  = emp.hourlyWage * (factor - 1);
+    return {
+      mode: 'hourly',
+      grossMonthly: null,
+      annualGross:  null,
+      socialFactor: factor,
+      socialCostMonthly: socialCostHourly,
+      totalAnnual: null,
+      internalHourly,
+    };
+  }
+
+  return { mode: 'none', grossMonthly: null, annualGross: null, socialFactor: factor, socialCostMonthly: null, totalAnnual: null, internalHourly: null };
+}
+
+/** @deprecated Verwende calcSalaryCosts */
 function calcInternalHourlyCost(emp: Employee): number | null {
-  if (emp.employmentType === 'vollzeit' && emp.monthlySalaryWith13th && emp.weeklyHours) {
-    return (emp.monthlySalaryWith13th * 12) / (emp.weeklyHours * 52);
-  }
-  if (emp.employmentType === 'teilzeit' && emp.monthlySalary && emp.weeklyHours) {
-    return (emp.monthlySalary * 12) / (emp.weeklyHours * 52);
-  }
-  return emp.hourlyWage > 0 ? emp.hourlyWage : null;
+  return calcSalaryCosts(emp).internalHourly;
+}
+
+/** UUID v4 einfach generieren (für Onboarding-Token) */
+function generateToken(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
 }
 
 function generateId(existing: Employee[]): string {
@@ -166,6 +273,17 @@ const Personalstamm = () => {
   const [showMobile, setShowMobile]       = useState<'list' | 'detail'>('list');
   const [showContractInfo, setShowContractInfo] = useState(false);
 
+  // ── Erweiterte HR-Daten (State) ────────────────────────────────────────────
+  const [editPersonal,   setEditPersonal]   = useState<PersonalInfo>({});
+  const [editContractF,  setEditContractF]  = useState<ContractFoundation>({});
+  const [editSalaryExt,  setEditSalaryExt]  = useState<SalaryExtension>({ socialCostFactor: DEFAULT_SOCIAL_COST_FACTOR });
+  const [editOnboarding, setEditOnboarding] = useState<OnboardingPrep>({ status: 'none' });
+
+  // ── UI-Abschnitte aufklappbar ──────────────────────────────────────────────
+  const [openPersonal,  setOpenPersonal]  = useState(false);
+  const [openContractF, setOpenContractF] = useState(false);
+  const [openOnboarding, setOpenOnboarding] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Laden ──────────────────────────────────────────────────────────────────
@@ -204,8 +322,16 @@ const Personalstamm = () => {
     const local = getLocalEntry(localData, emp.id);
     setEditNotes(local.notes);
     setEditActive(local.active);
+    // Neue HR-Felder aus localStorage laden
+    setEditPersonal(local.personalInfo ?? {});
+    setEditContractF(local.contractFoundation ?? {});
+    setEditSalaryExt(local.salaryExt ?? { socialCostFactor: DEFAULT_SOCIAL_COST_FACTOR });
+    setEditOnboarding(local.onboarding ?? { status: 'none' });
     setShowMobile('detail');
     setShowContractInfo(false);
+    setOpenPersonal(false);
+    setOpenContractF(false);
+    setOpenOnboarding(false);
   };
 
   const startEdit = () => {
@@ -220,6 +346,10 @@ const Personalstamm = () => {
     const local = getLocalEntry(localData, selectedId);
     setEditNotes(local.notes);
     setEditActive(local.active);
+    setEditPersonal(local.personalInfo ?? {});
+    setEditContractF(local.contractFoundation ?? {});
+    setEditSalaryExt(local.salaryExt ?? { socialCostFactor: DEFAULT_SOCIAL_COST_FACTOR });
+    setEditOnboarding(local.onboarding ?? { status: 'none' });
     setEditMode(false);
   };
 
@@ -231,8 +361,15 @@ const Personalstamm = () => {
     setSelectedId(newId);
     setEditNotes('');
     setEditActive(true);
+    setEditPersonal({});
+    setEditContractF({});
+    setEditSalaryExt({ socialCostFactor: DEFAULT_SOCIAL_COST_FACTOR });
+    setEditOnboarding({ status: 'none' });
     setEditMode(true);
     setShowMobile('detail');
+    setOpenPersonal(false);
+    setOpenContractF(false);
+    setOpenOnboarding(false);
   };
 
   // ── Speichern ──────────────────────────────────────────────────────────────
@@ -252,9 +389,18 @@ const Personalstamm = () => {
         }
         return [...prev, editData];
       });
-      // Lokale Daten speichern
+      // Lokale Daten speichern (inkl. neuer HR-Felder)
       const newLocal = { ...localData };
-      newLocal[editData.id] = { active: editActive, notes: editNotes };
+      const prevLocal = getLocalEntry(newLocal, editData.id);
+      newLocal[editData.id] = {
+        ...prevLocal,
+        active:              editActive,
+        notes:               editNotes,
+        personalInfo:        Object.keys(editPersonal).length  > 0 ? editPersonal  : undefined,
+        contractFoundation:  Object.keys(editContractF).length > 0 ? editContractF : undefined,
+        salaryExt:           editSalaryExt,
+        onboarding:          editOnboarding,
+      };
       setLocalData(newLocal);
       saveLocalData(newLocal);
       setSelectedId(editData.id);
@@ -724,75 +870,178 @@ const Personalstamm = () => {
 
               {/* ── Abschnitt 2: Lohn & Kosten (nur Admin) ─────────────────── */}
               {isAdmin && (
-                <Card>
+                <Card className="border-purple-200/50 dark:border-purple-800/30">
                   <CardHeader className="pb-3 pt-4">
                     <CardTitle className="text-sm flex items-center gap-2">
+                      <Calculator className="h-4 w-4 text-purple-600" />
                       Lohn & Kosten
                       <span className="text-[10px] font-normal text-muted-foreground bg-purple-50 dark:bg-purple-950/20 border border-purple-200 px-1.5 py-0.5 rounded">
                         Nur Admin
                       </span>
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-3 pt-0">
+                  <CardContent className="space-y-4 pt-0">
                     {editMode ? (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <Label className="text-xs text-muted-foreground mb-1 block">Stundenlohn (CHF)</Label>
-                          <Input
-                            type="number"
-                            min="0" step="0.05"
-                            value={editData?.hourlyWage ?? ''}
-                            onChange={e => setEditData(d => d ? { ...d, hourlyWage: parseFloat(e.target.value) || 0 } : d)}
-                            className="h-9 text-sm"
-                          />
-                        </div>
-                        {(editData?.employmentType === 'vollzeit' || editData?.employmentType === 'teilzeit') && (
-                          <>
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block">
+                              Stundenlohn brutto (CHF)
+                              <span className="ml-1 text-[10px] italic opacity-60">für Aushilfen / stundenweise</span>
+                            </Label>
+                            <Input
+                              type="number" min="0" step="0.05"
+                              value={editData?.hourlyWage || ''}
+                              onChange={e => setEditData(d => d ? { ...d, hourlyWage: parseFloat(e.target.value) || 0 } : d)}
+                              placeholder="z.B. 23.50"
+                              className="h-9 text-sm"
+                            />
+                          </div>
+                          {(editData?.employmentType === 'vollzeit' || editData?.employmentType === 'teilzeit') && (
                             <div>
-                              <Label className="text-xs text-muted-foreground mb-1 block">Monatslohn Basis (CHF)</Label>
+                              <Label className="text-xs text-muted-foreground mb-1 block">
+                                Monatslohn brutto Basis (CHF)
+                                <span className="ml-1 text-[10px] italic opacity-60">ohne 13. Monatslohn</span>
+                              </Label>
                               <Input
-                                type="number"
-                                min="0"
+                                type="number" min="0"
                                 value={editData?.monthlySalary ?? ''}
                                 onChange={e => setEditData(d => d ? { ...d, monthlySalary: parseFloat(e.target.value) || undefined } : d)}
+                                placeholder="z.B. 4800"
                                 className="h-9 text-sm"
                               />
                             </div>
-                            <div>
-                              <Label className="text-xs text-muted-foreground mb-1 block">Monatslohn inkl. 13. Monatslohn (CHF)</Label>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-2 block">13. Monatslohn</Label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={editSalaryExt.has13thSalary ?? false}
+                                onChange={e => setEditSalaryExt(s => ({ ...s, has13thSalary: e.target.checked }))}
+                                className="h-4 w-4 rounded"
+                              />
+                              <span className="text-sm">Ja – 13. Monatslohn vereinbart</span>
+                            </label>
+                            {editSalaryExt.has13thSalary && editData?.monthlySalary && (
+                              <p className="text-[11px] text-muted-foreground mt-1 ml-6">
+                                ≈ {formatCHF(editData.monthlySalary * 13 / 12)}/Mt. effektiv
+                              </p>
+                            )}
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block">
+                              AG-Sozialkostenfaktor
+                              <span className="ml-1 text-[10px] italic opacity-60">z.B. 1.13 = 13%</span>
+                            </Label>
+                            <div className="flex items-center gap-2">
                               <Input
-                                type="number"
-                                min="0"
-                                value={editData?.monthlySalaryWith13th ?? ''}
-                                onChange={e => setEditData(d => d ? { ...d, monthlySalaryWith13th: parseFloat(e.target.value) || undefined } : d)}
-                                className="h-9 text-sm"
+                                type="number" min="1.00" max="1.40" step="0.01"
+                                value={editSalaryExt.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR}
+                                onChange={e => setEditSalaryExt(s => ({ ...s, socialCostFactor: parseFloat(e.target.value) || DEFAULT_SOCIAL_COST_FACTOR }))}
+                                className="h-9 text-sm w-24"
+                              />
+                              <span className="text-xs text-muted-foreground">
+                                = {(((editSalaryExt.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR) - 1) * 100).toFixed(1)}% AG
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {editData && (() => {
+                          const costs = calcSalaryCosts(editData, editSalaryExt);
+                          if (costs.mode === 'none') return null;
+                          return (
+                            <div className="rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 p-3 space-y-1.5 text-xs">
+                              <p className="font-semibold text-purple-800 dark:text-purple-300 flex items-center gap-1">
+                                <Calculator className="h-3 w-3" /> Berechnungsvorschau
+                              </p>
+                              {costs.mode === 'monthly' && costs.grossMonthly && (
+                                <>
+                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Brutto/Monat (effektiv)</span><span className="font-medium">{formatCHF(costs.grossMonthly)}</span></div>
+                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">AG-Sozialkosten/Monat</span><span className="font-medium">{costs.socialCostMonthly ? formatCHF(costs.socialCostMonthly) : '–'}</span></div>
+                                  <Separator className="my-1 bg-purple-200" />
+                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Jahresvollkosten</span><span className="font-semibold">{costs.totalAnnual ? formatCHF(costs.totalAnnual) : '–'}</span></div>
+                                </>
+                              )}
+                              {costs.mode === 'hourly' && (
+                                <>
+                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Stundenlohn brutto</span><span className="font-medium">{formatCHF(editData.hourlyWage)}</span></div>
+                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">AG-Sozialkosten/h</span><span className="font-medium">{costs.socialCostMonthly ? formatCHF(costs.socialCostMonthly) : '–'}</span></div>
+                                  <Separator className="my-1 bg-purple-200" />
+                                </>
+                              )}
+                              <div className="flex justify-between items-center">
+                                <span className="font-bold text-purple-800 dark:text-purple-300">Interner Stundenansatz</span>
+                                <span className="font-bold text-purple-800 dark:text-purple-300">{costs.internalHourly ? formatCHF(costs.internalHourly) : '–'}</span>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </>
+                    ) : (
+                      (() => {
+                        const empForCost = selectedEmp ?? editData;
+                        if (!empForCost) return null;
+                        const salExt = selectedId ? localData[selectedId]?.salaryExt : editSalaryExt;
+                        const costs = calcSalaryCosts(empForCost, salExt);
+                        return (
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-2 gap-y-2 text-sm">
+                              {costs.mode === 'monthly' && costs.grossMonthly && (
+                                <>
+                                  <DataRow label="Brutto/Monat (effektiv)" value={formatCHF(costs.grossMonthly)} />
+                                  <DataRow label="13. Monatslohn" value={salExt?.has13thSalary ? 'Ja' : 'Nein'} />
+                                </>
+                              )}
+                              {costs.mode === 'hourly' && (
+                                <DataRow label="Stundenlohn brutto" value={formatCHF(empForCost.hourlyWage)} />
+                              )}
+                              <DataRow
+                                label="AG-Sozialkostenfaktor"
+                                value={`${costs.socialFactor.toFixed(2)} (${((costs.socialFactor - 1) * 100).toFixed(1)}%)`}
                               />
                             </div>
-                          </>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-2 gap-y-2 text-sm">
-                        <DataRow label="Stundenlohn" value={selectedEmp ? formatCHF(selectedEmp.hourlyWage) : '–'} />
-                        {selectedEmp?.monthlySalary && (
-                          <DataRow label="Monatslohn Basis" value={formatCHF(selectedEmp.monthlySalary)} />
-                        )}
-                        {selectedEmp?.monthlySalaryWith13th && (
-                          <DataRow label="inkl. 13. Monatslohn" value={formatCHF(selectedEmp.monthlySalaryWith13th)} />
-                        )}
-                        {selectedEmp && (
-                          <DataRow
-                            label="Interner Stundenansatz"
-                            value={
-                              (() => {
-                                const cost = calcInternalHourlyCost(selectedEmp);
-                                return cost ? formatCHF(cost) : '–';
-                              })()
-                            }
-                            highlight
-                          />
-                        )}
-                      </div>
+                            <div className="rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 p-3 space-y-1.5 text-xs">
+                              <p className="font-semibold text-purple-800 dark:text-purple-300 flex items-center gap-1 mb-2">
+                                <Calculator className="h-3 w-3" /> Vollkostenrechnung
+                              </p>
+                              {costs.mode === 'monthly' && costs.grossMonthly && (
+                                <>
+                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Brutto/Monat</span><span className="font-medium">{formatCHF(costs.grossMonthly)}</span></div>
+                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">AG-Sozialkosten/Monat</span><span className="font-medium text-red-600">{costs.socialCostMonthly ? `+ ${formatCHF(costs.socialCostMonthly)}` : '–'}</span></div>
+                                  <Separator className="my-1.5 bg-purple-200" />
+                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Jahresvollkosten</span><span className="font-semibold">{costs.totalAnnual ? formatCHF(costs.totalAnnual) : '–'}</span></div>
+                                </>
+                              )}
+                              {costs.mode === 'hourly' && (
+                                <>
+                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Stundenlohn brutto</span><span className="font-medium">{formatCHF(empForCost.hourlyWage)}</span></div>
+                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">AG-Sozialkosten/h</span><span className="font-medium text-red-600">{costs.socialCostMonthly ? `+ ${formatCHF(costs.socialCostMonthly)}` : '–'}</span></div>
+                                  <Separator className="my-1.5 bg-purple-200" />
+                                </>
+                              )}
+                              <div className="flex justify-between items-center">
+                                <span className="font-bold text-purple-800 dark:text-purple-300">Interner Stundenansatz</span>
+                                <span className="font-bold text-purple-800 dark:text-purple-300 text-sm">{costs.internalHourly ? formatCHF(costs.internalHourly) : '–'}</span>
+                              </div>
+                              {costs.mode === 'monthly' && empForCost.weeklyHours && (
+                                <p className="text-[10px] text-purple-600 italic mt-1">
+                                  = Jahresvollkosten ÷ {empForCost.weeklyHours} h/W ÷ 52 Wochen
+                                </p>
+                              )}
+                              {costs.mode === 'hourly' && (
+                                <p className="text-[10px] text-purple-600 italic mt-1">
+                                  = Stundenlohn × Sozialkostenfaktor ({costs.socialFactor.toFixed(2)})
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()
                     )}
                   </CardContent>
                 </Card>
@@ -887,7 +1136,378 @@ const Personalstamm = () => {
                 </CardContent>
               </Card>
 
-              {/* ── Abschnitt 5: Arbeitsvertrag (Platzhalter) ─────────────── */}
+              {/* ── Abschnitt 5: Persönliche Daten & Kontakt (Admin) ─────── */}
+              {isAdmin && (
+                <Card>
+                  <CardHeader
+                    className="pb-2 pt-4 cursor-pointer select-none"
+                    onClick={() => setOpenPersonal(o => !o)}
+                  >
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <UserCheck className="h-4 w-4 text-emerald-600" />
+                        Persönliche Daten & Kontakt
+                        <span className="text-[10px] font-normal text-muted-foreground bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 px-1.5 py-0.5 rounded">
+                          Onboarding-Vorbereitung
+                        </span>
+                      </span>
+                      <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', openPersonal && 'rotate-180')} />
+                    </CardTitle>
+                  </CardHeader>
+                  {openPersonal && (
+                    <CardContent className="space-y-3 pt-0">
+                      <Alert className="text-xs py-2 border-emerald-200 bg-emerald-50 dark:bg-emerald-950/20">
+                        <Info className="h-3.5 w-3.5 text-emerald-600" />
+                        <AlertDescription className="text-emerald-700 dark:text-emerald-400">
+                          Diese Felder werden später für das Self-Onboarding des Mitarbeiters und die automatische Vertragsgenerierung verwendet.
+                        </AlertDescription>
+                      </Alert>
+                      {editMode ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Geburtsdatum
+                            </Label>
+                            <Input type="date" className="h-9 text-sm"
+                              value={editPersonal.birthDate ?? ''}
+                              onChange={e => setEditPersonal(p => ({ ...p, birthDate: e.target.value || undefined }))} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Shield className="h-3 w-3" /> Nationalität
+                            </Label>
+                            <Input className="h-9 text-sm" placeholder="z.B. Schweiz"
+                              value={editPersonal.nationality ?? ''}
+                              onChange={e => setEditPersonal(p => ({ ...p, nationality: e.target.value || undefined }))} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Phone className="h-3 w-3" /> Telefon
+                            </Label>
+                            <Input className="h-9 text-sm" placeholder="+41 79 …"
+                              value={editPersonal.phone ?? ''}
+                              onChange={e => setEditPersonal(p => ({ ...p, phone: e.target.value || undefined }))} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Mail className="h-3 w-3" /> E-Mail
+                            </Label>
+                            <Input type="email" className="h-9 text-sm" placeholder="name@beispiel.ch"
+                              value={editPersonal.email ?? ''}
+                              onChange={e => setEditPersonal(p => ({ ...p, email: e.target.value || undefined }))} />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <MapPin className="h-3 w-3" /> Strasse & Hausnummer
+                            </Label>
+                            <Input className="h-9 text-sm" placeholder="Musterstrasse 1"
+                              value={editPersonal.addressStreet ?? ''}
+                              onChange={e => setEditPersonal(p => ({ ...p, addressStreet: e.target.value || undefined }))} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block">PLZ</Label>
+                            <Input className="h-9 text-sm" placeholder="3000"
+                              value={editPersonal.addressZip ?? ''}
+                              onChange={e => setEditPersonal(p => ({ ...p, addressZip: e.target.value || undefined }))} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block">Ort</Label>
+                            <Input className="h-9 text-sm" placeholder="Bern"
+                              value={editPersonal.addressCity ?? ''}
+                              onChange={e => setEditPersonal(p => ({ ...p, addressCity: e.target.value || undefined }))} />
+                          </div>
+                          {isAdmin && (
+                            <>
+                              <div>
+                                <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                                  <Shield className="h-3 w-3" /> AHV-Nummer
+                                  <span className="ml-1 text-[10px] opacity-60">vertraulich</span>
+                                </Label>
+                                <Input className="h-9 text-sm font-mono" placeholder="756.XXXX.XXXX.XX"
+                                  value={editPersonal.ahvNumber ?? ''}
+                                  onChange={e => setEditPersonal(p => ({ ...p, ahvNumber: e.target.value || undefined }))} />
+                              </div>
+                              <div>
+                                <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                                  <CreditCard className="h-3 w-3" /> IBAN (Lohnkonto)
+                                  <span className="ml-1 text-[10px] opacity-60">vertraulich</span>
+                                </Label>
+                                <Input className="h-9 text-sm font-mono" placeholder="CH56 …"
+                                  value={editPersonal.iban ?? ''}
+                                  onChange={e => setEditPersonal(p => ({ ...p, iban: e.target.value || undefined }))} />
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-y-2 text-sm">
+                          {editPersonal.birthDate    && <DataRow label="Geburtsdatum"  value={editPersonal.birthDate} />}
+                          {editPersonal.nationality  && <DataRow label="Nationalität"  value={editPersonal.nationality} />}
+                          {editPersonal.phone        && <DataRow label="Telefon"       value={editPersonal.phone} />}
+                          {editPersonal.email        && <DataRow label="E-Mail"        value={editPersonal.email} />}
+                          {editPersonal.addressStreet && (
+                            <DataRow label="Adresse" value={`${editPersonal.addressStreet}, ${editPersonal.addressZip ?? ''} ${editPersonal.addressCity ?? ''}`} />
+                          )}
+                          {isAdmin && editPersonal.ahvNumber && (
+                            <DataRow label="AHV-Nummer" value={editPersonal.ahvNumber} />
+                          )}
+                          {isAdmin && editPersonal.iban && (
+                            <DataRow label="IBAN" value={`****${editPersonal.iban.slice(-4)}`} />
+                          )}
+                          {!editPersonal.phone && !editPersonal.email && !editPersonal.birthDate && (
+                            <p className="col-span-2 text-xs text-muted-foreground italic">Noch keine persönlichen Daten erfasst. Im Bearbeitungsmodus ergänzen.</p>
+                          )}
+                        </div>
+                      )}
+                    </CardContent>
+                  )}
+                </Card>
+              )}
+
+              {/* ── Abschnitt 6: Vertragliche Grundlagen (Admin) ─────────────── */}
+              {isAdmin && (
+                <Card>
+                  <CardHeader
+                    className="pb-2 pt-4 cursor-pointer select-none"
+                    onClick={() => setOpenContractF(o => !o)}
+                  >
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <Briefcase className="h-4 w-4 text-blue-600" />
+                        Vertragliche Grundlagen
+                        <span className="text-[10px] font-normal text-muted-foreground bg-blue-50 dark:bg-blue-950/20 border border-blue-200 px-1.5 py-0.5 rounded">
+                          Vorbereitung Vertragsgenerierung
+                        </span>
+                      </span>
+                      <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', openContractF && 'rotate-180')} />
+                    </CardTitle>
+                  </CardHeader>
+                  {openContractF && (
+                    <CardContent className="space-y-3 pt-0">
+                      <Alert className="text-xs py-2 border-blue-200 bg-blue-50 dark:bg-blue-950/20">
+                        <Info className="h-3.5 w-3.5 text-blue-600" />
+                        <AlertDescription className="text-blue-700 dark:text-blue-400">
+                          Diese Felder bilden die Grundlage für die spätere automatische Vertragsgenerierung.
+                          Noch keine automatische Erzeugung — die Architektur wird hier vorbereitet.
+                        </AlertDescription>
+                      </Alert>
+                      {editMode ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block">Vertragsart</Label>
+                            <Select
+                              value={editContractF.contractType ?? ''}
+                              onValueChange={v => setEditContractF(c => ({ ...c, contractType: v as ContractFoundation['contractType'] || undefined }))}
+                            >
+                              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Wählen…" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="monthly">Monatslohn-Vertrag (Festanstellung)</SelectItem>
+                                <SelectItem value="hourly">Stundenlohn-Vertrag (Pensum variabel)</SelectItem>
+                                <SelectItem value="irregular">Aushilfe / unregelmässig</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Briefcase className="h-3 w-3" /> Stellenbezeichnung
+                            </Label>
+                            <Input className="h-9 text-sm" placeholder="z.B. Servicemitarbeiter"
+                              value={editContractF.positionTitle ?? ''}
+                              onChange={e => setEditContractF(c => ({ ...c, positionTitle: e.target.value || undefined }))} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Eintrittsdatum
+                            </Label>
+                            <Input type="date" className="h-9 text-sm"
+                              value={editContractF.contractStart ?? ''}
+                              onChange={e => setEditContractF(c => ({ ...c, contractStart: e.target.value || undefined }))} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-2 block">Befristeter Vertrag</Label>
+                            <label className="flex items-center gap-2 cursor-pointer mb-1">
+                              <input type="checkbox"
+                                checked={editContractF.isLimited ?? false}
+                                onChange={e => setEditContractF(c => ({ ...c, isLimited: e.target.checked }))}
+                                className="h-4 w-4 rounded" />
+                              <span className="text-sm">Ja – Vertrag ist befristet</span>
+                            </label>
+                            {editContractF.isLimited && (
+                              <Input type="date" className="h-9 text-sm mt-1"
+                                value={editContractF.contractEnd ?? ''}
+                                onChange={e => setEditContractF(c => ({ ...c, contractEnd: e.target.value || undefined }))} />
+                            )}
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Clock className="h-3 w-3" /> Probezeit (Monate)
+                            </Label>
+                            <Input type="number" min="0" max="12" className="h-9 text-sm"
+                              placeholder="z.B. 3"
+                              value={editContractF.trialPeriodMonths ?? ''}
+                              onChange={e => setEditContractF(c => ({ ...c, trialPeriodMonths: parseInt(e.target.value) || undefined }))} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Clock className="h-3 w-3" /> Kündigungsfrist (Wochen)
+                            </Label>
+                            <Input type="number" min="0" max="52" className="h-9 text-sm"
+                              placeholder="z.B. 4"
+                              value={editContractF.noticePeriodWeeks ?? ''}
+                              onChange={e => setEditContractF(c => ({ ...c, noticePeriodWeeks: parseInt(e.target.value) || undefined }))} />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-y-2 text-sm">
+                          {editContractF.contractType   && <DataRow label="Vertragsart"       value={editContractF.contractType === 'monthly' ? 'Monatslohn-Vertrag' : editContractF.contractType === 'hourly' ? 'Stundenlohn-Vertrag' : 'Aushilfe'} />}
+                          {editContractF.positionTitle  && <DataRow label="Stellenbezeichnung" value={editContractF.positionTitle} />}
+                          {editContractF.contractStart  && <DataRow label="Eintritt"           value={editContractF.contractStart} />}
+                          {editContractF.isLimited && editContractF.contractEnd && <DataRow label="Austritt (befristet)" value={editContractF.contractEnd} />}
+                          {editContractF.trialPeriodMonths  && <DataRow label="Probezeit"         value={`${editContractF.trialPeriodMonths} Monate`} />}
+                          {editContractF.noticePeriodWeeks  && <DataRow label="Kündigungsfrist"   value={`${editContractF.noticePeriodWeeks} Wochen`} />}
+                          {!editContractF.contractType && !editContractF.contractStart && (
+                            <p className="col-span-2 text-xs text-muted-foreground italic">Noch keine Vertragsdaten erfasst. Im Bearbeitungsmodus ergänzen.</p>
+                          )}
+                        </div>
+                      )}
+                    </CardContent>
+                  )}
+                </Card>
+              )}
+
+              {/* ── Abschnitt 7: Onboarding-Vorbereitung (Admin) ─────────────── */}
+              {isAdmin && (
+                <Card>
+                  <CardHeader
+                    className="pb-2 pt-4 cursor-pointer select-none"
+                    onClick={() => setOpenOnboarding(o => !o)}
+                  >
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <Clipboard className="h-4 w-4 text-amber-600" />
+                        Onboarding-Vorbereitung
+                        {editOnboarding.status !== 'none' && editOnboarding.status !== 'completed' && (
+                          <Badge className="text-[10px] bg-amber-100 text-amber-800 border-amber-200 font-medium">
+                            {editOnboarding.status === 'prepared' ? 'Vorbereitet' : 'Link versendet'}
+                          </Badge>
+                        )}
+                        {editOnboarding.status === 'completed' && (
+                          <Badge className="text-[10px] bg-green-100 text-green-800 border-green-200 font-medium">
+                            Abgeschlossen
+                          </Badge>
+                        )}
+                      </span>
+                      <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', openOnboarding && 'rotate-180')} />
+                    </CardTitle>
+                  </CardHeader>
+                  {openOnboarding && (
+                    <CardContent className="space-y-3 pt-0">
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2 text-xs text-amber-800 dark:text-amber-300">
+                        <p className="font-semibold flex items-center gap-1">
+                          <Info className="h-3.5 w-3.5" /> Was ist das Onboarding-System?
+                        </p>
+                        <p className="leading-relaxed">
+                          Hier wird die Grundlage für den späteren Self-Service-Onboarding-Link vorbereitet.
+                          Der Mitarbeiter erhält einen persönlichen Link, über den er seine eigenen Stammdaten
+                          (Adresse, IBAN, AHV-Nummer, etc.) selbst erfasst.
+                          Damit entfällt die manuelle Dateneingabe durch die Administration.
+                        </p>
+                        <div className="mt-2 space-y-0.5">
+                          <p className="font-semibold">Was der Mitarbeiter später selbst ausfüllen kann:</p>
+                          <ul className="list-disc list-inside space-y-0.5 text-amber-700 dark:text-amber-400">
+                            <li>Persönliche Daten (Adresse, Geburtsdatum, Nationalität)</li>
+                            <li>Kontaktdaten (Telefon, E-Mail)</li>
+                            <li>Bankverbindung (IBAN)</li>
+                            <li>AHV-Nummer</li>
+                            <li>Notfall-Kontakt</li>
+                            <li>Bestätigung der Vertragsbedingungen</li>
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Status-Steuerung */}
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">Onboarding-Status</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {(['none', 'prepared', 'sent', 'completed'] as const).map(s => (
+                            <button key={s}
+                              onClick={() => {
+                                const next: OnboardingPrep = { ...editOnboarding, status: s };
+                                if (s === 'prepared' && !next.token) {
+                                  next.token = generateToken();
+                                }
+                                setEditOnboarding(next);
+                                // Sofort in localStorage speichern
+                                if (selectedId) {
+                                  const newLocal = { ...localData };
+                                  const entry = getLocalEntry(newLocal, selectedId);
+                                  newLocal[selectedId] = { ...entry, onboarding: next };
+                                  setLocalData(newLocal);
+                                  saveLocalData(newLocal);
+                                }
+                              }}
+                              className={cn(
+                                'px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors',
+                                editOnboarding.status === s
+                                  ? 'bg-amber-600 text-white border-amber-700'
+                                  : 'bg-white dark:bg-gray-900 border-border text-muted-foreground hover:bg-muted',
+                              )}
+                            >
+                              {s === 'none' ? '–' : s === 'prepared' ? 'Vorbereitet' : s === 'sent' ? 'Link versendet' : 'Abgeschlossen'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Token anzeigen wenn vorbereitet */}
+                      {editOnboarding.status !== 'none' && editOnboarding.token && (
+                        <div className="rounded-md border border-border bg-muted/40 p-3 space-y-1.5">
+                          <p className="text-xs font-semibold flex items-center gap-1">
+                            <LinkIcon className="h-3.5 w-3.5" /> Onboarding-Token (für späteren Link)
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <code className="text-[11px] font-mono bg-background border border-border rounded px-2 py-1 flex-1 truncate">
+                              {editOnboarding.token}
+                            </code>
+                            <Button variant="outline" size="sm" className="h-7 text-xs"
+                              onClick={() => {
+                                navigator.clipboard.writeText(editOnboarding.token ?? '');
+                                toast.success('Token kopiert');
+                              }}>
+                              Kopieren
+                            </Button>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground italic">
+                            Dieser Token wird später für den personalisierten Self-Onboarding-Link verwendet.
+                            Noch kein aktiver Link — die E-Mail-Versand-Funktion folgt in einer nächsten Version.
+                          </p>
+                        </div>
+                      )}
+
+                      {editOnboarding.status === 'none' && (
+                        <Button variant="outline" size="sm" className="h-8 gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-50"
+                          onClick={() => {
+                            const next: OnboardingPrep = { status: 'prepared', token: generateToken() };
+                            setEditOnboarding(next);
+                            if (selectedId) {
+                              const newLocal = { ...localData };
+                              const entry = getLocalEntry(newLocal, selectedId);
+                              newLocal[selectedId] = { ...entry, onboarding: next };
+                              setLocalData(newLocal);
+                              saveLocalData(newLocal);
+                            }
+                            toast.success('Onboarding-Token erstellt');
+                          }}>
+                          <Clipboard className="h-3.5 w-3.5" />
+                          Onboarding vorbereiten
+                        </Button>
+                      )}
+                    </CardContent>
+                  )}
+                </Card>
+              )}
+
+              {/* ── Abschnitt 8: Arbeitsvertrag (Platzhalter) ─────────────── */}
               <Card className="border-dashed border-2 border-muted-foreground/20">
                 <CardHeader className="pb-2 pt-4">
                   <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground">
