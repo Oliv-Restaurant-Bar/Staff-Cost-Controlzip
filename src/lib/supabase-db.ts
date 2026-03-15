@@ -20,36 +20,90 @@ export interface ActualHourEntry {
 // ─── Hilfsfunktionen ────────────────────────────────────────────────────────
 
 const employeeToDb = (emp: Employee) => ({
-  id: emp.id,
-  name: emp.name,
-  department: emp.department === 'küche' ? 'kueche' : 'service',
-  employment_type: emp.employmentType,
-  hourly_wage: emp.hourlyWage,
-  weekly_hours: emp.weeklyHours ?? null,
-  monthly_salary: emp.monthlySalary ?? null,
-  monthly_salary_with_13th: emp.monthlySalaryWith13th ?? null,
-  days_off: emp.daysOff ?? [],
-  preferred_work_days: emp.preferredWorkDays ?? [],
-  hours_balance: emp.hoursBalance ?? null,
-  vacation_balance: emp.vacationBalance ?? null,
-  vacation_days_per_year: emp.vacationDaysPerYear ?? null,
+  // ── Stammdaten ────────────────────────────────────────────────────────────
+  id:                       emp.id,
+  name:                     emp.name,
+  department:               emp.department === 'küche' ? 'kueche' : 'service',
+  employment_type:          emp.employmentType,
+  // ── Arbeitszeit & Lohn ────────────────────────────────────────────────────
+  hourly_wage:              emp.hourlyWage,
+  weekly_hours:             emp.weeklyHours             ?? null,
+  monthly_salary:           emp.monthlySalary           ?? null,
+  monthly_salary_with_13th: emp.monthlySalaryWith13th   ?? null,
+  social_cost_factor:       emp.socialCostFactor        ?? 1.13,
+  has_13th_salary:          emp.has13thSalary           ?? false,
+  // ── Saldi ────────────────────────────────────────────────────────────────
+  hours_balance:            emp.hoursBalance            ?? null,
+  vacation_balance:         emp.vacationBalance         ?? null,
+  vacation_days_per_year:   emp.vacationDaysPerYear     ?? null,
+  // ── Dienstplan ────────────────────────────────────────────────────────────
+  days_off:                 emp.daysOff                 ?? [],
+  preferred_work_days:      emp.preferredWorkDays       ?? [],
+  // ── Persönliche Daten ────────────────────────────────────────────────────
+  birth_date:               emp.birthDate               ?? null,
+  nationality:              emp.nationality             ?? null,
+  phone:                    emp.phone                   ?? null,
+  email:                    emp.email                   ?? null,
+  address_street:           emp.addressStreet           ?? null,
+  address_zip:              emp.addressZip              ?? null,
+  address_city:             emp.addressCity             ?? null,
+  ahv_number:               emp.ahvNumber               ?? null,
+  iban:                     emp.iban                    ?? null,
+  // ── Vertragliche Grundlagen ──────────────────────────────────────────────
+  contract_type:            emp.contractType            ?? null,
+  position_title:           emp.positionTitle           ?? null,
+  contract_start:           emp.contractStart           ?? null,
+  contract_end:             emp.contractEnd             ?? null,
+  is_limited_contract:      emp.isLimitedContract       ?? false,
+  trial_period_months:      emp.trialPeriodMonths       ?? null,
+  notice_period_weeks:      emp.noticePeriodWeeks       ?? null,
+  // ── Onboarding ───────────────────────────────────────────────────────────
+  onboarding_status:        emp.onboardingStatus        ?? 'none',
+  onboarding_token:         emp.onboardingToken         ?? null,
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbToEmployee = (row: any): Employee => ({
-  id: row.id,
-  name: row.name,
-  department: row.department === 'kueche' ? 'küche' : 'service',
-  employmentType: row.employment_type,
-  hourlyWage: Number(row.hourly_wage),
-  weeklyHours: row.weekly_hours ?? undefined,
-  monthlySalary: row.monthly_salary ?? undefined,
-  monthlySalaryWith13th: row.monthly_salary_with_13th ?? undefined,
-  daysOff: row.days_off ?? undefined,
-  preferredWorkDays: row.preferred_work_days ?? undefined,
-  hoursBalance: row.hours_balance ?? undefined,
-  vacationBalance: row.vacation_balance ?? undefined,
-  vacationDaysPerYear: row.vacation_days_per_year ?? undefined,
+  // ── Stammdaten ────────────────────────────────────────────────────────────
+  id:                     row.id,
+  name:                   row.name,
+  department:             row.department === 'kueche' ? 'küche' : 'service',
+  employmentType:         row.employment_type,
+  // ── Arbeitszeit & Lohn ────────────────────────────────────────────────────
+  hourlyWage:             Number(row.hourly_wage),
+  weeklyHours:            row.weekly_hours              ?? undefined,
+  monthlySalary:          row.monthly_salary            ?? undefined,
+  monthlySalaryWith13th:  row.monthly_salary_with_13th  ?? undefined,
+  socialCostFactor:       row.social_cost_factor        != null ? Number(row.social_cost_factor) : undefined,
+  has13thSalary:          row.has_13th_salary           ?? undefined,
+  // ── Saldi ────────────────────────────────────────────────────────────────
+  hoursBalance:           row.hours_balance             ?? undefined,
+  vacationBalance:        row.vacation_balance          ?? undefined,
+  vacationDaysPerYear:    row.vacation_days_per_year    ?? undefined,
+  // ── Dienstplan ────────────────────────────────────────────────────────────
+  daysOff:                row.days_off                  ?? undefined,
+  preferredWorkDays:      row.preferred_work_days       ?? undefined,
+  // ── Persönliche Daten ────────────────────────────────────────────────────
+  birthDate:              row.birth_date                ?? undefined,
+  nationality:            row.nationality               ?? undefined,
+  phone:                  row.phone                     ?? undefined,
+  email:                  row.email                     ?? undefined,
+  addressStreet:          row.address_street            ?? undefined,
+  addressZip:             row.address_zip               ?? undefined,
+  addressCity:            row.address_city              ?? undefined,
+  ahvNumber:              row.ahv_number                ?? undefined,
+  iban:                   row.iban                      ?? undefined,
+  // ── Vertragliche Grundlagen ──────────────────────────────────────────────
+  contractType:           row.contract_type             ?? undefined,
+  positionTitle:          row.position_title            ?? undefined,
+  contractStart:          row.contract_start            ?? undefined,
+  contractEnd:            row.contract_end              ?? undefined,
+  isLimitedContract:      row.is_limited_contract       ?? undefined,
+  trialPeriodMonths:      row.trial_period_months       ?? undefined,
+  noticePeriodWeeks:      row.notice_period_weeks       ?? undefined,
+  // ── Onboarding ───────────────────────────────────────────────────────────
+  onboardingStatus:       row.onboarding_status         ?? undefined,
+  onboardingToken:        row.onboarding_token          ?? undefined,
 });
 
 // ─── Mitarbeiter ─────────────────────────────────────────────────────────────

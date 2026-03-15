@@ -58,9 +58,8 @@ interface ContractFields {
   source: 'manual' | 'ocr';  // Woher kamen die Daten?
 }
 
-// ─── Erweiterte HR-Strukturen (alle lokal / localStorage) ────────────────────
-
-/** Persönliche Daten für Onboarding-Vorbereitung */
+// ── Legacy-Typen: nur noch für einmalige localStorage→Supabase-Migration ──────
+/** @deprecated Migriert — Felder liegen jetzt in Employee (Supabase) */
 interface PersonalInfo {
   birthDate?:     string;
   phone?:         string;
@@ -69,44 +68,44 @@ interface PersonalInfo {
   addressZip?:    string;
   addressCity?:   string;
   nationality?:   string;
-  ahvNumber?:     string;   // AHV-Nummer
-  iban?:          string;   // Für Lohnzahlung
+  ahvNumber?:     string;
+  iban?:          string;
 }
 
-/** Vertragliche Grundlagen (Architektur für spätere Vertragsgenerierung) */
+/** @deprecated Migriert — Felder liegen jetzt in Employee (Supabase) */
 interface ContractFoundation {
-  contractType?:        'monthly' | 'hourly' | 'irregular';
-  positionTitle?:       string;
-  contractStart?:       string;  // ISO-Datum
-  contractEnd?:         string;  // ISO-Datum (leer wenn unbefristet)
-  isLimited?:           boolean;
-  noticePeriodWeeks?:   number;  // Kündigungsfrist in Wochen
-  trialPeriodMonths?:   number;  // Probezeit in Monaten
-  probationEndDate?:    string;  // berechnet aus Eintrittsdatum + Probezeit
+  contractType?:      'monthly' | 'hourly' | 'irregular';
+  positionTitle?:     string;
+  contractStart?:     string;
+  contractEnd?:       string;
+  isLimited?:         boolean;
+  noticePeriodWeeks?: number;
+  trialPeriodMonths?: number;
+  probationEndDate?:  string;
 }
 
-/** Onboarding-Vorbereitung (Status + Token für spätere Self-Service-Links) */
+/** @deprecated Migriert — Felder liegen jetzt in Employee (Supabase) */
 interface OnboardingPrep {
   status:       'none' | 'prepared' | 'sent' | 'completed';
-  token?:       string;   // Eindeutiger Link-Token (UUID)
+  token?:       string;
   sentAt?:      string;
   completedAt?: string;
   notes?:       string;
 }
 
-/** Erweiterte Lohn-/Kostendaten (lokal) */
+/** @deprecated Migriert — Felder liegen jetzt in Employee (Supabase) */
 interface SalaryExtension {
-  has13thSalary?:       boolean;  // 13. Monatslohn?
-  socialCostFactor?:    number;   // AG-Anteil Sozialkosten (z.B. 1.13 = 13%)
+  has13thSalary?:    boolean;
+  socialCostFactor?: number;
 }
 
-/** Lokal gespeicherte Felder (kein DB-Spalte nötig) */
+/** Lokal gespeicherte Felder (nur noch active, notes, contractFileName) */
 interface LocalEmployeeData {
   active:              boolean;
   notes:               string;
   contract?:           ContractFields;
   contractFileName?:   string;
-  // Neue Felder:
+  // Legacy-Felder (nur für Migration, danach leer):
   personalInfo?:       PersonalInfo;
   contractFoundation?: ContractFoundation;
   onboarding?:         OnboardingPrep;
@@ -161,9 +160,9 @@ interface SalaryCosts {
   internalHourly:  number | null;   // Interner Stundenansatz (für Dienstplan)
 }
 
-function calcSalaryCosts(emp: Employee, salaryExt?: SalaryExtension): SalaryCosts {
-  const factor   = salaryExt?.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
-  const has13th  = salaryExt?.has13thSalary ?? false;
+function calcSalaryCosts(emp: Employee): SalaryCosts {
+  const factor  = emp.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
+  const has13th = emp.has13thSalary ?? false;
 
   // Monatslohn-Basis-MA (Vollzeit / Teilzeit)
   if (emp.monthlySalary && emp.monthlySalary > 0 && emp.weeklyHours && emp.weeklyHours > 0) {
@@ -196,7 +195,7 @@ function calcSalaryCosts(emp: Employee, salaryExt?: SalaryExtension): SalaryCost
   return { mode: 'none', grossMonthly: null, annualGross: null, socialFactor: factor, socialCostMonthly: null, totalAnnual: null, internalHourly: null };
 }
 
-/** @deprecated Verwende calcSalaryCosts */
+/** @deprecated Verwende calcSalaryCosts — nur noch für externe Aufrufe */
 function calcInternalHourlyCost(emp: Employee): number | null {
   return calcSalaryCosts(emp).internalHourly;
 }
@@ -273,15 +272,9 @@ const Personalstamm = () => {
   const [showMobile, setShowMobile]       = useState<'list' | 'detail'>('list');
   const [showContractInfo, setShowContractInfo] = useState(false);
 
-  // ── Erweiterte HR-Daten (State) ────────────────────────────────────────────
-  const [editPersonal,   setEditPersonal]   = useState<PersonalInfo>({});
-  const [editContractF,  setEditContractF]  = useState<ContractFoundation>({});
-  const [editSalaryExt,  setEditSalaryExt]  = useState<SalaryExtension>({ socialCostFactor: DEFAULT_SOCIAL_COST_FACTOR });
-  const [editOnboarding, setEditOnboarding] = useState<OnboardingPrep>({ status: 'none' });
-
   // ── UI-Abschnitte aufklappbar ──────────────────────────────────────────────
-  const [openPersonal,  setOpenPersonal]  = useState(false);
-  const [openContractF, setOpenContractF] = useState(false);
+  const [openPersonal,   setOpenPersonal]   = useState(false);
+  const [openContractF,  setOpenContractF]  = useState(false);
   const [openOnboarding, setOpenOnboarding] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -290,8 +283,85 @@ const Personalstamm = () => {
   useEffect(() => {
     const load = async () => {
       const emps = await loadEmployees();
-      if (emps) setEmployees(emps);
-      setLocalData(loadLocalData());
+      const local = loadLocalData();
+
+      if (emps) {
+        // ── Einmalige Migration: localStorage HR-Daten → Supabase ──────────
+        // Wenn alte Browserdaten vorhanden sind (personalInfo, contractFoundation,
+        // salaryExt, onboarding), werden sie in die Supabase-Felder übertragen.
+        const migrated: Employee[] = [];
+        for (const emp of emps) {
+          const loc = local[emp.id];
+          if (!loc) continue;
+          const hasSalaryExt  = loc.salaryExt  && Object.keys(loc.salaryExt).length  > 0;
+          const hasPersonal   = loc.personalInfo && Object.keys(loc.personalInfo).length > 0;
+          const hasContractF  = loc.contractFoundation && Object.keys(loc.contractFoundation).length > 0;
+          const hasOnboarding = loc.onboarding  && loc.onboarding.status !== 'none';
+          if (!hasSalaryExt && !hasPersonal && !hasContractF && !hasOnboarding) continue;
+
+          let updated = { ...emp };
+          if (hasSalaryExt && loc.salaryExt) {
+            const s = loc.salaryExt;
+            updated = {
+              ...updated,
+              socialCostFactor: emp.socialCostFactor ?? s.socialCostFactor,
+              has13thSalary:    emp.has13thSalary    ?? s.has13thSalary,
+            };
+          }
+          if (hasPersonal && loc.personalInfo) {
+            const p = loc.personalInfo;
+            updated = {
+              ...updated,
+              birthDate:     emp.birthDate     ?? p.birthDate,
+              nationality:   emp.nationality   ?? p.nationality,
+              phone:         emp.phone         ?? p.phone,
+              email:         emp.email         ?? p.email,
+              addressStreet: emp.addressStreet ?? p.addressStreet,
+              addressZip:    emp.addressZip    ?? p.addressZip,
+              addressCity:   emp.addressCity   ?? p.addressCity,
+              ahvNumber:     emp.ahvNumber     ?? p.ahvNumber,
+              iban:          emp.iban          ?? p.iban,
+            };
+          }
+          if (hasContractF && loc.contractFoundation) {
+            const c = loc.contractFoundation;
+            updated = {
+              ...updated,
+              contractType:       emp.contractType       ?? c.contractType,
+              positionTitle:      emp.positionTitle      ?? c.positionTitle,
+              contractStart:      emp.contractStart      ?? c.contractStart,
+              contractEnd:        emp.contractEnd        ?? c.contractEnd,
+              isLimitedContract:  emp.isLimitedContract  ?? c.isLimited,
+              trialPeriodMonths:  emp.trialPeriodMonths  ?? c.trialPeriodMonths,
+              noticePeriodWeeks:  emp.noticePeriodWeeks  ?? c.noticePeriodWeeks,
+            };
+          }
+          if (hasOnboarding && loc.onboarding) {
+            const o = loc.onboarding;
+            updated = {
+              ...updated,
+              onboardingStatus: emp.onboardingStatus ?? o.status,
+              onboardingToken:  emp.onboardingToken  ?? o.token,
+            };
+          }
+
+          await upsertEmployee(updated);
+          migrated.push(updated);
+
+          // Alte Felder aus localStorage entfernen
+          const { personalInfo, contractFoundation, salaryExt, onboarding, ...rest } = local[emp.id] ?? {};
+          local[emp.id] = rest as LocalEmployeeData;
+        }
+        saveLocalData(local);
+
+        // Migrierte Records in die finale Liste einsetzen
+        const finalEmps = emps.map(e => migrated.find(m => m.id === e.id) ?? e);
+        setEmployees(finalEmps);
+        if (migrated.length > 0) {
+          console.info(`[Personalstamm] ${migrated.length} Mitarbeiter-Datensätze aus localStorage nach Supabase migriert.`);
+        }
+      }
+      setLocalData(local);
       setLoading(false);
     };
     load();
@@ -322,11 +392,6 @@ const Personalstamm = () => {
     const local = getLocalEntry(localData, emp.id);
     setEditNotes(local.notes);
     setEditActive(local.active);
-    // Neue HR-Felder aus localStorage laden
-    setEditPersonal(local.personalInfo ?? {});
-    setEditContractF(local.contractFoundation ?? {});
-    setEditSalaryExt(local.salaryExt ?? { socialCostFactor: DEFAULT_SOCIAL_COST_FACTOR });
-    setEditOnboarding(local.onboarding ?? { status: 'none' });
     setShowMobile('detail');
     setShowContractInfo(false);
     setOpenPersonal(false);
@@ -346,10 +411,6 @@ const Personalstamm = () => {
     const local = getLocalEntry(localData, selectedId);
     setEditNotes(local.notes);
     setEditActive(local.active);
-    setEditPersonal(local.personalInfo ?? {});
-    setEditContractF(local.contractFoundation ?? {});
-    setEditSalaryExt(local.salaryExt ?? { socialCostFactor: DEFAULT_SOCIAL_COST_FACTOR });
-    setEditOnboarding(local.onboarding ?? { status: 'none' });
     setEditMode(false);
   };
 
@@ -361,10 +422,6 @@ const Personalstamm = () => {
     setSelectedId(newId);
     setEditNotes('');
     setEditActive(true);
-    setEditPersonal({});
-    setEditContractF({});
-    setEditSalaryExt({ socialCostFactor: DEFAULT_SOCIAL_COST_FACTOR });
-    setEditOnboarding({ status: 'none' });
     setEditMode(true);
     setShowMobile('detail');
     setOpenPersonal(false);
@@ -394,12 +451,8 @@ const Personalstamm = () => {
       const prevLocal = getLocalEntry(newLocal, editData.id);
       newLocal[editData.id] = {
         ...prevLocal,
-        active:              editActive,
-        notes:               editNotes,
-        personalInfo:        Object.keys(editPersonal).length  > 0 ? editPersonal  : undefined,
-        contractFoundation:  Object.keys(editContractF).length > 0 ? editContractF : undefined,
-        salaryExt:           editSalaryExt,
-        onboarding:          editOnboarding,
+        active: editActive,
+        notes:  editNotes,
       };
       setLocalData(newLocal);
       saveLocalData(newLocal);
@@ -920,13 +973,13 @@ const Personalstamm = () => {
                             <label className="flex items-center gap-2 cursor-pointer">
                               <input
                                 type="checkbox"
-                                checked={editSalaryExt.has13thSalary ?? false}
-                                onChange={e => setEditSalaryExt(s => ({ ...s, has13thSalary: e.target.checked }))}
+                                checked={editData?.has13thSalary ?? false}
+                                onChange={e => setEditData(d => d ? { ...d, has13thSalary: e.target.checked } : d)}
                                 className="h-4 w-4 rounded"
                               />
                               <span className="text-sm">Ja – 13. Monatslohn vereinbart</span>
                             </label>
-                            {editSalaryExt.has13thSalary && editData?.monthlySalary && (
+                            {editData?.has13thSalary && editData?.monthlySalary && (
                               <p className="text-[11px] text-muted-foreground mt-1 ml-6">
                                 ≈ {formatCHF(editData.monthlySalary * 13 / 12)}/Mt. effektiv
                               </p>
@@ -940,19 +993,19 @@ const Personalstamm = () => {
                             <div className="flex items-center gap-2">
                               <Input
                                 type="number" min="1.00" max="1.40" step="0.01"
-                                value={editSalaryExt.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR}
-                                onChange={e => setEditSalaryExt(s => ({ ...s, socialCostFactor: parseFloat(e.target.value) || DEFAULT_SOCIAL_COST_FACTOR }))}
+                                value={editData?.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR}
+                                onChange={e => setEditData(d => d ? { ...d, socialCostFactor: parseFloat(e.target.value) || DEFAULT_SOCIAL_COST_FACTOR } : d)}
                                 className="h-9 text-sm w-24"
                               />
                               <span className="text-xs text-muted-foreground">
-                                = {(((editSalaryExt.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR) - 1) * 100).toFixed(1)}% AG
+                                = {(((editData?.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR) - 1) * 100).toFixed(1)}% AG
                               </span>
                             </div>
                           </div>
                         </div>
 
                         {editData && (() => {
-                          const costs = calcSalaryCosts(editData, editSalaryExt);
+                          const costs = calcSalaryCosts(editData);
                           if (costs.mode === 'none') return null;
                           return (
                             <div className="rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 p-3 space-y-1.5 text-xs">
@@ -986,8 +1039,7 @@ const Personalstamm = () => {
                       (() => {
                         const empForCost = selectedEmp ?? editData;
                         if (!empForCost) return null;
-                        const salExt = selectedId ? localData[selectedId]?.salaryExt : editSalaryExt;
-                        const costs = calcSalaryCosts(empForCost, salExt);
+                        const costs = calcSalaryCosts(empForCost);
                         return (
                           <div className="space-y-3">
                             <div className="grid grid-cols-2 gap-y-2 text-sm">
@@ -1169,52 +1221,52 @@ const Personalstamm = () => {
                               <Calendar className="h-3 w-3" /> Geburtsdatum
                             </Label>
                             <Input type="date" className="h-9 text-sm"
-                              value={editPersonal.birthDate ?? ''}
-                              onChange={e => setEditPersonal(p => ({ ...p, birthDate: e.target.value || undefined }))} />
+                              value={editData?.birthDate ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, birthDate: e.target.value || undefined } : d)} />
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
                               <Shield className="h-3 w-3" /> Nationalität
                             </Label>
                             <Input className="h-9 text-sm" placeholder="z.B. Schweiz"
-                              value={editPersonal.nationality ?? ''}
-                              onChange={e => setEditPersonal(p => ({ ...p, nationality: e.target.value || undefined }))} />
+                              value={editData?.nationality ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, nationality: e.target.value || undefined } : d)} />
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
                               <Phone className="h-3 w-3" /> Telefon
                             </Label>
                             <Input className="h-9 text-sm" placeholder="+41 79 …"
-                              value={editPersonal.phone ?? ''}
-                              onChange={e => setEditPersonal(p => ({ ...p, phone: e.target.value || undefined }))} />
+                              value={editData?.phone ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, phone: e.target.value || undefined } : d)} />
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
                               <Mail className="h-3 w-3" /> E-Mail
                             </Label>
                             <Input type="email" className="h-9 text-sm" placeholder="name@beispiel.ch"
-                              value={editPersonal.email ?? ''}
-                              onChange={e => setEditPersonal(p => ({ ...p, email: e.target.value || undefined }))} />
+                              value={editData?.email ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, email: e.target.value || undefined } : d)} />
                           </div>
                           <div className="sm:col-span-2">
                             <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
                               <MapPin className="h-3 w-3" /> Strasse & Hausnummer
                             </Label>
                             <Input className="h-9 text-sm" placeholder="Musterstrasse 1"
-                              value={editPersonal.addressStreet ?? ''}
-                              onChange={e => setEditPersonal(p => ({ ...p, addressStreet: e.target.value || undefined }))} />
+                              value={editData?.addressStreet ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, addressStreet: e.target.value || undefined } : d)} />
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block">PLZ</Label>
                             <Input className="h-9 text-sm" placeholder="3000"
-                              value={editPersonal.addressZip ?? ''}
-                              onChange={e => setEditPersonal(p => ({ ...p, addressZip: e.target.value || undefined }))} />
+                              value={editData?.addressZip ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, addressZip: e.target.value || undefined } : d)} />
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block">Ort</Label>
                             <Input className="h-9 text-sm" placeholder="Bern"
-                              value={editPersonal.addressCity ?? ''}
-                              onChange={e => setEditPersonal(p => ({ ...p, addressCity: e.target.value || undefined }))} />
+                              value={editData?.addressCity ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, addressCity: e.target.value || undefined } : d)} />
                           </div>
                           {isAdmin && (
                             <>
@@ -1224,8 +1276,8 @@ const Personalstamm = () => {
                                   <span className="ml-1 text-[10px] opacity-60">vertraulich</span>
                                 </Label>
                                 <Input className="h-9 text-sm font-mono" placeholder="756.XXXX.XXXX.XX"
-                                  value={editPersonal.ahvNumber ?? ''}
-                                  onChange={e => setEditPersonal(p => ({ ...p, ahvNumber: e.target.value || undefined }))} />
+                                  value={editData?.ahvNumber ?? ''}
+                                  onChange={e => setEditData(d => d ? { ...d, ahvNumber: e.target.value || undefined } : d)} />
                               </div>
                               <div>
                                 <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
@@ -1233,28 +1285,28 @@ const Personalstamm = () => {
                                   <span className="ml-1 text-[10px] opacity-60">vertraulich</span>
                                 </Label>
                                 <Input className="h-9 text-sm font-mono" placeholder="CH56 …"
-                                  value={editPersonal.iban ?? ''}
-                                  onChange={e => setEditPersonal(p => ({ ...p, iban: e.target.value || undefined }))} />
+                                  value={editData?.iban ?? ''}
+                                  onChange={e => setEditData(d => d ? { ...d, iban: e.target.value || undefined } : d)} />
                               </div>
                             </>
                           )}
                         </div>
                       ) : (
                         <div className="grid grid-cols-2 gap-y-2 text-sm">
-                          {editPersonal.birthDate    && <DataRow label="Geburtsdatum"  value={editPersonal.birthDate} />}
-                          {editPersonal.nationality  && <DataRow label="Nationalität"  value={editPersonal.nationality} />}
-                          {editPersonal.phone        && <DataRow label="Telefon"       value={editPersonal.phone} />}
-                          {editPersonal.email        && <DataRow label="E-Mail"        value={editPersonal.email} />}
-                          {editPersonal.addressStreet && (
-                            <DataRow label="Adresse" value={`${editPersonal.addressStreet}, ${editPersonal.addressZip ?? ''} ${editPersonal.addressCity ?? ''}`} />
+                          {selectedEmp?.birthDate    && <DataRow label="Geburtsdatum"  value={selectedEmp.birthDate} />}
+                          {selectedEmp?.nationality  && <DataRow label="Nationalität"  value={selectedEmp.nationality} />}
+                          {selectedEmp?.phone        && <DataRow label="Telefon"       value={selectedEmp.phone} />}
+                          {selectedEmp?.email        && <DataRow label="E-Mail"        value={selectedEmp.email} />}
+                          {selectedEmp?.addressStreet && (
+                            <DataRow label="Adresse" value={`${selectedEmp.addressStreet}, ${selectedEmp.addressZip ?? ''} ${selectedEmp.addressCity ?? ''}`} />
                           )}
-                          {isAdmin && editPersonal.ahvNumber && (
-                            <DataRow label="AHV-Nummer" value={editPersonal.ahvNumber} />
+                          {isAdmin && selectedEmp?.ahvNumber && (
+                            <DataRow label="AHV-Nummer" value={selectedEmp.ahvNumber} />
                           )}
-                          {isAdmin && editPersonal.iban && (
-                            <DataRow label="IBAN" value={`****${editPersonal.iban.slice(-4)}`} />
+                          {isAdmin && selectedEmp?.iban && (
+                            <DataRow label="IBAN" value={`****${selectedEmp.iban.slice(-4)}`} />
                           )}
-                          {!editPersonal.phone && !editPersonal.email && !editPersonal.birthDate && (
+                          {!selectedEmp?.phone && !selectedEmp?.email && !selectedEmp?.birthDate && (
                             <p className="col-span-2 text-xs text-muted-foreground italic">Noch keine persönlichen Daten erfasst. Im Bearbeitungsmodus ergänzen.</p>
                           )}
                         </div>
@@ -1296,8 +1348,8 @@ const Personalstamm = () => {
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block">Vertragsart</Label>
                             <Select
-                              value={editContractF.contractType ?? ''}
-                              onValueChange={v => setEditContractF(c => ({ ...c, contractType: v as ContractFoundation['contractType'] || undefined }))}
+                              value={editData?.contractType ?? ''}
+                              onValueChange={v => setEditData(d => d ? { ...d, contractType: (v as Employee['contractType']) || undefined } : d)}
                             >
                               <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Wählen…" /></SelectTrigger>
                               <SelectContent>
@@ -1312,30 +1364,30 @@ const Personalstamm = () => {
                               <Briefcase className="h-3 w-3" /> Stellenbezeichnung
                             </Label>
                             <Input className="h-9 text-sm" placeholder="z.B. Servicemitarbeiter"
-                              value={editContractF.positionTitle ?? ''}
-                              onChange={e => setEditContractF(c => ({ ...c, positionTitle: e.target.value || undefined }))} />
+                              value={editData?.positionTitle ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, positionTitle: e.target.value || undefined } : d)} />
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
                               <Calendar className="h-3 w-3" /> Eintrittsdatum
                             </Label>
                             <Input type="date" className="h-9 text-sm"
-                              value={editContractF.contractStart ?? ''}
-                              onChange={e => setEditContractF(c => ({ ...c, contractStart: e.target.value || undefined }))} />
+                              value={editData?.contractStart ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, contractStart: e.target.value || undefined } : d)} />
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground mb-2 block">Befristeter Vertrag</Label>
                             <label className="flex items-center gap-2 cursor-pointer mb-1">
                               <input type="checkbox"
-                                checked={editContractF.isLimited ?? false}
-                                onChange={e => setEditContractF(c => ({ ...c, isLimited: e.target.checked }))}
+                                checked={editData?.isLimitedContract ?? false}
+                                onChange={e => setEditData(d => d ? { ...d, isLimitedContract: e.target.checked } : d)}
                                 className="h-4 w-4 rounded" />
                               <span className="text-sm">Ja – Vertrag ist befristet</span>
                             </label>
-                            {editContractF.isLimited && (
+                            {editData?.isLimitedContract && (
                               <Input type="date" className="h-9 text-sm mt-1"
-                                value={editContractF.contractEnd ?? ''}
-                                onChange={e => setEditContractF(c => ({ ...c, contractEnd: e.target.value || undefined }))} />
+                                value={editData?.contractEnd ?? ''}
+                                onChange={e => setEditData(d => d ? { ...d, contractEnd: e.target.value || undefined } : d)} />
                             )}
                           </div>
                           <div>
@@ -1344,8 +1396,8 @@ const Personalstamm = () => {
                             </Label>
                             <Input type="number" min="0" max="12" className="h-9 text-sm"
                               placeholder="z.B. 3"
-                              value={editContractF.trialPeriodMonths ?? ''}
-                              onChange={e => setEditContractF(c => ({ ...c, trialPeriodMonths: parseInt(e.target.value) || undefined }))} />
+                              value={editData?.trialPeriodMonths ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, trialPeriodMonths: parseInt(e.target.value) || undefined } : d)} />
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
@@ -1353,19 +1405,19 @@ const Personalstamm = () => {
                             </Label>
                             <Input type="number" min="0" max="52" className="h-9 text-sm"
                               placeholder="z.B. 4"
-                              value={editContractF.noticePeriodWeeks ?? ''}
-                              onChange={e => setEditContractF(c => ({ ...c, noticePeriodWeeks: parseInt(e.target.value) || undefined }))} />
+                              value={editData?.noticePeriodWeeks ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, noticePeriodWeeks: parseInt(e.target.value) || undefined } : d)} />
                           </div>
                         </div>
                       ) : (
                         <div className="grid grid-cols-2 gap-y-2 text-sm">
-                          {editContractF.contractType   && <DataRow label="Vertragsart"       value={editContractF.contractType === 'monthly' ? 'Monatslohn-Vertrag' : editContractF.contractType === 'hourly' ? 'Stundenlohn-Vertrag' : 'Aushilfe'} />}
-                          {editContractF.positionTitle  && <DataRow label="Stellenbezeichnung" value={editContractF.positionTitle} />}
-                          {editContractF.contractStart  && <DataRow label="Eintritt"           value={editContractF.contractStart} />}
-                          {editContractF.isLimited && editContractF.contractEnd && <DataRow label="Austritt (befristet)" value={editContractF.contractEnd} />}
-                          {editContractF.trialPeriodMonths  && <DataRow label="Probezeit"         value={`${editContractF.trialPeriodMonths} Monate`} />}
-                          {editContractF.noticePeriodWeeks  && <DataRow label="Kündigungsfrist"   value={`${editContractF.noticePeriodWeeks} Wochen`} />}
-                          {!editContractF.contractType && !editContractF.contractStart && (
+                          {selectedEmp?.contractType   && <DataRow label="Vertragsart"       value={selectedEmp.contractType === 'monthly' ? 'Monatslohn-Vertrag' : selectedEmp.contractType === 'hourly' ? 'Stundenlohn-Vertrag' : 'Aushilfe'} />}
+                          {selectedEmp?.positionTitle  && <DataRow label="Stellenbezeichnung" value={selectedEmp.positionTitle} />}
+                          {selectedEmp?.contractStart  && <DataRow label="Eintritt"           value={selectedEmp.contractStart} />}
+                          {selectedEmp?.isLimitedContract && selectedEmp.contractEnd && <DataRow label="Austritt (befristet)" value={selectedEmp.contractEnd} />}
+                          {selectedEmp?.trialPeriodMonths  && <DataRow label="Probezeit"         value={`${selectedEmp.trialPeriodMonths} Monate`} />}
+                          {selectedEmp?.noticePeriodWeeks  && <DataRow label="Kündigungsfrist"   value={`${selectedEmp.noticePeriodWeeks} Wochen`} />}
+                          {!selectedEmp?.contractType && !selectedEmp?.contractStart && (
                             <p className="col-span-2 text-xs text-muted-foreground italic">Noch keine Vertragsdaten erfasst. Im Bearbeitungsmodus ergänzen.</p>
                           )}
                         </div>
@@ -1386,12 +1438,12 @@ const Personalstamm = () => {
                       <span className="flex items-center gap-2">
                         <Clipboard className="h-4 w-4 text-amber-600" />
                         Onboarding-Vorbereitung
-                        {editOnboarding.status !== 'none' && editOnboarding.status !== 'completed' && (
+                        {selectedEmp?.onboardingStatus && selectedEmp.onboardingStatus !== 'none' && selectedEmp.onboardingStatus !== 'completed' && (
                           <Badge className="text-[10px] bg-amber-100 text-amber-800 border-amber-200 font-medium">
-                            {editOnboarding.status === 'prepared' ? 'Vorbereitet' : 'Link versendet'}
+                            {selectedEmp.onboardingStatus === 'prepared' ? 'Vorbereitet' : 'Link versendet'}
                           </Badge>
                         )}
-                        {editOnboarding.status === 'completed' && (
+                        {selectedEmp?.onboardingStatus === 'completed' && (
                           <Badge className="text-[10px] bg-green-100 text-green-800 border-green-200 font-medium">
                             Abgeschlossen
                           </Badge>
@@ -1431,24 +1483,17 @@ const Personalstamm = () => {
                         <div className="flex flex-wrap gap-2">
                           {(['none', 'prepared', 'sent', 'completed'] as const).map(s => (
                             <button key={s}
-                              onClick={() => {
-                                const next: OnboardingPrep = { ...editOnboarding, status: s };
-                                if (s === 'prepared' && !next.token) {
-                                  next.token = generateToken();
-                                }
-                                setEditOnboarding(next);
-                                // Sofort in localStorage speichern
-                                if (selectedId) {
-                                  const newLocal = { ...localData };
-                                  const entry = getLocalEntry(newLocal, selectedId);
-                                  newLocal[selectedId] = { ...entry, onboarding: next };
-                                  setLocalData(newLocal);
-                                  saveLocalData(newLocal);
-                                }
+                              onClick={async () => {
+                                if (!editData) return;
+                                const token = (s !== 'none' && !editData.onboardingToken) ? generateToken() : editData.onboardingToken;
+                                const updated = { ...editData, onboardingStatus: s, onboardingToken: token };
+                                setEditData(updated);
+                                setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
+                                await upsertEmployee(updated);
                               }}
                               className={cn(
                                 'px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors',
-                                editOnboarding.status === s
+                                (editData?.onboardingStatus ?? 'none') === s
                                   ? 'bg-amber-600 text-white border-amber-700'
                                   : 'bg-white dark:bg-gray-900 border-border text-muted-foreground hover:bg-muted',
                               )}
@@ -1460,18 +1505,18 @@ const Personalstamm = () => {
                       </div>
 
                       {/* Token anzeigen wenn vorbereitet */}
-                      {editOnboarding.status !== 'none' && editOnboarding.token && (
+                      {editData?.onboardingStatus && editData.onboardingStatus !== 'none' && editData.onboardingToken && (
                         <div className="rounded-md border border-border bg-muted/40 p-3 space-y-1.5">
                           <p className="text-xs font-semibold flex items-center gap-1">
                             <LinkIcon className="h-3.5 w-3.5" /> Onboarding-Token (für späteren Link)
                           </p>
                           <div className="flex items-center gap-2">
                             <code className="text-[11px] font-mono bg-background border border-border rounded px-2 py-1 flex-1 truncate">
-                              {editOnboarding.token}
+                              {editData.onboardingToken}
                             </code>
                             <Button variant="outline" size="sm" className="h-7 text-xs"
                               onClick={() => {
-                                navigator.clipboard.writeText(editOnboarding.token ?? '');
+                                navigator.clipboard.writeText(editData?.onboardingToken ?? '');
                                 toast.success('Token kopiert');
                               }}>
                               Kopieren
@@ -1484,18 +1529,14 @@ const Personalstamm = () => {
                         </div>
                       )}
 
-                      {editOnboarding.status === 'none' && (
+                      {(!editData?.onboardingStatus || editData.onboardingStatus === 'none') && (
                         <Button variant="outline" size="sm" className="h-8 gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-50"
-                          onClick={() => {
-                            const next: OnboardingPrep = { status: 'prepared', token: generateToken() };
-                            setEditOnboarding(next);
-                            if (selectedId) {
-                              const newLocal = { ...localData };
-                              const entry = getLocalEntry(newLocal, selectedId);
-                              newLocal[selectedId] = { ...entry, onboarding: next };
-                              setLocalData(newLocal);
-                              saveLocalData(newLocal);
-                            }
+                          onClick={async () => {
+                            if (!editData) return;
+                            const updated = { ...editData, onboardingStatus: 'prepared' as const, onboardingToken: generateToken() };
+                            setEditData(updated);
+                            setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
+                            await upsertEmployee(updated);
                             toast.success('Onboarding-Token erstellt');
                           }}>
                           <Clipboard className="h-3.5 w-3.5" />

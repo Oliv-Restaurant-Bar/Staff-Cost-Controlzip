@@ -13,11 +13,39 @@ export interface Employee {
   weeklyHours?: number;
   daysOff?: DayOfWeek[];
   preferredWorkDays?: DayOfWeek[];
-  monthlySalary?: number; // Monatslohn (nur bei Vollzeit)
-  monthlySalaryWith13th?: number; // Monatslohn inkl. 13. Monatslohn
-  hoursBalance?: number; // Stundensaldo (Überstunden/Minusstunden)
-  vacationBalance?: number; // Feriensaldo (verbleibende Ferientage)
-  vacationDaysPerYear?: number; // Ferientage pro Jahr gemäss Vertrag
+  monthlySalary?: number;           // Monatslohn Basis (ohne 13.)
+  monthlySalaryWith13th?: number;   // Monatslohn inkl. 13. Monatslohn (berechnet)
+  hoursBalance?: number;            // Stundensaldo
+  vacationBalance?: number;         // Feriensaldo
+  vacationDaysPerYear?: number;     // Ferientage pro Jahr gemäss Vertrag
+
+  // ─── Lohn-Erweiterung ──────────────────────────────────────────────────
+  socialCostFactor?: number;        // AG-Sozialkostenanteil z.B. 1.13 = 13%
+  has13thSalary?: boolean;          // 13. Monatslohn vereinbart?
+
+  // ─── Persönliche Daten (für Onboarding / Vertrag) ──────────────────────
+  birthDate?: string;               // ISO-Datum
+  nationality?: string;
+  phone?: string;
+  email?: string;
+  addressStreet?: string;
+  addressZip?: string;
+  addressCity?: string;
+  ahvNumber?: string;               // Vertraulich – nur Admin
+  iban?: string;                    // Vertraulich – nur Admin
+
+  // ─── Vertragliche Grundlagen ───────────────────────────────────────────
+  contractType?: 'monthly' | 'hourly' | 'irregular';
+  positionTitle?: string;
+  contractStart?: string;           // ISO-Datum
+  contractEnd?: string;             // ISO-Datum (leer wenn unbefristet)
+  isLimitedContract?: boolean;
+  trialPeriodMonths?: number;
+  noticePeriodWeeks?: number;
+
+  // ─── Onboarding ────────────────────────────────────────────────────────
+  onboardingStatus?: 'none' | 'prepared' | 'sent' | 'completed';
+  onboardingToken?: string;         // UUID-Token für persönlichen Onboarding-Link
 }
 
 export interface TimeEntry {

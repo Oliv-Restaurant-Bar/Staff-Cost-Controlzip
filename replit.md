@@ -135,9 +135,19 @@ Rollenbasierte Ansicht:
 | Stunden Soll/Ist | ✅ | Service | Küche |
 | Warnung bei Kostenüberschreitung | ✅ | ✅ | ✅ |
 
+## Personalstamm HR-Felder (vollständig migriert)
+
+Alle HR-Felder liegen jetzt direkt im `Employee`-Objekt (Supabase):
+- `birthDate`, `nationality`, `phone`, `email`, `addressStreet`, `addressZip`, `addressCity`, `ahvNumber`, `iban`
+- `contractType`, `positionTitle`, `contractStart`, `contractEnd`, `isLimitedContract`, `trialPeriodMonths`, `noticePeriodWeeks`
+- `onboardingStatus` (`none`|`prepared`|`sent`|`completed`), `onboardingToken`
+- `socialCostFactor` (Standard: 1.13), `has13thSalary`
+
+SQL-Migration: `supabase/migrations/20260315_hr_fields_extension.sql` — **muss einmalig im Supabase SQL-Editor ausgeführt werden**.
+
+Automatische localStorage→Supabase-Migration beim ersten Load (einmalig): Wenn alte Daten in localStorage vorhanden (`personalInfo`, `contractFoundation`, `salaryExt`, `onboarding`), werden diese automatisch in Supabase geschrieben und aus localStorage entfernt.
+
 ## Nächste Schritte
-1. SQL-Skript `supabase/add_user_roles.sql` im Supabase SQL-Editor ausführen
+1. **KRITISCH**: SQL `supabase/migrations/20260315_hr_fields_extension.sql` im Supabase SQL-Editor ausführen
 2. Manager-Accounts in Supabase Authentication erstellen
 3. Rollen via SQL den neuen Accounts zuweisen
-4. Soll/Ist-Analyse als eigene Seite auslagern (Modul 3)
-5. Personalstamm-Modul (nur Admin)
