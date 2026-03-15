@@ -1069,7 +1069,7 @@ const Personalstamm = () => {
                               {costs.mode === 'monthly' && costs.grossMonthly && (
                                 <>
                                   <DataRow label="Brutto/Monat (effektiv)" value={formatCHF(costs.grossMonthly)} />
-                                  <DataRow label="13. Monatslohn" value={salExt?.has13thSalary ? 'Ja' : 'Nein'} />
+                                  <DataRow label="13. Monatslohn" value={empForCost.has13thSalary ? 'Ja' : 'Nein'} />
                                 </>
                               )}
                               {costs.mode === 'hourly' && (
