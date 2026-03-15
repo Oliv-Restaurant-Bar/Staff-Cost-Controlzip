@@ -625,7 +625,6 @@ const Personalstamm = () => {
               <SelectItem value="all">Alle Arten</SelectItem>
               <SelectItem value="vollzeit">Vollzeit</SelectItem>
               <SelectItem value="teilzeit">Teilzeit</SelectItem>
-              <SelectItem value="minijob">Minijob</SelectItem>
               <SelectItem value="aushilfe">Aushilfe</SelectItem>
             </SelectContent>
           </Select>
@@ -894,7 +893,6 @@ const Personalstamm = () => {
                           <SelectContent>
                             <SelectItem value="vollzeit">Vollzeit</SelectItem>
                             <SelectItem value="teilzeit">Teilzeit</SelectItem>
-                            <SelectItem value="minijob">Minijob</SelectItem>
                             <SelectItem value="aushilfe">Aushilfe</SelectItem>
                           </SelectContent>
                         </Select>
@@ -1553,112 +1551,144 @@ const Personalstamm = () => {
                     <CardTitle className="text-sm flex items-center justify-between">
                       <span className="flex items-center gap-2">
                         <Clipboard className="h-4 w-4 text-amber-600" />
-                        Onboarding-Vorbereitung
-                        {selectedEmp?.onboardingStatus && selectedEmp.onboardingStatus !== 'none' && selectedEmp.onboardingStatus !== 'completed' && (
-                          <Badge className="text-[10px] bg-amber-100 text-amber-800 border-amber-200 font-medium">
-                            {selectedEmp.onboardingStatus === 'prepared' ? 'Vorbereitet' : 'Link versendet'}
-                          </Badge>
+                        Onboarding
+                        {/* Status-Badges im Header */}
+                        {selectedEmp?.onboardingStatus === 'prepared' && (
+                          <Badge className="text-[10px] bg-slate-100 text-slate-700 border-slate-300 font-medium">Vorbereitet</Badge>
+                        )}
+                        {selectedEmp?.onboardingStatus === 'sent' && (
+                          <Badge className="text-[10px] bg-blue-100 text-blue-800 border-blue-200 font-medium">Link bereit</Badge>
+                        )}
+                        {selectedEmp?.onboardingStatus === 'in_progress' && (
+                          <Badge className="text-[10px] bg-amber-100 text-amber-800 border-amber-200 font-medium">In Bearbeitung</Badge>
                         )}
                         {selectedEmp?.onboardingStatus === 'completed' && (
-                          <Badge className="text-[10px] bg-green-100 text-green-800 border-green-200 font-medium">
-                            Abgeschlossen
-                          </Badge>
+                          <Badge className="text-[10px] bg-green-100 text-green-800 border-green-200 font-medium">Abgeschlossen</Badge>
                         )}
                       </span>
                       <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', openOnboarding && 'rotate-180')} />
                     </CardTitle>
                   </CardHeader>
                   {openOnboarding && (
-                    <CardContent className="space-y-3 pt-0">
-                      <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2 text-xs text-amber-800 dark:text-amber-300">
+                    <CardContent className="space-y-4 pt-0">
+
+                      {/* Erklärung */}
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-1.5 text-xs text-amber-800 dark:text-amber-300">
                         <p className="font-semibold flex items-center gap-1">
-                          <Info className="h-3.5 w-3.5" /> Was ist das Onboarding-System?
+                          <Info className="h-3.5 w-3.5" /> Onboarding-Link-System
                         </p>
                         <p className="leading-relaxed">
-                          Hier wird die Grundlage für den späteren Self-Service-Onboarding-Link vorbereitet.
-                          Der Mitarbeiter erhält einen persönlichen Link, über den er seine eigenen Stammdaten
-                          (Adresse, IBAN, AHV-Nummer, etc.) selbst erfasst.
-                          Damit entfällt die manuelle Dateneingabe durch die Administration.
+                          Klicken Sie auf <strong>„Link generieren"</strong>, um einen persönlichen Onboarding-Link für diesen Mitarbeiter zu erstellen.
+                          Der Mitarbeiter öffnet den Link und trägt seine eigenen Daten ein (Adresse, AHV, IBAN, Dokumente).
+                          Die Daten werden direkt in diesen Mitarbeiter-Datensatz übertragen.
                         </p>
-                        <div className="mt-2 space-y-0.5">
-                          <p className="font-semibold">Was der Mitarbeiter später selbst ausfüllen kann:</p>
-                          <ul className="list-disc list-inside space-y-0.5 text-amber-700 dark:text-amber-400">
-                            <li>Persönliche Daten (Adresse, Geburtsdatum, Nationalität)</li>
-                            <li>Kontaktdaten (Telefon, E-Mail)</li>
-                            <li>Bankverbindung (IBAN)</li>
-                            <li>AHV-Nummer</li>
-                            <li>Notfall-Kontakt</li>
-                            <li>Bestätigung der Vertragsbedingungen</li>
-                          </ul>
-                        </div>
                       </div>
 
-                      {/* Status-Steuerung */}
-                      <div className="space-y-2">
-                        <Label className="text-xs text-muted-foreground">Onboarding-Status</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {(['none', 'prepared', 'sent', 'completed'] as const).map(s => (
-                            <button key={s}
-                              onClick={async () => {
-                                if (!editData) return;
-                                const token = (s !== 'none' && !editData.onboardingToken) ? generateToken() : editData.onboardingToken;
-                                const updated = { ...editData, onboardingStatus: s, onboardingToken: token };
-                                setEditData(updated);
-                                setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
-                                await upsertEmployee(updated);
-                              }}
-                              className={cn(
-                                'px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors',
-                                (editData?.onboardingStatus ?? 'none') === s
-                                  ? 'bg-amber-600 text-white border-amber-700'
-                                  : 'bg-white dark:bg-gray-900 border-border text-muted-foreground hover:bg-muted',
-                              )}
-                            >
-                              {s === 'none' ? '–' : s === 'prepared' ? 'Vorbereitet' : s === 'sent' ? 'Link versendet' : 'Abgeschlossen'}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Token anzeigen wenn vorbereitet */}
-                      {editData?.onboardingStatus && editData.onboardingStatus !== 'none' && editData.onboardingToken && (
-                        <div className="rounded-md border border-border bg-muted/40 p-3 space-y-1.5">
-                          <p className="text-xs font-semibold flex items-center gap-1">
-                            <LinkIcon className="h-3.5 w-3.5" /> Onboarding-Token (für späteren Link)
-                          </p>
-                          <div className="flex items-center gap-2">
-                            <code className="text-[11px] font-mono bg-background border border-border rounded px-2 py-1 flex-1 truncate">
-                              {editData.onboardingToken}
-                            </code>
-                            <Button variant="outline" size="sm" className="h-7 text-xs"
-                              onClick={() => {
-                                navigator.clipboard.writeText(editData?.onboardingToken ?? '');
-                                toast.success('Token kopiert');
-                              }}>
-                              Kopieren
-                            </Button>
-                          </div>
-                          <p className="text-[10px] text-muted-foreground italic">
-                            Dieser Token wird später für den personalisierten Self-Onboarding-Link verwendet.
-                            Noch kein aktiver Link — die E-Mail-Versand-Funktion folgt in einer nächsten Version.
-                          </p>
-                        </div>
-                      )}
-
+                      {/* Onboarding vorbereiten (wenn noch keiner existiert) */}
                       {(!editData?.onboardingStatus || editData.onboardingStatus === 'none') && (
-                        <Button variant="outline" size="sm" className="h-8 gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-50"
+                        <Button variant="outline" size="sm" className="h-9 gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-50 w-full"
                           onClick={async () => {
                             if (!editData) return;
                             const updated = { ...editData, onboardingStatus: 'prepared' as const, onboardingToken: generateToken() };
                             setEditData(updated);
                             setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
                             await upsertEmployee(updated);
-                            toast.success('Onboarding-Token erstellt');
+                            toast.success('Onboarding-Link erstellt — jetzt kopieren und testen!');
                           }}>
                           <Clipboard className="h-3.5 w-3.5" />
-                          Onboarding vorbereiten
+                          Onboarding-Link generieren
                         </Button>
                       )}
+
+                      {/* Link-Box — wenn Token vorhanden */}
+                      {editData?.onboardingStatus && editData.onboardingStatus !== 'none' && editData.onboardingToken && (() => {
+                        const onboardingUrl = `${window.location.origin}/onboarding/${editData.onboardingToken}`;
+                        return (
+                          <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2.5">
+                            <p className="text-xs font-semibold flex items-center gap-1.5 text-foreground">
+                              <LinkIcon className="h-3.5 w-3.5 text-blue-600" />
+                              Onboarding-Link (für Mitarbeiter)
+                            </p>
+                            {/* URL-Anzeige */}
+                            <div className="flex items-center gap-2">
+                              <code className="text-[10px] font-mono bg-background border border-border rounded px-2 py-1.5 flex-1 truncate text-blue-700 dark:text-blue-400 select-all">
+                                {onboardingUrl}
+                              </code>
+                            </div>
+                            {/* Action Buttons */}
+                            <div className="flex gap-2">
+                              <Button variant="outline" size="sm" className="h-8 text-xs flex-1"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(onboardingUrl);
+                                  toast.success('Link kopiert!');
+                                }}>
+                                <LinkIcon className="h-3 w-3 mr-1.5" />
+                                Link kopieren
+                              </Button>
+                              <Button variant="outline" size="sm" className="h-8 text-xs flex-1 border-blue-300 text-blue-700 hover:bg-blue-50"
+                                onClick={() => window.open(onboardingUrl, '_blank')}>
+                                Link testen ↗
+                              </Button>
+                            </div>
+                            <p className="text-[10px] text-muted-foreground">
+                              Kopieren Sie den Link und schicken Sie ihn per E-Mail oder WhatsApp an den Mitarbeiter.
+                              E-Mail-Versand direkt aus dem System folgt in einer nächsten Version.
+                            </p>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Status-Steuerung */}
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">Status manuell setzen</Label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(
+                            [
+                              { value: 'none',        label: '–',              cls: 'bg-slate-100 text-slate-600 border-slate-200' },
+                              { value: 'prepared',    label: 'Vorbereitet',    cls: 'bg-slate-100 text-slate-700 border-slate-300' },
+                              { value: 'sent',        label: 'Link bereit',    cls: 'bg-blue-100 text-blue-800 border-blue-200' },
+                              { value: 'in_progress', label: 'In Bearbeitung', cls: 'bg-amber-100 text-amber-800 border-amber-200' },
+                              { value: 'completed',   label: 'Abgeschlossen',  cls: 'bg-green-100 text-green-800 border-green-200' },
+                            ] as const
+                          ).map(({ value: s, label, cls }) => (
+                            <button key={s}
+                              onClick={async () => {
+                                if (!editData) return;
+                                const tok = (s !== 'none' && !editData.onboardingToken) ? generateToken() : editData.onboardingToken;
+                                const updated = { ...editData, onboardingStatus: s, onboardingToken: tok };
+                                setEditData(updated);
+                                setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
+                                await upsertEmployee(updated);
+                              }}
+                              className={cn(
+                                'px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors',
+                                (editData?.onboardingStatus ?? 'none') === s
+                                  ? 'ring-2 ring-offset-1 ring-amber-500 ' + cls
+                                  : 'bg-background border-border text-muted-foreground hover:bg-muted',
+                              )}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Abgeschlossen-Hinweis */}
+                      {editData?.onboardingStatus === 'completed' && (
+                        <div className="rounded-md border border-green-200 bg-green-50 p-3 text-xs text-green-800 flex items-start gap-2">
+                          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          <span>Der Mitarbeiter hat das Onboarding abgeschlossen. Die eingetragenen Daten sind jetzt in den jeweiligen Feldern des Personalstamms sichtbar.</span>
+                        </div>
+                      )}
+
+                      {/* in_progress-Hinweis */}
+                      {editData?.onboardingStatus === 'in_progress' && (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 flex items-start gap-2">
+                          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          <span>Der Mitarbeiter hat den Link geöffnet und füllt das Formular gerade aus.</span>
+                        </div>
+                      )}
+
                     </CardContent>
                   )}
                 </Card>

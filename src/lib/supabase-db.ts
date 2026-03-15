@@ -61,6 +61,7 @@ const employeeToDb = (emp: Employee) => ({
   // ── Onboarding ───────────────────────────────────────────────────────────
   onboarding_status:        emp.onboardingStatus        ?? 'none',
   onboarding_token:         emp.onboardingToken         ?? null,
+  onboarding_documents:     emp.onboardingDocuments     ?? null,
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -106,6 +107,7 @@ const dbToEmployee = (row: any): Employee => ({
   // ── Onboarding ───────────────────────────────────────────────────────────
   onboardingStatus:       row.onboarding_status         ?? undefined,
   onboardingToken:        row.onboarding_token          ?? undefined,
+  onboardingDocuments:    row.onboarding_documents      ?? undefined,
 });
 
 // ─── Mitarbeiter ─────────────────────────────────────────────────────────────
@@ -350,5 +352,172 @@ export async function saveSetting<T>(key: string, value: T): Promise<void> {
     );
   } catch (e) {
     console.error('[supabase-db] saveSetting exception:', e);
+  }
+}
+
+// ─── Onboarding-Flow ──────────────────────────────────────────────────────────
+
+export interface OnboardingDoc {
+  type: string;
+  name: string;
+  path: string;
+  url?: string;
+  uploadedAt: string;
+}
+
+export interface OnboardingPublicEmployee {
+  id: string;
+  name: string;
+  department: string;
+  onboardingStatus: string;
+  positionTitle?: string;
+  contractStart?: string;
+  contractType?: string;
+  // Pre-fillable fields
+  birthDate?: string;
+  nationality?: string;
+  phone?: string;
+  email?: string;
+  addressStreet?: string;
+  addressZip?: string;
+  addressCity?: string;
+  ahvNumber?: string;
+  iban?: string;
+}
+
+/** Mitarbeiter anhand des Onboarding-Tokens laden (ohne Login) */
+export async function findEmployeeByToken(token: string): Promise<OnboardingPublicEmployee | null> {
+  try {
+    const { data, error } = await supabase
+      .from('employees')
+      .select(`
+        id, name, department, onboarding_status,
+        position_title, contract_start, contract_type,
+        birth_date, nationality, phone, email,
+        address_street, address_zip, address_city,
+        ahv_number, iban
+      `)
+      .eq('onboarding_token', token)
+      .single();
+
+    if (error || !data) {
+      console.warn('[findEmployeeByToken] not found or error:', error?.message);
+      return null;
+    }
+
+    return {
+      id:               data.id,
+      name:             data.name,
+      department:       data.department,
+      onboardingStatus: data.onboarding_status,
+      positionTitle:    data.position_title    ?? undefined,
+      contractStart:    data.contract_start    ?? undefined,
+      contractType:     data.contract_type     ?? undefined,
+      birthDate:        data.birth_date        ?? undefined,
+      nationality:      data.nationality       ?? undefined,
+      phone:            data.phone             ?? undefined,
+      email:            data.email             ?? undefined,
+      addressStreet:    data.address_street    ?? undefined,
+      addressZip:       data.address_zip       ?? undefined,
+      addressCity:      data.address_city      ?? undefined,
+      ahvNumber:        data.ahv_number        ?? undefined,
+      iban:             data.iban              ?? undefined,
+    };
+  } catch (e) {
+    console.error('[findEmployeeByToken] exception:', e);
+    return null;
+  }
+}
+
+/** Onboarding-Status auf in_progress setzen (Link wurde geöffnet) */
+export async function markOnboardingInProgress(employeeId: string): Promise<void> {
+  try {
+    await supabase
+      .from('employees')
+      .update({ onboarding_status: 'in_progress' })
+      .eq('id', employeeId);
+  } catch (e) {
+    console.error('[markOnboardingInProgress] exception:', e);
+  }
+}
+
+/** Onboarding-Daten speichern und Status auf completed setzen */
+export async function submitOnboardingData(
+  employeeId: string,
+  formData: {
+    birthDate?: string;
+    nationality?: string;
+    phone?: string;
+    email?: string;
+    addressStreet?: string;
+    addressZip?: string;
+    addressCity?: string;
+    ahvNumber?: string;
+    iban?: string;
+  },
+  documents: OnboardingDoc[]
+): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('employees')
+      .update({
+        birth_date:           formData.birthDate        || null,
+        nationality:          formData.nationality      || null,
+        phone:                formData.phone            || null,
+        email:                formData.email            || null,
+        address_street:       formData.addressStreet    || null,
+        address_zip:          formData.addressZip       || null,
+        address_city:         formData.addressCity      || null,
+        ahv_number:           formData.ahvNumber        || null,
+        iban:                 formData.iban             || null,
+        onboarding_documents: documents.length > 0 ? JSON.stringify(documents) : null,
+        onboarding_status:    'completed',
+      })
+      .eq('id', employeeId);
+
+    if (error) {
+      console.error('[submitOnboardingData] error:', error);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('[submitOnboardingData] exception:', e);
+    return false;
+  }
+}
+
+/** Datei in Supabase Storage hochladen */
+export async function uploadOnboardingFile(
+  employeeId: string,
+  file: File,
+  docType: string
+): Promise<OnboardingDoc | null> {
+  try {
+    const ext = file.name.split('.').pop() ?? 'bin';
+    const path = `${employeeId}/${docType}_${Date.now()}.${ext}`;
+
+    const { data, error } = await supabase.storage
+      .from('onboarding-docs')
+      .upload(path, file, { cacheControl: '3600', upsert: false });
+
+    if (error) {
+      console.error('[uploadOnboardingFile] storage error:', error);
+      return null;
+    }
+
+    const { data: urlData } = supabase.storage
+      .from('onboarding-docs')
+      .getPublicUrl(data.path);
+
+    return {
+      type:       docType,
+      name:       file.name,
+      path:       data.path,
+      url:        urlData.publicUrl,
+      uploadedAt: new Date().toISOString(),
+    };
+  } catch (e) {
+    console.error('[uploadOnboardingFile] exception:', e);
+    return null;
   }
 }

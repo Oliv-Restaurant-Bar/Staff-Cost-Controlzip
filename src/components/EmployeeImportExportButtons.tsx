@@ -344,7 +344,6 @@ export const EmployeeImportExportButtons = ({
                           <SelectContent>
                             <SelectItem value="vollzeit">Vollzeit</SelectItem>
                             <SelectItem value="teilzeit">Teilzeit</SelectItem>
-                            <SelectItem value="minijob">Minijob</SelectItem>
                             <SelectItem value="aushilfe">Aushilfe</SelectItem>
                           </SelectContent>
                         </Select>

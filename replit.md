@@ -140,23 +140,42 @@ Rollenbasierte Ansicht:
 Alle HR-Felder liegen jetzt direkt im `Employee`-Objekt (Supabase):
 - `birthDate`, `nationality`, `phone`, `email`, `addressStreet`, `addressZip`, `addressCity`, `ahvNumber`, `iban`
 - `contractType`, `positionTitle`, `contractStart`, `contractEnd`, `isLimitedContract`, `trialPeriodMonths`, `noticePeriodWeeks`
-- `onboardingStatus` (`none`|`prepared`|`sent`|`completed`), `onboardingToken`
+- `onboardingStatus` (`none`|`prepared`|`sent`|`in_progress`|`completed`), `onboardingToken`, `onboardingDocuments`
 - `socialCostFactor` (Standard: 1.13), `has13thSalary`
 
-SQL-Migration: `supabase/migrations/20260315_hr_fields_extension.sql` — **muss einmalig im Supabase SQL-Editor ausgeführt werden**.
+**Minijob entfernt:** `EmploymentType` enthält `minijob` weiterhin für bestehende Daten, aber alle SelectItem-Optionen wurden entfernt.
 
-Neue Felder in Migration (v2):
-- `employment_end_date DATE` — Austrittsdatum (allgemein, unabhängig von Vertragsart)
-- `trial_period_months` mit CHECK (0, 1, 2, 3) — Probezeit-Dropdown
-- `notice_period_weeks` bleibt als Legacy-Spalte erhalten, wird aber nicht mehr befüllt
+## SQL-Migrationen (beide ausführen!)
 
-Kündigungsfrist-Logik (automatisch, kein Freitext-Feld):
-- Während Probezeit: **3 Arbeitstage** (OR Art. 335b)
-- Nach Probezeit: **1 Monat auf Monatsende** (OR Art. 335c)
+**Migration 1:** `supabase/migrations/20260315_hr_fields_extension.sql`
+- Basis-HR-Felder (employment_end_date, trial_period_months, etc.)
 
-Automatische localStorage→Supabase-Migration beim ersten Load (einmalig): Wenn alte Daten in localStorage vorhanden (`personalInfo`, `contractFoundation`, `salaryExt`, `onboarding`), werden diese automatisch in Supabase geschrieben und aus localStorage entfernt.
+**Migration 2:** `supabase/migrations/20260315_onboarding_flow.sql`
+- `in_progress` Status zum Constraint hinzufügen
+- `onboarding_documents TEXT` Spalte
+- Supabase Storage Bucket `onboarding-docs`
+- RLS-Policies für anonymen Onboarding-Zugriff (nur via Token)
+
+## Onboarding-Link-Flow
+
+Public Route: `/onboarding/:token` — ohne Login erreichbar (BrowserRouter ist jetzt auf App-Ebene)
+
+Datei: `src/pages/OnboardingForm.tsx` — Employee-seitige öffentliche Seite
+- Token-Validierung beim Laden
+- Setzt Status automatisch auf `in_progress` wenn Link geöffnet wird
+- 5 Sektionen: Persönliche Daten, Kontakt, Adresse, Bankdaten, Dokumente
+- File-Upload via Supabase Storage Bucket `onboarding-docs`
+- Speichert Daten zurück in employee record und setzt Status auf `completed`
+
+Datei: `src/lib/supabase-db.ts` — neue Funktionen:
+- `findEmployeeByToken(token)` — Employee per Token laden (anon)
+- `markOnboardingInProgress(id)` — Status → in_progress
+- `submitOnboardingData(id, formData, docs)` — Daten speichern + completed
+- `uploadOnboardingFile(id, file, type)` — Datei in Storage hochladen
+
+Admin-Sicht (Personalstamm): Echter Link-URL wird angezeigt, Copy + "Link testen" Buttons
 
 ## Nächste Schritte
-1. **KRITISCH**: SQL `supabase/migrations/20260315_hr_fields_extension.sql` im Supabase SQL-Editor ausführen
+1. **KRITISCH**: Beide SQL-Migrationen im Supabase SQL-Editor ausführen (in Reihenfolge)
 2. Manager-Accounts in Supabase Authentication erstellen
-3. Rollen via SQL den neuen Accounts zuweisen
+3. E-Mail-Versand für Onboarding-Link hinzufügen

@@ -27,8 +27,11 @@ import Settings from "./pages/Settings";
 import DepartmentSchedule from "./pages/DepartmentSchedule";
 import DepartmentPlannerWrapper from "./pages/DepartmentPlannerWrapper";
 import NotFound from "./pages/NotFound";
+import OnboardingForm from "./pages/OnboardingForm";
 
 const queryClient = new QueryClient();
+
+// ─── Private App (requires authentication) ──────────────────────────────────
 
 const AppContent = () => {
   const { user, loading } = useAuth();
@@ -59,56 +62,51 @@ const AppContent = () => {
   }
 
   return (
-    <BrowserRouter>
-      {/*
-        Flex-Layout:
-          - Desktop: AppSidebar (220px) links | Content-Bereich rechts
-          - Mobile:  Content-Bereich full-width | AppBottomNav unten fixiert
-      */}
-      <div className="flex min-h-screen bg-background">
-        <AppNav />
+    <div className="flex min-h-screen bg-background">
+      <AppNav />
 
-        {/* Haupt-Inhaltsbereich */}
-        <div className="flex-1 min-w-0 pb-16 md:pb-0">
-          <Routes>
-            {/* Öffentlich für alle angemeldeten Nutzer */}
-            <Route path="/"               element={<Dashboard />} />
-            <Route path="/personal"       element={<SchedulePlanner />} />
-            <Route path="/schedule-planner" element={<SchedulePlanner />} />
-            <Route path="/analyse"        element={<SollIstAnalyse />} />
+      {/* Haupt-Inhaltsbereich */}
+      <div className="flex-1 min-w-0 pb-16 md:pb-0">
+        <Routes>
+          {/* Öffentlich für alle angemeldeten Nutzer */}
+          <Route path="/"               element={<Dashboard />} />
+          <Route path="/personal"       element={<SchedulePlanner />} />
+          <Route path="/schedule-planner" element={<SchedulePlanner />} />
+          <Route path="/analyse"        element={<SollIstAnalyse />} />
 
-            {/* Personalstamm: alle Rollen, Inhalt rollenbasiert gefiltert */}
-            <Route path="/personal-stamm" element={<Personalstamm />} />
+          {/* Personalstamm: alle Rollen, Inhalt rollenbasiert gefiltert */}
+          <Route path="/personal-stamm" element={<Personalstamm />} />
 
-            {/* Einstellungen: nur Admin */}
-            <Route
-              path="/settings"
-              element={canAccessSettings ? <Settings /> : <Navigate to="/" replace />}
-            />
+          {/* Einstellungen: nur Admin */}
+          <Route
+            path="/settings"
+            element={canAccessSettings ? <Settings /> : <Navigate to="/" replace />}
+          />
 
-            {/* Reporting: Finanzmodul (nur Admin) */}
-            <Route path="/reporting"        element={<Reporting />} />
-            <Route path="/kontenplan"       element={<AccountMappingPage />} />
-            <Route path="/erfolgsrechnung"  element={<PLViewPage />} />
-            <Route path="/csv-import"       element={<CSVImportPage />} />
-            <Route path="/lieferanten"          element={<SupplierDocumentsPage />} />
-            <Route path="/lieferanten-vergleich" element={<SupplierComparisonPage />} />
-            <Route path="/budget"           element={<BudgetPage />} />
+          {/* Reporting: Finanzmodul (nur Admin) */}
+          <Route path="/reporting"        element={<Reporting />} />
+          <Route path="/kontenplan"       element={<AccountMappingPage />} />
+          <Route path="/erfolgsrechnung"  element={<PLViewPage />} />
+          <Route path="/csv-import"       element={<CSVImportPage />} />
+          <Route path="/lieferanten"          element={<SupplierDocumentsPage />} />
+          <Route path="/lieferanten-vergleich" element={<SupplierComparisonPage />} />
+          <Route path="/budget"           element={<BudgetPage />} />
 
-            {/* Abteilungs-Dienstpläne */}
-            <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />
-            <Route path="/plan/:department"       element={<DepartmentPlannerWrapper />} />
+          {/* Abteilungs-Dienstpläne */}
+          <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />
+          <Route path="/plan/:department"       element={<DepartmentPlannerWrapper />} />
 
-            {/* Legacy */}
-            <Route path="/overview" element={<Index />} />
+          {/* Legacy */}
+          <Route path="/overview" element={<Index />} />
 
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </div>
+          <Route path="*" element={<NotFound />} />
+        </Routes>
       </div>
-    </BrowserRouter>
+    </div>
   );
 };
+
+// ─── Root App — BrowserRouter hier oben, damit öffentliche Routen möglich ───
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -117,7 +115,15 @@ const App = () => (
         <PlanDisplayProvider>
           <Sonner />
           <AuthProvider>
-            <AppContent />
+            <BrowserRouter>
+              <Routes>
+                {/* ── Öffentliche Route — kein Login erforderlich ── */}
+                <Route path="/onboarding/:token" element={<OnboardingForm />} />
+
+                {/* ── Alle anderen Routen → Auth-Check ── */}
+                <Route path="/*" element={<AppContent />} />
+              </Routes>
+            </BrowserRouter>
           </AuthProvider>
         </PlanDisplayProvider>
       </RevenueDisplayProvider>

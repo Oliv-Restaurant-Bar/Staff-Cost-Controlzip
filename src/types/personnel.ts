@@ -46,8 +46,9 @@ export interface Employee {
   //   Während Probezeit: 3 Arbeitstage | Nach Probezeit: 1 Monat auf Monatsende
 
   // ─── Onboarding ────────────────────────────────────────────────────────
-  onboardingStatus?: 'none' | 'prepared' | 'sent' | 'completed';
+  onboardingStatus?: 'none' | 'prepared' | 'sent' | 'in_progress' | 'completed';
   onboardingToken?: string;         // UUID-Token für persönlichen Onboarding-Link
+  onboardingDocuments?: string;     // JSON-Array: [{type, name, url, uploadedAt}]
 }
 
 export interface TimeEntry {
