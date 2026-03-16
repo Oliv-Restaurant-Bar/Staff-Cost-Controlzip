@@ -1,0 +1,80 @@
+Please improve and restructure the employee profile module with the following changes.
+
+Goal:
+Make the employee profile cleaner, more professional, and better aligned with the real HR workflow.
+
+Important:
+Do not break the current personnel module.
+Keep all existing stored data.
+Restructure and improve the employee detail view.
+
+Please implement the following:
+
+1. Pro rata vacation and public holiday calculation
+The system should no longer just use a static annual value.
+
+Base rule:
+- 100% workload for a full year = 35 vacation days + 6 public holiday days
+
+The system should automatically calculate pro rata values based on:
+- workload percentage / pensum
+- employment start date within the year if relevant
+
+Show clearly:
+- vacation days pro rata
+- public holiday days pro rata
+- total annual entitlement
+
+2. Automatic internal hourly cost display
+In the section "Lohn & Kosten", automatically calculate and clearly display:
+- monthly gross salary
+- 13th salary if active
+- employer social cost factor
+- monthly total cost
+- internal hourly cost
+
+The internal hourly cost must be shown directly and clearly in the "Lohn & Kosten" section.
+
+3. Remove old onboarding block from employee profile
+The current onboarding block in the employee profile is no longer needed in this form.
+
+Instead, the employee profile should later focus on:
+- contract generation
+- contract preview
+- PDF export
+- later signing workflow
+
+4. New section order in employee detail view
+Please restructure the employee profile in this order:
+
+1. Allgemeine Informationen
+2. Persönliche Daten und Informationen
+3. Vertragliche Grundlagen
+4. Lohn & Kosten
+5. Salden
+6. Notizen
+7. Arbeitsvertrag
+8. Anhänge / hochgeladene Dokumente
+
+5. Contract section preparation
+Create a proper "Arbeitsvertrag" section at the end of the profile.
+This section should be ready for:
+- contract type selection
+- contract preview
+- PDF generation
+- later sending/signature flow
+
+Do not yet implement the full final contract generator in this step, but prepare the section correctly.
+
+6. Attachments section
+Show uploaded onboarding files/documents clearly in the final section:
+- list of files
+- file names
+- download/open action if available
+
+7. Explain in simple German:
+- what was changed
+- how pro rata vacation/public holiday calculation works
+- how internal hourly cost is calculated and shown
+- how the employee profile structure was reorganized
+- what I should test next

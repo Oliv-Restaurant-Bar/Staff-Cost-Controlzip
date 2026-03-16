@@ -37,9 +37,10 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
-  Info, Calculator, Clipboard, UserCheck, ChevronDown,
+  Info, Calculator, UserCheck, ChevronDown,
   Building, Phone, Mail, MapPin, CreditCard, Shield,
   Briefcase, Calendar, Clock, Link as LinkIcon,
+  Paperclip, FileCheck, FileClock, FileSignature,
 } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
@@ -203,13 +204,50 @@ function calcInternalHourlyCost(emp: Employee): number | null {
   return calcSalaryCosts(emp).internalHourly;
 }
 
-/** UUID v4 einfach generieren (für Onboarding-Token) */
-function generateToken(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-    const r = Math.random() * 16 | 0;
-    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-  });
+/** Pro-rata Ferien- und Feiertags-Anspruch */
+interface ProRataEntitlement {
+  pensum: number;        // Pensum in % (z.B. 80)
+  vacationDays: number;  // Ferientage pro rata
+  holidayDays: number;   // Feiertage pro rata
+  totalDays: number;     // Gesamt (Ferien + Feiertage)
+  isProRata: boolean;    // true wenn Eintritt unterjährig
+  monthsWorked: number;  // Monate im laufenden Jahr
 }
+
+function calcProRataEntitlement(emp: Employee): ProRataEntitlement {
+  const FULL_VACATION = 35;
+  const FULL_HOLIDAYS = 6;
+  const FULL_HOURS    = 42; // Stunden/Woche = 100% Pensum
+
+  const pensum = emp.weeklyHours && emp.weeklyHours > 0
+    ? Math.min(emp.weeklyHours / FULL_HOURS, 1.0)
+    : 1.0;
+
+  let monthsWorked = 12;
+  let isProRata = false;
+  if (emp.contractStart) {
+    const start = new Date(emp.contractStart);
+    const currentYear = new Date().getFullYear();
+    if (start.getFullYear() === currentYear) {
+      monthsWorked = 12 - start.getMonth(); // 0-indexed Monat
+      isProRata = monthsWorked < 12;
+    }
+  }
+
+  const fraction     = monthsWorked / 12;
+  const vacationDays = Math.round(FULL_VACATION * pensum * fraction * 2) / 2;
+  const holidayDays  = Math.round(FULL_HOLIDAYS  * pensum * fraction * 2) / 2;
+
+  return {
+    pensum: Math.round(pensum * 100),
+    vacationDays,
+    holidayDays,
+    totalDays: Math.round((vacationDays + holidayDays) * 2) / 2,
+    isProRata,
+    monthsWorked,
+  };
+}
+
 
 /**
  * Probezeit-Ende berechnen (contractStart + trialPeriodMonths).
@@ -311,7 +349,6 @@ const Personalstamm = () => {
   // ── UI-Abschnitte aufklappbar ──────────────────────────────────────────────
   const [openPersonal,   setOpenPersonal]   = useState(false);
   const [openContractF,  setOpenContractF]  = useState(false);
-  const [openOnboarding, setOpenOnboarding] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -447,7 +484,6 @@ const Personalstamm = () => {
     setShowContractInfo(false);
     setOpenPersonal(false);
     setOpenContractF(false);
-    setOpenOnboarding(false);
   };
 
   const startEdit = () => {
@@ -518,7 +554,6 @@ const Personalstamm = () => {
     setShowMobile('detail');
     setOpenPersonal(false);
     setOpenContractF(false);
-    setOpenOnboarding(false);
   };
 
   // ── Speichern ──────────────────────────────────────────────────────────────
@@ -1353,18 +1388,359 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 gap-y-2 text-sm">
-                      <DataRow label="Name"           value={selectedEmp?.name} />
-                      <DataRow label="Abteilung"      value={selectedEmp ? DEPT_LABELS[selectedEmp.department] : undefined} />
-                      <DataRow label="Art"            value={selectedEmp ? TYPE_LABELS[selectedEmp.employmentType] : undefined} />
-                      <DataRow label="Wochenstunden"  value={selectedEmp?.weeklyHours ? `${selectedEmp.weeklyHours} h` : '–'} />
-                      <DataRow label="Ferientage/Jahr" value={selectedEmp?.vacationDaysPerYear ? `${selectedEmp.vacationDaysPerYear} Tage` : '–'} />
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-y-2 text-sm">
+                        <DataRow label="Name"           value={selectedEmp?.name} />
+                        <DataRow label="Abteilung"      value={selectedEmp ? DEPT_LABELS[selectedEmp.department] : undefined} />
+                        <DataRow label="Art"            value={selectedEmp ? TYPE_LABELS[selectedEmp.employmentType] : undefined} />
+                        <DataRow label="Wochenstunden"  value={selectedEmp?.weeklyHours ? `${selectedEmp.weeklyHours} h` : '–'} />
+                      </div>
+                      {selectedEmp && (() => {
+                        const pr = calcProRataEntitlement(selectedEmp);
+                        return (
+                          <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/20 p-3 space-y-2 text-xs">
+                            <p className="font-semibold text-green-800 dark:text-green-300 flex items-center gap-1.5">
+                              <Calendar className="h-3.5 w-3.5" />
+                              Ferienlohn-Anspruch {pr.isProRata ? `(pro rata · ${pr.monthsWorked} Monate)` : '(volles Jahr)'}
+                              {pr.pensum < 100 && (
+                                <span className="ml-1 font-normal text-green-700 dark:text-green-400">Pensum {pr.pensum}%</span>
+                              )}
+                            </p>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div className="rounded-md bg-white dark:bg-green-900/20 border border-green-200 dark:border-green-700 px-2.5 py-2 text-center">
+                                <p className="text-lg font-bold text-green-800 dark:text-green-200">{pr.vacationDays}</p>
+                                <p className="text-[10px] text-green-600 dark:text-green-400 leading-tight mt-0.5">Ferientage</p>
+                              </div>
+                              <div className="rounded-md bg-white dark:bg-green-900/20 border border-green-200 dark:border-green-700 px-2.5 py-2 text-center">
+                                <p className="text-lg font-bold text-green-800 dark:text-green-200">{pr.holidayDays}</p>
+                                <p className="text-[10px] text-green-600 dark:text-green-400 leading-tight mt-0.5">Feiertage</p>
+                              </div>
+                              <div className="rounded-md bg-green-100 dark:bg-green-800/40 border border-green-300 dark:border-green-600 px-2.5 py-2 text-center">
+                                <p className="text-lg font-bold text-green-900 dark:text-green-100">{pr.totalDays}</p>
+                                <p className="text-[10px] text-green-700 dark:text-green-300 leading-tight mt-0.5">Total Tage</p>
+                              </div>
+                            </div>
+                            <p className="text-[10px] text-green-600 dark:text-green-500 italic">
+                              Basis: 100% Pensum ({42} h/W) = 35 Ferientage + 6 Feiertage pro Jahr.
+                              {pr.isProRata ? ` Pro rata ${pr.monthsWorked}/12 Monate.` : ''}
+                            </p>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </CardContent>
               </Card>
 
-              {/* ── Abschnitt 2: Lohn & Kosten (nur Admin) ─────────────────── */}
+              {/* ── Abschnitt 2: Persönliche Daten (Admin) ─────────────────── */}
+              {isAdmin && (
+                <Card>
+                  <CardHeader
+                    className="pb-2 pt-4 cursor-pointer select-none"
+                    onClick={() => setOpenPersonal(o => !o)}
+                  >
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <UserCheck className="h-4 w-4 text-emerald-600" />
+                        Persönliche Daten
+                        <span className="text-[10px] font-normal text-muted-foreground bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 px-1.5 py-0.5 rounded">
+                          Nur Admin
+                        </span>
+                      </span>
+                      <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', openPersonal && 'rotate-180')} />
+                    </CardTitle>
+                  </CardHeader>
+                  {openPersonal && (
+                    <CardContent className="space-y-3 pt-0">
+                      {editMode ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Geburtsdatum
+                            </Label>
+                            <Input type="date" className="h-9 text-sm"
+                              value={editData?.birthDate ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, birthDate: e.target.value || undefined } : d)} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Shield className="h-3 w-3" /> Nationalität
+                            </Label>
+                            <Input className="h-9 text-sm" placeholder="z.B. Schweiz"
+                              value={editData?.nationality ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, nationality: e.target.value || undefined } : d)} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Phone className="h-3 w-3" /> Telefon
+                            </Label>
+                            <Input className="h-9 text-sm" placeholder="+41 79 …"
+                              value={editData?.phone ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, phone: e.target.value || undefined } : d)} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Mail className="h-3 w-3" /> E-Mail
+                            </Label>
+                            <Input type="email" className="h-9 text-sm" placeholder="name@beispiel.ch"
+                              value={editData?.email ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, email: e.target.value || undefined } : d)} />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <MapPin className="h-3 w-3" /> Strasse & Hausnummer
+                            </Label>
+                            <Input className="h-9 text-sm" placeholder="Musterstrasse 1"
+                              value={editData?.addressStreet ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, addressStreet: e.target.value || undefined } : d)} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block">PLZ</Label>
+                            <Input className="h-9 text-sm" placeholder="3000"
+                              value={editData?.addressZip ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, addressZip: e.target.value || undefined } : d)} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block">Ort</Label>
+                            <Input className="h-9 text-sm" placeholder="Bern"
+                              value={editData?.addressCity ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, addressCity: e.target.value || undefined } : d)} />
+                          </div>
+                          {isAdmin && (
+                            <>
+                              <div>
+                                <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                                  <Shield className="h-3 w-3" /> AHV-Nummer
+                                  <span className="ml-1 text-[10px] opacity-60">vertraulich</span>
+                                </Label>
+                                <Input className="h-9 text-sm font-mono" placeholder="756.XXXX.XXXX.XX"
+                                  value={editData?.ahvNumber ?? ''}
+                                  onChange={e => setEditData(d => d ? { ...d, ahvNumber: e.target.value || undefined } : d)} />
+                              </div>
+                              <div>
+                                <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                                  <CreditCard className="h-3 w-3" /> IBAN (Lohnkonto)
+                                  <span className="ml-1 text-[10px] opacity-60">vertraulich</span>
+                                </Label>
+                                <Input className="h-9 text-sm font-mono" placeholder="CH56 …"
+                                  value={editData?.iban ?? ''}
+                                  onChange={e => setEditData(d => d ? { ...d, iban: e.target.value || undefined } : d)} />
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-y-2 text-sm">
+                          {selectedEmp?.birthDate    && <DataRow label="Geburtsdatum"  value={selectedEmp.birthDate} />}
+                          {selectedEmp?.nationality  && <DataRow label="Nationalität"  value={selectedEmp.nationality} />}
+                          {selectedEmp?.phone        && <DataRow label="Telefon"       value={selectedEmp.phone} />}
+                          {selectedEmp?.email        && <DataRow label="E-Mail"        value={selectedEmp.email} />}
+                          {selectedEmp?.addressStreet && (
+                            <DataRow label="Adresse" value={`${selectedEmp.addressStreet}, ${selectedEmp.addressZip ?? ''} ${selectedEmp.addressCity ?? ''}`} />
+                          )}
+                          {isAdmin && selectedEmp?.ahvNumber && (
+                            <DataRow label="AHV-Nummer" value={selectedEmp.ahvNumber} />
+                          )}
+                          {isAdmin && selectedEmp?.iban && (
+                            <DataRow label="IBAN" value={`****${selectedEmp.iban.slice(-4)}`} />
+                          )}
+                          {!selectedEmp?.phone && !selectedEmp?.email && !selectedEmp?.birthDate && (
+                            <p className="col-span-2 text-xs text-muted-foreground italic">Noch keine persönlichen Daten erfasst. Im Bearbeitungsmodus ergänzen.</p>
+                          )}
+                        </div>
+                      )}
+                    </CardContent>
+                  )}
+                </Card>
+              )}
+
+              {/* ── Abschnitt 3: Vertragliche Grundlagen (Admin) ─────────────── */}
+              {isAdmin && (
+                <Card>
+                  <CardHeader
+                    className="pb-2 pt-4 cursor-pointer select-none"
+                    onClick={() => setOpenContractF(o => !o)}
+                  >
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <Briefcase className="h-4 w-4 text-blue-600" />
+                        Vertragliche Grundlagen
+                        <span className="text-[10px] font-normal text-muted-foreground bg-blue-50 dark:bg-blue-950/20 border border-blue-200 px-1.5 py-0.5 rounded">
+                          Nur Admin
+                        </span>
+                      </span>
+                      <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', openContractF && 'rotate-180')} />
+                    </CardTitle>
+                  </CardHeader>
+                  {openContractF && (
+                    <CardContent className="space-y-3 pt-0">
+                      {editMode ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block">Vertragsart</Label>
+                            <Select
+                              value={editData?.contractType ?? ''}
+                              onValueChange={v => setEditData(d => d ? { ...d, contractType: (v as Employee['contractType']) || undefined } : d)}
+                            >
+                              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Wählen…" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="monthly">Monatslohn-Vertrag (Festanstellung)</SelectItem>
+                                <SelectItem value="hourly">Stundenlohn-Vertrag (Pensum variabel)</SelectItem>
+                                <SelectItem value="irregular">Aushilfe / unregelmässig</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Briefcase className="h-3 w-3" /> Stellenbezeichnung
+                            </Label>
+                            <Input className="h-9 text-sm" placeholder="z.B. Servicemitarbeiter"
+                              value={editData?.positionTitle ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, positionTitle: e.target.value || undefined } : d)} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Eintrittsdatum
+                            </Label>
+                            <Input type="date" className="h-9 text-sm"
+                              value={editData?.contractStart ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, contractStart: e.target.value || undefined } : d)} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Austrittsdatum
+                              <span className="ml-1 text-[10px] opacity-60">falls bekannt</span>
+                            </Label>
+                            <Input type="date" className="h-9 text-sm"
+                              value={editData?.employmentEndDate ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, employmentEndDate: e.target.value || undefined } : d)} />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Clock className="h-3 w-3" /> Probezeit
+                            </Label>
+                            <Select
+                              value={String(editData?.trialPeriodMonths ?? 0)}
+                              onValueChange={v => setEditData(d => d ? { ...d, trialPeriodMonths: parseInt(v) as 0|1|2|3 } : d)}
+                            >
+                              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="0">Keine Probezeit</SelectItem>
+                                <SelectItem value="1">1 Monat</SelectItem>
+                                <SelectItem value="2">2 Monate</SelectItem>
+                                <SelectItem value="3">3 Monate</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-2 block">Befristeter Vertrag</Label>
+                            <label className="flex items-center gap-2 cursor-pointer mb-1">
+                              <input type="checkbox"
+                                checked={editData?.isLimitedContract ?? false}
+                                onChange={e => setEditData(d => d ? { ...d, isLimitedContract: e.target.checked } : d)}
+                                className="h-4 w-4 rounded" />
+                              <span className="text-sm">Ja – Vertrag ist befristet</span>
+                            </label>
+                            {editData?.isLimitedContract && (
+                              <>
+                                <Label className="text-[11px] text-muted-foreground mb-1 block">Vertragsende (befristet)</Label>
+                                <Input type="date" className="h-9 text-sm"
+                                  value={editData?.contractEnd ?? ''}
+                                  onChange={e => setEditData(d => d ? { ...d, contractEnd: e.target.value || undefined } : d)} />
+                              </>
+                            )}
+                          </div>
+                          <div className="sm:col-span-2">
+                            <div className="rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/20 p-3 space-y-1 text-xs text-blue-800 dark:text-blue-300">
+                              <p className="font-semibold flex items-center gap-1">
+                                <Info className="h-3.5 w-3.5" /> Kündigungsfrist (automatisch)
+                              </p>
+                              {(() => {
+                                const probEnd = calcProbationEnd(editData?.contractStart, editData?.trialPeriodMonths);
+                                const inProb  = isInProbation(editData?.contractStart, editData?.trialPeriodMonths);
+                                return (
+                                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 mt-1">
+                                    <div className="flex items-center gap-1">
+                                      <span className={cn('w-2 h-2 rounded-full flex-shrink-0', inProb ? 'bg-amber-500' : 'bg-gray-300')} />
+                                      <span className="font-medium">Während Probezeit:</span>
+                                    </div>
+                                    <span>3 Arbeitstage</span>
+                                    <div className="flex items-center gap-1">
+                                      <span className={cn('w-2 h-2 rounded-full flex-shrink-0', !inProb ? 'bg-green-500' : 'bg-gray-300')} />
+                                      <span className="font-medium">Nach Probezeit:</span>
+                                    </div>
+                                    <span>1 Monat auf Monatsende</span>
+                                    {probEnd && (
+                                      <>
+                                        <span className="font-medium text-blue-700 dark:text-blue-400">Probezeit endet am:</span>
+                                        <span>{probEnd}</span>
+                                      </>
+                                    )}
+                                    <span className="font-medium text-blue-700 dark:text-blue-400 col-span-2">
+                                      Aktueller Status: <span className={cn('font-bold', inProb ? 'text-amber-700 dark:text-amber-400' : 'text-green-700 dark:text-green-400')}>
+                                        {(editData?.trialPeriodMonths ?? 0) === 0 ? 'Keine Probezeit' : inProb ? 'In Probezeit' : 'Nach Probezeit'}
+                                      </span>
+                                    </span>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        (() => {
+                          const emp = selectedEmp;
+                          if (!emp) return null;
+                          const probEnd = calcProbationEnd(emp.contractStart, emp.trialPeriodMonths);
+                          const inProb  = isInProbation(emp.contractStart, emp.trialPeriodMonths);
+                          const hasData = emp.contractType || emp.contractStart;
+                          if (!hasData) return (
+                            <p className="text-xs text-muted-foreground italic">Noch keine Vertragsdaten erfasst. Im Bearbeitungsmodus ergänzen.</p>
+                          );
+                          return (
+                            <div className="space-y-3">
+                              <div className="grid grid-cols-2 gap-y-2 text-sm">
+                                {emp.contractType   && <DataRow label="Vertragsart"        value={emp.contractType === 'monthly' ? 'Monatslohn-Vertrag' : emp.contractType === 'hourly' ? 'Stundenlohn-Vertrag' : 'Aushilfe'} />}
+                                {emp.positionTitle  && <DataRow label="Stellenbezeichnung" value={emp.positionTitle} />}
+                                {emp.contractStart  && <DataRow label="Eintritt"           value={emp.contractStart} />}
+                                {emp.employmentEndDate && <DataRow label="Austritt"        value={emp.employmentEndDate} />}
+                                {emp.isLimitedContract && emp.contractEnd && <DataRow label="Vertragsende (befristet)" value={emp.contractEnd} />}
+                                {(emp.trialPeriodMonths ?? 0) > 0
+                                  ? <DataRow label="Probezeit" value={`${emp.trialPeriodMonths} Monat${emp.trialPeriodMonths === 1 ? '' : 'e'}`} />
+                                  : <DataRow label="Probezeit" value="Keine Probezeit" />
+                                }
+                              </div>
+                              <div className="rounded-md border border-border bg-muted/40 p-3 text-xs space-y-1">
+                                <p className="font-semibold flex items-center gap-1">
+                                  <Clock className="h-3.5 w-3.5 text-muted-foreground" /> Kündigungsfrist
+                                </p>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                                  <span className="text-muted-foreground">Während Probezeit:</span>
+                                  <span className="font-medium">3 Arbeitstage</span>
+                                  <span className="text-muted-foreground">Nach Probezeit:</span>
+                                  <span className="font-medium">1 Monat auf Monatsende</span>
+                                  {probEnd && (
+                                    <>
+                                      <span className="text-muted-foreground">Probezeit endet:</span>
+                                      <span className="font-medium">{probEnd}</span>
+                                    </>
+                                  )}
+                                  <span className="text-muted-foreground">Aktuell gilt:</span>
+                                  <span className={cn('font-semibold', inProb ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400')}>
+                                    {noticePeriodLabel(inProb)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()
+                      )}
+                    </CardContent>
+                  )}
+                </Card>
+              )}
+
+              {/* ── Abschnitt 4: Lohn & Kosten (nur Admin) ─────────────────── */}
               {isAdmin && (
                 <Card className="border-purple-200/50 dark:border-purple-800/30">
                   <CardHeader className="pb-3 pt-4">
@@ -1376,6 +1752,88 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                       </span>
                     </CardTitle>
                   </CardHeader>
+                  {openContractF && (
+                    <CardContent className="space-y-3 pt-0">
+                      <Alert className="text-xs py-2 border-blue-200 bg-blue-50 dark:bg-blue-950/20">
+                        <Info className="h-3.5 w-3.5 text-blue-600" />
+                        <AlertDescription className="text-blue-700 dark:text-blue-400">
+                          Diese Felder bilden die Grundlage für die spätere automatische Vertragsgenerierung.
+                          Noch keine automatische Erzeugung — die Architektur wird hier vorbereitet.
+                        </AlertDescription>
+                      </Alert>
+                      {editMode ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {/* Vertragsart */}
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block">Vertragsart</Label>
+                            <Select
+                              value={editData?.contractType ?? ''}
+                              onValueChange={v => setEditData(d => d ? { ...d, contractType: (v as Employee['contractType']) || undefined } : d)}
+                            >
+                              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Wählen…" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="monthly">Monatslohn-Vertrag (Festanstellung)</SelectItem>
+                                <SelectItem value="hourly">Stundenlohn-Vertrag (Pensum variabel)</SelectItem>
+                                <SelectItem value="irregular">Aushilfe / unregelmässig</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {/* Stellenbezeichnung */}
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Briefcase className="h-3 w-3" /> Stellenbezeichnung
+                            </Label>
+                            <Input className="h-9 text-sm" placeholder="z.B. Servicemitarbeiter"
+                              value={editData?.positionTitle ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, positionTitle: e.target.value || undefined } : d)} />
+                          </div>
+                          {/* Eintrittsdatum */}
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Eintrittsdatum
+                            </Label>
+                            <Input type="date" className="h-9 text-sm"
+                              value={editData?.contractStart ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, contractStart: e.target.value || undefined } : d)} />
+                          </div>
+                          {/* Austrittsdatum */}
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Austrittsdatum
+                              <span className="ml-1 text-[10px] opacity-60">falls bekannt</span>
+                            </Label>
+                            <Input type="date" className="h-9 text-sm"
+                              value={editData?.employmentEndDate ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, employmentEndDate: e.target.value || undefined } : d)} />
+                          </div>
+                          {/* Probezeit Dropdown */}
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                              <Clock className="h-3 w-3" /> Probezeit
+                            </Label>
+                            <Select
+                              value={String(editData?.trialPeriodMonths ?? 0)}
+                              onValueChange={v => setEditData(d => d ? { ...d, trialPeriodMonths: parseInt(v) as 0|1|2|3 } : d)}
+                            >
+                              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="0">Keine Probezeit</SelectItem>
+                                <SelectItem value="1">1 Monat</SelectItem>
+                                <SelectItem value="2">2 Monate</SelectItem>
+                                <SelectItem value="3">3 Monate</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {/* Befristeter Vertrag */}
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-2 block">Befristeter Vertrag</Label>
+                            <label className="flex items-center gap-2 cursor-pointer mb-1">
+                              <input type="checkbox"
+                                checked={editData?.isLimitedContract ?? false}
+                                onChange={e => setEditData(d => d ? { ...d, isLimitedContract: e.target.checked } : d)}
+                                className="h-4 w-4 rounded" />
+                              <span className="text-sm">Ja – Vertrag ist befristet</span>
+                            </label>
                   <CardContent className="space-y-4 pt-0">
                     {editMode ? (
                       <>
@@ -1542,7 +2000,7 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                 </Card>
               )}
 
-              {/* ── Abschnitt 3: Konten / Salden ──────────────────────────── */}
+              {/* ── Abschnitt 5: Salden & Konten ──────────────────────────── */}
               <Card>
                 <CardHeader className="pb-3 pt-4">
                   <CardTitle className="text-sm">Salden & Konten</CardTitle>
@@ -1599,7 +2057,7 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                 </CardContent>
               </Card>
 
-              {/* ── Abschnitt 4: Notizen ──────────────────────────────────── */}
+              {/* ── Abschnitt 6: Notizen ──────────────────────────────────── */}
               <Card>
                 <CardHeader className="pb-3 pt-4">
                   <CardTitle className="text-sm">Notizen</CardTitle>
@@ -1631,510 +2089,26 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                 </CardContent>
               </Card>
 
-              {/* ── Abschnitt 5: Persönliche Daten & Kontakt (Admin) ─────── */}
-              {isAdmin && (
-                <Card>
-                  <CardHeader
-                    className="pb-2 pt-4 cursor-pointer select-none"
-                    onClick={() => setOpenPersonal(o => !o)}
-                  >
-                    <CardTitle className="text-sm flex items-center justify-between">
-                      <span className="flex items-center gap-2">
-                        <UserCheck className="h-4 w-4 text-emerald-600" />
-                        Persönliche Daten & Kontakt
-                        <span className="text-[10px] font-normal text-muted-foreground bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 px-1.5 py-0.5 rounded">
-                          Onboarding-Vorbereitung
-                        </span>
-                      </span>
-                      <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', openPersonal && 'rotate-180')} />
-                    </CardTitle>
-                  </CardHeader>
-                  {openPersonal && (
-                    <CardContent className="space-y-3 pt-0">
-                      <Alert className="text-xs py-2 border-emerald-200 bg-emerald-50 dark:bg-emerald-950/20">
-                        <Info className="h-3.5 w-3.5 text-emerald-600" />
-                        <AlertDescription className="text-emerald-700 dark:text-emerald-400">
-                          Diese Felder werden später für das Self-Onboarding des Mitarbeiters und die automatische Vertragsgenerierung verwendet.
-                        </AlertDescription>
-                      </Alert>
-                      {editMode ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Calendar className="h-3 w-3" /> Geburtsdatum
-                            </Label>
-                            <Input type="date" className="h-9 text-sm"
-                              value={editData?.birthDate ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, birthDate: e.target.value || undefined } : d)} />
-                          </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Shield className="h-3 w-3" /> Nationalität
-                            </Label>
-                            <Input className="h-9 text-sm" placeholder="z.B. Schweiz"
-                              value={editData?.nationality ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, nationality: e.target.value || undefined } : d)} />
-                          </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Phone className="h-3 w-3" /> Telefon
-                            </Label>
-                            <Input className="h-9 text-sm" placeholder="+41 79 …"
-                              value={editData?.phone ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, phone: e.target.value || undefined } : d)} />
-                          </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Mail className="h-3 w-3" /> E-Mail
-                            </Label>
-                            <Input type="email" className="h-9 text-sm" placeholder="name@beispiel.ch"
-                              value={editData?.email ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, email: e.target.value || undefined } : d)} />
-                          </div>
-                          <div className="sm:col-span-2">
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <MapPin className="h-3 w-3" /> Strasse & Hausnummer
-                            </Label>
-                            <Input className="h-9 text-sm" placeholder="Musterstrasse 1"
-                              value={editData?.addressStreet ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, addressStreet: e.target.value || undefined } : d)} />
-                          </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block">PLZ</Label>
-                            <Input className="h-9 text-sm" placeholder="3000"
-                              value={editData?.addressZip ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, addressZip: e.target.value || undefined } : d)} />
-                          </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block">Ort</Label>
-                            <Input className="h-9 text-sm" placeholder="Bern"
-                              value={editData?.addressCity ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, addressCity: e.target.value || undefined } : d)} />
-                          </div>
-                          {isAdmin && (
-                            <>
-                              <div>
-                                <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                                  <Shield className="h-3 w-3" /> AHV-Nummer
-                                  <span className="ml-1 text-[10px] opacity-60">vertraulich</span>
-                                </Label>
-                                <Input className="h-9 text-sm font-mono" placeholder="756.XXXX.XXXX.XX"
-                                  value={editData?.ahvNumber ?? ''}
-                                  onChange={e => setEditData(d => d ? { ...d, ahvNumber: e.target.value || undefined } : d)} />
-                              </div>
-                              <div>
-                                <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                                  <CreditCard className="h-3 w-3" /> IBAN (Lohnkonto)
-                                  <span className="ml-1 text-[10px] opacity-60">vertraulich</span>
-                                </Label>
-                                <Input className="h-9 text-sm font-mono" placeholder="CH56 …"
-                                  value={editData?.iban ?? ''}
-                                  onChange={e => setEditData(d => d ? { ...d, iban: e.target.value || undefined } : d)} />
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-2 gap-y-2 text-sm">
-                          {selectedEmp?.birthDate    && <DataRow label="Geburtsdatum"  value={selectedEmp.birthDate} />}
-                          {selectedEmp?.nationality  && <DataRow label="Nationalität"  value={selectedEmp.nationality} />}
-                          {selectedEmp?.phone        && <DataRow label="Telefon"       value={selectedEmp.phone} />}
-                          {selectedEmp?.email        && <DataRow label="E-Mail"        value={selectedEmp.email} />}
-                          {selectedEmp?.addressStreet && (
-                            <DataRow label="Adresse" value={`${selectedEmp.addressStreet}, ${selectedEmp.addressZip ?? ''} ${selectedEmp.addressCity ?? ''}`} />
-                          )}
-                          {isAdmin && selectedEmp?.ahvNumber && (
-                            <DataRow label="AHV-Nummer" value={selectedEmp.ahvNumber} />
-                          )}
-                          {isAdmin && selectedEmp?.iban && (
-                            <DataRow label="IBAN" value={`****${selectedEmp.iban.slice(-4)}`} />
-                          )}
-                          {!selectedEmp?.phone && !selectedEmp?.email && !selectedEmp?.birthDate && (
-                            <p className="col-span-2 text-xs text-muted-foreground italic">Noch keine persönlichen Daten erfasst. Im Bearbeitungsmodus ergänzen.</p>
-                          )}
-                        </div>
-                      )}
-                    </CardContent>
-                  )}
-                </Card>
-              )}
-
-              {/* ── Abschnitt 6: Vertragliche Grundlagen (Admin) ─────────────── */}
-              {isAdmin && (
-                <Card>
-                  <CardHeader
-                    className="pb-2 pt-4 cursor-pointer select-none"
-                    onClick={() => setOpenContractF(o => !o)}
-                  >
-                    <CardTitle className="text-sm flex items-center justify-between">
-                      <span className="flex items-center gap-2">
-                        <Briefcase className="h-4 w-4 text-blue-600" />
-                        Vertragliche Grundlagen
-                        <span className="text-[10px] font-normal text-muted-foreground bg-blue-50 dark:bg-blue-950/20 border border-blue-200 px-1.5 py-0.5 rounded">
-                          Vorbereitung Vertragsgenerierung
-                        </span>
-                      </span>
-                      <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', openContractF && 'rotate-180')} />
-                    </CardTitle>
-                  </CardHeader>
-                  {openContractF && (
-                    <CardContent className="space-y-3 pt-0">
-                      <Alert className="text-xs py-2 border-blue-200 bg-blue-50 dark:bg-blue-950/20">
-                        <Info className="h-3.5 w-3.5 text-blue-600" />
-                        <AlertDescription className="text-blue-700 dark:text-blue-400">
-                          Diese Felder bilden die Grundlage für die spätere automatische Vertragsgenerierung.
-                          Noch keine automatische Erzeugung — die Architektur wird hier vorbereitet.
-                        </AlertDescription>
-                      </Alert>
-                      {editMode ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {/* Vertragsart */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block">Vertragsart</Label>
-                            <Select
-                              value={editData?.contractType ?? ''}
-                              onValueChange={v => setEditData(d => d ? { ...d, contractType: (v as Employee['contractType']) || undefined } : d)}
-                            >
-                              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Wählen…" /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="monthly">Monatslohn-Vertrag (Festanstellung)</SelectItem>
-                                <SelectItem value="hourly">Stundenlohn-Vertrag (Pensum variabel)</SelectItem>
-                                <SelectItem value="irregular">Aushilfe / unregelmässig</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          {/* Stellenbezeichnung */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Briefcase className="h-3 w-3" /> Stellenbezeichnung
-                            </Label>
-                            <Input className="h-9 text-sm" placeholder="z.B. Servicemitarbeiter"
-                              value={editData?.positionTitle ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, positionTitle: e.target.value || undefined } : d)} />
-                          </div>
-                          {/* Eintrittsdatum */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Calendar className="h-3 w-3" /> Eintrittsdatum
-                            </Label>
-                            <Input type="date" className="h-9 text-sm"
-                              value={editData?.contractStart ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, contractStart: e.target.value || undefined } : d)} />
-                          </div>
-                          {/* Austrittsdatum */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Calendar className="h-3 w-3" /> Austrittsdatum
-                              <span className="ml-1 text-[10px] opacity-60">falls bekannt</span>
-                            </Label>
-                            <Input type="date" className="h-9 text-sm"
-                              value={editData?.employmentEndDate ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, employmentEndDate: e.target.value || undefined } : d)} />
-                          </div>
-                          {/* Probezeit Dropdown */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Clock className="h-3 w-3" /> Probezeit
-                            </Label>
-                            <Select
-                              value={String(editData?.trialPeriodMonths ?? 0)}
-                              onValueChange={v => setEditData(d => d ? { ...d, trialPeriodMonths: parseInt(v) as 0|1|2|3 } : d)}
-                            >
-                              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="0">Keine Probezeit</SelectItem>
-                                <SelectItem value="1">1 Monat</SelectItem>
-                                <SelectItem value="2">2 Monate</SelectItem>
-                                <SelectItem value="3">3 Monate</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          {/* Befristeter Vertrag */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-2 block">Befristeter Vertrag</Label>
-                            <label className="flex items-center gap-2 cursor-pointer mb-1">
-                              <input type="checkbox"
-                                checked={editData?.isLimitedContract ?? false}
-                                onChange={e => setEditData(d => d ? { ...d, isLimitedContract: e.target.checked } : d)}
-                                className="h-4 w-4 rounded" />
-                              <span className="text-sm">Ja – Vertrag ist befristet</span>
-                            </label>
-                            {editData?.isLimitedContract && (
-                              <>
-                                <Label className="text-[11px] text-muted-foreground mb-1 block">Vertragsende (befristet)</Label>
-                                <Input type="date" className="h-9 text-sm"
-                                  value={editData?.contractEnd ?? ''}
-                                  onChange={e => setEditData(d => d ? { ...d, contractEnd: e.target.value || undefined } : d)} />
-                              </>
-                            )}
-                          </div>
-                          {/* Automatische Kündigungsfrist – Info */}
-                          <div className="sm:col-span-2">
-                            <div className="rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/20 p-3 space-y-1 text-xs text-blue-800 dark:text-blue-300">
-                              <p className="font-semibold flex items-center gap-1">
-                                <Info className="h-3.5 w-3.5" /> Kündigungsfrist (automatisch)
-                              </p>
-                              {(() => {
-                                const probEnd = calcProbationEnd(editData?.contractStart, editData?.trialPeriodMonths);
-                                const inProb  = isInProbation(editData?.contractStart, editData?.trialPeriodMonths);
-                                return (
-                                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 mt-1">
-                                    <div className="flex items-center gap-1">
-                                      <span className={cn('w-2 h-2 rounded-full flex-shrink-0', inProb ? 'bg-amber-500' : 'bg-gray-300')} />
-                                      <span className="font-medium">Während Probezeit:</span>
-                                    </div>
-                                    <span>3 Arbeitstage</span>
-                                    <div className="flex items-center gap-1">
-                                      <span className={cn('w-2 h-2 rounded-full flex-shrink-0', !inProb ? 'bg-green-500' : 'bg-gray-300')} />
-                                      <span className="font-medium">Nach Probezeit:</span>
-                                    </div>
-                                    <span>1 Monat auf Monatsende</span>
-                                    {probEnd && (
-                                      <>
-                                        <span className="font-medium text-blue-700 dark:text-blue-400">Probezeit endet am:</span>
-                                        <span>{probEnd}</span>
-                                      </>
-                                    )}
-                                    <span className="font-medium text-blue-700 dark:text-blue-400 col-span-2">
-                                      Aktueller Status: <span className={cn('font-bold', inProb ? 'text-amber-700 dark:text-amber-400' : 'text-green-700 dark:text-green-400')}>
-                                        {(editData?.trialPeriodMonths ?? 0) === 0 ? 'Keine Probezeit' : inProb ? 'In Probezeit' : 'Nach Probezeit'}
-                                      </span>
-                                    </span>
-                                  </div>
-                                );
-                              })()}
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        /* ── Read-only Vertragsansicht ── */
-                        (() => {
-                          const emp = selectedEmp;
-                          if (!emp) return null;
-                          const probEnd = calcProbationEnd(emp.contractStart, emp.trialPeriodMonths);
-                          const inProb  = isInProbation(emp.contractStart, emp.trialPeriodMonths);
-                          const hasData = emp.contractType || emp.contractStart;
-                          if (!hasData) return (
-                            <p className="text-xs text-muted-foreground italic">Noch keine Vertragsdaten erfasst. Im Bearbeitungsmodus ergänzen.</p>
-                          );
-                          return (
-                            <div className="space-y-3">
-                              <div className="grid grid-cols-2 gap-y-2 text-sm">
-                                {emp.contractType   && <DataRow label="Vertragsart"        value={emp.contractType === 'monthly' ? 'Monatslohn-Vertrag' : emp.contractType === 'hourly' ? 'Stundenlohn-Vertrag' : 'Aushilfe'} />}
-                                {emp.positionTitle  && <DataRow label="Stellenbezeichnung" value={emp.positionTitle} />}
-                                {emp.contractStart  && <DataRow label="Eintritt"           value={emp.contractStart} />}
-                                {emp.employmentEndDate && <DataRow label="Austritt"        value={emp.employmentEndDate} />}
-                                {emp.isLimitedContract && emp.contractEnd && <DataRow label="Vertragsende (befristet)" value={emp.contractEnd} />}
-                                {(emp.trialPeriodMonths ?? 0) > 0
-                                  ? <DataRow label="Probezeit" value={`${emp.trialPeriodMonths} Monat${emp.trialPeriodMonths === 1 ? '' : 'e'}`} />
-                                  : <DataRow label="Probezeit" value="Keine Probezeit" />
-                                }
-                              </div>
-                              {/* Kündigungsfrist-Box */}
-                              <div className="rounded-md border border-border bg-muted/40 p-3 text-xs space-y-1">
-                                <p className="font-semibold flex items-center gap-1">
-                                  <Clock className="h-3.5 w-3.5 text-muted-foreground" /> Kündigungsfrist
-                                </p>
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
-                                  <span className="text-muted-foreground">Während Probezeit:</span>
-                                  <span className="font-medium">3 Arbeitstage</span>
-                                  <span className="text-muted-foreground">Nach Probezeit:</span>
-                                  <span className="font-medium">1 Monat auf Monatsende</span>
-                                  {probEnd && (
-                                    <>
-                                      <span className="text-muted-foreground">Probezeit endet:</span>
-                                      <span className="font-medium">{probEnd}</span>
-                                    </>
-                                  )}
-                                  <span className="text-muted-foreground">Aktuell gilt:</span>
-                                  <span className={cn('font-semibold', inProb ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400')}>
-                                    {noticePeriodLabel(inProb)}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })()
-                      )}
-                    </CardContent>
-                  )}
-                </Card>
-              )}
-
-              {/* ── Abschnitt 7: Onboarding-Vorbereitung (Admin) ─────────────── */}
-              {isAdmin && (
-                <Card>
-                  <CardHeader
-                    className="pb-2 pt-4 cursor-pointer select-none"
-                    onClick={() => setOpenOnboarding(o => !o)}
-                  >
-                    <CardTitle className="text-sm flex items-center justify-between">
-                      <span className="flex items-center gap-2">
-                        <Clipboard className="h-4 w-4 text-amber-600" />
-                        Onboarding
-                        {/* Status-Badges im Header */}
-                        {selectedEmp?.onboardingStatus === 'prepared' && (
-                          <Badge className="text-[10px] bg-slate-100 text-slate-700 border-slate-300 font-medium">Vorbereitet</Badge>
-                        )}
-                        {selectedEmp?.onboardingStatus === 'sent' && (
-                          <Badge className="text-[10px] bg-blue-100 text-blue-800 border-blue-200 font-medium">Link bereit</Badge>
-                        )}
-                        {selectedEmp?.onboardingStatus === 'in_progress' && (
-                          <Badge className="text-[10px] bg-amber-100 text-amber-800 border-amber-200 font-medium">In Bearbeitung</Badge>
-                        )}
-                        {selectedEmp?.onboardingStatus === 'completed' && (
-                          <Badge className="text-[10px] bg-green-100 text-green-800 border-green-200 font-medium">Abgeschlossen</Badge>
-                        )}
-                      </span>
-                      <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', openOnboarding && 'rotate-180')} />
-                    </CardTitle>
-                  </CardHeader>
-                  {openOnboarding && (
-                    <CardContent className="space-y-4 pt-0">
-
-                      {/* Erklärung */}
-                      <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-1.5 text-xs text-amber-800 dark:text-amber-300">
-                        <p className="font-semibold flex items-center gap-1">
-                          <Info className="h-3.5 w-3.5" /> Onboarding-Link-System
-                        </p>
-                        <p className="leading-relaxed">
-                          Klicken Sie auf <strong>„Link generieren"</strong>, um einen persönlichen Onboarding-Link für diesen Mitarbeiter zu erstellen.
-                          Der Mitarbeiter öffnet den Link und trägt seine eigenen Daten ein (Adresse, AHV, IBAN, Dokumente).
-                          Die Daten werden direkt in diesen Mitarbeiter-Datensatz übertragen.
-                        </p>
-                      </div>
-
-                      {/* Onboarding vorbereiten (wenn noch keiner existiert) */}
-                      {(!editData?.onboardingStatus || editData.onboardingStatus === 'none') && (
-                        <Button variant="outline" size="sm" className="h-9 gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-50 w-full"
-                          onClick={async () => {
-                            if (!editData) return;
-                            const updated = { ...editData, onboardingStatus: 'prepared' as const, onboardingToken: generateToken() };
-                            setEditData(updated);
-                            setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
-                            await upsertEmployee(updated);
-                            toast.success('Onboarding-Link erstellt — jetzt kopieren und testen!');
-                          }}>
-                          <Clipboard className="h-3.5 w-3.5" />
-                          Onboarding-Link generieren
-                        </Button>
-                      )}
-
-                      {/* Link-Box — wenn Token vorhanden */}
-                      {editData?.onboardingStatus && editData.onboardingStatus !== 'none' && editData.onboardingToken && (() => {
-                        const onboardingUrl = `${window.location.origin}/onboarding/${editData.onboardingToken}`;
-                        return (
-                          <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2.5">
-                            <p className="text-xs font-semibold flex items-center gap-1.5 text-foreground">
-                              <LinkIcon className="h-3.5 w-3.5 text-blue-600" />
-                              Onboarding-Link (für Mitarbeiter)
-                            </p>
-                            {/* URL-Anzeige */}
-                            <div className="flex items-center gap-2">
-                              <code className="text-[10px] font-mono bg-background border border-border rounded px-2 py-1.5 flex-1 truncate text-blue-700 dark:text-blue-400 select-all">
-                                {onboardingUrl}
-                              </code>
-                            </div>
-                            {/* Action Buttons */}
-                            <div className="flex gap-2">
-                              <Button variant="outline" size="sm" className="h-8 text-xs flex-1"
-                                onClick={() => {
-                                  navigator.clipboard.writeText(onboardingUrl);
-                                  toast.success('Link kopiert!');
-                                }}>
-                                <LinkIcon className="h-3 w-3 mr-1.5" />
-                                Link kopieren
-                              </Button>
-                              <Button variant="outline" size="sm" className="h-8 text-xs flex-1 border-blue-300 text-blue-700 hover:bg-blue-50"
-                                onClick={() => window.open(onboardingUrl, '_blank')}>
-                                Link testen ↗
-                              </Button>
-                            </div>
-                            <p className="text-[10px] text-muted-foreground">
-                              Kopieren Sie den Link und schicken Sie ihn per E-Mail oder WhatsApp an den Mitarbeiter.
-                              E-Mail-Versand direkt aus dem System folgt in einer nächsten Version.
-                            </p>
-                          </div>
-                        );
-                      })()}
-
-                      {/* Status-Steuerung */}
-                      <div className="space-y-2">
-                        <Label className="text-xs text-muted-foreground">Status manuell setzen</Label>
-                        <div className="flex flex-wrap gap-1.5">
-                          {(
-                            [
-                              { value: 'none',        label: '–',              cls: 'bg-slate-100 text-slate-600 border-slate-200' },
-                              { value: 'prepared',    label: 'Vorbereitet',    cls: 'bg-slate-100 text-slate-700 border-slate-300' },
-                              { value: 'sent',        label: 'Link bereit',    cls: 'bg-blue-100 text-blue-800 border-blue-200' },
-                              { value: 'in_progress', label: 'In Bearbeitung', cls: 'bg-amber-100 text-amber-800 border-amber-200' },
-                              { value: 'completed',   label: 'Abgeschlossen',  cls: 'bg-green-100 text-green-800 border-green-200' },
-                            ] as const
-                          ).map(({ value: s, label, cls }) => (
-                            <button key={s}
-                              onClick={async () => {
-                                if (!editData) return;
-                                const tok = (s !== 'none' && !editData.onboardingToken) ? generateToken() : editData.onboardingToken;
-                                const updated = { ...editData, onboardingStatus: s, onboardingToken: tok };
-                                setEditData(updated);
-                                setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
-                                await upsertEmployee(updated);
-                              }}
-                              className={cn(
-                                'px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors',
-                                (editData?.onboardingStatus ?? 'none') === s
-                                  ? 'ring-2 ring-offset-1 ring-amber-500 ' + cls
-                                  : 'bg-background border-border text-muted-foreground hover:bg-muted',
-                              )}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Abgeschlossen-Hinweis */}
-                      {editData?.onboardingStatus === 'completed' && (
-                        <div className="rounded-md border border-green-200 bg-green-50 p-3 text-xs text-green-800 flex items-start gap-2">
-                          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                          <span>Der Mitarbeiter hat das Onboarding abgeschlossen. Die eingetragenen Daten sind jetzt in den jeweiligen Feldern des Personalstamms sichtbar.</span>
-                        </div>
-                      )}
-
-                      {/* in_progress-Hinweis */}
-                      {editData?.onboardingStatus === 'in_progress' && (
-                        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 flex items-start gap-2">
-                          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                          <span>Der Mitarbeiter hat den Link geöffnet und füllt das Formular gerade aus.</span>
-                        </div>
-                      )}
-
-                    </CardContent>
-                  )}
-                </Card>
-              )}
-
-              {/* ── Abschnitt 8: Arbeitsvertrag (Platzhalter) ─────────────── */}
-              <Card className="border-dashed border-2 border-muted-foreground/20">
+              {/* ── Abschnitt 7: Arbeitsvertrag ───────────────────────────── */}
+              <Card>
                 <CardHeader className="pb-2 pt-4">
-                  <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground">
-                    <FileText className="h-4 w-4" />
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <FileSignature className="h-4 w-4 text-indigo-600" />
                     Arbeitsvertrag
-                    <span className="text-[10px] bg-amber-50 dark:bg-amber-950/20 border border-amber-200 text-amber-700 px-1.5 py-0.5 rounded font-normal">
-                      Automatisierung geplant
-                    </span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-3">
                   {selectedLocal.contractFileName ? (
-                    <div className="flex items-center gap-2 rounded-md bg-muted/40 border border-border px-3 py-2">
-                      <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                      <span className="text-sm text-muted-foreground flex-1 truncate">{selectedLocal.contractFileName}</span>
+                    <div className="flex items-center gap-2 rounded-md bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 px-3 py-2">
+                      <FileCheck className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+                      <span className="text-sm text-emerald-800 dark:text-emerald-300 flex-1 truncate font-medium">
+                        {selectedLocal.contractFileName}
+                      </span>
                       {canEditEmployees && (
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-7 text-xs"
+                          className="h-7 text-xs text-muted-foreground hover:text-foreground"
                           onClick={() => fileInputRef.current?.click()}
                         >
                           Ersetzen
@@ -2142,7 +2116,10 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                       )}
                     </div>
                   ) : (
-                    <p className="text-xs text-muted-foreground">Noch kein Vertrag hinterlegt.</p>
+                    <div className="flex items-center gap-2 rounded-md bg-muted/30 border border-dashed border-muted-foreground/30 px-3 py-2">
+                      <FileClock className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      <span className="text-xs text-muted-foreground italic">Noch kein Vertrag hinterlegt.</span>
+                    </div>
                   )}
 
                   {canEditEmployees && (
@@ -2151,15 +2128,10 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                         variant="outline"
                         size="sm"
                         className="h-8 text-xs w-full border-dashed"
-                        onClick={() => {
-                          if (!showContractInfo) {
-                            fileInputRef.current?.click();
-                          }
-                          setShowContractInfo(!showContractInfo);
-                        }}
+                        onClick={() => fileInputRef.current?.click()}
                       >
                         <Upload className="h-3.5 w-3.5 mr-1.5" />
-                        Arbeitsvertrag hochladen
+                        {selectedLocal.contractFileName ? 'Vertrag ersetzen' : 'Arbeitsvertrag hochladen'}
                       </Button>
                       <input
                         ref={fileInputRef}
@@ -2170,21 +2142,24 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                       />
                     </>
                   )}
+                </CardContent>
+              </Card>
 
-                  {/* Erklärung zur geplanten Funktion */}
-                  <div className="rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 p-3 text-xs text-amber-800 dark:text-amber-300 space-y-1">
-                    <p className="font-semibold">Was wird später automatisch erkannt?</p>
-                    <ul className="list-disc list-inside space-y-0.5 text-amber-700 dark:text-amber-400">
-                      <li>Name & Abteilung</li>
-                      <li>Beschäftigungsart & Wochenstunden</li>
-                      <li>Eintrittsdatum & Vertragsende</li>
-                      <li>Vereinbarter Lohn</li>
-                      <li>Ferientage pro Jahr</li>
-                    </ul>
-                    <p className="text-[11px] mt-1 text-amber-600 dark:text-amber-500">
-                      Alle Felder bleiben danach manuell bearbeitbar.
-                    </p>
-                  </div>
+              {/* ── Abschnitt 8: Anhänge ──────────────────────────────────── */}
+              <Card>
+                <CardHeader className="pb-2 pt-4">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Paperclip className="h-4 w-4 text-slate-500" />
+                    Anhänge
+                    <span className="text-[10px] bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 px-1.5 py-0.5 rounded font-normal">
+                      Geplant
+                    </span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <p className="text-xs text-muted-foreground italic">
+                    Hier werden Sozialbeitragsausweise, Quellensteuerbelege, AHV-Bescheinigungen und weitere Dokumente hinterlegt.
+                  </p>
                 </CardContent>
               </Card>
 
