@@ -41,6 +41,7 @@ import {
   Building, Phone, Mail, MapPin, CreditCard, Shield,
   Briefcase, Calendar, Clock, Link as LinkIcon,
   Paperclip, FileCheck, FileClock, FileSignature,
+  Download, RefreshCw,
 } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
@@ -49,6 +50,7 @@ import {
   OnboardingSubmission,
 } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
+import { generateContract, detectContractTemplate } from '@/lib/generateContract';
 import { toast } from 'sonner';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
@@ -346,6 +348,11 @@ const Personalstamm = () => {
   const [showMobile, setShowMobile]       = useState<'list' | 'detail'>('list');
   const [showContractInfo, setShowContractInfo] = useState(false);
 
+  // ── Vertragsgenerator ──────────────────────────────────────────────────────
+  const [contractBlobUrl,     setContractBlobUrl]     = useState<string | null>(null);
+  const [contractPdfFileName, setContractPdfFileName] = useState<string | null>(null);
+  const [generatingContract,  setGeneratingContract]  = useState(false);
+
   // ── UI-Abschnitte aufklappbar ──────────────────────────────────────────────
   const [openPersonal,   setOpenPersonal]   = useState(false);
   const [openContractF,  setOpenContractF]  = useState(false);
@@ -484,6 +491,10 @@ const Personalstamm = () => {
     setShowContractInfo(false);
     setOpenPersonal(false);
     setOpenContractF(false);
+    // Vertragsvorschau zurücksetzen
+    if (contractBlobUrl) URL.revokeObjectURL(contractBlobUrl);
+    setContractBlobUrl(null);
+    setContractPdfFileName(null);
   };
 
   const startEdit = () => {
@@ -638,6 +649,33 @@ const Personalstamm = () => {
     toast.info(`Vertrag "${file.name}" hinterlegt. Automatische Auswertung folgt in einer späteren Version.`);
     setShowContractInfo(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // ── Vertrag generieren ────────────────────────────────────────────────────
+  const handleGenerateContract = () => {
+    const emp = employees.find(e => e.id === selectedId) ?? editData;
+    if (!emp) return;
+    setGeneratingContract(true);
+    try {
+      // Alte Blob-URL freigeben (Memory-Leak vermeiden)
+      if (contractBlobUrl) URL.revokeObjectURL(contractBlobUrl);
+      const { blobUrl, fileName } = generateContract(emp);
+      setContractBlobUrl(blobUrl);
+      setContractPdfFileName(fileName);
+    } catch (err) {
+      console.error('Vertragsgenerierung fehlgeschlagen:', err);
+      toast.error('Vertrag konnte nicht generiert werden. Bitte prüfe die Mitarbeiterdaten.');
+    } finally {
+      setGeneratingContract(false);
+    }
+  };
+
+  const handleDownloadContract = () => {
+    if (!contractBlobUrl || !contractPdfFileName) return;
+    const a = document.createElement('a');
+    a.href = contractBlobUrl;
+    a.download = contractPdfFileName;
+    a.click();
   };
 
   const selectedEmp   = employees.find(e => e.id === selectedId) ?? (editMode ? editData : null);
@@ -1752,88 +1790,6 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                       </span>
                     </CardTitle>
                   </CardHeader>
-                  {openContractF && (
-                    <CardContent className="space-y-3 pt-0">
-                      <Alert className="text-xs py-2 border-blue-200 bg-blue-50 dark:bg-blue-950/20">
-                        <Info className="h-3.5 w-3.5 text-blue-600" />
-                        <AlertDescription className="text-blue-700 dark:text-blue-400">
-                          Diese Felder bilden die Grundlage für die spätere automatische Vertragsgenerierung.
-                          Noch keine automatische Erzeugung — die Architektur wird hier vorbereitet.
-                        </AlertDescription>
-                      </Alert>
-                      {editMode ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {/* Vertragsart */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block">Vertragsart</Label>
-                            <Select
-                              value={editData?.contractType ?? ''}
-                              onValueChange={v => setEditData(d => d ? { ...d, contractType: (v as Employee['contractType']) || undefined } : d)}
-                            >
-                              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Wählen…" /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="monthly">Monatslohn-Vertrag (Festanstellung)</SelectItem>
-                                <SelectItem value="hourly">Stundenlohn-Vertrag (Pensum variabel)</SelectItem>
-                                <SelectItem value="irregular">Aushilfe / unregelmässig</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          {/* Stellenbezeichnung */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Briefcase className="h-3 w-3" /> Stellenbezeichnung
-                            </Label>
-                            <Input className="h-9 text-sm" placeholder="z.B. Servicemitarbeiter"
-                              value={editData?.positionTitle ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, positionTitle: e.target.value || undefined } : d)} />
-                          </div>
-                          {/* Eintrittsdatum */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Calendar className="h-3 w-3" /> Eintrittsdatum
-                            </Label>
-                            <Input type="date" className="h-9 text-sm"
-                              value={editData?.contractStart ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, contractStart: e.target.value || undefined } : d)} />
-                          </div>
-                          {/* Austrittsdatum */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Calendar className="h-3 w-3" /> Austrittsdatum
-                              <span className="ml-1 text-[10px] opacity-60">falls bekannt</span>
-                            </Label>
-                            <Input type="date" className="h-9 text-sm"
-                              value={editData?.employmentEndDate ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, employmentEndDate: e.target.value || undefined } : d)} />
-                          </div>
-                          {/* Probezeit Dropdown */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
-                              <Clock className="h-3 w-3" /> Probezeit
-                            </Label>
-                            <Select
-                              value={String(editData?.trialPeriodMonths ?? 0)}
-                              onValueChange={v => setEditData(d => d ? { ...d, trialPeriodMonths: parseInt(v) as 0|1|2|3 } : d)}
-                            >
-                              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="0">Keine Probezeit</SelectItem>
-                                <SelectItem value="1">1 Monat</SelectItem>
-                                <SelectItem value="2">2 Monate</SelectItem>
-                                <SelectItem value="3">3 Monate</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          {/* Befristeter Vertrag */}
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-2 block">Befristeter Vertrag</Label>
-                            <label className="flex items-center gap-2 cursor-pointer mb-1">
-                              <input type="checkbox"
-                                checked={editData?.isLimitedContract ?? false}
-                                onChange={e => setEditData(d => d ? { ...d, isLimitedContract: e.target.checked } : d)}
-                                className="h-4 w-4 rounded" />
-                              <span className="text-sm">Ja – Vertrag ist befristet</span>
-                            </label>
                   <CardContent className="space-y-4 pt-0">
                     {editMode ? (
                       <>
@@ -2090,48 +2046,121 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
               </Card>
 
               {/* ── Abschnitt 7: Arbeitsvertrag ───────────────────────────── */}
-              <Card>
-                <CardHeader className="pb-2 pt-4">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <FileSignature className="h-4 w-4 text-indigo-600" />
-                    Arbeitsvertrag
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="pt-0 space-y-3">
-                  {selectedLocal.contractFileName ? (
-                    <div className="flex items-center gap-2 rounded-md bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 px-3 py-2">
-                      <FileCheck className="h-4 w-4 text-emerald-600 flex-shrink-0" />
-                      <span className="text-sm text-emerald-800 dark:text-emerald-300 flex-1 truncate font-medium">
-                        {selectedLocal.contractFileName}
-                      </span>
-                      {canEditEmployees && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          Ersetzen
-                        </Button>
+              {isAdmin && selectedEmp && (
+                <Card>
+                  <CardHeader className="pb-2 pt-4">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <FileSignature className="h-4 w-4 text-indigo-600" />
+                      Arbeitsvertrag
+                      {selectedEmp && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-normal border ${
+                          detectContractTemplate(selectedEmp) === 'ML'
+                            ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 text-blue-700'
+                            : 'bg-orange-50 dark:bg-orange-950/20 border-orange-200 text-orange-700'
+                        }`}>
+                          {detectContractTemplate(selectedEmp) === 'ML' ? 'ML – Monatslohn' : 'SL – Stundenlohn'}
+                        </span>
                       )}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 rounded-md bg-muted/30 border border-dashed border-muted-foreground/30 px-3 py-2">
-                      <FileClock className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                      <span className="text-xs text-muted-foreground italic">Noch kein Vertrag hinterlegt.</span>
-                    </div>
-                  )}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0 space-y-3">
 
-                  {canEditEmployees && (
-                    <>
+                    {/* Erklärung Vertragstyp */}
+                    <div className="rounded-md bg-muted/30 border border-border px-3 py-2 text-xs text-muted-foreground space-y-0.5">
+                      <p>
+                        <span className="font-medium text-foreground">Vorlage:</span>{' '}
+                        {detectContractTemplate(selectedEmp) === 'ML'
+                          ? 'Monatslohn-Vertrag (ML) – Festanstellung mit fixem Monatsgehalt'
+                          : 'Stundenlohn-Vertrag (SL) – Aushilfe / unregelmässige Beschäftigung'}
+                      </p>
+                      <p>Alle Felder werden automatisch aus dem Mitarbeiterprofil übernommen.</p>
+                    </div>
+
+                    {/* Fehlende Pflichtfelder */}
+                    {(() => {
+                      const missing: string[] = [];
+                      if (!selectedEmp.positionTitle) missing.push('Funktion / Stelle');
+                      if (!selectedEmp.contractStart)  missing.push('Eintrittsdatum');
+                      if (detectContractTemplate(selectedEmp) === 'ML' && !selectedEmp.monthlySalary) missing.push('Monatslohn');
+                      if (detectContractTemplate(selectedEmp) === 'SL' && !selectedEmp.hourlyWage)    missing.push('Stundenlohn');
+                      if (missing.length === 0) return null;
+                      return (
+                        <div className="rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+                          <p className="font-semibold">Folgende Felder fehlen noch:</p>
+                          <ul className="list-disc list-inside space-y-0.5">
+                            {missing.map(f => <li key={f}>{f}</li>)}
+                          </ul>
+                          <p className="text-[11px] text-amber-600 dark:text-amber-500">Vertrag kann trotzdem generiert werden – fehlende Felder erscheinen als Lücken.</p>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Generieren-Button */}
+                    <Button
+                      className="w-full h-9 text-sm bg-indigo-600 hover:bg-indigo-700 text-white"
+                      onClick={handleGenerateContract}
+                      disabled={generatingContract}
+                    >
+                      <FileSignature className="h-4 w-4 mr-2" />
+                      {generatingContract ? 'Wird generiert…' : contractBlobUrl ? 'Vertrag neu generieren' : 'Vertrag generieren'}
+                    </Button>
+
+                    {/* Vorschau + Download */}
+                    {contractBlobUrl && (
+                      <div className="space-y-2">
+                        <div className="rounded-md border border-border overflow-hidden">
+                          <iframe
+                            src={contractBlobUrl}
+                            className="w-full"
+                            style={{ height: '420px' }}
+                            title="Vertragsvorschau"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="default"
+                            size="sm"
+                            className="flex-1 h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                            onClick={handleDownloadContract}
+                          >
+                            <Download className="h-3.5 w-3.5 mr-1.5" />
+                            PDF herunterladen
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={handleGenerateContract}
+                          >
+                            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                            Neu generieren
+                          </Button>
+                        </div>
+                        {contractPdfFileName && (
+                          <p className="text-[11px] text-muted-foreground truncate">
+                            Datei: {contractPdfFileName}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Trennlinie & manuell hochladen */}
+                    <div className="border-t border-border pt-2">
+                      <p className="text-[11px] text-muted-foreground mb-1.5">Oder: bestehenden Vertrag manuell hochladen</p>
+                      {selectedLocal.contractFileName && (
+                        <div className="flex items-center gap-2 rounded-md bg-muted/30 border border-border px-3 py-1.5 mb-1.5">
+                          <FileCheck className="h-3.5 w-3.5 text-emerald-600 flex-shrink-0" />
+                          <span className="text-xs text-foreground flex-1 truncate">{selectedLocal.contractFileName}</span>
+                        </div>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-8 text-xs w-full border-dashed"
+                        className="h-7 text-xs w-full border-dashed"
                         onClick={() => fileInputRef.current?.click()}
                       >
-                        <Upload className="h-3.5 w-3.5 mr-1.5" />
-                        {selectedLocal.contractFileName ? 'Vertrag ersetzen' : 'Arbeitsvertrag hochladen'}
+                        <Upload className="h-3 w-3 mr-1.5" />
+                        {selectedLocal.contractFileName ? 'Vertrag ersetzen' : 'Vertrag hochladen (.pdf)'}
                       </Button>
                       <input
                         ref={fileInputRef}
@@ -2140,10 +2169,10 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                         className="hidden"
                         onChange={handleContractUpload}
                       />
-                    </>
-                  )}
-                </CardContent>
-              </Card>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* ── Abschnitt 8: Anhänge ──────────────────────────────────── */}
               <Card>
@@ -2151,15 +2180,64 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                   <CardTitle className="text-sm flex items-center gap-2">
                     <Paperclip className="h-4 w-4 text-slate-500" />
                     Anhänge
-                    <span className="text-[10px] bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 px-1.5 py-0.5 rounded font-normal">
-                      Geplant
-                    </span>
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="pt-0">
-                  <p className="text-xs text-muted-foreground italic">
-                    Hier werden Sozialbeitragsausweise, Quellensteuerbelege, AHV-Bescheinigungen und weitere Dokumente hinterlegt.
-                  </p>
+                <CardContent className="pt-0 space-y-2">
+                  {(() => {
+                    const docs: Array<{ type: string; name: string; url?: string; uploadedAt?: string }> =
+                      (() => {
+                        try {
+                          return selectedEmp?.onboardingDocuments
+                            ? JSON.parse(selectedEmp.onboardingDocuments)
+                            : [];
+                        } catch { return []; }
+                      })();
+
+                    const iconFor = (type: string) => {
+                      if (type === 'permit') return <Shield className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />;
+                      if (type === 'passport' || type === 'id') return <UserCheck className="h-3.5 w-3.5 text-purple-500 flex-shrink-0" />;
+                      return <FileCheck className="h-3.5 w-3.5 text-emerald-600 flex-shrink-0" />;
+                    };
+
+                    const labelFor = (type: string) => {
+                      const map: Record<string, string> = {
+                        permit: 'Aufenthaltsausweis',
+                        passport: 'Reisepass',
+                        id: 'Personalausweis',
+                        contract: 'Arbeitsvertrag',
+                        ahv: 'AHV-Ausweis',
+                        other: 'Dokument',
+                      };
+                      return map[type] ?? type;
+                    };
+
+                    if (docs.length === 0) {
+                      return (
+                        <p className="text-xs text-muted-foreground italic">
+                          Noch keine Dokumente hochgeladen. Werden nach Onboarding automatisch angezeigt.
+                        </p>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-1.5">
+                        {docs.map((doc, i) => (
+                          <div key={i} className="flex items-center gap-2 rounded-md bg-muted/30 border border-border px-3 py-1.5">
+                            {iconFor(doc.type)}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium truncate">{doc.name || labelFor(doc.type)}</p>
+                              <p className="text-[10px] text-muted-foreground">{labelFor(doc.type)}{doc.uploadedAt ? ` · ${new Date(doc.uploadedAt).toLocaleDateString('de-CH')}` : ''}</p>
+                            </div>
+                            {doc.url && (
+                              <a href={doc.url} target="_blank" rel="noopener noreferrer">
+                                <Button variant="ghost" size="sm" className="h-6 text-[10px]">Öffnen</Button>
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </CardContent>
               </Card>
 

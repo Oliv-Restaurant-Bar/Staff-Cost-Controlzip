@@ -48,6 +48,7 @@ export interface Employee {
   // ─── Quellensteuer / Aufenthalt ─────────────────────────────────────────
   permitType?: 'swiss' | 'C' | 'B' | 'L' | 'G' | 'other'; // Aufenthaltsstatus
   maritalStatus?: 'single' | 'married' | 'divorced' | 'widowed';  // Zivilstand
+  numberOfChildren?: number;             // Anzahl Kinder (Quellensteuer)
   spouseEmployed?: boolean;              // Ehepartner erwerbstätig?
   spouseLivesInSwitzerland?: boolean;    // Ehepartner wohnt in CH?
 
