@@ -288,8 +288,9 @@ const Personalstamm = () => {
   const [deleteTarget, setDeleteTarget]   = useState<Employee | null>(null);
 
   // ── Selbst-Anmeldungen (onboarding_submissions Tabelle) ───────────────────
-  const [submissions, setSubmissions]             = useState<OnboardingSubmission[]>([]);
-  const [selectedSubmission, setSelectedSubmission] = useState<OnboardingSubmission | null>(null);
+  const [submissions, setSubmissions]                 = useState<OnboardingSubmission[]>([]);
+  const [selectedSubmission, setSelectedSubmission]   = useState<OnboardingSubmission | null>(null);
+  const [submissionsDbReady, setSubmissionsDbReady]   = useState<boolean | null>(null); // null = noch nicht geprüft
 
   // ── Filter ─────────────────────────────────────────────────────────────────
   const [search, setSearch]               = useState('');
@@ -396,11 +397,11 @@ const Personalstamm = () => {
       }
       setLocalData(local);
 
-      // Submissions laden (nur für Admin, Fehler werden still ignoriert
-      // solange die Migration noch nicht ausgeführt wurde)
+      // Submissions laden (nur für Admin)
       if (isAdmin) {
-        const subs = await loadOnboardingSubmissions();
+        const { data: subs, tableExists } = await loadOnboardingSubmissions();
         setSubmissions(subs);
+        setSubmissionsDbReady(tableExists);
       }
 
       setLoading(false);
@@ -694,6 +695,78 @@ const Personalstamm = () => {
           </span>
         </div>
       </div>
+
+      {/* ── DB-Setup Banner (nur sichtbar wenn onboarding_submissions fehlt) ── */}
+      {isAdmin && submissionsDbReady === false && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-3 max-w-7xl w-full mx-auto">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-red-900">
+                Einmaliges Datenbank-Setup erforderlich
+              </p>
+              <p className="text-xs text-red-700 mt-0.5">
+                Die Tabelle <code className="font-mono bg-red-100 px-1 rounded">onboarding_submissions</code> fehlt.
+                Führen Sie die folgende SQL-Anweisung einmalig im{' '}
+                <a href="https://supabase.com/dashboard/project/ajflrvuzmkfspsxkdyfe/sql/new"
+                   target="_blank" rel="noreferrer"
+                   className="underline font-semibold text-red-800">
+                  Supabase SQL-Editor
+                </a>{' '}
+                aus — danach funktioniert die Selbst-Anmeldung:
+              </p>
+              <div className="mt-2 relative">
+                <pre className="text-[10px] bg-slate-900 text-green-300 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
+{`CREATE TABLE IF NOT EXISTS public.onboarding_submissions (
+  id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  submitted_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  name         TEXT         NOT NULL,
+  form_data    JSONB        NOT NULL DEFAULT '{}'::jsonb
+);
+ALTER TABLE public.onboarding_submissions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon_insert" ON public.onboarding_submissions;
+CREATE POLICY "anon_insert" ON public.onboarding_submissions
+  FOR INSERT TO anon, authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "auth_select" ON public.onboarding_submissions;
+CREATE POLICY "auth_select" ON public.onboarding_submissions
+  FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "auth_delete" ON public.onboarding_submissions;
+CREATE POLICY "auth_delete" ON public.onboarding_submissions
+  FOR DELETE TO authenticated USING (true);`}
+                </pre>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="absolute top-2 right-2 h-6 text-[10px] bg-white/10 border-white/20 text-green-300 hover:bg-white/20"
+                  onClick={() => {
+                    navigator.clipboard.writeText(
+`CREATE TABLE IF NOT EXISTS public.onboarding_submissions (
+  id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  submitted_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  name         TEXT         NOT NULL,
+  form_data    JSONB        NOT NULL DEFAULT '{}'::jsonb
+);
+ALTER TABLE public.onboarding_submissions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon_insert" ON public.onboarding_submissions;
+CREATE POLICY "anon_insert" ON public.onboarding_submissions
+  FOR INSERT TO anon, authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "auth_select" ON public.onboarding_submissions;
+CREATE POLICY "auth_select" ON public.onboarding_submissions
+  FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "auth_delete" ON public.onboarding_submissions;
+CREATE POLICY "auth_delete" ON public.onboarding_submissions
+  FOR DELETE TO authenticated USING (true);`
+                    );
+                    toast.success('SQL in Zwischenablage kopiert!');
+                  }}
+                >
+                  Kopieren
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Haupt-Layout: Liste + Detail */}
       <div className="flex-1 flex max-w-7xl w-full mx-auto overflow-hidden" style={{ minHeight: 0 }}>

@@ -560,8 +560,15 @@ export async function createOnboardingSubmission(data: {
   }
 }
 
-/** Alle Selbst-Anmeldungen laden (nur für eingeloggte Admins) */
-export async function loadOnboardingSubmissions(): Promise<OnboardingSubmission[]> {
+/**
+ * Alle Selbst-Anmeldungen laden (nur für eingeloggte Admins).
+ * Gibt { data, tableExists } zurück — tableExists ist false wenn die
+ * Migration noch nicht ausgeführt wurde (PGRST205-Fehler).
+ */
+export async function loadOnboardingSubmissions(): Promise<{
+  data: OnboardingSubmission[];
+  tableExists: boolean;
+}> {
   try {
     const { data, error } = await supabase
       .from('onboarding_submissions')
@@ -569,19 +576,25 @@ export async function loadOnboardingSubmissions(): Promise<OnboardingSubmission[
       .order('submitted_at', { ascending: false });
 
     if (error) {
-      console.error('[loadOnboardingSubmissions] Fehler:', error);
-      return [];
+      const tableNotFound = error.code === 'PGRST205';
+      if (!tableNotFound) {
+        console.error('[loadOnboardingSubmissions] Fehler:', error);
+      }
+      return { data: [], tableExists: !tableNotFound };
     }
 
-    return (data ?? []).map(row => ({
-      id:          row.id as string,
-      submittedAt: row.submitted_at as string,
-      name:        row.name as string,
-      formData:    (row.form_data ?? {}) as Record<string, unknown>,
-    }));
+    return {
+      tableExists: true,
+      data: (data ?? []).map(row => ({
+        id:          row.id as string,
+        submittedAt: row.submitted_at as string,
+        name:        row.name as string,
+        formData:    (row.form_data ?? {}) as Record<string, unknown>,
+      })),
+    };
   } catch (e) {
     console.error('[loadOnboardingSubmissions] Exception:', e);
-    return [];
+    return { data: [], tableExists: false };
   }
 }
 
