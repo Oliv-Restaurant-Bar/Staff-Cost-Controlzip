@@ -171,8 +171,8 @@ function calcSalaryCosts(emp: Employee): SalaryCosts {
   const factor  = emp.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
   const has13th = emp.has13thSalary ?? false;
 
-  if (emp.monthlySalary && emp.monthlySalary > 0 && emp.weeklyHours && emp.weeklyHours > 0) {
-    const ml = calcML(emp.monthlySalary, has13th, emp.weeklyHours, factor);
+  if ((emp.contractType === 'monthly' || (emp.weeklyHours && emp.weeklyHours > 0)) && emp.monthlySalary && emp.monthlySalary > 0) {
+    const ml = calcML(emp.monthlySalary, has13th, emp.weeklyHours || 42, factor);
     return {
       mode: 'monthly',
       grossMonthly:      ml.effectiveMonthlyGross,
@@ -1422,15 +1422,42 @@ CREATE POLICY "Anon self-register new employee"
                         </Select>
                       </div>
                       <div>
-                        <Label className="text-xs text-muted-foreground mb-1 block">Wochenstunden</Label>
-                        <Input
-                          type="number"
-                          min="0" max="60" step="0.5"
-                          value={editData?.weeklyHours ?? ''}
-                          onChange={e => setEditData(d => d ? { ...d, weeklyHours: parseFloat(e.target.value) || undefined } : d)}
-                          placeholder="z.B. 42"
-                          className="h-9 text-sm"
-                        />
+                        {editData?.contractType === 'monthly' ? (
+                          <>
+                            <Label className="text-xs text-muted-foreground mb-1 block">
+                              Beschäftigungsgrad (Pensum)
+                              <span className="ml-1 text-[10px] italic opacity-60">100% = 42 h/Woche</span>
+                            </Label>
+                            <div className="flex items-center gap-2">
+                              <Input
+                                type="number"
+                                min="10" max="100" step="5"
+                                value={editData?.weeklyHours ? Math.round(editData.weeklyHours / 42 * 100) : 100}
+                                onChange={e => {
+                                  const pct = Math.min(100, Math.max(10, parseFloat(e.target.value) || 100));
+                                  const wh  = Math.round(42 * pct / 100 * 2) / 2;
+                                  setEditData(d => d ? { ...d, weeklyHours: wh } : d);
+                                }}
+                                className="h-9 text-sm w-20"
+                              />
+                              <span className="text-xs text-muted-foreground">
+                                % = {editData?.weeklyHours ? `${editData.weeklyHours} h/W` : '42 h/W'}
+                              </span>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <Label className="text-xs text-muted-foreground mb-1 block">Wochenstunden</Label>
+                            <Input
+                              type="number"
+                              min="0" max="60" step="0.5"
+                              value={editData?.weeklyHours ?? ''}
+                              onChange={e => setEditData(d => d ? { ...d, weeklyHours: parseFloat(e.target.value) || undefined } : d)}
+                              placeholder="z.B. 42"
+                              className="h-9 text-sm"
+                            />
+                          </>
+                        )}
                       </div>
                       <div>
                         <Label className="text-xs text-muted-foreground mb-1 block">Ferientage pro Jahr</Label>
@@ -1462,7 +1489,10 @@ CREATE POLICY "Anon self-register new employee"
                         <DataRow label="Name"           value={selectedEmp?.name} />
                         <DataRow label="Abteilung"      value={selectedEmp ? DEPT_LABELS[selectedEmp.department] : undefined} />
                         <DataRow label="Art"            value={selectedEmp ? TYPE_LABELS[selectedEmp.employmentType] : undefined} />
-                        <DataRow label="Wochenstunden"  value={selectedEmp?.weeklyHours ? `${selectedEmp.weeklyHours} h` : '–'} />
+                        {selectedEmp?.contractType === 'monthly'
+                          ? <DataRow label="Pensum / Wochenstunden" value={selectedEmp?.weeklyHours ? `${Math.round(selectedEmp.weeklyHours / 42 * 100)}% = ${selectedEmp.weeklyHours} h/W` : '100% = 42 h/W'} />
+                          : <DataRow label="Wochenstunden" value={selectedEmp?.weeklyHours ? `${selectedEmp.weeklyHours} h` : '–'} />
+                        }
                       </div>
                       {selectedEmp && (() => {
                         const pr = calcProRataEntitlement(selectedEmp);
@@ -1824,36 +1854,60 @@ CREATE POLICY "Anon self-register new employee"
                   <CardContent className="space-y-4 pt-0">
                     {editMode ? (
                       <>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block">
-                              Basis-Stundenlohn brutto (CHF)
-                              <span className="ml-1 text-[10px] italic opacity-60">ohne L-GAV-Zuschläge</span>
-                            </Label>
-                            <Input
-                              type="number" min="0" step="0.05"
-                              value={editData?.hourlyWage || ''}
-                              onChange={e => setEditData(d => d ? { ...d, hourlyWage: parseFloat(e.target.value) || 0 } : d)}
-                              placeholder="z.B. 23.50"
-                              className="h-9 text-sm"
-                            />
+                        {/* ── Lohneingabe abhängig von Vertragsart ─── */}
+                        {editData?.contractType === 'monthly' ? (
+                          <div className="space-y-3">
+                            <div className="rounded-md bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-3">
+                              <p className="text-xs font-semibold text-blue-800 dark:text-blue-300 mb-2">
+                                Monatslohn-Vertrag (ML) — Festanstellung
+                              </p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                  <Label className="text-xs text-muted-foreground mb-1 block">
+                                    Monatslohn brutto (CHF)
+                                    <span className="ml-1 text-[10px] italic opacity-60">exkl. 13. Monatslohn</span>
+                                  </Label>
+                                  <Input
+                                    type="number" min="0" step="50"
+                                    value={editData?.monthlySalary ?? ''}
+                                    onChange={e => setEditData(d => d ? { ...d, monthlySalary: parseFloat(e.target.value) || undefined } : d)}
+                                    placeholder="z.B. 4800"
+                                    className="h-9 text-sm"
+                                    autoFocus
+                                  />
+                                </div>
+                                <div>
+                                  <Label className="text-xs text-muted-foreground mb-1 block">
+                                    Pensum
+                                    <span className="ml-1 text-[10px] italic opacity-60">aus Stammdaten</span>
+                                  </Label>
+                                  <div className="h-9 flex items-center px-3 rounded-md border border-input bg-muted/30 text-sm text-muted-foreground">
+                                    {editData?.weeklyHours
+                                      ? `${Math.round(editData.weeklyHours / 42 * 100)}% = ${editData.weeklyHours} h/Woche`
+                                      : '100% = 42 h/Woche (Standard)'}
+                                  </div>
+                                  <p className="text-[10px] text-muted-foreground mt-0.5">Pensum in «Beschäftigung» ändern</p>
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                          {(editData?.employmentType === 'vollzeit' || editData?.employmentType === 'teilzeit') && (
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                               <Label className="text-xs text-muted-foreground mb-1 block">
-                                Monatslohn brutto Basis (CHF)
-                                <span className="ml-1 text-[10px] italic opacity-60">ohne 13. Monatslohn</span>
+                                Basis-Stundenlohn brutto (CHF)
+                                <span className="ml-1 text-[10px] italic opacity-60">ohne L-GAV-Zuschläge</span>
                               </Label>
                               <Input
-                                type="number" min="0"
-                                value={editData?.monthlySalary ?? ''}
-                                onChange={e => setEditData(d => d ? { ...d, monthlySalary: parseFloat(e.target.value) || undefined } : d)}
-                                placeholder="z.B. 4800"
+                                type="number" min="0" step="0.05"
+                                value={editData?.hourlyWage || ''}
+                                onChange={e => setEditData(d => d ? { ...d, hourlyWage: parseFloat(e.target.value) || 0 } : d)}
+                                placeholder="z.B. 23.50"
                                 className="h-9 text-sm"
                               />
                             </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
@@ -1893,10 +1947,11 @@ CREATE POLICY "Anon self-register new employee"
                         </div>
 
                         {editData && (() => {
-                          const factor  = editData.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
-                          const has13th = editData.has13thSalary ?? false;
-                          const hasSL   = editData.hourlyWage > 0;
-                          const hasML   = !!(editData.monthlySalary && editData.monthlySalary > 0 && editData.weeklyHours && editData.weeklyHours > 0);
+                          const factor   = editData.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
+                          const has13th  = editData.has13thSalary ?? false;
+                          const hasSL    = editData.hourlyWage > 0 && editData.contractType !== 'monthly';
+                          const mlHours  = editData.weeklyHours || 42;
+                          const hasML    = !!(editData.contractType === 'monthly' && editData.monthlySalary && editData.monthlySalary > 0);
                           if (!hasSL && !hasML) return null;
 
                           const LRow = ({ label, value, bold, sub }: { label: string; value: string; bold?: boolean; sub?: boolean }) => (
@@ -1932,10 +1987,11 @@ CREATE POLICY "Anon self-register new employee"
                               })()}
 
                               {hasML && (() => {
-                                const ml = calcML(editData.monthlySalary!, has13th, editData.weeklyHours!, factor);
+                                const ml = calcML(editData.monthlySalary!, has13th, mlHours, factor);
+                                const pensum = Math.round(mlHours / 42 * 100);
                                 return <>
-                                  <LRow label="Monatslohn brutto (Vertrag)" value={formatCHF(ml.baseSalaryMonthly)} />
-                                  {has13th && <LRow label="+ 13. Monatslohn (1/12 p. Monat)" value={formatCHF(ml.effectiveMonthlyGross - ml.baseSalaryMonthly)} sub />}
+                                  <LRow label={`Monatslohn brutto — ${pensum}% Pensum (${mlHours} h/W)`} value={formatCHF(ml.baseSalaryMonthly)} />
+                                  {has13th && <LRow label={`+ 13. Monatslohn (1/12 = ${(LGAV.THIRTEENTH_RATE * 100).toFixed(2)}%)`} value={formatCHF(ml.effectiveMonthlyGross - ml.baseSalaryMonthly)} sub />}
                                   {has13th && <><Sep /><LRow label="Effektiver Brutto/Monat (inkl. 13.)" value={formatCHF(ml.effectiveMonthlyGross)} bold /></>}
                                   <LRow label={`+ AG-Sozialkosten (${((factor - 1) * 100).toFixed(1)}%)`} value={`+ ${formatCHF(ml.socialCostMonthly)}`} sub />
                                   <Sep />
@@ -1943,7 +1999,7 @@ CREATE POLICY "Anon self-register new employee"
                                   <LRow label="Jahresvollkosten" value={formatCHF(ml.annualEmployerCost)} sub />
                                   <Sep />
                                   <LRow label="Interner Stundenansatz (Kostenstelle)" value={formatCHF(ml.internalHourlyCost)} bold />
-                                  <p className="text-[10px] text-purple-500 italic pt-0.5">= Vollkosten/Monat ÷ 182 h (L-GAV: 42 h/W × 52 ÷ 12 = 182 h)</p>
+                                  <p className="text-[10px] text-purple-500 italic pt-0.5">= Vollkosten/Monat ({formatCHF(ml.totalMonthlyEmployerCost)}) ÷ 182 h</p>
                                 </>;
                               })()}
                             </div>
@@ -1954,10 +2010,12 @@ CREATE POLICY "Anon self-register new employee"
                       (() => {
                         const empForCost = selectedEmp ?? editData;
                         if (!empForCost) return null;
-                        const factor  = empForCost.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
-                        const has13th = empForCost.has13thSalary ?? false;
-                        const hasSL   = empForCost.hourlyWage > 0;
-                        const hasML   = !!(empForCost.monthlySalary && empForCost.monthlySalary > 0 && empForCost.weeklyHours && empForCost.weeklyHours > 0);
+                        const factor   = empForCost.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
+                        const has13th  = empForCost.has13thSalary ?? false;
+                        const hasSL    = empForCost.hourlyWage > 0 && empForCost.contractType !== 'monthly';
+                        const mlHoursV = empForCost.weeklyHours || 42;
+                        const hasML    = !!(empForCost.contractType === 'monthly' && empForCost.monthlySalary && empForCost.monthlySalary > 0)
+                                      || !!(empForCost.monthlySalary && empForCost.monthlySalary > 0 && empForCost.weeklyHours && empForCost.weeklyHours > 0);
                         if (!hasSL && !hasML) return <p className="text-xs text-muted-foreground italic">Noch kein Lohn erfasst.</p>;
 
                         const LRow = ({ label, value, bold, sub }: { label: string; value: string; bold?: boolean; sub?: boolean }) => (
@@ -2002,10 +2060,11 @@ CREATE POLICY "Anon self-register new employee"
                               })()}
 
                               {hasML && (() => {
-                                const ml = calcML(empForCost.monthlySalary!, has13th, empForCost.weeklyHours!, factor);
+                                const ml     = calcML(empForCost.monthlySalary!, has13th, mlHoursV, factor);
+                                const pensum = Math.round(mlHoursV / 42 * 100);
                                 return <>
-                                  <LRow label="Monatslohn brutto (Vertrag)" value={formatCHF(ml.baseSalaryMonthly)} />
-                                  {has13th && <LRow label="+ 13. Monatslohn (1/12 p. Monat)" value={formatCHF(ml.effectiveMonthlyGross - ml.baseSalaryMonthly)} sub />}
+                                  <LRow label={`Monatslohn brutto — ${pensum}% Pensum (${mlHoursV} h/W)`} value={formatCHF(ml.baseSalaryMonthly)} />
+                                  {has13th && <LRow label={`+ 13. Monatslohn (1/12 = ${(LGAV.THIRTEENTH_RATE * 100).toFixed(2)}%)`} value={formatCHF(ml.effectiveMonthlyGross - ml.baseSalaryMonthly)} sub />}
                                   {has13th && <><Sep /><LRow label="Effektiver Brutto/Monat (inkl. 13.)" value={formatCHF(ml.effectiveMonthlyGross)} bold /></>}
                                   <LRow label={`+ AG-Sozialkosten (${((factor - 1) * 100).toFixed(1)}%)`} value={`+ ${formatCHF(ml.socialCostMonthly)}`} sub />
                                   <Sep />
@@ -2013,7 +2072,7 @@ CREATE POLICY "Anon self-register new employee"
                                   <LRow label="Jahresvollkosten" value={formatCHF(ml.annualEmployerCost)} sub />
                                   <Sep />
                                   <LRow label="Interner Stundenansatz (Kostenstelle)" value={formatCHF(ml.internalHourlyCost)} bold />
-                                  <p className="text-[10px] text-purple-500 italic pt-0.5">= Vollkosten/Monat ÷ 182 h (L-GAV: 42 h/W × 52 ÷ 12 = 182 h)</p>
+                                  <p className="text-[10px] text-purple-500 italic pt-0.5">= Vollkosten/Monat ({formatCHF(ml.totalMonthlyEmployerCost)}) ÷ 182 h</p>
                                 </>;
                               })()}
                             </div>
