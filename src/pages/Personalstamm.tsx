@@ -44,7 +44,7 @@ import {
 import { usePermissions } from '@/hooks/usePermissions';
 import {
   loadEmployees, upsertEmployee, deleteEmployee, activateEmployee,
-  loadOnboardingSubmissions, deleteOnboardingSubmission,
+  loadOnboardingSubmissions, deleteOnboardingSubmission, activateSubmissionAsEmployee,
   OnboardingSubmission,
 } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
@@ -467,40 +467,31 @@ const Personalstamm = () => {
 
   // ── Submission Aktivieren / Ablehnen (gemeinsame Handler) ─────────────────
   const handleActivateSubmission = async (sub: OnboardingSubmission) => {
-    const fd = sub.formData;
-    const newEmp: import('@/types/personnel').Employee = {
-      id:             sub.id,
+    const { id: newId, errorMessage } = await activateSubmissionAsEmployee(sub);
+
+    if (errorMessage || !newId) {
+      const msg = errorMessage ?? 'Unbekannter Fehler';
+      console.error('[handleActivateSubmission] Fehler:', msg);
+      toast.error(`Aktivierung fehlgeschlagen: ${msg}`, { duration: 10000 });
+      return;
+    }
+
+    // Submission aus lokalem State entfernen, neuen Mitarbeiter laden
+    setSubmissions(prev => prev.filter(s => s.id !== sub.id));
+    setSelectedSubmission(null);
+
+    // Einfacher Mitarbeiter-Stub für sofortige UI-Anzeige (vollständig nach Reload)
+    const stub: Employee = {
+      id:             newId,
       name:           sub.name,
       department:     'service',
-      employmentType: ((fd.preferredEmploymentType as string) || 'aushilfe') as import('@/types/personnel').EmploymentType,
+      employmentType: ((sub.formData.preferredEmploymentType as string) || 'aushilfe') as EmploymentType,
       hourlyWage:     0,
       weeklyHours:    0,
-      positionTitle:  (fd.desiredPosition as string)        || undefined,
-      contractStart:  (fd.desiredStartDate as string)       || undefined,
-      birthDate:      (fd.birthDate as string)              || undefined,
-      nationality:    (fd.nationality as string)            || undefined,
-      phone:          (fd.phone as string)                  || undefined,
-      email:          (fd.email as string)                  || undefined,
-      addressStreet:  (fd.addressStreet as string)          || undefined,
-      addressZip:     (fd.addressZip as string)             || undefined,
-      addressCity:    (fd.addressCity as string)            || undefined,
-      ahvNumber:      (fd.ahvNumber as string)              || undefined,
-      iban:           (fd.iban as string)                   || undefined,
-      permitType:     (fd.permitType as string)             || undefined,
-      maritalStatus:  (fd.maritalStatus as string)          || undefined,
-      onboardingStatus: 'completed',
     };
-    const saved = await upsertEmployee(newEmp);
-    if (saved) {
-      await deleteOnboardingSubmission(sub.id);
-      setSubmissions(prev => prev.filter(s => s.id !== sub.id));
-      setEmployees(prev => [...prev, saved]);
-      setSelectedSubmission(null);
-      setSelectedId(saved.id);
-      toast.success(`${sub.name} wurde als Mitarbeiter angelegt!`);
-    } else {
-      toast.error('Aktivierung fehlgeschlagen. Prüfen Sie, ob alle Basis-Migrationen ausgeführt wurden.');
-    }
+    setEmployees(prev => [...prev, stub]);
+    setSelectedId(newId);
+    toast.success(`${sub.name} wurde als Mitarbeiter angelegt!`);
   };
 
   const handleRejectSubmission = async (sub: OnboardingSubmission) => {

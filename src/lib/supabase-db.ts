@@ -151,6 +151,57 @@ export async function upsertEmployee(emp: Employee): Promise<boolean> {
   }
 }
 
+/**
+ * Selbst-Anmeldung in einen echten Mitarbeiterdatensatz umwandeln.
+ * Verwendet NUR die garantiert vorhandenen Basisspalten der employees-Tabelle.
+ * Funktioniert auch wenn die erweiterten HR-Migrationen (20260315_*.sql) noch
+ * nicht ausgeführt wurden.
+ *
+ * Rückgabe: { id, errorMessage }
+ *   id           — UUID des neu angelegten Mitarbeiters (null bei Fehler)
+ *   errorMessage — Exakter Supabase-Fehler für Toast/Logging (null bei Erfolg)
+ */
+export async function activateSubmissionAsEmployee(
+  sub: OnboardingSubmission,
+): Promise<{ id: string | null; errorMessage: string | null }> {
+  const fd = sub.formData;
+
+  // ── Schritt 1: Nur Basisspalten schreiben (existieren immer) ──────────────
+  const baseRow = {
+    id:               sub.id,
+    name:             sub.name,
+    department:       'service' as const,
+    employment_type:  ((fd.preferredEmploymentType as string) || 'aushilfe') as 'aushilfe' | 'vollzeit' | 'teilzeit' | 'minijob',
+    hourly_wage:      0,
+    weekly_hours:     null as number | null,
+    days_off:         [] as string[],
+    preferred_work_days: [] as string[],
+  };
+
+  const { error: insertErr } = await supabase
+    .from('employees')
+    .upsert(baseRow, { onConflict: 'id' });
+
+  if (insertErr) {
+    const msg = `${insertErr.code}: ${insertErr.message}`;
+    console.error('[activateSubmissionAsEmployee] INSERT fehlgeschlagen:', insertErr);
+    return { id: null, errorMessage: msg };
+  }
+
+  // ── Schritt 2: Submission löschen ─────────────────────────────────────────
+  const { error: delErr } = await supabase
+    .from('onboarding_submissions')
+    .delete()
+    .eq('id', sub.id);
+
+  if (delErr) {
+    console.warn('[activateSubmissionAsEmployee] Submission konnte nicht gelöscht werden:', delErr);
+    // Kein hard failure — Mitarbeiter ist bereits angelegt
+  }
+
+  return { id: sub.id, errorMessage: null };
+}
+
 export async function deleteEmployee(id: string): Promise<boolean> {
   try {
     const { error } = await supabase.from('employees').delete().eq('id', id);
