@@ -12,11 +12,13 @@
 
 export const LGAV = {
   WEEKLY_HOURS_FULLTIME: 42,
-  MONTHLY_HOURS:         182,
+  MONTHLY_HOURS:         182,    // 42 h/Woche × 52 ÷ 12 ≈ 182 h/Monat (L-GAV Standard)
+  VACATION_DAYS:         35,     // 5 Wochen = 35 Ferientage (Kalender) = 25 Arbeitstage
+  PUBLIC_HOLIDAY_DAYS:   6,      // 6 bezahlte Feiertage (Kanton Bern)
   // SL-Zuschläge (auf den Basis-Stundenlohn)
-  VACATION_RATE:         0.1065,  // 10.65% für 25 Ferientage
-  PUBLIC_HOLIDAY_RATE:   0.0227,  // 2.27%  für 6 Feiertage (Kt. Bern)
-  THIRTEENTH_RATE:       0.0833,  // 8.33%  = 1/12
+  VACATION_RATE:         0.1065, // 10.65% für 5 Wochen (25 Arbeitstage) Ferien
+  PUBLIC_HOLIDAY_RATE:   0.0227, // 2.27%  für 6 Feiertage (Kt. Bern)
+  THIRTEENTH_RATE:       0.0833, // 8.33%  = 1/12 (13. Monatslohn)
 } as const;
 
 // ── Stundenlohn (SL) ─────────────────────────────────────────────────────────
@@ -70,16 +72,20 @@ export interface MlBreakdown {
   effectiveMonthlyGross:    number;  // inkl. 13. (× 13/12) wenn vereinbart
   annualGross:              number;  // Jahresbrutto (effectiveMonthly × 12)
   socialCostMonthly:        number;  // AG-Sozialkosten pro Monat
-  totalMonthlyEmployerCost: number;  // Vollkosten pro Monat
+  totalMonthlyEmployerCost: number;  // Vollkosten pro Monat (= Basis der internen Stundenkostenkalkulation)
   annualEmployerCost:       number;  // Jahresvollkosten
-  internalHourlyCost:       number;  // = Jahresvollkosten ÷ (h/Woche × 52)
+  internalHourlyCost:       number;  // = Vollkosten/Monat ÷ 182 h (L-GAV Standard)
 }
 
 /**
- * Berechnet den vollständigen Monatslohn-Breakdown.
+ * Berechnet den vollständigen Monatslohn-Breakdown nach L-GAV.
+ *
+ * Interner Stundenansatz = Vollkosten pro Monat ÷ 182 h
+ * (L-GAV Standardwert: 42 h/Woche × 52 Wochen ÷ 12 Monate = 182 h/Monat)
+ *
  * @param baseSalaryMonthly  Monatslohn brutto laut Vertrag (ohne 13.)
  * @param has13th            13. Monatslohn vereinbart?
- * @param weeklyHours        Vertragsarbeitszeit in Stunden/Woche
+ * @param weeklyHours        Vertragsarbeitszeit (wird für Jahreskosten genutzt)
  * @param socialCostFactor   AG-Sozialkostenfaktor z.B. 1.13
  */
 export function calcML(
@@ -88,7 +94,6 @@ export function calcML(
   weeklyHours:       number,
   socialCostFactor:  number,
 ): MlBreakdown {
-  // Effektiver Monatsbrutto: bei 13. ML wird 1/12 pro Monat zurückgelegt
   const effectiveMonthlyGross    = has13th
     ? baseSalaryMonthly * (13 / 12)
     : baseSalaryMonthly;
@@ -96,8 +101,8 @@ export function calcML(
   const socialCostMonthly        = effectiveMonthlyGross * (socialCostFactor - 1);
   const totalMonthlyEmployerCost = effectiveMonthlyGross + socialCostMonthly;
   const annualEmployerCost       = annualGross * socialCostFactor;
-  const annualHours              = weeklyHours * 52;
-  const internalHourlyCost       = annualEmployerCost / annualHours;
+  // L-GAV: interner Stundenansatz = Vollkosten/Monat ÷ 182 h
+  const internalHourlyCost       = totalMonthlyEmployerCost / LGAV.MONTHLY_HOURS;
 
   return {
     baseSalaryMonthly,

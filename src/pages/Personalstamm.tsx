@@ -1943,7 +1943,7 @@ CREATE POLICY "Anon self-register new employee"
                                   <LRow label="Jahresvollkosten" value={formatCHF(ml.annualEmployerCost)} sub />
                                   <Sep />
                                   <LRow label="Interner Stundenansatz (Kostenstelle)" value={formatCHF(ml.internalHourlyCost)} bold />
-                                  <p className="text-[10px] text-purple-500 italic pt-0.5">= Jahresvollkosten ÷ {editData.weeklyHours} h/W ÷ 52 Wochen</p>
+                                  <p className="text-[10px] text-purple-500 italic pt-0.5">= Vollkosten/Monat ÷ 182 h (L-GAV: 42 h/W × 52 ÷ 12 = 182 h)</p>
                                 </>;
                               })()}
                             </div>
@@ -2013,7 +2013,7 @@ CREATE POLICY "Anon self-register new employee"
                                   <LRow label="Jahresvollkosten" value={formatCHF(ml.annualEmployerCost)} sub />
                                   <Sep />
                                   <LRow label="Interner Stundenansatz (Kostenstelle)" value={formatCHF(ml.internalHourlyCost)} bold />
-                                  <p className="text-[10px] text-purple-500 italic pt-0.5">= Jahresvollkosten ÷ {empForCost.weeklyHours} h/Woche ÷ 52 Wochen</p>
+                                  <p className="text-[10px] text-purple-500 italic pt-0.5">= Vollkosten/Monat ÷ 182 h (L-GAV: 42 h/W × 52 ÷ 12 = 182 h)</p>
                                 </>;
                               })()}
                             </div>
