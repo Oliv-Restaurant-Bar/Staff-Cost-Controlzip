@@ -516,7 +516,95 @@ export async function submitOnboardingData(
   }
 }
 
-/** Neuen Mitarbeiter aus Selbst-Anmeldung anlegen (pending_review) */
+// ─── Onboarding Submissions (standalone Tabelle, kein Abhängigkeit von employees) ───
+
+/** Typ für eine eingegangene Selbst-Anmeldung */
+export interface OnboardingSubmission {
+  id:          string;
+  submittedAt: string;
+  name:        string;
+  formData:    Record<string, unknown>;
+}
+
+/**
+ * Neue Selbst-Anmeldung in die `onboarding_submissions`-Tabelle schreiben.
+ * Gibt { id, error } zurück — error enthält den genauen Supabase-Fehler als String.
+ *
+ * VORAUSSETZUNG: Migration 20260316_onboarding_submissions.sql muss in Supabase
+ * ausgeführt worden sein (einmalig im SQL-Editor).
+ */
+export async function createOnboardingSubmission(data: {
+  name:     string;
+  formData: Record<string, unknown>;
+}): Promise<{ id: string | null; error: string | null }> {
+  try {
+    const id = crypto.randomUUID();
+    const { error } = await supabase.from('onboarding_submissions').insert({
+      id,
+      name:      data.name,
+      form_data: data.formData,
+    });
+
+    if (error) {
+      const msg = `[${error.code}] ${error.message}${error.details ? ' · ' + error.details : ''}${error.hint ? ' (Hint: ' + error.hint + ')' : ''}`;
+      console.error('[createOnboardingSubmission] Supabase-Fehler:', error);
+      return { id: null, error: msg };
+    }
+
+    console.log('[createOnboardingSubmission] Gespeichert, id=', id);
+    return { id, error: null };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[createOnboardingSubmission] Exception:', e);
+    return { id: null, error: msg };
+  }
+}
+
+/** Alle Selbst-Anmeldungen laden (nur für eingeloggte Admins) */
+export async function loadOnboardingSubmissions(): Promise<OnboardingSubmission[]> {
+  try {
+    const { data, error } = await supabase
+      .from('onboarding_submissions')
+      .select('*')
+      .order('submitted_at', { ascending: false });
+
+    if (error) {
+      console.error('[loadOnboardingSubmissions] Fehler:', error);
+      return [];
+    }
+
+    return (data ?? []).map(row => ({
+      id:          row.id as string,
+      submittedAt: row.submitted_at as string,
+      name:        row.name as string,
+      formData:    (row.form_data ?? {}) as Record<string, unknown>,
+    }));
+  } catch (e) {
+    console.error('[loadOnboardingSubmissions] Exception:', e);
+    return [];
+  }
+}
+
+/** Selbst-Anmeldung löschen (nach Aktivierung oder Ablehnung) */
+export async function deleteOnboardingSubmission(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('onboarding_submissions')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('[deleteOnboardingSubmission] Fehler:', error);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('[deleteOnboardingSubmission] Exception:', e);
+    return false;
+  }
+}
+
+/** @deprecated Verwende createOnboardingSubmission(). Neuen Mitarbeiter aus Selbst-Anmeldung anlegen (pending_review) */
 export async function createPendingEmployee(data: {
   name: string;
   employmentType?: string;
@@ -537,39 +625,11 @@ export async function createPendingEmployee(data: {
   spouseLivesInSwitzerland?: boolean | null;
   documents?: OnboardingDoc[];
 }): Promise<string | null> {
-  try {
-    const id = crypto.randomUUID();
-    const { error } = await supabase.from('employees').insert({
-      id,
-      name:                        data.name,
-      department:                  'service',
-      employment_type:             data.employmentType ?? 'aushilfe',
-      hourly_wage:                 0,
-      employee_status:             'pending_review',
-      onboarding_status:           'completed',
-      position_title:              data.positionTitle  ?? null,
-      contract_start:              data.contractStart  ?? null,
-      birth_date:                  data.birthDate       ?? null,
-      nationality:                 data.nationality     ?? null,
-      phone:                       data.phone           ?? null,
-      email:                       data.email           ?? null,
-      address_street:              data.addressStreet   ?? null,
-      address_zip:                 data.addressZip      ?? null,
-      address_city:                data.addressCity     ?? null,
-      ahv_number:                  data.ahvNumber       ?? null,
-      iban:                        data.iban            ?? null,
-      permit_type:                 data.permitType      ?? null,
-      marital_status:              data.maritalStatus   ?? null,
-      spouse_employed:             data.spouseEmployed  ?? null,
-      spouse_lives_in_switzerland: data.spouseLivesInSwitzerland ?? null,
-      onboarding_documents:        data.documents?.length ? JSON.stringify(data.documents) : null,
-    });
-    if (error) { console.error('[createPendingEmployee] error:', error); return null; }
-    return id;
-  } catch (e) {
-    console.error('[createPendingEmployee] exception:', e);
-    return null;
-  }
+  const result = await createOnboardingSubmission({
+    name: data.name,
+    formData: { ...data },
+  });
+  return result.id;
 }
 
 /** Mitarbeiter aktivieren (pending_review → active) */

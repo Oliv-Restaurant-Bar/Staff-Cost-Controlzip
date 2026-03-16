@@ -42,7 +42,11 @@ import {
   Briefcase, Calendar, Clock, Link as LinkIcon,
 } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
-import { loadEmployees, upsertEmployee, deleteEmployee, activateEmployee } from '@/lib/supabase-db';
+import {
+  loadEmployees, upsertEmployee, deleteEmployee, activateEmployee,
+  loadOnboardingSubmissions, deleteOnboardingSubmission,
+  OnboardingSubmission,
+} from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
 import { toast } from 'sonner';
 
@@ -283,6 +287,10 @@ const Personalstamm = () => {
   const [saving, setSaving]               = useState(false);
   const [deleteTarget, setDeleteTarget]   = useState<Employee | null>(null);
 
+  // ── Selbst-Anmeldungen (onboarding_submissions Tabelle) ───────────────────
+  const [submissions, setSubmissions]             = useState<OnboardingSubmission[]>([]);
+  const [selectedSubmission, setSelectedSubmission] = useState<OnboardingSubmission | null>(null);
+
   // ── Filter ─────────────────────────────────────────────────────────────────
   const [search, setSearch]               = useState('');
   const [filterDept, setFilterDept]       = useState<Department | 'all'>('all');
@@ -387,10 +395,18 @@ const Personalstamm = () => {
         }
       }
       setLocalData(local);
+
+      // Submissions laden (nur für Admin, Fehler werden still ignoriert
+      // solange die Migration noch nicht ausgeführt wurde)
+      if (isAdmin) {
+        const subs = await loadOnboardingSubmissions();
+        setSubmissions(subs);
+      }
+
       setLoading(false);
     };
     load();
-  }, []);
+  }, [isAdmin]);
 
   // ── Gefilterte Mitarbeiter ─────────────────────────────────────────────────
   const pendingEmployees = useMemo(() =>
@@ -592,9 +608,9 @@ const Personalstamm = () => {
               >
                 <LinkIcon className="h-3.5 w-3.5 mr-1" />
                 Anmelde-Link
-                {pendingEmployees.length > 0 && (
+                {(pendingEmployees.length + submissions.length) > 0 && (
                   <span className="ml-1.5 bg-amber-500 text-white rounded-full text-[10px] px-1.5 py-0 leading-4 font-bold">
-                    {pendingEmployees.length}
+                    {pendingEmployees.length + submissions.length}
                   </span>
                 )}
               </Button>
@@ -695,21 +711,52 @@ const Personalstamm = () => {
           ) : (
             <>
               {/* ── Ausstehende Anmeldungen ── */}
-              {isAdmin && pendingEmployees.length > 0 && (
+              {isAdmin && (pendingEmployees.length + submissions.length) > 0 && (
                 <div className="border-b border-amber-200">
                   <div className="px-4 py-2 bg-amber-50 sticky top-0 z-10 flex items-center gap-2">
                     <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
                     <span className="text-xs font-semibold text-amber-800">
-                      Ausstehende Anmeldungen ({pendingEmployees.length})
+                      Ausstehende Anmeldungen ({pendingEmployees.length + submissions.length})
                     </span>
                   </div>
                   <ul className="divide-y divide-amber-100">
+                    {/* Neue Selbst-Anmeldungen aus onboarding_submissions */}
+                    {submissions.map(sub => {
+                      const isSelected = selectedSubmission?.id === sub.id;
+                      const fd = sub.formData;
+                      const contact = (fd.email as string) || (fd.phone as string) || '';
+                      const dateStr = new Date(sub.submittedAt).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit', year: '2-digit' });
+                      return (
+                        <li key={sub.id}>
+                          <button
+                            onClick={() => { setSelectedSubmission(sub); setSelectedId(null); setEditMode(false); setShowMobile('detail'); }}
+                            className={cn(
+                              'w-full text-left px-4 py-3 hover:bg-amber-50/60 transition-colors flex items-center gap-3',
+                              isSelected && 'bg-amber-100/60 border-l-2 border-amber-500',
+                            )}
+                          >
+                            <div className="w-8 h-8 rounded-full bg-amber-200 flex items-center justify-center shrink-0 text-amber-800 font-semibold text-sm">
+                              {sub.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-slate-800 truncate">{sub.name}</p>
+                              <p className="text-xs text-amber-700 truncate">{contact || `Angemeldet am ${dateStr}`}</p>
+                            </div>
+                            <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 font-semibold shrink-0">
+                              NEU
+                            </span>
+                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          </button>
+                        </li>
+                      );
+                    })}
+                    {/* Legacy: Mitarbeiter mit employee_status = pending_review */}
                     {pendingEmployees.map(emp => {
                       const isSelected = selectedId === emp.id;
                       return (
                         <li key={emp.id}>
                           <button
-                            onClick={() => selectEmployee(emp)}
+                            onClick={() => { selectEmployee(emp); setSelectedSubmission(null); }}
                             className={cn(
                               'w-full text-left px-4 py-3 hover:bg-amber-50/60 transition-colors flex items-center gap-3',
                               isSelected && 'bg-amber-100/60 border-l-2 border-amber-500',
@@ -814,7 +861,129 @@ const Personalstamm = () => {
           'flex-1 overflow-y-auto bg-background',
           showMobile === 'list' ? 'hidden md:block' : 'block',
         )}>
-          {!selectedId && !editData ? (
+          {selectedSubmission && !selectedId && !editData ? (
+            /* ── Submission-Detail-Panel ─────────────────────────────────── */
+            <div className="max-w-2xl mx-auto p-6 space-y-5">
+              {/* Zurück-Button (Mobile) */}
+              <Button variant="ghost" size="sm" className="md:hidden -ml-1 mb-1 h-8 text-xs"
+                onClick={() => { setSelectedSubmission(null); setShowMobile('list'); }}>
+                <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Zurück
+              </Button>
+
+              {/* Header Banner */}
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-amber-200 flex items-center justify-center shrink-0 text-amber-800 font-bold text-lg">
+                    {selectedSubmission.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="text-base font-bold text-amber-900">{selectedSubmission.name}</p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      Selbst-Anmeldung vom {new Date(selectedSubmission.submittedAt).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button size="sm" variant="outline"
+                    className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50"
+                    onClick={async () => {
+                      if (!window.confirm(`Anmeldung von ${selectedSubmission.name} wirklich ablehnen und löschen?`)) return;
+                      const ok = await deleteOnboardingSubmission(selectedSubmission.id);
+                      if (ok) {
+                        setSubmissions(prev => prev.filter(s => s.id !== selectedSubmission.id));
+                        setSelectedSubmission(null);
+                        toast.success(`Anmeldung von ${selectedSubmission.name} abgelehnt.`);
+                      } else {
+                        toast.error('Ablehnen fehlgeschlagen.');
+                      }
+                    }}>
+                    Ablehnen
+                  </Button>
+                  <Button size="sm"
+                    className="h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
+                    onClick={async () => {
+                      const fd = selectedSubmission.formData;
+                      // Neuen Mitarbeiter-Datensatz voranlegen
+                      const newEmp: import('@/types/personnel').Employee = {
+                        id:             selectedSubmission.id,
+                        name:           selectedSubmission.name,
+                        department:     'service',
+                        employmentType: ((fd.preferredEmploymentType as string) || 'aushilfe') as import('@/types/personnel').EmploymentType,
+                        hourlyWage:     0,
+                        weeklyHours:    0,
+                        positionTitle:  (fd.desiredPosition as string) || undefined,
+                        contractStart:  (fd.desiredStartDate as string) || undefined,
+                        birthDate:      (fd.birthDate as string)       || undefined,
+                        nationality:    (fd.nationality as string)     || undefined,
+                        phone:          (fd.phone as string)           || undefined,
+                        email:          (fd.email as string)           || undefined,
+                        addressStreet:  (fd.addressStreet as string)   || undefined,
+                        addressZip:     (fd.addressZip as string)      || undefined,
+                        addressCity:    (fd.addressCity as string)     || undefined,
+                        ahvNumber:      (fd.ahvNumber as string)       || undefined,
+                        iban:           (fd.iban as string)            || undefined,
+                        permitType:     (fd.permitType as string)      || undefined,
+                        maritalStatus:  (fd.maritalStatus as string)   || undefined,
+                        onboardingStatus: 'completed',
+                      };
+                      const saved = await upsertEmployee(newEmp);
+                      if (saved) {
+                        await deleteOnboardingSubmission(selectedSubmission.id);
+                        setSubmissions(prev => prev.filter(s => s.id !== selectedSubmission.id));
+                        setEmployees(prev => [...prev, saved]);
+                        setSelectedSubmission(null);
+                        setSelectedId(saved.id);
+                        toast.success(`${selectedSubmission.name} wurde als Mitarbeiter angelegt!`);
+                      } else {
+                        toast.error('Aktivierung fehlgeschlagen. Bitte prüfen Sie, ob alle Basis-Migrationen ausgeführt wurden.');
+                      }
+                    }}>
+                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                    Als Mitarbeiter anlegen
+                  </Button>
+                </div>
+              </div>
+
+              {/* Eingereichte Daten (read-only) */}
+              {(() => {
+                const fd = selectedSubmission.formData;
+                const rows: [string, string][] = [
+                  ['Gewünschte Stelle',      (fd.desiredPosition as string)      || '—'],
+                  ['Gewünschter Start',       (fd.desiredStartDate as string)     || '—'],
+                  ['Anstellungsart',          (fd.preferredEmploymentType as string) || '—'],
+                  ['Geburtsdatum',            (fd.birthDate as string)             || '—'],
+                  ['Nationalität',            (fd.nationality as string)           || '—'],
+                  ['Aufenthaltsstatus',        (fd.permitType as string)            || '—'],
+                  ['Zivilstand',              (fd.maritalStatus as string)         || '—'],
+                  ['Telefon',                 (fd.phone as string)                 || '—'],
+                  ['E-Mail',                  (fd.email as string)                 || '—'],
+                  ['Strasse',                 (fd.addressStreet as string)         || '—'],
+                  ['PLZ / Ort',               `${(fd.addressZip as string) || ''} ${(fd.addressCity as string) || ''}`.trim() || '—'],
+                  ['AHV-Nummer',              (fd.ahvNumber as string)             || '—'],
+                  ['IBAN',                    (fd.iban as string)                  || '—'],
+                ].filter(([, v]) => v !== '—');
+                return (
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                      <p className="text-xs font-semibold text-slate-700">Eingereichte Daten (schreibgeschützt)</p>
+                    </div>
+                    <dl className="divide-y divide-slate-100">
+                      {rows.map(([label, value]) => (
+                        <div key={label} className="grid grid-cols-2 px-4 py-2.5 text-sm">
+                          <dt className="text-slate-500 text-xs font-medium">{label}</dt>
+                          <dd className="text-slate-900 text-xs">{value}</dd>
+                        </div>
+                      ))}
+                      {rows.length === 0 && (
+                        <div className="px-4 py-4 text-xs text-slate-400 text-center">Keine Angaben übermittelt.</div>
+                      )}
+                    </dl>
+                  </div>
+                );
+              })()}
+            </div>
+
+          ) : !selectedId && !editData ? (
             <div className="flex flex-col items-center justify-center h-full py-20 px-6 text-center gap-3">
               <Users className="h-12 w-12 text-muted-foreground/30" />
               <p className="text-sm text-muted-foreground">

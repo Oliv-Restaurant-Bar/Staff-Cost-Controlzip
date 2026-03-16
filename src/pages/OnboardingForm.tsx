@@ -5,7 +5,7 @@ import {
   markOnboardingInProgress,
   submitOnboardingData,
   uploadOnboardingFile,
-  createPendingEmployee,
+  createOnboardingSubmission,
   OnboardingPublicEmployee,
   OnboardingDoc,
 } from '@/lib/supabase-db';
@@ -224,36 +224,55 @@ export default function OnboardingForm() {
     setSubmitting(true);
     setErrorMsg('');
 
-    const tempId = crypto.randomUUID();
-    const docs = await uploadFiles(tempId);
-
-    const newId = await createPendingEmployee({
-      name:                    fullName,
-      employmentType:          newExtras.preferredEmploymentType || 'aushilfe',
-      positionTitle:           newExtras.desiredPosition         || undefined,
-      contractStart:           newExtras.desiredStartDate        || undefined,
-      birthDate:               formData.birthDate                || undefined,
-      nationality:             formData.nationality              || undefined,
-      permitType:              formData.permitType               || undefined,
-      maritalStatus:           formData.maritalStatus            || undefined,
-      spouseEmployed:          toBool(formData.spouseEmployed),
-      spouseLivesInSwitzerland: toBool(formData.spouseLivesInSwitzerland),
-      phone:                   formData.phone                    || undefined,
-      email:                   formData.email                    || undefined,
-      addressStreet:           formData.addressStreet            || undefined,
-      addressZip:              formData.addressZip               || undefined,
-      addressCity:             formData.addressCity              || undefined,
-      ahvNumber:               formData.ahvNumber                || undefined,
-      iban:                    formData.iban                     || undefined,
-      documents:               docs,
+    // ── Schritt 1: Datensatz speichern (OHNE Dateien) ──────────────────────
+    // Dateien werden erst danach hochgeladen, damit ein Upload-Fehler den
+    // Datensatz-Fehler nicht verbirgt.
+    const result = await createOnboardingSubmission({
+      name: fullName,
+      formData: {
+        firstName:                 newExtras.firstName,
+        lastName:                  newExtras.lastName,
+        desiredPosition:           newExtras.desiredPosition,
+        desiredStartDate:          newExtras.desiredStartDate,
+        preferredEmploymentType:   newExtras.preferredEmploymentType || 'aushilfe',
+        birthDate:                 formData.birthDate,
+        nationality:               formData.nationality,
+        permitType:                formData.permitType,
+        maritalStatus:             formData.maritalStatus,
+        spouseEmployed:            formData.spouseEmployed,
+        spouseLivesInSwitzerland:  formData.spouseLivesInSwitzerland,
+        phone:                     formData.phone,
+        email:                     formData.email,
+        addressStreet:             formData.addressStreet,
+        addressZip:                formData.addressZip,
+        addressCity:               formData.addressCity,
+        ahvNumber:                 formData.ahvNumber,
+        iban:                      formData.iban,
+      },
     });
 
-    setSubmitting(false);
-    if (newId) {
-      setPhase('success');
-    } else {
-      setErrorMsg('Ihre Anmeldung konnte nicht gespeichert werden. Bitte versuchen Sie es erneut.');
+    if (!result.id) {
+      setSubmitting(false);
+      // Exakter Supabase-Fehler sichtbar machen (im UI + Konsole bereits geloggt)
+      const detail = result.error
+        ? `\n\nFehlerdetail (für Admin): ${result.error}`
+        : '';
+      setErrorMsg(
+        `Ihre Anmeldung konnte nicht gespeichert werden.${detail}`
+      );
+      return;
     }
+
+    // ── Schritt 2: Dateien hochladen (nach erfolgreichem Speichern) ────────
+    // Ein Fehler beim Upload blockiert die Erfolgs-Meldung NICHT.
+    if (pendingFiles.length > 0) {
+      await uploadFiles(result.id);
+      // Dateien liegen im Storage unter onboarding-docs/{submissionId}/...
+      // Admin sieht sie im Supabase Storage oder via Download-Link.
+    }
+
+    setSubmitting(false);
+    setPhase('success');
   };
 
   // ── Submit: EXISTING employee onboarding ──────────────────────────────────
