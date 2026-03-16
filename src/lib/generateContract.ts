@@ -2,16 +2,14 @@
  * Arbeitsvertrag-Generator für oLiv Restaurant & Bar
  *
  * Reproduziert die offiziellen GastroSuisse / L-GAV Vertragsvorlagen:
- *   SL = Stundenlohn-Vertrag  (Vorlage: Nora Anais Guggisberg)
- *   ML = Monatslohn-Vertrag   (Vorlage: Karel Novak)
+ *   SL = Stundenlohn-Vertrag
+ *   ML = Monatslohn-Vertrag
  *
- * ⚠️  Abschnitt 8 (Bruttolohn) zeigt NUR die Werte, die der Mitarbeitende
- *    sehen muss (Bruttolohn / Entschädigungen / Auszahlbetrag).
- *    AG-interne Kosten (Vollkosten, Interner Stundenansatz) sind NICHT
- *    im generierten Vertragsdokument enthalten.
+ * Checkboxen werden als gezeichnete Rechtecke gerendert (drawCB).
+ * Helvetica-Font unterstützt keine ■/□ Unicode-Symbole.
  *
- * Layout: 2-spaltiger Aufbau wie im Original (Sektionen 1-7 nebeneinander),
- * Sektion 8 (Bruttolohn) vollbreite, Sektion 9-13 wieder 2-spaltig.
+ * ⚠️  Abschnitt 8 (Bruttolohn) zeigt NUR Mitarbeitenden-relevante Werte.
+ *    AG-Kosten (Vollkosten, Interner Stundenansatz) sind NICHT enthalten.
  */
 
 import jsPDF from 'jspdf';
@@ -19,27 +17,21 @@ import { Employee } from '@/types/personnel';
 import { ContractDraft } from '@/types/contract';
 import { calcSL, LGAV } from './salaryCalc';
 
-// ── Konstanten ────────────────────────────────────────────────────────────────
+// ── Seitenmasse ───────────────────────────────────────────────────────────────
 
-const EMPLOYER_NAME = 'oLiv Restaurant & Bar (Oliv Gastro AG)';
-const EMPLOYER_ADDR = 'Seftigenstrasse 101, 3007 Bern';
-
-const PL  = 12;
-const PR  = 198;
-const COL = 104;
-const LR  = 101;
-const RX  = 107;
+const PL  = 12;   // page left margin
+const PR  = 198;  // page right margin
+const COL = 104;  // column divider x
+const LR  = 101;  // left column right edge
+const RX  = 107;  // right column left edge
 
 const LH5 = 4.5;
 const LH4 = 4.0;
+const CB_SIZE = 2.8;  // checkbox square side (mm)
 
-// ── Typen ─────────────────────────────────────────────────────────────────────
+// ── Interfaces ────────────────────────────────────────────────────────────────
 
-interface ColCtx {
-  doc:  jsPDF;
-  yL:   number;
-  yR:   number;
-}
+interface ColCtx { doc: jsPDF; yL: number; yR: number; }
 
 // ── Vertragstyp-Erkennung ─────────────────────────────────────────────────────
 
@@ -50,41 +42,35 @@ export function detectContractTemplate(emp: Employee): 'ML' | 'SL' {
   return 'SL';
 }
 
-// ── Format-Hilfsfunktionen ────────────────────────────────────────────────────
+// ── Format-Helpers ────────────────────────────────────────────────────────────
 
 function fd(iso?: string): string {
   if (!iso) return '___________';
   return new Date(iso).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
-
 function fc(v?: number | null, dec = 2): string {
   if (v == null || isNaN(v)) return '___________';
   return v.toFixed(dec);
 }
-
 function pct(r: number): string { return (r * 100).toFixed(2); }
 
 function permitLabel(p?: string): string {
   const m: Record<string, string> = { swiss: 'CH', C: 'C', B: 'B', L: 'L', G: 'G', other: 'Andere' };
   return p ? (m[p] ?? p) : '___________';
 }
-
 function maritalLabel(m?: string): string {
   const map: Record<string, string> = {
     single: 'ledig', married: 'verheiratet', divorced: 'geschieden', widowed: 'verwitwet',
   };
   return m ? (map[m] ?? m) : '___________';
 }
-
 function deptLabel(d?: string): string {
   if (d === 'küche')   return 'Küche';
   if (d === 'service') return 'Service';
   return '___________';
 }
 
-function cb(checked: boolean): string { return checked ? '■' : '□'; }
-
-// ── Low-level Zeichenfunktionen ───────────────────────────────────────────────
+// ── Font-Setter ───────────────────────────────────────────────────────────────
 
 function setFont(doc: jsPDF, size: number, style: 'normal' | 'bold' | 'italic' = 'normal') {
   doc.setFont('helvetica', style);
@@ -92,18 +78,38 @@ function setFont(doc: jsPDF, size: number, style: 'normal' | 'bold' | 'italic' =
   doc.setTextColor(0, 0, 0);
 }
 
+// ── Checkbox: gezeichnetes Rechteck mit optionalem X ─────────────────────────
+//
+//  Aufruf: drawCB(doc, x, y, checked)
+//    x/y = linke Baseline-Position (wie bei doc.text)
+//    Das Kästchen wird um CB_SIZE × CB_SIZE gezeichnet und ist y-zentriert.
+
+function drawCB(doc: jsPDF, x: number, y: number, checked: boolean) {
+  const top = y - CB_SIZE + 0.4;
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.3);
+  doc.rect(x, top, CB_SIZE, CB_SIZE);
+
+  if (checked) {
+    // X aus zwei Diagonalen
+    doc.setLineWidth(0.4);
+    doc.line(x + 0.4, top + 0.4, x + CB_SIZE - 0.4, top + CB_SIZE - 0.4);
+    doc.line(x + CB_SIZE - 0.4, top + 0.4, x + 0.4, top + CB_SIZE - 0.4);
+  }
+}
+
+// ── Linien ────────────────────────────────────────────────────────────────────
+
 function hlineFullWidth(doc: jsPDF, y: number) {
   doc.setDrawColor(160, 160, 160);
   doc.setLineWidth(0.2);
   doc.line(PL, y, PR, y);
 }
-
 function vlineSep(doc: jsPDF, yTop: number, yBot: number) {
   doc.setDrawColor(160, 160, 160);
   doc.setLineWidth(0.15);
   doc.line(COL, yTop, COL, yBot);
 }
-
 function pageFooter(doc: jsPDF, page: number) {
   setFont(doc, 7, 'normal');
   doc.setTextColor(140, 140, 140);
@@ -111,14 +117,11 @@ function pageFooter(doc: jsPDF, page: number) {
   doc.text('oLiv Restaurant & Bar – Vertraulich', 105, 294, { align: 'center' });
 }
 
-// ── Spalten-Hilfsfunktionen ───────────────────────────────────────────────────
+// ── Spalten-Helpers ───────────────────────────────────────────────────────────
 
 type Col = 'L' | 'R';
-
-function colX(col: Col): number  { return col === 'L' ? PL : RX; }
-function colW(col: Col): number  { return col === 'L' ? LR - PL : PR - RX; }
-function colY(ctx: ColCtx, col: Col): number { return col === 'L' ? ctx.yL : ctx.yR; }
-
+function colX(col: Col): number { return col === 'L' ? PL : RX; }
+function colW(col: Col): number { return col === 'L' ? LR - PL : PR - RX; }
 function setColY(ctx: ColCtx, col: Col, y: number): ColCtx {
   return col === 'L' ? { ...ctx, yL: y } : { ...ctx, yR: y };
 }
@@ -128,7 +131,6 @@ function sectionTitle(doc: jsPDF, col: Col, y: number, text: string): number {
   doc.text(text, colX(col), y);
   return y + 5;
 }
-
 function sectionPara(doc: jsPDF, col: Col, y: number, text: string): number {
   setFont(doc, 7.5, 'normal');
   const lines = doc.splitTextToSize(text, colW(col));
@@ -136,23 +138,48 @@ function sectionPara(doc: jsPDF, col: Col, y: number, text: string): number {
   return y + lines.length * LH5;
 }
 
-function sectionItem(doc: jsPDF, col: Col, y: number, checked: boolean, letter: string, text: string, indent = 0): number {
-  setFont(doc, 7.5, 'normal');
+/**
+ * Zeichnet eine Checkbox-Zeile:
+ *   [ ] letter)  text
+ *
+ * Die Checkbox ist ein gezeichnetes Kästchen (drawCB), kein Unicode-Symbol.
+ */
+function sectionItem(
+  doc: jsPDF,
+  col: Col,
+  y: number,
+  checked: boolean,
+  letter: string,
+  text: string,
+  indent = 0,
+): number {
   const x = colX(col) + indent;
-  doc.text(`${cb(checked)} ${letter})`, x, y);
-  const lines = doc.splitTextToSize(text, colW(col) - 14 - indent);
-  doc.text(lines, x + 12, y);
+
+  drawCB(doc, x, y, checked);
+
+  setFont(doc, 7.5, 'normal');
+  doc.text(`${letter})`, x + CB_SIZE + 1, y);
+
+  const textX = x + CB_SIZE + 8;
+  const textW = colW(col) - CB_SIZE - 8 - indent;
+  const lines = doc.splitTextToSize(text, textW);
+  doc.text(lines, textX, y);
+
   return y + Math.max(LH5, lines.length * LH5);
 }
 
 // ── Seiten-Header ─────────────────────────────────────────────────────────────
 
-function drawPageHeader(doc: jsPDF, template: 'ML' | 'SL', draft: ContractDraft, emp: Employee): number {
+function drawPageHeader(
+  doc: jsPDF,
+  template: 'ML' | 'SL',
+  draft: ContractDraft,
+  _emp: Employee,
+): number {
   let y = 12;
 
   setFont(doc, 9, 'bold');
   doc.text('Der vorliegende Arbeitsvertrag berücksichtigt die Erfordernisse des L-GAV.', PL, y);
-
   y += 7;
 
   if (template === 'SL') {
@@ -164,15 +191,30 @@ function drawPageHeader(doc: jsPDF, template: 'ML' | 'SL', draft: ContractDraft,
     doc.text('(z.B. "Aushilfen" im Stundenlohn)', PL + 38, y + 4.5);
     y += 12;
   } else {
+    // ML – Vollzeit / Teilzeit mit gezeichneten Checkboxen
+    const isVollzeit = draft.employmentMode === 'vollzeit';
+
     setFont(doc, 8, 'bold');
     doc.text('Arbeitsvertrag', PL, y);
-    const isVollzeit = draft.employmentMode === 'vollzeit';
+
+    const cbX = PL + 30;
+
+    // Zeile a)
+    drawCB(doc, cbX, y, isVollzeit);
     setFont(doc, 8, 'normal');
-    doc.text(`${cb(isVollzeit)} a)  für Vollzeitmitarbeiter/in`, PL + 30, y);
-    const teilzeitText = 'für Teilzeitmitarbeiter/in (mit regelmässigem, festgelegtem Arbeitspensum)';
-    doc.text(`${cb(!isVollzeit)} b)  ${teilzeitText}`, PL + 30, y + 4.5);
+    doc.text('a)  für Vollzeitmitarbeiter/in', cbX + CB_SIZE + 1, y);
+
+    // Zeile b)
+    const yB = y + 5;
+    drawCB(doc, cbX, yB, !isVollzeit);
+    const teilzeitText = 'b)  für Teilzeitmitarbeiter/in (mit regelmässigem, festgelegtem Arbeitspensum)';
+    doc.text(teilzeitText, cbX + CB_SIZE + 1, yB);
+
     setFont(doc, 7, 'italic');
-    doc.text('(Zutreffendes ankreuzen bzw. Ziff. 5 ausfüllen, sonst gilt Variante a Vollzeitmitarbeiter/in)', PL + 38, y + 9);
+    doc.text(
+      '(Zutreffendes ankreuzen bzw. Ziff. 5 ausfüllen, sonst gilt Variante a Vollzeitmitarbeiter/in)',
+      cbX + CB_SIZE + 5, yB + 4.5,
+    );
     y += 16;
   }
 
@@ -180,7 +222,6 @@ function drawPageHeader(doc: jsPDF, template: 'ML' | 'SL', draft: ContractDraft,
   doc.text(`zwischen  ${EMPLOYER_NAME}, ${EMPLOYER_ADDR}`, PL, y);
   setFont(doc, 7.5, 'italic');
   doc.text('Arbeitgeber/in', PR, y, { align: 'right' });
-
   y += 4;
   setFont(doc, 8, 'normal');
   doc.text('und', PL, y);
@@ -192,7 +233,6 @@ function drawPageHeader(doc: jsPDF, template: 'ML' | 'SL', draft: ContractDraft,
 
 function drawPersonBlock(doc: jsPDF, emp: Employee, startY: number): number {
   let y = startY;
-
   hlineFullWidth(doc, y - 1);
 
   setFont(doc, 7.5, 'bold');
@@ -218,8 +258,6 @@ function drawPersonBlock(doc: jsPDF, emp: Employee, startY: number): number {
   doc.text('Telefon', PL, y + 3.5);
   setFont(doc, 8, 'normal');
   doc.text(emp.phone || '___________', PL + 14, y + 3.5);
-  setFont(doc, 7.5, 'bold');
-  doc.text('Handy', PL + 50, y + 3.5);
   setFont(doc, 7.5, 'bold');
   doc.text('Geburtsdatum', PL + 75, y + 3.5);
   setFont(doc, 8, 'normal');
@@ -267,7 +305,7 @@ function drawPersonBlock(doc: jsPDF, emp: Employee, startY: number): number {
   return y + 5;
 }
 
-// ── Linke Spalten-Sektionen (Art. 1-4) ───────────────────────────────────────
+// ── Linke Spalte: Art. 1-4 ───────────────────────────────────────────────────
 
 function sec1(ctx: ColCtx, emp: Employee, draft: ContractDraft): ColCtx {
   let y = ctx.yL;
@@ -284,8 +322,10 @@ function sec1(ctx: ColCtx, emp: Employee, draft: ContractDraft): ColCtx {
   y = sectionPara(doc, 'L', y, 'Dem Mitarbeitenden können vorübergehend auch andere Arbeiten im Betrieb oder an einem zumutbaren anderen Arbeitsort zugewiesen werden.');
   y += 1;
   doc.text('c)   Beschäftigung in Raucherbetrieben und Raucherräumen:', PL, y); y += LH5;
-  y = sectionItem(doc, 'L', y, draft.smokingConsent === 'aa', 'aa', 'Der Mitarbeitende stimmt einer Beschäftigung in einem Raucherbetrieb oder in Raucherräumen zu.', 4);
-  y = sectionItem(doc, 'L', y, draft.smokingConsent === 'bb', 'bb', 'Der Mitarbeitende lehnt eine Beschäftigung in einem Raucherbetrieb ab.', 4);
+  y = sectionItem(doc, 'L', y, draft.smokingConsent === 'aa', 'aa',
+    'Der Mitarbeitende stimmt einer Beschäftigung in einem Raucherbetrieb oder in Raucherräumen zu.', 4);
+  y = sectionItem(doc, 'L', y, draft.smokingConsent === 'bb', 'bb',
+    'Der Mitarbeitende lehnt eine Beschäftigung in einem Raucherbetrieb ab.', 4);
   return setColY(ctx, 'L', y + 3);
 }
 
@@ -295,9 +335,12 @@ function sec2(ctx: ColCtx, draft: ContractDraft): ColCtx {
   y = sectionTitle(doc, 'L', y, '2. Vertragsdauer');
   setFont(doc, 7, 'italic');
   doc.text('(Zutreffendes ankreuzen, sonst gilt Variante a)', PL, y); y += LH4;
-  y = sectionItem(doc, 'L', y, draft.duration === 'unlimited', 'a', 'Der Vertrag wird auf unbestimmte Zeit abgeschlossen. Er ist gemäss Ziff. 3 und 4 kündbar.');
-  y = sectionItem(doc, 'L', y, draft.duration === 'limited_cancellable', 'b', `Der Vertrag wird auf bestimmte Zeit abgeschlossen. Er dauert bis am ${fd(draft.endDate)}, ist aber kündbar.`);
-  y = sectionItem(doc, 'L', y, draft.duration === 'limited_fixed', 'c', 'Der Vertrag wird auf bestimmte Zeit abgeschlossen und ist nicht kündbar.');
+  y = sectionItem(doc, 'L', y, draft.duration === 'unlimited', 'a',
+    'Der Vertrag wird auf unbestimmte Zeit abgeschlossen. Er ist gemäss Ziff. 3 und 4 kündbar.');
+  y = sectionItem(doc, 'L', y, draft.duration === 'limited_cancellable', 'b',
+    `Der Vertrag wird auf bestimmte Zeit abgeschlossen. Er dauert bis am ${fd(draft.endDate)}, ist aber kündbar.`);
+  y = sectionItem(doc, 'L', y, draft.duration === 'limited_fixed', 'c',
+    'Der Vertrag wird auf bestimmte Zeit abgeschlossen und ist nicht kündbar.');
   return setColY(ctx, 'L', y + 2);
 }
 
@@ -307,9 +350,12 @@ function sec3(ctx: ColCtx, draft: ContractDraft): ColCtx {
   y = sectionTitle(doc, 'L', y, '3. Probezeit (Art. 5 L-GAV)');
   setFont(doc, 7, 'italic');
   doc.text('(Zutreffendes ankreuzen, sonst gilt Variante a)', PL, y); y += LH4;
-  y = sectionItem(doc, 'L', y, draft.probation === 'three_months_7d', 'a', 'Die Probezeit beträgt 3 Monate, die Kündigungsfrist beträgt 7 Tage.');
-  y = sectionItem(doc, 'L', y, draft.probation === 'fourteen_days',   'b', 'Die Probezeit beträgt 14 Tage, die Kündigungsfrist beträgt 3 Tage.');
-  y = sectionItem(doc, 'L', y, draft.probation === 'none',            'c', 'Es besteht keine Probezeit.');
+  y = sectionItem(doc, 'L', y, draft.probation === 'three_months_7d', 'a',
+    'Die Probezeit beträgt 3 Monate, die Kündigungsfrist beträgt 7 Tage.');
+  y = sectionItem(doc, 'L', y, draft.probation === 'fourteen_days', 'b',
+    'Die Probezeit beträgt 14 Tage, die Kündigungsfrist beträgt 3 Tage.');
+  y = sectionItem(doc, 'L', y, draft.probation === 'none', 'c',
+    'Es besteht keine Probezeit.');
   const pm = draft.probationMonths ?? 3;
   const pd = draft.probationNoticeDays ?? 3;
   y = sectionItem(doc, 'L', y, draft.probation === 'custom', 'd',
@@ -330,7 +376,7 @@ function sec4(ctx: ColCtx, draft: ContractDraft): ColCtx {
   return setColY(ctx, 'L', y + 2);
 }
 
-// ── Rechte Spalten-Sektionen (Art. 5-7) ──────────────────────────────────────
+// ── Rechte Spalte: Art. 5-7 ──────────────────────────────────────────────────
 
 function sec5_SL(ctx: ColCtx, emp: Employee): ColCtx {
   let y = ctx.yR;
@@ -339,11 +385,14 @@ function sec5_SL(ctx: ColCtx, emp: Employee): ColCtx {
   const wh     = emp.weeklyHours ?? 42;
   const pensum = Math.round(wh / 42 * 100);
   const adjVac = pensum < 100 ? Math.round(35 * pensum / 100) : 35;
-  y = sectionPara(doc, 'R', y, 'Die einzelnen Arbeitseinsätze erfolgen jeweils nach Absprache im gegenseitigen Einvernehmen. Die durchschnittliche wöchentliche Arbeitszeit liegt unter 42 Stunden.');
+  y = sectionPara(doc, 'R', y,
+    'Die einzelnen Arbeitseinsätze erfolgen jeweils nach Absprache im gegenseitigen Einvernehmen. Die durchschnittliche wöchentliche Arbeitszeit liegt unter 42 Stunden.');
   y += 1;
-  y = sectionPara(doc, 'R', y, `Der Mitarbeitende hat Anspruch auf ${adjVac} Ferientage pro Dienstjahr. Der Ferienlohn wird mit ${pct(LGAV.VACATION_RATE)}% des Bruttolohnes vergütet.`);
+  y = sectionPara(doc, 'R', y,
+    `Der Mitarbeitende hat Anspruch auf ${adjVac} Ferientage pro Dienstjahr. Der Ferienlohn wird mit ${pct(LGAV.VACATION_RATE)}% des Bruttolohnes vergütet.`);
   y += 1;
-  y = sectionPara(doc, 'R', y, `Der Mitarbeitende hat Anspruch auf 6 bezahlte Feiertage pro Kalenderjahr. Die Lohnzahlung für die Feiertage erfolgt durch eine Vergütung von ${pct(LGAV.PUBLIC_HOLIDAY_RATE)}% des Bruttolohnes.`);
+  y = sectionPara(doc, 'R', y,
+    `Anspruch auf 6 bezahlte Feiertage pro Kalenderjahr. Vergütung durch ${pct(LGAV.PUBLIC_HOLIDAY_RATE)}% des Bruttolohnes.`);
   return setColY(ctx, 'R', y + 2);
 }
 
@@ -358,16 +407,19 @@ function sec5_ML(ctx: ColCtx, emp: Employee, draft: ContractDraft): ColCtx {
 
   setFont(doc, 7.5, 'bold');
   doc.text('a) Vollzeitmitarbeitende', RX, y); y += LH5;
-  y = sectionPara(doc, 'R', y, 'Die durchschnittliche wöchentliche Arbeitszeit beträgt 42 Stunden, in Kleinbetrieben 45 Stunden. In Saisonbetrieben ganzjährig 43,5 Stunden.');
+  y = sectionPara(doc, 'R', y,
+    'Die durchschnittliche wöchentliche Arbeitszeit beträgt 42 Stunden, in Kleinbetrieben 45 Stunden. In Saisonbetrieben ganzjährig 43,5 Stunden.');
   y = sectionPara(doc, 'R', y, 'Der Ferienanspruch beträgt 35 Tage.');
   y += 2;
   setFont(doc, 7.5, 'bold');
   doc.text('b) Teilzeitmitarbeitende', RX, y); y += LH5;
-  y = sectionPara(doc, 'R', y, `Durchschnittliche wöchentliche Arbeitszeit: ${isVollzeit ? '___' : wh} Stunden. Ferienanspruch: ${adjVac} Tage (${pensum}% Pensum).`);
+  y = sectionPara(doc, 'R', y,
+    `Durchschnittliche wöchentliche Arbeitszeit: ${isVollzeit ? '___' : wh} Stunden. Ferienanspruch: ${adjVac} Tage (${pensum}% Pensum).`);
   y += 2;
   setFont(doc, 7.5, 'bold');
   doc.text('c) Überstunden und Überzeit', RX, y); y += LH5;
-  y = sectionPara(doc, 'R', y, 'Der Mitarbeitende ist zur Leistung von Überstunden verpflichtet. Kompensation durch Freizeit oder Auszahlung gemäss Art. 15 Ziff. 5 L-GAV.');
+  y = sectionPara(doc, 'R', y,
+    'Der Mitarbeitende ist zur Leistung von Überstunden verpflichtet. Kompensation durch Freizeit oder Auszahlung gemäss Art. 15 Ziff. 5 L-GAV.');
   return setColY(ctx, 'R', y + 2);
 }
 
@@ -375,11 +427,14 @@ function sec6(ctx: ColCtx): ColCtx {
   let y = ctx.yR;
   const doc = ctx.doc;
   y = sectionTitle(doc, 'R', y, '6. Wichtige Hinweise');
-  y = sectionPara(doc, 'R', y, 'Der Mitarbeitende ist orientiert über: das Ende der Deckung für Berufsunfälle, die Abredeversicherung für Nichtberufsunfälle sowie den Wechsel in eine Einzelversicherung bei der Krankengeldversicherung.');
+  y = sectionPara(doc, 'R', y,
+    'Der Mitarbeitende ist orientiert über: das Ende der Deckung für Berufsunfälle, die Abredeversicherung für Nichtberufsunfälle sowie den Wechsel in eine Einzelversicherung bei der Krankengeldversicherung.');
   y += 1;
-  y = sectionPara(doc, 'R', y, 'Der Mitarbeitende ist verpflichtet, sich ab dem ersten Arbeitstag gemäss KVG für Krankenpflege zu versichern.');
+  y = sectionPara(doc, 'R', y,
+    'Der Mitarbeitende ist verpflichtet, sich ab dem ersten Arbeitstag gemäss KVG für Krankenpflege zu versichern.');
   y += 1;
-  y = sectionPara(doc, 'R', y, 'Sexuelle Belästigung und diskriminierendes Verhalten sind ausdrücklich untersagt. Entsprechendes Fehlverhalten kann zu einer fristlosen Kündigung führen.');
+  y = sectionPara(doc, 'R', y,
+    'Sexuelle Belästigung und diskriminierendes Verhalten sind ausdrücklich untersagt. Entsprechendes Fehlverhalten kann zu einer fristlosen Kündigung führen.');
   return setColY(ctx, 'R', y + 2);
 }
 
@@ -391,13 +446,13 @@ function sec7(ctx: ColCtx, draft: ContractDraft): ColCtx {
   doc.text('(Zutreffendes ankreuzen, sonst gilt Variante g)', RX, y); y += LH4;
   const ed = draft.education;
   const items: [string, string, boolean][] = [
-    ['a', 'mit eidgenössischem Berufsattest (EBA)',                  ed === 'eba'],
-    ['b', 'mit eidgenössischem Fähigkeitszeugnis (EFZ)',             ed === 'efz'],
-    ['c', 'mit EFZ und mind. 6 Tage anerkannte Weiterbildung',       ed === 'efz_plus'],
-    ['d', 'Berufsprüfung nach Art. 27 lit. a BBG',                   ed === 'berufspruefung'],
+    ['a', 'mit eidgenössischem Berufsattest (EBA)',                       ed === 'eba'],
+    ['b', 'mit eidgenössischem Fähigkeitszeugnis (EFZ)',                  ed === 'efz'],
+    ['c', 'mit EFZ und mind. 6 Tage anerkannte Weiterbildung',            ed === 'efz_plus'],
+    ['d', 'Berufsprüfung nach Art. 27 lit. a BBG',                        ed === 'berufspruefung'],
     ['e', `mit anderem Zertifikat: ${draft.educationOtherText || '___________________'}`, ed === 'other_cert'],
     ['f', 'keine gastgewerbliche Berufslehre, aber Progresso-Ausbildung', ed === 'progresso'],
-    ['g', 'keine den L-GAV betreffende Ausbildung',                  ed === 'none'],
+    ['g', 'keine den L-GAV betreffende Ausbildung',                       ed === 'none'],
   ];
   items.forEach(([letter, text, checked]) => {
     y = sectionItem(doc, 'R', y, checked, letter, text);
@@ -405,12 +460,12 @@ function sec7(ctx: ColCtx, draft: ContractDraft): ColCtx {
   return setColY(ctx, 'R', y + 2);
 }
 
-// ── Sektion 8: Bruttolohn – NUR Mitarbeitenden-relevante Werte ───────────────
+// ── Sektion 8: Bruttolohn (nur AN-relevante Zahlen) ──────────────────────────
 
-function sec8_SL(doc: jsPDF, y: number, emp: Employee, draft: ContractDraft): number {
+function sec8_SL(doc: jsPDF, y: number, emp: Employee): number {
   const has13th = emp.has13thSalary ?? false;
   const base    = emp.hourlyWage ?? 0;
-  const sl      = calcSL(base, has13th, 1.0); // Faktor 1.0 = nur AN-Werte, keine AG-Kosten
+  const sl      = calcSL(base, has13th, 1.0);
 
   hlineFullWidth(doc, y - 2);
   setFont(doc, 8, 'bold');
@@ -431,12 +486,12 @@ function sec8_SL(doc: jsPDF, y: number, emp: Employee, draft: ContractDraft): nu
     y += LH5;
   };
 
-  lRow(`- Stundenlohn (Basis-Stundenlohn brutto)`, `Fr.  ${fc(base)}`, '(1)');
+  lRow('- Stundenlohn (Basis-Stundenlohn brutto)', `Fr.  ${fc(base)}`, '(1)');
   lRow(`- Ferienentschädigung (${pct(LGAV.VACATION_RATE)} %)`, `Fr.  ${fc(sl.vacationComp)}`, '(2)');
   lRow(`- Feiertagsentschädigung (${pct(LGAV.PUBLIC_HOLIDAY_RATE)} %)`, `Fr.  ${fc(sl.holidayComp)}`, '(3)');
 
   if (has13th) {
-    lRow(`- 13. Monatslohn (${pct(LGAV.THIRTEENTH_RATE)} % auf Total (1)-(3), Art. 12 L-GAV)`, `Fr.  ${fc(sl.thirteenthComp)}`, '*');
+    lRow(`- 13. Monatslohn (${pct(LGAV.THIRTEENTH_RATE)} % auf Total (1)-(3))`, `Fr.  ${fc(sl.thirteenthComp)}`, '*');
     setFont(doc, 7, 'italic');
     doc.text('  * Berechnungsbasis: Total von (1) - (3)', labelX, y); y += LH4;
   } else {
@@ -451,11 +506,10 @@ function sec8_SL(doc: jsPDF, y: number, emp: Employee, draft: ContractDraft): nu
   doc.text('Total Brutto-Stundenlohn (auszahlbarer Betrag)', labelX, y);
   doc.text(`Fr.  ${fc(sl.totalPayableHourly)}`, amtX, y, { align: 'right' });
   y += LH5 + 2;
-
   return y;
 }
 
-function sec8_ML(doc: jsPDF, y: number, emp: Employee, draft: ContractDraft): number {
+function sec8_ML(doc: jsPDF, y: number, emp: Employee): number {
   const has13th = emp.has13thSalary ?? false;
   const base    = emp.monthlySalary ?? 0;
 
@@ -476,17 +530,20 @@ function sec8_ML(doc: jsPDF, y: number, emp: Employee, draft: ContractDraft): nu
     y += LH5;
   };
 
-  lRow('- Festlohn (Monatslohn brutto, laut Vertrag)', `Fr.  ${fc(base)}`);
+  lRow('- Festlohn (Monatslohn brutto, laut Vertrag)', `Fr. ${fc(base)}`);
 
   if (has13th) {
     const thirteenth = base / 12;
-    lRow(`- monatl. Anteil 13. Monatslohn (Art. 12 L-GAV, 1/12 = ${pct(LGAV.THIRTEENTH_RATE)} %)`, `Fr.  ${fc(thirteenth)}`);
+    lRow(
+      `- monatl. Anteil 13. Monatslohn (Art. 12 L-GAV, 1/12 = ${pct(LGAV.THIRTEENTH_RATE)} %)`,
+      `Fr. ${fc(thirteenth)}`,
+    );
     y += 1;
     doc.setDrawColor(0); doc.setLineWidth(0.4);
     doc.line(PL + 4, y, 160, y); y += 2;
     setFont(doc, 8, 'bold');
     doc.text('Total (Monatslohn brutto inkl. 13. Monatslohn-Anteil)', labelX, y);
-    doc.text(`Fr.  ${fc(base + thirteenth)}`, amtX, y, { align: 'right' });
+    doc.text(`Fr. ${fc(base + thirteenth)}`, amtX, y, { align: 'right' });
     y += LH5;
   } else {
     setFont(doc, 7.5, 'normal');
@@ -496,15 +553,13 @@ function sec8_ML(doc: jsPDF, y: number, emp: Employee, draft: ContractDraft): nu
     doc.line(PL + 4, y, 160, y); y += 2;
     setFont(doc, 8, 'bold');
     doc.text('Total (Monatslohn brutto)', labelX, y);
-    doc.text(`Fr.  ${fc(base)}`, amtX, y, { align: 'right' });
+    doc.text(`Fr. ${fc(base)}`, amtX, y, { align: 'right' });
     y += LH5;
   }
-
-  y += 2;
-  return y;
+  return y + 2;
 }
 
-// ── Sektionen 9-13 (Seite 2) ─────────────────────────────────────────────────
+// ── Sektion 9-13 (Seite 2) ───────────────────────────────────────────────────
 
 function sec9(ctx: ColCtx, draft: ContractDraft): ColCtx {
   let y = ctx.yL;
@@ -514,16 +569,21 @@ function sec9(ctx: ColCtx, draft: ContractDraft): ColCtx {
   doc.text('Mindestlohnstufe I (ungelernte Mitarbeitende)', PL, y); y += LH4;
   setFont(doc, 7, 'italic');
   doc.text('(WICHTIG: Zutreffendes ankreuzen, sonst gilt Variante b)', PL, y); y += LH4;
-  y = sectionItem(doc, 'L', y, draft.wageRedI === 'first_12m', 'a', 'Erstanstellung in L-GAV-Betrieb. Reduktion um 8% für die ersten 12 Monate.');
-  y = sectionItem(doc, 'L', y, draft.wageRedI === 'first_3m',  'b', 'Mehr als 4 Monate Erfahrung in L-GAV-Betrieb. Reduktion um 8% für die ersten 3 Monate.');
-  y = sectionItem(doc, 'L', y, draft.wageRedI === 'none',      'c', 'Auf eine Lohnreduktion während der Einführungszeit wird verzichtet.');
+  y = sectionItem(doc, 'L', y, draft.wageRedI === 'first_12m', 'a',
+    'Erstanstellung in L-GAV-Betrieb. Reduktion um 8% für die ersten 12 Monate.');
+  y = sectionItem(doc, 'L', y, draft.wageRedI === 'first_3m', 'b',
+    'Mehr als 4 Monate Erfahrung in L-GAV-Betrieb. Reduktion um 8% für die ersten 3 Monate.');
+  y = sectionItem(doc, 'L', y, draft.wageRedI === 'none', 'c',
+    'Auf eine Lohnreduktion während der Einführungszeit wird verzichtet.');
   y += 2;
   setFont(doc, 7.5, 'bold');
   doc.text('Mindestlohnstufen II und IIIa (EBA und EFZ)', PL, y); y += LH4;
   setFont(doc, 7, 'italic');
   doc.text('(WICHTIG: Zutreffendes ankreuzen, sonst gilt Variante b)', PL, y); y += LH4;
-  y = sectionItem(doc, 'L', y, draft.wageRedII === 'first_3m', 'a', 'Erste Anstellung nach Abschluss der Ausbildung. Reduktion um 8% für die ersten 3 Monate.');
-  y = sectionItem(doc, 'L', y, draft.wageRedII === 'none',     'b', 'Es besteht keine Lohnreduktion während der Einführungszeit.');
+  y = sectionItem(doc, 'L', y, draft.wageRedII === 'first_3m', 'a',
+    'Erste Anstellung nach Abschluss der Ausbildung. Reduktion um 8% für die ersten 3 Monate.');
+  y = sectionItem(doc, 'L', y, draft.wageRedII === 'none', 'b',
+    'Es besteht keine Lohnreduktion während der Einführungszeit.');
   return setColY(ctx, 'L', y + 2);
 }
 
@@ -589,12 +649,13 @@ function sec12(ctx: ColCtx, draft: ContractDraft): ColCtx {
   const doc = ctx.doc;
   y = sectionTitle(doc, 'R', y, '12. Vereinbarungen nach Arbeitsgesetz');
   y = sectionPara(doc, 'R', y, 'a) Der Mitarbeitende ist einverstanden, Nachtarbeit zu leisten. Beginn und Ende der Nachtarbeit:');
-  y = sectionItem(doc, 'R', y, draft.nightWork === 'aa', 'aa', '24 – 7 Uhr', 4);
-  y = sectionItem(doc, 'R', y, draft.nightWork === 'bb', 'bb', '22 – 5 Uhr',  4);
-  y = sectionItem(doc, 'R', y, draft.nightWork === 'cc', 'cc', '23 – 6 Uhr',  4);
+  y = sectionItem(doc, 'R', y, draft.nightWork === 'aa', 'aa', '24 – 7 Uhr',       4);
+  y = sectionItem(doc, 'R', y, draft.nightWork === 'bb', 'bb', '22 – 5 Uhr',       4);
+  y = sectionItem(doc, 'R', y, draft.nightWork === 'cc', 'cc', '23 – 6 Uhr',       4);
   y = sectionItem(doc, 'R', y, draft.nightWork === 'dd', 'dd', '23:30 – 6:30 Uhr', 4);
   y += 1;
-  y = sectionItem(doc, 'R', y, draft.sixDayWork, 'b', 'Der Mitarbeitende ist mit einer vorübergehenden Beschäftigung während 6 anstatt an 5 Arbeitstagen einverstanden.');
+  y = sectionItem(doc, 'R', y, draft.sixDayWork, 'b',
+    'Der Mitarbeitende ist mit einer vorübergehenden Beschäftigung während 6 anstatt an 5 Arbeitstagen einverstanden.');
   return setColY(ctx, 'R', y + 2);
 }
 
@@ -652,13 +713,11 @@ export function generateContract(
   let colCtx: ColCtx = { doc, yL: startY, yR: startY };
   const topOfSections = startY;
 
-  // Linke Spalte: Art. 1-4
   colCtx = sec1(colCtx, emp, draft);
   colCtx = sec2(colCtx, draft);
   colCtx = sec3(colCtx, draft);
   colCtx = sec4(colCtx, draft);
 
-  // Rechte Spalte: Art. 5-7
   if (template === 'SL') {
     colCtx = sec5_SL(colCtx, emp);
   } else {
@@ -674,18 +733,16 @@ export function generateContract(
   doc.addPage();
   let yPage2 = 18;
 
-  // Art. 8 (volle Breite) — NUR Mitarbeitenden-Werte, KEINE AG-Kosten
   if (template === 'SL') {
-    yPage2 = sec8_SL(doc, yPage2, emp, draft);
+    yPage2 = sec8_SL(doc, yPage2, emp);
   } else {
-    yPage2 = sec8_ML(doc, yPage2, emp, draft);
+    yPage2 = sec8_ML(doc, yPage2, emp);
   }
 
   hlineFullWidth(doc, yPage2 + 2);
   let colCtx2: ColCtx = { doc, yL: yPage2 + 6, yR: yPage2 + 6 };
   const topPage2 = yPage2 + 6;
 
-  // Art. 9-12
   colCtx2 = sec9(colCtx2, draft);
   colCtx2 = sec10L(colCtx2);
   colCtx2 = sec10R(colCtx2, draft);
@@ -694,11 +751,9 @@ export function generateContract(
 
   vlineSep(doc, topPage2, Math.max(colCtx2.yL, colCtx2.yR) + 2);
 
-  // Art. 13
-  const y13 = Math.max(colCtx2.yL, colCtx2.yR) + 4;
+  const y13    = Math.max(colCtx2.yL, colCtx2.yR) + 4;
   const y13end = sec13(doc, y13, draft);
 
-  // Unterschriften
   signatures(doc, Math.min(y13end, 242));
   pageFooter(doc, 2);
 

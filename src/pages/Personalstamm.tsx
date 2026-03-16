@@ -2247,24 +2247,24 @@ CREATE POLICY "Anon self-register new employee"
                               {detectContractTemplate(selectedEmp) === 'ML' && (
                                 <div>
                                   <SectionHead title="Vertragsart (Kopfzeile)" />
-                                  <CbRow checked={d.employmentMode === 'vollzeit'} label="■ a)  für Vollzeitmitarbeiter/in" onClick={() => upd({ employmentMode: 'vollzeit' })} />
-                                  <CbRow checked={d.employmentMode === 'teilzeit'} label="■ b)  für Teilzeitmitarbeiter/in (mit regelmässigem, festgelegtem Arbeitspensum)" onClick={() => upd({ employmentMode: 'teilzeit' })} />
+                                  <CbRow checked={d.employmentMode === 'vollzeit'} label="a)  für Vollzeitmitarbeiter/in" onClick={() => upd({ employmentMode: 'vollzeit' })} />
+                                  <CbRow checked={d.employmentMode === 'teilzeit'} label="b)  für Teilzeitmitarbeiter/in (mit regelmässigem, festgelegtem Arbeitspensum)" onClick={() => upd({ employmentMode: 'teilzeit' })} />
                                 </div>
                               )}
 
                               {/* Art. 1c: Raucherbetrieb */}
                               <div>
                                 <SectionHead title="Ziff. 1c – Raucherbetrieb" />
-                                <CbRow checked={d.smokingConsent === 'aa'} label="■ aa)  Mitarbeitende/r stimmt Beschäftigung in Raucherbetrieb zu" onClick={() => upd({ smokingConsent: 'aa' })} />
-                                <CbRow checked={d.smokingConsent === 'bb'} label="■ bb)  Mitarbeitende/r lehnt Beschäftigung in Raucherbetrieb ab" onClick={() => upd({ smokingConsent: 'bb' })} />
+                                <CbRow checked={d.smokingConsent === 'aa'} label="aa)  Mitarbeitende/r stimmt Beschäftigung in Raucherbetrieb zu" onClick={() => upd({ smokingConsent: 'aa' })} />
+                                <CbRow checked={d.smokingConsent === 'bb'} label="bb)  Mitarbeitende/r lehnt Beschäftigung in Raucherbetrieb ab" onClick={() => upd({ smokingConsent: 'bb' })} />
                               </div>
 
                               {/* Art. 2: Vertragsdauer */}
                               <div>
                                 <SectionHead title="Ziff. 2 – Vertragsdauer" />
-                                <CbRow checked={d.duration === 'unlimited'} label="■ a)  unbefristet, kündbar gemäss Ziff. 3 und 4" onClick={() => upd({ duration: 'unlimited' })} />
-                                <CbRow checked={d.duration === 'limited_cancellable'} label={`■ b)  befristet bis ${d.endDate ?? '___________'}, kündbar`} onClick={() => upd({ duration: 'limited_cancellable' })} />
-                                <CbRow checked={d.duration === 'limited_fixed'} label="■ c)  befristet, nicht kündbar" onClick={() => upd({ duration: 'limited_fixed' })} />
+                                <CbRow checked={d.duration === 'unlimited'} label="a)  unbefristet, kündbar gemäss Ziff. 3 und 4" onClick={() => upd({ duration: 'unlimited' })} />
+                                <CbRow checked={d.duration === 'limited_cancellable'} label={`b)  befristet bis ${d.endDate ?? '___________'}, kündbar`} onClick={() => upd({ duration: 'limited_cancellable' })} />
+                                <CbRow checked={d.duration === 'limited_fixed'} label="c)  befristet, nicht kündbar" onClick={() => upd({ duration: 'limited_fixed' })} />
                                 {(d.duration === 'limited_cancellable' || d.duration === 'limited_fixed') && (
                                   <div className="mt-1 ml-6">
                                     <Label className="text-[10px] text-muted-foreground mb-0.5 block">Vertragsende</Label>
@@ -2278,10 +2278,10 @@ CREATE POLICY "Anon self-register new employee"
                               {/* Art. 3: Probezeit */}
                               <div>
                                 <SectionHead title="Ziff. 3 – Probezeit" />
-                                <CbRow checked={d.probation === 'three_months_7d'} label="■ a)  3 Monate, 7 Tage Kündigungsfrist" onClick={() => upd({ probation: 'three_months_7d' })} />
-                                <CbRow checked={d.probation === 'fourteen_days'}   label="■ b)  14 Tage, 3 Tage Kündigungsfrist" onClick={() => upd({ probation: 'fourteen_days' })} />
-                                <CbRow checked={d.probation === 'none'}            label="■ c)  keine Probezeit" onClick={() => upd({ probation: 'none' })} />
-                                <CbRow checked={d.probation === 'custom'}          label="■ d)  individuell (max. 3 Monate, min. 3 Tage Kündigungsfrist)" onClick={() => upd({ probation: 'custom' })} />
+                                <CbRow checked={d.probation === 'three_months_7d'} label="a)  3 Monate, 7 Tage Kündigungsfrist" onClick={() => upd({ probation: 'three_months_7d' })} />
+                                <CbRow checked={d.probation === 'fourteen_days'}   label="b)  14 Tage, 3 Tage Kündigungsfrist" onClick={() => upd({ probation: 'fourteen_days' })} />
+                                <CbRow checked={d.probation === 'none'}            label="c)  keine Probezeit" onClick={() => upd({ probation: 'none' })} />
+                                <CbRow checked={d.probation === 'custom'}          label="d)  individuell (max. 3 Monate, min. 3 Tage Kündigungsfrist)" onClick={() => upd({ probation: 'custom' })} />
                                 {d.probation === 'custom' && (
                                   <div className="mt-1 ml-6 flex gap-3">
                                     <div>
@@ -2303,8 +2303,8 @@ CREATE POLICY "Anon self-register new employee"
                               {/* Art. 4: Kündigung */}
                               <div>
                                 <SectionHead title="Ziff. 4 – Kündigung" />
-                                <CbRow checked={d.notice === 'standard'} label="■ a)  Standard (1 Monat, ab 6. Dienstjahr 2 Monate, auf Monatsende)" onClick={() => upd({ notice: 'standard' })} />
-                                <CbRow checked={d.notice === 'extended'} label="■ b)  längere Kündigungsfrist (individuell)" onClick={() => upd({ notice: 'extended' })} />
+                                <CbRow checked={d.notice === 'standard'} label="a)  Standard (1 Monat, ab 6. Dienstjahr 2 Monate, auf Monatsende)" onClick={() => upd({ notice: 'standard' })} />
+                                <CbRow checked={d.notice === 'extended'} label="b)  längere Kündigungsfrist (individuell)" onClick={() => upd({ notice: 'extended' })} />
                                 {d.notice === 'extended' && (
                                   <div className="mt-1 ml-6">
                                     <Label className="text-[10px] text-muted-foreground mb-0.5 block">Beschreibung</Label>
@@ -2327,7 +2327,7 @@ CREATE POLICY "Anon self-register new employee"
                                   ['progresso',    'f) keine Lehre, aber Progresso-Ausbildung'],
                                   ['none',         'g) keine L-GAV-relevante Ausbildung'],
                                 ] as [ContractDraft['education'], string][]).map(([val, label]) => (
-                                  <CbRow key={val} checked={d.education === val} label={`■ ${label}`} onClick={() => upd({ education: val })} />
+                                  <CbRow key={val} checked={d.education === val} label={`${label}`} onClick={() => upd({ education: val })} />
                                 ))}
                                 {d.education === 'other_cert' && (
                                   <div className="mt-1 ml-6">
@@ -2342,39 +2342,39 @@ CREATE POLICY "Anon self-register new employee"
                               {/* Art. 9 Stufe I */}
                               <div>
                                 <SectionHead title="Ziff. 9 – Lohnreduktion Stufe I (ungelernt)" />
-                                <CbRow checked={d.wageRedI === 'first_12m'} label="■ a)  Erstanstellung – Reduktion 8% für erste 12 Monate" onClick={() => upd({ wageRedI: 'first_12m' })} />
-                                <CbRow checked={d.wageRedI === 'first_3m'}  label="■ b)  Erfahren (> 4 Mt. in L-GAV) – Reduktion 8% für erste 3 Monate" onClick={() => upd({ wageRedI: 'first_3m' })} />
-                                <CbRow checked={d.wageRedI === 'none'}      label="■ c)  kein Abzug während Einführungszeit" onClick={() => upd({ wageRedI: 'none' })} />
+                                <CbRow checked={d.wageRedI === 'first_12m'} label="a)  Erstanstellung – Reduktion 8% für erste 12 Monate" onClick={() => upd({ wageRedI: 'first_12m' })} />
+                                <CbRow checked={d.wageRedI === 'first_3m'}  label="b)  Erfahren (> 4 Mt. in L-GAV) – Reduktion 8% für erste 3 Monate" onClick={() => upd({ wageRedI: 'first_3m' })} />
+                                <CbRow checked={d.wageRedI === 'none'}      label="c)  kein Abzug während Einführungszeit" onClick={() => upd({ wageRedI: 'none' })} />
                               </div>
 
                               {/* Art. 9 Stufe II */}
                               <div>
                                 <SectionHead title="Ziff. 9 – Lohnreduktion Stufe II/IIIa (EBA/EFZ)" />
-                                <CbRow checked={d.wageRedII === 'first_3m'} label="■ a)  Erstanstellung nach Ausbildung – Reduktion 8% für erste 3 Monate" onClick={() => upd({ wageRedII: 'first_3m' })} />
-                                <CbRow checked={d.wageRedII === 'none'}     label="■ b)  kein Abzug während Einführungszeit" onClick={() => upd({ wageRedII: 'none' })} />
+                                <CbRow checked={d.wageRedII === 'first_3m'} label="a)  Erstanstellung nach Ausbildung – Reduktion 8% für erste 3 Monate" onClick={() => upd({ wageRedII: 'first_3m' })} />
+                                <CbRow checked={d.wageRedII === 'none'}     label="b)  kein Abzug während Einführungszeit" onClick={() => upd({ wageRedII: 'none' })} />
                               </div>
 
                               {/* Art. 10d: Lohnauszahlung */}
                               <div>
                                 <SectionHead title="Ziff. 10d – Lohnauszahlung" />
-                                <CbRow checked={d.paymentTiming === 'last'}       label="■ a)  spätestens am letzten Tag des Monats" onClick={() => upd({ paymentTiming: 'last' })} />
-                                <CbRow checked={d.paymentTiming === 'sixth'}      label="■ b)  spätestens am 6. des Folgemonats" onClick={() => upd({ paymentTiming: 'sixth' })} />
-                                <CbRow checked={d.paymentTiming === 'collective'} label="■ c)  gemäss Art. 14 Ziff. 1 Abs. 2 L-GAV" onClick={() => upd({ paymentTiming: 'collective' })} />
+                                <CbRow checked={d.paymentTiming === 'last'}       label="a)  spätestens am letzten Tag des Monats" onClick={() => upd({ paymentTiming: 'last' })} />
+                                <CbRow checked={d.paymentTiming === 'sixth'}      label="b)  spätestens am 6. des Folgemonats" onClick={() => upd({ paymentTiming: 'sixth' })} />
+                                <CbRow checked={d.paymentTiming === 'collective'} label="c)  gemäss Art. 14 Ziff. 1 Abs. 2 L-GAV" onClick={() => upd({ paymentTiming: 'collective' })} />
                               </div>
 
                               {/* Art. 12a: Nachtarbeit */}
                               <div>
                                 <SectionHead title="Ziff. 12a – Nachtarbeit" />
-                                <CbRow checked={d.nightWork === 'aa'} label="■ aa)  24 – 7 Uhr" onClick={() => upd({ nightWork: 'aa' })} />
-                                <CbRow checked={d.nightWork === 'bb'} label="■ bb)  22 – 5 Uhr" onClick={() => upd({ nightWork: 'bb' })} />
-                                <CbRow checked={d.nightWork === 'cc'} label="■ cc)  23 – 6 Uhr" onClick={() => upd({ nightWork: 'cc' })} />
-                                <CbRow checked={d.nightWork === 'dd'} label="■ dd)  23:30 – 6:30 Uhr" onClick={() => upd({ nightWork: 'dd' })} />
+                                <CbRow checked={d.nightWork === 'aa'} label="aa)  24 – 7 Uhr" onClick={() => upd({ nightWork: 'aa' })} />
+                                <CbRow checked={d.nightWork === 'bb'} label="bb)  22 – 5 Uhr" onClick={() => upd({ nightWork: 'bb' })} />
+                                <CbRow checked={d.nightWork === 'cc'} label="cc)  23 – 6 Uhr" onClick={() => upd({ nightWork: 'cc' })} />
+                                <CbRow checked={d.nightWork === 'dd'} label="dd)  23:30 – 6:30 Uhr" onClick={() => upd({ nightWork: 'dd' })} />
                               </div>
 
                               {/* Art. 12b: 6-Tage-Woche */}
                               <div>
                                 <SectionHead title="Ziff. 12b – 6-Tage-Woche" />
-                                <CbRow checked={d.sixDayWork}  label="■ b)  vorübergehend 6 Arbeitstage pro Woche (Einverständnis)" onClick={() => upd({ sixDayWork: !d.sixDayWork })} />
+                                <CbRow checked={d.sixDayWork}  label="b)  vorübergehend 6 Arbeitstage pro Woche (Einverständnis)" onClick={() => upd({ sixDayWork: !d.sixDayWork })} />
                               </div>
 
                               {/* Art. 13: Besondere Vereinbarungen */}
