@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { createClient } from '@supabase/supabase-js';
 import { Employee } from '@/types/personnel';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 
@@ -63,8 +64,9 @@ const employeeToDb = (emp: Employee) => ({
   marital_status:           emp.maritalStatus           ?? null,
   spouse_employed:          emp.spouseEmployed          ?? null,
   spouse_lives_in_switzerland: emp.spouseLivesInSwitzerland ?? null,
-  // ── Mitarbeiterstatus ────────────────────────────────────────────────────
-  employee_status:          emp.employeeStatus          ?? 'active',
+  // NOTE: employee_status is intentionally excluded here because the column
+  // may not exist yet (migration 20260315_employee_self_registration.sql).
+  // Use activateEmployee() to set status once the migration has been applied.
   // ── Onboarding ───────────────────────────────────────────────────────────
   onboarding_status:        emp.onboardingStatus        ?? 'none',
   onboarding_token:         emp.onboardingToken         ?? null,
@@ -597,7 +599,10 @@ export async function createOnboardingSubmission(data: {
     });
 
     if (error) {
-      const msg = `[${error.code}] ${error.message}${error.details ? ' · ' + error.details : ''}${error.hint ? ' (Hint: ' + error.hint + ')' : ''}`;
+      const isPermissionError = error.code === '42501' || error.code === '42000';
+      const msg = isPermissionError
+        ? `BERECHTIGUNG: Anon-INSERT auf onboarding_submissions ist blockiert. Führen Sie die SQL-Migration im Supabase SQL-Editor aus (GRANT INSERT ON TABLE public.onboarding_submissions TO anon). [${error.code}]`
+        : `[${error.code}] ${error.message}${error.details ? ' · ' + error.details : ''}${error.hint ? ' (Hint: ' + error.hint + ')' : ''}`;
       console.error('[createOnboardingSubmission] Supabase-Fehler:', error);
       return { id: null, error: msg };
     }
@@ -613,14 +618,23 @@ export async function createOnboardingSubmission(data: {
 
 /**
  * Alle Selbst-Anmeldungen laden (nur für eingeloggte Admins).
- * Gibt { data, tableExists } zurück — tableExists ist false wenn die
- * Migration noch nicht ausgeführt wurde (PGRST205-Fehler).
+ * Prüft zusätzlich ob:
+ *  - die Tabelle existiert (tableExists)
+ *  - anonyme Benutzer neue Anmeldungen einreichen können (anonInsertBlocked)
+ *  - der employee_status-Spalte in employees fehlt (employeeStatusMissing)
  */
 export async function loadOnboardingSubmissions(): Promise<{
   data: OnboardingSubmission[];
   tableExists: boolean;
   permissionError: boolean;
+  anonInsertBlocked: boolean;
+  employeeStatusMissing: boolean;
 }> {
+  // ── Admin-SELECT ──────────────────────────────────────────────────────────
+  let tableExists     = true;
+  let permissionError = false;
+  let submissions: OnboardingSubmission[] = [];
+
   try {
     const { data, error } = await supabase
       .from('onboarding_submissions')
@@ -628,28 +642,67 @@ export async function loadOnboardingSubmissions(): Promise<{
       .order('submitted_at', { ascending: false });
 
     if (error) {
-      const tableNotFound    = error.code === 'PGRST205';
-      const permissionDenied = error.code === '42501';
-      if (!tableNotFound) {
-        console.error('[loadOnboardingSubmissions] Fehler:', error);
-      }
-      return { data: [], tableExists: !tableNotFound, permissionError: permissionDenied };
-    }
-
-    return {
-      tableExists:     true,
-      permissionError: false,
-      data: (data ?? []).map(row => ({
+      tableExists     = error.code !== 'PGRST205';
+      permissionError = error.code === '42501';
+      if (tableExists) console.error('[loadOnboardingSubmissions] Fehler:', error);
+    } else {
+      submissions = (data ?? []).map(row => ({
         id:          row.id as string,
         submittedAt: row.submitted_at as string,
         name:        row.name as string,
         formData:    (row.form_data ?? {}) as Record<string, unknown>,
-      })),
-    };
+      }));
+    }
   } catch (e) {
     console.error('[loadOnboardingSubmissions] Exception:', e);
-    return { data: [], tableExists: false, permissionError: false };
+    tableExists = false;
   }
+
+  // ── Anon-INSERT Test (braucht unauthenzierten Client) ─────────────────────
+  let anonInsertBlocked = false;
+  if (tableExists) {
+    try {
+      const anonClient = createClient(
+        import.meta.env.VITE_SUPABASE_URL as string,
+        import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+      );
+      const testId = '00000000-0000-4000-b000-000000000001';
+      const { error: insertErr } = await anonClient
+        .from('onboarding_submissions')
+        .insert({ id: testId, name: '__setup_check__', form_data: {} });
+
+      if (insertErr) {
+        anonInsertBlocked = insertErr.code === '42501' || insertErr.code === '42000';
+        console.warn('[loadOnboardingSubmissions] Anon INSERT blockiert:', insertErr.code, insertErr.message);
+      } else {
+        // Probe-Zeile sofort wieder löschen
+        await supabase.from('onboarding_submissions').delete().eq('id', testId);
+      }
+    } catch (e) {
+      console.warn('[loadOnboardingSubmissions] Anon INSERT Test fehlgeschlagen:', e);
+    }
+  }
+
+  // ── employee_status Spalte prüfen ─────────────────────────────────────────
+  let employeeStatusMissing = false;
+  try {
+    const { error: colErr } = await supabase
+      .from('employees')
+      .update({ employee_status: 'active' })
+      .eq('id', '00000000-0000-0000-0000-000000000000'); // non-existent row
+    // If the column doesn't exist, Supabase returns PGRST204
+    employeeStatusMissing = colErr?.code === 'PGRST204';
+  } catch {
+    // ignore
+  }
+
+  return {
+    data:                 submissions,
+    tableExists,
+    permissionError,
+    anonInsertBlocked,
+    employeeStatusMissing,
+  };
 }
 
 /** Selbst-Anmeldung löschen (nach Aktivierung oder Ablehnung) */

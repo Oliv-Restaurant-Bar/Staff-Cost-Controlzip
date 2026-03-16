@@ -332,6 +332,8 @@ const Personalstamm = () => {
   const [selectedSubmission, setSelectedSubmission]   = useState<OnboardingSubmission | null>(null);
   const [submissionsDbReady, setSubmissionsDbReady]   = useState<boolean | null>(null);
   const [submissionsPermissionError, setSubmissionsPermissionError] = useState(false);
+  const [anonInsertBlocked, setAnonInsertBlocked]     = useState(false);
+  const [employeeStatusMissing, setEmployeeStatusMissing] = useState(false);
 
   // ── Filter ─────────────────────────────────────────────────────────────────
   const [search, setSearch]               = useState('');
@@ -444,10 +446,12 @@ const Personalstamm = () => {
 
       // Submissions laden (nur für Admin)
       if (isAdmin) {
-        const { data: subs, tableExists, permissionError } = await loadOnboardingSubmissions();
+        const { data: subs, tableExists, permissionError, anonInsertBlocked: aib, employeeStatusMissing: esm } = await loadOnboardingSubmissions();
         setSubmissions(subs);
         setSubmissionsDbReady(tableExists);
         setSubmissionsPermissionError(permissionError);
+        setAnonInsertBlocked(aib);
+        setEmployeeStatusMissing(esm);
       }
 
       setLoading(false);
@@ -812,52 +816,75 @@ const Personalstamm = () => {
         </div>
       </div>
 
-      {/* ── DB-Setup Banner (Tabelle fehlt ODER Berechtigungen fehlen) ────────── */}
-      {isAdmin && (submissionsDbReady === false || submissionsPermissionError) && (() => {
-        const isPermissionOnly = submissionsPermissionError && submissionsDbReady !== false;
-        const sqlFull = `CREATE TABLE IF NOT EXISTS public.onboarding_submissions (
+      {/* ── DB-Setup Banner ──────────────────────────────────────────────────── */}
+      {isAdmin && (() => {
+        const needsTableSetup   = submissionsDbReady === false;
+        const needsGrantFix     = (submissionsPermissionError || anonInsertBlocked) && !needsTableSetup;
+        const needsStatusColumn = employeeStatusMissing;
+        const hasAnyIssue       = needsTableSetup || needsGrantFix || needsStatusColumn;
+        if (!hasAnyIssue) return null;
+
+        // Build a single SQL block covering everything still needed
+        const sqlParts: string[] = [];
+
+        if (needsTableSetup) {
+          sqlParts.push(`-- 1. Anmeldungs-Tabelle erstellen
+CREATE TABLE IF NOT EXISTS public.onboarding_submissions (
   id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   submitted_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
   name         TEXT         NOT NULL,
   form_data    JSONB        NOT NULL DEFAULT '{}'::jsonb
-);
+);`);
+        }
+
+        if (needsTableSetup || needsGrantFix) {
+          sqlParts.push(`-- ${needsTableSetup ? '2' : '1'}. Zugriffsrechte & RLS für Anmeldungen
 GRANT SELECT, INSERT, DELETE ON TABLE public.onboarding_submissions TO authenticated;
 GRANT INSERT ON TABLE public.onboarding_submissions TO anon;
 ALTER TABLE public.onboarding_submissions ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "anon_insert" ON public.onboarding_submissions;
-CREATE POLICY "anon_insert" ON public.onboarding_submissions
-  FOR INSERT TO anon, authenticated WITH CHECK (true);
-DROP POLICY IF EXISTS "auth_select" ON public.onboarding_submissions;
-CREATE POLICY "auth_select" ON public.onboarding_submissions
-  FOR SELECT TO authenticated USING (true);
-DROP POLICY IF EXISTS "auth_delete" ON public.onboarding_submissions;
-CREATE POLICY "auth_delete" ON public.onboarding_submissions
-  FOR DELETE TO authenticated USING (true);`;
-        const sqlGrant = `GRANT SELECT, INSERT, DELETE ON TABLE public.onboarding_submissions TO authenticated;
-GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
-        const sql = isPermissionOnly ? sqlGrant : sqlFull;
+DROP POLICY IF EXISTS "anon_insert"  ON public.onboarding_submissions;
+CREATE POLICY "anon_insert"  ON public.onboarding_submissions FOR INSERT TO anon, authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "auth_select"  ON public.onboarding_submissions;
+CREATE POLICY "auth_select"  ON public.onboarding_submissions FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "auth_delete"  ON public.onboarding_submissions;
+CREATE POLICY "auth_delete"  ON public.onboarding_submissions FOR DELETE TO authenticated USING (true);`);
+        }
+
+        if (needsStatusColumn) {
+          const n = sqlParts.length + 1;
+          sqlParts.push(`-- ${n}. Mitarbeiterstatus-Spalte hinzufügen (Selbst-Anmeldung)
+ALTER TABLE public.employees
+  ADD COLUMN IF NOT EXISTS employee_status VARCHAR DEFAULT 'active'
+  CHECK (employee_status IN ('active', 'pending_review'));
+DROP POLICY IF EXISTS "Anon self-register new employee" ON public.employees;
+CREATE POLICY "Anon self-register new employee"
+  ON public.employees FOR INSERT TO anon
+  WITH CHECK (employee_status = 'pending_review');`);
+        }
+
+        const sql = sqlParts.join('\n\n');
+        const issues: string[] = [];
+        if (needsTableSetup)   issues.push('Anmeldungs-Tabelle fehlt');
+        if (needsGrantFix)     issues.push('Anon-Zugriffsrechte (GRANT) fehlen');
+        if (needsStatusColumn) issues.push('Spalte employee_status fehlt');
+
         return (
           <div className="bg-red-50 border-b border-red-200 px-4 py-3 max-w-7xl w-full mx-auto">
             <div className="flex items-start gap-3">
               <AlertTriangle className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-red-900">
-                  {isPermissionOnly
-                    ? 'Datenbankberechtigungen fehlen'
-                    : 'Einmaliges Datenbank-Setup erforderlich'}
+                  Einmaliges Datenbank-Setup erforderlich
                 </p>
                 <p className="text-xs text-red-700 mt-0.5">
-                  {isPermissionOnly
-                    ? <>Die Tabelle existiert, aber die Zugriffsrechte (<code className="font-mono bg-red-100 px-1 rounded">GRANT</code>) fehlen noch.</>
-                    : <>Die Tabelle <code className="font-mono bg-red-100 px-1 rounded">onboarding_submissions</code> fehlt.</>
-                  }{' '}
+                  Ausstehend: {issues.join(' · ')}.{' '}
                   Führen Sie das folgende SQL einmalig im{' '}
                   <a href="https://supabase.com/dashboard/project/ajflrvuzmkfspsxkdyfe/sql/new"
                      target="_blank" rel="noreferrer"
                      className="underline font-semibold text-red-800">
-                    Supabase SQL-Editor
+                    Supabase SQL-Editor ↗
                   </a>{' '}
-                  aus:
+                  aus, dann die Seite neu laden:
                 </p>
                 <div className="mt-2 relative">
                   <pre className="text-[10px] bg-slate-900 text-green-300 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
@@ -1240,8 +1267,14 @@ GRANT INSERT ON TABLE public.onboarding_submissions TO anon;`;
                     <Button
                       size="sm"
                       className="h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
+                      disabled={employeeStatusMissing}
+                      title={employeeStatusMissing ? 'Migration erforderlich – siehe Setup-Banner oben' : undefined}
                       onClick={async () => {
                         if (!selectedEmp) return;
+                        if (employeeStatusMissing) {
+                          toast.error('Datenbank-Migration fehlt. Bitte das SQL im roten Banner oben ausführen.');
+                          return;
+                        }
                         const ok = await activateEmployee(selectedEmp.id);
                         if (ok) {
                           const updated = { ...selectedEmp, employeeStatus: 'active' as const };
