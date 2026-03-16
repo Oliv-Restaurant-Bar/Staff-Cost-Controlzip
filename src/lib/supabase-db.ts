@@ -568,6 +568,7 @@ export async function createOnboardingSubmission(data: {
 export async function loadOnboardingSubmissions(): Promise<{
   data: OnboardingSubmission[];
   tableExists: boolean;
+  permissionError: boolean;
 }> {
   try {
     const { data, error } = await supabase
@@ -576,15 +577,17 @@ export async function loadOnboardingSubmissions(): Promise<{
       .order('submitted_at', { ascending: false });
 
     if (error) {
-      const tableNotFound = error.code === 'PGRST205';
+      const tableNotFound    = error.code === 'PGRST205';
+      const permissionDenied = error.code === '42501';
       if (!tableNotFound) {
         console.error('[loadOnboardingSubmissions] Fehler:', error);
       }
-      return { data: [], tableExists: !tableNotFound };
+      return { data: [], tableExists: !tableNotFound, permissionError: permissionDenied };
     }
 
     return {
-      tableExists: true,
+      tableExists:     true,
+      permissionError: false,
       data: (data ?? []).map(row => ({
         id:          row.id as string,
         submittedAt: row.submitted_at as string,
@@ -594,7 +597,7 @@ export async function loadOnboardingSubmissions(): Promise<{
     };
   } catch (e) {
     console.error('[loadOnboardingSubmissions] Exception:', e);
-    return { data: [], tableExists: false };
+    return { data: [], tableExists: false, permissionError: false };
   }
 }
 
