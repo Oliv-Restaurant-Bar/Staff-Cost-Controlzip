@@ -463,6 +463,56 @@ const Personalstamm = () => {
     setEditMode(false);
   };
 
+  // ── Submission Aktivieren / Ablehnen (gemeinsame Handler) ─────────────────
+  const handleActivateSubmission = async (sub: OnboardingSubmission) => {
+    const fd = sub.formData;
+    const newEmp: import('@/types/personnel').Employee = {
+      id:             sub.id,
+      name:           sub.name,
+      department:     'service',
+      employmentType: ((fd.preferredEmploymentType as string) || 'aushilfe') as import('@/types/personnel').EmploymentType,
+      hourlyWage:     0,
+      weeklyHours:    0,
+      positionTitle:  (fd.desiredPosition as string)        || undefined,
+      contractStart:  (fd.desiredStartDate as string)       || undefined,
+      birthDate:      (fd.birthDate as string)              || undefined,
+      nationality:    (fd.nationality as string)            || undefined,
+      phone:          (fd.phone as string)                  || undefined,
+      email:          (fd.email as string)                  || undefined,
+      addressStreet:  (fd.addressStreet as string)          || undefined,
+      addressZip:     (fd.addressZip as string)             || undefined,
+      addressCity:    (fd.addressCity as string)            || undefined,
+      ahvNumber:      (fd.ahvNumber as string)              || undefined,
+      iban:           (fd.iban as string)                   || undefined,
+      permitType:     (fd.permitType as string)             || undefined,
+      maritalStatus:  (fd.maritalStatus as string)          || undefined,
+      onboardingStatus: 'completed',
+    };
+    const saved = await upsertEmployee(newEmp);
+    if (saved) {
+      await deleteOnboardingSubmission(sub.id);
+      setSubmissions(prev => prev.filter(s => s.id !== sub.id));
+      setEmployees(prev => [...prev, saved]);
+      setSelectedSubmission(null);
+      setSelectedId(saved.id);
+      toast.success(`${sub.name} wurde als Mitarbeiter angelegt!`);
+    } else {
+      toast.error('Aktivierung fehlgeschlagen. Prüfen Sie, ob alle Basis-Migrationen ausgeführt wurden.');
+    }
+  };
+
+  const handleRejectSubmission = async (sub: OnboardingSubmission) => {
+    if (!window.confirm(`Anmeldung von ${sub.name} wirklich ablehnen und löschen?`)) return;
+    const ok = await deleteOnboardingSubmission(sub.id);
+    if (ok) {
+      setSubmissions(prev => prev.filter(s => s.id !== sub.id));
+      if (selectedSubmission?.id === sub.id) setSelectedSubmission(null);
+      toast.success(`Anmeldung von ${sub.name} abgelehnt.`);
+    } else {
+      toast.error('Ablehnen fehlgeschlagen.');
+    }
+  };
+
   // ── Neuer Mitarbeiter ──────────────────────────────────────────────────────
   const handleNew = () => {
     const newId = generateId(employees);
@@ -723,6 +773,8 @@ const Personalstamm = () => {
   name         TEXT         NOT NULL,
   form_data    JSONB        NOT NULL DEFAULT '{}'::jsonb
 );
+GRANT SELECT, INSERT, DELETE ON TABLE public.onboarding_submissions TO authenticated;
+GRANT INSERT ON TABLE public.onboarding_submissions TO anon;
 ALTER TABLE public.onboarding_submissions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "anon_insert" ON public.onboarding_submissions;
 CREATE POLICY "anon_insert" ON public.onboarding_submissions
@@ -746,6 +798,8 @@ CREATE POLICY "auth_delete" ON public.onboarding_submissions
   name         TEXT         NOT NULL,
   form_data    JSONB        NOT NULL DEFAULT '{}'::jsonb
 );
+GRANT SELECT, INSERT, DELETE ON TABLE public.onboarding_submissions TO authenticated;
+GRANT INSERT ON TABLE public.onboarding_submissions TO anon;
 ALTER TABLE public.onboarding_submissions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "anon_insert" ON public.onboarding_submissions;
 CREATE POLICY "anon_insert" ON public.onboarding_submissions
@@ -768,6 +822,96 @@ CREATE POLICY "auth_delete" ON public.onboarding_submissions
         </div>
       )}
 
+      {/* ── Ausstehende Anmeldungen (vollbreite Kartenansicht) ──────────────── */}
+      {isAdmin && submissions.length > 0 && (
+        <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 overflow-y-auto" style={{ maxHeight: '320px' }}>
+          <div className="max-w-7xl mx-auto px-4 py-3">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+              <h2 className="text-sm font-semibold text-amber-800">Ausstehende Anmeldungen</h2>
+              <span className="bg-amber-500 text-white text-[11px] font-bold rounded-full px-2 py-0.5 leading-none">
+                {submissions.length}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+              {submissions.map(sub => {
+                const fd = sub.formData;
+                const permitType     = (fd.permitType as string)    || null;
+                const maritalStatus  = (fd.maritalStatus as string) || null;
+                const hasDocuments   = fd.documents != null && typeof fd.documents === 'object' && Object.keys(fd.documents as object).length > 0;
+                const dateStr = new Date(sub.submittedAt).toLocaleString('de-CH', {
+                  day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                });
+                const permitLabel: Record<string, string> = {
+                  CH: 'Schweizer/in', C: 'Ausweis C', B: 'Ausweis B',
+                  L: 'Ausweis L', G: 'Grenzgänger G', other: 'Anderer',
+                };
+                const maritalLabel: Record<string, string> = {
+                  single: 'Ledig', married: 'Verheiratet', divorced: 'Geschieden',
+                  widowed: 'Verwitwet', partnership: 'Eingetr. Partnerschaft',
+                };
+                return (
+                  <div key={sub.id} className="bg-white border border-amber-200 rounded-lg p-4 flex flex-col gap-3 shadow-sm">
+                    {/* Name + Datum */}
+                    <div className="flex items-start gap-2.5">
+                      <div className="w-9 h-9 rounded-full bg-amber-200 flex items-center justify-center shrink-0 text-amber-800 font-bold text-sm">
+                        {sub.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-800 leading-snug truncate">{sub.name}</p>
+                        <p className="text-[11px] text-amber-700 mt-0.5">{dateStr}</p>
+                      </div>
+                    </div>
+
+                    {/* Badges: Aufenthalt, Zivilstand, Dokumente */}
+                    <div className="flex flex-wrap gap-1.5">
+                      {permitType && (
+                        <span className="text-[11px] bg-blue-50 text-blue-700 border border-blue-200 rounded px-2 py-0.5">
+                          {permitLabel[permitType] ?? permitType}
+                        </span>
+                      )}
+                      {maritalStatus && (
+                        <span className="text-[11px] bg-slate-50 text-slate-600 border border-slate-200 rounded px-2 py-0.5">
+                          {maritalLabel[maritalStatus] ?? maritalStatus}
+                        </span>
+                      )}
+                      {hasDocuments && (
+                        <span className="text-[11px] bg-green-50 text-green-700 border border-green-200 rounded px-2 py-0.5 flex items-center gap-1">
+                          <FileText className="h-3 w-3 shrink-0" />
+                          Dokumente
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Aktions-Buttons */}
+                    <div className="flex gap-2 mt-auto">
+                      <Button size="sm" variant="outline"
+                        className="flex-1 h-8 text-xs border-red-200 text-red-600 hover:bg-red-50"
+                        onClick={() => handleRejectSubmission(sub)}>
+                        Ablehnen
+                      </Button>
+                      <Button size="sm"
+                        className="flex-1 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
+                        onClick={() => handleActivateSubmission(sub)}>
+                        <CheckCircle2 className="h-3 w-3 mr-1 shrink-0" />
+                        Übernehmen
+                      </Button>
+                    </div>
+
+                    {/* Detail-Link */}
+                    <button
+                      className="text-[11px] text-amber-600 hover:text-amber-800 underline text-left -mt-1"
+                      onClick={() => { setSelectedSubmission(sub); setSelectedId(null); setEditMode(false); setShowMobile('detail'); }}>
+                      Vollständige Daten anzeigen →
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Haupt-Layout: Liste + Detail */}
       <div className="flex-1 flex max-w-7xl w-full mx-auto overflow-hidden" style={{ minHeight: 0 }}>
 
@@ -783,47 +927,16 @@ CREATE POLICY "auth_delete" ON public.onboarding_submissions
             </div>
           ) : (
             <>
-              {/* ── Ausstehende Anmeldungen ── */}
-              {isAdmin && (pendingEmployees.length + submissions.length) > 0 && (
+              {/* ── Legacy: Mitarbeiter mit employee_status = pending_review ── */}
+              {isAdmin && pendingEmployees.length > 0 && (
                 <div className="border-b border-amber-200">
                   <div className="px-4 py-2 bg-amber-50 sticky top-0 z-10 flex items-center gap-2">
                     <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
                     <span className="text-xs font-semibold text-amber-800">
-                      Ausstehende Anmeldungen ({pendingEmployees.length + submissions.length})
+                      Ausstehend ({pendingEmployees.length})
                     </span>
                   </div>
                   <ul className="divide-y divide-amber-100">
-                    {/* Neue Selbst-Anmeldungen aus onboarding_submissions */}
-                    {submissions.map(sub => {
-                      const isSelected = selectedSubmission?.id === sub.id;
-                      const fd = sub.formData;
-                      const contact = (fd.email as string) || (fd.phone as string) || '';
-                      const dateStr = new Date(sub.submittedAt).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit', year: '2-digit' });
-                      return (
-                        <li key={sub.id}>
-                          <button
-                            onClick={() => { setSelectedSubmission(sub); setSelectedId(null); setEditMode(false); setShowMobile('detail'); }}
-                            className={cn(
-                              'w-full text-left px-4 py-3 hover:bg-amber-50/60 transition-colors flex items-center gap-3',
-                              isSelected && 'bg-amber-100/60 border-l-2 border-amber-500',
-                            )}
-                          >
-                            <div className="w-8 h-8 rounded-full bg-amber-200 flex items-center justify-center shrink-0 text-amber-800 font-semibold text-sm">
-                              {sub.name.charAt(0).toUpperCase()}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-slate-800 truncate">{sub.name}</p>
-                              <p className="text-xs text-amber-700 truncate">{contact || `Angemeldet am ${dateStr}`}</p>
-                            </div>
-                            <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 font-semibold shrink-0">
-                              NEU
-                            </span>
-                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          </button>
-                        </li>
-                      );
-                    })}
-                    {/* Legacy: Mitarbeiter mit employee_status = pending_review */}
                     {pendingEmployees.map(emp => {
                       const isSelected = selectedId === emp.id;
                       return (
@@ -841,7 +954,7 @@ CREATE POLICY "auth_delete" ON public.onboarding_submissions
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-slate-800 truncate">{emp.name}</p>
                               <p className="text-xs text-amber-700 truncate">
-                                {emp.email ?? emp.phone ?? 'Selbst-Anmeldung'}
+                                {emp.email ?? emp.phone ?? 'Ausstehend'}
                               </p>
                             </div>
                             <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 font-semibold shrink-0">
@@ -959,58 +1072,12 @@ CREATE POLICY "auth_delete" ON public.onboarding_submissions
                 <div className="flex items-center gap-2 shrink-0">
                   <Button size="sm" variant="outline"
                     className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50"
-                    onClick={async () => {
-                      if (!window.confirm(`Anmeldung von ${selectedSubmission.name} wirklich ablehnen und löschen?`)) return;
-                      const ok = await deleteOnboardingSubmission(selectedSubmission.id);
-                      if (ok) {
-                        setSubmissions(prev => prev.filter(s => s.id !== selectedSubmission.id));
-                        setSelectedSubmission(null);
-                        toast.success(`Anmeldung von ${selectedSubmission.name} abgelehnt.`);
-                      } else {
-                        toast.error('Ablehnen fehlgeschlagen.');
-                      }
-                    }}>
+                    onClick={() => handleRejectSubmission(selectedSubmission)}>
                     Ablehnen
                   </Button>
                   <Button size="sm"
                     className="h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
-                    onClick={async () => {
-                      const fd = selectedSubmission.formData;
-                      // Neuen Mitarbeiter-Datensatz voranlegen
-                      const newEmp: import('@/types/personnel').Employee = {
-                        id:             selectedSubmission.id,
-                        name:           selectedSubmission.name,
-                        department:     'service',
-                        employmentType: ((fd.preferredEmploymentType as string) || 'aushilfe') as import('@/types/personnel').EmploymentType,
-                        hourlyWage:     0,
-                        weeklyHours:    0,
-                        positionTitle:  (fd.desiredPosition as string) || undefined,
-                        contractStart:  (fd.desiredStartDate as string) || undefined,
-                        birthDate:      (fd.birthDate as string)       || undefined,
-                        nationality:    (fd.nationality as string)     || undefined,
-                        phone:          (fd.phone as string)           || undefined,
-                        email:          (fd.email as string)           || undefined,
-                        addressStreet:  (fd.addressStreet as string)   || undefined,
-                        addressZip:     (fd.addressZip as string)      || undefined,
-                        addressCity:    (fd.addressCity as string)     || undefined,
-                        ahvNumber:      (fd.ahvNumber as string)       || undefined,
-                        iban:           (fd.iban as string)            || undefined,
-                        permitType:     (fd.permitType as string)      || undefined,
-                        maritalStatus:  (fd.maritalStatus as string)   || undefined,
-                        onboardingStatus: 'completed',
-                      };
-                      const saved = await upsertEmployee(newEmp);
-                      if (saved) {
-                        await deleteOnboardingSubmission(selectedSubmission.id);
-                        setSubmissions(prev => prev.filter(s => s.id !== selectedSubmission.id));
-                        setEmployees(prev => [...prev, saved]);
-                        setSelectedSubmission(null);
-                        setSelectedId(saved.id);
-                        toast.success(`${selectedSubmission.name} wurde als Mitarbeiter angelegt!`);
-                      } else {
-                        toast.error('Aktivierung fehlgeschlagen. Bitte prüfen Sie, ob alle Basis-Migrationen ausgeführt wurden.');
-                      }
-                    }}>
+                    onClick={() => handleActivateSubmission(selectedSubmission)}>
                     <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
                     Als Mitarbeiter anlegen
                   </Button>

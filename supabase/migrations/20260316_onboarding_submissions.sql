@@ -13,26 +13,30 @@ CREATE TABLE IF NOT EXISTS public.onboarding_submissions (
   form_data    JSONB        NOT NULL DEFAULT '{}'::jsonb
 );
 
+-- Explizite Zugriffsrechte (zusätzlich zu RLS-Policies notwendig)
+GRANT SELECT, INSERT, DELETE ON TABLE public.onboarding_submissions TO authenticated;
+GRANT INSERT ON TABLE public.onboarding_submissions TO anon;
+
 -- RLS aktivieren
 ALTER TABLE public.onboarding_submissions ENABLE ROW LEVEL SECURITY;
 
 -- Jeder (auch anonym) darf neue Einträge erstellen
-DROP POLICY IF EXISTS "Anon und Auth dürfen Einträge erstellen" ON public.onboarding_submissions;
-CREATE POLICY "Anon und Auth dürfen Einträge erstellen"
+DROP POLICY IF EXISTS "anon_insert" ON public.onboarding_submissions;
+CREATE POLICY "anon_insert"
   ON public.onboarding_submissions FOR INSERT
   TO anon, authenticated
   WITH CHECK (true);
 
 -- Nur eingeloggte Benutzer dürfen Einträge lesen
-DROP POLICY IF EXISTS "Auth darf lesen" ON public.onboarding_submissions;
-CREATE POLICY "Auth darf lesen"
+DROP POLICY IF EXISTS "auth_select" ON public.onboarding_submissions;
+CREATE POLICY "auth_select"
   ON public.onboarding_submissions FOR SELECT
   TO authenticated
   USING (true);
 
 -- Nur eingeloggte Benutzer dürfen Einträge löschen (Aktivieren / Ablehnen)
-DROP POLICY IF EXISTS "Auth darf löschen" ON public.onboarding_submissions;
-CREATE POLICY "Auth darf löschen"
+DROP POLICY IF EXISTS "auth_delete" ON public.onboarding_submissions;
+CREATE POLICY "auth_delete"
   ON public.onboarding_submissions FOR DELETE
   TO authenticated
   USING (true);
