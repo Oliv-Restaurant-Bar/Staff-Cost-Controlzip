@@ -51,6 +51,7 @@ import {
 } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
 import { generateContract, detectContractTemplate } from '@/lib/generateContract';
+import { ContractDraft, defaultContractDraft } from '@/types/contract';
 import { calcSL, calcML, LGAV } from '@/lib/salaryCalc';
 import { toast } from 'sonner';
 
@@ -352,6 +353,8 @@ const Personalstamm = () => {
   const [contractBlobUrl,     setContractBlobUrl]     = useState<string | null>(null);
   const [contractPdfFileName, setContractPdfFileName] = useState<string | null>(null);
   const [generatingContract,  setGeneratingContract]  = useState(false);
+  const [contractDraft,       setContractDraft]       = useState<ContractDraft | null>(null);
+  const [showContractEditor,  setShowContractEditor]  = useState(false);
 
   // ── UI-Abschnitte aufklappbar ──────────────────────────────────────────────
   const [openPersonal,   setOpenPersonal]   = useState(false);
@@ -497,6 +500,8 @@ const Personalstamm = () => {
     if (contractBlobUrl) URL.revokeObjectURL(contractBlobUrl);
     setContractBlobUrl(null);
     setContractPdfFileName(null);
+    setContractDraft(defaultContractDraft(emp));
+    setShowContractEditor(false);
   };
 
   const startEdit = () => {
@@ -657,11 +662,12 @@ const Personalstamm = () => {
   const handleGenerateContract = () => {
     const emp = employees.find(e => e.id === selectedId) ?? editData;
     if (!emp) return;
+    const draft = contractDraft ?? defaultContractDraft(emp);
     setGeneratingContract(true);
     try {
       // Alte Blob-URL freigeben (Memory-Leak vermeiden)
       if (contractBlobUrl) URL.revokeObjectURL(contractBlobUrl);
-      const { blobUrl, fileName } = generateContract(emp);
+      const { blobUrl, fileName } = generateContract(emp, draft);
       setContractBlobUrl(blobUrl);
       setContractPdfFileName(fileName);
     } catch (err) {
@@ -2174,35 +2180,228 @@ CREATE POLICY "Anon self-register new employee"
               </Card>
 
               {/* ── Abschnitt 7: Arbeitsvertrag ───────────────────────────── */}
-              {isAdmin && selectedEmp && (
+              {isAdmin && selectedEmp && contractDraft && (
                 <Card>
                   <CardHeader className="pb-2 pt-4">
                     <CardTitle className="text-sm flex items-center gap-2">
                       <FileSignature className="h-4 w-4 text-indigo-600" />
                       Arbeitsvertrag
-                      {selectedEmp && (
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-normal border ${
-                          detectContractTemplate(selectedEmp) === 'ML'
-                            ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 text-blue-700'
-                            : 'bg-orange-50 dark:bg-orange-950/20 border-orange-200 text-orange-700'
-                        }`}>
-                          {detectContractTemplate(selectedEmp) === 'ML' ? 'ML – Monatslohn' : 'SL – Stundenlohn'}
-                        </span>
-                      )}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-normal border ${
+                        detectContractTemplate(selectedEmp) === 'ML'
+                          ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 text-blue-700'
+                          : 'bg-orange-50 dark:bg-orange-950/20 border-orange-200 text-orange-700'
+                      }`}>
+                        {detectContractTemplate(selectedEmp) === 'ML' ? 'ML – Monatslohn' : 'SL – Stundenlohn'}
+                      </span>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-0 space-y-3">
 
-                    {/* Erklärung Vertragstyp */}
-                    <div className="rounded-md bg-muted/30 border border-border px-3 py-2 text-xs text-muted-foreground space-y-0.5">
-                      <p>
-                        <span className="font-medium text-foreground">Vorlage:</span>{' '}
-                        {detectContractTemplate(selectedEmp) === 'ML'
-                          ? 'Monatslohn-Vertrag (ML) – Festanstellung mit fixem Monatsgehalt'
-                          : 'Stundenlohn-Vertrag (SL) – Aushilfe / unregelmässige Beschäftigung'}
-                      </p>
-                      <p>Alle Felder werden automatisch aus dem Mitarbeiterprofil übernommen.</p>
-                    </div>
+                    {/* Toggle: Vertragseinstellungen */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full h-8 text-xs justify-between"
+                      onClick={() => setShowContractEditor(v => !v)}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Edit3 className="h-3.5 w-3.5" />
+                        Vertragseinstellungen (Checkboxen bearbeiten)
+                      </span>
+                      <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showContractEditor ? 'rotate-180' : ''}`} />
+                    </Button>
+
+                    {/* ── Interaktiver Vertragseditor ────────────────────── */}
+                    {showContractEditor && contractDraft && (
+                      <div className="rounded-md border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/20 p-3 space-y-4 text-xs">
+
+                        {/* Helper-Komponenten inline */}
+                        {(() => {
+                          const d = contractDraft;
+                          const upd = (patch: Partial<ContractDraft>) => setContractDraft(prev => prev ? { ...prev, ...patch } : prev);
+
+                          const CbRow = ({ checked, label, onClick }: { checked: boolean; label: string; onClick: () => void }) => (
+                            <label className="flex items-start gap-2 cursor-pointer hover:bg-white/60 dark:hover:bg-white/5 rounded px-1 py-0.5">
+                              <button
+                                type="button"
+                                onClick={onClick}
+                                className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border text-center leading-none text-[10px] font-bold transition-colors ${
+                                  checked
+                                    ? 'bg-indigo-600 border-indigo-600 text-white'
+                                    : 'bg-white dark:bg-background border-border'
+                                }`}
+                              >
+                                {checked ? '✓' : ''}
+                              </button>
+                              <span className={checked ? 'font-medium text-foreground' : 'text-muted-foreground'}>{label}</span>
+                            </label>
+                          );
+
+                          const SectionHead = ({ title }: { title: string }) => (
+                            <p className="font-semibold text-indigo-700 dark:text-indigo-400 border-b border-indigo-200 dark:border-indigo-800 pb-0.5 mb-1.5">{title}</p>
+                          );
+
+                          return (
+                            <>
+                              {/* Art. 0 / Header: Vollzeit / Teilzeit (nur ML) */}
+                              {detectContractTemplate(selectedEmp) === 'ML' && (
+                                <div>
+                                  <SectionHead title="Vertragsart (Kopfzeile)" />
+                                  <CbRow checked={d.employmentMode === 'vollzeit'} label="■ a)  für Vollzeitmitarbeiter/in" onClick={() => upd({ employmentMode: 'vollzeit' })} />
+                                  <CbRow checked={d.employmentMode === 'teilzeit'} label="■ b)  für Teilzeitmitarbeiter/in (mit regelmässigem, festgelegtem Arbeitspensum)" onClick={() => upd({ employmentMode: 'teilzeit' })} />
+                                </div>
+                              )}
+
+                              {/* Art. 1c: Raucherbetrieb */}
+                              <div>
+                                <SectionHead title="Ziff. 1c – Raucherbetrieb" />
+                                <CbRow checked={d.smokingConsent === 'aa'} label="■ aa)  Mitarbeitende/r stimmt Beschäftigung in Raucherbetrieb zu" onClick={() => upd({ smokingConsent: 'aa' })} />
+                                <CbRow checked={d.smokingConsent === 'bb'} label="■ bb)  Mitarbeitende/r lehnt Beschäftigung in Raucherbetrieb ab" onClick={() => upd({ smokingConsent: 'bb' })} />
+                              </div>
+
+                              {/* Art. 2: Vertragsdauer */}
+                              <div>
+                                <SectionHead title="Ziff. 2 – Vertragsdauer" />
+                                <CbRow checked={d.duration === 'unlimited'} label="■ a)  unbefristet, kündbar gemäss Ziff. 3 und 4" onClick={() => upd({ duration: 'unlimited' })} />
+                                <CbRow checked={d.duration === 'limited_cancellable'} label={`■ b)  befristet bis ${d.endDate ?? '___________'}, kündbar`} onClick={() => upd({ duration: 'limited_cancellable' })} />
+                                <CbRow checked={d.duration === 'limited_fixed'} label="■ c)  befristet, nicht kündbar" onClick={() => upd({ duration: 'limited_fixed' })} />
+                                {(d.duration === 'limited_cancellable' || d.duration === 'limited_fixed') && (
+                                  <div className="mt-1 ml-6">
+                                    <Label className="text-[10px] text-muted-foreground mb-0.5 block">Vertragsende</Label>
+                                    <Input type="date" className="h-6 text-xs w-36"
+                                      value={d.endDate ?? ''}
+                                      onChange={e => upd({ endDate: e.target.value || undefined })} />
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Art. 3: Probezeit */}
+                              <div>
+                                <SectionHead title="Ziff. 3 – Probezeit" />
+                                <CbRow checked={d.probation === 'three_months_7d'} label="■ a)  3 Monate, 7 Tage Kündigungsfrist" onClick={() => upd({ probation: 'three_months_7d' })} />
+                                <CbRow checked={d.probation === 'fourteen_days'}   label="■ b)  14 Tage, 3 Tage Kündigungsfrist" onClick={() => upd({ probation: 'fourteen_days' })} />
+                                <CbRow checked={d.probation === 'none'}            label="■ c)  keine Probezeit" onClick={() => upd({ probation: 'none' })} />
+                                <CbRow checked={d.probation === 'custom'}          label="■ d)  individuell (max. 3 Monate, min. 3 Tage Kündigungsfrist)" onClick={() => upd({ probation: 'custom' })} />
+                                {d.probation === 'custom' && (
+                                  <div className="mt-1 ml-6 flex gap-3">
+                                    <div>
+                                      <Label className="text-[10px] text-muted-foreground mb-0.5 block">Monate (1-3)</Label>
+                                      <Input type="number" min={1} max={3} className="h-6 text-xs w-16"
+                                        value={d.probationMonths ?? 3}
+                                        onChange={e => upd({ probationMonths: Math.min(3, Math.max(1, +e.target.value || 1)) })} />
+                                    </div>
+                                    <div>
+                                      <Label className="text-[10px] text-muted-foreground mb-0.5 block">Kündigung (Tage, min. 3)</Label>
+                                      <Input type="number" min={3} className="h-6 text-xs w-16"
+                                        value={d.probationNoticeDays ?? 3}
+                                        onChange={e => upd({ probationNoticeDays: Math.max(3, +e.target.value || 3) })} />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Art. 4: Kündigung */}
+                              <div>
+                                <SectionHead title="Ziff. 4 – Kündigung" />
+                                <CbRow checked={d.notice === 'standard'} label="■ a)  Standard (1 Monat, ab 6. Dienstjahr 2 Monate, auf Monatsende)" onClick={() => upd({ notice: 'standard' })} />
+                                <CbRow checked={d.notice === 'extended'} label="■ b)  längere Kündigungsfrist (individuell)" onClick={() => upd({ notice: 'extended' })} />
+                                {d.notice === 'extended' && (
+                                  <div className="mt-1 ml-6">
+                                    <Label className="text-[10px] text-muted-foreground mb-0.5 block">Beschreibung</Label>
+                                    <Input className="h-6 text-xs"
+                                      value={d.noticeExtended ?? ''}
+                                      onChange={e => upd({ noticeExtended: e.target.value })} />
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Art. 7: Berufsausbildung */}
+                              <div>
+                                <SectionHead title="Ziff. 7 – Berufsausbildung" />
+                                {([
+                                  ['eba',          'a) eidgenössisches Berufsattest (EBA)'],
+                                  ['efz',          'b) eidgenössisches Fähigkeitszeugnis (EFZ)'],
+                                  ['efz_plus',     'c) EFZ + mind. 6 Tage anerkannte Weiterbildung'],
+                                  ['berufspruefung','d) Berufsprüfung nach Art. 27 lit. a BBG'],
+                                  ['other_cert',   'e) anderes Zertifikat'],
+                                  ['progresso',    'f) keine Lehre, aber Progresso-Ausbildung'],
+                                  ['none',         'g) keine L-GAV-relevante Ausbildung'],
+                                ] as [ContractDraft['education'], string][]).map(([val, label]) => (
+                                  <CbRow key={val} checked={d.education === val} label={`■ ${label}`} onClick={() => upd({ education: val })} />
+                                ))}
+                                {d.education === 'other_cert' && (
+                                  <div className="mt-1 ml-6">
+                                    <Label className="text-[10px] text-muted-foreground mb-0.5 block">Bezeichnung Zertifikat</Label>
+                                    <Input className="h-6 text-xs"
+                                      value={d.educationOtherText ?? ''}
+                                      onChange={e => upd({ educationOtherText: e.target.value })} />
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Art. 9 Stufe I */}
+                              <div>
+                                <SectionHead title="Ziff. 9 – Lohnreduktion Stufe I (ungelernt)" />
+                                <CbRow checked={d.wageRedI === 'first_12m'} label="■ a)  Erstanstellung – Reduktion 8% für erste 12 Monate" onClick={() => upd({ wageRedI: 'first_12m' })} />
+                                <CbRow checked={d.wageRedI === 'first_3m'}  label="■ b)  Erfahren (> 4 Mt. in L-GAV) – Reduktion 8% für erste 3 Monate" onClick={() => upd({ wageRedI: 'first_3m' })} />
+                                <CbRow checked={d.wageRedI === 'none'}      label="■ c)  kein Abzug während Einführungszeit" onClick={() => upd({ wageRedI: 'none' })} />
+                              </div>
+
+                              {/* Art. 9 Stufe II */}
+                              <div>
+                                <SectionHead title="Ziff. 9 – Lohnreduktion Stufe II/IIIa (EBA/EFZ)" />
+                                <CbRow checked={d.wageRedII === 'first_3m'} label="■ a)  Erstanstellung nach Ausbildung – Reduktion 8% für erste 3 Monate" onClick={() => upd({ wageRedII: 'first_3m' })} />
+                                <CbRow checked={d.wageRedII === 'none'}     label="■ b)  kein Abzug während Einführungszeit" onClick={() => upd({ wageRedII: 'none' })} />
+                              </div>
+
+                              {/* Art. 10d: Lohnauszahlung */}
+                              <div>
+                                <SectionHead title="Ziff. 10d – Lohnauszahlung" />
+                                <CbRow checked={d.paymentTiming === 'last'}       label="■ a)  spätestens am letzten Tag des Monats" onClick={() => upd({ paymentTiming: 'last' })} />
+                                <CbRow checked={d.paymentTiming === 'sixth'}      label="■ b)  spätestens am 6. des Folgemonats" onClick={() => upd({ paymentTiming: 'sixth' })} />
+                                <CbRow checked={d.paymentTiming === 'collective'} label="■ c)  gemäss Art. 14 Ziff. 1 Abs. 2 L-GAV" onClick={() => upd({ paymentTiming: 'collective' })} />
+                              </div>
+
+                              {/* Art. 12a: Nachtarbeit */}
+                              <div>
+                                <SectionHead title="Ziff. 12a – Nachtarbeit" />
+                                <CbRow checked={d.nightWork === 'aa'} label="■ aa)  24 – 7 Uhr" onClick={() => upd({ nightWork: 'aa' })} />
+                                <CbRow checked={d.nightWork === 'bb'} label="■ bb)  22 – 5 Uhr" onClick={() => upd({ nightWork: 'bb' })} />
+                                <CbRow checked={d.nightWork === 'cc'} label="■ cc)  23 – 6 Uhr" onClick={() => upd({ nightWork: 'cc' })} />
+                                <CbRow checked={d.nightWork === 'dd'} label="■ dd)  23:30 – 6:30 Uhr" onClick={() => upd({ nightWork: 'dd' })} />
+                              </div>
+
+                              {/* Art. 12b: 6-Tage-Woche */}
+                              <div>
+                                <SectionHead title="Ziff. 12b – 6-Tage-Woche" />
+                                <CbRow checked={d.sixDayWork}  label="■ b)  vorübergehend 6 Arbeitstage pro Woche (Einverständnis)" onClick={() => upd({ sixDayWork: !d.sixDayWork })} />
+                              </div>
+
+                              {/* Art. 13: Besondere Vereinbarungen */}
+                              <div>
+                                <SectionHead title="Ziff. 13 – Besondere Vereinbarungen" />
+                                <Textarea
+                                  className="text-xs min-h-[80px]"
+                                  placeholder="Eine Vereinbarung pro Zeile…"
+                                  value={d.specialAgreements}
+                                  onChange={e => upd({ specialAgreements: e.target.value })}
+                                />
+                              </div>
+
+                              {/* Zurücksetzen */}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-[11px] text-muted-foreground w-full"
+                                onClick={() => setContractDraft(defaultContractDraft(selectedEmp))}
+                              >
+                                ↺  Auf Standardwerte zurücksetzen
+                              </Button>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    )}
 
                     {/* Fehlende Pflichtfelder */}
                     {(() => {
