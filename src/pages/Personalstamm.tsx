@@ -51,6 +51,7 @@ import {
 } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
 import { generateContract, detectContractTemplate } from '@/lib/generateContract';
+import { calcSL, calcML, LGAV } from '@/lib/salaryCalc';
 import { toast } from 'sonner';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
@@ -157,51 +158,48 @@ function formatCHF(v?: number): string {
 
 /** Vollständige Lohnkostenberechnung inkl. Sozialkosten */
 interface SalaryCosts {
-  mode:            'monthly' | 'hourly' | 'none';
-  grossMonthly:    number | null;   // Brutto-Monatslohn (inkl. 13. wenn aktiv)
-  annualGross:     number | null;   // Jahresbrutto
-  socialFactor:    number;          // z.B. 1.13
-  socialCostMonthly: number | null; // AG-Sozialkosten pro Monat
-  totalAnnual:     number | null;   // Jahresvollkosten (Brutto * Faktor)
-  internalHourly:  number | null;   // Interner Stundenansatz (für Dienstplan)
+  mode:              'monthly' | 'hourly' | 'none';
+  grossMonthly:      number | null;
+  annualGross:       number | null;
+  socialFactor:      number;
+  socialCostMonthly: number | null;
+  totalAnnual:       number | null;
+  internalHourly:    number | null;
 }
 
 function calcSalaryCosts(emp: Employee): SalaryCosts {
   const factor  = emp.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
   const has13th = emp.has13thSalary ?? false;
 
-  // Monatslohn-Basis-MA (Vollzeit / Teilzeit)
   if (emp.monthlySalary && emp.monthlySalary > 0 && emp.weeklyHours && emp.weeklyHours > 0) {
-    // Monatslohn inkl. 13. Monatslohn (1/12 pro Monat)
-    const grossMonthly = has13th
-      ? emp.monthlySalary * (13 / 12)
-      : (emp.monthlySalaryWith13th ?? emp.monthlySalary);
-    const annualGross       = grossMonthly * 12;
-    const totalAnnual       = annualGross * factor;
-    const socialCostMonthly = grossMonthly * (factor - 1);
-    const internalHourly    = totalAnnual / (emp.weeklyHours * 52);
-    return { mode: 'monthly', grossMonthly, annualGross, socialFactor: factor, socialCostMonthly, totalAnnual, internalHourly };
+    const ml = calcML(emp.monthlySalary, has13th, emp.weeklyHours, factor);
+    return {
+      mode: 'monthly',
+      grossMonthly:      ml.effectiveMonthlyGross,
+      annualGross:       ml.annualGross,
+      socialFactor:      factor,
+      socialCostMonthly: ml.socialCostMonthly,
+      totalAnnual:       ml.annualEmployerCost,
+      internalHourly:    ml.internalHourlyCost,
+    };
   }
 
-  // Stundenlohn-MA
   if (emp.hourlyWage > 0) {
-    const internalHourly    = emp.hourlyWage * factor;
-    const socialCostHourly  = emp.hourlyWage * (factor - 1);
+    const sl = calcSL(emp.hourlyWage, has13th, factor);
     return {
       mode: 'hourly',
-      grossMonthly: null,
-      annualGross:  null,
-      socialFactor: factor,
-      socialCostMonthly: socialCostHourly,
-      totalAnnual: null,
-      internalHourly,
+      grossMonthly:      null,
+      annualGross:       null,
+      socialFactor:      factor,
+      socialCostMonthly: sl.socialCostPerHour,
+      totalAnnual:       null,
+      internalHourly:    sl.internalHourlyCost,
     };
   }
 
   return { mode: 'none', grossMonthly: null, annualGross: null, socialFactor: factor, socialCostMonthly: null, totalAnnual: null, internalHourly: null };
 }
 
-/** @deprecated Verwende calcSalaryCosts — nur noch für externe Aufrufe */
 function calcInternalHourlyCost(emp: Employee): number | null {
   return calcSalaryCosts(emp).internalHourly;
 }
@@ -1829,8 +1827,8 @@ CREATE POLICY "Anon self-register new employee"
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block">
-                              Stundenlohn brutto (CHF)
-                              <span className="ml-1 text-[10px] italic opacity-60">für Aushilfen / stundenweise</span>
+                              Basis-Stundenlohn brutto (CHF)
+                              <span className="ml-1 text-[10px] italic opacity-60">ohne L-GAV-Zuschläge</span>
                             </Label>
                             <Input
                               type="number" min="0" step="0.05"
@@ -1895,32 +1893,59 @@ CREATE POLICY "Anon self-register new employee"
                         </div>
 
                         {editData && (() => {
-                          const costs = calcSalaryCosts(editData);
-                          if (costs.mode === 'none') return null;
+                          const factor  = editData.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
+                          const has13th = editData.has13thSalary ?? false;
+                          const hasSL   = editData.hourlyWage > 0;
+                          const hasML   = !!(editData.monthlySalary && editData.monthlySalary > 0 && editData.weeklyHours && editData.weeklyHours > 0);
+                          if (!hasSL && !hasML) return null;
+
+                          const LRow = ({ label, value, bold, sub }: { label: string; value: string; bold?: boolean; sub?: boolean }) => (
+                            <div className={`flex justify-between ${sub ? 'pl-3' : ''}`}>
+                              <span className={bold ? 'font-semibold text-purple-900 dark:text-purple-200' : 'text-purple-700 dark:text-purple-400'}>{label}</span>
+                              <span className={bold ? 'font-semibold text-purple-900 dark:text-purple-200' : 'font-medium'}>{value}</span>
+                            </div>
+                          );
+                          const Sep = () => <Separator className="my-1 bg-purple-200 dark:bg-purple-700" />;
+
                           return (
-                            <div className="rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 p-3 space-y-1.5 text-xs">
-                              <p className="font-semibold text-purple-800 dark:text-purple-300 flex items-center gap-1">
-                                <Calculator className="h-3 w-3" /> Berechnungsvorschau
+                            <div className="rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 p-3 space-y-1 text-xs">
+                              <p className="font-semibold text-purple-800 dark:text-purple-300 flex items-center gap-1 mb-2">
+                                <Calculator className="h-3 w-3" /> L-GAV Kostenvorschau
                               </p>
-                              {costs.mode === 'monthly' && costs.grossMonthly && (
-                                <>
-                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Brutto/Monat (effektiv)</span><span className="font-medium">{formatCHF(costs.grossMonthly)}</span></div>
-                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">AG-Sozialkosten/Monat</span><span className="font-medium">{costs.socialCostMonthly ? formatCHF(costs.socialCostMonthly) : '–'}</span></div>
-                                  <Separator className="my-1 bg-purple-200" />
-                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Jahresvollkosten</span><span className="font-semibold">{costs.totalAnnual ? formatCHF(costs.totalAnnual) : '–'}</span></div>
-                                </>
-                              )}
-                              {costs.mode === 'hourly' && (
-                                <>
-                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Stundenlohn brutto</span><span className="font-medium">{formatCHF(editData.hourlyWage)}</span></div>
-                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">AG-Sozialkosten/h</span><span className="font-medium">{costs.socialCostMonthly ? formatCHF(costs.socialCostMonthly) : '–'}</span></div>
-                                  <Separator className="my-1 bg-purple-200" />
-                                </>
-                              )}
-                              <div className="flex justify-between items-center">
-                                <span className="font-bold text-purple-800 dark:text-purple-300">Interner Stundenansatz</span>
-                                <span className="font-bold text-purple-800 dark:text-purple-300">{costs.internalHourly ? formatCHF(costs.internalHourly) : '–'}</span>
-                              </div>
+
+                              {hasSL && (() => {
+                                const sl = calcSL(editData.hourlyWage, has13th, factor);
+                                return <>
+                                  <LRow label="Basis-Stundenlohn brutto" value={formatCHF(editData.hourlyWage)} />
+                                  <LRow label={`+ Ferienentschädigung (${(LGAV.VACATION_RATE * 100).toFixed(2)}%)`} value={formatCHF(sl.vacationComp)} sub />
+                                  <LRow label={`+ Feiertagsentschädigung (${(LGAV.PUBLIC_HOLIDAY_RATE * 100).toFixed(2)}%)`} value={formatCHF(sl.holidayComp)} sub />
+                                  <Sep />
+                                  <LRow label="Zwischensumme" value={formatCHF(sl.subtotal)} bold />
+                                  {has13th && <LRow label={`+ 13. Monatslohn (${(LGAV.THIRTEENTH_RATE * 100).toFixed(2)}%)`} value={formatCHF(sl.thirteenthComp)} sub />}
+                                  <Sep />
+                                  <LRow label="Auszahlbarer Stundenlohn" value={formatCHF(sl.totalPayableHourly)} bold />
+                                  <LRow label={`+ AG-Sozialkosten (${((factor - 1) * 100).toFixed(1)}%)`} value={`+ ${formatCHF(sl.socialCostPerHour)}`} sub />
+                                  <Sep />
+                                  <LRow label="Interner Stundenansatz (Kostenstelle)" value={formatCHF(sl.internalHourlyCost)} bold />
+                                  <p className="text-[10px] text-purple-500 italic pt-0.5">= Auszahlbarer Lohn × Sozialkostenfaktor {factor.toFixed(2)}</p>
+                                </>;
+                              })()}
+
+                              {hasML && (() => {
+                                const ml = calcML(editData.monthlySalary!, has13th, editData.weeklyHours!, factor);
+                                return <>
+                                  <LRow label="Monatslohn brutto (Vertrag)" value={formatCHF(ml.baseSalaryMonthly)} />
+                                  {has13th && <LRow label="+ 13. Monatslohn (1/12 p. Monat)" value={formatCHF(ml.effectiveMonthlyGross - ml.baseSalaryMonthly)} sub />}
+                                  {has13th && <><Sep /><LRow label="Effektiver Brutto/Monat (inkl. 13.)" value={formatCHF(ml.effectiveMonthlyGross)} bold /></>}
+                                  <LRow label={`+ AG-Sozialkosten (${((factor - 1) * 100).toFixed(1)}%)`} value={`+ ${formatCHF(ml.socialCostMonthly)}`} sub />
+                                  <Sep />
+                                  <LRow label="Vollkosten pro Monat" value={formatCHF(ml.totalMonthlyEmployerCost)} bold />
+                                  <LRow label="Jahresvollkosten" value={formatCHF(ml.annualEmployerCost)} sub />
+                                  <Sep />
+                                  <LRow label="Interner Stundenansatz (Kostenstelle)" value={formatCHF(ml.internalHourlyCost)} bold />
+                                  <p className="text-[10px] text-purple-500 italic pt-0.5">= Jahresvollkosten ÷ {editData.weeklyHours} h/W ÷ 52 Wochen</p>
+                                </>;
+                              })()}
                             </div>
                           );
                         })()}
@@ -1929,57 +1954,68 @@ CREATE POLICY "Anon self-register new employee"
                       (() => {
                         const empForCost = selectedEmp ?? editData;
                         if (!empForCost) return null;
-                        const costs = calcSalaryCosts(empForCost);
+                        const factor  = empForCost.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
+                        const has13th = empForCost.has13thSalary ?? false;
+                        const hasSL   = empForCost.hourlyWage > 0;
+                        const hasML   = !!(empForCost.monthlySalary && empForCost.monthlySalary > 0 && empForCost.weeklyHours && empForCost.weeklyHours > 0);
+                        if (!hasSL && !hasML) return <p className="text-xs text-muted-foreground italic">Noch kein Lohn erfasst.</p>;
+
+                        const LRow = ({ label, value, bold, sub }: { label: string; value: string; bold?: boolean; sub?: boolean }) => (
+                          <div className={`flex justify-between text-xs ${sub ? 'pl-3' : ''}`}>
+                            <span className={bold ? 'font-semibold text-purple-900 dark:text-purple-200' : 'text-purple-700 dark:text-purple-400'}>{label}</span>
+                            <span className={bold ? 'font-semibold text-purple-900 dark:text-purple-200' : 'font-medium'}>{value}</span>
+                          </div>
+                        );
+                        const Sep = () => <Separator className="my-1 bg-purple-200 dark:bg-purple-700" />;
+
                         return (
                           <div className="space-y-3">
-                            <div className="grid grid-cols-2 gap-y-2 text-sm">
-                              {costs.mode === 'monthly' && costs.grossMonthly && (
-                                <>
-                                  <DataRow label="Brutto/Monat (effektiv)" value={formatCHF(costs.grossMonthly)} />
-                                  <DataRow label="13. Monatslohn" value={empForCost.has13thSalary ? 'Ja' : 'Nein'} />
-                                </>
-                              )}
-                              {costs.mode === 'hourly' && (
-                                <DataRow label="Stundenlohn brutto" value={formatCHF(empForCost.hourlyWage)} />
-                              )}
+                            <div className="grid grid-cols-2 gap-y-1.5 text-sm">
                               <DataRow
                                 label="AG-Sozialkostenfaktor"
-                                value={`${costs.socialFactor.toFixed(2)} (${((costs.socialFactor - 1) * 100).toFixed(1)}%)`}
+                                value={`${factor.toFixed(2)} (${((factor - 1) * 100).toFixed(1)}%)`}
                               />
+                              <DataRow label="13. Monatslohn" value={has13th ? 'Ja – vereinbart' : 'Nicht vereinbart'} />
                             </div>
-                            <div className="rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 p-3 space-y-1.5 text-xs">
-                              <p className="font-semibold text-purple-800 dark:text-purple-300 flex items-center gap-1 mb-2">
-                                <Calculator className="h-3 w-3" /> Vollkostenrechnung
+                            <div className="rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 p-3 space-y-1">
+                              <p className="font-semibold text-purple-800 dark:text-purple-300 flex items-center gap-1 mb-2 text-xs">
+                                <Calculator className="h-3 w-3" />
+                                {hasSL ? 'Stundenlohn-Aufschlüsselung (L-GAV)' : 'Monatslohn-Aufschlüsselung (L-GAV)'}
                               </p>
-                              {costs.mode === 'monthly' && costs.grossMonthly && (
-                                <>
-                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Brutto/Monat</span><span className="font-medium">{formatCHF(costs.grossMonthly)}</span></div>
-                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">AG-Sozialkosten/Monat</span><span className="font-medium text-red-600">{costs.socialCostMonthly ? `+ ${formatCHF(costs.socialCostMonthly)}` : '–'}</span></div>
-                                  <Separator className="my-1.5 bg-purple-200" />
-                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Jahresvollkosten</span><span className="font-semibold">{costs.totalAnnual ? formatCHF(costs.totalAnnual) : '–'}</span></div>
-                                </>
-                              )}
-                              {costs.mode === 'hourly' && (
-                                <>
-                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">Stundenlohn brutto</span><span className="font-medium">{formatCHF(empForCost.hourlyWage)}</span></div>
-                                  <div className="flex justify-between"><span className="text-purple-700 dark:text-purple-400">AG-Sozialkosten/h</span><span className="font-medium text-red-600">{costs.socialCostMonthly ? `+ ${formatCHF(costs.socialCostMonthly)}` : '–'}</span></div>
-                                  <Separator className="my-1.5 bg-purple-200" />
-                                </>
-                              )}
-                              <div className="flex justify-between items-center">
-                                <span className="font-bold text-purple-800 dark:text-purple-300">Interner Stundenansatz</span>
-                                <span className="font-bold text-purple-800 dark:text-purple-300 text-sm">{costs.internalHourly ? formatCHF(costs.internalHourly) : '–'}</span>
-                              </div>
-                              {costs.mode === 'monthly' && empForCost.weeklyHours && (
-                                <p className="text-[10px] text-purple-600 italic mt-1">
-                                  = Jahresvollkosten ÷ {empForCost.weeklyHours} h/W ÷ 52 Wochen
-                                </p>
-                              )}
-                              {costs.mode === 'hourly' && (
-                                <p className="text-[10px] text-purple-600 italic mt-1">
-                                  = Stundenlohn × Sozialkostenfaktor ({costs.socialFactor.toFixed(2)})
-                                </p>
-                              )}
+
+                              {hasSL && (() => {
+                                const sl = calcSL(empForCost.hourlyWage, has13th, factor);
+                                return <>
+                                  <LRow label="Basis-Stundenlohn brutto" value={formatCHF(empForCost.hourlyWage)} />
+                                  <LRow label={`+ Ferienentschädigung (${(LGAV.VACATION_RATE * 100).toFixed(2)}%)`} value={formatCHF(sl.vacationComp)} sub />
+                                  <LRow label={`+ Feiertagsentschädigung (${(LGAV.PUBLIC_HOLIDAY_RATE * 100).toFixed(2)}%)`} value={formatCHF(sl.holidayComp)} sub />
+                                  <Sep />
+                                  <LRow label="Zwischensumme" value={formatCHF(sl.subtotal)} bold />
+                                  {has13th && <LRow label={`+ 13. Monatslohn (${(LGAV.THIRTEENTH_RATE * 100).toFixed(2)}%)`} value={formatCHF(sl.thirteenthComp)} sub />}
+                                  <Sep />
+                                  <LRow label="Auszahlbarer Stundenlohn (Lohnzettel)" value={formatCHF(sl.totalPayableHourly)} bold />
+                                  <LRow label={`+ AG-Sozialkosten (${((factor - 1) * 100).toFixed(1)}%)`} value={`+ ${formatCHF(sl.socialCostPerHour)}`} sub />
+                                  <Sep />
+                                  <LRow label="Interner Stundenansatz (Kostenstelle)" value={formatCHF(sl.internalHourlyCost)} bold />
+                                  <p className="text-[10px] text-purple-500 italic pt-0.5">Gemäss L-GAV: Ferien + Feiertage bereits im Stundenlohn enthalten</p>
+                                </>;
+                              })()}
+
+                              {hasML && (() => {
+                                const ml = calcML(empForCost.monthlySalary!, has13th, empForCost.weeklyHours!, factor);
+                                return <>
+                                  <LRow label="Monatslohn brutto (Vertrag)" value={formatCHF(ml.baseSalaryMonthly)} />
+                                  {has13th && <LRow label="+ 13. Monatslohn (1/12 p. Monat)" value={formatCHF(ml.effectiveMonthlyGross - ml.baseSalaryMonthly)} sub />}
+                                  {has13th && <><Sep /><LRow label="Effektiver Brutto/Monat (inkl. 13.)" value={formatCHF(ml.effectiveMonthlyGross)} bold /></>}
+                                  <LRow label={`+ AG-Sozialkosten (${((factor - 1) * 100).toFixed(1)}%)`} value={`+ ${formatCHF(ml.socialCostMonthly)}`} sub />
+                                  <Sep />
+                                  <LRow label="Vollkosten pro Monat" value={formatCHF(ml.totalMonthlyEmployerCost)} bold />
+                                  <LRow label="Jahresvollkosten" value={formatCHF(ml.annualEmployerCost)} sub />
+                                  <Sep />
+                                  <LRow label="Interner Stundenansatz (Kostenstelle)" value={formatCHF(ml.internalHourlyCost)} bold />
+                                  <p className="text-[10px] text-purple-500 italic pt-0.5">= Jahresvollkosten ÷ {empForCost.weeklyHours} h/Woche ÷ 52 Wochen</p>
+                                </>;
+                              })()}
                             </div>
                           </div>
                         );
@@ -2138,17 +2174,21 @@ CREATE POLICY "Anon self-register new employee"
                       {generatingContract ? 'Wird generiert…' : contractBlobUrl ? 'Vertrag neu generieren' : 'Vertrag generieren'}
                     </Button>
 
-                    {/* Vorschau + Download */}
+                    {/* Bereit-Banner + Download + Vorschau */}
                     {contractBlobUrl && (
                       <div className="space-y-2">
-                        <div className="rounded-md border border-border overflow-hidden">
-                          <iframe
-                            src={contractBlobUrl}
-                            className="w-full"
-                            style={{ height: '420px' }}
-                            title="Vertragsvorschau"
-                          />
+                        {/* Erfolgs-Banner */}
+                        <div className="rounded-md bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 px-3 py-2 flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-emerald-800 dark:text-emerald-300">Vertrag generiert</p>
+                            {contractPdfFileName && (
+                              <p className="text-[11px] text-emerald-700 dark:text-emerald-400 truncate">{contractPdfFileName}</p>
+                            )}
+                          </div>
                         </div>
+
+                        {/* Aktionsbuttons */}
                         <div className="flex gap-2">
                           <Button
                             variant="default"
@@ -2163,17 +2203,38 @@ CREATE POLICY "Anon self-register new employee"
                             variant="outline"
                             size="sm"
                             className="h-8 text-xs"
-                            onClick={handleGenerateContract}
+                            onClick={() => window.open(contractBlobUrl, '_blank')}
                           >
-                            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                            Neu generieren
+                            <FileText className="h-3.5 w-3.5 mr-1.5" />
+                            Im Browser öffnen
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs px-2"
+                            onClick={handleGenerateContract}
+                            title="Neu generieren"
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
                           </Button>
                         </div>
-                        {contractPdfFileName && (
-                          <p className="text-[11px] text-muted-foreground truncate">
-                            Datei: {contractPdfFileName}
-                          </p>
-                        )}
+
+                        {/* Eingebettete Vorschau (object-Tag – breiter Browser-Support) */}
+                        <div className="rounded-md border border-border overflow-hidden">
+                          <object
+                            data={contractBlobUrl}
+                            type="application/pdf"
+                            className="w-full"
+                            style={{ height: '480px' }}
+                          >
+                            <div className="flex flex-col items-center justify-center h-32 text-xs text-muted-foreground gap-2 p-4">
+                              <p>PDF-Vorschau nicht möglich — bitte herunterladen oder im Browser öffnen.</p>
+                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleDownloadContract}>
+                                <Download className="h-3 w-3 mr-1.5" /> PDF herunterladen
+                              </Button>
+                            </div>
+                          </object>
+                        </div>
                       </div>
                     )}
 

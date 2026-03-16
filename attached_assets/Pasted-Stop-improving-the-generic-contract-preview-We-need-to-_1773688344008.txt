@@ -1,0 +1,70 @@
+Stop improving the generic contract preview.
+
+We need to rebuild the employment contract logic properly based on the two uploaded PDF templates and the official L-GAV rules.
+
+Important:
+Do not create a generic fake contract layout.
+Use the uploaded templates as the real basis and stay as close as possible to them in structure and wording.
+Also fix the salary calculation logic in the employee profile.
+
+Please implement the following:
+
+1. Contract generation must follow the uploaded templates closely
+Templates:
+- SL Arbeitsvertrag = hourly wage / irregular workload
+- ML Arbeitsvertrag = monthly salary / fixed workload
+
+Do not create a generic HTML contract that only roughly resembles the template.
+The generated contract should follow the uploaded templates as closely as possible.
+
+2. Correct salary logic in the employee profile
+
+For monthly salary employees:
+- allow entering monthly gross salary
+- allow 13th salary yes/no
+- allow employer social cost factor
+- automatically calculate:
+  - effective monthly gross incl. 13th if applicable
+  - monthly employer cost
+  - internal hourly cost
+
+Use the correct hospitality baseline:
+- normal full-time weekly workload = 42 hours
+- monthly hours = 182 for the normal model
+
+3. Correct hourly wage logic according to L-GAV
+For hourly wage employees, calculate and display separately:
+- base hourly wage
+- vacation compensation = 10.65%
+- public holiday compensation = 2.27%
+- then 13th month salary compensation = 8.33%
+- total payable hourly wage
+- internal hourly cost
+
+Important:
+The 13th month salary compensation must also be applied consistently on the holiday/vacation compensated wage logic as required by the L-GAV approach.
+
+4. Contract type selection
+If employee uses hourly wage -> use SL template
+If employee uses monthly salary -> use ML template
+
+5. Proper contract section in employee profile
+At the end of the employee profile, create a clean section:
+"Arbeitsvertrag"
+
+Functions:
+- contract type visible
+- button "Vertrag generieren"
+- button "PDF herunterladen"
+- button "Vertrag neu generieren"
+
+6. Better preview behavior
+Do not rely on a broken embedded browser preview if Chrome blocks it.
+Provide a reliable preview/download flow instead.
+
+7. Explain in simple German:
+- what was fixed in the contract logic
+- how monthly salary internal hourly cost is calculated
+- how hourly wage surcharges are calculated
+- whether the generated contract now follows the uploaded templates closely
+- what I should test next
