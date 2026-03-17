@@ -50,6 +50,7 @@ import {
   OnboardingSubmission,
 } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { generateContract, detectContractTemplate } from '@/lib/generateContract';
 import { ContractDraft, defaultContractDraft } from '@/types/contract';
 import { calcSL, calcML, LGAV } from '@/lib/salaryCalc';
@@ -354,7 +355,8 @@ const Personalstamm = () => {
   const [contractPdfFileName, setContractPdfFileName] = useState<string | null>(null);
   const [generatingContract,  setGeneratingContract]  = useState(false);
   const [contractDraft,       setContractDraft]       = useState<ContractDraft | null>(null);
-  const [showContractEditor,  setShowContractEditor]  = useState(false);
+  const [showContractEditor,  setShowContractEditor]  = useState(true);
+  const [activeDetailTab,     setActiveDetailTab]     = useState<'stammdaten' | 'vertrag'>('stammdaten');
 
   // ── UI-Abschnitte aufklappbar ──────────────────────────────────────────────
   const [openPersonal,   setOpenPersonal]   = useState(false);
@@ -501,7 +503,8 @@ const Personalstamm = () => {
     setContractBlobUrl(null);
     setContractPdfFileName(null);
     setContractDraft(defaultContractDraft(emp));
-    setShowContractEditor(false);
+    setShowContractEditor(true);
+    setActiveDetailTab('stammdaten');
   };
 
   const startEdit = () => {
@@ -670,6 +673,7 @@ const Personalstamm = () => {
       const { blobUrl, fileName } = generateContract(emp, draft);
       setContractBlobUrl(blobUrl);
       setContractPdfFileName(fileName);
+      setActiveDetailTab('vertrag');
     } catch (err) {
       console.error('Vertragsgenerierung fehlgeschlagen:', err);
       toast.error('Vertrag konnte nicht generiert werden. Bitte prüfe die Mitarbeiterdaten.');
@@ -1378,6 +1382,24 @@ CREATE POLICY "Anon self-register new employee"
                   )}
                 </div>
               </div>
+
+              {/* ── Tab-Leiste ────────────────────────────────────────────── */}
+              <Tabs
+                value={activeDetailTab}
+                onValueChange={(v) => setActiveDetailTab(v as 'stammdaten' | 'vertrag')}
+              >
+                <TabsList className="w-full grid grid-cols-2 mb-2">
+                  <TabsTrigger value="stammdaten" className="text-xs">
+                    Stammdaten
+                  </TabsTrigger>
+                  <TabsTrigger value="vertrag" className="text-xs flex items-center gap-1.5">
+                    <FileSignature className="h-3.5 w-3.5" />
+                    Arbeitsvertrag
+                  </TabsTrigger>
+                </TabsList>
+
+                {/* ── Tab 1: Stammdaten ──────────────────────────────────── */}
+                <TabsContent value="stammdaten" className="space-y-4 mt-0">
 
               {/* ── Abschnitt 1: Allgemeine Infos ──────────────────────────── */}
               <Card>
@@ -2179,13 +2201,20 @@ CREATE POLICY "Anon self-register new employee"
                 </CardContent>
               </Card>
 
+                </TabsContent>
+
+                {/* ── Tab 2: Arbeitsvertrag ──────────────────────────────────── */}
+                <TabsContent value="vertrag" className="space-y-4 mt-0">
+
               {/* ── Abschnitt 7: Arbeitsvertrag ───────────────────────────── */}
               {isAdmin && selectedEmp && contractDraft && (
                 <Card>
                   <CardHeader className="pb-2 pt-4">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <FileSignature className="h-4 w-4 text-indigo-600" />
-                      Arbeitsvertrag
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <FileSignature className="h-4 w-4 text-indigo-600" />
+                        Vertragseinstellungen
+                      </span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-normal border ${
                         detectContractTemplate(selectedEmp) === 'ML'
                           ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 text-blue-700'
@@ -2197,22 +2226,8 @@ CREATE POLICY "Anon self-register new employee"
                   </CardHeader>
                   <CardContent className="pt-0 space-y-3">
 
-                    {/* Toggle: Vertragseinstellungen */}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full h-8 text-xs justify-between"
-                      onClick={() => setShowContractEditor(v => !v)}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <Edit3 className="h-3.5 w-3.5" />
-                        Vertragseinstellungen (Checkboxen bearbeiten)
-                      </span>
-                      <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showContractEditor ? 'rotate-180' : ''}`} />
-                    </Button>
-
                     {/* ── Interaktiver Vertragseditor ────────────────────── */}
-                    {showContractEditor && contractDraft && (
+                    {contractDraft && (
                       <div className="rounded-md border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/20 p-3 space-y-4 text-xs">
 
                         {/* Helper-Komponenten inline */}
@@ -2592,6 +2607,9 @@ CREATE POLICY "Anon self-register new employee"
                   })()}
                 </CardContent>
               </Card>
+
+                </TabsContent>
+              </Tabs>
 
             </div>
           )}
