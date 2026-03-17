@@ -2,7 +2,18 @@ import { useState, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -10,7 +21,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Upload, FileText, XCircle, CheckCircle2, AlertTriangle, Info, Loader2,
+  Upload, FileText, XCircle, CheckCircle2, AlertTriangle, Info,
+  Loader2, PencilLine, Save,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { parseGastronoviExcel, GastronoviDayResult } from '@/lib/revenue-parser';
@@ -36,6 +48,217 @@ function parseLocalDate(dateStr: string): Date {
   return new Date(y, m - 1, d);
 }
 
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function loadBudgets(): Record<string, DailyBudget> {
+  try { return JSON.parse(localStorage.getItem(DAILY_BUDGETS_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+function saveBudgets(b: Record<string, DailyBudget>) {
+  localStorage.setItem(DAILY_BUDGETS_KEY, JSON.stringify(b));
+}
+
+// ─── Manual entry sub-component ──────────────────────────────────────────────
+
+function ManualEntryCard() {
+  const [date, setDate]         = useState(todayIso());
+  const [target, setTarget]     = useState<ImportTarget>('actual');
+  const [total, setTotal]       = useState('');
+  const [food, setFood]         = useState('');
+  const [beverage, setBeverage] = useState('');
+  const [splitMode, setSplitMode] = useState(false);
+  const [saved, setSaved]       = useState(false);
+
+  const existingValue = (() => {
+    const b = loadBudgets();
+    const e = b[date];
+    if (!e) return null;
+    return target === 'actual' ? e.actualRevenue : e.previousYearRevenue;
+  })();
+
+  const handleSave = () => {
+    const totalNum = parseFloat(total.replace(',', '.'));
+    if (!date || isNaN(totalNum) || totalNum < 0) {
+      toast.error('Bitte gültiges Datum und Betrag eingeben');
+      return;
+    }
+
+    let foodNum = 0;
+    let bevNum  = 0;
+
+    if (splitMode) {
+      foodNum = parseFloat(food.replace(',', '.')) || 0;
+      bevNum  = parseFloat(beverage.replace(',', '.')) || 0;
+    } else {
+      foodNum = Math.round(totalNum * 0.70 * 100) / 100;
+      bevNum  = Math.round(totalNum * 0.30 * 100) / 100;
+    }
+
+    const budgets = loadBudgets();
+    const prev = budgets[date] ?? {
+      date,
+      plannedRevenue: 0,
+      actualRevenue: 0,
+      previousYearRevenue: 0,
+      plannedLaborCost: 0,
+      actualLaborCost: 0,
+    };
+
+    if (target === 'actual') {
+      budgets[date] = { ...prev, actualRevenue: totalNum, actualFood: foodNum, actualBeverage: bevNum };
+    } else {
+      budgets[date] = { ...prev, previousYearRevenue: totalNum, previousYearFood: foodNum, previousYearBeverage: bevNum };
+    }
+
+    saveBudgets(budgets);
+    setSaved(true);
+    toast.success(`Umsatz für ${format(parseLocalDate(date), 'dd. MMM yyyy', { locale: de })} gespeichert`);
+    setTimeout(() => setSaved(false), 3000);
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <PencilLine className="h-4 w-4" />
+          Tagesumsatz manuell erfassen
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {/* Date */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Datum
+            </label>
+            <Input
+              type="date"
+              value={date}
+              onChange={e => { setDate(e.target.value); setSaved(false); }}
+              className="h-9"
+            />
+          </div>
+
+          {/* Target */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Typ
+            </label>
+            <Select value={target} onValueChange={v => { setTarget(v as ImportTarget); setSaved(false); }}>
+              <SelectTrigger className="h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="actual">Ist-Umsatz</SelectItem>
+                <SelectItem value="previous_year">Vorjahresumsatz</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Total */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Umsatz (CHF)
+            </label>
+            <Input
+              type="number"
+              min="0"
+              step="0.05"
+              placeholder="0.00"
+              value={total}
+              onChange={e => { setTotal(e.target.value); setSaved(false); }}
+              className="h-9"
+            />
+          </div>
+
+          {/* Save */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide invisible">
+              &nbsp;
+            </label>
+            <Button
+              onClick={handleSave}
+              className="h-9 w-full"
+              variant={saved ? 'outline' : 'default'}
+            >
+              {saved ? (
+                <><CheckCircle2 className="h-4 w-4 mr-1.5 text-green-600" />Gespeichert</>
+              ) : (
+                <><Save className="h-4 w-4 mr-1.5" />Speichern</>
+              )}
+            </Button>
+          </div>
+        </div>
+
+        {/* Existing value hint */}
+        {existingValue != null && existingValue > 0 && (
+          <Alert className="text-sm py-2">
+            <Info className="h-4 w-4" />
+            <AlertDescription>
+              Bestehender Wert für diesen Tag: <strong>{fmt(existingValue)}</strong> — wird beim Speichern überschrieben.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Optional Food/Bev split */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSplitMode(s => !s)}
+            className="text-xs text-primary underline underline-offset-2 hover:opacity-70"
+          >
+            {splitMode ? 'Food/Beverage-Split ausblenden' : 'Food/Beverage manuell aufteilen'}
+          </button>
+          {!splitMode && total && (
+            <span className="text-xs text-muted-foreground">
+              (automatisch: 70% Food / 30% Beverage)
+            </span>
+          )}
+        </div>
+
+        {splitMode && (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Food (CHF)
+              </label>
+              <Input
+                type="number"
+                min="0"
+                step="0.05"
+                placeholder="0.00"
+                value={food}
+                onChange={e => setFood(e.target.value)}
+                className="h-9"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Beverage (CHF)
+              </label>
+              <Input
+                type="number"
+                min="0"
+                step="0.05"
+                placeholder="0.00"
+                value={beverage}
+                onChange={e => setBeverage(e.target.value)}
+                className="h-9"
+              />
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Main import section ──────────────────────────────────────────────────────
+
 export function GastronoviImportSection() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging]   = useState(false);
@@ -46,6 +269,11 @@ export function GastronoviImportSection() {
   const [year, setYear]           = useState<string>(String(new Date().getFullYear()));
   const [target, setTarget]       = useState<ImportTarget>('actual');
   const [imported, setImported]   = useState(false);
+
+  // Overwrite dialog state
+  const [showOverwriteDialog, setShowOverwriteDialog] = useState(false);
+  const [existingCount, setExistingCount]             = useState(0);
+  const [newCount, setNewCount]                       = useState(0);
 
   const currentYear = new Date().getFullYear();
   const yearOptions = [currentYear + 1, currentYear, currentYear - 1, currentYear - 2];
@@ -94,18 +322,43 @@ export function GastronoviImportSection() {
     if (file) handleFile(file);
   }, [handleFile]);
 
-  const handleImport = () => {
+  // Called when user clicks "X Tage importieren"
+  const handleImportClick = () => {
     if (!results) return;
 
-    const existing: Record<string, DailyBudget> = (() => {
-      try { return JSON.parse(localStorage.getItem(DAILY_BUDGETS_KEY) || '{}'); }
-      catch { return {}; }
-    })();
+    const budgets = loadBudgets();
+    const field = target === 'actual' ? 'actualRevenue' : 'previousYearRevenue';
 
-    const updated = { ...existing };
-
+    let existing = 0;
+    let fresh = 0;
     for (const r of results) {
-      const prev = updated[r.date] ?? {
+      const val = budgets[r.date]?.[field];
+      if (val != null && val > 0) existing++;
+      else fresh++;
+    }
+
+    if (existing > 0) {
+      setExistingCount(existing);
+      setNewCount(fresh);
+      setShowOverwriteDialog(true);
+    } else {
+      commitImport(results, 'all');
+    }
+  };
+
+  // mode: 'all' = overwrite everything, 'new' = skip existing
+  const commitImport = (rows: GastronoviDayResult[], mode: 'all' | 'new') => {
+    const budgets = loadBudgets();
+    const field    = target === 'actual' ? 'actualRevenue'      : 'previousYearRevenue';
+    const foodKey  = target === 'actual' ? 'actualFood'         : 'previousYearFood';
+    const bevKey   = target === 'actual' ? 'actualBeverage'     : 'previousYearBeverage';
+
+    let count = 0;
+    for (const r of rows) {
+      const existingVal = budgets[r.date]?.[field];
+      if (mode === 'new' && existingVal != null && (existingVal as number) > 0) continue;
+
+      const prev = budgets[r.date] ?? {
         date: r.date,
         plannedRevenue: 0,
         actualRevenue: 0,
@@ -114,28 +367,19 @@ export function GastronoviImportSection() {
         actualLaborCost: 0,
       };
 
-      if (target === 'actual') {
-        updated[r.date] = {
-          ...prev,
-          actualRevenue: r.total,
-          actualFood:    r.food,
-          actualBeverage: r.beverage,
-        };
-      } else {
-        updated[r.date] = {
-          ...prev,
-          previousYearRevenue: r.total,
-          previousYearFood:    r.food,
-          previousYearBeverage: r.beverage,
-        };
-      }
+      budgets[r.date] = {
+        ...prev,
+        [field]:   r.total,
+        [foodKey]: r.food,
+        [bevKey]:  r.beverage,
+      };
+      count++;
     }
 
-    localStorage.setItem(DAILY_BUDGETS_KEY, JSON.stringify(updated));
+    saveBudgets(budgets);
     setImported(true);
-    toast.success(
-      `${results.length} Tage importiert als ${target === 'actual' ? 'Ist-Umsätze' : 'Vorjahresumsätze'}`
-    );
+    const label = target === 'actual' ? 'Ist-Umsätze' : 'Vorjahresumsätze';
+    toast.success(`${count} Tage importiert als ${label}`);
   };
 
   const totalFood     = results?.reduce((s, r) => s + r.food, 0)     ?? 0;
@@ -145,10 +389,23 @@ export function GastronoviImportSection() {
   return (
     <div className="space-y-6">
 
-      {/* Settings row */}
+      {/* ── Manual entry ── */}
+      <ManualEntryCard />
+
+      {/* ── Divider ── */}
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center">
+          <span className="w-full border-t" />
+        </div>
+        <div className="relative flex justify-center text-xs uppercase">
+          <span className="bg-background px-2 text-muted-foreground">oder aus Gastronovi exportieren</span>
+        </div>
+      </div>
+
+      {/* ── Import settings ── */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Einstellungen</CardTitle>
+          <CardTitle className="text-base">Import-Einstellungen</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4">
@@ -185,7 +442,7 @@ export function GastronoviImportSection() {
         </CardContent>
       </Card>
 
-      {/* Upload zone */}
+      {/* ── Upload zone ── */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Gastronovi Export hochladen</CardTitle>
@@ -204,9 +461,7 @@ export function GastronoviImportSection() {
                 <div>
                   <p className="font-medium text-sm flex items-center gap-2">
                     {fileName}
-                    <Badge className="bg-green-100 text-green-800 border-green-200 text-[10px]">
-                      XLSX
-                    </Badge>
+                    <Badge className="bg-green-100 text-green-800 border-green-200 text-[10px]">XLSX</Badge>
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {results.length} Tage mit Umsatzdaten erkannt · Jahr {year}
@@ -231,12 +486,8 @@ export function GastronoviImportSection() {
               onClick={() => inputRef.current?.click()}
             >
               <Upload className="h-10 w-10 mx-auto mb-3 text-muted-foreground/50" />
-              <p className="font-medium text-sm">
-                Gastronovi Excel-Export hierher ziehen
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                oder klicken zum Auswählen · .xlsx, .xls
-              </p>
+              <p className="font-medium text-sm">Gastronovi Excel-Export hierher ziehen</p>
+              <p className="text-xs text-muted-foreground mt-1">oder klicken zum Auswählen · .xlsx, .xls</p>
               <input
                 ref={inputRef}
                 type="file"
@@ -263,14 +514,13 @@ export function GastronoviImportSection() {
             <AlertDescription>
               <strong>Kategorisierung:</strong> Food (Speisen) → 100% Food ·
               Beverage (Getränke) → 100% Beverage ·
-              Alle anderen Positionen (Non-Foods, Trinkgeld, Rabatte, …) → 70% Food / 30% Beverage
+              Alle anderen Positionen → 70% Food / 30% Beverage
             </AlertDescription>
           </Alert>
-
         </CardContent>
       </Card>
 
-      {/* Preview + Import */}
+      {/* ── Preview + Import ── */}
       {results && results.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
@@ -287,7 +537,7 @@ export function GastronoviImportSection() {
                   Importiert
                 </div>
               ) : (
-                <Button onClick={handleImport} size="sm">
+                <Button onClick={handleImportClick} size="sm">
                   <Upload className="h-4 w-4 mr-1.5" />
                   {results.length} Tage importieren
                 </Button>
@@ -325,8 +575,6 @@ export function GastronoviImportSection() {
                 </TableBody>
               </Table>
             </div>
-
-            {/* Totals footer */}
             <div className="border-t px-4 py-3 bg-muted/30 flex items-center justify-between text-sm">
               <span className="text-muted-foreground font-medium">
                 Gesamt ({results.length} Tage)
@@ -349,6 +597,52 @@ export function GastronoviImportSection() {
           </CardContent>
         </Card>
       )}
+
+      {/* ── Overwrite confirmation dialog ── */}
+      <AlertDialog open={showOverwriteDialog} onOpenChange={setShowOverwriteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Bestehende Werte gefunden</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  Beim Import wurden <strong>{existingCount} Tage</strong> gefunden,
+                  die bereits {target === 'actual' ? 'Ist-Umsätze' : 'Vorjahresumsätze'} enthalten.
+                </p>
+                {newCount > 0 && (
+                  <p className="text-muted-foreground">
+                    {newCount} neue Tage ohne bestehende Werte werden in jedem Fall importiert.
+                  </p>
+                )}
+                <p className="font-medium text-foreground">
+                  Möchtest du die bestehenden Werte überschreiben?
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowOverwriteDialog(false);
+                if (results) commitImport(results, 'new');
+              }}
+            >
+              Nur neue Tage ({newCount})
+            </Button>
+            <AlertDialogAction
+              onClick={() => {
+                setShowOverwriteDialog(false);
+                if (results) commitImport(results, 'all');
+              }}
+            >
+              Alle überschreiben ({existingCount + newCount})
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </div>
   );
 }
