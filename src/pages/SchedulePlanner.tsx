@@ -157,7 +157,7 @@ const SchedulePlanner = () => {
   const [showCosts, setShowCosts] = useState(false);
   const [costPasswordDialogOpen, setCostPasswordDialogOpen] = useState(false);
   const [costPassword, setCostPassword] = useState('');
-  const [dailyBudgets, setDailyBudgets] = useState<{[key: string]: { plannedRevenue?: number; actualRevenue?: number }}>({});
+  const [dailyBudgets, setDailyBudgets] = useState<{[key: string]: { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }}>({});
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [pendingImportResult, setPendingImportResult] = useState<{
@@ -233,18 +233,31 @@ const SchedulePlanner = () => {
     const manualBudgets: Record<string, { plannedRevenue?: number; actualRevenue?: number }> =
       savedBudgets ? JSON.parse(savedBudgets) : {};
 
+    // Manuelle Tages-Umsatz-Übersteurungen (z.B. für Events)
+    const revenueOverrides: Record<string, number> =
+      JSON.parse(localStorage.getItem('dailyRevenueOverrides') || '{}');
+
     if (monthlyRevenue > 0) {
       const autoBudgets = distributeBudgetByWeekday(monthlyRevenue, allDays);
-      // Ist-Umsatz (actualRevenue) aus localStorage erhalten
-      const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number }> = { ...autoBudgets };
+      // Ist-Umsatz (actualRevenue) + manuelle Overrides erhalten
+      const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }> = { ...autoBudgets };
       Object.entries(manualBudgets).forEach(([k, v]) => {
         if (v.actualRevenue !== undefined) {
           merged[k] = { ...merged[k], actualRevenue: v.actualRevenue };
         }
       });
+      // Manuelle Umsatz-Overrides überschreiben die auto-berechneten Werte
+      Object.entries(revenueOverrides).forEach(([k, v]) => {
+        merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true };
+      });
       setDailyBudgets(merged);
     } else {
-      setDailyBudgets(manualBudgets);
+      // Kein Monatsbudget: manuelle Overrides direkt verwenden
+      const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }> = { ...manualBudgets };
+      Object.entries(revenueOverrides).forEach(([k, v]) => {
+        merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true };
+      });
+      setDailyBudgets(merged);
     }
   }, [currentMonth]);
 
@@ -817,6 +830,29 @@ const SchedulePlanner = () => {
     setDayDetailDialogOpen(true);
   };
 
+  // Manuellen Umsatz-Override für einen Tag setzen oder löschen
+  const handleUpdatePlannedRevenue = (dateStr: string, value: number | null) => {
+    const overrides: Record<string, number> =
+      JSON.parse(localStorage.getItem('dailyRevenueOverrides') || '{}');
+    if (value === null) {
+      delete overrides[dateStr];
+    } else {
+      overrides[dateStr] = value;
+    }
+    localStorage.setItem('dailyRevenueOverrides', JSON.stringify(overrides));
+    // State aktualisieren
+    setDailyBudgets(prev => {
+      const next = { ...prev };
+      if (value === null) {
+        // Zurück auf Auto-Wert — Monat neu laden
+        loadMonthData();
+        return prev;
+      }
+      next[dateStr] = { ...next[dateStr], plannedRevenue: value, isOverride: true };
+      return next;
+    });
+  };
+
   const handleSaveShiftConfig = (newShifts: ShiftConfigItem[]) => {
     updateShifts(newShifts);
     toast.success('Schichtkonfiguration gespeichert!');
@@ -966,11 +1002,34 @@ const SchedulePlanner = () => {
   const visibleEmployeeIds = new Set(visibleEmployees.map(e => e.id));
 
   const monthDateSet = new Set(daysInMonth.map(d => format(d, 'yyyy-MM-dd')));
+
+  // Wochenansicht: Kennzahlen auf die angezeigten Tage beschränken
+  const displayDateSet = new Set(displayDays.map(d => format(d, 'yyyy-MM-dd')));
+  const isWeekView = calendarView === 'week';
+
+  // Geplanter Umsatz (Monat oder Woche)
   const totalPlannedRevenue = Object.entries(dailyBudgets)
-    .filter(([date]) => monthDateSet.has(date))
+    .filter(([date]) => (isWeekView ? displayDateSet : monthDateSet).has(date))
     .reduce((sum, [, b]) => sum + (b.plannedRevenue || 0), 0);
+
+  // Geplante Personalkosten (Monat oder Woche pro-rata)
+  const weekPlannedLaborCost = visibleEmployees.reduce((sum, emp) => {
+    if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
+      return sum + emp.monthlySalary * (displayDays.length / daysInMonth.length);
+    }
+    // Stündlich: nur Stunden in der angezeigten Woche
+    const hrs = displayDays.reduce((h, day) => {
+      const cellKey = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
+      const ds = scheduleData[cellKey];
+      return h + (ds ? calculateDayHours(ds) : 0);
+    }, 0);
+    return sum + hrs * emp.hourlyWage;
+  }, 0);
+
+  const activeLaborCost = isWeekView ? weekPlannedLaborCost : totalPlannedLaborCost;
+
   const plannedCostRatio = totalPlannedRevenue > 0
-    ? (totalPlannedLaborCost / totalPlannedRevenue) * 100
+    ? (activeLaborCost / totalPlannedRevenue) * 100
     : null;
   const costRatioStatus: 'good' | 'ok' | 'high' | 'unknown' =
     plannedCostRatio === null ? 'unknown' :
@@ -1336,7 +1395,7 @@ const SchedulePlanner = () => {
               {costRatioStatus === 'unknown' && '?'}
             </div>
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Personalkostenquote – Planung</p>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Personalkostenquote – Planung {isWeekView ? '(Woche)' : '(Monat)'}</p>
               <p className={cn(
                 "text-4xl font-black leading-none mt-0.5",
                 costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
@@ -1358,7 +1417,7 @@ const SchedulePlanner = () => {
           <div className="flex gap-5 flex-wrap sm:flex-nowrap">
             <div className="text-center">
               <p className="text-xl font-bold tabular-nums">
-                {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedLaborCost)}
+                {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
               </p>
               <p className="text-[11px] text-muted-foreground mt-0.5">Geplante Personalkosten</p>
             </div>
@@ -1368,7 +1427,7 @@ const SchedulePlanner = () => {
                   ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedRevenue)
                   : <span className="text-muted-foreground text-base">kein Budget</span>}
               </p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">Geplanter Umsatz</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{isWeekView ? 'Umsatz diese Woche' : 'Geplanter Umsatz'}</p>
             </div>
             <div className="text-center">
               <p className="text-xl font-bold tabular-nums">{laborCostThreshold} %</p>
@@ -1921,6 +1980,9 @@ const SchedulePlanner = () => {
         date={selectedDay}
         employees={employees}
         scheduleData={scheduleData}
+        plannedRevenue={selectedDay ? dailyBudgets[format(selectedDay, 'yyyy-MM-dd')]?.plannedRevenue : undefined}
+        isOverride={selectedDay ? !!dailyBudgets[format(selectedDay, 'yyyy-MM-dd')]?.isOverride : false}
+        onUpdatePlannedRevenue={handleUpdatePlannedRevenue}
       />
 
       {/* Shift Config Dialog */}

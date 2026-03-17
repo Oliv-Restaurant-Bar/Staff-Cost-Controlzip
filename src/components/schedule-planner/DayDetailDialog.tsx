@@ -1,10 +1,13 @@
 import { format, getDay } from 'date-fns';
 import { de } from 'date-fns/locale';
+import { useState } from 'react';
 import { useShiftConfig } from '@/hooks/useShiftConfig';
 import { Employee } from '@/types/personnel';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Clock, Users } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Clock, Users, TrendingUp, Pencil, RotateCcw, Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
@@ -15,6 +18,9 @@ interface DayDetailDialogProps {
   date: Date | null;
   employees: Employee[];
   scheduleData: Record<string, DaySchedule>;
+  plannedRevenue?: number;
+  isOverride?: boolean;
+  onUpdatePlannedRevenue?: (dateStr: string, value: number | null) => void;
 }
 
 // Calculate hours from a time slot
@@ -42,9 +48,14 @@ export const DayDetailDialog = ({
   date,
   employees,
   scheduleData,
+  plannedRevenue,
+  isOverride,
+  onUpdatePlannedRevenue,
 }: DayDetailDialogProps) => {
   const { shiftMap } = useShiftConfig();
-  
+  const [editingRevenue, setEditingRevenue] = useState(false);
+  const [revenueInput, setRevenueInput] = useState('');
+
   if (!date) return null;
 
   const dateStr = format(date, 'yyyy-MM-dd');
@@ -194,7 +205,7 @@ export const DayDetailDialog = ({
 
         <div className="space-y-6 py-4">
           {/* Summary */}
-          <div className="flex gap-6 p-3 bg-muted/30 rounded-lg">
+          <div className="flex gap-6 p-3 bg-muted/30 rounded-lg flex-wrap">
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm">
@@ -207,7 +218,113 @@ export const DayDetailDialog = ({
                 <strong>{totalHours.toFixed(1)}</strong> Stunden
               </span>
             </div>
+            {plannedRevenue !== undefined && (
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm">
+                  <strong>
+                    {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(plannedRevenue)}
+                  </strong>
+                  {' '}Zielumsatz
+                  {isOverride && (
+                    <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 rounded px-1">Event</span>
+                  )}
+                </span>
+              </div>
+            )}
           </div>
+
+          {/* Umsatz-Override: Bearbeitungsbereich */}
+          {onUpdatePlannedRevenue && (
+            <div className="p-3 rounded-lg border bg-card space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <TrendingUp className="h-4 w-4" />
+                  Zielumsatz für diesen Tag
+                  {isOverride && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 rounded px-1">Event</span>
+                  )}
+                </div>
+                {!editingRevenue && (
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs gap-1"
+                      onClick={() => {
+                        setRevenueInput(String(Math.round(plannedRevenue ?? 0)));
+                        setEditingRevenue(true);
+                      }}
+                    >
+                      <Pencil className="h-3 w-3" />
+                      {isOverride ? 'Ändern' : 'Übersteuern'}
+                    </Button>
+                    {isOverride && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs gap-1 text-muted-foreground"
+                        onClick={() => { onUpdatePlannedRevenue(dateStr, null); }}
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        Zurücksetzen
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {editingRevenue ? (
+                <div className="flex gap-2 items-center">
+                  <span className="text-sm text-muted-foreground shrink-0">CHF</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={100}
+                    className="h-8 text-sm"
+                    value={revenueInput}
+                    onChange={e => setRevenueInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        const v = parseFloat(revenueInput);
+                        if (!isNaN(v) && v >= 0) { onUpdatePlannedRevenue(dateStr, v); }
+                        setEditingRevenue(false);
+                      }
+                      if (e.key === 'Escape') setEditingRevenue(false);
+                    }}
+                    autoFocus
+                    placeholder="z.B. 15000"
+                  />
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="h-8 px-2"
+                    onClick={() => {
+                      const v = parseFloat(revenueInput);
+                      if (!isNaN(v) && v >= 0) { onUpdatePlannedRevenue(dateStr, v); }
+                      setEditingRevenue(false);
+                    }}
+                  >
+                    <Check className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 px-2"
+                    onClick={() => setEditingRevenue(false)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {isOverride
+                    ? 'Manuell übersteuert – vom normalen Wochentag-Budget abweichend.'
+                    : 'Automatisch aus Monatsbudget berechnet. Für Events manuell übersteuern.'}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Service */}
           {serviceEmployees.length > 0 && (

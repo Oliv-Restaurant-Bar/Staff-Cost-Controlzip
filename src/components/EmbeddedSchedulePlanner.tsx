@@ -123,7 +123,7 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
   const [showCosts, setShowCosts] = useState(false);
   const [costPasswordDialogOpen, setCostPasswordDialogOpen] = useState(false);
   const [costPassword, setCostPassword] = useState('');
-  const [dailyBudgets, setDailyBudgets] = useState<{[key: string]: { plannedRevenue?: number; actualRevenue?: number }}>({});
+  const [dailyBudgets, setDailyBudgets] = useState<{[key: string]: { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }}>({});
   const [isExpanded, setIsExpanded] = useState(true);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
@@ -153,15 +153,25 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     const manualBudgets: Record<string, { plannedRevenue?: number; actualRevenue?: number }> =
       savedBudgets ? JSON.parse(savedBudgets) : {};
 
+    const revenueOverrides: Record<string, number> =
+      JSON.parse(localStorage.getItem('dailyRevenueOverrides') || '{}');
+
     if (monthlyRev > 0) {
       const auto = distributeBudgetByWeekday(monthlyRev, allDays);
-      const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number }> = { ...auto };
+      const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }> = { ...auto };
       Object.entries(manualBudgets).forEach(([k, v]) => {
         if (v.actualRevenue !== undefined) merged[k] = { ...merged[k], actualRevenue: v.actualRevenue };
       });
+      Object.entries(revenueOverrides).forEach(([k, v]) => {
+        merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true };
+      });
       setDailyBudgets(merged);
     } else {
-      if (savedBudgets) setDailyBudgets(manualBudgets);
+      const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }> = savedBudgets ? { ...manualBudgets } : {};
+      Object.entries(revenueOverrides).forEach(([k, v]) => {
+        merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true };
+      });
+      setDailyBudgets(merged);
     }
     
     // Load actual hours for current month AND adjacent months (for week views spanning month boundaries)
@@ -535,6 +545,40 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
   const handleDayClick = (day: Date) => {
     setSelectedDay(day);
     setDayDetailDialogOpen(true);
+  };
+
+  const handleUpdatePlannedRevenue = (dateStr: string, value: number | null) => {
+    const overrides: Record<string, number> =
+      JSON.parse(localStorage.getItem('dailyRevenueOverrides') || '{}');
+    if (value === null) {
+      delete overrides[dateStr];
+      localStorage.setItem('dailyRevenueOverrides', JSON.stringify(overrides));
+      // Zurück auf Auto-Wert: Monats-Distribution neu berechnen
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const day = new Date(y, m - 1, d);
+      const monthlyRev = getMonthlyBudgetRevenue(y, m - 1);
+      if (monthlyRev > 0) {
+        const allDays = eachDayOfInterval({ start: startOfMonth(day), end: endOfMonth(day) });
+        const auto = distributeBudgetByWeekday(monthlyRev, allDays);
+        setDailyBudgets(prev => ({
+          ...prev,
+          [dateStr]: { ...prev[dateStr], plannedRevenue: auto[dateStr]?.plannedRevenue, isOverride: false },
+        }));
+      } else {
+        setDailyBudgets(prev => {
+          const next = { ...prev };
+          delete next[dateStr];
+          return next;
+        });
+      }
+    } else {
+      overrides[dateStr] = value;
+      localStorage.setItem('dailyRevenueOverrides', JSON.stringify(overrides));
+      setDailyBudgets(prev => ({
+        ...prev,
+        [dateStr]: { ...prev[dateStr], plannedRevenue: value, isOverride: true },
+      }));
+    }
   };
 
   const handleConfigureDaysOff = (employee: Employee) => {
@@ -1035,6 +1079,9 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
         date={selectedDay}
         employees={employees}
         scheduleData={scheduleData}
+        plannedRevenue={selectedDay ? dailyBudgets[format(selectedDay, 'yyyy-MM-dd')]?.plannedRevenue : undefined}
+        isOverride={selectedDay ? !!dailyBudgets[format(selectedDay, 'yyyy-MM-dd')]?.isOverride : false}
+        onUpdatePlannedRevenue={handleUpdatePlannedRevenue}
       />
 
       <ShiftConfigDialog
