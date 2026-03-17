@@ -68,13 +68,13 @@ function saveBudgets(b: Record<string, DailyBudget>) {
 // ─── Manual entry sub-component ──────────────────────────────────────────────
 
 function ManualEntryCard() {
-  const [date, setDate]           = useState(todayIso());
-  const [target, setTarget]       = useState<ImportTarget>('actual');
-  const [total, setTotal]         = useState('');
-  const [food, setFood]           = useState('');
-  const [beverage, setBeverage]   = useState('');
-  const [splitMode, setSplitMode] = useState(false);
-  const [saved, setSaved]         = useState(false);
+  const [date, setDate]         = useState(todayIso());
+  const [target, setTarget]     = useState<ImportTarget>('actual');
+  const [total, setTotal]       = useState('');
+  const [food, setFood]         = useState('');
+  const [beverage, setBeverage] = useState('');
+  const [autoSplit, setAutoSplit] = useState(true);
+  const [saved, setSaved]       = useState(false);
 
   const existingValue = (() => {
     const b = loadBudgets();
@@ -83,22 +83,50 @@ function ManualEntryCard() {
     return target === 'actual' ? e.actualRevenue : e.previousYearRevenue;
   })();
 
+  const handleTotalChange = (val: string) => {
+    setTotal(val);
+    setSaved(false);
+    if (autoSplit) {
+      const num = parseFloat(val.replace(',', '.'));
+      if (!isNaN(num) && num >= 0) {
+        setFood(String(Math.round(num * 0.70 * 100) / 100));
+        setBeverage(String(Math.round(num * 0.30 * 100) / 100));
+      } else {
+        setFood('');
+        setBeverage('');
+      }
+    }
+  };
+
+  const handleFoodChange = (val: string) => {
+    setFood(val);
+    setAutoSplit(false);
+    setSaved(false);
+  };
+
+  const handleBeverageChange = (val: string) => {
+    setBeverage(val);
+    setAutoSplit(false);
+    setSaved(false);
+  };
+
+  const resetAutoSplit = () => {
+    setAutoSplit(true);
+    const num = parseFloat(total.replace(',', '.'));
+    if (!isNaN(num) && num >= 0) {
+      setFood(String(Math.round(num * 0.70 * 100) / 100));
+      setBeverage(String(Math.round(num * 0.30 * 100) / 100));
+    }
+  };
+
   const handleSave = () => {
     const totalNum = parseFloat(total.replace(',', '.'));
     if (!date || isNaN(totalNum) || totalNum < 0) {
       toast.error('Bitte gültiges Datum und Betrag eingeben');
       return;
     }
-
-    let foodNum = 0;
-    let bevNum  = 0;
-    if (splitMode) {
-      foodNum = parseFloat(food.replace(',', '.'))     || 0;
-      bevNum  = parseFloat(beverage.replace(',', '.')) || 0;
-    } else {
-      foodNum = Math.round(totalNum * 0.70 * 100) / 100;
-      bevNum  = Math.round(totalNum * 0.30 * 100) / 100;
-    }
+    const foodNum = parseFloat(food.replace(',', '.')) || 0;
+    const bevNum  = parseFloat(beverage.replace(',', '.')) || 0;
 
     const budgets = loadBudgets();
     const prev = budgets[date] ?? {
@@ -130,8 +158,10 @@ function ManualEntryCard() {
           Tagesumsatz manuell erfassen
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <CardContent className="space-y-3">
+
+        {/* Row 1: Date + Typ */}
+        <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Datum</label>
             <Input
@@ -151,16 +181,59 @@ function ManualEntryCard() {
               </SelectContent>
             </Select>
           </div>
+        </div>
+
+        {/* Row 2: Total + Food + Beverage + Save */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Umsatz (CHF)</label>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total (CHF)</label>
             <Input
               type="number"
               min="0"
               step="0.05"
               placeholder="0.00"
               value={total}
-              onChange={e => { setTotal(e.target.value); setSaved(false); }}
+              onChange={e => handleTotalChange(e.target.value)}
               className="h-9"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Food (CHF)
+              </label>
+              {!autoSplit && (
+                <button
+                  type="button"
+                  onClick={resetAutoSplit}
+                  className="text-[10px] text-primary underline underline-offset-2 leading-none"
+                >
+                  70/30 auto
+                </button>
+              )}
+            </div>
+            <Input
+              type="number"
+              min="0"
+              step="0.05"
+              placeholder="auto"
+              value={food}
+              onChange={e => handleFoodChange(e.target.value)}
+              className={cn('h-9', !autoSplit && food ? '' : 'text-muted-foreground')}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Beverage (CHF)
+            </label>
+            <Input
+              type="number"
+              min="0"
+              step="0.05"
+              placeholder="auto"
+              value={beverage}
+              onChange={e => handleBeverageChange(e.target.value)}
+              className={cn('h-9', !autoSplit && beverage ? '' : 'text-muted-foreground')}
             />
           </div>
           <div className="space-y-1.5">
@@ -173,6 +246,13 @@ function ManualEntryCard() {
           </div>
         </div>
 
+        {/* Auto-split hint */}
+        {autoSplit && (
+          <p className="text-xs text-muted-foreground">
+            Food und Beverage werden automatisch 70/30 aufgeteilt — du kannst sie oben manuell überschreiben.
+          </p>
+        )}
+
         {existingValue != null && existingValue > 0 && (
           <Alert className="text-sm py-2">
             <Info className="h-4 w-4" />
@@ -180,32 +260,6 @@ function ManualEntryCard() {
               Bestehender Wert für diesen Tag: <strong>{fmt(existingValue)}</strong> — wird beim Speichern überschrieben.
             </AlertDescription>
           </Alert>
-        )}
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSplitMode(s => !s)}
-            className="text-xs text-primary underline underline-offset-2 hover:opacity-70"
-          >
-            {splitMode ? 'Food/Beverage-Split ausblenden' : 'Food/Beverage manuell aufteilen'}
-          </button>
-          {!splitMode && total && (
-            <span className="text-xs text-muted-foreground">(automatisch: 70% Food / 30% Beverage)</span>
-          )}
-        </div>
-
-        {splitMode && (
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Food (CHF)</label>
-              <Input type="number" min="0" step="0.05" placeholder="0.00" value={food} onChange={e => setFood(e.target.value)} className="h-9" />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Beverage (CHF)</label>
-              <Input type="number" min="0" step="0.05" placeholder="0.00" value={beverage} onChange={e => setBeverage(e.target.value)} className="h-9" />
-            </div>
-          </div>
         )}
       </CardContent>
     </Card>
