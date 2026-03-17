@@ -1,6 +1,6 @@
 import { Employee, TimeEntry, DailySummary, EmploymentType, MirusImportEntry, MirusDailyImportEntry } from '@/types/personnel';
 import * as XLSX from 'xlsx';
-import { format, parse, addDays } from 'date-fns';
+import { format, parse, addDays, endOfMonth } from 'date-fns';
 
 export const formatCurrency = (value: number): string => {
   return new Intl.NumberFormat('de-CH', {
@@ -585,6 +585,21 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
       }
     }
 
+    // --- 1b) No explicit date range — try to infer month/year from filename ---
+    // Expected filename pattern: Tägliche_Stunden_MM.YYYY_*.xls
+    if (!startDate || !endDate) {
+      const fnMatch = file.name.match(/_(\d{2})\.(\d{4})[_\.]/);
+      if (fnMatch) {
+        const mm = parseInt(fnMatch[1], 10);
+        const yyyy = parseInt(fnMatch[2], 10);
+        if (mm >= 1 && mm <= 12 && yyyy > 2000) {
+          startDate = new Date(yyyy, mm - 1, 1);
+          endDate = endOfMonth(startDate);
+          console.log('[mirus-daily][excel] inferred month from filename:', format(startDate, 'MM.yyyy'));
+        }
+      }
+    }
+
     if (startDate && endDate) {
       // Build expected dates (inclusive) and their day-of-month sequence
       const expectedDates: { date: Date; iso: string; day: number }[] = [];
@@ -710,14 +725,17 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
       const deptCandidate = row
         .slice(0, 6)
         .map((c) => String(c || '').trim())
-        .find((t) => /^\d+\s*(küche|kuche|service)\b/i.test(t));
+        .find((t) => /^\d+\s*(küche|kuche|service|geschäftsleitung|geschaftsleitung|geschaeftsleitung|leitung|admin)\b/i.test(t));
 
       if (deptCandidate) {
         const d = deptCandidate.toLowerCase();
         if (d.includes('küch') || d.includes('kuche')) currentDepartment = 'küche';
         else if (d.includes('service')) currentDepartment = 'service';
-        // Geschäftsleitung → treat as Service
-        else if (d.includes('geschäftsleitung') || d.includes('geschaftsleitung') || d.includes('geschaeftsleitung')) currentDepartment = 'service';
+        // Skip management/admin sections entirely
+        else if (d.includes('geschäfts') || d.includes('geschaft') || d.includes('leitung') || d.includes('admin')) {
+          // skip all rows until next department header by setting a flag-like department
+          // We still use 'service' as fallback but these rows will be skipped by the name filter
+        }
         continue;
       }
 

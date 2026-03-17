@@ -266,6 +266,22 @@ const SchedulePlanner = () => {
     loadMonthData();
   }, [loadMonthData]);
 
+  // Re-read actual hours from localStorage when an external import fires `schedule-updated`
+  useEffect(() => {
+    const handleScheduleUpdated = () => {
+      const monthKey = format(currentMonth, 'yyyy-MM');
+      const storageKey = `actual-hours-${monthKey}`;
+      try {
+        const saved = localStorage.getItem(storageKey);
+        if (saved) {
+          setActualHoursData(JSON.parse(saved));
+        }
+      } catch { /* ignore */ }
+    };
+    window.addEventListener('schedule-updated', handleScheduleUpdated);
+    return () => window.removeEventListener('schedule-updated', handleScheduleUpdated);
+  }, [currentMonth]);
+
   // Get days in current month
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
