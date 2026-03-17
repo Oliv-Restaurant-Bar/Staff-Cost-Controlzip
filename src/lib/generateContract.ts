@@ -29,6 +29,11 @@ const LH5 = 4.5;
 const LH4 = 4.0;
 const CB_SIZE = 2.8;  // checkbox square side (mm)
 
+// ── Arbeitgeber-Konstanten ────────────────────────────────────────────────────
+
+const EMPLOYER_NAME = 'oLiv Restaurant & Bar (Oliv Gastro AG)';
+const EMPLOYER_ADDR = 'Seftigenstrasse 101, 3007 Bern';
+
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
 interface ColCtx { doc: jsPDF; yL: number; yR: number; }
