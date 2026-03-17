@@ -31,8 +31,8 @@ const CB_SIZE = 2.8;  // checkbox square side (mm)
 
 // ── Arbeitgeber-Konstanten ────────────────────────────────────────────────────
 
-const EMPLOYER_NAME = 'oLiv Restaurant & Bar (Oliv Gastro AG)';
-const EMPLOYER_ADDR = 'Seftigenstrasse 101, 3007 Bern';
+const EMPLOYER_NAME = 'Oliv Gastro AG';
+const EMPLOYER_ADDR = 'Waisenhausplatz 28, 3011 Bern';
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
@@ -240,63 +240,63 @@ function drawPersonBlock(doc: jsPDF, emp: Employee, startY: number): number {
   let y = startY;
   hlineFullWidth(doc, y - 1);
 
-  setFont(doc, 7.5, 'bold');
-  doc.text('Name/Vorname', PL, y + 3.5);
-  setFont(doc, 8, 'normal');
-  doc.text(emp.name || '___________________', PL + 25, y + 3.5);
-  setFont(doc, 7.5, 'bold');
-  doc.text('Strasse', PL + 78, y + 3.5);
-  setFont(doc, 8, 'normal');
-  doc.text(emp.addressStreet || '___________________', PL + 90, y + 3.5);
-  setFont(doc, 7.5, 'italic');
-  doc.text('Mitarbeiter/in', PR, y + 3.5, { align: 'right' });
+  // Leicht grauer Hintergrund für den Personendaten-Block
+  const ROW  = 6.8;
+  const ROWS = 4;
+  const PADV = 3.5;  // vertical padding above first row
+  const blockH = PADV + ROWS * ROW + 2.5;
 
-  y += 7;
-  setFont(doc, 7.5, 'bold');
-  doc.text('PLZ/Ort', PL + 78, y + 3.5);
-  setFont(doc, 8, 'normal');
+  doc.setFillColor(248, 249, 250);
+  doc.rect(PL, y, PR - PL, blockH, 'F');
+
+  // Spalten-Definitionen  (3 Spalten)
+  // Spalte A: x=13 .. 74   Label A bei 13, Wert A bei 37
+  // Spalte B: x=76 .. 136  Label B bei 76, Wert B bei 98
+  // Spalte C: x=140 .. 198 Label C bei 140, Wert C bei 160
+  const A_L = PL + 1;   const A_V = PL + 24;
+  const B_L = PL + 64;  const B_V = PL + 84;
+  const C_L = PL + 130; const C_V = PL + 151;
+
+  // Hilfsroutine: Label fett, Wert normal
+  const lv = (label: string, val: string, lx: number, vy: number, vx: number) => {
+    setFont(doc, 7, 'bold');
+    doc.text(label, lx, vy);
+    setFont(doc, 7.5, 'normal');
+    doc.text(val, vx, vy);
+  };
+
   const plzOrt = [emp.addressZip, emp.addressCity].filter(Boolean).join(' ') || '___________';
-  doc.text(plzOrt, PL + 90, y + 3.5);
+  const kinder = emp.numberOfChildren != null ? String(emp.numberOfChildren) : '–';
 
-  y += 7;
-  setFont(doc, 7.5, 'bold');
-  doc.text('Telefon', PL, y + 3.5);
-  setFont(doc, 8, 'normal');
-  doc.text(emp.phone || '___________', PL + 14, y + 3.5);
-  setFont(doc, 7.5, 'bold');
-  doc.text('Geburtsdatum', PL + 75, y + 3.5);
-  setFont(doc, 8, 'normal');
-  doc.text(fd(emp.birthDate), PL + 101, y + 3.5);
-  setFont(doc, 7.5, 'bold');
-  doc.text('Zivilstand', PL + 133, y + 3.5);
-  setFont(doc, 8, 'normal');
-  doc.text(maritalLabel(emp.maritalStatus), PL + 150, y + 3.5);
-  setFont(doc, 7.5, 'bold');
-  doc.text('Anzahl Kinder', PL + 172, y + 3.5);
-  setFont(doc, 8, 'normal');
-  doc.text(emp.numberOfChildren != null ? String(emp.numberOfChildren) : '-', PL + 190, y + 3.5);
-
-  y += 7;
-  setFont(doc, 7.5, 'bold');
-  doc.text('Krankenkasse', PL, y + 3.5);
+  // Zeile 1: Name | Strasse | "Mitarbeiter/in" (rechts)
+  const r1 = y + PADV + ROW * 0;
+  lv('Name / Vorname', emp.name || '___________________', A_L, r1, A_V);
+  lv('Strasse',        emp.addressStreet || '___________', B_L, r1, B_V);
   setFont(doc, 7, 'italic');
-  doc.text('(vom Mitarbeitenden selbst abgeschlossen)', PL + 24, y + 3.5);
-  setFont(doc, 7.5, 'bold');
-  doc.text('Ausländerausweis', PL + 120, y + 3.5);
-  setFont(doc, 8, 'normal');
-  doc.text(permitLabel(emp.permitType), PL + 147, y + 3.5);
-  setFont(doc, 7.5, 'bold');
-  doc.text('AHV-Nr.', PL + 160, y + 3.5);
-  setFont(doc, 8, 'normal');
-  doc.text(emp.ahvNumber || '___________________', PL + 174, y + 3.5);
+  doc.text('Mitarbeiter/in', PR, r1, { align: 'right' });
 
-  y += 7;
-  setFont(doc, 7.5, 'bold');
-  doc.text('E-Mail', PL, y + 3.5);
-  setFont(doc, 8, 'normal');
-  doc.text(emp.email || '___________________', PL + 14, y + 3.5);
+  // Zeile 2: PLZ/Ort | Telefon | Geburtsdatum
+  const r2 = y + PADV + ROW * 1;
+  lv('PLZ / Ort',   plzOrt,               A_L, r2, A_V);
+  lv('Telefon',     emp.phone || '___________', B_L, r2, B_V);
+  lv('Geburtsdatum', fd(emp.birthDate),   C_L, r2, C_V);
 
-  y += 8;
+  // Zeile 3: E-Mail | Zivilstand | Anzahl Kinder
+  const r3 = y + PADV + ROW * 2;
+  lv('E-Mail',       emp.email || '___________________', A_L, r3, A_V);
+  lv('Zivilstand',   maritalLabel(emp.maritalStatus),   B_L, r3, B_V);
+  lv('Anz. Kinder',  kinder,                             C_L, r3, C_V);
+
+  // Zeile 4: AHV-Nr. | Ausländerausweis | Krankenkasse
+  const r4 = y + PADV + ROW * 3;
+  lv('AHV-Nr.',           emp.ahvNumber || '___________________', A_L, r4, A_V);
+  lv('Ausländerausweis',  permitLabel(emp.permitType),            B_L, r4, B_V);
+  setFont(doc, 7, 'bold');
+  doc.text('Krankenkasse', C_L, r4);
+  setFont(doc, 6.5, 'italic');
+  doc.text('(MA selbst abgeschlossen)', C_L, r4 + ROW * 0.55);
+
+  y += blockH;
   hlineFullWidth(doc, y);
   y += 3;
 
@@ -320,9 +320,18 @@ function sec1(ctx: ColCtx, emp: Employee, draft: ContractDraft): ColCtx {
   y += 1;
   y = sectionPara(doc, 'L', y, 'Dieser Vertrag tritt nur in Kraft, sofern die notwendigen Arbeitsbewilligungen erteilt werden.');
   y += 2;
+  const wh      = emp.weeklyHours ?? 42;
+  const pensum  = Math.round(wh / 42 * 100);
+  const isSL    = emp.contractType === 'hourly' || emp.contractType === 'irregular';
+  const pensumStr = isSL ? 'nach Vereinbarung' : `${pensum} %`;
+
   setFont(doc, 7.5, 'normal');
   doc.text(`a)   Vertragsbeginn: ${fd(emp.contractStart)}`, PL, y); y += LH5;
-  doc.text(`b)   Funktion: ${emp.positionTitle || '___________________'}`, PL, y); y += LH5;
+  doc.text(`b)   Funktion: ${emp.positionTitle || '___________________'}`, PL, y);
+  setFont(doc, 7.5, 'bold');
+  doc.text(`Arbeitspensum: ${pensumStr}`, PL + 80, y);
+  setFont(doc, 7.5, 'normal');
+  y += LH5;
   doc.text(`      Abteilung: ${deptLabel(emp.department)}`, PL, y); y += LH5 + 1;
   y = sectionPara(doc, 'L', y, 'Dem Mitarbeitenden können vorübergehend auch andere Arbeiten im Betrieb oder an einem zumutbaren anderen Arbeitsort zugewiesen werden.');
   y += 1;
