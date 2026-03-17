@@ -382,6 +382,38 @@ function initPLStructure(budget: BudgetYear): BudgetYear {
 }
 
 /**
+ * Migriert alte Umsatz-Unterkonten (pli_wein, pli_bier, …) zu einem einzigen
+ * pli_umsatz Konto 3000. Bestehendes Datenmaterial wird summiert.
+ */
+function migrateToSingleRevenueItem(budget: BudgetYear): BudgetYear {
+  const OLD_IDS = ['pli_wein', 'pli_bier', 'pli_spirituosen', 'pli_kueche_ertrag', 'pli_kaffee'];
+  const items = budget.plLineItems ?? [];
+
+  const hasOldItems = items.some(i => OLD_IDS.includes(i.id));
+  const hasNewItem  = items.some(i => i.id === 'pli_umsatz');
+
+  if (!hasOldItems) return budget; // Bereits migriert
+
+  // Monatswerte der alten Konten summieren
+  const combined = Array(12).fill(0) as number[];
+  items
+    .filter(i => OLD_IDS.includes(i.id))
+    .forEach(i => i.monthlyValues.forEach((v, m) => { combined[m] += v; }));
+
+  // Bestehendes pli_umsatz aktualisieren oder neu anlegen
+  const umsatzItem: BudgetPLLineItem = hasNewItem
+    ? { ...items.find(i => i.id === 'pli_umsatz')!, monthlyValues: combined as BudgetPLLineItem['monthlyValues'] }
+    : { id: 'pli_umsatz', categoryId: 'pl_revenue', accountNumber: '3000', label: 'Umsatz', valueType: 'chf', sortOrder: 1, isDefault: true, monthlyValues: combined as BudgetPLLineItem['monthlyValues'] };
+
+  const newItems = [
+    umsatzItem,
+    ...items.filter(i => !OLD_IDS.includes(i.id) && i.id !== 'pli_umsatz'),
+  ];
+
+  return { ...budget, plLineItems: newItems };
+}
+
+/**
  * Budgetjahr laden und P&L-Struktur sicherstellen.
  * Wenn noch keine P&L-Struktur vorhanden → Standardstruktur erstellen + speichern.
  */
@@ -389,8 +421,10 @@ export function loadBudgetWithPL(year: number): BudgetYear {
   let budget = loadBudgetYear(year);
   if (!budget.plCategories || !budget.plLineItems) {
     budget = initPLStructure(budget);
-    saveBudgetYear(budget);
   }
+  // Migration: alte Umsatzkonten → pli_umsatz
+  budget = migrateToSingleRevenueItem(budget);
+  saveBudgetYear(budget);
   return budget;
 }
 

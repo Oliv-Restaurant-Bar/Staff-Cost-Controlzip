@@ -303,12 +303,8 @@ export const DEFAULT_PL_CATEGORIES: BudgetPLCategory[] = [
 const Z12: BudgetPLLineItem['monthlyValues'] = [0,0,0,0,0,0,0,0,0,0,0,0];
 
 export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = [
-  // Betriebsertrag
-  { id: 'pli_wein',           categoryId: 'pl_revenue',         accountNumber: '3000', label: 'Wein',                       valueType: 'chf',     sortOrder: 1  },
-  { id: 'pli_bier',           categoryId: 'pl_revenue',         accountNumber: '3100', label: 'Bier',                       valueType: 'chf',     sortOrder: 2  },
-  { id: 'pli_spirituosen',    categoryId: 'pl_revenue',         accountNumber: '3200', label: 'Spirituosen',                valueType: 'chf',     sortOrder: 3  },
-  { id: 'pli_kueche_ertrag',  categoryId: 'pl_revenue',         accountNumber: '3300', label: 'Küche',                      valueType: 'chf',     sortOrder: 4,  department: 'küche'   },
-  { id: 'pli_kaffee',         categoryId: 'pl_revenue',         accountNumber: '3400', label: 'Kaffee / Non-Alc',           valueType: 'chf',     sortOrder: 5  },
+  // Betriebsertrag – ein einziges Konto 3000
+  { id: 'pli_umsatz',         categoryId: 'pl_revenue',         accountNumber: '3000', label: 'Umsatz',                     valueType: 'chf',     sortOrder: 1  },
 
   // Warenaufwand
   { id: 'pli_waren_wein',     categoryId: 'pl_goods_cost',      accountNumber: '4000', label: 'Wein Warenaufwand',          valueType: 'percent', sortOrder: 1  },
