@@ -28,6 +28,7 @@ import { importScheduleFromExcelV2, NameMatchInfo } from '@/lib/schedule-export-
 import { exportScheduleToExcelPrint, exportScheduleToPDFPrint, PrintExportOptions } from '@/lib/schedule-print-export';
 import { toast } from 'sonner';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval, getISOWeek, isSameMonth } from 'date-fns';
+import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem, calculateBreakDeduction } from '@/hooks/useShiftConfig';
@@ -139,10 +140,29 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
   const ADMIN_PASSWORD_KEY = 'admin_password';
   const DEFAULT_ADMIN_PASSWORD = 'admin123';
 
-  // Load daily budgets and actual hours from localStorage
+  // Load daily budgets (aus Monatsbudget + localStorage-Overrides) und actual hours
   useEffect(() => {
+    const year         = currentMonthStart.getFullYear();
+    const monthIdx     = currentMonthStart.getMonth();
+    const monthlyRev   = getMonthlyBudgetRevenue(year, monthIdx);
+    const allDays      = eachDayOfInterval({
+      start: startOfMonth(currentMonthStart),
+      end:   endOfMonth(currentMonthStart),
+    });
     const savedBudgets = localStorage.getItem('dailyBudgets');
-    if (savedBudgets) setDailyBudgets(JSON.parse(savedBudgets));
+    const manualBudgets: Record<string, { plannedRevenue?: number; actualRevenue?: number }> =
+      savedBudgets ? JSON.parse(savedBudgets) : {};
+
+    if (monthlyRev > 0) {
+      const auto = distributeBudgetByWeekday(monthlyRev, allDays);
+      const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number }> = { ...auto };
+      Object.entries(manualBudgets).forEach(([k, v]) => {
+        if (v.actualRevenue !== undefined) merged[k] = { ...merged[k], actualRevenue: v.actualRevenue };
+      });
+      setDailyBudgets(merged);
+    } else {
+      if (savedBudgets) setDailyBudgets(manualBudgets);
+    }
     
     // Load actual hours for current month AND adjacent months (for week views spanning month boundaries)
     const currentMonthKey = format(currentMonthStart, 'yyyy-MM');

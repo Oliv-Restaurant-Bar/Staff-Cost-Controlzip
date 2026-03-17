@@ -36,6 +36,7 @@ import { EmployeeForm } from '@/components/EmployeeForm';
 import { importScheduleFromExcelV2, exportScheduleToPDF, exportScheduleTemplate, NameMatchInfo } from '@/lib/schedule-export-import';
 import { toast } from 'sonner';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval } from 'date-fns';
+import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
@@ -219,9 +220,32 @@ const SchedulePlanner = () => {
       setActualHoursData(savedActualHours ? JSON.parse(savedActualHours) : {});
     }
 
-    // --- Tagesbudgets (noch localStorage) ---
+    // --- Tagesbudgets: aus Monatsbudget berechnen (Wochentag-Gewichtung) ---
+    const year        = currentMonth.getFullYear();
+    const monthIdx    = currentMonth.getMonth();
+    const monthlyRevenue = getMonthlyBudgetRevenue(year, monthIdx);
+    const allDays     = eachDayOfInterval({
+      start: startOfMonth(currentMonth),
+      end:   endOfMonth(currentMonth),
+    });
+
     const savedBudgets = localStorage.getItem('dailyBudgets');
-    if (savedBudgets) setDailyBudgets(JSON.parse(savedBudgets));
+    const manualBudgets: Record<string, { plannedRevenue?: number; actualRevenue?: number }> =
+      savedBudgets ? JSON.parse(savedBudgets) : {};
+
+    if (monthlyRevenue > 0) {
+      const autoBudgets = distributeBudgetByWeekday(monthlyRevenue, allDays);
+      // Ist-Umsatz (actualRevenue) aus localStorage erhalten
+      const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number }> = { ...autoBudgets };
+      Object.entries(manualBudgets).forEach(([k, v]) => {
+        if (v.actualRevenue !== undefined) {
+          merged[k] = { ...merged[k], actualRevenue: v.actualRevenue };
+        }
+      });
+      setDailyBudgets(merged);
+    } else {
+      setDailyBudgets(manualBudgets);
+    }
   }, [currentMonth]);
 
   useEffect(() => {
