@@ -320,18 +320,14 @@ function sec1(ctx: ColCtx, emp: Employee, draft: ContractDraft): ColCtx {
   y += 1;
   y = sectionPara(doc, 'L', y, 'Dieser Vertrag tritt nur in Kraft, sofern die notwendigen Arbeitsbewilligungen erteilt werden.');
   y += 2;
-  const wh      = emp.weeklyHours ?? 42;
-  const pensum  = Math.round(wh / 42 * 100);
-  const isSL    = emp.contractType === 'hourly' || emp.contractType === 'irregular';
-  const pensumStr = isSL ? 'nach Vereinbarung' : `${pensum} %`;
+  const wh         = emp.weeklyHours ?? 42;
+  const pensum     = Math.round(wh / 42 * 100);
+  const pensumStr  = `${pensum}%`;
+  const funktionStr = [emp.positionTitle, pensumStr].filter(Boolean).join(' ');
 
   setFont(doc, 7.5, 'normal');
   doc.text(`a)   Vertragsbeginn: ${fd(emp.contractStart)}`, PL, y); y += LH5;
-  doc.text(`b)   Funktion: ${emp.positionTitle || '___________________'}`, PL, y);
-  setFont(doc, 7.5, 'bold');
-  doc.text(`Arbeitspensum: ${pensumStr}`, PL + 80, y);
-  setFont(doc, 7.5, 'normal');
-  y += LH5;
+  doc.text(`b)   Funktion: ${funktionStr || '___________________'}`, PL, y); y += LH5;
   doc.text(`      Abteilung: ${deptLabel(emp.department)}`, PL, y); y += LH5 + 1;
   y = sectionPara(doc, 'L', y, 'Dem Mitarbeitenden können vorübergehend auch andere Arbeiten im Betrieb oder an einem zumutbaren anderen Arbeitsort zugewiesen werden.');
   y += 1;
@@ -392,48 +388,12 @@ function sec4(ctx: ColCtx, draft: ContractDraft): ColCtx {
 
 // ── Rechte Spalte: Art. 5-7 ──────────────────────────────────────────────────
 
-function sec5_SL(ctx: ColCtx, emp: Employee): ColCtx {
+function sec5(ctx: ColCtx): ColCtx {
   let y = ctx.yR;
   const doc = ctx.doc;
   y = sectionTitle(doc, 'R', y, '5. Arbeitszeit und Ferien (Art. 15 und Art. 17 L-GAV)');
-  const wh     = emp.weeklyHours ?? 42;
-  const pensum = Math.round(wh / 42 * 100);
-  const adjVac = pensum < 100 ? Math.round(35 * pensum / 100) : 35;
   y = sectionPara(doc, 'R', y,
-    'Die einzelnen Arbeitseinsätze erfolgen jeweils nach Absprache im gegenseitigen Einvernehmen. Die durchschnittliche wöchentliche Arbeitszeit liegt unter 42 Stunden.');
-  y += 1;
-  y = sectionPara(doc, 'R', y,
-    `Der Mitarbeitende hat Anspruch auf ${adjVac} Ferientage pro Dienstjahr. Der Ferienlohn wird mit ${pct(LGAV.VACATION_RATE)}% des Bruttolohnes vergütet.`);
-  y += 1;
-  y = sectionPara(doc, 'R', y,
-    `Anspruch auf 6 bezahlte Feiertage pro Kalenderjahr. Vergütung durch ${pct(LGAV.PUBLIC_HOLIDAY_RATE)}% des Bruttolohnes.`);
-  return setColY(ctx, 'R', y + 2);
-}
-
-function sec5_ML(ctx: ColCtx, emp: Employee, draft: ContractDraft): ColCtx {
-  let y = ctx.yR;
-  const doc = ctx.doc;
-  y = sectionTitle(doc, 'R', y, '5. Arbeitszeit und Ferien (Art. 15 und Art. 17 L-GAV)');
-  const wh         = emp.weeklyHours ?? 42;
-  const isVollzeit = draft.employmentMode === 'vollzeit';
-  const pensum     = Math.round(wh / 42 * 100);
-  const adjVac     = isVollzeit ? 35 : Math.round(35 * pensum / 100);
-
-  setFont(doc, 7.5, 'bold');
-  doc.text('a) Vollzeitmitarbeitende', RX, y); y += LH5;
-  y = sectionPara(doc, 'R', y,
-    'Die durchschnittliche wöchentliche Arbeitszeit beträgt 42 Stunden, in Kleinbetrieben 45 Stunden. In Saisonbetrieben ganzjährig 43,5 Stunden.');
-  y = sectionPara(doc, 'R', y, 'Der Ferienanspruch beträgt 35 Tage.');
-  y += 2;
-  setFont(doc, 7.5, 'bold');
-  doc.text('b) Teilzeitmitarbeitende', RX, y); y += LH5;
-  y = sectionPara(doc, 'R', y,
-    `Durchschnittliche wöchentliche Arbeitszeit: ${isVollzeit ? '___' : wh} Stunden. Ferienanspruch: ${adjVac} Tage (${pensum}% Pensum).`);
-  y += 2;
-  setFont(doc, 7.5, 'bold');
-  doc.text('c) Überstunden und Überzeit', RX, y); y += LH5;
-  y = sectionPara(doc, 'R', y,
-    'Der Mitarbeitende ist zur Leistung von Überstunden verpflichtet. Kompensation durch Freizeit oder Auszahlung gemäss Art. 15 Ziff. 5 L-GAV.');
+    'Die einzelnen Arbeitseins\u00e4tze erfolgen jeweils nach Absprache im gegenseitigen Einvernehmen. Die durchschnittliche w\u00f6chentliche Arbeitszeit liegt unter 42 Stunden (in Kleinbetrieben unter 45 Stunden; in Saisonbetrieben unter 43,5 Stunden). Der Mitarbeitende hat Anspruch auf 5 Wochen Ferien pro Dienstjahr. Der Ferienlohn wird mit 10,65% des Bruttolohnes verg\u00fctet. Der Mitarbeitende hat Anspruch auf 6 (0,5 Tage pro Monat) bezahlte Feiertage pro Kalenderjahr (Bundesfeiertag inbegriffen). Die Lohnzahlung f\u00fcr die Feiertage erfolgt durch eine Verg\u00fctung von 2,27% des Bruttolohnes.');
   return setColY(ctx, 'R', y + 2);
 }
 
@@ -442,13 +402,13 @@ function sec6(ctx: ColCtx): ColCtx {
   const doc = ctx.doc;
   y = sectionTitle(doc, 'R', y, '6. Wichtige Hinweise');
   y = sectionPara(doc, 'R', y,
-    'Der Mitarbeitende ist orientiert über: das Ende der Deckung für Berufsunfälle, die Abredeversicherung für Nichtberufsunfälle sowie den Wechsel in eine Einzelversicherung bei der Krankengeldversicherung.');
+    'Der Mitarbeitende ist orientiert: \u00dcber das Ende der Deckung f\u00fcr Berufsunf\u00e4lle bei Beendigung des Arbeitsverh\u00e4ltnisses, die einunddrei\u00dfigt\u00e4gige Nachdeckung und die Abredeversicherung f\u00fcr Nichtberufsunf\u00e4lle bei der Unfallversicherung f\u00fcr Zwischensaison sowie Beendigung des Arbeitsverh\u00e4ltnisses, den Wiedereinschluss des Unfalls bei der Krankenpflegeversicherung und den Wechsel in eine Einzelversicherung bei der Krankengeldversicherung.');
   y += 1;
   y = sectionPara(doc, 'R', y,
-    'Der Mitarbeitende ist verpflichtet, sich ab dem ersten Arbeitstag gemäss KVG für Krankenpflege zu versichern.');
+    'Der Mitarbeitende ist verpflichtet, sich ab dem ersten Arbeitstag gem\u00e4ss den Bestimmungen des KVG f\u00fcr Krankenpflege zu versichern. Bei einem Besch\u00e4ftigungsgrad von unter 8 Stunden pro Woche ist der Abschluss der NBU-Versicherung Sache des Mitarbeiters. Gest\u00fctzt auf die Lebensmittelgesetzgebung orientiert die Arbeitgeber sofort bei Fieber, Durchfall, Erbrechen und eitrigen Wunden.');
   y += 1;
   y = sectionPara(doc, 'R', y,
-    'Sexuelle Belästigung und diskriminierendes Verhalten sind ausdrücklich untersagt. Entsprechendes Fehlverhalten kann zu einer fristlosen Kündigung führen.');
+    'Sexuelle Bel\u00e4stigung und diskriminierendes Verhalten sind ausdr\u00fccklich untersagt. Entsprechendes Fehlverhalten kann zu einer fristlosen K\u00fcndigung f\u00fchren.');
   return setColY(ctx, 'R', y + 2);
 }
 
@@ -732,11 +692,7 @@ export function generateContract(
   colCtx = sec3(colCtx, draft);
   colCtx = sec4(colCtx, draft);
 
-  if (template === 'SL') {
-    colCtx = sec5_SL(colCtx, emp);
-  } else {
-    colCtx = sec5_ML(colCtx, emp, draft);
-  }
+  colCtx = sec5(colCtx);
   colCtx = sec6(colCtx);
   colCtx = sec7(colCtx, draft);
 
