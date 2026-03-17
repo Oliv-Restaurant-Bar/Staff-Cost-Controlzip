@@ -119,7 +119,7 @@ function pageFooter(doc: jsPDF, page: number) {
   setFont(doc, 7, 'normal');
   doc.setTextColor(140, 140, 140);
   doc.text(`© GastroSuisse – L-GAV Arbeitsvertrag – Seite ${page}`, 105, 290, { align: 'center' });
-  doc.text('oLiv Restaurant & Bar – Vertraulich', 105, 294, { align: 'center' });
+  doc.text('Oliv Restaurant & Bar – Vertraulich', 105, 294, { align: 'center' });
 }
 
 // ── Spalten-Helpers ───────────────────────────────────────────────────────────
@@ -665,7 +665,7 @@ function signatures(doc: jsPDF, y: number) {
   doc.line(mid + 8, y, PR, y);
   y += 4;
   setFont(doc, 7.5, 'normal');
-  doc.text('Arbeitgeber/in (oLiv Restaurant & Bar)', PL, y);
+  doc.text('Arbeitgeber/in (Oliv Restaurant & Bar)', PL, y);
   doc.text('Mitarbeiter/in (Unterschrift)', mid + 8, y);
   y += 8;
   doc.text('Beilagen: _________________________________', PL, y);
