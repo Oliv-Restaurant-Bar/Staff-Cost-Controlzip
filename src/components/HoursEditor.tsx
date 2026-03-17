@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Employee, TimeEntry, DailyBudget, ScheduleImportEntry, MirusDailyImportEntry } from '@/types/personnel';
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Calendar, CalendarDays, Target, TrendingUp, Clock, X, Download, FileSpreadsheet, Users, UtensilsCrossed, Building2, BarChart3, FileText } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Calendar, CalendarDays, Target, TrendingUp, Clock, X, Download, FileSpreadsheet, Users, UtensilsCrossed, Building2, BarChart3, FileText, PenLine } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   Dialog,
@@ -23,6 +23,8 @@ import autoTable from 'jspdf-autotable';
 import ExcelJS from 'exceljs';
 import { PlannedHoursImportButton } from '@/components/PlannedHoursImportButton';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
+import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
+import { HoursDirectEntryDialog } from '@/components/HoursDirectEntryDialog';
 import { exportComprehensiveReport } from '@/lib/comprehensive-report';
 
 interface HoursEditorProps {
@@ -65,6 +67,7 @@ export const HoursEditor = ({
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [selectedDateForDetail, setSelectedDateForDetail] = useState<string | null>(null);
   const [departmentFilter, setDepartmentFilter] = useState<DepartmentFilter>('all');
+  const [directEntryOpen, setDirectEntryOpen] = useState(false);
 
   const monthDays = useMemo(() => {
     const monthStart = startOfMonth(currentMonthStart);
@@ -1145,6 +1148,27 @@ export const HoursEditor = ({
                 Küche
               </Button>
             </div>
+
+            {/* Ist-Stunden Import (nur im Ist-Modus) */}
+            {hoursMode === 'actual' && (
+              <div className="flex items-center gap-1 border-l pl-2 ml-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDirectEntryOpen(true)}
+                  className="gap-1 text-xs"
+                  title="Stunden direkt in Tabelle eingeben"
+                >
+                  <PenLine className="h-3 w-3" />
+                  Direkteingabe
+                </Button>
+                <HoursCSVImportButton
+                  employees={employees}
+                  selectedDate={currentMonthStart}
+                  onImport={entries => onImportActualHours?.(entries)}
+                />
+              </div>
+            )}
 
             {/* Export Buttons */}
             <div className="flex items-center gap-1">
@@ -2546,6 +2570,14 @@ export const HoursEditor = ({
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Ist-Stunden Direkteingabe */}
+      <HoursDirectEntryDialog
+        open={directEntryOpen}
+        onClose={() => setDirectEntryOpen(false)}
+        employees={employees}
+        selectedDate={currentMonthStart}
+      />
     </Card>
   );
 };
