@@ -158,6 +158,7 @@ const SchedulePlanner = () => {
   const [costPasswordDialogOpen, setCostPasswordDialogOpen] = useState(false);
   const [costPassword, setCostPassword] = useState('');
   const [dailyBudgets, setDailyBudgets] = useState<{[key: string]: { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }}>({});
+  const [pkqPeriod, setPkqPeriod] = useState<'monat' | 'woche' | 'tag'>('monat');
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [pendingImportResult, setPendingImportResult] = useState<{
@@ -1002,22 +1003,24 @@ const SchedulePlanner = () => {
   const visibleEmployeeIds = new Set(visibleEmployees.map(e => e.id));
 
   const monthDateSet = new Set(daysInMonth.map(d => format(d, 'yyyy-MM-dd')));
-
-  // Wochenansicht: Kennzahlen auf die angezeigten Tage beschränken
   const displayDateSet = new Set(displayDays.map(d => format(d, 'yyyy-MM-dd')));
-  const isWeekView = calendarView === 'week';
 
-  // Geplanter Umsatz (Monat oder Woche)
-  const totalPlannedRevenue = Object.entries(dailyBudgets)
-    .filter(([date]) => (isWeekView ? displayDateSet : monthDateSet).has(date))
+  // ── Geplanter Umsatz: Monat / Woche / Tag ─────────────────────────────────
+  const monthlyPlannedRevenue = Object.entries(dailyBudgets)
+    .filter(([date]) => monthDateSet.has(date))
     .reduce((sum, [, b]) => sum + (b.plannedRevenue || 0), 0);
 
-  // Geplante Personalkosten (Monat oder Woche pro-rata)
-  const weekPlannedLaborCost = visibleEmployees.reduce((sum, emp) => {
+  const weeklyPlannedRevenue = Object.entries(dailyBudgets)
+    .filter(([date]) => displayDateSet.has(date))
+    .reduce((sum, [, b]) => sum + (b.plannedRevenue || 0), 0);
+
+  const dailyAvgRevenue = daysInMonth.length > 0 ? monthlyPlannedRevenue / daysInMonth.length : 0;
+
+  // ── Geplante Personalkosten: Monat / Woche / Tag ───────────────────────────
+  const weeklyPlannedLaborCost = visibleEmployees.reduce((sum, emp) => {
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
       return sum + emp.monthlySalary * (displayDays.length / daysInMonth.length);
     }
-    // Stündlich: nur Stunden in der angezeigten Woche
     const hrs = displayDays.reduce((h, day) => {
       const cellKey = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
       const ds = scheduleData[cellKey];
@@ -1026,10 +1029,24 @@ const SchedulePlanner = () => {
     return sum + hrs * emp.hourlyWage;
   }, 0);
 
-  const activeLaborCost = isWeekView ? weekPlannedLaborCost : totalPlannedLaborCost;
+  const dailyAvgLaborCost = daysInMonth.length > 0 ? totalPlannedLaborCost / daysInMonth.length : 0;
 
-  const plannedCostRatio = totalPlannedRevenue > 0
-    ? (activeLaborCost / totalPlannedRevenue) * 100
+  // ── Aktive Werte nach gewählter Periode ───────────────────────────────────
+  const activeRevenue =
+    pkqPeriod === 'monat' ? monthlyPlannedRevenue :
+    pkqPeriod === 'woche' ? weeklyPlannedRevenue  :
+    dailyAvgRevenue;
+
+  const activeLaborCost =
+    pkqPeriod === 'monat' ? totalPlannedLaborCost   :
+    pkqPeriod === 'woche' ? weeklyPlannedLaborCost   :
+    dailyAvgLaborCost;
+
+  // Für Rückwärtskompatibilität (wird noch an anderen Stellen referenziert)
+  const totalPlannedRevenue = monthlyPlannedRevenue;
+
+  const plannedCostRatio = activeRevenue > 0
+    ? (activeLaborCost / activeRevenue) * 100
     : null;
   const costRatioStatus: 'good' | 'ok' | 'high' | 'unknown' =
     plannedCostRatio === null ? 'unknown' :
@@ -1374,64 +1391,93 @@ const SchedulePlanner = () => {
             FEATURE 1 – PERSONALKOSTENQUOTE (direkt unter den 4 Karten)
             ════════════════════════════════════════════════════════════ */}
         <div className={cn(
-          "rounded-xl border-2 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4",
+          "rounded-xl border-2 p-4 flex flex-col gap-3",
           costRatioStatus === 'good'    && "border-green-500 bg-green-50 dark:bg-green-950/30",
           costRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
           costRatioStatus === 'high'    && "border-red-500 bg-red-50 dark:bg-red-950/30",
           costRatioStatus === 'unknown' && "border-slate-300 bg-slate-50 dark:bg-slate-800/40"
         )}>
-          {/* Left: icon + label + big % */}
-          <div className="flex items-center gap-3">
-            <div className={cn(
-              "w-14 h-14 rounded-full flex items-center justify-center text-white text-2xl font-black shrink-0",
-              costRatioStatus === 'good'    && "bg-green-500",
-              costRatioStatus === 'ok'      && "bg-yellow-400",
-              costRatioStatus === 'high'    && "bg-red-500",
-              costRatioStatus === 'unknown' && "bg-slate-400"
-            )}>
-              {costRatioStatus === 'good'    && '✓'}
-              {costRatioStatus === 'ok'      && '!'}
-              {costRatioStatus === 'high'    && '✗'}
-              {costRatioStatus === 'unknown' && '?'}
-            </div>
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Personalkostenquote – Planung {isWeekView ? '(Woche)' : '(Monat)'}</p>
-              <p className={cn(
-                "text-4xl font-black leading-none mt-0.5",
-                costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
-                costRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
-                costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
-                costRatioStatus === 'unknown' && "text-slate-500"
-              )}>
-                {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '– %'}
-              </p>
-              <p className="text-sm mt-1">
-                {costRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {laborCostThreshold}% erreicht</span>}
-                {costRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({laborCostThreshold}%)</span>}
-                {costRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {laborCostThreshold}% überschritten</span>}
-                {costRatioStatus === 'unknown' && <span className="text-muted-foreground">Kein Umsatzbudget – Quote noch nicht berechenbar</span>}
-              </p>
+          {/* Periode-Toggle (Monat / Woche / Tag) */}
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Personalkostenquote – Planung
+            </p>
+            <div className="flex rounded-md overflow-hidden border border-border text-xs">
+              {(['monat', 'woche', 'tag'] as const).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPkqPeriod(p)}
+                  className={cn(
+                    "px-3 py-1 font-medium transition-colors",
+                    pkqPeriod === p
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-background text-muted-foreground hover:bg-muted"
+                  )}
+                >
+                  {p === 'monat' ? 'Monat' : p === 'woche' ? 'Woche' : 'Tag'}
+                </button>
+              ))}
             </div>
           </div>
-          {/* Right: three key numbers */}
-          <div className="flex gap-5 flex-wrap sm:flex-nowrap">
-            <div className="text-center">
-              <p className="text-xl font-bold tabular-nums">
-                {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
-              </p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">Geplante Personalkosten</p>
+
+          {/* Hauptinhalt */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            {/* Left: icon + big % */}
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-14 h-14 rounded-full flex items-center justify-center text-white text-2xl font-black shrink-0",
+                costRatioStatus === 'good'    && "bg-green-500",
+                costRatioStatus === 'ok'      && "bg-yellow-400",
+                costRatioStatus === 'high'    && "bg-red-500",
+                costRatioStatus === 'unknown' && "bg-slate-400"
+              )}>
+                {costRatioStatus === 'good'    && '✓'}
+                {costRatioStatus === 'ok'      && '!'}
+                {costRatioStatus === 'high'    && '✗'}
+                {costRatioStatus === 'unknown' && '?'}
+              </div>
+              <div>
+                <p className={cn(
+                  "text-4xl font-black leading-none",
+                  costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
+                  costRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
+                  costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
+                  costRatioStatus === 'unknown' && "text-slate-500"
+                )}>
+                  {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '– %'}
+                </p>
+                <p className="text-sm mt-1">
+                  {costRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {laborCostThreshold}% erreicht</span>}
+                  {costRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({laborCostThreshold}%)</span>}
+                  {costRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {laborCostThreshold}% überschritten</span>}
+                  {costRatioStatus === 'unknown' && <span className="text-muted-foreground">Kein Umsatzbudget – Quote noch nicht berechenbar</span>}
+                </p>
+              </div>
             </div>
-            <div className="text-center">
-              <p className="text-xl font-bold tabular-nums">
-                {totalPlannedRevenue > 0
-                  ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedRevenue)
-                  : <span className="text-muted-foreground text-base">kein Budget</span>}
-              </p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">{isWeekView ? 'Umsatz diese Woche' : 'Geplanter Umsatz'}</p>
-            </div>
-            <div className="text-center">
-              <p className="text-xl font-bold tabular-nums">{laborCostThreshold} %</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">Zielwert</p>
+            {/* Right: three key numbers */}
+            <div className="flex gap-5 flex-wrap sm:flex-nowrap">
+              <div className="text-center">
+                <p className="text-xl font-bold tabular-nums">
+                  {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Personalkosten{pkqPeriod === 'monat' ? ' / Monat' : pkqPeriod === 'woche' ? ' / Woche' : ' / Tag'}
+                </p>
+              </div>
+              <div className="text-center">
+                <p className="text-xl font-bold tabular-nums">
+                  {activeRevenue > 0
+                    ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue)
+                    : <span className="text-muted-foreground text-base">kein Budget</span>}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Umsatz{pkqPeriod === 'monat' ? ' / Monat' : pkqPeriod === 'woche' ? ' / Woche' : ' / Tag'}
+                </p>
+              </div>
+              <div className="text-center">
+                <p className="text-xl font-bold tabular-nums">{laborCostThreshold} %</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Zielwert</p>
+              </div>
             </div>
           </div>
         </div>
