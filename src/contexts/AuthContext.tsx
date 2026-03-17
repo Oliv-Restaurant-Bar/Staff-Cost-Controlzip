@@ -24,7 +24,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<UserRole>('admin');
 
-  const loadUserRole = async (userId: string) => {
+  // Feste E-Mail → Rollen-Zuordnung (greift sofort, unabhängig von DB)
+  const EMAIL_ROLE_MAP: Record<string, UserRole> = {
+    'admin@olivbern.ch':   'admin',
+    'service@olivbern.ch': 'service_manager',
+    'kueche@olivbern.ch':  'kueche_manager',
+  };
+
+  const loadUserRole = async (userId: string, email?: string) => {
+    // 1. Zuerst DB-Tabelle versuchen (wenn vorhanden, hat sie Vorrang)
     try {
       const { data, error } = await supabase
         .from('user_profiles')
@@ -32,18 +40,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .eq('id', userId)
         .maybeSingle();
 
-      if (error) {
-        // Tabelle fehlt noch oder DB-Fehler → admin als temporärer Fallback
-        setRole('admin');
-      } else if (!data) {
-        // Tabelle existiert, aber kein Eintrag für diesen User → sicherster Fallback
-        setRole('kueche_manager');
-      } else {
-        setRole((data.role as UserRole) ?? 'kueche_manager');
+      if (!error && data?.role) {
+        setRole(data.role as UserRole);
+        return;
       }
     } catch {
-      setRole('admin');
+      // Tabelle fehlt — weiter mit E-Mail-Fallback
     }
+
+    // 2. E-Mail-basierte Rollenzuweisung (funktioniert ohne DB)
+    if (email && EMAIL_ROLE_MAP[email.toLowerCase()]) {
+      setRole(EMAIL_ROLE_MAP[email.toLowerCase()]);
+      return;
+    }
+
+    // 3. Sicherster Fallback: kein Zugriff auf Admin-Bereiche
+    setRole('kueche_manager');
   };
 
   useEffect(() => {
@@ -51,7 +63,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        loadUserRole(session.user.id);
+        loadUserRole(session.user.id, session.user.email);
       }
       setLoading(false);
     });
@@ -60,9 +72,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        loadUserRole(session.user.id);
+        loadUserRole(session.user.id, session.user.email);
       } else {
-        setRole('admin');
+        setRole('kueche_manager');
       }
       setLoading(false);
     });
