@@ -32,10 +32,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .eq('id', userId)
         .maybeSingle();
 
-      if (error || !data) {
+      if (error) {
+        // Tabelle fehlt noch oder DB-Fehler → admin als temporärer Fallback
         setRole('admin');
+      } else if (!data) {
+        // Tabelle existiert, aber kein Eintrag für diesen User → sicherster Fallback
+        setRole('kueche_manager');
       } else {
-        setRole((data.role as UserRole) ?? 'admin');
+        setRole((data.role as UserRole) ?? 'kueche_manager');
       }
     } catch {
       setRole('admin');

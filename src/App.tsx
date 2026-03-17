@@ -35,7 +35,7 @@ const queryClient = new QueryClient();
 
 const AppContent = () => {
   const { user, loading } = useAuth();
-  const { canAccessSettings } = usePermissions();
+  const { canAccessSettings, canAccessModule } = usePermissions();
 
   useEffect(() => {
     if (user) {
@@ -68,11 +68,19 @@ const AppContent = () => {
       {/* Haupt-Inhaltsbereich */}
       <div className="flex-1 min-w-0 pb-16 md:pb-0">
         <Routes>
-          {/* Öffentlich für alle angemeldeten Nutzer */}
-          <Route path="/"               element={<Dashboard />} />
-          <Route path="/personal"       element={<SchedulePlanner />} />
+          {/* Routen mit Rollenprüfung */}
+          <Route path="/"
+            element={canAccessModule('dashboard')
+              ? <Dashboard />
+              : <Navigate to="/personal" replace />}
+          />
+          <Route path="/personal"         element={<SchedulePlanner />} />
           <Route path="/schedule-planner" element={<SchedulePlanner />} />
-          <Route path="/analyse"        element={<SollIstAnalyse />} />
+          <Route path="/analyse"
+            element={canAccessModule('soll_ist_analyse')
+              ? <SollIstAnalyse />
+              : <Navigate to="/personal" replace />}
+          />
 
           {/* Personalstamm: alle Rollen, Inhalt rollenbasiert gefiltert */}
           <Route path="/personal-stamm" element={<Personalstamm />} />

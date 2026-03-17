@@ -91,11 +91,11 @@ export const usePermissions = (): Permissions => {
   const canAccessModule = (module: AppModule): boolean => {
     switch (module) {
       case 'dashboard':
-        return true; // alle
+        return isAdmin; // nur Admin
       case 'dienstplanung':
         return true; // alle (aber gefiltert nach Abteilung)
       case 'soll_ist_analyse':
-        return true; // alle (aber gefiltert)
+        return isAdmin; // nur Admin
       case 'personalstamm':
         return isAdmin; // nur Admin
       case 'reporting':

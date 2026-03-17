@@ -33,6 +33,7 @@ interface NavItem {
   icon: React.FC<{ className?: string }>;
   adminOnly?: boolean;
   comingSoon?: boolean;
+  module?: import('@/hooks/usePermissions').AppModule;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -41,18 +42,21 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Dashboard',
     shortLabel: 'Home',
     icon: LayoutDashboard,
+    module: 'dashboard',
   },
   {
     path: '/personal',
     label: 'Dienstplanung',
     shortLabel: 'Dienst',
     icon: Calendar,
+    module: 'dienstplanung',
   },
   {
     path: '/analyse',
     label: 'Soll / Ist Analyse',
     shortLabel: 'Analyse',
     icon: BarChart2,
+    module: 'soll_ist_analyse',
   },
   {
     path: '/personal-stamm',
@@ -136,7 +140,7 @@ const ROLE_CONFIG = {
 export const AppSidebar = () => {
   const location      = useLocation();
   const { user, signOut } = useAuth();
-  const { role, isAdmin, isManager, allowedDepartment } = usePermissions();
+  const { role, isAdmin, isManager, allowedDepartment, canAccessModule } = usePermissions();
 
   const roleConfig = ROLE_CONFIG[role as keyof typeof ROLE_CONFIG] ?? ROLE_CONFIG.admin;
   const RoleIcon = roleConfig.Icon;
@@ -144,6 +148,7 @@ export const AppSidebar = () => {
   const visibleItems = NAV_ITEMS.filter(item => {
     if (item.comingSoon && !isAdmin) return false;
     if (item.adminOnly && !isAdmin) return false;
+    if (item.module && !canAccessModule(item.module)) return false;
     return true;
   });
 
@@ -248,12 +253,13 @@ export const AppSidebar = () => {
 
 export const AppBottomNav = () => {
   const location = useLocation();
-  const { isAdmin } = usePermissions();
+  const { isAdmin, canAccessModule } = usePermissions();
 
   // Mobile zeigt max. 4 Hauptpunkte
   const mobileItems = NAV_ITEMS.filter(item => {
     if (item.comingSoon) return false;
     if (item.adminOnly && !isAdmin) return false;
+    if (item.module && !canAccessModule(item.module)) return false;
     // Einstellungen auf Mobile weglassen (zu wenig Platz)
     if (item.path === '/settings') return false;
     return true;
