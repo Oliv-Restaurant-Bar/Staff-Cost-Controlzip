@@ -986,7 +986,7 @@ const SchedulePlanner = () => {
   const overhoursEmployees = employeeSummaries.filter(s => s.status === 'over');
 
   // ── Feature 1: Personalkostenquote ──────────────────────────────────────
-  const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 35);
+  const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 40);
 
   // Kosten und Stunden werden auf die sichtbare Abteilung gefiltert.
   // Ein Manager sieht nur die Zahlen seiner eigenen Abteilung.

@@ -208,7 +208,7 @@ const Dashboard = () => {
     }
   }, []);
 
-  const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 35);
+  const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 40);
 
   // ── Budget-Daten (aus Budget-Modul, budget_v1) ───────────────────────────────
   const currentYear  = today.getFullYear();

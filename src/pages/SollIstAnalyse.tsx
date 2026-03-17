@@ -334,7 +334,7 @@ const SollIstAnalyse = () => {
     catch { return {}; }
   }, []);
 
-  const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 35);
+  const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 40);
 
   // ── Budget-Daten für den gewählten Monat ─────────────────────────────────────
   const budgetYear  = selDate.getFullYear();

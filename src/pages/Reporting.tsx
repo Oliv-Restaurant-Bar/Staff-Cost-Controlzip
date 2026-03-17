@@ -512,7 +512,7 @@ const Reporting = () => {
   const summary = useMemo(() => calcAnnualSummary(year), [year, months]);
   const chartData = useMemo(() => buildChartData(months), [months]);
   const threshold = useMemo(
-    () => parseInt(localStorage.getItem('labor_cost_threshold') || '35'),
+    () => parseInt(localStorage.getItem('labor_cost_threshold') || '40'),
     [],
   );
 
