@@ -31,8 +31,9 @@ import { Separator } from '@/components/ui/separator';
 import {
   Upload, CheckCircle2, AlertTriangle, XCircle, FileText,
   ChevronRight, ChevronLeft, Save, RefreshCw, Info, FileType,
-  Loader2,
+  Loader2, ShoppingCart,
 } from 'lucide-react';
+import { GastronoviImportSection } from '@/components/GastronoviImportSection';
 import { cn } from '@/lib/utils';
 import {
   processCSV, matchCSVRows, buildMonthRecord,
@@ -352,16 +353,35 @@ export default function CSVImportPage() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Upload className="h-6 w-6" />
-            Buchhaltungs-Import
+            Import
           </h1>
           <p className="text-muted-foreground text-sm mt-0.5">
-            CSV oder PDF aus dem Buchhaltungsprogramm importieren – automatische Kontozuordnung
+            Buchhaltungsdaten und Tagesumsätze importieren
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => navigate('/reporting')}>
           <ChevronLeft className="h-4 w-4 mr-1" /> Zurück zu Reporting
         </Button>
       </div>
+
+      {/* Top-level tab switch */}
+      <Tabs defaultValue="accounting">
+        <TabsList className="mb-2">
+          <TabsTrigger value="accounting" className="flex items-center gap-1.5">
+            <FileType className="h-4 w-4" />
+            Buchhaltung (CSV / PDF)
+          </TabsTrigger>
+          <TabsTrigger value="gastronovi" className="flex items-center gap-1.5">
+            <ShoppingCart className="h-4 w-4" />
+            Tagesumsätze (Gastronovi)
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="gastronovi" className="mt-0">
+          <GastronoviImportSection />
+        </TabsContent>
+
+        <TabsContent value="accounting" className="mt-0">
 
       {/* Fortschritts-Indicator */}
       <div className="flex items-center gap-2 text-sm">
@@ -664,6 +684,9 @@ export default function CSVImportPage() {
           </CardContent>
         </Card>
       )}
+
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -99,6 +99,11 @@ export interface DailyBudget {
   hourlyRevenue?: HourlyRevenue[]; // Revenue per hour for analysis
   fixedBudget?: number; // Fixes Startbudget vom Monatsplan (bleibt konstant)
   takeawayRevenue?: number; // Take Away Umsatz (separate MWST: 2.6%)
+  // Food / Beverage breakdown (from Gastronovi import)
+  actualFood?: number;
+  actualBeverage?: number;
+  previousYearFood?: number;
+  previousYearBeverage?: number;
 }
 
 // MWST rates for revenue calculation

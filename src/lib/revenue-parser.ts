@@ -718,3 +718,141 @@ export const analyzeHourlyRevenue = (data: HourlyRevenueParseResult): RevenueOpt
     recommendations,
   };
 };
+
+// ─── Gastronovi Multi-Day Import ──────────────────────────────────────────────
+
+export interface GastronoviDayResult {
+  date: string;        // yyyy-MM-dd
+  food: number;
+  beverage: number;
+  total: number;
+  currency: 'CHF' | 'EUR';
+}
+
+/**
+ * Parse Gastronovi daily-revenue Excel export.
+ *
+ * Row layout:
+ *   col 0  = Bezeichnung (row label)
+ *   col 1  = Zeitraum / period total
+ *   col 2+ = one column per calendar day ("01.01.", "02.01.", …)
+ *
+ * Category rules:
+ *   "Food (Speisen)"      → 100 % Food
+ *   "Beverage (Getränke)" → 100 % Beverage
+ *   everything else       → 70 % Food + 30 % Beverage
+ *   "Gesamt"              → ignored (we recompute from Food + Bev + Other)
+ *
+ * @param file  The .xlsx file from the user
+ * @param year  The calendar year of the data (required because column headers
+ *              only contain "DD.MM." without year)
+ */
+export const parseGastronoviExcel = async (
+  file: File,
+  year: number,
+): Promise<GastronoviDayResult[] | null> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden'));
+
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result;
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(firstSheet, {
+          header: 1,
+          defval: '',
+        }) as (string | number)[][];
+
+        if (!rows.length) { resolve(null); return; }
+
+        // ── 1. Find the header row (the row whose cells 2+ look like dates) ──
+        let headerRowIdx = -1;
+        const dateColumns: { colIdx: number; date: string }[] = [];
+
+        for (let r = 0; r < Math.min(rows.length, 5); r++) {
+          const row = rows[r];
+          const found: { colIdx: number; date: string }[] = [];
+          for (let c = 2; c < row.length; c++) {
+            const cell = String(row[c] ?? '').trim();
+            if (!cell) continue;
+            const d = parseDateFromHeader(cell, year);
+            if (d) found.push({ colIdx: c, date: d });
+          }
+          if (found.length >= 2) {
+            headerRowIdx = r;
+            found.forEach(f => dateColumns.push(f));
+            break;
+          }
+        }
+
+        if (headerRowIdx === -1 || !dateColumns.length) {
+          resolve(null);
+          return;
+        }
+
+        // ── 2. Per-day accumulators ──
+        const foodMap: Record<string, number>      = {};
+        const beverageMap: Record<string, number>  = {};
+        const otherMap: Record<string, number>     = {};
+        const currencyMap: Record<string, 'CHF' | 'EUR'> = {};
+
+        dateColumns.forEach(({ date }) => {
+          foodMap[date]      = 0;
+          beverageMap[date]  = 0;
+          otherMap[date]     = 0;
+          currencyMap[date]  = 'CHF';
+        });
+
+        // ── 3. Walk data rows ──
+        for (let r = headerRowIdx + 1; r < rows.length; r++) {
+          const row = rows[r];
+          if (!row || !row[0]) continue;
+
+          const label = String(row[0]).trim().toLowerCase();
+          const isGesamt   = label.includes('gesamt') || label.includes('total');
+          const isFood     = label.includes('food') || label.includes('speisen');
+          const isBeverage = label.includes('beverage') || label.includes('getränke');
+
+          if (isGesamt) continue; // Skip – we recompute the total
+
+          for (const { colIdx, date } of dateColumns) {
+            const cell = row[colIdx];
+            if (cell === '' || cell === undefined || cell === null) continue;
+            const { amount, currency } = parseRevenueValue(cell);
+            if (amount === 0) continue;
+
+            currencyMap[date] = currency;
+
+            if (isFood)          foodMap[date]     += amount;
+            else if (isBeverage) beverageMap[date] += amount;
+            else                 otherMap[date]    += amount;
+          }
+        }
+
+        // ── 4. Apply 70/30 split and build results ──
+        const results: GastronoviDayResult[] = dateColumns.map(({ date }) => {
+          const other     = otherMap[date] ?? 0;
+          const food      = (foodMap[date] ?? 0) + other * 0.70;
+          const beverage  = (beverageMap[date] ?? 0) + other * 0.30;
+          return {
+            date,
+            food:     Math.round(food     * 100) / 100,
+            beverage: Math.round(beverage * 100) / 100,
+            total:    Math.round((food + beverage) * 100) / 100,
+            currency: currencyMap[date] ?? 'CHF',
+          };
+        });
+
+        // Filter out completely empty days
+        resolve(results.filter(r => r.total !== 0));
+      } catch (err) {
+        reject(err);
+      }
+    };
+
+    reader.readAsArrayBuffer(file);
+  });
+};
