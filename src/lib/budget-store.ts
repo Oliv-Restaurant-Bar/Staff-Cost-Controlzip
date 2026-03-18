@@ -75,8 +75,11 @@ export function loadBudgetYear(year: number): BudgetYear {
   const all = loadAll();
   if (year === 2026) {
     const existing = all[2026];
-    const hasItems = existing?.plLineItems && existing.plLineItems.length > 0;
-    if (!hasItems) {
+    // Nur seeden wenn noch keine echten Werte vorhanden (alle 0 oder keine Items)
+    const hasRealValues = existing?.plLineItems?.some(
+      item => item.monthlyValues.some(v => v !== 0)
+    );
+    if (!hasRealValues) {
       const seeded = createSeededBudget2026();
       all[2026] = seeded;
       saveAll(all);
