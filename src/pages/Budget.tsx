@@ -469,15 +469,22 @@ function BudgetContent() {
                       </tr>,
 
                       // ── Einzelpositionen (Unterkonten) ─────────────────────
-                      ...(!isColl ? items.map(item => {
+                      ...(!isColl ? items.flatMap(item => {
                         const iyearly   = itemYearly(item);
                         const isEditKum = editKumuliert === item.id;
 
-                        return (
+                        const itemRow = (
                           <tr key={item.id} className="border-b border-border/40 hover:bg-muted/20 transition-colors group">
                             {/* Sticky linke Zelle */}
                             <td className="sticky left-0 bg-background z-10 py-1.5 pl-8 pr-2 border-r border-border">
                               <div className="flex items-center gap-1.5">
+                                {/* %-Badge LINKS */}
+                                <span className={cn('text-[9px] px-1 py-0 rounded border flex-shrink-0',
+                                  item.valueType === 'percent'
+                                    ? 'bg-blue-50 border-blue-200 text-blue-700'
+                                    : 'bg-gray-50 border-gray-200 text-gray-600')}>
+                                  {item.valueType === 'percent' ? '%' : 'CHF'}
+                                </span>
                                 <span className="text-[10px] font-mono text-muted-foreground w-9 flex-shrink-0 tabular-nums">
                                   {item.accountNumber}
                                 </span>
@@ -490,12 +497,6 @@ function BudgetContent() {
                                     {item.department}
                                   </span>
                                 )}
-                                <span className={cn('text-[9px] px-1 py-0 rounded border flex-shrink-0 ml-auto',
-                                  item.valueType === 'percent'
-                                    ? 'bg-blue-50 border-blue-200 text-blue-700'
-                                    : 'bg-gray-50 border-gray-200 text-gray-600')}>
-                                  {item.valueType === 'percent' ? '%' : 'CHF'}
-                                </span>
                               </div>
                             </td>
 
@@ -583,6 +584,40 @@ function BudgetContent() {
                             </td>
                           </tr>
                         );
+
+                        // ── Subtotal «Direkter Warenaufwand» nach Konto 4070 ──
+                        if (cat.id === 'pl_goods_cost' && item.accountNumber === '4070') {
+                          const direktAccounts = ['4020','4030','4040','4050','4060','4070'];
+                          const direktItems = items.filter(i => direktAccounts.includes(i.accountNumber ?? ''));
+                          const direktMonthly = Array.from({ length: 12 }, (_, m) =>
+                            direktItems.reduce((s, i) => s + (i.valueType === 'percent'
+                              ? Math.round(i.monthlyValues[m] / 100 * revenueByMonth[m])
+                              : i.monthlyValues[m]
+                            ), 0)
+                          );
+                          const direktYearly = direktMonthly.reduce((s, v) => s + v, 0);
+                          const subtotalRow = (
+                            <tr key="subtotal-direkter-warenaufwand" className="border-t border-b-2 border-orange-200 bg-orange-50/60 dark:bg-orange-950/20">
+                              <td className="sticky left-0 z-10 py-1.5 pl-8 pr-2 border-r border-border bg-orange-50/60 dark:bg-orange-950/20">
+                                <span className="font-bold italic text-[11px] text-orange-800 dark:text-orange-200 uppercase tracking-wide">
+                                  Direkter Warenaufwand
+                                </span>
+                              </td>
+                              <td className="text-right py-1.5 px-3 font-mono font-bold text-xs border-r-2 border-amber-300 bg-amber-50/40 dark:bg-amber-950/10 text-orange-800 dark:text-orange-200">
+                                {direktYearly !== 0 ? CHF(direktYearly) : '–'}
+                              </td>
+                              {direktMonthly.map((v, m) => (
+                                <td key={m} className="text-right py-1.5 px-2 font-mono text-xs font-semibold text-orange-800 dark:text-orange-200">
+                                  {v !== 0 ? CHF(v) : '–'}
+                                </td>
+                              ))}
+                              <td />
+                            </tr>
+                          );
+                          return [itemRow, subtotalRow];
+                        }
+
+                        return [itemRow];
                       }) : []),
                     ];
                   })}
