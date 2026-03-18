@@ -161,7 +161,6 @@ const SchedulePlanner = () => {
   const [costPasswordDialogOpen, setCostPasswordDialogOpen] = useState(false);
   const [costPassword, setCostPassword] = useState('');
   const [dailyBudgets, setDailyBudgets] = useState<{[key: string]: { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }}>({});
-  const [pkqPeriod, setPkqPeriod] = useState<'monat' | 'woche' | 'tag'>('monat');
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [pendingImportResult, setPendingImportResult] = useState<{
@@ -1117,7 +1116,6 @@ const SchedulePlanner = () => {
     .filter(([date]) => displayDateSet.has(date))
     .reduce((sum, [, b]) => sum + (b.plannedRevenue || 0), 0);
 
-  const dailyAvgRevenue = daysInMonth.length > 0 ? monthlyPlannedRevenue / daysInMonth.length : 0;
 
   // ── Geplante Personalkosten: Monat / Woche / Tag ───────────────────────────
   const weeklyPlannedLaborCost = visibleEmployees.reduce((sum, emp) => {
@@ -1132,18 +1130,33 @@ const SchedulePlanner = () => {
     return sum + hrs * emp.hourlyWage;
   }, 0);
 
-  const dailyAvgLaborCost = daysInMonth.length > 0 ? totalPlannedLaborCost / daysInMonth.length : 0;
 
-  // ── Aktive Werte nach gewählter Periode ───────────────────────────────────
+  // ── Aktive Werte nach gewählter Periode (calendarView als Quelle) ────────
   const activeRevenue =
-    pkqPeriod === 'monat' ? monthlyPlannedRevenue :
-    pkqPeriod === 'woche' ? weeklyPlannedRevenue  :
-    dailyAvgRevenue;
+    calendarView === 'month' ? monthlyPlannedRevenue :
+    weeklyPlannedRevenue; // woche + tag nutzen beide displayDateSet
 
   const activeLaborCost =
-    pkqPeriod === 'monat' ? totalPlannedLaborCost   :
-    pkqPeriod === 'woche' ? weeklyPlannedLaborCost   :
-    dailyAvgLaborCost;
+    calendarView === 'month' ? totalPlannedLaborCost :
+    weeklyPlannedLaborCost; // woche + tag nutzen beide displayDays
+
+  // ── Label für die aktive Periode ─────────────────────────────────────────
+  const pkqPeriodLabel = useMemo(() => {
+    if (calendarView === 'month') return format(currentMonth, 'MMMM yyyy', { locale: de });
+    if (calendarView === 'day' && displayDays[0]) {
+      return format(displayDays[0], 'EEEE, d.M.yyyy', { locale: de });
+    }
+    if (calendarView === 'week' && displayDays.length > 0) {
+      const first = displayDays[0];
+      const last  = displayDays[displayDays.length - 1];
+      return `KW\u00a0${format(first, 'w')} · ${format(first, 'd.M.')}–${format(last, 'd.M.yyyy')}`;
+    }
+    return '';
+  }, [calendarView, currentMonth, displayDays]);
+
+  const pkqPeriodName =
+    calendarView === 'month' ? 'Monat' :
+    calendarView === 'week'  ? 'Woche' : 'Tag';
 
   // Für Rückwärtskompatibilität (wird noch an anderen Stellen referenziert)
   const totalPlannedRevenue = monthlyPlannedRevenue;
@@ -1534,24 +1547,24 @@ const SchedulePlanner = () => {
           costRatioStatus === 'high'    && "border-red-500 bg-red-50 dark:bg-red-950/30",
           costRatioStatus === 'unknown' && "border-slate-300 bg-slate-50 dark:bg-slate-800/40"
         )}>
-          {/* Periode-Toggle (Monat / Woche / Tag) */}
+          {/* Periode-Toggle (Monat / Woche / Tag) – steuert auch den Dienstplan-Kalender */}
           <div className="flex items-center justify-between">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
               Personalkostenquote – Planung
             </p>
             <div className="flex rounded-md overflow-hidden border border-border text-xs">
-              {(['monat', 'woche', 'tag'] as const).map((p) => (
+              {(['month', 'week', 'day'] as const).map((v) => (
                 <button
-                  key={p}
-                  onClick={() => setPkqPeriod(p)}
+                  key={v}
+                  onClick={() => setCalendarView(v)}
                   className={cn(
                     "px-3 py-1 font-medium transition-colors",
-                    pkqPeriod === p
+                    calendarView === v
                       ? "bg-primary text-primary-foreground"
                       : "bg-background text-muted-foreground hover:bg-muted"
                   )}
                 >
-                  {p === 'monat' ? 'Monat' : p === 'woche' ? 'Woche' : 'Tag'}
+                  {v === 'month' ? 'Monat' : v === 'week' ? 'Woche' : 'Tag'}
                 </button>
               ))}
             </div>
@@ -1598,8 +1611,9 @@ const SchedulePlanner = () => {
                   {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
                 </p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Personalkosten{pkqPeriod === 'monat' ? ' / Monat' : pkqPeriod === 'woche' ? ' / Woche' : ' / Tag'}
+                  Personalkosten / {pkqPeriodName}
                 </p>
+                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
               </div>
               <div className="text-center">
                 <p className="text-xl font-bold tabular-nums">
@@ -1608,8 +1622,9 @@ const SchedulePlanner = () => {
                     : <span className="text-muted-foreground text-base">kein Budget</span>}
                 </p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Umsatz{pkqPeriod === 'monat' ? ' / Monat' : pkqPeriod === 'woche' ? ' / Woche' : ' / Tag'}
+                  Umsatz / {pkqPeriodName}
                 </p>
+                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
               </div>
               <div className="text-center">
                 <p className="text-xl font-bold tabular-nums">{laborCostThreshold} %</p>
