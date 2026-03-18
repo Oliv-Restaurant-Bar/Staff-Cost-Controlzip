@@ -954,68 +954,25 @@ const Dashboard = () => {
                           </div>
                         </div>
 
-                        {/* Zeile 1: vs. Budget */}
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                          Umsatz vs. Budget pro rata
-                        </p>
-                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-                          <KpiCard
-                            title="Budget pro rata"
-                            value={formatCHF(budgetProRataStichtag)}
-                            subtitle={`Monatsbudget × ${stichtagDay}/${daysInRefMonth}`}
-                            icon={<CalendarDays className="h-5 w-5" />}
-                            color="blue"
-                            small
-                          />
-                          {revenueIstStichtag !== null && (
-                            <KpiCard
-                              title="Ist Umsatz"
-                              value={revenueIstStichtag > 0 ? formatCHF(revenueIstStichtag) : '–'}
-                              subtitle={`bis ${stichtagFormatted}`}
-                              icon={<TrendingUp className="h-5 w-5" />}
-                              color={revenueIstStichtag >= budgetProRataStichtag ? 'green' : 'red'}
-                              small
-                            />
-                          )}
-                          {revenueIstStichtag !== null && (
-                            <KpiCard
-                              title="Abw. vs. Budget p.r."
-                              value={`${(revenueIstStichtag - budgetProRataStichtag) >= 0 ? '+' : ''}${formatCHF(revenueIstStichtag - budgetProRataStichtag)}`}
-                              subtitle={`Ist vs. Budget pro rata · ${budgetProRataStichtag > 0
-                                ? `${(((revenueIstStichtag - budgetProRataStichtag) / budgetProRataStichtag) * 100).toFixed(1)} %`
-                                : '–'}`}
-                              icon={(revenueIstStichtag - budgetProRataStichtag) >= 0
-                                ? <TrendingUp className="h-5 w-5" />
-                                : <TrendingDown className="h-5 w-5" />}
-                              color={(revenueIstStichtag - budgetProRataStichtag) >= 0 ? 'green' : 'red'}
-                              badge={(revenueIstStichtag - budgetProRataStichtag) >= 0 ? '✓ Über Budget' : '↓ Unter Budget'}
-                              badgeColor={(revenueIstStichtag - budgetProRataStichtag) >= 0
-                                ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
-                                : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'}
-                              small
-                            />
-                          )}
-                        </div>
-
-                        {/* Zeile 2: vs. Vorjahr */}
+                        {/* Zeile 1: vs. Vorjahr (zuerst) */}
                         {revenuePrevYearStichtag !== null && revenuePrevYearStichtag > 0 && revenueIstStichtag !== null && (
                           <>
                             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
                               Umsatz vs. Vorjahr pro rata
                             </p>
-                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                              <KpiCard
-                                title="Vorjahr bis Stichtag"
-                                value={formatCHF(revenuePrevYearStichtag)}
-                                subtitle={`Vorjahr bis ${stichtagFormatted}`}
-                                icon={<TrendingUp className="h-5 w-5" />}
-                                color="default"
-                                small
-                              />
+                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
                               <KpiCard
                                 title="Ist Umsatz"
                                 value={revenueIstStichtag > 0 ? formatCHF(revenueIstStichtag) : '–'}
                                 subtitle={`bis ${stichtagFormatted}`}
+                                icon={<TrendingUp className="h-5 w-5" />}
+                                color={(revenueIstStichtag - revenuePrevYearStichtag) >= 0 ? 'green' : 'red'}
+                                small
+                              />
+                              <KpiCard
+                                title="Vorjahr bis Stichtag"
+                                value={formatCHF(revenuePrevYearStichtag)}
+                                subtitle={`Vorjahr bis ${stichtagFormatted}`}
                                 icon={<TrendingUp className="h-5 w-5" />}
                                 color="default"
                                 small
@@ -1032,6 +989,49 @@ const Dashboard = () => {
                                 color={(revenueIstStichtag - revenuePrevYearStichtag) >= 0 ? 'green' : 'red'}
                                 badge={(revenueIstStichtag - revenuePrevYearStichtag) >= 0 ? '✓ Über Vorjahr' : '↓ Unter Vorjahr'}
                                 badgeColor={(revenueIstStichtag - revenuePrevYearStichtag) >= 0
+                                  ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
+                                  : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'}
+                                small
+                              />
+                            </div>
+                          </>
+                        )}
+
+                        {/* Zeile 2: vs. Budget */}
+                        {revenueIstStichtag !== null && (
+                          <>
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                              Umsatz vs. Budget pro rata
+                            </p>
+                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                              <KpiCard
+                                title="Ist Umsatz"
+                                value={revenueIstStichtag > 0 ? formatCHF(revenueIstStichtag) : '–'}
+                                subtitle={`bis ${stichtagFormatted}`}
+                                icon={<TrendingUp className="h-5 w-5" />}
+                                color={revenueIstStichtag >= budgetProRataStichtag ? 'green' : 'red'}
+                                small
+                              />
+                              <KpiCard
+                                title="Budget pro rata"
+                                value={formatCHF(budgetProRataStichtag)}
+                                subtitle={`Monatsbudget × ${stichtagDay}/${daysInRefMonth}`}
+                                icon={<CalendarDays className="h-5 w-5" />}
+                                color="blue"
+                                small
+                              />
+                              <KpiCard
+                                title="Abw. vs. Budget p.r."
+                                value={`${(revenueIstStichtag - budgetProRataStichtag) >= 0 ? '+' : ''}${formatCHF(revenueIstStichtag - budgetProRataStichtag)}`}
+                                subtitle={`Ist vs. Budget pro rata · ${budgetProRataStichtag > 0
+                                  ? `${(((revenueIstStichtag - budgetProRataStichtag) / budgetProRataStichtag) * 100).toFixed(1)} %`
+                                  : '–'}`}
+                                icon={(revenueIstStichtag - budgetProRataStichtag) >= 0
+                                  ? <TrendingUp className="h-5 w-5" />
+                                  : <TrendingDown className="h-5 w-5" />}
+                                color={(revenueIstStichtag - budgetProRataStichtag) >= 0 ? 'green' : 'red'}
+                                badge={(revenueIstStichtag - budgetProRataStichtag) >= 0 ? '✓ Über Budget' : '↓ Unter Budget'}
+                                badgeColor={(revenueIstStichtag - budgetProRataStichtag) >= 0
                                   ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
                                   : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'}
                                 small
