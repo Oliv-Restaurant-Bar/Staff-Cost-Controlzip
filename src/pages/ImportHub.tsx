@@ -12,8 +12,8 @@ import { toast } from 'sonner';
 import { GastronoviImportSection } from '@/components/GastronoviImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
-import { loadEmployees, saveActualHourEntry } from '@/lib/supabase-db';
-import { Employee, MirusDailyImportEntry, MirusImportMode } from '@/types/personnel';
+import { loadEmployees, saveActualHourEntry, upsertEmployee } from '@/lib/supabase-db';
+import { Employee, MirusDailyImportEntry, MirusImportMode, Department } from '@/types/personnel';
 import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue-import';
 import { saveMonth } from '@/lib/reporting-store';
 import { cn } from '@/lib/utils';
@@ -248,6 +248,20 @@ const IstStundenSection = () => {
     });
   }, []);
 
+  const handleCreateEmployee = (name: string, department: Department): Employee => {
+    const newEmp: Employee = {
+      id:             crypto.randomUUID(),
+      name,
+      department,
+      employmentType: 'aushilfe',
+      hourlyWage:     0,
+    };
+    setEmployees(prev => [...prev, newEmp]);
+    upsertEmployee(newEmp).catch(e => console.error('[ImportHub] upsertEmployee failed:', e));
+    toast.success(`Mitarbeiter "${name}" neu angelegt – Stundenlohn bitte im Personalstamm ergänzen.`);
+    return newEmp;
+  };
+
   const handleMirusImport = async (entries: MirusDailyImportEntry[], mode: MirusImportMode) => {
     const affectedMonths = new Set(entries.map(e => e.date.slice(0, 7)));
     const saves: Array<{ empId: string; date: string; hours: number }> = [];
@@ -315,6 +329,7 @@ const IstStundenSection = () => {
       <div className="flex flex-wrap gap-2">
         <ActualHoursImportButton
           onImport={handleMirusImport}
+          onCreateEmployee={handleCreateEmployee}
           employees={employees}
           existingTimeEntries={[]}
         />

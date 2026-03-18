@@ -27,7 +27,7 @@ import {
   Upload, FileSpreadsheet, Check, AlertCircle, AlertTriangle, TestTube2,
   RefreshCw, GitMerge, ChevronRight, ArrowLeft,
 } from 'lucide-react';
-import { MirusDailyImportEntry, MirusImportMode, Employee, TimeEntry } from '@/types/personnel';
+import { MirusDailyImportEntry, MirusImportMode, Employee, TimeEntry, Department } from '@/types/personnel';
 import { parseMirusDailyExcel } from '@/lib/personnel-utils';
 import {
   loadNameMappings, saveNameMappingsBatch, lookupSavedMapping,
@@ -46,6 +46,7 @@ import {
 
 interface ActualHoursImportButtonProps {
   onImport: (entries: MirusDailyImportEntry[], mode: MirusImportMode) => void;
+  onCreateEmployee?: (name: string, department: Department) => Employee;
   employees: Employee[];
   existingTimeEntries?: TimeEntry[];
 }
@@ -133,7 +134,7 @@ function findMatchingEmployee(
 // ─── Hauptkomponente ─────────────────────────────────────────────────────────
 
 export const ActualHoursImportButton = ({
-  onImport, employees, existingTimeEntries = [],
+  onImport, onCreateEmployee, employees, existingTimeEntries = [],
 }: ActualHoursImportButtonProps) => {
 
   const [isOpen, setIsOpen]             = useState(false);
@@ -360,7 +361,20 @@ export const ActualHoursImportButton = ({
   }
 
   const handleMatchConfirm = (overrides: NameMatchOverride[]) => {
-    // Gespeicherte Zuordnungen aktualisieren
+    // Neu zu erstellende Mitarbeiter anlegen (falls Callback vorhanden)
+    const createdEmployees = new Map<string, Employee>();
+    if (onCreateEmployee) {
+      for (const o of overrides) {
+        if (o.selectedEmployeeId === 'new') {
+          const firstEntry = parsedEntries.find(e => e.name === o.importedName);
+          const dept: Department = (firstEntry?.department === 'küche' ? 'küche' : 'service') as Department;
+          const newEmp = onCreateEmployee(o.importedName, dept);
+          createdEmployees.set(o.importedName, newEmp);
+        }
+      }
+    }
+
+    // Gespeicherte Zuordnungen aktualisieren (keine 'new'-Einträge speichern)
     saveNameMappingsBatch(
       overrides
         .filter(o => o.selectedEmployeeId !== 'new')
@@ -372,9 +386,13 @@ export const ActualHoursImportButton = ({
 
     const nameToEmployeeId = new Map<string, string | 'skip'>();
     overrides.forEach(o => {
-      if (o.selectedEmployeeId === 'skip') nameToEmployeeId.set(o.importedName, 'skip');
-      else if (o.selectedEmployeeId === 'new') nameToEmployeeId.set(o.importedName, 'new');
-      else {
+      if (o.selectedEmployeeId === 'skip') {
+        nameToEmployeeId.set(o.importedName, 'skip');
+      } else if (o.selectedEmployeeId === 'new') {
+        const created = createdEmployees.get(o.importedName);
+        if (created) nameToEmployeeId.set(o.importedName, created.id);
+        else nameToEmployeeId.set(o.importedName, 'skip');
+      } else {
         const emp = employees.find(e => e.id === o.selectedEmployeeId);
         if (emp) nameToEmployeeId.set(o.importedName, emp.id);
       }
@@ -387,8 +405,9 @@ export const ActualHoursImportButton = ({
       .filter(entry => nameToEmployeeId.get(entry.name) !== 'skip')
       .map(entry => {
         const mapping = nameToEmployeeId.get(entry.name);
-        if (mapping && mapping !== 'new' && mapping !== 'skip') {
-          const emp = employees.find(e => e.id === mapping);
+        if (mapping && mapping !== 'skip') {
+          const emp = employees.find(e => e.id === mapping)
+            ?? [...createdEmployees.values()].find(e => e.id === mapping);
           if (emp) {
             originalToResolved.set(emp.name, entry.name);
             return { ...entry, name: emp.name };
