@@ -472,8 +472,7 @@ const OBSOLETE_PL_IDS = [
   'pli_leasing',       // 6101 Leasing Maschinen → nicht mehr im Kontoplan
   'pli_ure_edv',       // 61409 (5-stellig) → neu pli_ure_edv mit 6140
   'pli_versicherungen',// 6300 → neu 6310 Haftpflicht
-  'pli_abschreibungen',// 6800 → nicht mehr im Kontoplan
-  'pli_bankspesen',    // 6900 → neu 6940
+  'pli_abschreibungen',// 6800 → neu pli_finance_6800 (Abschreibungen)
 ];
 
 function migrateObsoletePLItems(budget: BudgetYear): BudgetYear {

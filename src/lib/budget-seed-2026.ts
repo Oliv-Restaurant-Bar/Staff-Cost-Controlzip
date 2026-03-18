@@ -7,8 +7,7 @@
  * Monat-Index: 0 = Januar … 11 = Dezember
  */
 
-import { v4 as uuidv4 } from 'uuid';
-import { BudgetYear, BudgetPLLineItem } from '@/types/budget';
+import { BudgetYear, BudgetPLLineItem, DEFAULT_PL_CATEGORIES } from '@/types/budget';
 
 type MV = [number,number,number,number,number,number,number,number,number,number,number,number];
 
@@ -407,7 +406,7 @@ export const SEED_2026_LINE_ITEMS: BudgetPLLineItem[] = [
 
   // ── Finanzaufwand ─────────────────────────────────────────────────────────
   {
-    id: 'pli_abschreibungen',
+    id: 'pli_finance_6800',
     categoryId: 'pl_finance',
     accountNumber: '6800',
     label: 'Abschreibungen',
@@ -449,6 +448,7 @@ export function createSeededBudget2026(): BudgetYear {
     wasAutoCalculated: false,
     createdAt: now,
     updatedAt: now,
+    plCategories: DEFAULT_PL_CATEGORIES.map(c => ({ ...c })),
     plLineItems: SEED_2026_LINE_ITEMS,
   };
 }
