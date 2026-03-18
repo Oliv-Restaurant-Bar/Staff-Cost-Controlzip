@@ -33,6 +33,8 @@ import { ExportOptionsDialog, ExportOptions } from '@/components/schedule-planne
 import { ImportMatchPreviewDialog, NameMatchOverride } from '@/components/schedule-planner/ImportMatchPreviewDialog';
 import { LaborCostComparison } from '@/components/schedule-planner/LaborCostComparison';
 import { EmployeeForm } from '@/components/EmployeeForm';
+import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
+import { MirusDailyImportEntry, MirusImportMode } from '@/types/personnel';
 import { importScheduleFromExcelV2, exportScheduleToPDF, exportScheduleTemplate, NameMatchInfo } from '@/lib/schedule-export-import';
 import { toast } from 'sonner';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval } from 'date-fns';
@@ -658,6 +660,68 @@ const SchedulePlanner = () => {
       window.dispatchEvent(new CustomEvent('schedule-updated'));
       
       return newState;
+    });
+  };
+
+  // Handle Mirus XLS Ist-Stunden import directly in the Dienstplan
+  const handleImportMirusActualHours = (entries: MirusDailyImportEntry[], mode: MirusImportMode) => {
+    const affectedMonths = new Set(entries.map(e => e.date.slice(0, 7)));
+
+    setActualHoursData(prev => {
+      let updated = { ...prev };
+
+      if (mode === 'replace') {
+        const importedDates = new Set(entries.map(e => e.date));
+        for (const key of Object.keys(updated)) {
+          const dateFromKey = key.slice(-10);
+          if (importedDates.has(dateFromKey)) {
+            delete updated[key];
+          }
+        }
+      }
+
+      let matchedCount = 0;
+      const unmatched = new Set<string>();
+
+      for (const entry of entries) {
+        const employee = employees.find(emp => {
+          const a = emp.name.toLowerCase();
+          const b = entry.name.toLowerCase();
+          if (a === b) return true;
+          const ap = a.split(' ').filter(p => p.length > 1);
+          const bp = b.split(' ').filter(p => p.length > 1);
+          return ap.some(p => bp.some(q => p.includes(q) || q.includes(p)));
+        });
+        if (!employee) { unmatched.add(entry.name); continue; }
+        const cellKey = `${employee.id}-${entry.date}`;
+        if (mode === 'replace' || !updated[cellKey]) {
+          updated[cellKey] = { hours: entry.hours };
+        }
+        matchedCount++;
+      }
+
+      for (const m of affectedMonths) {
+        const sk = `actual-hours-${m}`;
+        const ex = (() => { try { return JSON.parse(localStorage.getItem(sk) || '{}'); } catch { return {}; } })();
+        const data = { ...ex };
+        for (const [k, v] of Object.entries(updated)) {
+          const dateFromKey = k.slice(-10); // yyyy-MM-dd
+          if (dateFromKey.slice(0, 7) === m) data[k] = v;
+        }
+        localStorage.setItem(sk, JSON.stringify(data));
+      }
+
+      window.dispatchEvent(new CustomEvent('schedule-updated'));
+
+      const uniqueEmployees = new Set(entries.map(e => e.name));
+      if (matchedCount > 0) {
+        toast.success(`Mirus Ist-Stunden importiert: ${entries.length} Einträge, ${uniqueEmployees.size} Mitarbeiter`);
+      }
+      if (unmatched.size > 0) {
+        toast.warning(`${unmatched.size} Mitarbeiter nicht gefunden: ${[...unmatched].slice(0, 3).join(', ')}`);
+      }
+
+      return updated;
     });
   };
 
@@ -1676,11 +1740,16 @@ const SchedulePlanner = () => {
               ) : (
                 // Ist-Dienstplan (actual hours grid)
                 <>
-                  <div className="mb-3 p-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
+                  <div className="mb-3 p-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                     <p className="text-sm text-green-700 dark:text-green-400">
                       <Clock className="h-4 w-4 inline mr-1" />
-                      <strong>Ist-Stunden:</strong> Klicke auf eine Zelle um Ist-Stunden zu erfassen (direkte Stundenzahl oder Start/Ende).
+                      <strong>Ist-Stunden:</strong> Klicke auf eine Zelle um Ist-Stunden zu erfassen, oder importiere den Mirus «Tägliche Stunden» Export direkt.
                     </p>
+                    <ActualHoursImportButton
+                      onImport={handleImportMirusActualHours}
+                      employees={employees}
+                      existingTimeEntries={[]}
+                    />
                   </div>
 
                   {activeDepartment === 'all' ? (
