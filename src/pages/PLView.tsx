@@ -1624,6 +1624,22 @@ const years = [currentYear - 1, currentYear, currentYear + 1];
 
 type ViewMode = 'monthly' | 'yearly' | 'budget_pl';
 
+/** Summiert ein Feld aus dailyBudgets für einen bestimmten Monat */
+function sumDailyBudgetField(
+  db: Record<string, Record<string, number>>,
+  yr: number,
+  mo: number,
+  field: string,
+): number {
+  const daysInMonth = new Date(yr, mo, 0).getDate();
+  let sum = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${yr}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    sum += (db[key]?.[field] as number) ?? 0;
+  }
+  return sum;
+}
+
 const PLViewPage = () => {
   const { isAdmin } = usePermissions();
   if (!isAdmin) return <Navigate to="/" replace />;
@@ -1654,31 +1670,44 @@ const PLViewPage = () => {
   const records = useMemo(() => loadYear(year), [year, month, refreshKey]);
   const prevYearRecords = useMemo(() => loadYear(year - 1), [year]);
 
-  // Fallback: Ist-Umsatz aus Gastronovi-Tagesdaten summieren (dailyBudgets)
+  // Gastronovi-Tagesdaten aus localStorage laden (gecacht für alle Berechnungen)
+  const dailyBudgetsData = useMemo<Record<string, Record<string, number>>>(() => {
+    try { return JSON.parse(localStorage.getItem('dailyBudgets') || '{}'); }
+    catch { return {}; }
+  }, [refreshKey]);
+
+  // Fallback: Ist-Umsatz aus Gastronovi-Tagesdaten summieren (actualRevenue)
   // wenn kein manueller Monatswert in reporting_v1 vorhanden
   const dailyRevenueForMonth = useMemo(() => {
     const rec = records[month - 1];
     if (rec?.revenueActual) return 0; // bereits gesetzt, kein Fallback nötig
-    try {
-      const db: Record<string, { actualRevenue?: number }> = JSON.parse(
-        localStorage.getItem('dailyBudgets') || '{}'
-      );
-      const daysInMonth = new Date(year, month, 0).getDate();
-      let sum = 0;
-      for (let d = 1; d <= daysInMonth; d++) {
-        const key = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        sum += db[key]?.actualRevenue ?? 0;
-      }
-      return sum;
-    } catch { return 0; }
-  }, [records, year, month, refreshKey]);
+    return sumDailyBudgetField(dailyBudgetsData, year, month, 'actualRevenue');
+  }, [records, year, month, dailyBudgetsData]);
 
-  // Effektiver Monatsdatensatz: revenueActual aus dailyBudgets injizieren falls nicht manuell gesetzt
-  const effectiveMonthRecord = useMemo(() => {
+  // Fallback: Vorjahr-Umsatz aus Gastronovi-Tagesdaten summieren (previousYearRevenue)
+  // wenn kein manueller Vorjahreswert vorhanden
+  const dailyPrevYearRevenueForMonth = useMemo(() => {
     const rec = records[month - 1];
-    if (!dailyRevenueForMonth) return rec;
-    return { ...rec, revenueActual: dailyRevenueForMonth };
-  }, [records, month, dailyRevenueForMonth]);
+    if (rec?.revenuePreviousYear) return 0; // bereits gesetzt, kein Fallback nötig
+    // Vorjahr-Spalte: aus dailyBudgets des aktuellen Jahres (Feld previousYearRevenue)
+    const fromCurrent = sumDailyBudgetField(dailyBudgetsData, year, month, 'previousYearRevenue');
+    if (fromCurrent > 0) return fromCurrent;
+    // Alternativ: aus reporting_v1 des Vorjahres
+    const prevRec = prevYearRecords[month - 1];
+    if (prevRec?.revenueActual) return 0; // wird via prevYearRecords in getCatPY gehandhabt
+    // Gastronovi actualRevenue des Vorjahres
+    return sumDailyBudgetField(dailyBudgetsData, year - 1, month, 'actualRevenue');
+  }, [records, prevYearRecords, year, month, dailyBudgetsData]);
+
+  // Effektiver Monatsdatensatz:
+  //   revenueActual       ← dailyBudgets.actualRevenue (falls reporting_v1 leer)
+  //   revenuePreviousYear ← dailyBudgets.previousYearRevenue (falls nicht manuell gesetzt)
+  const effectiveMonthRecord = useMemo(() => {
+    let rec = records[month - 1];
+    if (dailyRevenueForMonth)      rec = { ...rec, revenueActual:       dailyRevenueForMonth };
+    if (dailyPrevYearRevenueForMonth) rec = { ...rec, revenuePreviousYear: dailyPrevYearRevenueForMonth };
+    return rec;
+  }, [records, month, dailyRevenueForMonth, dailyPrevYearRevenueForMonth]);
 
   const monthResult = useMemo(
     () => computePLForMonth(effectiveMonthRecord),

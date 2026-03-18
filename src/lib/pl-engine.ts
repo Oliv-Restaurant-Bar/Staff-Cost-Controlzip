@@ -325,27 +325,52 @@ export function computePLForMonth(record: MonthlyFinancialRecord): PLMonthResult
     rowSources.set(row.id, []);
   }
 
-  // Schritt 2: Direktfelder zuordnen
-  // Umsatz: nur wenn KEINE individuellen 3xxx-Konten in expenseCategories (würde sonst doppelt zählen)
-  // hasIndividualRevenueAccounts wird in Schritt 3 bestimmt – Vorberechnung nötig
+  // Schritt 2: Direktfelder zuordnen (Actual, Budget, PrevYear separat — verhindert doppeltes Zählen)
+
+  // Vorberechnung: Ob individuelle 3xxx-Actual-Konten in expenseCategories vorhanden (Sage-Import)
   const _hasIndivRev = record.expenseCategories.some(c => {
     const n = parseInt(c.categoryId);
     return !isNaN(n) && n >= 3000 && n <= 3999;
   });
+  // Vorberechnung: Ob individuelle 3xxx-Vorjahr-Konten in expenseCategoriesPreviousYear vorhanden
+  const _hasIndivPYRev = record.expenseCategoriesPreviousYear.some(c => {
+    const n = parseInt(c.categoryId);
+    return !isNaN(n) && n >= 3000 && n <= 3999;
+  });
+
+  // Ist-Umsatz (Actual): nur wenn KEINE Sage 3xxx-Actual-Konten (würde sonst doppelt zählen)
   if (record.revenueActual !== undefined && !_hasIndivRev) {
-    rowValues.set('revenue_total', {
-      actual:   record.revenueActual,
-      budget:   record.revenueBudget,
-      prevYear: record.revenuePreviousYear,
-    });
+    const existing = rowValues.get('revenue_total') ?? {};
+    rowValues.set('revenue_total', { ...existing, actual: record.revenueActual, budget: record.revenueBudget });
     rowSources.get('revenue_total')!.push({
       categoryId: '_revenue',
-      label: 'Umsatz (manuell erfasst)',
+      label: 'Umsatz (Gastronovi / manuell)',
       actualAmount: record.revenueActual,
-      prevYearAmount: record.revenuePreviousYear,
       sourceType: 'direct_field',
       monthId: record.id,
     });
+  } else if (record.revenueBudget !== undefined) {
+    // Budget auch ohne Actual setzen
+    const existing = rowValues.get('revenue_total') ?? {};
+    rowValues.set('revenue_total', { ...existing, budget: record.revenueBudget });
+  }
+
+  // Vorjahr-Umsatz (PrevYear): nur wenn KEINE Sage 3xxx-PY-Konten
+  if (record.revenuePreviousYear !== undefined && !_hasIndivPYRev) {
+    const existing = rowValues.get('revenue_total') ?? {};
+    rowValues.set('revenue_total', { ...existing, prevYear: record.revenuePreviousYear });
+    // Source-Eintrag nur wenn noch nicht vorhanden
+    const sources = rowSources.get('revenue_total')!;
+    if (!sources.some(s => s.categoryId === '_revenue_py')) {
+      sources.push({
+        categoryId: '_revenue_py',
+        label: 'Umsatz Vorjahr (Gastronovi / manuell)',
+        actualAmount: 0,
+        prevYearAmount: record.revenuePreviousYear,
+        sourceType: 'direct_field',
+        monthId: record.id,
+      });
+    }
   }
 
   // Personal (Löhne)
@@ -481,7 +506,8 @@ export function computePLForMonth(record: MonthlyFinancialRecord): PLMonthResult
     const hasActualCounterpart = numericActual.some(a => a.categoryId === cat.categoryId);
     if (hasActualCounterpart) continue;
     const rowId = resolveRowId(cat.categoryId) ?? 'other_operating';
-    if (rowId === 'revenue_total' && record.revenuePreviousYear !== undefined) continue;
+    // Vorjahr-Umsatz: nur überspringen wenn revenuePreviousYear direkt gesetzt UND KEINE individuellen PY-3xxx-Konten
+    if (rowId === 'revenue_total' && !_hasIndivPYRev && record.revenuePreviousYear !== undefined) continue;
     if (rowId === 'personnel_wages' && record.personnelCostPreviousYear !== undefined) continue;
     const existing = rowValues.get(rowId) ?? {};
     rowValues.set(rowId, {
