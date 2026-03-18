@@ -781,7 +781,7 @@ const InlineIstCell = ({
   );
 };
 
-const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance }: {
+const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode = 'off', revenueActual = 0 }: {
   row: BPLRowWithValues;
   onClick: () => void;
   compact: boolean;
@@ -790,6 +790,8 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   year: number;
   onSaved: () => void;
   highlightVariance?: boolean;
+  pctMode?: 'off' | 'normal' | 'subtle';
+  revenueActual?: number;
 }) => {
   const [editingIst, setEditingIst] = useState(false);
   const { values: v } = row;
@@ -797,14 +799,28 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   const pyResult = compact ? 'py-1' : 'py-2.5';
   const pyItem = compact ? 'py-0.5' : 'py-1.5';
 
+  const pctVal = (actual: number) =>
+    revenueActual > 0 && actual !== 0
+      ? `${(actual / revenueActual * 100).toFixed(1)}%`
+      : null;
+  const pctNormalClass = 'px-2 text-right font-mono tabular-nums text-xs text-amber-700 dark:text-amber-400';
+  const pctSubtleClass  = 'px-2 text-right font-mono tabular-nums text-[10px] italic text-muted-foreground/50';
+  const pctClass = pctMode === 'subtle' ? pctSubtleClass : pctNormalClass;
+
   if (row.catType === 'result') {
     const isPos = v.actual >= 0;
+    const p = pctVal(v.actual);
     return (
       <tr className="bg-slate-100 dark:bg-slate-800/80 font-bold border-t-2 border-b border-slate-400 dark:border-slate-500">
         <td className={cn('px-3 text-sm', pyResult)} colSpan={2}>{row.catLabel}</td>
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums font-bold', pyResult,
           isPos ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600'
         )}>{fmt(v.actual)}</td>
+        {pctMode !== 'off' && (
+          <td className={cn(pctClass, pyResult, 'font-bold')}>
+            {p ?? <span className="opacity-30">—</span>}
+          </td>
+        )}
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.budget)}</td>
         <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.prevYear)}</td>
@@ -814,6 +830,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   }
 
   if (row.isCategory) {
+    const p = pctVal(v.actual);
     return (
       <tr
         className="bg-slate-700 text-white dark:bg-slate-800 cursor-pointer hover:bg-slate-600 transition-colors"
@@ -822,6 +839,16 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
       >
         <td className={cn('px-3 text-xs font-bold tracking-wider', py)} colSpan={2}>{row.catLabel}</td>
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums', py)}>{fmt(v.actual)}</td>
+        {pctMode !== 'off' && (
+          <td className={cn(
+            py,
+            pctMode === 'subtle'
+              ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-white/40'
+              : 'px-2 text-right font-mono tabular-nums text-xs text-amber-300 font-bold',
+          )}>
+            {p ?? <span className="opacity-30">—</span>}
+          </td>
+        )}
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-75', py)}>{fmt(v.budget)}</td>
         <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-65', py)}>{fmt(v.prevYear)}</td>
@@ -897,6 +924,11 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
           v.actual > 0 ? fmt(v.actual) : <span className="text-muted-foreground/40">—</span>
         )}
       </td>
+      {pctMode !== 'off' && (
+        <td className={cn(pctClass, pyItem)}>
+          {pctVal(v.actual) ?? <span className="opacity-25">—</span>}
+        </td>
+      )}
       <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.budget > 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>
       <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
       <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.prevYear > 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>
@@ -914,6 +946,8 @@ const BudgetPLView = ({
   year,
   onSaved,
   highlightVariance,
+  pctMode = 'off',
+  revenueActual = 0,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
@@ -923,6 +957,8 @@ const BudgetPLView = ({
   year: number;
   onSaved: () => void;
   highlightVariance?: boolean;
+  pctMode?: 'off' | 'normal' | 'subtle';
+  revenueActual?: number;
 }) => (
   <div className="overflow-x-auto">
     <table className="w-full text-sm border-collapse min-w-[820px]">
@@ -931,6 +967,11 @@ const BudgetPLView = ({
           <th className={cn('text-left px-3 min-w-[230px]', compact ? 'py-1.5' : 'py-2.5')}>Position</th>
           <th className={cn('w-5', compact ? 'py-1.5' : 'py-2.5')} />
           <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')} title="Klick auf Ist-Wert = direkt bearbeiten">Ist (CHF) ✎</th>
+          {pctMode !== 'off' && (
+            <th className={cn('text-right px-2 min-w-[60px]', compact ? 'py-1.5' : 'py-2.5',
+              pctMode === 'subtle' ? 'opacity-50 italic text-[10px]' : 'text-amber-300',
+            )}>% Ums.</th>
+          )}
           <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Budget (CHF)</th>
           <th className={cn('text-right px-2 min-w-[130px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. Budget</th>
           <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Vorjahr (CHF)</th>
@@ -949,6 +990,8 @@ const BudgetPLView = ({
             year={year}
             onSaved={onSaved}
             highlightVariance={highlightVariance}
+            pctMode={pctMode}
+            revenueActual={revenueActual}
           />
         ))}
       </tbody>
@@ -1489,6 +1532,7 @@ const PLViewPage = () => {
   const [accountAction,   setAccountAction]   = useState<BPLRowWithValues | null>(null);
   const [compact,          setCompact]          = useState(false);
   const [highlightVariance, setHighlightVariance] = useState(false);
+  const [pctMode,          setPctMode]          = useState<'off' | 'normal' | 'subtle'>('off');
   const [refreshKey,       setRefreshKey]       = useState(0);
   const [addKontoOpen,    setAddKontoOpen]    = useState(false);
 
@@ -1511,6 +1555,11 @@ const PLViewPage = () => {
   const bplRows = useMemo(
     () => computeBPLRows(budgetData, records[month - 1], month - 1),
     [budgetData, records, month],
+  );
+
+  const bplRevenue = useMemo(
+    () => bplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.actual ?? 0,
+    [bplRows],
   );
 
   const handleDrilldown = useCallback((rowId: string) => {
@@ -1661,6 +1710,36 @@ const PLViewPage = () => {
                 <span className="hidden sm:inline">Abw. &gt;10%</span>
               </button>
             )}
+
+            {/* % Anteil am Umsatz */}
+            {mode === 'budget_pl' && (
+              <button
+                title={
+                  pctMode === 'off'
+                    ? '% Anteil am Umsatz einblenden'
+                    : pctMode === 'normal'
+                    ? 'Dezent anzeigen'
+                    : '% Spalte ausblenden'
+                }
+                onClick={() => setPctMode(m => m === 'off' ? 'normal' : m === 'normal' ? 'subtle' : 'off')}
+                className={cn(
+                  'h-8 px-2 flex items-center gap-1 rounded border text-xs transition-colors',
+                  pctMode === 'normal'
+                    ? 'bg-amber-500 text-white border-amber-500'
+                    : pctMode === 'subtle'
+                    ? 'bg-card border-slate-300 dark:border-slate-600 text-muted-foreground'
+                    : 'bg-card border-border hover:bg-muted text-muted-foreground',
+                )}
+              >
+                <span className={cn(
+                  'font-mono font-bold',
+                  pctMode === 'subtle' ? 'italic opacity-50 text-[10px]' : 'text-xs',
+                )}>%</span>
+                <span className="hidden sm:inline">
+                  {pctMode === 'subtle' ? 'Dezent' : '% Anteil'}
+                </span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -1763,6 +1842,8 @@ const PLViewPage = () => {
                 year={year}
                 onSaved={() => setRefreshKey(k => k + 1)}
                 highlightVariance={highlightVariance}
+                pctMode={pctMode}
+                revenueActual={bplRevenue}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
