@@ -536,7 +536,26 @@ function getCatActual(catId: string, rec: MonthlyFinancialRecord | undefined): n
     .reduce((s, c) => s + (c.amount ?? 0), 0);
 }
 
-function getCatPY(catId: string, rec: MonthlyFinancialRecord | undefined): number {
+function getCatPY(
+  catId: string,
+  rec: MonthlyFinancialRecord | undefined,
+  prevRec?: MonthlyFinancialRecord,
+): number {
+  // Bevorzuge Ist-Daten aus dem Vorjahresdatensatz (z.B. 2025-Actual)
+  if (prevRec) {
+    if (catId === 'pl_revenue') {
+      const fromActual = prevRec.revenueActual ?? 0;
+      if (fromActual !== 0) return fromActual;
+    }
+    const r = BPL_CAT_RANGES[catId];
+    if (r) {
+      const fromActual = (prevRec.expenseCategories ?? [])
+        .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
+        .reduce((s, c) => s + (c.amount ?? 0), 0);
+      if (fromActual !== 0) return fromActual;
+    }
+  }
+  // Fallback: PreviousYear-Felder im aktuellen Datensatz (manuell als "Vorjahr" importiert)
   if (!rec) return 0;
   if (catId === 'pl_revenue') return (rec as any).revenuePreviousYear ?? 0;
   const r = BPL_CAT_RANGES[catId];
@@ -602,6 +621,7 @@ function computeBPLRows(
   budget: BudgetYear,
   rec: MonthlyFinancialRecord | undefined,
   mIdx: number,
+  prevRec?: MonthlyFinancialRecord,
 ): BPLRowWithValues[] {
   const cats  = (budget.plCategories ?? []).sort((a, b) => a.sortOrder - b.sortOrder);
   const items = budget.plLineItems ?? [];
@@ -633,7 +653,7 @@ function computeBPLRows(
       const its = items.filter(i => i.categoryId === cat.id && !i.isInternal);
       catB[cat.id] = its.reduce((s, i) => s + (i.monthlyValues[mIdx] ?? 0), 0);
       catA[cat.id] = getCatActual(cat.id, rec);
-      catP[cat.id] = getCatPY(cat.id, rec);
+      catP[cat.id] = getCatPY(cat.id, rec, prevRec);
     }
   }
   for (const cat of cats) {
@@ -660,7 +680,10 @@ function computeBPLRows(
         }
         const iB = item.monthlyValues[mIdx] ?? 0;
         const iA = (rec?.expenseCategories ?? []).find(c => c.categoryId === item.accountNumber)?.amount ?? 0;
-        const iP = (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === item.accountNumber)?.amount ?? 0;
+        const iP =
+          (prevRec?.expenseCategories ?? []).find(c => c.categoryId === item.accountNumber)?.amount
+          ?? (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === item.accountNumber)?.amount
+          ?? 0;
         if (!item.isInternal && iA === 0 && iB === 0 && iP === 0) continue;
         rows.push({
           catId: cat.id, catLabel: cat.label, catType: 'items',
@@ -680,7 +703,10 @@ function computeBPLRows(
         })
         .sort((a, b) => parseInt(a.accountNum) - parseInt(b.accountNum));
       for (const ar of actualRows) {
-        const iP = (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === ar.accountNum)?.amount ?? 0;
+        const iP =
+          (prevRec?.expenseCategories ?? []).find(c => c.categoryId === ar.accountNum)?.amount
+          ?? (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === ar.accountNum)?.amount
+          ?? 0;
         if (ar.amount === 0 && iP === 0) continue;
         rows.push({
           catId: cat.id, catLabel: cat.label, catType: 'items',
@@ -1538,6 +1564,7 @@ const PLViewPage = () => {
 
   // Daten laden & P&L berechnen
   const records = useMemo(() => loadYear(year), [year, month, refreshKey]);
+  const prevYearRecords = useMemo(() => loadYear(year - 1), [year]);
 
   const monthResult = useMemo(
     () => computePLForMonth(records[month - 1]),
@@ -1553,8 +1580,8 @@ const PLViewPage = () => {
   const budgetData = useMemo(() => loadBudgetWithPL(year), [year, refreshKey]);
 
   const bplRows = useMemo(
-    () => computeBPLRows(budgetData, records[month - 1], month - 1),
-    [budgetData, records, month],
+    () => computeBPLRows(budgetData, records[month - 1], month - 1, prevYearRecords[month - 1]),
+    [budgetData, records, month, prevYearRecords],
   );
 
   const bplRevenue = useMemo(
