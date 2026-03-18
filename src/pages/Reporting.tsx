@@ -14,7 +14,7 @@
  *   - Mehrjahresvergleich
  */
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Plus,
@@ -50,6 +50,7 @@ import {
 } from '@/lib/reporting-store';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Navigate } from 'react-router-dom';
+import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue-import';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -887,27 +888,7 @@ const Reporting = () => {
           </Card>
 
           {/* Vorjahr importieren */}
-          <Card className="border-dashed border-2 border-muted-foreground/20">
-            <CardHeader className="pb-2 pt-4">
-              <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground">
-                <BarChart2 className="h-4 w-4" />
-                Vorjahresdaten importieren
-                <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20 ml-auto">
-                  Geplant
-                </Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pb-4 space-y-2">
-              <p className="text-xs text-muted-foreground">
-                Buchhaltungsabschluss des Vorjahres als PDF oder CSV hochladen.
-                Wird separat gespeichert – kein Überschreiben der Ist-Daten.
-              </p>
-              <ImportModeInfo />
-              <Button variant="outline" size="sm" className="w-full h-8 text-xs border-dashed" disabled>
-                <FileText className="h-3.5 w-3.5 mr-1.5" /> Vorjahresdatei hochladen (kommt bald)
-              </Button>
-            </CardContent>
-          </Card>
+          <AnnualRevenueImportCard onImported={reload} />
         </section>
 
         {/* Technische Struktur – nur zur Orientierung */}
@@ -976,6 +957,243 @@ const SummaryCard = ({
     </CardContent>
   </Card>
 );
+
+// ─── Jahres-Umsatz-Import (Excel) ────────────────────────────────────────────
+
+const AnnualRevenueImportCard = ({ onImported }: { onImported: () => void }) => {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [importYear, setImportYear] = useState(currentYear - 1);
+  const [parsing, setParsing] = useState(false);
+  const [result, setResult] = useState<AnnualImportResult | null>(null);
+  const [fileName, setFileName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleFile = async (file: File) => {
+    if (!file.name.match(/\.(xlsx|xls)$/i)) {
+      setError('Nur Excel-Dateien (.xlsx/.xls) werden unterstützt.');
+      return;
+    }
+    setParsing(true);
+    setError('');
+    setResult(null);
+    setSaved(false);
+    setFileName(file.name);
+    try {
+      const res = await parseAnnualRevenueXLSX(file);
+      setResult(res);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Unbekannter Fehler beim Parsen.');
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  };
+
+  const handleSave = () => {
+    if (!result) return;
+    setSaving(true);
+    let saved = 0;
+    for (const row of result.months) {
+      if (row.revenue === 0) continue;
+      saveMonth(
+        { year: importYear, month: row.month, revenueActual: row.revenue },
+        'annual_xlsx_import',
+        'update',
+        { note: `Jahres-Import ${fileName}` },
+      );
+      saved++;
+    }
+    setSaving(false);
+    setSaved(true);
+    onImported();
+    toast.success(`${saved} Monate gespeichert (Vorjahr ${importYear})`);
+  };
+
+  const fmt = (v: number) =>
+    v === 0 ? '—' : new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 }).format(v);
+
+  return (
+    <Card className="border-2 border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/10">
+      <CardHeader className="pb-2 pt-4">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Upload className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          Jahres-Umsatz importieren (Excel)
+          <Badge className="ml-auto text-[9px] bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 border border-blue-200 dark:border-blue-700">
+            Neu
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pb-4 space-y-3">
+        <p className="text-xs text-muted-foreground">
+          Lade das Jahres-Umsatz-Excel (Gastronovi-Export) hoch. Die tagesweisen Werte werden
+          automatisch auf die 12 Monate summiert und als Ist-Daten für das gewählte Jahr gespeichert.
+        </p>
+
+        {/* Jahr-Auswahl */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-muted-foreground whitespace-nowrap">Für Jahr:</label>
+          <Select value={String(importYear)} onValueChange={v => { setImportYear(Number(v)); setResult(null); setSaved(false); }}>
+            <SelectTrigger className="h-7 text-xs w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[currentYear - 2, currentYear - 1, currentYear].map(y => (
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="text-[10px] text-muted-foreground">
+            (wird als Ist-Daten für dieses Jahr gespeichert)
+          </span>
+        </div>
+
+        {/* Drop-Zone */}
+        {!result && !parsing && (
+          <div
+            className="border-2 border-dashed border-blue-300 dark:border-blue-700 rounded-lg p-4 text-center cursor-pointer hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-colors"
+            onClick={() => fileRef.current?.click()}
+            onDrop={handleDrop}
+            onDragOver={e => e.preventDefault()}
+          >
+            <Upload className="h-6 w-6 mx-auto mb-2 text-blue-400" />
+            <p className="text-xs font-medium text-blue-700 dark:text-blue-300">
+              Excel-Datei hierher ziehen oder klicken
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1">.xlsx · Gastronovi-Jahresbericht</p>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+            />
+          </div>
+        )}
+
+        {/* Parsing Spinner */}
+        {parsing && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            Datei wird analysiert…
+          </div>
+        )}
+
+        {/* Fehler */}
+        {error && (
+          <div className="flex items-start gap-2 rounded bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 p-2 text-xs text-red-700 dark:text-red-400">
+            <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+            {error}
+          </div>
+        )}
+
+        {/* Vorschau */}
+        {result && !saved && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-semibold text-foreground">
+                Vorschau — {fileName}
+              </p>
+              <button
+                className="text-[10px] text-muted-foreground underline"
+                onClick={() => { setResult(null); setFileName(''); if (fileRef.current) fileRef.current.value = ''; }}
+              >
+                Andere Datei
+              </button>
+            </div>
+
+            {result.warnings.length > 0 && (
+              <div className="rounded bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-700 p-2 text-[10px] text-amber-800 dark:text-amber-300 space-y-0.5">
+                {result.warnings.map((w, i) => (
+                  <p key={i} className="flex items-start gap-1">
+                    <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />{w}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            <div className="overflow-x-auto rounded border border-border">
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="bg-muted/60 border-b border-border">
+                    <th className="text-left px-2 py-1.5 font-medium">Monat</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Umsatz (CHF)</th>
+                    <th className="text-right px-2 py-1.5 font-medium text-muted-foreground">Food</th>
+                    <th className="text-right px-2 py-1.5 font-medium text-muted-foreground">Getränke</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.months.map(row => (
+                    <tr key={row.month} className={cn(
+                      'border-b border-border/50',
+                      row.revenue === 0 ? 'opacity-40' : '',
+                    )}>
+                      <td className="px-2 py-1">{MONTH_NAMES_SHORT_DE[row.month]}</td>
+                      <td className="px-2 py-1 text-right font-mono font-semibold tabular-nums">
+                        {fmt(row.revenue)}
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono tabular-nums text-muted-foreground">
+                        {fmt(row.food)}
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono tabular-nums text-muted-foreground">
+                        {fmt(row.beverage)}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 border-border bg-muted/40 font-semibold">
+                    <td className="px-2 py-1.5">Jahrestotal</td>
+                    <td className="px-2 py-1.5 text-right font-mono tabular-nums">
+                      {fmt(result.yearTotal)}
+                    </td>
+                    <td colSpan={2} />
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <Button
+              size="sm"
+              className="w-full h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+              disabled={saving}
+              onClick={handleSave}
+            >
+              {saving ? (
+                <><RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />Speichere…</>
+              ) : (
+                <><Save className="h-3.5 w-3.5 mr-1.5" />12 Monate für {importYear} speichern</>
+              )}
+            </Button>
+          </div>
+        )}
+
+        {/* Gespeichert */}
+        {saved && (
+          <div className="flex items-center gap-2 rounded bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-3 text-xs text-green-700 dark:text-green-400">
+            <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+            <div>
+              <p className="font-semibold">Erfolgreich importiert!</p>
+              <p className="text-[10px] opacity-80">
+                Umsatzdaten {importYear} wurden gespeichert. Sichtbar unter Vorjahr in der Erfolgsrechnung.
+              </p>
+            </div>
+            <button
+              className="ml-auto text-[10px] underline"
+              onClick={() => { setResult(null); setFileName(''); setSaved(false); if (fileRef.current) fileRef.current.value = ''; }}
+            >
+              Weiteren Import
+            </button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
 
 // ─── Import-Modus-Info ────────────────────────────────────────────────────────
 
