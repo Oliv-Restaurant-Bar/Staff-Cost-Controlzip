@@ -269,8 +269,8 @@ export const DEFAULT_ACCOUNTS: AccountMapping[] = [
   { accountNumber: '6620', accountName: 'Schaufenster, Dekoration', plCategory: 'marketing', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
   { accountNumber: '6640', accountName: 'Kundengeschenke',       plCategory: 'marketing', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
   { accountNumber: '6650', accountName: 'Sponsoring',            plCategory: 'marketing', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
-  { accountNumber: '6690', accountName: 'Übriger Werbeaufwand',  plCategory: 'marketing', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
   // Sonstiger betrieblicher Aufwand
+  { accountNumber: '6690', accountName: 'Diverse Auslagen',      plCategory: 'other_operating', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
   { accountNumber: '6790', accountName: 'Sonst. betr. Aufwand',  plCategory: 'other_operating', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
   { accountNumber: '6791', accountName: 'Privatanteile',         plCategory: 'other_operating', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
 

@@ -403,7 +403,8 @@ export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = 
   { id: 'pli_kundengesch',    categoryId: 'pl_marketing',       accountNumber: '6640', label: 'Kundengeschenke',                 valueType: 'chf', sortOrder: 3 },
 
   // ── Übriger Betriebsaufwand ───────────────────────────────────────────────────
-  { id: 'pli_uebrig_betr',    categoryId: 'pl_other_op',        accountNumber: '6790', label: 'Sonst. betr. Aufwand',            valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_diverse_auslagen',categoryId: 'pl_other_op',       accountNumber: '6690', label: 'Diverse Auslagen',                valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_uebrig_betr',    categoryId: 'pl_other_op',        accountNumber: '6790', label: 'Sonst. betr. Aufwand',            valueType: 'chf', sortOrder: 2 },
 
   // ── Finanzaufwand und Finanzertrag ────────────────────────────────────────────
   { id: 'pli_bankspesen',     categoryId: 'pl_finance',         accountNumber: '6940', label: 'Bankspesen',                      valueType: 'chf', sortOrder: 1 },
