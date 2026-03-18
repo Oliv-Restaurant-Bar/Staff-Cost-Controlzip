@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom';
 import {
   format, startOfWeek, endOfWeek, eachDayOfInterval,
   startOfMonth, endOfMonth, startOfYear, endOfYear,
+  addDays, addWeeks, addMonths, addYears,
+  subDays, subWeeks, subMonths, subYears,
+  getDaysInMonth, isSameDay, isSameMonth, isSameYear,
 } from 'date-fns';
 import { de } from 'date-fns/locale';
 import {
@@ -10,7 +13,7 @@ import {
   Users, Clock, ChefHat, Utensils,
   CalendarDays, AlertTriangle, CheckCircle2,
   LayoutDashboard, Calendar, BarChart2,
-  BookOpen, Target, Upload,
+  BookOpen, Target, Upload, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -173,9 +176,36 @@ const PERIOD_LABELS: Record<Period, string> = {
 };
 
 const Dashboard = () => {
-  const today = new Date();
-  const monthKey = format(today, 'yyyy-MM');
+  const today = useMemo(() => new Date(), []);
+  const [referenceDate, setReferenceDate] = useState<Date>(() => new Date());
   const [period, setPeriod] = useState<Period>('month');
+
+  // Navigation: vor/zurück je nach Periode
+  const navigatePrev = () => setReferenceDate(d =>
+    period === 'today' ? subDays(d, 1)
+    : period === 'week'  ? subWeeks(d, 1)
+    : period === 'month' ? subMonths(d, 1)
+    : subYears(d, 1),
+  );
+  const navigateNext = () => setReferenceDate(d =>
+    period === 'today' ? addDays(d, 1)
+    : period === 'week'  ? addWeeks(d, 1)
+    : period === 'month' ? addMonths(d, 1)
+    : addYears(d, 1),
+  );
+  const navigateToday = () => setReferenceDate(new Date());
+
+  // Ist das referenceDate in der aktuellen Periode?
+  const isCurrentPeriod =
+    period === 'today' ? isSameDay(referenceDate, today)
+    : period === 'week'  ? isSameDay(
+        startOfWeek(referenceDate, { weekStartsOn: 1 }),
+        startOfWeek(today, { weekStartsOn: 1 }),
+      )
+    : period === 'month' ? isSameMonth(referenceDate, today)
+    : isSameYear(referenceDate, today);
+
+  const monthKey = format(referenceDate, 'yyyy-MM');
 
   const {
     isAdmin, isManager, allowedDepartment,
@@ -224,8 +254,8 @@ const Dashboard = () => {
   const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 40);
 
   // ── Budget-Daten (aus Budget-Modul, budget_v1) ───────────────────────────────
-  const currentYear  = today.getFullYear();
-  const currentMonth = today.getMonth() + 1;
+  const currentYear  = referenceDate.getFullYear();
+  const currentMonth = referenceDate.getMonth() + 1;
   const budgetData   = useBudgetMonth(currentYear, currentMonth);
 
   // ── Mitarbeiter nach Abteilung filtern ──────────────────────────────────────
@@ -236,23 +266,23 @@ const Dashboard = () => {
 
   const visibleIds = useMemo(() => new Set(visibleEmployees.map(e => e.id)), [visibleEmployees]);
 
-  // ── Datumslisten ────────────────────────────────────────────────────────────
-  const todayStr  = format(today, 'yyyy-MM-dd');
-  const weekDays  = eachDayOfInterval({
-    start: startOfWeek(today, { weekStartsOn: 1 }),
-    end:   endOfWeek(today,   { weekStartsOn: 1 }),
+  // ── Datumslisten (basierend auf referenceDate) ───────────────────────────────
+  const refDateStr = format(referenceDate, 'yyyy-MM-dd');
+  const weekDays   = eachDayOfInterval({
+    start: startOfWeek(referenceDate, { weekStartsOn: 1 }),
+    end:   endOfWeek(referenceDate,   { weekStartsOn: 1 }),
   }).map(d => format(d, 'yyyy-MM-dd'));
-  const monthDays = eachDayOfInterval({
-    start: startOfMonth(today),
-    end:   endOfMonth(today),
+  const monthDays  = eachDayOfInterval({
+    start: startOfMonth(referenceDate),
+    end:   endOfMonth(referenceDate),
   }).map(d => format(d, 'yyyy-MM-dd'));
-  const yearDays = eachDayOfInterval({
-    start: startOfYear(today),
-    end:   endOfYear(today),
+  const yearDays   = eachDayOfInterval({
+    start: startOfYear(referenceDate),
+    end:   endOfYear(referenceDate),
   }).map(d => format(d, 'yyyy-MM-dd'));
 
   // Aktive Tage abhängig von der gewählten Periode
-  const activeDays = period === 'today' ? [todayStr]
+  const activeDays = period === 'today' ? [refDateStr]
     : period === 'week'  ? weekDays
     : period === 'month' ? monthDays
     : yearDays;
@@ -266,8 +296,16 @@ const Dashboard = () => {
 
   // Periodenspezifische Umsatz-Werte
   const revenueActive         = sumRevenue(activeDays, 'actualRevenue');
-  const revenuePlannedActive  = sumRevenue(activeDays, 'plannedRevenue');
   const revenuePrevYearActive = sumRevenue(activeDays, 'previousYearRevenue');
+
+  // Budget pro Periode: aus budget_v1 Monatsbudget anteilig berechnen
+  const daysInRefMonth = getDaysInMonth(referenceDate);
+  const budgetActive = budgetData.revenueBudget > 0
+    ? period === 'month' ? budgetData.revenueBudget
+      : period === 'today' ? budgetData.revenueBudget / daysInRefMonth
+      : period === 'week'  ? budgetData.revenueBudget / daysInRefMonth * 7
+      : budgetData.revenueBudget * 12  // Jahr: Monatsbudget × 12
+    : 0;
 
   // ── Personalkosten-Berechnungen ─────────────────────────────────────────────
   const monthDateSet = new Set(monthDays);
@@ -347,7 +385,16 @@ const Dashboard = () => {
     : plannedRatioStatus === 'high' ? 'red'
     : 'default';
 
-  const monthName = format(today, 'MMMM yyyy', { locale: de });
+  const monthName = format(referenceDate, 'MMMM yyyy', { locale: de });
+
+  // ── Perioden-Label für Header und Sektionen ──────────────────────────────────
+  const periodLabel = period === 'today'
+    ? format(referenceDate, 'EEEE, d. MMMM yyyy', { locale: de })
+    : period === 'week'
+      ? `KW ${format(referenceDate, 'w', { locale: de })} · ${format(startOfWeek(referenceDate, { weekStartsOn: 1 }), 'd. MMM', { locale: de })} – ${format(endOfWeek(referenceDate, { weekStartsOn: 1 }), 'd. MMM yyyy', { locale: de })}`
+      : period === 'month'
+        ? format(referenceDate, 'MMMM yyyy', { locale: de })
+        : `${referenceDate.getFullYear()}`;
 
   // ── Budget-Vergleichs-Berechnungen ───────────────────────────────────────────
   // Abweichung Umsatz: Ist (aus dailyBudgets) vs. Jahresbudget
@@ -400,22 +447,52 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {/* Zeitraum-Auswahl */}
-            <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
-              {(['today', 'week', 'month', 'year'] as Period[]).map(p => (
+            {/* Zeitraum-Auswahl + Navigation */}
+            <div className="flex items-center gap-1.5">
+              {/* Perioden-Typ */}
+              <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+                {(['today', 'week', 'month', 'year'] as Period[]).map(p => (
+                  <button
+                    key={p}
+                    onClick={() => { setPeriod(p); setReferenceDate(new Date()); }}
+                    className={cn(
+                      'px-3 py-1 text-xs font-medium rounded-md transition-all',
+                      period === p
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {PERIOD_LABELS[p]}
+                  </button>
+                ))}
+              </div>
+
+              {/* Navigation: ← Heute → */}
+              <div className="flex items-center gap-0.5">
                 <button
-                  key={p}
-                  onClick={() => setPeriod(p)}
-                  className={cn(
-                    'px-3 py-1 text-xs font-medium rounded-md transition-all',
-                    period === p
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
+                  onClick={navigatePrev}
+                  className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  title="Zurück"
                 >
-                  {PERIOD_LABELS[p]}
+                  <ChevronLeft className="h-4 w-4" />
                 </button>
-              ))}
+                {!isCurrentPeriod && (
+                  <button
+                    onClick={navigateToday}
+                    className="px-2 py-1 text-xs font-medium rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                    title="Zur aktuellen Periode"
+                  >
+                    Heute
+                  </button>
+                )}
+                <button
+                  onClick={navigateNext}
+                  className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  title="Weiter"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center gap-2">
@@ -506,10 +583,7 @@ const Dashboard = () => {
               <>
                 <SectionTitle icon={<TrendingUp className="h-4 w-4" />}>
                   Umsatz · {PERIOD_LABELS[period]}
-                  {period === 'today' && <span className="ml-2 font-normal text-muted-foreground normal-case">{format(today, 'EEEE, d. MMMM', { locale: de })}</span>}
-                  {period === 'week'  && <span className="ml-2 font-normal text-muted-foreground normal-case">KW {format(today, 'w', { locale: de })}</span>}
-                  {period === 'month' && <span className="ml-2 font-normal text-muted-foreground normal-case">{monthName}</span>}
-                  {period === 'year'  && <span className="ml-2 font-normal text-muted-foreground normal-case">YTD {today.getFullYear()}</span>}
+                  <span className="ml-2 font-normal text-muted-foreground normal-case">{periodLabel}</span>
                 </SectionTitle>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <KpiCard
@@ -521,9 +595,9 @@ const Dashboard = () => {
                   />
                   <KpiCard
                     title={`Budget · ${PERIOD_LABELS[period]}`}
-                    value={revenuePlannedActive > 0 ? formatCHF(revenuePlannedActive) : '–'}
-                    subtitle="Budgetierter Umsatz"
-                    delta={revenuePlannedActive > 0 ? ((revenueActive - revenuePlannedActive) / revenuePlannedActive) * 100 : null}
+                    value={budgetActive > 0 ? formatCHF(Math.round(budgetActive)) : '–'}
+                    subtitle={period === 'month' ? 'Monatsbudget 2026' : period === 'year' ? 'Jahresbudget (×12)' : 'Anteiliges Budget'}
+                    delta={budgetActive > 0 ? ((revenueActive - budgetActive) / budgetActive) * 100 : null}
                     deltaLabel="% vs. Budget"
                     icon={<CalendarDays className="h-5 w-5" />}
                     color="blue"
