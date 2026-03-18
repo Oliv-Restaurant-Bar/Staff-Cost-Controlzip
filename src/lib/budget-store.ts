@@ -413,11 +413,13 @@ function migrateToSingleRevenueItem(budget: BudgetYear): BudgetYear {
   return { ...budget, plLineItems: newItems };
 }
 
+/**
+ * Wirklich veraltete IDs – diese wurden durch neue IDs/Strukturen ersetzt und
+ * existieren NICHT mehr in DEFAULT_PL_LINE_ITEMS.
+ */
 const OBSOLETE_PL_IDS = [
   'pli_waren_wein', 'pli_waren_bier', 'pli_waren_spirit', 'pli_waren_mineral', 'pli_waren_kueche',
-  'pli_lohn_flex', 'pli_lohn_13', 'pli_lohn_zulagen',
-  'pli_ahv', 'pli_bvg', 'pli_uvg',
-  'pli_weiterbildung', 'pli_personalverpf',
+  'pli_lohn_zulagen',
   'pli_nebenkosten', 'pli_verwaltung', 'pli_uebrig_aufwand',
 ];
 
@@ -436,6 +438,22 @@ function migrateObsoletePLItems(budget: BudgetYear): BudgetYear {
 }
 
 /**
+ * Stellt sicher, dass alle Standard-P&L-Positionen (DEFAULT_PL_LINE_ITEMS)
+ * im Budget vorhanden sind. Fügt fehlende hinzu, ohne bestehende Daten zu
+ * überschreiben. Wird automatisch beim Laden und nach der Reparatur ausgeführt.
+ */
+function ensureDefaultPLItems(budget: BudgetYear): BudgetYear {
+  const items = budget.plLineItems ?? [];
+  const existingIds = new Set(items.map(i => i.id));
+  const missing = DEFAULT_PL_LINE_ITEMS.filter(d => !existingIds.has(d.id));
+  if (missing.length === 0) return budget;
+  return {
+    ...budget,
+    plLineItems: [...items, ...missing.map(createDefaultPLLineItem)],
+  };
+}
+
+/**
  * Budgetjahr laden und P&L-Struktur sicherstellen.
  */
 export function loadBudgetWithPL(year: number): BudgetYear {
@@ -445,8 +463,28 @@ export function loadBudgetWithPL(year: number): BudgetYear {
   }
   budget = migrateToSingleRevenueItem(budget);
   budget = migrateObsoletePLItems(budget);
+  budget = ensureDefaultPLItems(budget);
   saveBudgetYear(budget);
   return budget;
+}
+
+/**
+ * Fügt alle fehlenden Standard-P&L-Positionen zum Budget hinzu (für den
+ * expliziten "Standardkonten sicherstellen"-Button im Budget).
+ * Gibt die Anzahl der hinzugefügten Positionen zurück.
+ */
+export function restoreMissingDefaultPLItems(year: number): { budget: BudgetYear; added: number } {
+  const budget = loadBudgetWithPL(year);
+  const items = budget.plLineItems ?? [];
+  const existingIds = new Set(items.map(i => i.id));
+  const missing = DEFAULT_PL_LINE_ITEMS.filter(d => !existingIds.has(d.id));
+  if (missing.length === 0) return { budget, added: 0 };
+  const updated = {
+    ...budget,
+    plLineItems: [...items, ...missing.map(createDefaultPLLineItem)],
+  };
+  saveBudgetYear(updated);
+  return { budget: updated, added: missing.length };
 }
 
 /**

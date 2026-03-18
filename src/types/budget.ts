@@ -326,11 +326,13 @@ export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = 
   { id: 'pli_lohn_ferien',    categoryId: 'pl_wages',           accountNumber: '5003', label: 'Ferien / Feiertage Rückst.',    valueType: 'chf', sortOrder: 4 },
 
   // Sozialleistungen – Oliv Konten 5700–5770
-  { id: 'pli_ahv',            categoryId: 'pl_social',          accountNumber: '5700', label: 'AHV / IV / EO / ALV / FAK',     valueType: 'chf', sortOrder: 1 },
-  { id: 'pli_bvg',            categoryId: 'pl_social',          accountNumber: '5710', label: 'BVG / Pensionskasse',            valueType: 'chf', sortOrder: 2 },
-  { id: 'pli_uvg',            categoryId: 'pl_social',          accountNumber: '5720', label: 'UVG Berufsunfall',               valueType: 'chf', sortOrder: 3 },
-  { id: 'pli_ktg',            categoryId: 'pl_social',          accountNumber: '5730', label: 'KTG / NBU / SUVA',              valueType: 'chf', sortOrder: 4 },
-  { id: 'pli_quellst',        categoryId: 'pl_social',          accountNumber: '5770', label: 'Quellensteuer',                  valueType: 'chf', sortOrder: 5 },
+  { id: 'pli_zulagen',        categoryId: 'pl_social',          accountNumber: '5010', label: 'Zulagen / SozL. Vergütungen',   valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_ahv',            categoryId: 'pl_social',          accountNumber: '5700', label: 'AHV / IV / EO / ALV / FAK',     valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_bvg',            categoryId: 'pl_social',          accountNumber: '5710', label: 'BVG / Pensionskasse',            valueType: 'chf', sortOrder: 3 },
+  { id: 'pli_uvg',            categoryId: 'pl_social',          accountNumber: '5720', label: 'UVG Berufsunfall',               valueType: 'chf', sortOrder: 4 },
+  { id: 'pli_ktg',            categoryId: 'pl_social',          accountNumber: '5730', label: 'KTG / NBU / SUVA',              valueType: 'chf', sortOrder: 5 },
+  { id: 'pli_kvg',            categoryId: 'pl_social',          accountNumber: '5740', label: 'Krankentaggeldvers. KVG',        valueType: 'chf', sortOrder: 6 },
+  { id: 'pli_quellst',        categoryId: 'pl_social',          accountNumber: '5770', label: 'Quellensteuer',                  valueType: 'chf', sortOrder: 7 },
 
   // Übriger Personalaufwand – Oliv Konten 5800–5890
   { id: 'pli_personalverpf',  categoryId: 'pl_personnel_other', accountNumber: '5850', label: 'Personalverpflegung',            valueType: 'chf', sortOrder: 1 },

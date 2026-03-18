@@ -33,6 +33,7 @@ import {
   addBudgetRule, removeBudgetRule, deleteBudgetYear,
   savePLLineItem, addCustomPLLineItem, removeCustomPLLineItem,
   computePLCategoryTotals, computePLResultTotals,
+  restoreMissingDefaultPLItems,
 } from '@/lib/budget-store';
 
 import { Button }  from '@/components/ui/button';
@@ -258,6 +259,16 @@ function BudgetContent() {
     toast.success(`${budget.rules.length} Regel(n) angewendet`);
   };
 
+  const handleRestoreDefaults = () => {
+    const { budget: upd, added } = restoreMissingDefaultPLItems(selectedYear);
+    setBudget(upd);
+    if (added === 0) {
+      toast.info('Alle Standardkonten sind bereits vorhanden.');
+    } else {
+      toast.success(`${added} fehlende Standardkonto${added !== 1 ? 'en' : ''} hinzugefügt.`);
+    }
+  };
+
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -286,6 +297,9 @@ function BudgetContent() {
           </Select>
           <Button variant="outline" size="sm" onClick={() => setCopyDialog(true)} className="gap-1.5">
             <Copy className="h-4 w-4" /> Jahr kopieren
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleRestoreDefaults} className="gap-1.5" title="Fehlende Standardkonten (Oliv-Kontenplan) hinzufügen">
+            <CheckCircle2 className="h-4 w-4" /> Standardkonten
           </Button>
           <Button variant="outline" size="sm" onClick={handleApplyRules} className="gap-1.5">
             <RefreshCw className="h-4 w-4" /> Regeln anwenden
