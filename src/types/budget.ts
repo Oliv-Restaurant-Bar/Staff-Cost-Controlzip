@@ -407,7 +407,9 @@ export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = 
   { id: 'pli_uebrig_betr',    categoryId: 'pl_other_op',        accountNumber: '6790', label: 'Sonst. betr. Aufwand',            valueType: 'chf', sortOrder: 2 },
 
   // ── Finanzaufwand und Finanzertrag ────────────────────────────────────────────
-  { id: 'pli_bankspesen',     categoryId: 'pl_finance',         accountNumber: '6940', label: 'Bankspesen',                      valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_finance_6800',   categoryId: 'pl_finance',         accountNumber: '6800', label: 'Abschreibungen',                  valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_zinsaufwand',    categoryId: 'pl_finance',         accountNumber: '6910', label: 'Zinsaufwand und Amortisation',    valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_bankspesen',     categoryId: 'pl_finance',         accountNumber: '6940', label: 'Bankspesen',                      valueType: 'chf', sortOrder: 3 },
 ];
 
 export function createDefaultPLLineItem(

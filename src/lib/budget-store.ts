@@ -30,7 +30,7 @@ import {
   DEFAULT_PL_LINE_ITEMS,
   createDefaultPLLineItem,
 } from '@/types/budget';
-import { createSeededBudget2026 } from '@/lib/budget-seed-2026';
+import { createSeededBudget2026, SEED_2026_LINE_ITEMS } from '@/lib/budget-seed-2026';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -458,19 +458,17 @@ const OBSOLETE_PL_IDS = [
   'pli_bier',          // 4002 → 4030 Bier
   'pli_wein',          // 4010 → 4020 Wein
   'pli_kueche',        // 4060 → pli_kueche_wa
-  'pli_bvg',           // 5710 BVG → 5720 (neue Nr.)
-  'pli_uvg',           // 5720 UVG → 5730 (neue Nr.)
+  // NOTE: pli_bvg, pli_uvg, pli_ure_edv, pli_energie sind NICHT obsolet –
+  //       sie existieren in DEFAULT_PL_LINE_ITEMS und im 2026-Seed mit gültigen Werten.
   'pli_ktg',           // 5730 KTG → entfällt (UVG übernimmt 5730)
   'pli_quellst',       // 5770 Quellensteuer → nicht mehr im Kontoplan
   'pli_personalverpf', // 5850 → nicht mehr im Kontoplan
   'pli_zulagen',       // 5010 war in pl_social → neu in pl_wages
   'pli_weiterbildung', // 5830 → neu 5810
-  'pli_energie',       // 6001 Heizung in Raumaufwand → neu 6400 in pl_energy
   'pli_hauswart',      // 6002 Reinigung/Hauswart → entfernt
   'pli_miete_park',    // 6002 Parkplatz → entfernt
   'pli_unterhalt',     // 6200 Unterhalt Gebäude → nicht mehr im Kontoplan
   'pli_leasing',       // 6101 Leasing Maschinen → nicht mehr im Kontoplan
-  'pli_ure_edv',       // 61409 (5-stellig) → neu pli_ure_edv mit 6140
   'pli_versicherungen',// 6300 → neu 6310 Haftpflicht
   'pli_abschreibungen',// 6800 → neu pli_finance_6800 (Abschreibungen)
 ];
@@ -529,6 +527,34 @@ function ensureDefaultPLCategories(budget: BudgetYear): BudgetYear {
 }
 
 /**
+ * Stellt für 2026-Budgets sicher, dass Positionen mit ausschliesslich Null-Werten
+ * die korrekten Seed-Werte erhalten. Betrifft Konten, die früher fälschlicherweise
+ * als "obsolet" markiert und durch leere Standardeinträge ersetzt wurden:
+ * 5710 BVG (pli_bvg), 5730 UVG (pli_uvg), 6140 EDV (pli_ure_edv),
+ * 6400 Energie (pli_energie), 6800 Abschreibungen (pli_finance_6800),
+ * 6910 Zinsaufwand (pli_zinsaufwand).
+ */
+function migrateSeedZeroValues2026(budget: BudgetYear): BudgetYear {
+  if (budget.year !== 2026) return budget;
+  const seedMap = new Map(SEED_2026_LINE_ITEMS.map(s => [s.id, s]));
+  const items = budget.plLineItems ?? [];
+  let changed = false;
+  const healed = items.map(item => {
+    const seedItem = seedMap.get(item.id);
+    if (!seedItem) return item;
+    const allZero = item.monthlyValues.every(v => v === 0);
+    const seedHasValues = seedItem.monthlyValues.some(v => v !== 0);
+    if (allZero && seedHasValues) {
+      changed = true;
+      return { ...item, monthlyValues: [...seedItem.monthlyValues] };
+    }
+    return item;
+  });
+  if (!changed) return budget;
+  return { ...budget, plLineItems: healed };
+}
+
+/**
  * Budgetjahr laden und P&L-Struktur sicherstellen.
  */
 export function loadBudgetWithPL(year: number): BudgetYear {
@@ -540,6 +566,7 @@ export function loadBudgetWithPL(year: number): BudgetYear {
   budget = migrateObsoletePLItems(budget);
   budget = ensureDefaultPLCategories(budget);
   budget = ensureDefaultPLItems(budget);
+  budget = migrateSeedZeroValues2026(budget);
   // Immer Sync: plLineItems → legacy positions (damit Dashboard/SollIst budget_revenue findet)
   budget = syncPLToLegacyPositions(budget);
   saveBudgetYear(budget);
