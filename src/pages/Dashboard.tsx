@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   format, startOfWeek, endOfWeek, eachDayOfInterval,
@@ -14,6 +14,7 @@ import {
   CalendarDays, AlertTriangle, CheckCircle2,
   LayoutDashboard, Calendar, BarChart2,
   BookOpen, Target, Upload, ChevronLeft, ChevronRight,
+  Pencil, Check, X as XIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -205,7 +206,8 @@ const Dashboard = () => {
     : period === 'month' ? isSameMonth(referenceDate, today)
     : isSameYear(referenceDate, today);
 
-  const monthKey = format(referenceDate, 'yyyy-MM');
+  const monthKey   = format(referenceDate, 'yyyy-MM');
+  const refDateStr = format(referenceDate, 'yyyy-MM-dd');
 
   const {
     isAdmin, isManager, allowedDepartment,
@@ -242,14 +244,51 @@ const Dashboard = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthKey]);
 
-  // DailyBudgets aus localStorage (Umsatz-Daten)
-  const dailyBudgets = useMemo<Record<string, DailyBudget>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('dailyBudgets') || '{}');
-    } catch {
-      return {};
-    }
+  // DailyBudgets aus localStorage (Umsatz-Daten) — schreibbar für Schnelleingabe
+  const [dailyBudgets, setDailyBudgets] = useState<Record<string, DailyBudget>>(() => {
+    try { return JSON.parse(localStorage.getItem('dailyBudgets') || '{}'); }
+    catch { return {}; }
+  });
+
+  // Schnelleingabe-State
+  const [editingRevenue, setEditingRevenue] = useState(false);
+  const [pendingRevenue, setPendingRevenue] = useState('');
+  const revenueInputRef = useRef<HTMLInputElement>(null);
+
+  const openRevenueEdit = useCallback(() => {
+    const existing = dailyBudgets[refDateStr]?.actualRevenue;
+    setPendingRevenue(existing ? String(existing) : '');
+    setEditingRevenue(true);
+    setTimeout(() => revenueInputRef.current?.focus(), 50);
+  }, [dailyBudgets, refDateStr]);
+
+  const saveRevenue = useCallback(() => {
+    const amount = parseFloat(pendingRevenue.replace(/[^0-9.]/g, '')) || 0;
+    const updated = {
+      ...dailyBudgets,
+      [refDateStr]: {
+        plannedRevenue: dailyBudgets[refDateStr]?.plannedRevenue ?? 0,
+        previousYearRevenue: dailyBudgets[refDateStr]?.previousYearRevenue ?? 0,
+        ...dailyBudgets[refDateStr],
+        actualRevenue: amount,
+      },
+    };
+    localStorage.setItem('dailyBudgets', JSON.stringify(updated));
+    setDailyBudgets(updated);
+    setEditingRevenue(false);
+    setPendingRevenue('');
+  }, [dailyBudgets, refDateStr, pendingRevenue]);
+
+  const cancelRevenueEdit = useCallback(() => {
+    setEditingRevenue(false);
+    setPendingRevenue('');
   }, []);
+
+  // Eingabe schliessen wenn Tag/Periode wechselt
+  useEffect(() => {
+    setEditingRevenue(false);
+    setPendingRevenue('');
+  }, [refDateStr, period]);
 
   const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 40);
 
@@ -267,7 +306,6 @@ const Dashboard = () => {
   const visibleIds = useMemo(() => new Set(visibleEmployees.map(e => e.id)), [visibleEmployees]);
 
   // ── Datumslisten (basierend auf referenceDate) ───────────────────────────────
-  const refDateStr = format(referenceDate, 'yyyy-MM-dd');
   const weekDays   = eachDayOfInterval({
     start: startOfWeek(referenceDate, { weekStartsOn: 1 }),
     end:   endOfWeek(referenceDate,   { weekStartsOn: 1 }),
@@ -612,6 +650,81 @@ const Dashboard = () => {
                     color={revenuePrevYearActive > 0 ? (revenueActive >= revenuePrevYearActive ? 'green' : 'red') : 'default'}
                   />
                 </div>
+
+                {/* ── Schnelleingabe Tagesumsatz ─────────────────────────────── */}
+                {period === 'today' && (
+                  <Card className={cn(
+                    'border-l-4 transition-all',
+                    revenueActive > 0
+                      ? 'border-l-green-400 dark:border-l-green-600 bg-green-50/30 dark:bg-green-950/10'
+                      : 'border-l-blue-400 dark:border-l-blue-600 bg-blue-50/30 dark:bg-blue-950/10',
+                  )}>
+                    <CardContent className="p-3">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Pencil className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            Tagesumsatz
+                          </span>
+                          <span className="text-xs text-muted-foreground hidden sm:inline">
+                            · {format(referenceDate, 'EEEE, d. MMMM', { locale: de })}
+                          </span>
+                        </div>
+
+                        {editingRevenue ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm font-medium text-muted-foreground">CHF</span>
+                            <input
+                              ref={revenueInputRef}
+                              type="number"
+                              value={pendingRevenue}
+                              onChange={e => setPendingRevenue(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') saveRevenue();
+                                if (e.key === 'Escape') cancelRevenueEdit();
+                              }}
+                              className="w-36 px-2 py-1 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary/50 tabular-nums"
+                              placeholder="0"
+                              min="0"
+                              step="100"
+                            />
+                            <button
+                              onClick={saveRevenue}
+                              className="p-1.5 rounded-md bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-950/40 dark:text-green-400 transition-colors"
+                              title="Speichern (Enter)"
+                            >
+                              <Check className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={cancelRevenueEdit}
+                              className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-muted/80 transition-colors"
+                              title="Abbrechen (Esc)"
+                            >
+                              <XIcon className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={openRevenueEdit}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-background hover:bg-muted transition-colors group"
+                          >
+                            {revenueActive > 0 ? (
+                              <>
+                                <span className="text-sm font-bold tabular-nums">{formatCHF(revenueActive)}</span>
+                                <Pencil className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-sm text-muted-foreground">Umsatz eingeben…</span>
+                                <Pencil className="h-3 w-3 text-muted-foreground" />
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
 
               </>
             )}
