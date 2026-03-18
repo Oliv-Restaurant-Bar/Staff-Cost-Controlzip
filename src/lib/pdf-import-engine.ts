@@ -79,6 +79,16 @@ export function detectMonthYear(lines: string[]): {
 } {
   const fullText = lines.slice(0, 30).join(' ').toLowerCase();
 
+  // Muster 0: Sage-Format "vom: 01.01.26 bis 31.01.26" → Startmonat/-jahr
+  const sageVomMatch = fullText.match(/vom\s*:\s*(\d{1,2})\.(\d{1,2})\.(\d{2,4})/i);
+  if (sageVomMatch) {
+    const yy = parseInt(sageVomMatch[3]);
+    return {
+      month: parseInt(sageVomMatch[2]),
+      year:  yy < 100 ? (yy < 50 ? 2000 + yy : 1900 + yy) : yy,
+    };
+  }
+
   // Muster 1: "Periode: 01.01.2026 – 31.01.2026" → Monat aus Startdatum
   const periodeMatch = fullText.match(
     /periode[:\s]+(\d{1,2})\.(\d{1,2})\.(\d{4})/i,
@@ -152,6 +162,83 @@ async function extractLinesFromPage(
       return { y, items, text };
     })
     .filter(l => l.text.length > 0);
+}
+
+// ─── Sage Kontoblatt-Parser ───────────────────────────────────────────────────
+
+/**
+ * Erkennt ob es sich um ein Sage Kontoblatt handelt.
+ * Typische Sage-Kopfzeilen: "Kontoblatt", "vom: DD.MM.YY bis DD.MM.YY"
+ */
+function isSageKontoblatt(rawLines: string[]): boolean {
+  const head = rawLines.slice(0, 20).join(' ').toLowerCase();
+  return head.includes('kontoblatt') && (head.includes('vom:') || head.includes(' bis '));
+}
+
+/**
+ * State-Machine-Parser für Sage Kontoblatt-PDFs.
+ *
+ * Format:
+ *   4020            Wein Warenaufwand          ← Konto-Header (kein Betrag)
+ *                   Saldo Vortrag  0.00         ← ignorieren
+ *   20.01.2026  54  Paul Ullrich AG  2001  1'324.01  1'324.01  ← Buchungszeilen ignorieren
+ *                   Total Soll      11'790.66   ← Debit-Summe
+ *                   Total Haben     0.00        11'790.66  ← letzter Betrag = Netto-Saldo
+ *
+ * Ergebnis: eine ParsedCSVRow pro Konto mit dem Netto-Saldo als amount.
+ * Mehrseitige Konten (Saldo-Vortrag auf Folgeseite) werden korrekt behandelt.
+ */
+function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
+  const accountTotals = new Map<string, { name: string; saldo: number; lineIndex: number; raw: string }>();
+  let currentAccount: { number: string; name: string } | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const { text } = lines[i];
+    const lower = text.toLowerCase().trim();
+
+    // "Total Haben …  <saldo>" → letzter Betrag auf der Zeile ist der Netto-Saldo
+    if (/^total\s+haben\b/i.test(lower) && currentAccount) {
+      const lastAmt = findLastAmount(text);
+      if (lastAmt) {
+        const saldo = parseAmount(lastAmt.raw);
+        if (saldo !== null && saldo >= 0) {
+          accountTotals.set(currentAccount.number, {
+            name:      currentAccount.name,
+            saldo:     Math.abs(saldo),
+            lineIndex: i + 1,
+            raw:       lastAmt.raw,
+          });
+        }
+      }
+      currentAccount = null;
+      continue;
+    }
+
+    // Konto-Header: 4-stellige Zahl am Anfang, gefolgt von Name – kein Betrag dahinter
+    const accM = /^\s*(\d{4})\s+(.+)/.exec(text);
+    if (accM) {
+      const afterNum = accM[2].trim();
+      const hasAmount = findLastAmount(afterNum) !== null;
+      if (!hasAmount) {
+        // Prüfe, dass der Name sinnvoll lang ist (mind. 2 Zeichen, keine reine Zahl)
+        const cleanName = afterNum.replace(/^\s+|\s+$/g, '');
+        if (cleanName.length >= 2 && !/^\d+$/.test(cleanName)) {
+          currentAccount = { number: accM[1], name: cleanName };
+        }
+      }
+    }
+  }
+
+  return Array.from(accountTotals.entries())
+    .filter(([, v]) => v.saldo > 0)
+    .map(([accNum, v]) => ({
+      lineIndex:     v.lineIndex,
+      rawLine:       `${accNum} ${v.name}  Total Haben ${v.raw}`,
+      accountNumber: accNum.padStart(4, '0'),
+      accountName:   v.name,
+      rawAmount:     v.raw,
+      amount:        v.saldo,
+    }));
 }
 
 // ─── Zeilen-Parser ────────────────────────────────────────────────────────────
@@ -283,18 +370,27 @@ export async function parsePDF(buffer: ArrayBuffer): Promise<PDFParseResult> {
   // Monat/Jahr erkennen
   const { month: detectedMonth, year: detectedYear } = detectMonthYear(rawLines);
 
-  // Buchungszeilen parsen
-  const seen = new Set<string>(); // Duplikat-Schutz: gleiche Konto+Betrag-Kombination
-
-  for (let i = 0; i < allLines.length; i++) {
-    const parsed = parseLine(allLines[i], i + 1);
-    if (!parsed) continue;
-
-    const dedupeKey = `${parsed.accountNumber}_${parsed.amount.toFixed(2)}`;
-    if (seen.has(dedupeKey)) continue; // Vermeidet z.B. doppelte Gesamt-Saldi
-    seen.add(dedupeKey);
-
-    rows.push(parsed);
+  // Format-Erkennung: Sage Kontoblatt vs. generisches Kontenblatt
+  if (isSageKontoblatt(rawLines)) {
+    // Sage Kontoblatt: State-Machine — ein Saldo pro Konto via "Total Haben"-Zeile
+    const sageRows = parseSageKontoblatt(allLines);
+    rows.push(...sageRows);
+    if (sageRows.length > 0) {
+      warnings.push(
+        `Sage Kontoblatt erkannt: ${sageRows.length} Konten mit Netto-Saldo importiert.`,
+      );
+    }
+  } else {
+    // Generisches Kontenblatt: eine Zeile = Konto + Betrag
+    const seen = new Set<string>();
+    for (let i = 0; i < allLines.length; i++) {
+      const parsed = parseLine(allLines[i], i + 1);
+      if (!parsed) continue;
+      const dedupeKey = `${parsed.accountNumber}_${parsed.amount.toFixed(2)}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      rows.push(parsed);
+    }
   }
 
   if (rows.length === 0) {
