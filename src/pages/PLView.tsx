@@ -12,14 +12,14 @@
  * Nur für Admin zugänglich.
  */
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Navigate } from 'react-router-dom';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Info,
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight,
-  Minus, Database, AlignJustify, List,
+  Minus, Database, AlignJustify, List, Pencil, Check,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -31,8 +31,9 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import { usePermissions } from '@/hooks/usePermissions';
-import { loadYear } from '@/lib/reporting-store';
+import { loadYear, saveMonth } from '@/lib/reporting-store';
 import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE } from '@/lib/pl-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
@@ -729,15 +730,49 @@ const BudgetPLDrilldownDialog = ({
   month,
   year,
   onClose,
+  onSaved,
 }: {
   row: BPLRowWithValues;
   month: number;
   year: number;
   onClose: () => void;
+  onSaved: () => void;
 }) => {
   const label   = row.itemLabel ?? row.catLabel;
   const account = row.itemAccountNumber;
   const v       = row.values;
+
+  const [istInput, setIstInput] = useState(v.actual !== 0 ? String(v.actual) : '');
+  const [saved,    setSaved]    = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const canEdit = row.catType !== 'result';
+
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.focus();
+  }, []);
+
+  const handleSave = () => {
+    const raw = istInput.replace(/['\s]/g, '').replace(',', '.');
+    const num = parseFloat(raw);
+    if (isNaN(num)) return;
+
+    if (row.catId === 'pl_revenue') {
+      saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' });
+    } else if (row.catId === 'pl_wages' && row.isCategory) {
+      saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' });
+    } else if (!row.isCategory && account) {
+      const existing = loadYear(year)[month - 1];
+      const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
+      cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? label });
+      saveMonth({ year, month, expenseCategories: cats }, 'manual_entry', 'update', { note: `Manuelle Eingabe Konto ${account}` });
+    } else {
+      return;
+    }
+
+    setSaved(true);
+    setTimeout(() => { onSaved(); }, 600);
+  };
 
   return (
     <Dialog open onOpenChange={() => onClose()}>
@@ -757,6 +792,47 @@ const BudgetPLDrilldownDialog = ({
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span>Kontonummer:</span>
               <span className="font-mono font-bold text-foreground bg-muted px-1.5 py-0.5 rounded">{account}</span>
+            </div>
+          )}
+
+          {/* Manuelle Ist-Eingabe */}
+          {canEdit && (
+            <div className="rounded-lg border-2 border-primary/30 bg-primary/5 p-3 space-y-2">
+              <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <Pencil className="h-3.5 w-3.5 text-primary" />
+                Ist-Wert manuell eingeben
+              </p>
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">CHF</span>
+                  <Input
+                    ref={inputRef}
+                    className="pl-10 font-mono text-right text-base h-9"
+                    placeholder="0"
+                    value={istInput}
+                    onChange={e => { setIstInput(e.target.value); setSaved(false); }}
+                    onKeyDown={e => e.key === 'Enter' && handleSave()}
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  className="h-9 px-4"
+                  onClick={handleSave}
+                  disabled={saved}
+                  variant={saved ? 'outline' : 'default'}
+                >
+                  {saved ? (
+                    <><Check className="h-3.5 w-3.5 mr-1 text-emerald-600" /> Gespeichert</>
+                  ) : (
+                    'Speichern'
+                  )}
+                </Button>
+              </div>
+              {row.isCategory && row.catId !== 'pl_revenue' && row.catId !== 'pl_wages' && (
+                <p className="text-[10px] text-amber-600">
+                  Hinweis: Kategorie-Summen werden aus Einzelkonten berechnet. Bitte die Unterkonten einzeln eingeben.
+                </p>
+              )}
             </div>
           )}
 
@@ -854,9 +930,10 @@ const PLViewPage = () => {
   const [drilldown,    setDrilldown]    = useState<PLDrilldown | null>(null);
   const [bplDrilldown, setBplDrilldown] = useState<BPLRowWithValues | null>(null);
   const [compact,      setCompact]      = useState(false);
+  const [refreshKey,   setRefreshKey]   = useState(0);
 
   // Daten laden & P&L berechnen
-  const records = useMemo(() => loadYear(year), [year, month]);
+  const records = useMemo(() => loadYear(year), [year, month, refreshKey]);
 
   const monthResult = useMemo(
     () => computePLForMonth(records[month - 1]),
@@ -1113,6 +1190,7 @@ const PLViewPage = () => {
           month={month}
           year={year}
           onClose={() => setBplDrilldown(null)}
+          onSaved={() => { setBplDrilldown(null); setRefreshKey(k => k + 1); }}
         />
       )}
     </div>
