@@ -34,6 +34,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { usePermissions } from '@/hooks/usePermissions';
 import { loadYear, saveMonth } from '@/lib/reporting-store';
+import { lookupAccount } from '@/lib/account-mapping-store';
 import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE } from '@/lib/pl-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
@@ -499,8 +500,8 @@ function getCatActual(catId: string, rec: MonthlyFinancialRecord | undefined): n
   if (catId === 'pl_wages')   return (rec as any).personnel_actual ?? 0;
   const ranges: Record<string, [number, number]> = {
     pl_goods_cost:      [4000, 4999],
-    pl_social:          [5400, 5699],
-    pl_personnel_other: [5700, 5899],
+    pl_social:          [5010, 5799],
+    pl_personnel_other: [5800, 5899],
     pl_rent:            [6000, 6199],
     pl_maintenance:     [6200, 6399],
     pl_admin:           [6400, 6999],
@@ -518,8 +519,8 @@ function getCatPY(catId: string, rec: MonthlyFinancialRecord | undefined): numbe
   if (catId === 'pl_wages')   return (rec as any).personnelCostPreviousYear ?? 0;
   const ranges: Record<string, [number, number]> = {
     pl_goods_cost:      [4000, 4999],
-    pl_social:          [5400, 5699],
-    pl_personnel_other: [5700, 5899],
+    pl_social:          [5010, 5799],
+    pl_personnel_other: [5800, 5899],
     pl_rent:            [6000, 6199],
     pl_maintenance:     [6200, 6399],
     pl_admin:           [6400, 6999],
@@ -543,6 +544,32 @@ function makeCell(actual: number, budget: number, prevYear: number, isExpense: b
   };
 }
 
+const PL_CAT_TO_BPL: Partial<Record<string, string>> = {
+  revenue_food:      'pl_revenue',
+  revenue_beverage:  'pl_revenue',
+  revenue_catering:  'pl_revenue',
+  revenue_other:     'pl_revenue',
+  cogs_food:         'pl_goods_cost',
+  cogs_beverage:     'pl_goods_cost',
+  cogs_other:        'pl_goods_cost',
+  personnel_kitchen: 'pl_wages',
+  personnel_service: 'pl_wages',
+  personnel_admin:   'pl_wages',
+  personnel_social:  'pl_social',
+  personnel_other:   'pl_personnel_other',
+  rent:              'pl_rent',
+  utilities:         'pl_rent',
+  cleaning:          'pl_maintenance',
+  maintenance:       'pl_maintenance',
+  insurance:         'pl_admin',
+  marketing:         'pl_admin',
+  admin_costs:       'pl_admin',
+  office:            'pl_admin',
+  bank_fees:         'pl_admin',
+  other_operating:   'pl_admin',
+  depreciation:      'pl_admin',
+};
+
 function computeBPLRows(
   budget: BudgetYear,
   rec: MonthlyFinancialRecord | undefined,
@@ -551,6 +578,22 @@ function computeBPLRows(
   const cats  = (budget.plCategories ?? []).sort((a, b) => a.sortOrder - b.sortOrder);
   const items = budget.plLineItems ?? [];
   const rows: BPLRowWithValues[] = [];
+
+  const budgetItemAccounts = new Set(items.map(i => i.accountNumber).filter(Boolean) as string[]);
+
+  const actualByCat: Record<string, Array<{ accountNum: string; amount: number; label: string }>> = {};
+  for (const ec of (rec?.expenseCategories ?? [])) {
+    if (!ec.categoryId || ec.amount === undefined || ec.amount === 0) continue;
+    const result = lookupAccount(ec.categoryId);
+    const bplCatId = result.mapping ? PL_CAT_TO_BPL[result.mapping.plCategory] : undefined;
+    if (!bplCatId) continue;
+    if (!actualByCat[bplCatId]) actualByCat[bplCatId] = [];
+    actualByCat[bplCatId].push({
+      accountNum: ec.categoryId,
+      amount:     ec.amount,
+      label:      ec.label ?? result.mapping?.accountName ?? ec.categoryId,
+    });
+  }
 
   const catB: Record<string, number> = {};
   const catA: Record<string, number> = {};
@@ -579,6 +622,7 @@ function computeBPLRows(
         isExpense: cat.isExpense, isCategory: true,
         values: makeCell(catA[cat.id] ?? 0, catB[cat.id] ?? 0, catP[cat.id] ?? 0, cat.isExpense),
       });
+
       const its = items.filter(i => i.categoryId === cat.id).sort((a, b) => a.sortOrder - b.sortOrder);
       for (const item of its) {
         const iB = item.monthlyValues[mIdx] ?? 0;
@@ -589,6 +633,19 @@ function computeBPLRows(
           isExpense: cat.isExpense, isCategory: false,
           itemId: item.id, itemLabel: item.label, itemAccountNumber: item.accountNumber,
           values: makeCell(iA, iB, iP, cat.isExpense),
+        });
+      }
+
+      const actualRows = (actualByCat[cat.id] ?? [])
+        .filter(a => !budgetItemAccounts.has(a.accountNum))
+        .sort((a, b) => parseInt(a.accountNum) - parseInt(b.accountNum));
+      for (const ar of actualRows) {
+        const iP = (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === ar.accountNum)?.amount ?? 0;
+        rows.push({
+          catId: cat.id, catLabel: cat.label, catType: 'items',
+          isExpense: cat.isExpense, isCategory: false,
+          itemId: `actual_${ar.accountNum}`, itemLabel: ar.label, itemAccountNumber: ar.accountNum,
+          values: makeCell(ar.amount, 0, iP, cat.isExpense),
         });
       }
     } else if (cat.type === 'result') {
