@@ -980,6 +980,7 @@ const BudgetPLView = ({
   pctMode = 'off',
   revenueActual = 0,
   compareMode = 'all',
+  pctIsBudgetBased = false,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
@@ -992,6 +993,7 @@ const BudgetPLView = ({
   pctMode?: 'off' | 'normal' | 'subtle';
   revenueActual?: number;
   compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr';
+  pctIsBudgetBased?: boolean;
 }) => {
   const showBudget   = compareMode !== 'ist_vorjahr';
   const showPrevYear = compareMode !== 'ist_budget';
@@ -1005,8 +1007,10 @@ const BudgetPLView = ({
           <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')} title="Klick auf Ist-Wert = direkt bearbeiten">Ist (CHF) ✎</th>
           {pctMode !== 'off' && (
             <th className={cn('text-right px-2 min-w-[60px]', compact ? 'py-1.5' : 'py-2.5',
-              pctMode === 'subtle' ? 'opacity-50 italic text-[10px]' : 'text-amber-300',
-            )}>% Ums.</th>
+              pctMode === 'subtle' ? 'opacity-50 italic text-[10px]' : pctIsBudgetBased ? 'text-slate-300' : 'text-amber-300',
+            )} title={pctIsBudgetBased ? '% vom Budget-Umsatz (kein Ist-Umsatz erfasst)' : '% vom Ist-Umsatz'}>
+              {pctIsBudgetBased ? '% Bud.' : '% Ums.'}
+            </th>
           )}
           {showBudget && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Budget (CHF)</th>}
           {showBudget && <th className={cn('text-right px-2 min-w-[130px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. Budget</th>}
@@ -1611,6 +1615,14 @@ const PLViewPage = () => {
     [bplRows],
   );
 
+  // Wenn kein Ist-Umsatz vorhanden → Budget-Umsatz als Fallback für %-Berechnung
+  const bplBudgetRevenue = useMemo(
+    () => bplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.budget ?? 0,
+    [bplRows],
+  );
+  const bplEffectiveRevenue = bplRevenue > 0 ? bplRevenue : bplBudgetRevenue;
+  const pctIsBudgetBased = pctMode !== 'off' && bplRevenue === 0 && bplBudgetRevenue > 0;
+
   const handleDrilldown = useCallback((rowId: string) => {
     const dd = getDrilldown(rowId, monthResult);
     if (dd) setDrilldown(dd);
@@ -1773,8 +1785,10 @@ const PLViewPage = () => {
                 onClick={() => setPctMode(m => m === 'off' ? 'normal' : m === 'normal' ? 'subtle' : 'off')}
                 className={cn(
                   'h-8 px-2 flex items-center gap-1 rounded border text-xs transition-colors',
-                  pctMode === 'normal'
+                  pctMode === 'normal' && !pctIsBudgetBased
                     ? 'bg-amber-500 text-white border-amber-500'
+                    : pctMode === 'normal' && pctIsBudgetBased
+                    ? 'bg-slate-500 text-white border-slate-500'
                     : pctMode === 'subtle'
                     ? 'bg-card border-slate-300 dark:border-slate-600 text-muted-foreground'
                     : 'bg-card border-border hover:bg-muted text-muted-foreground',
@@ -1785,9 +1799,14 @@ const PLViewPage = () => {
                   pctMode === 'subtle' ? 'italic opacity-50 text-[10px]' : 'text-xs',
                 )}>%</span>
                 <span className="hidden sm:inline">
-                  {pctMode === 'subtle' ? 'Dezent' : '% Anteil'}
+                  {pctMode === 'subtle' ? 'Dezent' : pctIsBudgetBased && pctMode !== 'off' ? '% Budget' : '% Anteil'}
                 </span>
               </button>
+            )}
+            {pctIsBudgetBased && pctMode !== 'off' && (
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 italic hidden sm:inline" title="Kein Ist-Umsatz erfasst – Prozente basieren auf dem Budget-Umsatz">
+                ⚠ % vom Budget
+              </span>
             )}
 
             {/* Vergleichsmodus */}
@@ -1922,8 +1941,9 @@ const PLViewPage = () => {
                 onSaved={() => setRefreshKey(k => k + 1)}
                 highlightVariance={highlightVariance}
                 pctMode={pctMode}
-                revenueActual={bplRevenue}
+                revenueActual={bplEffectiveRevenue}
                 compareMode={compareMode}
+                pctIsBudgetBased={pctIsBudgetBased}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
