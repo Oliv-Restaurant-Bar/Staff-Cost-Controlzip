@@ -502,10 +502,21 @@ const BPL_CAT_RANGES: Record<string, [number, number]> = {
   pl_goods_cost:      [4000, 4999],
   pl_social:          [5010, 5799],
   pl_personnel_other: [5800, 5899],
-  pl_rent:            [6000, 6199],
-  pl_maintenance:     [6200, 6399],
-  pl_admin:           [6400, 6999],
+  pl_rent:            [6000, 6099],  // 6000–6099: Miete, Energie, Reinigung/Hauswart
+  pl_maintenance:     [6100, 6299],  // 6100–6299: Unterhalt, Leasing, URE inkl. 5-stellige 61xxx
+  pl_admin:           [6300, 6999],  // 6300–6999: Versicherungen, Verwaltung, Abschreibungen, Bank
 };
+
+/**
+ * Normalisiert eine Kontonummer für den Bereichsvergleich.
+ * 5-stellige Konten (z.B. «61409») werden auf die ersten 4 Stellen
+ * reduziert (→ 6140), damit sie korrekt in den 4-stelligen Bereich fallen.
+ */
+function normalizeAccountNum(categoryId: string): number {
+  const s = categoryId.trim();
+  if (s.length > 4) return parseInt(s.slice(0, 4));
+  return parseInt(s);
+}
 
 function getCatActual(catId: string, rec: MonthlyFinancialRecord | undefined): number {
   if (!rec) return 0;
@@ -513,7 +524,7 @@ function getCatActual(catId: string, rec: MonthlyFinancialRecord | undefined): n
   const r = BPL_CAT_RANGES[catId];
   if (!r) return 0;
   return (rec.expenseCategories ?? [])
-    .filter(c => { const n = parseInt(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
+    .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
     .reduce((s, c) => s + (c.amount ?? 0), 0);
 }
 
@@ -523,7 +534,7 @@ function getCatPY(catId: string, rec: MonthlyFinancialRecord | undefined): numbe
   const r = BPL_CAT_RANGES[catId];
   if (!r) return 0;
   return (rec.expenseCategoriesPreviousYear ?? [])
-    .filter(c => { const n = parseInt(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
+    .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
     .reduce((s, c) => s + (c.amount ?? 0), 0);
 }
 
