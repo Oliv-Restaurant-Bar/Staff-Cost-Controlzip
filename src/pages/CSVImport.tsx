@@ -38,8 +38,13 @@ import { cn } from '@/lib/utils';
 import {
   processCSV, matchCSVRows, buildMonthRecord,
   CSVParseResult, MatchedCSVRow, ImportConfig,
+  PL_CATEGORY_TO_ROW_ID,
 } from '@/lib/csv-import-engine';
 import { parsePDF, parseSageKontoblattExcel, detectMonthYear } from '@/lib/pdf-import-engine';
+import {
+  saveMappingCustom, PL_CATEGORIES, getCategoryLabel, getSectionLabel,
+} from '@/lib/account-mapping-store';
+import { PLCategory } from '@/types/account-mapping';
 import { saveMonth } from '@/lib/reporting-store';
 import { toast } from 'sonner';
 
@@ -220,6 +225,114 @@ function PreviewTable({ rows, emptyLabel }: PreviewTableProps) {
   );
 }
 
+// ─── Nicht-zugeordnet-Tabelle mit Inline-Zuweisung ────────────────────────────
+
+const PL_SECTIONS_ORDER = [
+  'net_revenue', 'cogs', 'personnel', 'operating_expenses', 'depreciation_section',
+] as const;
+
+const PL_SECTION_LABELS: Record<string, string> = {
+  net_revenue:           'Umsatz',
+  cogs:                  'Warenaufwand',
+  personnel:             'Personal',
+  operating_expenses:    'Betriebskosten',
+  depreciation_section:  'Abschreibungen',
+};
+
+interface UnresolvedTableProps {
+  rows: MatchedCSVRow[];
+  onAssign: (accountNumber: string, accountName: string, plCategory: PLCategory) => void;
+}
+
+function UnresolvedTable({ rows, onAssign }: UnresolvedTableProps) {
+  const [selections, setSelections] = useState<Record<string, PLCategory | ''>>({});
+
+  if (rows.length === 0) {
+    return (
+      <div className="py-10 text-center text-muted-foreground text-sm">
+        Alle Konten wurden zugeordnet
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-auto max-h-[500px]">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-16">Konto</TableHead>
+            <TableHead>Bezeichnung</TableHead>
+            <TableHead className="text-right w-32">Betrag CHF</TableHead>
+            <TableHead className="min-w-[220px]">P&L-Kategorie zuweisen</TableHead>
+            <TableHead className="w-28"></TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row, i) => {
+            const key = row.parsed.accountNumber;
+            const selected = selections[key] ?? '';
+            return (
+              <TableRow key={i} className="bg-red-50/40 hover:bg-red-50">
+                <TableCell className="font-mono text-xs text-red-700 font-semibold">{key}</TableCell>
+                <TableCell className="text-sm font-medium">{row.parsed.accountName}</TableCell>
+                <TableCell className="text-right font-mono text-sm">
+                  {formatAmount(row.parsed.amount)}
+                </TableCell>
+                <TableCell>
+                  <Select
+                    value={selected}
+                    onValueChange={v => setSelections(prev => ({ ...prev, [key]: v as PLCategory }))}
+                  >
+                    <SelectTrigger className="h-8 text-xs w-full">
+                      <SelectValue placeholder="Kategorie wählen…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PL_SECTIONS_ORDER.map(section => {
+                        const cats = PL_CATEGORIES.filter(c => c.section === section && c.id !== 'unmapped');
+                        if (cats.length === 0) return null;
+                        return (
+                          <div key={section}>
+                            <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide bg-muted/40">
+                              {PL_SECTION_LABELS[section] ?? section}
+                            </div>
+                            {cats.map(cat => (
+                              <SelectItem key={cat.id} value={cat.id} className="text-xs">
+                                {cat.label}
+                              </SelectItem>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell>
+                  <Button
+                    size="sm"
+                    className="h-8 text-xs w-full"
+                    disabled={!selected}
+                    onClick={() => {
+                      if (!selected) return;
+                      onAssign(key, row.parsed.accountName, selected as PLCategory);
+                      setSelections(prev => {
+                        const next = { ...prev };
+                        delete next[key];
+                        return next;
+                      });
+                    }}
+                  >
+                    Zuordnen & speichern
+                  </Button>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 // ─── Haupt-Komponente ─────────────────────────────────────────────────────────
 
 export default function CSVImportPage() {
@@ -328,6 +441,41 @@ export default function CSVImportPage() {
       return;
     }
     setStep('preview');
+  }
+
+  // ─── Inline-Kontozuweisung ────────────────────────────────────────────────
+
+  function handleAssignAccount(accountNumber: string, accountName: string, plCategory: PLCategory) {
+    if (!parseResult) return;
+
+    const catDef = PL_CATEGORIES.find(c => c.id === plCategory);
+    const plSection = catDef?.section ?? 'operating_expenses';
+    const sign      = catDef?.sign ?? 'expense';
+    const dept      =
+      plSection === 'net_revenue' ? 'general'
+      : plSection === 'cogs'       ? 'kitchen'
+      : plSection === 'personnel'  ? 'general'
+      : 'general';
+
+    saveMappingCustom({
+      accountNumber,
+      accountName,
+      plCategory,
+      plSection,
+      department: dept as 'kitchen' | 'service' | 'admin' | 'general',
+      sign,
+      canOverride: true,
+      isActive:    true,
+      source:      'custom',
+    });
+
+    const allParsed = [...parseResult.matched, ...parseResult.unresolved].map(r => r.parsed);
+    const newResult = matchCSVRows(allParsed);
+    setParseResult(newResult);
+
+    toast.success(
+      `Konto ${accountNumber} «${accountName}» → ${getCategoryLabel(plCategory)} gespeichert`,
+    );
   }
 
   // ─── Speichern ────────────────────────────────────────────────────────────
@@ -630,8 +778,8 @@ export default function CSVImportPage() {
             <Alert variant="destructive" className="text-sm">
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                <strong>{parseResult.unresolvedCount} Konto(s)</strong> konnten nicht zugeordnet werden.
-                Sie werden unter «Übrige Betriebskosten» gespeichert. Bitte im Kontenplan die fehlenden Konten anlegen und danach neu importieren.
+                <strong>{parseResult.unresolvedCount} Konto(s)</strong> konnten nicht automatisch zugeordnet werden.
+                Bitte unten im Tab «Nicht zugeordnet» die P&L-Kategorie pro Konto zuweisen — die Zuordnung wird dauerhaft im Kontenplan gespeichert.
               </AlertDescription>
             </Alert>
           )}
@@ -655,7 +803,10 @@ export default function CSVImportPage() {
                   <PreviewTable rows={parseResult.matched} emptyLabel="Keine zugeordneten Zeilen" />
                 </TabsContent>
                 <TabsContent value="unresolved" className="mt-0">
-                  <PreviewTable rows={parseResult.unresolved} emptyLabel="Alle Zeilen wurden zugeordnet" />
+                  <UnresolvedTable
+                    rows={parseResult.unresolved}
+                    onAssign={handleAssignAccount}
+                  />
                 </TabsContent>
               </Tabs>
             </CardContent>
@@ -689,8 +840,8 @@ export default function CSVImportPage() {
               </p>
               {parseResult && parseResult.unresolvedCount > 0 && (
                 <p className="text-amber-700 text-xs mt-2">
-                  {parseResult.unresolvedCount} Konto(s) konnten nicht zugeordnet werden.
-                  Bitte im Kontenplan ergänzen und danach neu importieren.
+                  {parseResult.unresolvedCount} Konto(s) noch nicht zugeordnet.
+                  Bitte oben im Tab «Nicht zugeordnet» die Kategorie zuweisen, dann können Sie importieren.
                 </p>
               )}
             </div>
