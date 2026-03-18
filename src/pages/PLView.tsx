@@ -809,6 +809,59 @@ const InlineIstCell = ({
   );
 };
 
+// ─── Inline Ist-Umsatz Schnelleingabe (für PLView-Banner) ─────────────────────
+const InlineRevenueEntry = ({
+  year, month, onSaved,
+}: { year: number; month: number; onSaved: () => void }) => {
+  const [input, setInput] = useState('');
+  const [saving, setSaving] = useState(false);
+  const ref = useRef<HTMLInputElement>(null);
+
+  const handleSave = () => {
+    const raw = input.replace(/['\s]/g, '').replace(',', '.');
+    const num = parseFloat(raw);
+    if (isNaN(num) || num <= 0) return;
+    setSaving(true);
+    saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Schnelleingabe Ist-Umsatz' });
+    setSaving(false);
+    onSaved();
+    setInput('');
+  };
+
+  return (
+    <div className="rounded-lg border border-orange-200 bg-orange-50 dark:bg-orange-950/20 p-4 flex items-center gap-3 flex-wrap">
+      <AlertCircle className="h-4 w-4 text-orange-600 flex-shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold text-orange-800 dark:text-orange-300">
+          Kein Ist-Umsatz für {MONTH_NAMES_DE[month]} {year} erfasst
+        </p>
+        <p className="text-[11px] text-orange-700 dark:text-orange-400 mt-0.5">
+          Der Umsatz ist nicht im Sage Kontoblatt enthalten — bitte direkt hier oder unter Reporting erfassen.
+        </p>
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <input
+          ref={ref}
+          type="text"
+          placeholder="Umsatz CHF"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleSave(); }}
+          className="w-32 h-8 text-right font-mono text-xs border border-orange-300 rounded px-2 bg-white dark:bg-orange-950/30 focus:outline-none focus:ring-2 focus:ring-orange-400"
+        />
+        <Button
+          size="sm"
+          className="h-8 text-xs bg-orange-600 hover:bg-orange-700 text-white"
+          onClick={handleSave}
+          disabled={saving || !input.trim()}
+        >
+          Speichern
+        </Button>
+      </div>
+    </div>
+  );
+};
+
 const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode = 'off', revenueActual = 0, compareMode = 'all' }: {
   row: BPLRowWithValues;
   onClick: () => void;
@@ -1884,6 +1937,15 @@ const PLViewPage = () => {
               </p>
             </div>
           </div>
+        )}
+
+        {/* Kein Ist-Umsatz – inline Schnelleingabe */}
+        {(mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && !records[month - 1]?.revenueActual && (
+          <InlineRevenueEntry
+            year={year}
+            month={month}
+            onSaved={() => setRefreshKey(k => k + 1)}
+          />
         )}
 
         {/* P&L-Tabelle */}
