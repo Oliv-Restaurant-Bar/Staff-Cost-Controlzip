@@ -875,26 +875,27 @@ const Reporting = () => {
         <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
           {/* Aktuelles Jahr importieren */}
-          <Card className="border-dashed border-2 border-muted-foreground/20">
+          <Card className="border-2 border-purple-200 dark:border-purple-800">
             <CardHeader className="pb-2 pt-4">
-              <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground">
+              <CardTitle className="text-sm flex items-center gap-2">
                 <Upload className="h-4 w-4" />
                 Buchhaltungsimport – Laufendes Jahr
-                <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20 ml-auto">
-                  Geplant
+                <Badge variant="outline" className="text-[9px] border-purple-300 text-purple-700 bg-purple-50 dark:bg-purple-950/20 ml-auto">
+                  CSV / Excel
                 </Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="pb-4 space-y-2">
               <p className="text-xs text-muted-foreground">
-                PDF oder CSV aus dem Buchhaltungsprogramm hochladen.
-                Das System erkennt den Monat automatisch und fragt,
-                ob die Daten ersetzt oder ergänzt werden sollen.
+                Excel (Sage Kontoblatt), CSV oder Text-PDF aus dem Buchhaltungsprogramm importieren.
+                Monat, Jahr und Datentyp «Ist-Daten» auswählen.
               </p>
               <ImportModeInfo />
-              <Button variant="outline" size="sm" className="w-full h-8 text-xs border-dashed" disabled>
-                <FileText className="h-3.5 w-3.5 mr-1.5" /> Datei hochladen (kommt bald)
-              </Button>
+              <Link to="/csv-import">
+                <Button size="sm" className="w-full h-8 text-xs gap-1.5">
+                  <FileText className="h-3.5 w-3.5" /> Zum Buchhaltungs-Import
+                </Button>
+              </Link>
             </CardContent>
           </Card>
 

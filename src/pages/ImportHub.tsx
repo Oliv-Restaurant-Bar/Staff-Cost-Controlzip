@@ -438,10 +438,26 @@ const ImportHub = () => {
           subtitle="Monatliche Kosten aus Buchhaltungssoftware importieren (laufendes Jahr)"
           icon={<BookOpen className="h-4 w-4" />}
           color="border-purple-400 dark:border-purple-600"
-          badge="Geplant"
-          badgeColor="border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20"
+          badge="CSV / Excel"
+          badgeColor="border-purple-300 text-purple-700 bg-purple-50 dark:bg-purple-950/20"
         >
-          <PlaceholderSection label="Buchhaltungsexport – Laufendes Jahr (PDF/CSV)" />
+          <div className="rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/10 p-4 space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Importiere monatliche Buchhaltungskosten (laufendes Jahr) aus deinem Buchhaltungsprogramm.
+              Unterstützte Formate: Excel (Sage Kontoblatt), CSV, PDF.
+            </p>
+            <div className="text-[11px] text-muted-foreground/80 space-y-0.5">
+              <p>• Format wählen: <span className="font-medium">Excel (Sage Kontoblatt)</span> oder CSV/Text-PDF</p>
+              <p>• Monat und Jahr auswählen</p>
+              <p>• Datentyp <span className="font-medium">«Ist-Daten»</span> auswählen</p>
+            </div>
+            <Link to="/csv-import">
+              <Button size="sm" className="h-8 text-xs gap-1.5 w-full">
+                <Upload className="h-3.5 w-3.5" />
+                Zum Buchhaltungs-Import
+              </Button>
+            </Link>
+          </div>
         </Section>
 
         {/* ── 5. Vorjahr Kosten Buchhaltung ─────────────────────────────── */}
@@ -451,10 +467,26 @@ const ImportHub = () => {
           subtitle="Jahresabschluss-Kostendaten aus dem Vorjahr für Vergleiche importieren"
           icon={<BookOpen className="h-4 w-4" />}
           color="border-gray-400 dark:border-gray-600"
-          badge="Geplant"
-          badgeColor="border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20"
+          badge="CSV / Excel"
+          badgeColor="border-gray-300 text-gray-700 bg-gray-50 dark:bg-gray-950/20"
         >
-          <PlaceholderSection label="Vorjahr Buchhaltungskosten (PDF/CSV/Excel)" />
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/20 p-4 space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Importiere Jahresabschluss-Kostendaten aus dem Vorjahr für Vergleiche in der Soll/Ist-Analyse.
+              Unterstützte Formate: Excel (Sage Kontoblatt), CSV, Text-PDF.
+            </p>
+            <div className="text-[11px] text-muted-foreground/80 space-y-0.5">
+              <p>• Format wählen: <span className="font-medium">Excel (Sage Kontoblatt)</span> oder CSV/Text-PDF</p>
+              <p>• Monat und Jahr des Vorjahres auswählen</p>
+              <p>• Datentyp <span className="font-medium">«Vorjahr (VJ)»</span> auswählen</p>
+            </div>
+            <Link to="/csv-import">
+              <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5 w-full">
+                <Upload className="h-3.5 w-3.5" />
+                Zum Buchhaltungs-Import (Vorjahr)
+              </Button>
+            </Link>
+          </div>
         </Section>
 
       </main>
