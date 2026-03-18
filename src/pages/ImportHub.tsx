@@ -15,6 +15,8 @@ import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
 import { loadEmployees, saveActualHourEntry, upsertEmployee } from '@/lib/supabase-db';
 import { Employee, MirusDailyImportEntry, MirusImportMode, Department } from '@/types/personnel';
 import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue-import';
+import { parseAnnualSageKontoblattByMonth, AnnualKostenResult } from '@/lib/pdf-import-engine';
+import { matchCSVRows, buildMonthRecord } from '@/lib/csv-import-engine';
 import { saveMonth } from '@/lib/reporting-store';
 import { cn } from '@/lib/utils';
 
@@ -227,6 +229,207 @@ const AnnualRevenueImportSection = () => {
           Daten gespeichert für {importYear}. Nächste Datei?{' '}
           <button className="underline" onClick={() => { setResult(null); setFileName(''); setSaved(false); }}>
             Erneut importieren
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Jahres-Kosten-Import (Sage Kontoblatt ganzes Jahr) ───────────────────────
+
+const MONTH_LABELS = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+
+const AnnualCostImportSection = () => {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [parsing, setParsing]     = useState(false);
+  const [result, setResult]       = useState<AnnualKostenResult | null>(null);
+  const [fileName, setFileName]   = useState('');
+  const [saving, setSaving]       = useState(false);
+  const [saved, setSaved]         = useState(false);
+  const [error, setError]         = useState('');
+  const [dataType, setDataType]   = useState<'actual' | 'previous_year'>('previous_year');
+
+  const handleFile = async (file: File) => {
+    if (!file.name.match(/\.(xlsx|xls)$/i)) {
+      setError('Nur Excel-Dateien (.xlsx/.xls) werden unterstützt.');
+      return;
+    }
+    setParsing(true);
+    setError('');
+    setResult(null);
+    setSaved(false);
+    setFileName(file.name);
+    try {
+      const buf = await file.arrayBuffer();
+      const res = await parseAnnualSageKontoblattByMonth(buf);
+      if (res.byMonth.size === 0) {
+        setError(res.warnings.find(w => w.toLowerCase().includes('keine')) ?? 'Keine Buchungszeilen gefunden.');
+      } else {
+        setResult(res);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Unbekannter Fehler beim Parsen.');
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  };
+
+  const handleSave = () => {
+    if (!result) return;
+    setSaving(true);
+    let savedCount = 0;
+    const sourceYear = result.detectedYear;
+    const saveYear = dataType === 'previous_year' ? sourceYear + 1 : sourceYear;
+
+    for (const [month, rows] of result.byMonth.entries()) {
+      if (rows.length === 0) continue;
+      const matchResult = matchCSVRows(rows);
+      const config = { year: saveYear, month, dataType, mode: 'update' as const, fileName };
+      const record = buildMonthRecord(matchResult.matched, matchResult.unresolved, config);
+      saveMonth(
+        { ...record, year: saveYear, month },
+        dataType === 'previous_year' ? 'csv_previous_year' : 'csv_current',
+        'update',
+        { fileName, note: `Jahresimport ${sourceYear} (${dataType === 'previous_year' ? 'Vorjahr' : 'Ist'})` },
+      );
+      savedCount++;
+    }
+    setSaving(false);
+    setSaved(true);
+    toast.success(
+      dataType === 'previous_year'
+        ? `${savedCount} Monate als Vorjahr-Kosten (${sourceYear}) gespeichert`
+        : `${savedCount} Monate als Ist-Kosten ${sourceYear} gespeichert`,
+    );
+  };
+
+  const fmtChf = (v: number) =>
+    v === 0 ? '—' : new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 }).format(v);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <label className="text-xs text-muted-foreground whitespace-nowrap">Speichern als:</label>
+        <Select value={dataType} onValueChange={v => setDataType(v as 'actual' | 'previous_year')}>
+          <SelectTrigger className="h-7 text-xs w-52">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="previous_year">Vorjahr-Vergleich (empfohlen)</SelectItem>
+            <SelectItem value="actual">Ist-Daten (für das Quellenjahr)</SelectItem>
+          </SelectContent>
+        </Select>
+        {result && (
+          <span className="text-[10px] text-muted-foreground">
+            {dataType === 'previous_year'
+              ? `→ Vorjahr-Kosten auf ${result.detectedYear + 1}-Datensätze`
+              : `→ Ist-Kosten für Jahr ${result.detectedYear}`}
+          </span>
+        )}
+      </div>
+
+      {!result && !parsing && (
+        <div
+          className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-5 text-center cursor-pointer hover:bg-gray-50/50 dark:hover:bg-gray-900/20 transition-colors"
+          onClick={() => fileRef.current?.click()}
+          onDrop={handleDrop}
+          onDragOver={e => e.preventDefault()}
+        >
+          <Upload className="h-6 w-6 mx-auto mb-2 text-gray-400" />
+          <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
+            Excel-Datei hierher ziehen oder klicken
+          </p>
+          <p className="text-[10px] text-muted-foreground mt-1">.xlsx · Sage Kontoblatt (Jahresexport)</p>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
+          />
+        </div>
+      )}
+
+      {parsing && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground py-3">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Datei wird analysiert…
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {result && !saved && (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            <strong>{result.byMonth.size}</strong> Monate erkannt aus{' '}
+            <em>{fileName}</em> (Jahr {result.detectedYear})
+          </p>
+
+          {/* Vorschau: Gesamtkosten pro Monat */}
+          <div className="rounded border text-[11px] overflow-auto">
+            <table className="w-full min-w-[480px]">
+              <thead className="bg-muted/60">
+                <tr>
+                  {MONTH_LABELS.map(m => (
+                    <th key={m} className="text-center py-1 px-1 font-medium">{m}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(m => {
+                    const rows = result.byMonth.get(m) ?? [];
+                    const total = rows.reduce((s, r) => s + r.amount, 0);
+                    return (
+                      <td key={m} className={cn(
+                        'text-center py-1 px-1 tabular-nums',
+                        total === 0 && 'text-muted-foreground',
+                      )}>
+                        {fmtChf(total)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex gap-2">
+            <Button size="sm" className="h-8 text-xs" onClick={handleSave} disabled={saving}>
+              {saving
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                : <CheckCircle2 className="h-3.5 w-3.5 mr-1" />}
+              Alle {result.byMonth.size} Monate speichern
+            </Button>
+            <Button
+              size="sm" variant="outline" className="h-8 text-xs"
+              onClick={() => { setResult(null); setFileName(''); setError(''); }}
+            >
+              Abbrechen
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {saved && (
+        <div className="flex items-center gap-2 text-xs text-green-700 dark:text-green-400">
+          <CheckCircle2 className="h-4 w-4" />
+          Daten gespeichert.{' '}
+          <button className="underline" onClick={() => { setResult(null); setFileName(''); setSaved(false); }}>
+            Weitere Datei importieren
           </button>
         </div>
       )}
@@ -464,29 +667,13 @@ const ImportHub = () => {
         <Section
           id="vorjahr-kosten-buchhaltung"
           title="Vorjahr Kosten Buchhaltung"
-          subtitle="Jahresabschluss-Kostendaten aus dem Vorjahr für Vergleiche importieren"
+          subtitle="Sage-Jahres-Kontoblatt (.xlsx) mit einem Upload für alle 12 Monate importieren"
           icon={<BookOpen className="h-4 w-4" />}
           color="border-gray-400 dark:border-gray-600"
-          badge="CSV / Excel"
+          badge="Excel Jahresimport"
           badgeColor="border-gray-300 text-gray-700 bg-gray-50 dark:bg-gray-950/20"
         >
-          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/20 p-4 space-y-3">
-            <p className="text-xs text-muted-foreground">
-              Importiere Jahresabschluss-Kostendaten aus dem Vorjahr für Vergleiche in der Soll/Ist-Analyse.
-              Unterstützte Formate: Excel (Sage Kontoblatt), CSV, Text-PDF.
-            </p>
-            <div className="text-[11px] text-muted-foreground/80 space-y-0.5">
-              <p>• Format wählen: <span className="font-medium">Excel (Sage Kontoblatt)</span> oder CSV/Text-PDF</p>
-              <p>• Monat und Jahr des Vorjahres auswählen</p>
-              <p>• Datentyp <span className="font-medium">«Vorjahr (VJ)»</span> auswählen</p>
-            </div>
-            <Link to="/csv-import">
-              <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5 w-full">
-                <Upload className="h-3.5 w-3.5" />
-                Zum Buchhaltungs-Import (Vorjahr)
-              </Button>
-            </Link>
-          </div>
+          <AnnualCostImportSection />
         </Section>
 
       </main>

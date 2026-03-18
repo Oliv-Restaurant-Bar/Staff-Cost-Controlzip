@@ -578,3 +578,149 @@ export async function parseSageKontoblattExcel(buffer: ArrayBuffer): Promise<Exc
 
   return { rows, journalEntries, detectedMonth, detectedYear, warnings };
 }
+
+// ─── Jahres-Kontoblatt-Parser (multi-month) ───────────────────────────────────
+
+export interface AnnualKostenResult {
+  /** Monat (1–12) → ParsedCSVRow[] (summiert pro Konto) */
+  byMonth: Map<number, ParsedCSVRow[]>;
+  detectedYear: number;
+  warnings: string[];
+}
+
+/**
+ * Liest ein Sage-Kontoblatt-Excel das einen ganzen Jahr-Zeitraum umfasst
+ * (z.B. 01.01.25 – 31.12.25) und gruppiert Buchungszeilen nach Monat.
+ *
+ * Ergebnis: pro Monat ein Array von ParsedCSVRow[], die dann einzeln über
+ * matchCSVRows + buildMonthRecord + saveMonth gespeichert werden können.
+ */
+export async function parseAnnualSageKontoblattByMonth(
+  buffer: ArrayBuffer,
+): Promise<AnnualKostenResult> {
+  const warnings: string[] = [];
+
+  let workbook: XLSX.WorkBook;
+  try {
+    workbook = XLSX.read(buffer, { type: 'array' });
+  } catch (e) {
+    warnings.push(`Excel-Datei konnte nicht geöffnet werden: ${String(e)}`);
+    return { byMonth: new Map(), detectedYear: new Date().getFullYear() - 1, warnings };
+  }
+
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  const data: (string | number | null)[][] = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: null,
+    raw: true,
+  }) as (string | number | null)[][];
+
+  // Jahr aus Kopfzeile "vom: 01.01.25 bis 31.12.25"
+  let detectedYear = new Date().getFullYear() - 1;
+  const headerLine = String(data[1]?.join(' ') ?? '');
+  const sageVomM = headerLine.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+  if (sageVomM) {
+    const yy = parseInt(sageVomM[3]);
+    detectedYear = yy < 100 ? (yy < 50 ? 2000 + yy : 1900 + yy) : yy;
+  }
+
+  // Konten + Buchungszeilen einlesen
+  // monthAccountSums: month → accountNumber → { name, soll, haben }
+  const monthAccountSums = new Map<number, Map<string, { name: string; soll: number; haben: number }>>();
+
+  let currentAccount: { number: string; name: string } | null = null;
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    if (!row) continue;
+
+    const col0 = row[0];
+    const col3 = String(row[3] ?? '').trim();
+    const col6 = row[6];
+    const col7 = row[7];
+
+    // Konto-Header: col0 ist 4-stellige Zahl, col6 leer
+    if (typeof col0 === 'number' && col0 >= 1000 && col0 <= 9999 && !col6 && col3 && col3.length >= 2) {
+      currentAccount = { number: String(Math.round(col0)), name: col3 };
+      continue;
+    }
+
+    if (!currentAccount) continue;
+    if (col3 === 'Total Haben' || col3 === 'Total' || col3 === 'Saldo Vortrag') continue;
+
+    // Buchungszeile: col0 = Datum-String oder Excel-Serial
+    let dateStr = '';
+    if (typeof col0 === 'number' && col0 > 40000) {
+      dateStr = excelSerialToDateStr(col0);
+    } else if (typeof col0 === 'string' && /\d{1,2}\.\d{1,2}\.\d{2,4}/.test(col0)) {
+      dateStr = col0.trim();
+    }
+
+    if (!dateStr) continue;
+
+    // Monat aus Datum extrahieren
+    const parts = dateStr.split('.');
+    if (parts.length < 2) continue;
+    const month = parseInt(parts[1]);
+    if (isNaN(month) || month < 1 || month > 12) continue;
+
+    const soll  = typeof col6 === 'number' ? Math.abs(col6) : Math.abs(parseAmount(String(col6 ?? '')) ?? 0);
+    const haben = typeof col7 === 'number' ? Math.abs(col7) : Math.abs(parseAmount(String(col7 ?? '')) ?? 0);
+
+    if (soll === 0 && haben === 0) continue;
+
+    if (!monthAccountSums.has(month)) {
+      monthAccountSums.set(month, new Map());
+    }
+    const accounts = monthAccountSums.get(month)!;
+    const accKey = currentAccount.number;
+    const prev = accounts.get(accKey) ?? { name: currentAccount.name, soll: 0, haben: 0 };
+    accounts.set(accKey, {
+      name: prev.name,
+      soll:  prev.soll  + soll,
+      haben: prev.haben + haben,
+    });
+  }
+
+  if (monthAccountSums.size === 0) {
+    warnings.push(
+      'Keine Buchungszeilen gefunden. Prüfe ob das Excel im Sage-Kontoblatt-Format vorliegt ' +
+      '(Datum in Spalte A, Soll in Spalte G, Haben in Spalte H).',
+    );
+  }
+
+  // ParsedCSVRow[] pro Monat aufbauen
+  const byMonth = new Map<number, ParsedCSVRow[]>();
+
+  for (const [month, accounts] of monthAccountSums.entries()) {
+    const rows: ParsedCSVRow[] = [];
+    let lineIndex = 0;
+
+    for (const [accNum, { name, soll, haben }] of accounts.entries()) {
+      // Für Kosten (Haben-Seite) ist haben relevant; für Erträge (Soll-Seite) soll
+      const amount = haben > 0 ? haben : soll;
+      if (amount <= 0) continue;
+
+      rows.push({
+        lineIndex:     ++lineIndex,
+        rawLine:       `${accNum} ${name} → ${amount.toFixed(2)}`,
+        accountNumber: accNum.padStart(4, '0'),
+        accountName:   name,
+        rawAmount:     amount.toFixed(2),
+        amount,
+      });
+    }
+
+    if (rows.length > 0) {
+      byMonth.set(month, rows);
+    }
+  }
+
+  const monthCount = byMonth.size;
+  warnings.push(
+    `Sage-Jahres-Kontoblatt erkannt: ${monthCount} Monate mit Buchungsdaten (Jahr ${detectedYear}).`,
+  );
+
+  return { byMonth, detectedYear, warnings };
+}
