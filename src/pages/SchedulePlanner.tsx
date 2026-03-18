@@ -1156,10 +1156,22 @@ const SchedulePlanner = () => {
   }, 0);
 
 
+  // ── Ist-Umsatz ─────────────────────────────────────────────────────────────
+  const monthlyActualRevenue = Object.entries(dailyBudgets)
+    .filter(([date]) => monthDateSet.has(date))
+    .reduce((sum, [, b]) => sum + (b.actualRevenue || 0), 0);
+
+  const weeklyActualRevenue = Object.entries(dailyBudgets)
+    .filter(([date]) => displayDateSet.has(date))
+    .reduce((sum, [, b]) => sum + (b.actualRevenue || 0), 0);
+
   // ── Aktive Werte nach gewählter Periode (calendarView als Quelle) ────────
-  const activeRevenue =
-    calendarView === 'month' ? monthlyPlannedRevenue :
-    weeklyPlannedRevenue; // woche + tag nutzen beide displayDateSet
+  // Plan-Modus → Budgetwerte; Ist-Modus → Ist-Umsatz
+  const activePlannedRevenue =
+    calendarView === 'month' ? monthlyPlannedRevenue : weeklyPlannedRevenue;
+  const activeIstRevenue =
+    calendarView === 'month' ? monthlyActualRevenue : weeklyActualRevenue;
+  const activeRevenue = scheduleMode === 'ist' ? activeIstRevenue : activePlannedRevenue;
 
   const activeLaborCost =
     calendarView === 'month' ? totalPlannedLaborCost :
@@ -1182,6 +1194,34 @@ const SchedulePlanner = () => {
   const pkqPeriodName =
     calendarView === 'month' ? 'Monat' :
     calendarView === 'week'  ? 'Woche' : 'Tag';
+
+  // Kurz-Label für den Card-Header
+  const periodShortLabel = useMemo(() => {
+    if (calendarView === 'month') return format(currentMonth, 'MMM yyyy', { locale: de });
+    if (calendarView === 'week' && displayDays.length > 0) {
+      return `KW\u00a0${format(displayDays[0], 'w')}`;
+    }
+    if (calendarView === 'day' && displayDays[0]) {
+      return format(displayDays[0], 'EEE d.M.', { locale: de });
+    }
+    return '';
+  }, [calendarView, currentMonth, displayDays]);
+
+  // Navigations-Handler für den Card-Header (◀ / ▶)
+  const handlePrevPeriod = () => {
+    if (calendarView === 'month') setCurrentMonth(prev => subMonths(prev, 1));
+    else if (calendarView === 'week') setSelectedWeekIndex(prev => Math.max(0, prev - 1));
+    else setSelectedDayOffset(prev => Math.max(0, prev - 1));
+  };
+  const handleNextPeriod = () => {
+    if (calendarView === 'month') setCurrentMonth(prev => addMonths(prev, 1));
+    else if (calendarView === 'week') setSelectedWeekIndex(prev => Math.min(weeksInMonth.length - 1, prev + 1));
+    else setSelectedDayOffset(prev => Math.min(daysInMonth.length - 1, prev + 1));
+  };
+  const isPrevDisabled = calendarView === 'week' ? selectedWeekIndex === 0
+    : calendarView === 'day' ? selectedDayOffset === 0 : false;
+  const isNextDisabled = calendarView === 'week' ? selectedWeekIndex >= weeksInMonth.length - 1
+    : calendarView === 'day' ? selectedDayOffset >= daysInMonth.length - 1 : false;
 
   // Für Rückwärtskompatibilität (wird noch an anderen Stellen referenziert)
   const totalPlannedRevenue = monthlyPlannedRevenue;
@@ -1644,10 +1684,10 @@ const SchedulePlanner = () => {
                 <p className="text-xl font-bold tabular-nums">
                   {activeRevenue > 0
                     ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue)
-                    : <span className="text-muted-foreground text-base">kein Budget</span>}
+                    : <span className="text-muted-foreground text-base">{scheduleMode === 'ist' ? 'kein Ist-Umsatz' : 'kein Budget'}</span>}
                 </p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Umsatz / {pkqPeriodName}
+                  {scheduleMode === 'ist' ? 'Ist-Umsatz' : 'Budget'} / {pkqPeriodName}
                 </p>
                 <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
               </div>
@@ -1717,29 +1757,58 @@ const SchedulePlanner = () => {
               
               {/* Plan/Ist Toggle and Footer Toggle */}
               <div className="flex items-center gap-2">
-                {/* Monat / Woche / Tag – kompakt im Grid-Header */}
-                <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
-                  <Button
-                    variant={calendarView === 'month' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setCalendarView('month')}
-                    className="h-7 px-2 text-xs"
-                    title="Monatsansicht"
-                  >Mo</Button>
-                  <Button
-                    variant={calendarView === 'week' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setCalendarView('week')}
-                    className="h-7 px-2 text-xs"
-                    title="Wochenansicht"
-                  >Wo</Button>
-                  <Button
-                    variant={calendarView === 'day' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setCalendarView('day')}
-                    className="h-7 px-2 text-xs"
-                    title="Tagesansicht"
-                  >Ta</Button>
+                {/* Monat / Woche / Tag – kompakt im Grid-Header mit Navigation */}
+                <div className="flex items-center gap-1">
+                  {/* Ansichts-Wähler */}
+                  <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+                    <Button
+                      variant={calendarView === 'month' ? 'default' : 'ghost'}
+                      size="sm"
+                      onClick={() => setCalendarView('month')}
+                      className="h-7 px-2 text-xs"
+                      title="Monatsansicht"
+                    >Mo</Button>
+                    <Button
+                      variant={calendarView === 'week' ? 'default' : 'ghost'}
+                      size="sm"
+                      onClick={() => setCalendarView('week')}
+                      className="h-7 px-2 text-xs"
+                      title="Wochenansicht"
+                    >Wo</Button>
+                    <Button
+                      variant={calendarView === 'day' ? 'default' : 'ghost'}
+                      size="sm"
+                      onClick={() => setCalendarView('day')}
+                      className="h-7 px-2 text-xs"
+                      title="Tagesansicht"
+                    >Ta</Button>
+                  </div>
+                  {/* Perioden-Navigation ◀ Label ▶ */}
+                  <div className="flex items-center gap-0.5 bg-muted rounded-lg px-1 py-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handlePrevPeriod}
+                      disabled={isPrevDisabled}
+                      className="h-7 w-6 p-0"
+                      title="Vorherige Periode"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    <span className="text-xs font-medium min-w-[52px] text-center select-none">
+                      {periodShortLabel}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleNextPeriod}
+                      disabled={isNextDisabled}
+                      className="h-7 w-6 p-0"
+                      title="Nächste Periode"
+                    >
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
                   <Button
