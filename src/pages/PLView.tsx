@@ -530,7 +530,16 @@ function normalizeAccountNum(categoryId: string): number {
 
 function getCatActual(catId: string, rec: MonthlyFinancialRecord | undefined): number {
   if (!rec) return 0;
-  if (catId === 'pl_revenue') return rec.revenueActual ?? (rec as any).revenue ?? 0;
+  if (catId === 'pl_revenue') {
+    // Priorität 1: individuelle 3xxx-Konten aus expenseCategories (Sage-Import)
+    const r = BPL_CAT_RANGES['pl_revenue']; // [3000, 3999]
+    const fromExpCat = (rec.expenseCategories ?? [])
+      .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
+      .reduce((s, c) => s + (c.amount ?? 0), 0);
+    if (fromExpCat !== 0) return fromExpCat;
+    // Priorität 2: revenueActual Direktfeld (manuelle Eingabe / Gastronovi)
+    return rec.revenueActual ?? (rec as any).revenue ?? 0;
+  }
   const r = BPL_CAT_RANGES[catId];
   if (!r) return 0;
   return (rec.expenseCategories ?? [])

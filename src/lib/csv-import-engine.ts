@@ -467,15 +467,17 @@ export function buildMonthRecord(
   // Alle gematchten Zeilen verarbeiten
   for (const row of matched) {
     const { parsed, sign, plCategory } = row;
+    // Ertragskonten (3xxx): Soll - Haben ist negativ (Haben > Soll), daher negieren → positiver Betrag
+    const amount = sign === 'income' ? -parsed.amount : parsed.amount;
     const cat: ExpenseCategory = {
       categoryId: parsed.accountNumber,
       label: parsed.accountName,
-      amount: parsed.amount,
+      amount,
     };
     expenseCategories.push(cat);
 
     if (sign === 'income') {
-      revenueTotal += parsed.amount;
+      revenueTotal += amount; // positiver Betrag
       hasRevenue = true;
     }
 

@@ -326,8 +326,13 @@ export function computePLForMonth(record: MonthlyFinancialRecord): PLMonthResult
   }
 
   // Schritt 2: Direktfelder zuordnen
-  // Umsatz
-  if (record.revenueActual !== undefined) {
+  // Umsatz: nur wenn KEINE individuellen 3xxx-Konten in expenseCategories (würde sonst doppelt zählen)
+  // hasIndividualRevenueAccounts wird in Schritt 3 bestimmt – Vorberechnung nötig
+  const _hasIndivRev = record.expenseCategories.some(c => {
+    const n = parseInt(c.categoryId);
+    return !isNaN(n) && n >= 3000 && n <= 3999;
+  });
+  if (record.revenueActual !== undefined && !_hasIndivRev) {
     rowValues.set('revenue_total', {
       actual:   record.revenueActual,
       budget:   record.revenueBudget,
@@ -372,6 +377,13 @@ export function computePLForMonth(record: MonthlyFinancialRecord): PLMonthResult
   const numericActual   = record.expenseCategories.filter(c =>
     /^\d{3,5}$/.test(c.categoryId)
   );
+
+  // Ob individuelle 3xxx-Konten in expenseCategories vorhanden (aus CSV-Import)
+  const hasIndividualRevenueAccounts = numericActual.some(c => {
+    const n = parseInt(c.categoryId);
+    return !isNaN(n) && n >= 3000 && n <= 3999;
+  });
+
   const humanPY         = record.expenseCategoriesPreviousYear.filter(c =>
     !(/^\d{3,5}$/.test(c.categoryId))
   );
@@ -453,8 +465,10 @@ export function computePLForMonth(record: MonthlyFinancialRecord): PLMonthResult
   // B) Numerische Kontonummern (CSV-Import): via resolveRowId zuordnen
   for (const cat of numericActual) {
     const rowId = resolveRowId(cat.categoryId) ?? 'other_operating';
-    // Umsatzkonten (revenue_total) überspringen – bereits via revenueActual gesetzt
-    if (rowId === 'revenue_total' && record.revenueActual !== undefined) continue;
+    // Umsatzkonten (revenue_total): nur überspringen wenn revenueActual NICHT über individuelle Konten gesetzt
+    // → hasIndividualRevenueAccounts=true: individuelle Konten verarbeiten (kein Skip)
+    // → hasIndividualRevenueAccounts=false: revenueActual ist direkt gesetzt, also Skip
+    if (rowId === 'revenue_total' && !hasIndividualRevenueAccounts && record.revenueActual !== undefined) continue;
     // Personalkonten (personnel_wages) überspringen – bereits via personnelCostActual gesetzt
     if (rowId === 'personnel_wages' && record.personnelCostActual !== undefined) continue;
 
