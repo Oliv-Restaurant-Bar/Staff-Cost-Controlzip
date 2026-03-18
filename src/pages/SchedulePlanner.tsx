@@ -37,7 +37,7 @@ import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { MirusDailyImportEntry, MirusImportMode } from '@/types/personnel';
 import { importScheduleFromExcelV2, exportScheduleToPDF, exportScheduleTemplate, NameMatchInfo } from '@/lib/schedule-export-import';
 import { toast } from 'sonner';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval, isSameDay } from 'date-fns';
 import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -297,6 +297,31 @@ const SchedulePlanner = () => {
     () => eachWeekOfInterval({ start: monthStart, end: monthEnd }, { weekStartsOn: 1 }),
     [monthStart.getTime(), monthEnd.getTime()],
   );
+
+  // When switching to week view (or changing month while in week view), auto-select the current week
+  useEffect(() => {
+    if (calendarView !== 'week') return;
+    const today = new Date();
+    const idx = weeksInMonth.findIndex(weekStart => {
+      const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+      return eachDayOfInterval({ start: weekStart, end: weekEnd })
+        .filter(d => isWithinInterval(d, { start: monthStart, end: monthEnd }))
+        .some(d => isSameDay(d, today));
+    });
+    if (idx >= 0) {
+      setSelectedWeekIndex(idx);
+    } else {
+      // Not in this month — pick first week with at least 4 days
+      const firstFull = weeksInMonth.findIndex(weekStart => {
+        const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+        return eachDayOfInterval({ start: weekStart, end: weekEnd })
+          .filter(d => isWithinInterval(d, { start: monthStart, end: monthEnd }))
+          .length >= 4;
+      });
+      setSelectedWeekIndex(Math.max(0, firstFull));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calendarView, monthStart.getTime()]);
 
   // Ref for scrolling to week
   const scheduleGridRef = useRef<HTMLDivElement>(null);
@@ -1692,6 +1717,30 @@ const SchedulePlanner = () => {
               
               {/* Plan/Ist Toggle and Footer Toggle */}
               <div className="flex items-center gap-2">
+                {/* Monat / Woche / Tag – kompakt im Grid-Header */}
+                <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+                  <Button
+                    variant={calendarView === 'month' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setCalendarView('month')}
+                    className="h-7 px-2 text-xs"
+                    title="Monatsansicht"
+                  >Mo</Button>
+                  <Button
+                    variant={calendarView === 'week' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setCalendarView('week')}
+                    className="h-7 px-2 text-xs"
+                    title="Wochenansicht"
+                  >Wo</Button>
+                  <Button
+                    variant={calendarView === 'day' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setCalendarView('day')}
+                    className="h-7 px-2 text-xs"
+                    title="Tagesansicht"
+                  >Ta</Button>
+                </div>
                 <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
                   <Button
                     variant={scheduleMode === 'plan' ? 'default' : 'ghost'}
