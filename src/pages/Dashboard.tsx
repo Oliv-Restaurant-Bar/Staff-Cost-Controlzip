@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
+import { loadMonth } from '@/lib/reporting-store';
 import {
   loadEmployees,
   loadScheduleForMonth,
@@ -332,11 +333,22 @@ const Dashboard = () => {
   const sumRevenue = (days: string[], field: keyof DailyBudget) =>
     days.reduce((s, d) => s + (dailyBudgets[d]?.[field] ?? 0), 0);
 
-  const revenueMonth        = sumRevenue(monthDays,  'actualRevenue');
-  const revenuePlannedMonth = sumRevenue(monthDays,  'plannedRevenue');
+  const revenueMonthDaily    = sumRevenue(monthDays,  'actualRevenue');
+  const revenuePlannedMonth  = sumRevenue(monthDays,  'plannedRevenue');
+
+  // Fallback: wenn keine Gastronovi-Tagesdaten, lese Ist-Umsatz aus Reporting-Modul
+  const reportingActualRevenue = useMemo(
+    () => loadMonth(currentYear, currentMonth).revenueActual ?? 0,
+    [currentYear, currentMonth]
+  );
+  const revenueMonth = revenueMonthDaily > 0 ? revenueMonthDaily : reportingActualRevenue;
 
   // Periodenspezifische Umsatz-Werte
-  const revenueActive         = sumRevenue(activeDays, 'actualRevenue');
+  // Für 'month' nutzen wir denselben Fallback; für today/week nur Tagesdaten
+  const revenueActiveDailyRaw = sumRevenue(activeDays, 'actualRevenue');
+  const revenueActive = (period === 'month' && revenueActiveDailyRaw === 0)
+    ? reportingActualRevenue
+    : revenueActiveDailyRaw;
   const revenuePrevYearActive = sumRevenue(activeDays, 'previousYearRevenue');
 
   // Budget pro Periode: aus budget_v1 Monatsbudget anteilig berechnen
