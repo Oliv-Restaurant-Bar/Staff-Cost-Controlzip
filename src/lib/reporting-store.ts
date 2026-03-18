@@ -36,6 +36,7 @@ import {
   monthId,
   AnnualSummary,
   MONTH_NAMES_DE,
+  SageJournalEntry,
 } from '@/types/reporting';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -260,6 +261,54 @@ function mergeExpenseCategories(
     map.set(item.categoryId, { ...item }); // Überschreiben oder neu einfügen
   }
   return Array.from(map.values());
+}
+
+// ─── Sage Buchungsjournal ─────────────────────────────────────────────────────
+
+const JOURNAL_KEY = 'sage_journal_v1';
+
+/**
+ * Buchungszeilen für einen Monat speichern.
+ * Bei "replace" werden bestehende Einträge überschrieben.
+ * Bei "update" werden Einträge gemergt (bestehende bleiben erhalten).
+ */
+export function saveJournalEntries(
+  year: number,
+  month: number,
+  entries: SageJournalEntry[],
+  mode: ImportMode = 'replace',
+): void {
+  const key = `${JOURNAL_KEY}_${year}_${String(month).padStart(2, '0')}`;
+  if (mode === 'replace') {
+    localStorage.setItem(key, JSON.stringify(entries));
+  } else {
+    const existing = loadJournalEntries(year, month);
+    const merged = [...existing, ...entries];
+    localStorage.setItem(key, JSON.stringify(merged));
+  }
+}
+
+/**
+ * Buchungszeilen für einen Monat laden.
+ */
+export function loadJournalEntries(year: number, month: number): SageJournalEntry[] {
+  const key = `${JOURNAL_KEY}_${year}_${String(month).padStart(2, '0')}`;
+  try {
+    return JSON.parse(localStorage.getItem(key) ?? '[]');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Buchungszeilen für ein ganzes Jahr laden (alle 12 Monate).
+ */
+export function loadJournalYear(year: number): SageJournalEntry[] {
+  const all: SageJournalEntry[] = [];
+  for (let m = 1; m <= 12; m++) {
+    all.push(...loadJournalEntries(year, m));
+  }
+  return all;
 }
 
 // ─── Formatierungshilfen ──────────────────────────────────────────────────────

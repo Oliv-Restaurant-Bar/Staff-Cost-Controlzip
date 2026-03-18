@@ -33,7 +33,8 @@ import {
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { usePermissions } from '@/hooks/usePermissions';
-import { loadYear, saveMonth } from '@/lib/reporting-store';
+import { loadYear, saveMonth, loadJournalYear } from '@/lib/reporting-store';
+import type { SageJournalEntry } from '@/types/reporting';
 import { lookupAccount, saveMappingCustom } from '@/lib/account-mapping-store';
 import { AccountMapping } from '@/types/account-mapping';
 import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE } from '@/lib/pl-engine';
@@ -1014,6 +1015,13 @@ const AccountActionDialog = ({
   const isActive   = mapping?.isActive !== false;
   const isBudgetItem = !!(row.itemId && !row.itemId.startsWith('actual_'));
 
+  // Buchungszeilen für dieses Konto laden
+  const bookings = useMemo<SageJournalEntry[]>(() => {
+    if (!accountNum) return [];
+    const all = loadJournalYear(year);
+    return all.filter(e => e.accountNumber === accountNum.padStart(4, '0'));
+  }, [accountNum, year]);
+
   const handleToggleActive = () => {
     if (mapping) {
       saveMappingCustom({ ...mapping, isActive: !isActive, source: 'custom' });
@@ -1042,72 +1050,129 @@ const AccountActionDialog = ({
     onClose();
   };
 
+  const totalBookings = bookings.reduce((s, e) => s + e.amount, 0);
+
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <span className="font-mono text-muted-foreground text-sm">{accountNum}</span>
             <span className="text-base">{row.itemLabel}</span>
           </DialogTitle>
           <DialogDescription>
-            Konto-Aktionen für diese Zeile in der Erfolgsrechnung
+            Buchungen und Konto-Aktionen für {year}
           </DialogDescription>
         </DialogHeader>
 
-        {mapping && (
-          <div className="text-xs text-muted-foreground rounded-md bg-muted/40 border border-border px-3 py-2 space-y-0.5">
-            <div className="flex justify-between">
-              <span>Kategorie:</span>
-              <span className="font-medium">{mapping.plCategory}</span>
+        {/* Buchungszeilen */}
+        <div className="flex-1 overflow-auto min-h-0">
+          {bookings.length > 0 ? (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-foreground">
+                  Einzelbuchungen ({bookings.length})
+                </p>
+                <span className="text-xs text-muted-foreground font-mono">
+                  Total: {fmtCHF(totalBookings)}
+                </span>
+              </div>
+              <div className="rounded-md border border-border overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-muted/60 border-b border-border">
+                      <th className="text-left px-2 py-1.5 font-medium text-muted-foreground w-24">Datum</th>
+                      <th className="text-left px-2 py-1.5 font-medium text-muted-foreground w-20">Beleg</th>
+                      <th className="text-left px-2 py-1.5 font-medium text-muted-foreground">Buchungstext</th>
+                      <th className="text-right px-2 py-1.5 font-medium text-muted-foreground w-24">Betrag CHF</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bookings.map((entry, idx) => (
+                      <tr
+                        key={idx}
+                        className={cn(
+                          'border-b border-border last:border-0',
+                          idx % 2 === 0 ? 'bg-background' : 'bg-muted/20',
+                        )}
+                      >
+                        <td className="px-2 py-1.5 font-mono text-muted-foreground">{entry.date}</td>
+                        <td className="px-2 py-1.5 font-mono text-muted-foreground">{entry.belegNr ?? '—'}</td>
+                        <td className="px-2 py-1.5">{entry.text}</td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums">
+                          {fmtCHF(entry.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-muted/40 border-t-2 border-border">
+                      <td colSpan={3} className="px-2 py-1.5 font-semibold text-xs">Total</td>
+                      <td className="px-2 py-1.5 text-right font-semibold font-mono tabular-nums">
+                        {fmtCHF(totalBookings)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             </div>
-            <div className="flex justify-between">
-              <span>Status:</span>
-              <span className={cn('font-medium', isActive ? 'text-emerald-600' : 'text-red-500')}>
-                {isActive ? 'Aktiv' : 'Inaktiv'}
-              </span>
+          ) : (
+            <div className="rounded-md border border-border bg-muted/30 px-4 py-6 text-center">
+              <Database className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground font-medium">Keine Buchungszeilen vorhanden</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Buchungsdetails werden beim Excel-Import aus dem Sage-Kontoblatt gelesen.
+                Importiere das Kontoblatt erneut, um Einzelbuchungen anzuzeigen.
+              </p>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        <div className="space-y-2">
-          <Button
-            variant="outline"
-            className={cn('w-full justify-start gap-2 text-sm', !isActive && 'border-emerald-300 text-emerald-700')}
-            onClick={handleToggleActive}
-          >
-            {isActive ? (
-              <><X className="h-4 w-4 text-amber-500" /> Konto inaktiv setzen (ausblenden)</>
-            ) : (
-              <><Check className="h-4 w-4 text-emerald-500" /> Konto wieder aktivieren</>
+        {/* Trennlinie + Konto-Aktionen */}
+        <div className="border-t border-border pt-3 space-y-1.5">
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Aktionen</p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn('gap-1.5 text-xs', !isActive && 'border-emerald-300 text-emerald-700')}
+              onClick={handleToggleActive}
+            >
+              {isActive ? (
+                <><X className="h-3 w-3 text-amber-500" /> Inaktiv setzen</>
+              ) : (
+                <><Check className="h-3 w-3 text-emerald-500" /> Aktivieren</>
+              )}
+            </Button>
+
+            {isBudgetItem && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 text-xs text-blue-600 border-blue-200"
+                onClick={() => { onClose(); setTimeout(onOpenDrilldown, 50); }}
+              >
+                <Pencil className="h-3 w-3" /> Budget bearbeiten
+              </Button>
             )}
-          </Button>
 
-          {isBudgetItem && (
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2 text-sm text-blue-600 border-blue-200"
-              onClick={() => { onClose(); setTimeout(onOpenDrilldown, 50); }}
-            >
-              <Pencil className="h-4 w-4" /> Budget-Werte bearbeiten
-            </Button>
-          )}
+            <Link to={`/kontenplan?q=${accountNum}`} onClick={onClose}>
+              <Button size="sm" variant="outline" className="gap-1.5 text-xs">
+                <ArrowUpRight className="h-3 w-3 text-muted-foreground" /> Kontenplan
+              </Button>
+            </Link>
 
-          <Link to={`/kontenplan?q=${accountNum}`} onClick={onClose}>
-            <Button variant="outline" className="w-full justify-start gap-2 text-sm mt-0">
-              <ArrowUpRight className="h-4 w-4 text-muted-foreground" /> Im Kontenplan bearbeiten
-            </Button>
-          </Link>
-
-          {isBudgetItem && (
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2 text-sm text-red-600 border-red-200"
-              onClick={handleDelete}
-            >
-              <Trash2 className="h-4 w-4" /> Zeile aus P&L entfernen
-            </Button>
-          )}
+            {isBudgetItem && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 text-xs text-red-600 border-red-200"
+                onClick={handleDelete}
+              >
+                <Trash2 className="h-3 w-3" /> Zeile entfernen
+              </Button>
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>

@@ -227,6 +227,31 @@ export function createEmptyMonth(year: number, month: number): MonthlyFinancialR
 }
 
 /** Deutsche Monatsnamen */
+// ─── Sage Buchungszeile (Einzelbuchung) ──────────────────────────────────────
+
+/**
+ * Eine einzelne Buchungszeile aus einem Sage-Import (Kontoblatt / Journal).
+ * Gespeichert unter 'sage_journal_v1_{year}_{month}' in localStorage.
+ */
+export interface SageJournalEntry {
+  /** Buchungsdatum als String "DD.MM.YYYY" */
+  date: string;
+  /** Belegnummer / Referenz (optional) */
+  belegNr?: string;
+  /** Buchungstext / Beschreibung */
+  text: string;
+  /** Kontonummer (4-stellig, mit führenden Nullen) */
+  accountNumber: string;
+  /** Kontobezeichnung */
+  accountName: string;
+  /** Soll-Betrag (CHF, 0 wenn nicht vorhanden) */
+  soll: number;
+  /** Haben-Betrag (CHF, 0 wenn nicht vorhanden) */
+  haben: number;
+  /** Netto-Betrag (absoluter Wert, immer positiv) */
+  amount: number;
+}
+
 export const MONTH_NAMES_DE = [
   '', // Index 0 leer lassen
   'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',

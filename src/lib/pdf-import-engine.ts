@@ -26,6 +26,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import * as XLSX from 'xlsx';
 import type { ParsedCSVRow } from './csv-import-engine';
 import { parseAmount } from './csv-import-engine';
+import type { SageJournalEntry } from '@/types/reporting';
 
 // ─── Worker-Konfiguration ─────────────────────────────────────────────────────
 
@@ -409,9 +410,24 @@ export async function parsePDF(buffer: ArrayBuffer): Promise<PDFParseResult> {
 
 export interface ExcelParseResult {
   rows: ParsedCSVRow[];
+  journalEntries: SageJournalEntry[];
   detectedYear?: number;
   detectedMonth?: number;
   warnings: string[];
+}
+
+/** Konvertiert einen Excel-Datum-Serial-Wert in "DD.MM.YYYY" */
+function excelSerialToDateStr(serial: number): string {
+  try {
+    // Excel epoch: 1 Jan 1900, but has leap year bug (treats 1900 as leap year)
+    const d = new Date(Date.UTC(1900, 0, 1) + (serial - 2) * 86400000);
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const yyyy = d.getUTCFullYear();
+    return `${dd}.${mm}.${yyyy}`;
+  } catch {
+    return String(serial);
+  }
 }
 
 /**
@@ -426,19 +442,20 @@ export interface ExcelParseResult {
 export async function parseSageKontoblattExcel(buffer: ArrayBuffer): Promise<ExcelParseResult> {
   const warnings: string[] = [];
   const rows: ParsedCSVRow[] = [];
+  const journalEntries: SageJournalEntry[] = [];
 
   let workbook: XLSX.WorkBook;
   try {
     workbook = XLSX.read(buffer, { type: 'array' });
   } catch (e) {
     warnings.push(`Excel-Datei konnte nicht geöffnet werden: ${String(e)}`);
-    return { rows, warnings };
+    return { rows, journalEntries, warnings };
   }
 
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) {
     warnings.push('Excel-Datei enthält kein Blatt.');
-    return { rows, warnings };
+    return { rows, journalEntries, warnings };
   }
 
   const sheet = workbook.Sheets[sheetName];
@@ -459,7 +476,7 @@ export async function parseSageKontoblattExcel(buffer: ArrayBuffer): Promise<Exc
     detectedYear  = yy < 100 ? (yy < 50 ? 2000 + yy : 1900 + yy) : yy;
   }
 
-  // State-Machine: Konto-Header → Total Haben → Saldo erfassen
+  // State-Machine: Konto-Header → Buchungszeilen → Total Haben
   const accountTotals = new Map<string, { name: string; saldo: number }>();
   let currentAccount: { number: string; name: string } | null = null;
 
@@ -467,10 +484,12 @@ export async function parseSageKontoblattExcel(buffer: ArrayBuffer): Promise<Exc
     const row = data[i];
     if (!row) continue;
 
-    const col0 = row[0];
-    const col3 = String(row[3] ?? '').trim();
-    const col6 = row[6]; // Soll-Betrag
-    const col10 = row[10]; // Saldo
+    const col0  = row[0];
+    const col1  = row[1];   // BelegNr
+    const col3  = String(row[3] ?? '').trim();
+    const col6  = row[6];   // Soll-Betrag
+    const col7  = row[7];   // Haben-Betrag (falls vorhanden)
+    const col10 = row[10];  // Saldo
 
     // Konto-Header: col0 ist eine 4-stellige Zahl, col6 ist leer
     if (typeof col0 === 'number' && col0 >= 1000 && col0 <= 9999 && !col6 && col3) {
@@ -482,13 +501,56 @@ export async function parseSageKontoblattExcel(buffer: ArrayBuffer): Promise<Exc
     }
 
     // "Total Haben" Zeile: col3 === "Total Haben", col10 = Netto-Saldo
-    if (col3 === 'Total Haben' && currentAccount) {
-      const saldo = typeof col10 === 'number' ? col10 : parseFloat(String(col10 ?? '0').replace(/[^0-9.-]/g, ''));
+    if ((col3 === 'Total Haben' || col3 === 'Total') && currentAccount) {
+      const saldo = typeof col10 === 'number' ? col10
+        : parseFloat(String(col10 ?? '0').replace(/[^0-9.-]/g, ''));
       if (!isNaN(saldo) && saldo > 0) {
         accountTotals.set(currentAccount.number, { name: currentAccount.name, saldo });
       }
       currentAccount = null;
       continue;
+    }
+
+    // Buchungszeile: col0 ist ein Excel-Datum-Serial (> 40000) oder Datumsstring
+    // und wir sind innerhalb eines Konto-Abschnitts
+    if (currentAccount && col3) {
+      let dateStr = '';
+      let isSageBookingLine = false;
+
+      if (typeof col0 === 'number' && col0 > 40000) {
+        // Excel date serial
+        dateStr = excelSerialToDateStr(col0);
+        isSageBookingLine = true;
+      } else if (typeof col0 === 'string' && /\d{1,2}\.\d{1,2}\.\d{2,4}/.test(col0)) {
+        // Date string already formatted
+        dateStr = col0.trim();
+        isSageBookingLine = true;
+      }
+
+      if (isSageBookingLine) {
+        // Parse Soll- und Haben-Beträge
+        const sollRaw  = typeof col6 === 'number' ? col6
+          : parseAmount(String(col6 ?? '')) ?? 0;
+        const habenRaw = typeof col7 === 'number' ? col7
+          : parseAmount(String(col7 ?? '')) ?? 0;
+        const soll  = Math.abs(sollRaw);
+        const haben = Math.abs(habenRaw);
+        const amount = soll > 0 ? soll : haben;
+
+        if (amount > 0 && col3 !== 'Saldo' && col3 !== 'Total' && col3 !== 'Total Haben') {
+          const belegNr = col1 !== null && col1 !== undefined ? String(col1).trim() : undefined;
+          journalEntries.push({
+            date:          dateStr,
+            belegNr:       belegNr || undefined,
+            text:          col3,
+            accountNumber: currentAccount.number.padStart(4, '0'),
+            accountName:   currentAccount.name,
+            soll,
+            haben,
+            amount,
+          });
+        }
+      }
     }
   }
 
@@ -510,8 +572,9 @@ export async function parseSageKontoblattExcel(buffer: ArrayBuffer): Promise<Exc
       '(Konto-Header in Spalte A, "Total Haben" in Spalte D, Saldo in Spalte K).',
     );
   } else {
-    warnings.push(`Sage Kontoblatt (Excel) erkannt: ${rows.length} Konten mit Netto-Saldo importiert.`);
+    const je = journalEntries.length > 0 ? `, ${journalEntries.length} Einzelbuchungen` : '';
+    warnings.push(`Sage Kontoblatt (Excel) erkannt: ${rows.length} Konten${je} importiert.`);
   }
 
-  return { rows, detectedMonth, detectedYear, warnings };
+  return { rows, journalEntries, detectedMonth, detectedYear, warnings };
 }

@@ -22,7 +22,7 @@
  *   - Replace-Modus: ganzer Monat wird neu gesetzt
  */
 
-import { ExpenseCategory, MonthlyFinancialRecord } from '@/types/reporting';
+import { ExpenseCategory, MonthlyFinancialRecord, SageJournalEntry } from '@/types/reporting';
 import { lookupAccount, getCategoryLabel, getSectionLabel } from '@/lib/account-mapping-store';
 import { PLCategory } from '@/types/account-mapping';
 
@@ -59,6 +59,7 @@ export interface MatchedCSVRow {
 export interface CSVParseResult {
   matched: MatchedCSVRow[];
   unresolved: MatchedCSVRow[];
+  journalEntries: SageJournalEntry[];
   totalRows: number;
   matchedCount: number;
   unresolvedCount: number;
@@ -338,12 +339,103 @@ export function matchCSVRows(rows: ParsedCSVRow[]): CSVParseResult {
   return {
     matched,
     unresolved,
+    journalEntries: [],
     totalRows: rows.length,
     matchedCount: matched.length,
     unresolvedCount: unresolved.length,
     detectedSeparator: ';',
     warnings: [],
   };
+}
+
+// ─── Journal-CSV-Parser ───────────────────────────────────────────────────────
+
+/**
+ * Erkennt und parst das Sage/Abacus Buchungsjournal-CSV-Format.
+ *
+ * Erkannte Spalten (flexibel, reihenfolge-unabhängig):
+ *   Datum | BelegNr | Buchungstext | Konto | Soll | Haben
+ *   Datum | Ref     | Text         | Acc   | Debit | Credit
+ *
+ * Gibt null zurück wenn das CSV nicht als Journal-Format erkannt wird.
+ */
+export function parseJournalCSV(rawContent: string): {
+  entries: SageJournalEntry[];
+  warnings: string[];
+} | null {
+  const warnings: string[] = [];
+  const sep = rawContent.includes(';') ? ';' : ',';
+  const lines = rawContent.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length < 2) return null;
+
+  const header = lines[0].split(sep).map(h => h.replace(/^["']|["']$/g, '').trim().toLowerCase());
+
+  // Journal erkannt wenn: Datum-Spalte UND (Buchungstext/Text)-Spalte UND (Konto/Account)-Spalte
+  const dateIdx = header.findIndex(h => /^datum$|^date$|^dat\.?$/i.test(h));
+  const textIdx = header.findIndex(h => /buchungstext|text|beschreibung|description|bezeichn/i.test(h));
+  const accIdx  = header.findIndex(h => /^konto$|^account$|^kto$|^acc\.?$/i.test(h));
+  const belegIdx = header.findIndex(h => /beleg|beleg.?nr|ref|belegnr|doc/i.test(h));
+  const sollIdx  = header.findIndex(h => /^soll$|^debit$|^debet$/i.test(h));
+  const habenIdx = header.findIndex(h => /^haben$|^credit$|^kredit$/i.test(h));
+  const amtIdx   = header.findIndex(h => /^betrag$|^amount$|^chf$/i.test(h));
+
+  // Muss mindestens Datum + Text + (Konto oder Betrag) haben
+  if (dateIdx === -1 || textIdx === -1 || (accIdx === -1 && amtIdx === -1 && sollIdx === -1)) {
+    return null;
+  }
+
+  const entries: SageJournalEntry[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const cells = lines[i].split(sep).map(c => c.replace(/^["']|["']$/g, '').trim());
+
+    const dateRaw = cells[dateIdx] ?? '';
+    const textRaw = cells[textIdx] ?? '';
+    const accRaw  = accIdx >= 0 ? (cells[accIdx] ?? '') : '';
+    const belegRaw = belegIdx >= 0 ? (cells[belegIdx] ?? '') : '';
+
+    if (!dateRaw || !textRaw) continue;
+
+    // Datum normalisieren: "1.1.26" → "01.01.2026"
+    let dateStr = dateRaw;
+    const dm = dateRaw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
+    if (dm) {
+      const yy = parseInt(dm[3]);
+      const yyyy = yy < 100 ? (yy < 50 ? 2000 + yy : 1900 + yy) : yy;
+      dateStr = `${dm[1].padStart(2,'0')}.${dm[2].padStart(2,'0')}.${yyyy}`;
+    }
+
+    // Beträge
+    const soll  = sollIdx >= 0  ? (parseAmount(cells[sollIdx]  ?? '') ?? 0) : 0;
+    const haben = habenIdx >= 0 ? (parseAmount(cells[habenIdx] ?? '') ?? 0) : 0;
+    const amt   = amtIdx >= 0   ? Math.abs(parseAmount(cells[amtIdx] ?? '') ?? 0) : 0;
+    const amount = amt > 0 ? amt : (soll > 0 ? Math.abs(soll) : Math.abs(haben));
+
+    if (amount === 0 && soll === 0 && haben === 0) continue;
+
+    // Kontonummer
+    const accountNumber = /^\d{3,5}$/.test(accRaw)
+      ? accRaw.padStart(4, '0')
+      : '';
+
+    const mapping = accountNumber ? lookupAccount(accountNumber).mapping : undefined;
+
+    entries.push({
+      date:          dateStr,
+      belegNr:       belegRaw || undefined,
+      text:          textRaw,
+      accountNumber: accountNumber || accRaw,
+      accountName:   mapping?.accountName ?? (accountNumber ? `Konto ${accountNumber}` : accRaw),
+      soll:          Math.abs(soll),
+      haben:         Math.abs(haben),
+      amount,
+    });
+  }
+
+  if (entries.length === 0) return null;
+
+  warnings.push(`Buchungsjournal-Format erkannt: ${entries.length} Einzelbuchungen gelesen.`);
+  return { entries, warnings };
 }
 
 // ─── Record-Builder ───────────────────────────────────────────────────────────
@@ -436,5 +528,13 @@ export function processCSV(rawContent: string): {
   const parseResult = matchCSVRows(rows);
   parseResult.warnings.push(...warnings);
   parseResult.detectedSeparator = separator;
+
+  // Zusätzlich: Journal-Format erkennen und Einzelbuchungen extrahieren
+  const journal = parseJournalCSV(rawContent);
+  if (journal) {
+    parseResult.journalEntries = journal.entries;
+    parseResult.warnings.push(...journal.warnings);
+  }
+
   return { parseResult, warnings, separator };
 }

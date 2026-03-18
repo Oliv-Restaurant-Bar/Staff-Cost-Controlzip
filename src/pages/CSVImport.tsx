@@ -45,7 +45,7 @@ import {
   saveMappingCustom, PL_CATEGORIES, getCategoryLabel, getSectionLabel,
 } from '@/lib/account-mapping-store';
 import { PLCategory } from '@/types/account-mapping';
-import { saveMonth } from '@/lib/reporting-store';
+import { saveMonth, saveJournalEntries } from '@/lib/reporting-store';
 import { toast } from 'sonner';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
@@ -400,6 +400,7 @@ export default function CSVImportPage() {
         const excelResult = await parseSageKontoblattExcel(buffer);
         const matchResult = matchCSVRows(excelResult.rows);
         matchResult.warnings.push(...excelResult.warnings);
+        matchResult.journalEntries = excelResult.journalEntries;
 
         setParseResult(matchResult);
         setWarnings(matchResult.warnings);
@@ -502,9 +503,17 @@ export default function CSVImportPage() {
           note: `${fileKind.toUpperCase()}-Import: ${parseResult.matchedCount} zugeordnet, ${parseResult.unresolvedCount} unbekannt`,
         },
       );
+
+      // Einzelbuchungen speichern (falls vorhanden)
+      if (parseResult.journalEntries && parseResult.journalEntries.length > 0 && dataType === 'actual') {
+        saveJournalEntries(year, month, parseResult.journalEntries, importMode);
+      }
+
       setSavedMonth({ year, month });
       setStep('done');
-      toast.success(`Daten für ${MONTHS[month - 1]} ${year} wurden gespeichert`);
+      const jeCount = parseResult.journalEntries?.length ?? 0;
+      const jeMsg = jeCount > 0 ? `, ${jeCount} Buchungszeilen` : '';
+      toast.success(`Daten für ${MONTHS[month - 1]} ${year} wurden gespeichert${jeMsg}`);
     } catch (e) {
       toast.error('Fehler beim Speichern – bitte erneut versuchen');
     } finally {
