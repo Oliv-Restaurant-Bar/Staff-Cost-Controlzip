@@ -476,20 +476,21 @@ export async function parseSageKontoblattExcel(buffer: ArrayBuffer): Promise<Exc
     detectedYear  = yy < 100 ? (yy < 50 ? 2000 + yy : 1900 + yy) : yy;
   }
 
-  // State-Machine: Konto-Header → Buchungszeilen → Total Haben
-  const accountTotals = new Map<string, { name: string; saldo: number }>();
+  // Konto-Summen aus einzelnen Buchungszeilen aufbauen (Soll - Haben = Netto-Bewegung).
+  // NICHT den Saldo aus "Total Haben" (Spalte K) verwenden – dieser ist kumulativ
+  // und enthält den Saldo-Vortrag aus Vorperioden.
+  const accountSums = new Map<string, { name: string; soll: number; haben: number }>();
   let currentAccount: { number: string; name: string } | null = null;
 
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
     if (!row) continue;
 
-    const col0  = row[0];
-    const col1  = row[1];   // BelegNr
-    const col3  = String(row[3] ?? '').trim();
-    const col6  = row[6];   // Soll-Betrag
-    const col7  = row[7];   // Haben-Betrag (falls vorhanden)
-    const col10 = row[10];  // Saldo
+    const col0 = row[0];
+    const col1 = row[1];   // BelegNr
+    const col3 = String(row[3] ?? '').trim();
+    const col6 = row[6];   // Soll-Betrag
+    const col7 = row[7];   // Haben-Betrag
 
     // Konto-Header: col0 ist eine 4-stellige Zahl, col6 ist leer
     if (typeof col0 === 'number' && col0 >= 1000 && col0 <= 9999 && !col6 && col3) {
@@ -500,76 +501,81 @@ export async function parseSageKontoblattExcel(buffer: ArrayBuffer): Promise<Exc
       continue;
     }
 
-    // "Total Haben" Zeile: col3 === "Total Haben", col10 = Netto-Saldo
+    // "Total Haben" / Trennzeilen: Konto-Sektion beenden, aber Saldo NICHT übernehmen
     if ((col3 === 'Total Haben' || col3 === 'Total') && currentAccount) {
-      const saldo = typeof col10 === 'number' ? col10
-        : parseFloat(String(col10 ?? '0').replace(/[^0-9.-]/g, ''));
-      if (!isNaN(saldo) && saldo > 0) {
-        accountTotals.set(currentAccount.number, { name: currentAccount.name, saldo });
-      }
       currentAccount = null;
       continue;
     }
 
-    // Buchungszeile: col0 ist ein Excel-Datum-Serial (> 40000) oder Datumsstring
-    // und wir sind innerhalb eines Konto-Abschnitts
+    // "Saldo Vortrag" überspringen – enthält kumulierten Vorperioden-Saldo
+    if (col3 === 'Saldo Vortrag') continue;
+
+    // Buchungszeile: col0 = Datumsstring oder Excel-Datum-Serial
     if (currentAccount && col3) {
-      let dateStr = '';
       let isSageBookingLine = false;
+      let dateStr = '';
 
       if (typeof col0 === 'number' && col0 > 40000) {
-        // Excel date serial
         dateStr = excelSerialToDateStr(col0);
         isSageBookingLine = true;
       } else if (typeof col0 === 'string' && /\d{1,2}\.\d{1,2}\.\d{2,4}/.test(col0)) {
-        // Date string already formatted
         dateStr = col0.trim();
         isSageBookingLine = true;
       }
 
       if (isSageBookingLine) {
-        // Parse Soll- und Haben-Beträge
-        const sollRaw  = typeof col6 === 'number' ? col6
-          : parseAmount(String(col6 ?? '')) ?? 0;
-        const habenRaw = typeof col7 === 'number' ? col7
-          : parseAmount(String(col7 ?? '')) ?? 0;
-        const soll  = Math.abs(sollRaw);
-        const haben = Math.abs(habenRaw);
-        const amount = soll > 0 ? soll : haben;
+        // Sage-Beträge sind immer positiv in ihrer Spalte
+        const soll  = typeof col6 === 'number' ? col6 : (parseAmount(String(col6 ?? '')) ?? 0);
+        const haben = typeof col7 === 'number' ? col7 : (parseAmount(String(col7 ?? '')) ?? 0);
 
-        if (amount > 0 && col3 !== 'Saldo' && col3 !== 'Total' && col3 !== 'Total Haben') {
-          const belegNr = col1 !== null && col1 !== undefined ? String(col1).trim() : undefined;
-          journalEntries.push({
-            date:          dateStr,
-            belegNr:       belegNr || undefined,
-            text:          col3,
-            accountNumber: currentAccount.number.padStart(4, '0'),
-            accountName:   currentAccount.name,
-            soll,
-            haben,
-            amount,
+        if (soll > 0 || haben > 0) {
+          const key = currentAccount.number;
+          const prev = accountSums.get(key) ?? { name: currentAccount.name, soll: 0, haben: 0 };
+          accountSums.set(key, {
+            name: prev.name,
+            soll:  prev.soll  + soll,
+            haben: prev.haben + haben,
           });
+
+          // Journal-Eintrag für Einzelbuchungen
+          if (col3 !== 'Saldo' && col3 !== 'Total' && col3 !== 'Total Haben') {
+            const amount = soll > 0 ? soll : haben;
+            const belegNr = col1 !== null && col1 !== undefined ? String(col1).trim() : undefined;
+            journalEntries.push({
+              date:          dateStr,
+              belegNr:       belegNr || undefined,
+              text:          col3,
+              accountNumber: currentAccount.number.padStart(4, '0'),
+              accountName:   currentAccount.name,
+              soll,
+              haben,
+              amount,
+            });
+          }
         }
       }
     }
   }
 
+  // ParsedCSVRow[] aus Netto-Bewegungen aufbauen (Soll - Haben)
   let lineIndex = 0;
-  for (const [accNum, { name, saldo }] of accountTotals.entries()) {
+  for (const [accNum, { name, soll, haben }] of accountSums.entries()) {
+    const netto = soll - haben;
+    if (netto === 0) continue;
     rows.push({
       lineIndex:     ++lineIndex,
-      rawLine:       `${accNum} ${name} → Saldo ${saldo.toFixed(2)}`,
+      rawLine:       `${accNum} ${name} → Soll ${soll.toFixed(2)} Haben ${haben.toFixed(2)} = ${netto.toFixed(2)}`,
       accountNumber: accNum.padStart(4, '0'),
       accountName:   name,
-      rawAmount:     saldo.toFixed(2),
-      amount:        saldo,
+      rawAmount:     netto.toFixed(2),
+      amount:        netto,
     });
   }
 
   if (rows.length === 0) {
     warnings.push(
       'Keine Konten gefunden. Prüfe ob das Excel im Sage-Kontoblatt-Format vorliegt ' +
-      '(Konto-Header in Spalte A, "Total Haben" in Spalte D, Saldo in Spalte K).',
+      '(Konto-Header in Spalte A, Buchungszeilen mit Datum, Soll/Haben in Spalten G/H).',
     );
   } else {
     const je = journalEntries.length > 0 ? `, ${journalEntries.length} Einzelbuchungen` : '';
