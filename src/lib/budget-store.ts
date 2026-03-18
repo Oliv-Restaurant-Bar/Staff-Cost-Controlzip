@@ -438,7 +438,8 @@ const OBSOLETE_PL_IDS = [
   'pli_zulagen',       // 5010 war in pl_social → neu in pl_wages
   'pli_weiterbildung', // 5830 → neu 5810
   'pli_energie',       // 6001 Heizung in Raumaufwand → neu 6400 in pl_energy
-  'pli_hauswart',      // 6002 Reinigung/Hauswart → neu pli_miete_park (Parkplatz)
+  'pli_hauswart',      // 6002 Reinigung/Hauswart → entfernt
+  'pli_miete_park',    // 6002 Parkplatz → entfernt
   'pli_unterhalt',     // 6200 Unterhalt Gebäude → nicht mehr im Kontoplan
   'pli_leasing',       // 6101 Leasing Maschinen → nicht mehr im Kontoplan
   'pli_ure_edv',       // 61409 (5-stellig) → neu pli_ure_edv mit 6140

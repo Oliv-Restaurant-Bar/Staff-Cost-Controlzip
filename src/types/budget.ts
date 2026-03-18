@@ -367,9 +367,8 @@ export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = 
 
   // ── Raumaufwand ──────────────────────────────────────────────────────────────
   { id: 'pli_miete',          categoryId: 'pl_rent',            accountNumber: '6000', label: 'Mietzins',                         valueType: 'chf', sortOrder: 1 },
-  { id: 'pli_miete_park',     categoryId: 'pl_rent',            accountNumber: '6002', label: 'Mietzins Parkplatz',               valueType: 'chf', sortOrder: 2 },
-  { id: 'pli_reinigung_ent',  categoryId: 'pl_rent',            accountNumber: '6040', label: 'Reinigung und Entsorgung',         valueType: 'chf', sortOrder: 3 },
-  { id: 'pli_unterhalt_gesc', categoryId: 'pl_rent',            accountNumber: '6050', label: 'Unterhalt Geschäftsräume',         valueType: 'chf', sortOrder: 4 },
+  { id: 'pli_reinigung_ent',  categoryId: 'pl_rent',            accountNumber: '6040', label: 'Reinigung und Entsorgung',         valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_unterhalt_gesc', categoryId: 'pl_rent',            accountNumber: '6050', label: 'Unterhalt Geschäftsräume',         valueType: 'chf', sortOrder: 3 },
 
   // ── Unterhalt, Rep., Ersatz (URE) ────────────────────────────────────────────
   { id: 'pli_ure_maschinen',  categoryId: 'pl_maintenance',     accountNumber: '6100', label: 'URE Maschinen und Apparate',       valueType: 'chf', sortOrder: 1 },
