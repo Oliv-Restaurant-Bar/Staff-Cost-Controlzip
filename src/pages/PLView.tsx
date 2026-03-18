@@ -498,7 +498,7 @@ function getCatActual(catId: string, rec: MonthlyFinancialRecord | undefined): n
   if (catId === 'pl_revenue') return rec.revenueActual ?? (rec as any).revenue ?? 0;
   if (catId === 'pl_wages')   return (rec as any).personnel_actual ?? 0;
   const ranges: Record<string, [number, number]> = {
-    pl_goods_cost:      [4000, 4499],
+    pl_goods_cost:      [4000, 4999],
     pl_social:          [5400, 5699],
     pl_personnel_other: [5700, 5899],
     pl_rent:            [6000, 6199],
@@ -517,7 +517,7 @@ function getCatPY(catId: string, rec: MonthlyFinancialRecord | undefined): numbe
   if (catId === 'pl_revenue') return (rec as any).revenuePreviousYear ?? 0;
   if (catId === 'pl_wages')   return (rec as any).personnelCostPreviousYear ?? 0;
   const ranges: Record<string, [number, number]> = {
-    pl_goods_cost:      [4000, 4499],
+    pl_goods_cost:      [4000, 4999],
     pl_social:          [5400, 5699],
     pl_personnel_other: [5700, 5899],
     pl_rent:            [6000, 6199],
