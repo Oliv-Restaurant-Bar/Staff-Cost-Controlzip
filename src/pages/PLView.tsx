@@ -19,7 +19,7 @@ import {
   LayoutDashboard, TrendingUp, ChevronRight, Info,
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
-  Minus, Database, AlignJustify, List, Pencil, Check,
+  Minus, Database, AlignJustify, List, Pencil, Check, Plus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -40,7 +40,7 @@ import { AccountMapping } from '@/types/account-mapping';
 import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE } from '@/lib/pl-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
-import { loadBudgetWithPL, deletePLLineItem } from '@/lib/budget-store';
+import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem } from '@/lib/budget-store';
 import { BudgetYear, BudgetPLCategory } from '@/types/budget';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
@@ -490,6 +490,7 @@ interface BPLRow {
   itemLabel?: string;
   itemAccountNumber?: string;
   itemId?: string;
+  isInternal?: boolean;
 }
 
 interface BPLRowWithValues extends BPLRow {
@@ -603,7 +604,8 @@ function computeBPLRows(
 
   for (const cat of cats) {
     if (cat.type === 'items') {
-      const its = items.filter(i => i.categoryId === cat.id);
+      // Interne Positionen werden aus den Kategorie-Summen ausgeschlossen
+      const its = items.filter(i => i.categoryId === cat.id && !i.isInternal);
       catB[cat.id] = its.reduce((s, i) => s + (i.monthlyValues[mIdx] ?? 0), 0);
       catA[cat.id] = getCatActual(cat.id, rec);
       catP[cat.id] = getCatPY(cat.id, rec);
@@ -634,11 +636,12 @@ function computeBPLRows(
         const iB = item.monthlyValues[mIdx] ?? 0;
         const iA = (rec?.expenseCategories ?? []).find(c => c.categoryId === item.accountNumber)?.amount ?? 0;
         const iP = (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === item.accountNumber)?.amount ?? 0;
-        if (iA === 0 && iB === 0 && iP === 0) continue;
+        if (!item.isInternal && iA === 0 && iB === 0 && iP === 0) continue;
         rows.push({
           catId: cat.id, catLabel: cat.label, catType: 'items',
           isExpense: cat.isExpense, isCategory: false,
           itemId: item.id, itemLabel: item.label, itemAccountNumber: item.accountNumber,
+          isInternal: item.isInternal,
           values: makeCell(iA, iB, iP, cat.isExpense),
         });
       }
@@ -740,11 +743,19 @@ const BPLRowComp = ({ row, onClick, compact, onDelete }: { row: BPLRowWithValues
   const isBudgetItem = row.itemId && !row.itemId.startsWith('actual_');
   return (
     <tr
-      className="hover:bg-muted/30 border-b border-slate-100 dark:border-slate-800 transition-colors group"
+      className={cn(
+        'hover:bg-muted/30 border-b border-slate-100 dark:border-slate-800 transition-colors group',
+        row.isInternal && 'opacity-75 bg-violet-50/40 dark:bg-violet-950/10',
+      )}
     >
       <td className={cn('px-3 pl-9 text-sm cursor-pointer', pyItem)} onClick={onClick}>
         <span className="text-[10px] text-muted-foreground/50 font-mono mr-1.5">{row.itemAccountNumber}</span>
         {row.itemLabel}
+        {row.isInternal && (
+          <span className="ml-1.5 inline-flex items-center rounded px-1 py-0.5 text-[9px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300 border border-violet-200 dark:border-violet-700">
+            INTERN
+          </span>
+        )}
       </td>
       <td className={cn('px-2 w-5', pyItem)}>
         {isBudgetItem && onDelete ? (
@@ -1179,6 +1190,135 @@ const AccountActionDialog = ({
   );
 };
 
+// ─── Konto hinzufügen Dialog ──────────────────────────────────────────────────
+
+interface AddKontoDialogProps {
+  open: boolean;
+  onClose: () => void;
+  year: number;
+  categories: BudgetPLCategory[];
+  onSaved: () => void;
+}
+
+const AddKontoDialog = ({ open, onClose, year, categories, onSaved }: AddKontoDialogProps) => {
+  const [accountNumber, setAccountNumber] = useState('');
+  const [label,         setLabel]         = useState('');
+  const [categoryId,    setCategoryId]    = useState('');
+  const [isInternal,    setIsInternal]    = useState(true);
+  const [error,         setError]         = useState<string | null>(null);
+
+  const itemCats = categories.filter(c => c.type === 'items');
+
+  function reset() {
+    setAccountNumber('');
+    setLabel('');
+    setCategoryId(itemCats[0]?.id ?? '');
+    setIsInternal(true);
+    setError(null);
+  }
+
+  function handleSave() {
+    const num = accountNumber.trim();
+    const lbl = label.trim();
+    if (!num) { setError('Kontonummer eingeben.'); return; }
+    if (!/^\d{4}$/.test(num)) { setError('Kontonummer muss 4-stellig sein.'); return; }
+    if (!lbl) { setError('Bezeichnung eingeben.'); return; }
+    if (!categoryId) { setError('Kategorie auswählen.'); return; }
+
+    const zeroMonths: [number,number,number,number,number,number,number,number,number,number,number,number]
+      = [0,0,0,0,0,0,0,0,0,0,0,0];
+    addCustomPLLineItem(year, {
+      categoryId,
+      accountNumber: num,
+      label: lbl,
+      valueType: 'chf',
+      monthlyValues: zeroMonths,
+      sortOrder: 9999,
+      isInternal,
+    });
+    onSaved();
+    reset();
+    onClose();
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) { reset(); onClose(); } }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Konto hinzufügen</DialogTitle>
+          <DialogDescription>
+            Fügt ein Konto zur Erfolgsrechnung hinzu. Interne Konten erscheinen mit
+            INTERN-Badge und werden aus Summen und Ergebniszeilen ausgeschlossen.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3 py-1">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Kontonummer</label>
+            <Input
+              placeholder="z.B. 5850"
+              value={accountNumber}
+              maxLength={4}
+              onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ''))}
+              className="h-8 text-sm font-mono"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Bezeichnung</label>
+            <Input
+              placeholder="z.B. Personalverpflegung"
+              value={label}
+              onChange={e => setLabel(e.target.value)}
+              className="h-8 text-sm"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Kategorie</label>
+            <Select value={categoryId} onValueChange={setCategoryId}>
+              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Kategorie wählen" /></SelectTrigger>
+              <SelectContent>
+                {itemCats.map(c => (
+                  <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isInternal}
+              onChange={e => setIsInternal(e.target.checked)}
+              className="mt-0.5 accent-violet-600"
+            />
+            <div>
+              <span className="text-sm font-medium">Nur intern</span>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Konto wird mit INTERN-Badge angezeigt und fliesst nicht in die offiziellen Summen ein.
+              </p>
+            </div>
+          </label>
+
+          {error && (
+            <p className="text-xs text-red-600 flex items-center gap-1">
+              <AlertCircle className="h-3 w-3" />{error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="ghost" size="sm" onClick={() => { reset(); onClose(); }}>Abbrechen</Button>
+          <Button size="sm" onClick={handleSave}>
+            <Plus className="h-3.5 w-3.5 mr-1" />Hinzufügen
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 // ─── Haupt-Seite ──────────────────────────────────────────────────────────────
 
 const currentYear  = new Date().getFullYear();
@@ -1199,6 +1339,7 @@ const PLViewPage = () => {
   const [accountAction,   setAccountAction]   = useState<BPLRowWithValues | null>(null);
   const [compact,         setCompact]         = useState(false);
   const [refreshKey,      setRefreshKey]       = useState(0);
+  const [addKontoOpen,    setAddKontoOpen]    = useState(false);
 
   // Daten laden & P&L berechnen
   const records = useMemo(() => loadYear(year), [year, month, refreshKey]);
@@ -1322,6 +1463,18 @@ const PLViewPage = () => {
                   ))}
                 </SelectContent>
               </Select>
+            )}
+
+            {/* Konto hinzufügen */}
+            {mode === 'budget_pl' && (
+              <button
+                title="Konto zur Erfolgsrechnung hinzufügen"
+                onClick={() => setAddKontoOpen(true)}
+                className="h-8 px-2 flex items-center gap-1 rounded border text-xs transition-colors bg-card border-border hover:bg-muted text-muted-foreground"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Konto hinzufügen</span>
+              </button>
             )}
 
             {/* Zeilenabstand */}
@@ -1486,6 +1639,15 @@ const PLViewPage = () => {
           onOpenDrilldown={() => { setAccountAction(null); setBplDrilldown(accountAction); }}
         />
       )}
+
+      {/* Konto hinzufügen */}
+      <AddKontoDialog
+        open={addKontoOpen}
+        onClose={() => setAddKontoOpen(false)}
+        year={year}
+        categories={budgetData.plCategories ?? []}
+        onSaved={() => setRefreshKey(k => k + 1)}
+      />
     </div>
   );
 };

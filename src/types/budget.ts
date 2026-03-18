@@ -270,6 +270,12 @@ export interface BudgetPLLineItem {
                   number, number, number, number, number, number];
   sortOrder: number;
   isDefault?: boolean;
+  /**
+   * Nur intern: Konto erscheint in der Erfolgsrechnung mit "Intern"-Badge,
+   * wird aber von allen Kategorie-Summen und Ergebnis-Zeilen ausgeschlossen.
+   * Nützlich z.B. für interne Verrechnungen oder Kalkulationshilfen.
+   */
+  isInternal?: boolean;
 }
 
 // ─── Standard P&L Kategorien für oLiv ────────────────────────────────────────
