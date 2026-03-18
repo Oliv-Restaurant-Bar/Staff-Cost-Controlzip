@@ -540,6 +540,8 @@ export function loadBudgetWithPL(year: number): BudgetYear {
   budget = migrateObsoletePLItems(budget);
   budget = ensureDefaultPLCategories(budget);
   budget = ensureDefaultPLItems(budget);
+  // Immer Sync: plLineItems → legacy positions (damit Dashboard/SollIst budget_revenue findet)
+  budget = syncPLToLegacyPositions(budget);
   saveBudgetYear(budget);
   return budget;
 }
@@ -729,8 +731,14 @@ export function removeCustomPLLineItem(year: number, itemId: string): BudgetYear
 export function syncPLToLegacyPositions(budget: BudgetYear): BudgetYear {
   if (!budget.plLineItems) return budget;
 
-  const items     = budget.plLineItems;
-  const positions = budget.positions.map(p => ({ ...p, monthlyValues: [...p.monthlyValues] as BudgetPosition['monthlyValues'] }));
+  const items = budget.plLineItems;
+
+  // Wenn positions leer ist (z.B. beim Seed-Budget), mit Standard-Positionen initialisieren
+  const basePositions = budget.positions.length > 0
+    ? budget.positions.map(p => ({ ...p, monthlyValues: [...p.monthlyValues] as BudgetPosition['monthlyValues'] }))
+    : DEFAULT_BUDGET_POSITIONS.map(def => createDefaultPosition(def));
+
+  const positions = basePositions;
   const setPos    = (id: string, vals: number[]) => {
     const pos = positions.find(p => p.id === id);
     if (pos) { pos.monthlyValues = vals as BudgetPosition['monthlyValues']; pos.valueType = 'chf'; }

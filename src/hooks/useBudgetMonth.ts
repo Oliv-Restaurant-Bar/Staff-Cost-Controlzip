@@ -7,14 +7,13 @@
  *
  * Datenquelle: localStorage 'budget_v1' (Budget-Modul)
  *
- * Position-IDs aus DEFAULT_BUDGET_POSITIONS:
- *   budget_revenue, budget_food_cost, budget_bev_cost,
- *   budget_personnel, budget_rent, budget_energy,
- *   budget_marketing, budget_insurance, budget_maintenance, budget_other
+ * Wichtig: Nutzt loadBudgetWithPL (nicht nur loadBudgetYear) um sicherzustellen,
+ * dass plLineItems → legacy positions synchronisiert sind, damit hasBudget
+ * auch dann true ist wenn der Nutzer Budget über die P&L-Hierarchie erfasst hat.
  */
 
 import { useMemo } from 'react';
-import { loadBudgetYear, resolveBudgetYear } from '@/lib/budget-store';
+import { loadBudgetWithPL, resolveBudgetYear } from '@/lib/budget-store';
 
 export interface BudgetMonthData {
   revenueBudget:         number;
@@ -29,7 +28,8 @@ export interface BudgetMonthData {
 
 export function useBudgetMonth(year: number, month: number): BudgetMonthData {
   return useMemo(() => {
-    const budget   = loadBudgetYear(year);
+    // loadBudgetWithPL stellt sicher dass plLineItems → positions sync läuft
+    const budget   = loadBudgetWithPL(year);
     const resolved = resolveBudgetYear(budget);
 
     const m = month - 1; // 0-basierter Array-Index (0=Jan, 11=Dez)
@@ -65,7 +65,14 @@ export function useBudgetMonth(year: number, month: number): BudgetMonthData {
 
     const operatingResultBudget = revenueBudget - totalCostBudget;
 
-    const hasBudget = revenueBudget > 0 || personnelBudget > 0;
+    // hasBudget: true wenn Umsatz- oder Personalbudget vorhanden
+    // Fallback: direkt in plLineItems prüfen (falls positions noch nicht synced)
+    const hasPositionValues = revenueBudget > 0 || personnelBudget > 0;
+    const hasLineItemValues = budget.plLineItems?.some(
+      item => (item.categoryId === 'pl_revenue' || item.categoryId === 'pl_wages') &&
+              item.monthlyValues.some(v => v !== 0)
+    ) ?? false;
+    const hasBudget = hasPositionValues || hasLineItemValues;
 
     return {
       revenueBudget,
