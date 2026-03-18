@@ -421,6 +421,7 @@ const OBSOLETE_PL_IDS = [
   'pli_waren_wein', 'pli_waren_bier', 'pli_waren_spirit', 'pli_waren_mineral', 'pli_waren_kueche',
   'pli_lohn_zulagen',
   'pli_nebenkosten', 'pli_verwaltung', 'pli_uebrig_aufwand',
+  'pli_reinigung',
 ];
 
 function migrateObsoletePLItems(budget: BudgetYear): BudgetYear {

@@ -346,10 +346,11 @@ export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = 
 
   // Unterhalt & Reinigung
   { id: 'pli_unterhalt',      categoryId: 'pl_maintenance',     accountNumber: '6200', label: 'Unterhalt Gebäude/Einrichtung',  valueType: 'chf', sortOrder: 1 },
-  { id: 'pli_reinigung',      categoryId: 'pl_maintenance',     accountNumber: '6300', label: 'Reinigung',                      valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_leasing',        categoryId: 'pl_maintenance',     accountNumber: '6101', label: 'Leasing von Maschinen',          valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_ure_edv',        categoryId: 'pl_maintenance',     accountNumber: '61409',label: 'URE Informatik EDV',             valueType: 'chf', sortOrder: 3 },
 
   // Versicherungen / Verwaltung / Übriges
-  { id: 'pli_versicherungen', categoryId: 'pl_admin',           accountNumber: '6400', label: 'Versicherungen',                 valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_versicherungen', categoryId: 'pl_admin',           accountNumber: '6300', label: 'Versicherungen',                 valueType: 'chf', sortOrder: 1 },
   { id: 'pli_bankspesen',     categoryId: 'pl_admin',           accountNumber: '6900', label: 'Bankzinsen / Bankspesen',        valueType: 'chf', sortOrder: 2 },
   { id: 'pli_abschreibungen', categoryId: 'pl_admin',           accountNumber: '6800', label: 'Abschreibungen',                 valueType: 'chf', sortOrder: 3 },
 ];
