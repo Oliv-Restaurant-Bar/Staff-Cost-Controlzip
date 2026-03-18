@@ -807,7 +807,7 @@ const InlineIstCell = ({
   );
 };
 
-const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode = 'off', revenueActual = 0 }: {
+const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode = 'off', revenueActual = 0, compareMode = 'all' }: {
   row: BPLRowWithValues;
   onClick: () => void;
   compact: boolean;
@@ -818,12 +818,15 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   highlightVariance?: boolean;
   pctMode?: 'off' | 'normal' | 'subtle';
   revenueActual?: number;
+  compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr';
 }) => {
   const [editingIst, setEditingIst] = useState(false);
   const { values: v } = row;
   const py = compact ? 'py-1' : 'py-2';
   const pyResult = compact ? 'py-1' : 'py-2.5';
   const pyItem = compact ? 'py-0.5' : 'py-1.5';
+  const showBudget   = compareMode !== 'ist_vorjahr';
+  const showPrevYear = compareMode !== 'ist_budget';
 
   const pctVal = (actual: number) =>
     revenueActual > 0 && actual !== 0
@@ -847,10 +850,10 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
             {p ?? <span className="opacity-30">—</span>}
           </td>
         )}
-        <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.budget)}</td>
-        <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
-        <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.prevYear)}</td>
-        <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />
+        {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.budget)}</td>}
+        {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
+        {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.prevYear)}</td>}
+        {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
       </tr>
     );
   }
@@ -875,10 +878,10 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
             {p ?? <span className="opacity-30">—</span>}
           </td>
         )}
-        <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-75', py)}>{fmt(v.budget)}</td>
-        <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
-        <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-65', py)}>{fmt(v.prevYear)}</td>
-        <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />
+        {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-75', py)}>{fmt(v.budget)}</td>}
+        {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
+        {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-65', py)}>{fmt(v.prevYear)}</td>}
+        {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
       </tr>
     );
   }
@@ -955,10 +958,10 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
           {pctVal(v.actual) ?? <span className="opacity-25">—</span>}
         </td>
       )}
-      <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.budget > 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>
-      <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
-      <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.prevYear > 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>
-      <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />
+      {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.budget > 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>}
+      {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
+      {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.prevYear > 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>}
+      {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
     </tr>
   );
 };
@@ -974,6 +977,7 @@ const BudgetPLView = ({
   highlightVariance,
   pctMode = 'off',
   revenueActual = 0,
+  compareMode = 'all',
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
@@ -985,9 +989,13 @@ const BudgetPLView = ({
   highlightVariance?: boolean;
   pctMode?: 'off' | 'normal' | 'subtle';
   revenueActual?: number;
-}) => (
+  compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr';
+}) => {
+  const showBudget   = compareMode !== 'ist_vorjahr';
+  const showPrevYear = compareMode !== 'ist_budget';
+  return (
   <div className="overflow-x-auto">
-    <table className="w-full text-sm border-collapse min-w-[820px]">
+    <table className="w-full text-sm border-collapse min-w-[600px]">
       <thead>
         <tr className="bg-slate-900 text-white text-xs">
           <th className={cn('text-left px-3 min-w-[230px]', compact ? 'py-1.5' : 'py-2.5')}>Position</th>
@@ -998,10 +1006,10 @@ const BudgetPLView = ({
               pctMode === 'subtle' ? 'opacity-50 italic text-[10px]' : 'text-amber-300',
             )}>% Ums.</th>
           )}
-          <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Budget (CHF)</th>
-          <th className={cn('text-right px-2 min-w-[130px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. Budget</th>
-          <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Vorjahr (CHF)</th>
-          <th className={cn('text-right px-2 min-w-[120px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. VJ</th>
+          {showBudget && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Budget (CHF)</th>}
+          {showBudget && <th className={cn('text-right px-2 min-w-[130px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. Budget</th>}
+          {showPrevYear && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Vorjahr (CHF)</th>}
+          {showPrevYear && <th className={cn('text-right px-2 min-w-[120px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. VJ</th>}
         </tr>
       </thead>
       <tbody>
@@ -1018,12 +1026,14 @@ const BudgetPLView = ({
             highlightVariance={highlightVariance}
             pctMode={pctMode}
             revenueActual={revenueActual}
+            compareMode={compareMode}
           />
         ))}
       </tbody>
     </table>
   </div>
-);
+  );
+};
 
 const BudgetPLDrilldownDialog = ({
   row,
@@ -1559,6 +1569,7 @@ const PLViewPage = () => {
   const [compact,          setCompact]          = useState(false);
   const [highlightVariance, setHighlightVariance] = useState(false);
   const [pctMode,          setPctMode]          = useState<'off' | 'normal' | 'subtle'>('off');
+  const [compareMode,      setCompareMode]      = useState<'all' | 'ist_budget' | 'ist_vorjahr'>('all');
   const [refreshKey,       setRefreshKey]       = useState(0);
   const [addKontoOpen,    setAddKontoOpen]    = useState(false);
 
@@ -1767,6 +1778,29 @@ const PLViewPage = () => {
                 </span>
               </button>
             )}
+
+            {/* Vergleichsmodus */}
+            {mode === 'budget_pl' && (
+              <button
+                title="Vergleichsmodus wechseln: Alles / Ist vs Budget / Ist vs Vorjahr"
+                onClick={() => setCompareMode(m => m === 'all' ? 'ist_budget' : m === 'ist_budget' ? 'ist_vorjahr' : 'all')}
+                className={cn(
+                  'h-8 px-2 flex items-center gap-1 rounded border text-xs transition-colors',
+                  compareMode === 'ist_budget'
+                    ? 'bg-blue-500 text-white border-blue-500'
+                    : compareMode === 'ist_vorjahr'
+                    ? 'bg-purple-500 text-white border-purple-500'
+                    : 'bg-card border-border hover:bg-muted text-muted-foreground',
+                )}
+              >
+                <span className="hidden sm:inline">
+                  {compareMode === 'ist_budget' ? 'Ist vs Budget' : compareMode === 'ist_vorjahr' ? 'Ist vs Vorjahr' : 'Vergleich'}
+                </span>
+                <span className="sm:hidden">
+                  {compareMode === 'ist_budget' ? 'B' : compareMode === 'ist_vorjahr' ? 'VJ' : 'Vgl'}
+                </span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -1833,7 +1867,11 @@ const PLViewPage = () => {
               </h2>
               <p className="text-[11px] text-slate-400 mt-0.5">
                 {mode === 'budget_pl'
-                  ? 'Ist · Budget · Vorjahr · Abweichungen – Budget-Hierarchie mit Kontonummern'
+                  ? compareMode === 'ist_budget'
+                    ? 'Ist vs Budget · Abweichungen – Budget-Hierarchie mit Kontonummern'
+                    : compareMode === 'ist_vorjahr'
+                    ? 'Ist vs Vorjahr · Abweichungen – Budget-Hierarchie mit Kontonummern'
+                    : 'Ist · Budget · Vorjahr · Abweichungen – Budget-Hierarchie mit Kontonummern'
                   : mode === 'monthly'
                   ? 'Ist / Budget / Vorjahr inkl. Abweichungen'
                   : 'Alle 12 Monate + Jahressumme · Klick auf Monatsspalte → Monatsansicht'}
@@ -1871,6 +1909,7 @@ const PLViewPage = () => {
                 highlightVariance={highlightVariance}
                 pctMode={pctMode}
                 revenueActual={bplRevenue}
+                compareMode={compareMode}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />

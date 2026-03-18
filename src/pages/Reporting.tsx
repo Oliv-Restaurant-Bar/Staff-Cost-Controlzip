@@ -1108,6 +1108,10 @@ const AnnualRevenueImportCard = ({ onImported }: { onImported: () => void }) => 
               </button>
             </div>
 
+            {result.debugInfo && (
+              <p className="text-[10px] text-muted-foreground/60 italic font-mono">{result.debugInfo}</p>
+            )}
+
             {result.warnings.length > 0 && (
               <div className="rounded bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-700 p-2 text-[10px] text-amber-800 dark:text-amber-300 space-y-0.5">
                 {result.warnings.map((w, i) => (
