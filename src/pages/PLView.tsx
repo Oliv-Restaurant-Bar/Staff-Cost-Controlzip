@@ -497,19 +497,20 @@ interface BPLRowWithValues extends BPLRow {
   values: BPLCell;
 }
 
+const BPL_CAT_RANGES: Record<string, [number, number]> = {
+  pl_wages:           [5000, 5009],
+  pl_goods_cost:      [4000, 4999],
+  pl_social:          [5010, 5799],
+  pl_personnel_other: [5800, 5899],
+  pl_rent:            [6000, 6199],
+  pl_maintenance:     [6200, 6399],
+  pl_admin:           [6400, 6999],
+};
+
 function getCatActual(catId: string, rec: MonthlyFinancialRecord | undefined): number {
   if (!rec) return 0;
   if (catId === 'pl_revenue') return rec.revenueActual ?? (rec as any).revenue ?? 0;
-  if (catId === 'pl_wages')   return (rec as any).personnel_actual ?? 0;
-  const ranges: Record<string, [number, number]> = {
-    pl_goods_cost:      [4000, 4999],
-    pl_social:          [5010, 5799],
-    pl_personnel_other: [5800, 5899],
-    pl_rent:            [6000, 6199],
-    pl_maintenance:     [6200, 6399],
-    pl_admin:           [6400, 6999],
-  };
-  const r = ranges[catId];
+  const r = BPL_CAT_RANGES[catId];
   if (!r) return 0;
   return (rec.expenseCategories ?? [])
     .filter(c => { const n = parseInt(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
@@ -519,16 +520,7 @@ function getCatActual(catId: string, rec: MonthlyFinancialRecord | undefined): n
 function getCatPY(catId: string, rec: MonthlyFinancialRecord | undefined): number {
   if (!rec) return 0;
   if (catId === 'pl_revenue') return (rec as any).revenuePreviousYear ?? 0;
-  if (catId === 'pl_wages')   return (rec as any).personnelCostPreviousYear ?? 0;
-  const ranges: Record<string, [number, number]> = {
-    pl_goods_cost:      [4000, 4999],
-    pl_social:          [5010, 5799],
-    pl_personnel_other: [5800, 5899],
-    pl_rent:            [6000, 6199],
-    pl_maintenance:     [6200, 6399],
-    pl_admin:           [6400, 6999],
-  };
-  const r = ranges[catId];
+  const r = BPL_CAT_RANGES[catId];
   if (!r) return 0;
   return (rec.expenseCategoriesPreviousYear ?? [])
     .filter(c => { const n = parseInt(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
