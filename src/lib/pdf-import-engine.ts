@@ -665,8 +665,9 @@ export async function parseAnnualSageKontoblattByMonth(
     const month = parseInt(parts[1]);
     if (isNaN(month) || month < 1 || month > 12) continue;
 
-    const soll  = typeof col6 === 'number' ? Math.abs(col6) : Math.abs(parseAmount(String(col6 ?? '')) ?? 0);
-    const haben = typeof col7 === 'number' ? Math.abs(col7) : Math.abs(parseAmount(String(col7 ?? '')) ?? 0);
+    // Sage: Soll- und Haben-Beträge sind immer positive Zahlen in ihrer Spalte
+    const soll  = typeof col6 === 'number' ? col6 : (parseAmount(String(col6 ?? '')) ?? 0);
+    const haben = typeof col7 === 'number' ? col7 : (parseAmount(String(col7 ?? '')) ?? 0);
 
     if (soll === 0 && haben === 0) continue;
 
@@ -698,9 +699,9 @@ export async function parseAnnualSageKontoblattByMonth(
     let lineIndex = 0;
 
     for (const [accNum, { name, soll, haben }] of accounts.entries()) {
-      // Für Kosten (Haben-Seite) ist haben relevant; für Erträge (Soll-Seite) soll
-      const amount = haben > 0 ? haben : soll;
-      if (amount <= 0) continue;
+      // Netto-Aufwand: Soll minus Haben (kann negativ sein bei Korrekturen/Stornos)
+      const amount = soll - haben;
+      if (amount === 0) continue;
 
       rows.push({
         lineIndex:     ++lineIndex,
