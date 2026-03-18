@@ -19,7 +19,7 @@ import {
   LayoutDashboard, TrendingUp, ChevronRight, Info,
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
-  Minus, Database, AlignJustify, List, Pencil, Check, Plus,
+  Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -781,7 +781,7 @@ const InlineIstCell = ({
   );
 };
 
-const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved }: {
+const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance }: {
   row: BPLRowWithValues;
   onClick: () => void;
   compact: boolean;
@@ -789,6 +789,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved }: {
   month: number;
   year: number;
   onSaved: () => void;
+  highlightVariance?: boolean;
 }) => {
   const [editingIst, setEditingIst] = useState(false);
   const { values: v } = row;
@@ -831,11 +832,26 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved }: {
 
   const isBudgetItem = row.itemId && !row.itemId.startsWith('actual_');
   const canEdit = !row.isCategory;
+
+  const varPct = v.vsBudgetPct;
+  const isVarianceHighlighted =
+    highlightVariance &&
+    v.budget !== undefined && v.budget !== 0 &&
+    v.actual !== undefined && v.actual !== 0 &&
+    varPct !== undefined &&
+    Math.abs(varPct) > 10;
+  const varBgClass = isVarianceHighlighted
+    ? varPct! < 0
+      ? 'bg-red-50 dark:bg-red-950/20 border-l-4 border-l-red-400'
+      : 'bg-green-50 dark:bg-green-950/20 border-l-4 border-l-green-400'
+    : '';
+
   return (
     <tr
       className={cn(
         'hover:bg-muted/30 border-b border-slate-100 dark:border-slate-800 transition-colors group',
-        row.isInternal && 'opacity-75 bg-violet-50/40 dark:bg-violet-950/10',
+        row.isInternal && !isVarianceHighlighted && 'opacity-75 bg-violet-50/40 dark:bg-violet-950/10',
+        varBgClass,
       )}
     >
       <td className={cn('px-3 pl-9 text-sm cursor-pointer', pyItem)} onClick={onClick}>
@@ -897,6 +913,7 @@ const BudgetPLView = ({
   month,
   year,
   onSaved,
+  highlightVariance,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
@@ -905,6 +922,7 @@ const BudgetPLView = ({
   month: number;
   year: number;
   onSaved: () => void;
+  highlightVariance?: boolean;
 }) => (
   <div className="overflow-x-auto">
     <table className="w-full text-sm border-collapse min-w-[820px]">
@@ -930,6 +948,7 @@ const BudgetPLView = ({
             month={month}
             year={year}
             onSaved={onSaved}
+            highlightVariance={highlightVariance}
           />
         ))}
       </tbody>
@@ -1468,8 +1487,9 @@ const PLViewPage = () => {
   const [drilldown,       setDrilldown]       = useState<PLDrilldown | null>(null);
   const [bplDrilldown,    setBplDrilldown]    = useState<BPLRowWithValues | null>(null);
   const [accountAction,   setAccountAction]   = useState<BPLRowWithValues | null>(null);
-  const [compact,         setCompact]         = useState(false);
-  const [refreshKey,      setRefreshKey]       = useState(0);
+  const [compact,          setCompact]          = useState(false);
+  const [highlightVariance, setHighlightVariance] = useState(false);
+  const [refreshKey,       setRefreshKey]       = useState(0);
   const [addKontoOpen,    setAddKontoOpen]    = useState(false);
 
   // Daten laden & P&L berechnen
@@ -1624,6 +1644,23 @@ const PLViewPage = () => {
                 <span className="hidden sm:inline">{compact ? 'Normal' : 'Kompakt'}</span>
               </button>
             )}
+
+            {/* Abweichung >10% hervorheben */}
+            {mode === 'budget_pl' && (
+              <button
+                title={highlightVariance ? 'Abweichungs-Highlight deaktivieren' : 'Positionen mit Abweichung >10% farblich hervorheben'}
+                onClick={() => setHighlightVariance(v => !v)}
+                className={cn(
+                  'h-8 px-2 flex items-center gap-1 rounded border text-xs transition-colors',
+                  highlightVariance
+                    ? 'bg-amber-500 text-white border-amber-500'
+                    : 'bg-card border-border hover:bg-muted text-muted-foreground',
+                )}
+              >
+                <AlertTriangle className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Abw. &gt;10%</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -1725,6 +1762,7 @@ const PLViewPage = () => {
                 month={month}
                 year={year}
                 onSaved={() => setRefreshKey(k => k + 1)}
+                highlightVariance={highlightVariance}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />

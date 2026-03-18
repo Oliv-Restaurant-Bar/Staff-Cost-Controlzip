@@ -19,7 +19,7 @@ import { Link } from 'react-router-dom';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Plus,
   Edit3, Upload, CheckCircle2, AlertCircle, Clock,
-  Info, Save, X, FileText, BarChart2, RefreshCw, Settings2,
+  Info, Save, X, FileText, BarChart2, RefreshCw, Settings2, AlertTriangle,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -505,9 +505,10 @@ const Reporting = () => {
   if (!isAdmin) return <Navigate to="/" replace />;
 
   const years       = availableYears();
-  const [year, setYear]           = useState(currentYear);
-  const [months, setMonths]       = useState<MonthlyFinancialRecord[]>(() => loadYear(year));
-  const [editRecord, setEditRecord] = useState<MonthlyFinancialRecord | null>(null);
+  const [year, setYear]               = useState(currentYear);
+  const [months, setMonths]           = useState<MonthlyFinancialRecord[]>(() => loadYear(year));
+  const [editRecord, setEditRecord]   = useState<MonthlyFinancialRecord | null>(null);
+  const [highlightVariance, setHighlightVariance] = useState(false);
 
   const summary = useMemo(() => calcAnnualSummary(year), [year, months]);
   const chartData = useMemo(() => buildChartData(months), [months]);
@@ -712,9 +713,24 @@ const Reporting = () => {
         <section>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-bold">Monatsdaten {year}</h2>
-            <p className="text-xs text-muted-foreground">
-              Klick auf «Erfassen» um Daten einzugeben
-            </p>
+            <div className="flex items-center gap-2">
+              <button
+                title={highlightVariance ? 'Abweichungs-Highlight deaktivieren' : 'Monate mit Umsatz-Abweichung >10% farblich hervorheben'}
+                onClick={() => setHighlightVariance(v => !v)}
+                className={cn(
+                  'h-7 px-2 flex items-center gap-1 rounded border text-xs transition-colors',
+                  highlightVariance
+                    ? 'bg-amber-500 text-white border-amber-500'
+                    : 'bg-card border-border hover:bg-muted text-muted-foreground',
+                )}
+              >
+                <AlertTriangle className="h-3.5 w-3.5" />
+                <span>Abw. &gt;10%</span>
+              </button>
+              <p className="text-xs text-muted-foreground">
+                Klick auf «Erfassen» um Daten einzugeben
+              </p>
+            </div>
           </div>
 
           <div className="rounded-lg border border-border overflow-hidden">
@@ -743,13 +759,24 @@ const Reporting = () => {
                     const isFuture  = m.year > currentYear ||
                       (m.year === currentYear && m.month > currentMonth);
 
+                    const revPct = m.revenueActual != null && m.revenueBudget != null && m.revenueBudget !== 0
+                      ? ((m.revenueActual - m.revenueBudget) / Math.abs(m.revenueBudget)) * 100
+                      : undefined;
+                    const isVarHighlighted = highlightVariance && revPct !== undefined && Math.abs(revPct) > 10;
+                    const varRowClass = isVarHighlighted
+                      ? revPct! < 0
+                        ? 'bg-red-50 dark:bg-red-950/20 border-l-4 border-l-red-400'
+                        : 'bg-green-50 dark:bg-green-950/20 border-l-4 border-l-green-400'
+                      : '';
+
                     return (
                       <tr
                         key={m.id}
                         className={cn(
                           'hover:bg-muted/30 transition-colors',
-                          isCurrent && 'bg-primary/5',
+                          isCurrent && !isVarHighlighted && 'bg-primary/5',
                           isEmpty && 'opacity-60',
+                          varRowClass,
                         )}
                       >
                         <td className="px-3 py-2.5 font-semibold">
