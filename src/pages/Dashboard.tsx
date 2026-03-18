@@ -939,15 +939,26 @@ const Dashboard = () => {
 
                     {/* ── Stichtag-Vergleich (nur wenn Stichtag im aktuellen Monat gesetzt) ── */}
                     {stichtagInMonth && budgetProRataStichtag !== null && (
-                      <div className="mt-3">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
-                          <CalendarDays className="h-3.5 w-3.5" />
-                          Budget pro rata bis Stichtag {stichtagFormatted}
-                          <span className="text-[10px] font-normal normal-case ml-1 px-1.5 py-0.5 rounded bg-muted border border-border">
-                            {stichtagDay} von {daysInRefMonth} Tagen
-                          </span>
+                      <div className="mt-4 rounded-lg border border-border bg-muted/20 p-4">
+                        {/* Abschnitts-Header */}
+                        <div className="flex items-center gap-2 mb-4 pb-3 border-b border-border">
+                          <CalendarDays className="h-4 w-4 text-primary flex-shrink-0" />
+                          <div>
+                            <p className="text-sm font-semibold text-foreground">
+                              Pro-rata-Vergleich per Stichtag {stichtagFormatted}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Basis: {stichtagDay} von {daysInRefMonth} Tagen
+                              ({((stichtagDay! / daysInRefMonth) * 100).toFixed(0)} % des Monats)
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Zeile 1: vs. Budget */}
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                          Umsatz vs. Budget pro rata
                         </p>
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
                           <KpiCard
                             title="Budget pro rata"
                             value={formatCHF(budgetProRataStichtag)}
@@ -958,7 +969,7 @@ const Dashboard = () => {
                           />
                           {revenueIstStichtag !== null && (
                             <KpiCard
-                              title="Ist Umsatz bis Stichtag"
+                              title="Ist Umsatz"
                               value={revenueIstStichtag > 0 ? formatCHF(revenueIstStichtag) : '–'}
                               subtitle={`bis ${stichtagFormatted}`}
                               icon={<TrendingUp className="h-5 w-5" />}
@@ -984,21 +995,50 @@ const Dashboard = () => {
                               small
                             />
                           )}
-                          {revenuePrevYearStichtag !== null && revenuePrevYearStichtag > 0 && (
-                            <KpiCard
-                              title="Vorjahr bis Stichtag"
-                              value={formatCHF(revenuePrevYearStichtag)}
-                              subtitle={`Vorjahr bis ${stichtagFormatted}`}
-                              icon={<TrendingUp className="h-5 w-5" />}
-                              color="default"
-                              delta={revenueIstStichtag !== null && revenuePrevYearStichtag > 0
-                                ? ((revenueIstStichtag - revenuePrevYearStichtag) / revenuePrevYearStichtag) * 100
-                                : null}
-                              deltaLabel="% vs. Vorjahr"
-                              small
-                            />
-                          )}
                         </div>
+
+                        {/* Zeile 2: vs. Vorjahr */}
+                        {revenuePrevYearStichtag !== null && revenuePrevYearStichtag > 0 && revenueIstStichtag !== null && (
+                          <>
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                              Umsatz vs. Vorjahr pro rata
+                            </p>
+                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                              <KpiCard
+                                title="Vorjahr bis Stichtag"
+                                value={formatCHF(revenuePrevYearStichtag)}
+                                subtitle={`Vorjahr bis ${stichtagFormatted}`}
+                                icon={<TrendingUp className="h-5 w-5" />}
+                                color="default"
+                                small
+                              />
+                              <KpiCard
+                                title="Ist Umsatz"
+                                value={revenueIstStichtag > 0 ? formatCHF(revenueIstStichtag) : '–'}
+                                subtitle={`bis ${stichtagFormatted}`}
+                                icon={<TrendingUp className="h-5 w-5" />}
+                                color="default"
+                                small
+                              />
+                              <KpiCard
+                                title="Abw. vs. Vorjahr"
+                                value={`${(revenueIstStichtag - revenuePrevYearStichtag) >= 0 ? '+' : ''}${formatCHF(revenueIstStichtag - revenuePrevYearStichtag)}`}
+                                subtitle={`Ist vs. Vorjahr · ${revenuePrevYearStichtag > 0
+                                  ? `${(((revenueIstStichtag - revenuePrevYearStichtag) / revenuePrevYearStichtag) * 100).toFixed(1)} %`
+                                  : '–'}`}
+                                icon={(revenueIstStichtag - revenuePrevYearStichtag) >= 0
+                                  ? <TrendingUp className="h-5 w-5" />
+                                  : <TrendingDown className="h-5 w-5" />}
+                                color={(revenueIstStichtag - revenuePrevYearStichtag) >= 0 ? 'green' : 'red'}
+                                badge={(revenueIstStichtag - revenuePrevYearStichtag) >= 0 ? '✓ Über Vorjahr' : '↓ Unter Vorjahr'}
+                                badgeColor={(revenueIstStichtag - revenuePrevYearStichtag) >= 0
+                                  ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
+                                  : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'}
+                                small
+                              />
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </>
