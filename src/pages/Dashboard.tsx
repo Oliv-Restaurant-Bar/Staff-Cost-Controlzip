@@ -1044,59 +1044,71 @@ const Dashboard = () => {
                   </>
                 )}
 
-                {/* Personalkosten: Budget vs. Ist */}
+                {/* Personalkosten: Ist vs. Plan vs. Budget */}
                 {canSeePersonnelCostTotals && budgetData.personnelBudget > 0 && (
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
-                    <KpiCard
-                      title="Budget Personalkosten"
-                      value={formatCHF(budgetData.personnelBudget)}
-                      subtitle="Aus Jahresplanung"
-                      icon={<BookOpen className="h-5 w-5" />}
-                      color="blue"
-                    />
-                    {actualLaborCost > 0 && (
+                  <div className="mt-3">
+                    {/* Zeile 1: Dreiweg-Vergleich Ist · Plan · Budget */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      {actualLaborCost > 0 && (
+                        <KpiCard
+                          title="Ist Personalkosten"
+                          value={formatCHF(actualLaborCost)}
+                          subtitle={actualCostRatio !== null
+                            ? `${actualCostRatio.toFixed(1)} % v. Ist-Umsatz`
+                            : 'Effektive Kosten'}
+                          icon={<Users className="h-5 w-5" />}
+                          color={laborVsBudgetAbs !== null && laborVsBudgetAbs <= 0 ? 'green' : 'red'}
+                          delta={laborVsBudgetPct}
+                          deltaLabel="% vs. Budget"
+                        />
+                      )}
+                      {plannedLaborCost > 0 && (
+                        <KpiCard
+                          title="Plan-Kosten"
+                          value={formatCHF(plannedLaborCost)}
+                          subtitle="Aus Dienstplanung"
+                          icon={<CalendarDays className="h-5 w-5" />}
+                          color="default"
+                          delta={actualLaborCost > 0 && plannedLaborCost > 0
+                            ? ((actualLaborCost - plannedLaborCost) / plannedLaborCost) * 100
+                            : null}
+                          deltaLabel="% Ist vs. Plan"
+                        />
+                      )}
                       <KpiCard
-                        title="Ist Personalkosten"
-                        value={formatCHF(actualLaborCost)}
-                        subtitle="Effektive Kosten"
-                        icon={<Users className="h-5 w-5" />}
-                        color={laborVsBudgetAbs !== null && laborVsBudgetAbs <= 0 ? 'green' : 'red'}
-                        delta={laborVsBudgetPct}
-                        deltaLabel="% vs. Budget"
-                      />
-                    )}
-                    {budgetData.personnelRatioTarget !== null && (
-                      <KpiCard
-                        title="Budget-Zielquote"
-                        value={`${budgetData.personnelRatioTarget.toFixed(1)} %`}
-                        subtitle="Personalkostenquote Budget"
-                        icon={<Target className="h-5 w-5" />}
+                        title="Budget Personalkosten"
+                        value={formatCHF(budgetData.personnelBudget)}
+                        subtitle="Aus Jahresplanung"
+                        icon={<BookOpen className="h-5 w-5" />}
                         color="blue"
                       />
-                    )}
-                    {actualRatioVsBudgetRevenue !== null && budgetData.personnelRatioTarget !== null && (
-                      <KpiCard
-                        title="Ist-Quote vs. Budget"
-                        value={`${actualRatioVsBudgetRevenue.toFixed(1)} %`}
-                        subtitle={`Ziel: ≤ ${budgetData.personnelRatioTarget.toFixed(1)} %`}
-                        icon={<Target className="h-5 w-5" />}
-                        color={budgetRatioColor(actualRatioVsBudgetRevenue, budgetData.personnelRatioTarget)}
-                        badge={
-                          actualRatioVsBudgetRevenue <= budgetData.personnelRatioTarget
-                            ? '✓ Im Ziel'
-                            : actualRatioVsBudgetRevenue <= budgetData.personnelRatioTarget + 5
-                            ? '~ Grenzwertig'
-                            : '↑ Über Ziel'
-                        }
-                        badgeColor={
-                          actualRatioVsBudgetRevenue <= budgetData.personnelRatioTarget
-                            ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
-                            : actualRatioVsBudgetRevenue <= budgetData.personnelRatioTarget + 5
-                            ? 'bg-yellow-50 text-yellow-700 border-yellow-300 dark:bg-yellow-950/30'
-                            : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
-                        }
-                      />
-                    )}
+                      {actualRatioVsBudgetRevenue !== null && budgetData.personnelRatioTarget !== null && (
+                        <KpiCard
+                          title="Ist-Quote vs. Ziel"
+                          value={`${actualCostRatio !== null ? actualCostRatio.toFixed(1) : actualRatioVsBudgetRevenue.toFixed(1)} %`}
+                          subtitle={`Ziel: ≤ ${budgetData.personnelRatioTarget.toFixed(1)} % v. Umsatz`}
+                          icon={<Target className="h-5 w-5" />}
+                          color={budgetRatioColor(
+                            actualCostRatio ?? actualRatioVsBudgetRevenue,
+                            budgetData.personnelRatioTarget,
+                          )}
+                          badge={
+                            (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget
+                              ? '✓ Im Ziel'
+                              : (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget + 5
+                              ? '~ Grenzwertig'
+                              : '↑ Über Ziel'
+                          }
+                          badgeColor={
+                            (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget
+                              ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
+                              : (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget + 5
+                              ? 'bg-yellow-50 text-yellow-700 border-yellow-300 dark:bg-yellow-950/30'
+                              : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
+                          }
+                        />
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -1120,7 +1132,9 @@ const Dashboard = () => {
                         <KpiCard
                           title="Ist Personalkosten"
                           value={formatCHF(actualLaborCostStichtag)}
-                          subtitle={`bis ${stichtagFormatted}`}
+                          subtitle={revenueIstStichtag && revenueIstStichtag > 0
+                            ? `${((actualLaborCostStichtag / revenueIstStichtag) * 100).toFixed(1)} % v. Ist-Umsatz`
+                            : `bis ${stichtagFormatted}`}
                           icon={<Users className="h-5 w-5" />}
                           color={actualLaborCostStichtag <= personnelBudgetProRata ? 'green' : 'red'}
                           delta={personnelBudgetProRata > 0
