@@ -527,17 +527,9 @@ function BudgetContent() {
                                   onCancel={() => setEditKumuliert(null)}
                                 />
                               ) : (
-                                <div className="flex items-center justify-end gap-1">
-                                  {item.valueType === 'percent'
-                                    ? <span className="text-blue-700 dark:text-blue-300">{CHF(iyearly)}</span>
-                                    : <>
-                                        <span>{iyearly !== 0 ? CHF(iyearly) : <span className="text-muted-foreground/30">–</span>}</span>
-                                        {iyearly !== 0 && (
-                                          <SplitSquareHorizontal className="h-3 w-3 text-amber-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                                        )}
-                                      </>
-                                  }
-                                </div>
+                                item.valueType === 'percent'
+                                  ? <span className="text-blue-700 dark:text-blue-300">{CHF(iyearly)}</span>
+                                  : <span>{iyearly !== 0 ? CHF(iyearly) : <span className="text-muted-foreground/30">–</span>}</span>
                               )}
                             </td>
                             {/* Kumuliert % (Anteil am Jahresumsatz) */}
