@@ -488,6 +488,22 @@ export function restoreMissingDefaultPLItems(year: number): { budget: BudgetYear
 }
 
 /**
+ * Setzt die P&L-Kontenstruktur vollständig zurück auf DEFAULT_PL_CATEGORIES
+ * und DEFAULT_PL_LINE_ITEMS. Alle bestehenden Budgetwerte der P&L-Positionen
+ * gehen verloren; Budgetpositionen, Regeln und Jahr bleiben erhalten.
+ */
+export function resetPLToDefaults(year: number): BudgetYear {
+  const budget = loadBudgetYear(year);
+  const reset: BudgetYear = {
+    ...budget,
+    plCategories: DEFAULT_PL_CATEGORIES.map(c => ({ ...c })),
+    plLineItems: DEFAULT_PL_LINE_ITEMS.map(createDefaultPLLineItem),
+  };
+  saveBudgetYear(reset);
+  return reset;
+}
+
+/**
  * Löscht eine P&L-Zeile (auch Standard-Positionen).
  */
 export function deletePLLineItem(year: number, itemId: string): BudgetYear {

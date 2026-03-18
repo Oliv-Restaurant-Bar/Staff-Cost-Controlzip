@@ -33,7 +33,7 @@ import {
   addBudgetRule, removeBudgetRule, deleteBudgetYear,
   savePLLineItem, addCustomPLLineItem, removeCustomPLLineItem,
   computePLCategoryTotals, computePLResultTotals,
-  restoreMissingDefaultPLItems,
+  restoreMissingDefaultPLItems, resetPLToDefaults,
 } from '@/lib/budget-store';
 
 import { Button }  from '@/components/ui/button';
@@ -175,10 +175,11 @@ function BudgetContent() {
   const [editKumuliert, setEditKumuliert] = useState<string | null>(null); // itemId
 
   // Dialoge
-  const [copyDialog,    setCopyDialog]    = useState(false);
-  const [ruleDialog,    setRuleDialog]    = useState(false);
-  const [addItemDialog, setAddItemDialog] = useState<{ categoryId: string } | null>(null);
-  const [deleteDialog,  setDeleteDialog]  = useState(false);
+  const [copyDialog,     setCopyDialog]    = useState(false);
+  const [ruleDialog,     setRuleDialog]    = useState(false);
+  const [addItemDialog,  setAddItemDialog] = useState<{ categoryId: string } | null>(null);
+  const [deleteDialog,   setDeleteDialog]  = useState(false);
+  const [resetPLDialog,  setResetPLDialog] = useState(false);
 
   const reload = useCallback((year: number) => {
     setBudget(loadBudgetWithPL(year));
@@ -269,6 +270,13 @@ function BudgetContent() {
     }
   };
 
+  const handleResetPL = () => {
+    const upd = resetPLToDefaults(selectedYear);
+    setBudget(upd);
+    setResetPLDialog(false);
+    toast.success('Konten wurden vollständig zurückgesetzt — Struktur entspricht jetzt 1:1 der Erfolgsrechnung.');
+  };
+
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -298,8 +306,10 @@ function BudgetContent() {
           <Button variant="outline" size="sm" onClick={() => setCopyDialog(true)} className="gap-1.5">
             <Copy className="h-4 w-4" /> Jahr kopieren
           </Button>
-          <Button variant="outline" size="sm" onClick={handleRestoreDefaults} className="gap-1.5" title="Fehlende Standardkonten (Oliv-Kontenplan) hinzufügen">
-            <CheckCircle2 className="h-4 w-4" /> Standardkonten
+          <Button variant="outline" size="sm" onClick={() => setResetPLDialog(true)}
+            className="gap-1.5 text-red-600 border-red-200 hover:bg-red-50"
+            title="Alle Konten löschen und 1:1 Struktur der Erfolgsrechnung wiederherstellen">
+            <RefreshCw className="h-4 w-4" /> Konten zurücksetzen
           </Button>
           <Button variant="outline" size="sm" onClick={handleApplyRules} className="gap-1.5">
             <RefreshCw className="h-4 w-4" /> Regeln anwenden
@@ -698,6 +708,27 @@ function BudgetContent() {
               setDeleteDialog(false);
               toast.success(`Budget ${selectedYear} gelöscht`);
             }}>Löschen</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Konten zurücksetzen ── */}
+      <Dialog open={resetPLDialog} onOpenChange={setResetPLDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Konten zurücksetzen?</DialogTitle>
+          </DialogHeader>
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              Alle P&amp;L-Konten und Budgetwerte für <strong>{selectedYear}</strong> werden gelöscht und durch die Standardstruktur der Erfolgsrechnung ersetzt (Konten 3000, 4000–4060, 5000–5890, 6000–6900). Eingegebene Budgetwerte gehen verloren.
+            </AlertDescription>
+          </Alert>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetPLDialog(false)}>Abbrechen</Button>
+            <Button variant="destructive" onClick={handleResetPL}>
+              Zurücksetzen
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
