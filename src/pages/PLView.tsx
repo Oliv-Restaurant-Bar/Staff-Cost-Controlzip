@@ -505,7 +505,8 @@ const BPL_CAT_RANGES: Record<string, [number, number]> = {
   pl_social:          [5700, 5799],  // 5700-5740: AHV/BVG/UVG/KVG
   pl_personnel_other: [5800, 5899],  // 5810-5890: Übriger Personalaufwand
   pl_rent:            [6000, 6099],  // 6000-6050: Miete, Reinigung, Unterhalt Räume
-  pl_maintenance:     [6100, 6299],  // 6100-6140: URE Maschinen/Mobiliar/EDV
+  pl_maintenance:     [6100, 6199],  // 6100-6140: URE Maschinen/Mobiliar/EDV
+  pl_vehicles:        [6200, 6299],  // 6200-6240: Fahrzeug Service/Benzin/Versicherung/Leasing
   pl_insurance:       [6300, 6399],  // 6310-6360: Haftpflicht, Abgaben, Gebühren
   pl_energy:          [6400, 6499],  // 6400: Strom, Gas, Heizöl, Wasser
   pl_admin:           [6500, 6599],  // 6500-6530: Büro, Telefon, Buchhaltung
@@ -577,8 +578,10 @@ const PL_CAT_TO_BPL: Partial<Record<string, string>> = {
   // Raumaufwand (6000–6099: Miete, Reinigung, Unterhalt Räume)
   rent:              'pl_rent',
   cleaning:          'pl_rent',
-  // URE (6100–6299)
+  // URE (6100–6199)
   maintenance:       'pl_maintenance',
+  // Fahrzeugaufwand (6200–6299)
+  vehicle_costs:     'pl_vehicles',
   // Sachversicherungen / Abgaben (6300–6399)
   insurance:         'pl_insurance',
   // Energie (6400–6499)

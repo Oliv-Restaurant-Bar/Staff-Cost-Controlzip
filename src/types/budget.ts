@@ -300,6 +300,7 @@ export const DEFAULT_PL_CATEGORIES: BudgetPLCategory[] = [
   // ── Betriebsaufwand ──────────────────────────────────────────────────────────
   { id: 'pl_rent',            label: 'Raumaufwand',                            type: 'items',  isExpense: true,  sortOrder: 90,  color: 'gray'   },
   { id: 'pl_maintenance',     label: 'Unterhalt, Rep., Ersatz (URE)',           type: 'items',  isExpense: true,  sortOrder: 100, color: 'gray'   },
+  { id: 'pl_vehicles',        label: 'Fahrzeugaufwand',                        type: 'items',  isExpense: true,  sortOrder: 105, color: 'gray'   },
   { id: 'pl_insurance',       label: 'Sachversich., Abgaben, Gebühren',        type: 'items',  isExpense: true,  sortOrder: 110, color: 'gray'   },
   { id: 'pl_energy',          label: 'Energie- und Entsorgungsaufwand',        type: 'items',  isExpense: true,  sortOrder: 120, color: 'gray'   },
   { id: 'pl_admin',           label: 'Verwaltungsaufwand',                     type: 'items',  isExpense: true,  sortOrder: 130, color: 'gray'   },
@@ -311,6 +312,7 @@ export const DEFAULT_PL_CATEGORIES: BudgetPLCategory[] = [
       { sign:  1, categoryId: 'pl_gross_2'    },
       { sign: -1, categoryId: 'pl_rent'       },
       { sign: -1, categoryId: 'pl_maintenance'},
+      { sign: -1, categoryId: 'pl_vehicles'   },
       { sign: -1, categoryId: 'pl_insurance'  },
       { sign: -1, categoryId: 'pl_energy'     },
       { sign: -1, categoryId: 'pl_admin'      },
@@ -374,6 +376,12 @@ export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = 
   { id: 'pli_ure_maschinen',  categoryId: 'pl_maintenance',     accountNumber: '6100', label: 'URE Maschinen und Apparate',       valueType: 'chf', sortOrder: 1 },
   { id: 'pli_ure_mobiliar',   categoryId: 'pl_maintenance',     accountNumber: '6110', label: 'URE Mobiliar und Einrichtung',     valueType: 'chf', sortOrder: 2 },
   { id: 'pli_ure_edv',        categoryId: 'pl_maintenance',     accountNumber: '6140', label: 'URE Informatik EDV',               valueType: 'chf', sortOrder: 3 },
+
+  // ── Fahrzeugaufwand ───────────────────────────────────────────────────────────
+  { id: 'pli_fzg_service',    categoryId: 'pl_vehicles',        accountNumber: '6200', label: 'Fahrzeug Service',              valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_fzg_benzin',     categoryId: 'pl_vehicles',        accountNumber: '6210', label: 'Fahrzeug Benzin',               valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_fzg_vers',       categoryId: 'pl_vehicles',        accountNumber: '6220', label: 'Fahrzeug Versicherung',         valueType: 'chf', sortOrder: 3 },
+  { id: 'pli_fzg_leasing',    categoryId: 'pl_vehicles',        accountNumber: '6240', label: 'Fahrzeug Leasing',              valueType: 'chf', sortOrder: 4 },
 
   // ── Sachversicherungen, Abgaben, Gebühren ────────────────────────────────────
   { id: 'pli_haftpflicht',    categoryId: 'pl_insurance',       accountNumber: '6310', label: 'Betriebshaftpflichtversicherung',  valueType: 'chf', sortOrder: 1 },
