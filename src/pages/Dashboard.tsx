@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   format, startOfWeek, endOfWeek, eachDayOfInterval,
-  startOfMonth, endOfMonth,
+  startOfMonth, endOfMonth, startOfYear, endOfYear,
 } from 'date-fns';
 import { de } from 'date-fns/locale';
 import {
@@ -10,7 +10,7 @@ import {
   Users, Clock, ChefHat, Utensils,
   CalendarDays, AlertTriangle, CheckCircle2,
   LayoutDashboard, Calendar, BarChart2,
-  BookOpen, Target,
+  BookOpen, Target, Upload,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -163,9 +163,19 @@ const SectionTitle = ({ children, icon }: { children: React.ReactNode; icon?: Re
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
+type Period = 'today' | 'week' | 'month' | 'year';
+
+const PERIOD_LABELS: Record<Period, string> = {
+  today: 'Heute',
+  week:  'Woche',
+  month: 'Monat',
+  year:  'Jahr',
+};
+
 const Dashboard = () => {
   const today = new Date();
   const monthKey = format(today, 'yyyy-MM');
+  const [period, setPeriod] = useState<Period>('month');
 
   const {
     isAdmin, isManager, allowedDepartment,
@@ -236,23 +246,28 @@ const Dashboard = () => {
     start: startOfMonth(today),
     end:   endOfMonth(today),
   }).map(d => format(d, 'yyyy-MM-dd'));
+  const yearDays = eachDayOfInterval({
+    start: startOfYear(today),
+    end:   endOfYear(today),
+  }).map(d => format(d, 'yyyy-MM-dd'));
+
+  // Aktive Tage abhängig von der gewählten Periode
+  const activeDays = period === 'today' ? [todayStr]
+    : period === 'week'  ? weekDays
+    : period === 'month' ? monthDays
+    : yearDays;
 
   // ── Umsatz-Berechnungen ─────────────────────────────────────────────────────
   const sumRevenue = (days: string[], field: keyof DailyBudget) =>
     days.reduce((s, d) => s + (dailyBudgets[d]?.[field] ?? 0), 0);
 
-  const revenueToday       = sumRevenue([todayStr], 'actualRevenue');
-  const revenueWeek        = sumRevenue(weekDays,  'actualRevenue');
-  const revenueMonth       = sumRevenue(monthDays, 'actualRevenue');
-  const revenuePlannedMonth = sumRevenue(monthDays, 'plannedRevenue');
-  const revenuePrevYear    = sumRevenue(monthDays, 'previousYearRevenue');
+  const revenueMonth        = sumRevenue(monthDays,  'actualRevenue');
+  const revenuePlannedMonth = sumRevenue(monthDays,  'plannedRevenue');
 
-  const revenueVsPlanned = revenuePlannedMonth > 0
-    ? ((revenueMonth - revenuePlannedMonth) / revenuePlannedMonth) * 100
-    : null;
-  const revenueVsPrevYear = revenuePrevYear > 0
-    ? ((revenueMonth - revenuePrevYear) / revenuePrevYear) * 100
-    : null;
+  // Periodenspezifische Umsatz-Werte
+  const revenueActive         = sumRevenue(activeDays, 'actualRevenue');
+  const revenuePlannedActive  = sumRevenue(activeDays, 'plannedRevenue');
+  const revenuePrevYearActive = sumRevenue(activeDays, 'previousYearRevenue');
 
   // ── Personalkosten-Berechnungen ─────────────────────────────────────────────
   const monthDateSet = new Set(monthDays);
@@ -375,18 +390,37 @@ const Dashboard = () => {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
-        <div className="max-w-6xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between gap-4">
+        <div className="max-w-6xl mx-auto px-4 py-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3">
-              <LayoutDashboard className="h-5 w-5 text-muted-foreground" />
+              <LayoutDashboard className="h-5 w-5 text-muted-foreground flex-shrink-0" />
               <div>
                 <h1 className="text-base font-bold leading-tight">Dashboard</h1>
                 <p className="text-xs text-muted-foreground">oLiv Restaurant & Bar · {monthName}</p>
               </div>
             </div>
+
+            {/* Zeitraum-Auswahl */}
+            <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+              {(['today', 'week', 'month', 'year'] as Period[]).map(p => (
+                <button
+                  key={p}
+                  onClick={() => setPeriod(p)}
+                  className={cn(
+                    'px-3 py-1 text-xs font-medium rounded-md transition-all',
+                    period === p
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {PERIOD_LABELS[p]}
+                </button>
+              ))}
+            </div>
+
             <div className="flex items-center gap-2">
               {isAdmin && (
-                <Badge variant="outline" className="text-xs hidden sm:flex">
+                <Badge variant="outline" className="text-xs hidden lg:flex">
                   {deptIcon}
                   <span className="ml-1">Alle Abteilungen</span>
                 </Badge>
@@ -395,7 +429,7 @@ const Dashboard = () => {
                 <Badge
                   variant="outline"
                   className={cn(
-                    'text-xs hidden sm:flex items-center gap-1',
+                    'text-xs hidden lg:flex items-center gap-1',
                     allowedDepartment === 'service'
                       ? 'border-blue-300 text-blue-700 bg-blue-50 dark:bg-blue-950/30'
                       : 'border-orange-300 text-orange-700 bg-orange-50 dark:bg-orange-950/30',
@@ -404,6 +438,14 @@ const Dashboard = () => {
                   {deptIcon}
                   <span>{deptLabel}</span>
                 </Badge>
+              )}
+              {isAdmin && (
+                <Link to="/import">
+                  <Button variant="outline" size="sm" className="h-8">
+                    <Upload className="h-3.5 w-3.5 mr-1.5" />
+                    <span className="hidden sm:inline">Import</span>
+                  </Button>
+                </Link>
               )}
               <Link to="/personal">
                 <Button variant="outline" size="sm" className="h-8">
@@ -463,60 +505,40 @@ const Dashboard = () => {
             {isAdmin && (
               <>
                 <SectionTitle icon={<TrendingUp className="h-4 w-4" />}>
-                  Umsatz {monthName}
+                  Umsatz · {PERIOD_LABELS[period]}
+                  {period === 'today' && <span className="ml-2 font-normal text-muted-foreground normal-case">{format(today, 'EEEE, d. MMMM', { locale: de })}</span>}
+                  {period === 'week'  && <span className="ml-2 font-normal text-muted-foreground normal-case">KW {format(today, 'w', { locale: de })}</span>}
+                  {period === 'month' && <span className="ml-2 font-normal text-muted-foreground normal-case">{monthName}</span>}
+                  {period === 'year'  && <span className="ml-2 font-normal text-muted-foreground normal-case">YTD {today.getFullYear()}</span>}
                 </SectionTitle>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <KpiCard
-                    title="Heute (Ist)"
-                    value={revenueToday > 0 ? formatCHF(revenueToday) : '–'}
-                    subtitle={format(today, 'EEEE, d. MMMM', { locale: de })}
+                    title={`Umsatz Ist · ${PERIOD_LABELS[period]}`}
+                    value={revenueActive > 0 ? formatCHF(revenueActive) : '–'}
+                    subtitle="Tatsächlicher Umsatz"
                     icon={<TrendingUp className="h-5 w-5" />}
-                    color={revenueToday > 0 ? 'green' : 'default'}
+                    color={revenueActive > 0 ? 'green' : 'default'}
                   />
                   <KpiCard
-                    title="Diese Woche (Ist)"
-                    value={revenueWeek > 0 ? formatCHF(revenueWeek) : '–'}
-                    subtitle={`KW ${format(today, 'w', { locale: de })}`}
-                    icon={<CalendarDays className="h-5 w-5" />}
-                    color="default"
-                  />
-                  <KpiCard
-                    title="Monat Plan"
-                    value={revenuePlannedMonth > 0 ? formatCHF(revenuePlannedMonth) : '–'}
+                    title={`Budget · ${PERIOD_LABELS[period]}`}
+                    value={revenuePlannedActive > 0 ? formatCHF(revenuePlannedActive) : '–'}
                     subtitle="Budgetierter Umsatz"
-                    icon={<TrendingUp className="h-5 w-5" />}
+                    delta={revenuePlannedActive > 0 ? ((revenueActive - revenuePlannedActive) / revenuePlannedActive) * 100 : null}
+                    deltaLabel="% vs. Budget"
+                    icon={<CalendarDays className="h-5 w-5" />}
                     color="blue"
                   />
                   <KpiCard
-                    title="Monat Ist"
-                    value={revenueMonth > 0 ? formatCHF(revenueMonth) : '–'}
-                    subtitle="Tatsächlicher Umsatz"
-                    delta={revenueVsPlanned}
-                    deltaLabel="% vs. Budget"
+                    title={`Vorjahr · ${PERIOD_LABELS[period]}`}
+                    value={revenuePrevYearActive > 0 ? formatCHF(revenuePrevYearActive) : '–'}
+                    subtitle="Vergleich Vorjahr"
+                    delta={revenuePrevYearActive > 0 ? ((revenueActive - revenuePrevYearActive) / revenuePrevYearActive) * 100 : null}
+                    deltaLabel="% vs. Vorjahr"
                     icon={<TrendingUp className="h-5 w-5" />}
-                    color={
-                      revenueVsPlanned === null ? 'default' :
-                      revenueVsPlanned >= 0 ? 'green' : 'red'
-                    }
+                    color={revenuePrevYearActive > 0 ? (revenueActive >= revenuePrevYearActive ? 'green' : 'red') : 'default'}
                   />
                 </div>
 
-                {revenuePrevYear > 0 && (
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-1">
-                    <KpiCard
-                      small
-                      title="Vorjahr (gleicher Monat)"
-                      value={formatCHF(revenuePrevYear)}
-                      subtitle="Vergleichswert Vorjahr"
-                      delta={revenueVsPrevYear}
-                      deltaLabel="% vs. Vorjahr"
-                      color={
-                        revenueVsPrevYear === null ? 'default' :
-                        revenueVsPrevYear >= 0 ? 'green' : 'red'
-                      }
-                    />
-                  </div>
-                )}
               </>
             )}
 

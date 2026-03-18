@@ -88,8 +88,8 @@ const NAV_ITEMS: NavItem[] = [
     adminOnly: true,
   },
   {
-    path: '/csv-import',
-    label: 'Buchh.-Import',
+    path: '/import',
+    label: 'Import-Zentrale',
     shortLabel: 'Import',
     icon: Upload,
     adminOnly: true,

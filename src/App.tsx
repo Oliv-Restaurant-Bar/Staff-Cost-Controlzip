@@ -29,6 +29,7 @@ import DepartmentSchedule from "./pages/DepartmentSchedule";
 import DepartmentPlannerWrapper from "./pages/DepartmentPlannerWrapper";
 import NotFound from "./pages/NotFound";
 import OnboardingForm from "./pages/OnboardingForm";
+import ImportHub from "./pages/ImportHub";
 
 const queryClient = new QueryClient();
 
@@ -97,6 +98,7 @@ const AppContent = () => {
           <Route path="/kontenplan"       element={<AccountMappingPage />} />
           <Route path="/erfolgsrechnung"  element={<PLViewPage />} />
           <Route path="/csv-import"       element={<CSVImportPage />} />
+          <Route path="/import"           element={<ImportHub />} />
           <Route path="/lieferanten"          element={<SupplierDocumentsPage />} />
           <Route path="/lieferanten-vergleich" element={<SupplierComparisonPage />} />
           <Route path="/budget"           element={<BudgetPage />} />
