@@ -174,6 +174,48 @@ export const ActualHoursImportButton = ({
     });
   }
 
+  // ── Auto-Import wenn alle Namen bereits bekannt ───────────────────────────
+
+  const autoApplyAndImport = (matches: NameMatchInfo[], entries: MirusDailyImportEntry[]) => {
+    const overrides: NameMatchOverride[] = matches.map(m => ({
+      importedName:       m.importedName,
+      selectedEmployeeId: m.matchedEmployee?.id || 'skip',
+    }));
+
+    // Mappings für zukünftige Importe speichern
+    saveNameMappingsBatch(
+      overrides
+        .filter(o => o.selectedEmployeeId !== 'new')
+        .map(o => ({ importedName: o.importedName, employeeId: o.selectedEmployeeId || 'skip' })),
+    );
+
+    const nameToId = new Map<string, string | 'skip'>();
+    overrides.forEach(o => nameToId.set(o.importedName, o.selectedEmployeeId || 'skip'));
+
+    const updatedEntries = entries
+      .filter(entry => {
+        const m = nameToId.get(entry.name);
+        return m !== 'skip' && m !== undefined;
+      })
+      .map(entry => {
+        const empId = nameToId.get(entry.name);
+        if (empId && empId !== 'skip') {
+          const emp = employees.find(e => e.id === empId);
+          if (emp) return { ...entry, name: emp.name };
+        }
+        return entry;
+      });
+
+    setParsedEntries(updatedEntries);
+    onImport(updatedEntries, importMode);
+
+    const uniqueEmps = new Set(updatedEntries.map(e => e.name)).size;
+    const totalHours = updatedEntries.reduce((s, e) => s + e.hours, 0);
+    toast.success(
+      `${updatedEntries.length} Ist-Stunden importiert: ${uniqueEmps} Mitarbeiter, ${totalHours.toFixed(1)} Std.`,
+    );
+  };
+
   // ── Datei-Upload ──────────────────────────────────────────────────────────
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -200,9 +242,15 @@ export const ActualHoursImportButton = ({
         );
       } else {
         const matches = generateNameMatches(result.entries);
-        setNameMatches(matches);
-        setShowMatchDialog(true);
-        toast.success(`${result.entries.length} Ist-Stunden-Einträge erkannt`);
+        const unresolved = matches.filter(m => m.isNew && !m.matchedEmployee);
+        if (unresolved.length === 0) {
+          // Alle Namen bekannt → direkt importieren ohne Dialog
+          autoApplyAndImport(matches, result.entries);
+        } else {
+          setNameMatches(matches);
+          setShowMatchDialog(true);
+          toast.success(`${result.entries.length} Ist-Stunden-Einträge erkannt`);
+        }
       }
     } catch (error) {
       console.error('Fehler beim Parsen:', error);
@@ -226,9 +274,14 @@ export const ActualHoursImportButton = ({
       setDetectedDates(result.dateRange);
       if (result.entries.length > 0) {
         const matches = generateNameMatches(result.entries);
-        setNameMatches(matches);
-        setShowMatchDialog(true);
-        toast.success(`${result.entries.length} Ist-Stunden aus Testdatei geladen`);
+        const unresolved = matches.filter(m => m.isNew && !m.matchedEmployee);
+        if (unresolved.length === 0) {
+          autoApplyAndImport(matches, result.entries);
+        } else {
+          setNameMatches(matches);
+          setShowMatchDialog(true);
+          toast.success(`${result.entries.length} Ist-Stunden aus Testdatei geladen`);
+        }
       }
     } catch {
       toast.error('Fehler beim Laden der Testdatei');
