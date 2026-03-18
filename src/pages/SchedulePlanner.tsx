@@ -664,8 +664,9 @@ const SchedulePlanner = () => {
   };
 
   // Handle Mirus XLS Ist-Stunden import directly in the Dienstplan
-  const handleImportMirusActualHours = (entries: MirusDailyImportEntry[], mode: MirusImportMode) => {
+  const handleImportMirusActualHours = async (entries: MirusDailyImportEntry[], mode: MirusImportMode) => {
     const affectedMonths = new Set(entries.map(e => e.date.slice(0, 7)));
+    const supabaseSaves: Array<{ empId: string; date: string; hours: number }> = [];
 
     setActualHoursData(prev => {
       let updated = { ...prev };
@@ -696,6 +697,7 @@ const SchedulePlanner = () => {
         const cellKey = `${employee.id}-${entry.date}`;
         if (mode === 'replace' || !updated[cellKey]) {
           updated[cellKey] = { hours: entry.hours };
+          supabaseSaves.push({ empId: employee.id, date: entry.date, hours: entry.hours });
         }
         matchedCount++;
       }
@@ -705,7 +707,7 @@ const SchedulePlanner = () => {
         const ex = (() => { try { return JSON.parse(localStorage.getItem(sk) || '{}'); } catch { return {}; } })();
         const data = { ...ex };
         for (const [k, v] of Object.entries(updated)) {
-          const dateFromKey = k.slice(-10); // yyyy-MM-dd
+          const dateFromKey = k.slice(-10);
           if (dateFromKey.slice(0, 7) === m) data[k] = v;
         }
         localStorage.setItem(sk, JSON.stringify(data));
@@ -723,6 +725,15 @@ const SchedulePlanner = () => {
 
       return updated;
     });
+
+    // Supabase persistieren — parallel, außerhalb des setState-Callbacks
+    if (supabaseSaves.length > 0) {
+      await Promise.all(
+        supabaseSaves.map(({ empId, date, hours }) =>
+          saveActualHourEntry(empId, date, { hours }),
+        ),
+      );
+    }
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
