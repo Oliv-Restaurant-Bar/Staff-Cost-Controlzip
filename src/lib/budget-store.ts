@@ -413,19 +413,53 @@ function migrateToSingleRevenueItem(budget: BudgetYear): BudgetYear {
   return { ...budget, plLineItems: newItems };
 }
 
+const OBSOLETE_PL_IDS = [
+  'pli_waren_wein', 'pli_waren_bier', 'pli_waren_spirit', 'pli_waren_mineral', 'pli_waren_kueche',
+  'pli_lohn_flex', 'pli_lohn_13', 'pli_lohn_zulagen',
+  'pli_ahv', 'pli_bvg', 'pli_uvg',
+  'pli_weiterbildung', 'pli_personalverpf',
+  'pli_nebenkosten', 'pli_verwaltung', 'pli_uebrig_aufwand',
+];
+
+function migrateObsoletePLItems(budget: BudgetYear): BudgetYear {
+  const items = budget.plLineItems ?? [];
+  const hasObsolete = items.some(i => OBSOLETE_PL_IDS.includes(i.id));
+  if (!hasObsolete) return budget;
+
+  const kept = items.filter(i => !OBSOLETE_PL_IDS.includes(i.id));
+  const existingIds = new Set(kept.map(i => i.id));
+  const toAdd = DEFAULT_PL_LINE_ITEMS
+    .filter(d => !existingIds.has(d.id) && d.id !== 'pli_umsatz')
+    .map(createDefaultPLLineItem);
+
+  return { ...budget, plLineItems: [...kept, ...toAdd] };
+}
+
 /**
  * Budgetjahr laden und P&L-Struktur sicherstellen.
- * Wenn noch keine P&L-Struktur vorhanden → Standardstruktur erstellen + speichern.
  */
 export function loadBudgetWithPL(year: number): BudgetYear {
   let budget = loadBudgetYear(year);
   if (!budget.plCategories || !budget.plLineItems) {
     budget = initPLStructure(budget);
   }
-  // Migration: alte Umsatzkonten → pli_umsatz
   budget = migrateToSingleRevenueItem(budget);
+  budget = migrateObsoletePLItems(budget);
   saveBudgetYear(budget);
   return budget;
+}
+
+/**
+ * Löscht eine P&L-Zeile (auch Standard-Positionen).
+ */
+export function deletePLLineItem(year: number, itemId: string): BudgetYear {
+  const budget = loadBudgetWithPL(year);
+  const updated = syncPLToLegacyPositions({
+    ...budget,
+    plLineItems: budget.plLineItems!.filter(i => i.id !== itemId),
+  });
+  saveBudgetYear(updated);
+  return updated;
 }
 
 /**

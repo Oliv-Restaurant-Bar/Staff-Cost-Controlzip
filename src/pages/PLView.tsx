@@ -18,7 +18,7 @@ import { Navigate } from 'react-router-dom';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Info,
   ChevronDown, X, BarChart2, Table2, Calendar,
-  AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight,
+  AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
   Minus, Database, AlignJustify, List, Pencil, Check,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -38,7 +38,7 @@ import { lookupAccount } from '@/lib/account-mapping-store';
 import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE } from '@/lib/pl-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
-import { loadBudgetWithPL } from '@/lib/budget-store';
+import { loadBudgetWithPL, deletePLLineItem } from '@/lib/budget-store';
 import { BudgetYear, BudgetPLCategory } from '@/types/budget';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
@@ -685,7 +685,7 @@ const BPLVarCell = ({ value, pct }: { value: number; pct?: number }) => {
   );
 };
 
-const BPLRowComp = ({ row, onClick, compact }: { row: BPLRowWithValues; onClick: () => void; compact: boolean }) => {
+const BPLRowComp = ({ row, onClick, compact, onDelete }: { row: BPLRowWithValues; onClick: () => void; compact: boolean; onDelete?: (itemId: string) => void }) => {
   const { values: v } = row;
   const py = compact ? 'py-1' : 'py-2';
   const pyResult = compact ? 'py-1' : 'py-2.5';
@@ -724,23 +724,32 @@ const BPLRowComp = ({ row, onClick, compact }: { row: BPLRowWithValues; onClick:
     );
   }
 
+  const isBudgetItem = row.itemId && !row.itemId.startsWith('actual_');
   return (
     <tr
-      className="hover:bg-muted/30 cursor-pointer border-b border-slate-100 dark:border-slate-800 transition-colors"
-      onClick={onClick}
-      title="Klicken für Details"
+      className="hover:bg-muted/30 border-b border-slate-100 dark:border-slate-800 transition-colors group"
     >
-      <td className={cn('px-3 pl-9 text-sm', pyItem)}>
+      <td className={cn('px-3 pl-9 text-sm cursor-pointer', pyItem)} onClick={onClick}>
         <span className="text-[10px] text-muted-foreground/50 font-mono mr-1.5">{row.itemAccountNumber}</span>
         {row.itemLabel}
       </td>
       <td className={cn('px-2 w-5', pyItem)}>
-        <ChevronDown className="h-3 w-3 text-muted-foreground opacity-30" />
+        {isBudgetItem && onDelete ? (
+          <button
+            onClick={e => { e.stopPropagation(); onDelete(row.itemId!); }}
+            title="Zeile löschen"
+            className="opacity-0 group-hover:opacity-60 hover:!opacity-100 text-red-500 transition-opacity"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        ) : (
+          <ChevronDown className="h-3 w-3 text-muted-foreground opacity-30 cursor-pointer" onClick={onClick} />
+        )}
       </td>
-      <td className={cn('px-2 text-right text-sm font-mono tabular-nums', pyItem)}>{v.actual > 0 ? fmt(v.actual) : <span className="text-muted-foreground/40">—</span>}</td>
-      <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyItem)}>{v.budget > 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>
+      <td className={cn('px-2 text-right text-sm font-mono tabular-nums cursor-pointer', pyItem)} onClick={onClick}>{v.actual > 0 ? fmt(v.actual) : <span className="text-muted-foreground/40">—</span>}</td>
+      <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.budget > 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>
       <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
-      <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyItem)}>{v.prevYear > 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>
+      <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.prevYear > 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>
       <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />
     </tr>
   );
@@ -749,10 +758,12 @@ const BPLRowComp = ({ row, onClick, compact }: { row: BPLRowWithValues; onClick:
 const BudgetPLView = ({
   rows,
   onRowClick,
+  onDeleteItem,
   compact,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
+  onDeleteItem?: (itemId: string) => void;
   compact: boolean;
 }) => (
   <div className="overflow-x-auto">
@@ -775,6 +786,7 @@ const BudgetPLView = ({
             row={row}
             onClick={() => onRowClick(row)}
             compact={compact}
+            onDelete={onDeleteItem}
           />
         ))}
       </tbody>
@@ -1003,7 +1015,7 @@ const PLViewPage = () => {
   );
 
   // Budget P&L laden
-  const budgetData = useMemo(() => loadBudgetWithPL(year), [year]);
+  const budgetData = useMemo(() => loadBudgetWithPL(year), [year, refreshKey]);
 
   const bplRows = useMemo(
     () => computeBPLRows(budgetData, records[month - 1], month - 1),
@@ -1213,7 +1225,15 @@ const PLViewPage = () => {
 
           {/* Tabelle */}
           {mode === 'budget_pl'
-            ? <BudgetPLView rows={bplRows} onRowClick={row => setBplDrilldown(row)} compact={compact} />
+            ? <BudgetPLView
+                rows={bplRows}
+                onRowClick={row => setBplDrilldown(row)}
+                compact={compact}
+                onDeleteItem={itemId => {
+                  deletePLLineItem(year, itemId);
+                  setRefreshKey(k => k + 1);
+                }}
+              />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
             : <YearView results={yearResult.months} onClickMonth={handleYearMonthClick} />

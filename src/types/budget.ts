@@ -303,43 +303,47 @@ export const DEFAULT_PL_CATEGORIES: BudgetPLCategory[] = [
 const Z12: BudgetPLLineItem['monthlyValues'] = [0,0,0,0,0,0,0,0,0,0,0,0];
 
 export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = [
-  // Betriebsertrag – ein einziges Konto 3000
-  { id: 'pli_umsatz',         categoryId: 'pl_revenue',         accountNumber: '3000', label: 'Umsatz',                     valueType: 'chf',     sortOrder: 1  },
+  // Betriebsertrag
+  { id: 'pli_umsatz',         categoryId: 'pl_revenue',         accountNumber: '3000', label: 'Umsatz',                        valueType: 'chf', sortOrder: 1 },
 
-  // Warenaufwand
-  { id: 'pli_waren_wein',     categoryId: 'pl_goods_cost',      accountNumber: '4000', label: 'Wein Warenaufwand',          valueType: 'percent', sortOrder: 1  },
-  { id: 'pli_waren_bier',     categoryId: 'pl_goods_cost',      accountNumber: '4100', label: 'Bier Warenaufwand',          valueType: 'percent', sortOrder: 2  },
-  { id: 'pli_waren_spirit',   categoryId: 'pl_goods_cost',      accountNumber: '4200', label: 'Spirituosen Warenaufwand',   valueType: 'percent', sortOrder: 3  },
-  { id: 'pli_waren_mineral',  categoryId: 'pl_goods_cost',      accountNumber: '4300', label: 'Mineral / Softdrinks',       valueType: 'percent', sortOrder: 4  },
-  { id: 'pli_waren_kueche',   categoryId: 'pl_goods_cost',      accountNumber: '4400', label: 'Küche Warenaufwand',         valueType: 'percent', sortOrder: 5,  department: 'küche'   },
+  // Warenaufwand – Oliv Konten
+  { id: 'pli_growa',          categoryId: 'pl_goods_cost',      accountNumber: '4000', label: 'GROWA Warenaufwand',             valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_alligro',        categoryId: 'pl_goods_cost',      accountNumber: '4001', label: 'Alligro Warenaufwand',           valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_bier',           categoryId: 'pl_goods_cost',      accountNumber: '4002', label: 'Feldschlösschen / Carlsberg',    valueType: 'chf', sortOrder: 3 },
+  { id: 'pli_wein',           categoryId: 'pl_goods_cost',      accountNumber: '4010', label: 'Keller AG / Wein',              valueType: 'chf', sortOrder: 4 },
+  { id: 'pli_kueche',         categoryId: 'pl_goods_cost',      accountNumber: '4060', label: 'Küche Warenaufwand',             valueType: 'chf', sortOrder: 5 },
 
-  // Löhne
-  { id: 'pli_lohn_fix',       categoryId: 'pl_wages',           accountNumber: '5000', label: 'Lohn Fix',                   valueType: 'chf',     sortOrder: 1  },
-  { id: 'pli_lohn_flex',      categoryId: 'pl_wages',           accountNumber: '5100', label: 'Lohn Flex',                  valueType: 'chf',     sortOrder: 2  },
-  { id: 'pli_lohn_13',        categoryId: 'pl_wages',           accountNumber: '5200', label: '13. Monatslohn',             valueType: 'chf',     sortOrder: 3  },
-  { id: 'pli_lohn_zulagen',   categoryId: 'pl_wages',           accountNumber: '5300', label: 'Lohn Zulagen',               valueType: 'chf',     sortOrder: 4  },
+  // Löhne – Oliv Konten
+  { id: 'pli_lohn_fix',       categoryId: 'pl_wages',           accountNumber: '5000', label: 'Löhne',                         valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_lohn_flex',      categoryId: 'pl_wages',           accountNumber: '5001', label: 'Löhne Flex',                    valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_lohn_13',        categoryId: 'pl_wages',           accountNumber: '5002', label: '13. Monatslohn',                valueType: 'chf', sortOrder: 3 },
+  { id: 'pli_lohn_ferien',    categoryId: 'pl_wages',           accountNumber: '5003', label: 'Ferien / Feiertage Rückst.',    valueType: 'chf', sortOrder: 4 },
 
-  // Sozialleistungen
-  { id: 'pli_ahv',            categoryId: 'pl_social',          accountNumber: '5400', label: 'AHV / IV / EO / ALV',        valueType: 'chf',     sortOrder: 1  },
-  { id: 'pli_bvg',            categoryId: 'pl_social',          accountNumber: '5500', label: 'BVG / Pensionskasse',         valueType: 'chf',     sortOrder: 2  },
-  { id: 'pli_uvg',            categoryId: 'pl_social',          accountNumber: '5600', label: 'UVG / Krankentaggeld',        valueType: 'chf',     sortOrder: 3  },
+  // Sozialleistungen – Oliv Konten 5700–5770
+  { id: 'pli_ahv',            categoryId: 'pl_social',          accountNumber: '5700', label: 'AHV / IV / EO / ALV / FAK',     valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_bvg',            categoryId: 'pl_social',          accountNumber: '5710', label: 'BVG / Pensionskasse',            valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_uvg',            categoryId: 'pl_social',          accountNumber: '5720', label: 'UVG Berufsunfall',               valueType: 'chf', sortOrder: 3 },
+  { id: 'pli_ktg',            categoryId: 'pl_social',          accountNumber: '5730', label: 'KTG / NBU / SUVA',              valueType: 'chf', sortOrder: 4 },
+  { id: 'pli_quellst',        categoryId: 'pl_social',          accountNumber: '5770', label: 'Quellensteuer',                  valueType: 'chf', sortOrder: 5 },
 
-  // Übriger Personalaufwand
-  { id: 'pli_weiterbildung',  categoryId: 'pl_personnel_other', accountNumber: '5700', label: 'Aus- und Weiterbildung',      valueType: 'chf',     sortOrder: 1  },
-  { id: 'pli_personalverpf',  categoryId: 'pl_personnel_other', accountNumber: '5800', label: 'Personalverpflegung / übriges', valueType: 'chf',  sortOrder: 2  },
+  // Übriger Personalaufwand – Oliv Konten 5800–5890
+  { id: 'pli_personalverpf',  categoryId: 'pl_personnel_other', accountNumber: '5850', label: 'Personalverpflegung',            valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_weiterbildung',  categoryId: 'pl_personnel_other', accountNumber: '5830', label: 'Aus- und Weiterbildung',         valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_uebrig_pers',    categoryId: 'pl_personnel_other', accountNumber: '5890', label: 'Übriger Personalaufwand',        valueType: 'chf', sortOrder: 3 },
 
-  // Raumaufwand
-  { id: 'pli_miete',          categoryId: 'pl_rent',            accountNumber: '6000', label: 'Miete',                      valueType: 'chf',     sortOrder: 1  },
-  { id: 'pli_nebenkosten',    categoryId: 'pl_rent',            accountNumber: '6100', label: 'Nebenkosten',                valueType: 'chf',     sortOrder: 2  },
+  // Raumaufwand – Oliv Konten
+  { id: 'pli_miete',          categoryId: 'pl_rent',            accountNumber: '6000', label: 'Mietzins',                       valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_energie',        categoryId: 'pl_rent',            accountNumber: '6001', label: 'Heizung / Energie',              valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_hauswart',       categoryId: 'pl_rent',            accountNumber: '6002', label: 'Reinigung / Hauswart',           valueType: 'chf', sortOrder: 3 },
 
-  // Unterhalt
-  { id: 'pli_unterhalt',      categoryId: 'pl_maintenance',     accountNumber: '6200', label: 'Unterhalt Gebäude/Einrichtung', valueType: 'chf',  sortOrder: 1  },
-  { id: 'pli_reinigung',      categoryId: 'pl_maintenance',     accountNumber: '6300', label: 'Reinigung',                  valueType: 'chf',     sortOrder: 2  },
+  // Unterhalt & Reinigung
+  { id: 'pli_unterhalt',      categoryId: 'pl_maintenance',     accountNumber: '6200', label: 'Unterhalt Gebäude/Einrichtung',  valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_reinigung',      categoryId: 'pl_maintenance',     accountNumber: '6300', label: 'Reinigung',                      valueType: 'chf', sortOrder: 2 },
 
-  // Versicherungen/Verwaltung
-  { id: 'pli_versicherungen', categoryId: 'pl_admin',           accountNumber: '6400', label: 'Versicherungen',             valueType: 'chf',     sortOrder: 1  },
-  { id: 'pli_verwaltung',     categoryId: 'pl_admin',           accountNumber: '6500', label: 'Verwaltungskosten',          valueType: 'chf',     sortOrder: 2  },
-  { id: 'pli_uebrig_aufwand', categoryId: 'pl_admin',           accountNumber: '6600', label: 'Übriger Betriebsaufwand',    valueType: 'chf',     sortOrder: 3  },
+  // Versicherungen / Verwaltung / Übriges
+  { id: 'pli_versicherungen', categoryId: 'pl_admin',           accountNumber: '6400', label: 'Versicherungen',                 valueType: 'chf', sortOrder: 1 },
+  { id: 'pli_bankspesen',     categoryId: 'pl_admin',           accountNumber: '6900', label: 'Bankzinsen / Bankspesen',        valueType: 'chf', sortOrder: 2 },
+  { id: 'pli_abschreibungen', categoryId: 'pl_admin',           accountNumber: '6800', label: 'Abschreibungen',                 valueType: 'chf', sortOrder: 3 },
 ];
 
 export function createDefaultPLLineItem(

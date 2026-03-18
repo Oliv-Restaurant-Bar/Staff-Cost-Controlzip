@@ -965,6 +965,12 @@ const AccountMappingPage = () => {
   const customCount   = mappings.filter(m => m.source === 'custom').length;
   const inactiveCount = mappings.filter(m => !m.isActive).length;
 
+  const handleDelete = (m: AccountMappingType) => {
+    deleteMappingCustom(m.accountNumber);
+    toast.success(`Konto ${m.accountNumber} gelöscht`);
+    reload();
+  };
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
 
@@ -987,9 +993,16 @@ const AccountMappingPage = () => {
               Admin
             </Badge>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-3 text-xs text-muted-foreground border border-border rounded-md px-3 py-1.5 bg-muted/30">
+              <span><span className="font-bold text-foreground">{mappings.length}</span> Konten</span>
+              <span className="text-border">|</span>
+              <span><span className="font-bold text-amber-600">{customCount}</span> Custom</span>
+              <span className="text-border">|</span>
+              <span><span className="font-bold text-muted-foreground">{inactiveCount}</span> Inaktiv</span>
+            </div>
             <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => setShowImport(true)}>
-              <Upload className="h-3.5 w-3.5" /> Kontenplan importieren
+              <Upload className="h-3.5 w-3.5" /> Importieren
             </Button>
             <Button size="sm" className="h-8 gap-1" onClick={() => setShowNew(true)}>
               <Plus className="h-3.5 w-3.5" /> Konto hinzufügen
@@ -998,40 +1011,7 @@ const AccountMappingPage = () => {
         </div>
       </header>
 
-      <div className="flex-1 max-w-6xl mx-auto w-full px-4 py-5 space-y-5 pb-20">
-
-        {/* Erklärung */}
-        <ExplanationPanel />
-
-        {/* Statistik-Karten + Matching-Test */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground mb-1">Konten gesamt</p>
-              <p className="text-2xl font-bold">{mappings.length}</p>
-              <p className="text-[11px] text-muted-foreground">{DEFAULT_ACCOUNTS.length} Standard + {customCount} Custom</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground mb-1">Angepasst (Custom)</p>
-              <p className="text-2xl font-bold text-amber-600">{customCount}</p>
-              <p className="text-[11px] text-muted-foreground">Überschreiben Standard-Mapping</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground mb-1">Bereichsregeln</p>
-              <p className="text-2xl font-bold text-blue-600">{ACCOUNT_RANGES.length}</p>
-              <p className="text-[11px] text-muted-foreground">Fallback für unbekannte Konten</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        <MatchingTestPanel />
-
-        {/* Integrations-Übersicht */}
-        <IntegrationOverview />
+      <div className="flex-1 max-w-6xl mx-auto w-full px-4 py-5 space-y-4 pb-20">
 
         {/* Filter-Bar */}
         <div className="flex flex-wrap items-center gap-2">
@@ -1155,15 +1135,26 @@ const AccountMappingPage = () => {
                                 <Edit3 className="h-3 w-3" />
                               </Button>
                               {m.source === 'custom' && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-6 w-6 p-0 text-amber-600 hover:text-amber-700"
-                                  onClick={() => handleReset(m)}
-                                  title="Auf Standard zurücksetzen"
-                                >
-                                  <RotateCcw className="h-3 w-3" />
-                                </Button>
+                                <>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-6 p-0 text-amber-600 hover:text-amber-700"
+                                    onClick={() => handleReset(m)}
+                                    title="Auf Standard zurücksetzen"
+                                  >
+                                    <RotateCcw className="h-3 w-3" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-6 p-0 text-red-500 hover:text-red-700"
+                                    onClick={() => handleDelete(m)}
+                                    title="Konto löschen"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </Button>
+                                </>
                               )}
                             </div>
                           </td>
@@ -1232,6 +1223,15 @@ const AccountMappingPage = () => {
             </table>
           </div>
         </section>
+
+        {/* Konto-Test + Infos (sekundär, unten) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <MatchingTestPanel />
+          <IntegrationOverview />
+        </div>
+
+        <ExplanationPanel />
+
       </div>
 
       {/* Dialoge */}
