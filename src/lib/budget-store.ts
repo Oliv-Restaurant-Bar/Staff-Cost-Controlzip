@@ -30,6 +30,7 @@ import {
   DEFAULT_PL_LINE_ITEMS,
   createDefaultPLLineItem,
 } from '@/types/budget';
+import { createSeededBudget2026 } from '@/lib/budget-seed-2026';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -66,11 +67,35 @@ function createEmptyBudgetYear(year: number): BudgetYear {
 
 /**
  * Budgetjahr laden.
- * Gibt ein leeres Budgetjahr zurück, falls noch keins für dieses Jahr existiert.
+ * Für Jahr 2026: Wird beim ersten Aufruf automatisch mit den Excel-Daten befüllt,
+ * sofern noch keine plLineItems vorhanden sind.
+ * Für andere Jahre: Gibt ein leeres Budgetjahr zurück.
  */
 export function loadBudgetYear(year: number): BudgetYear {
   const all = loadAll();
+  if (year === 2026) {
+    const existing = all[2026];
+    const hasItems = existing?.plLineItems && existing.plLineItems.length > 0;
+    if (!hasItems) {
+      const seeded = createSeededBudget2026();
+      all[2026] = seeded;
+      saveAll(all);
+      return seeded;
+    }
+    return existing;
+  }
   return all[year] ?? createEmptyBudgetYear(year);
+}
+
+/**
+ * Budget 2026 auf Excel-Seed zurücksetzen (alle bestehenden Daten werden überschrieben).
+ */
+export function resetBudget2026ToSeed(): BudgetYear {
+  const seeded = createSeededBudget2026();
+  const all = loadAll();
+  all[2026] = seeded;
+  saveAll(all);
+  return seeded;
 }
 
 /**
