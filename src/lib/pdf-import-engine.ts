@@ -23,6 +23,7 @@
  */
 
 import * as pdfjsLib from 'pdfjs-dist';
+import * as XLSX from 'xlsx';
 import type { ParsedCSVRow } from './csv-import-engine';
 import { parseAmount } from './csv-import-engine';
 
@@ -402,4 +403,115 @@ export async function parsePDF(buffer: ArrayBuffer): Promise<PDFParseResult> {
   }
 
   return { rows, detectedMonth, detectedYear, pageCount, rawLines, warnings };
+}
+
+// ─── Sage Kontoblatt Excel-Parser ─────────────────────────────────────────────
+
+export interface ExcelParseResult {
+  rows: ParsedCSVRow[];
+  detectedYear?: number;
+  detectedMonth?: number;
+  warnings: string[];
+}
+
+/**
+ * Liest ein Sage-Kontoblatt Excel (xlsx/xls) und extrahiert Netto-Saldi pro Konto.
+ *
+ * Erwartetes Format (Sage 50 Kontoblatt-Export):
+ *   Zeile 0:  ["Kontoblatt", ..., "Oliv Gastro AG", ...]
+ *   Zeile 1:  ["vom:", ..., "01.01.26 bis 31.01.26", ...]
+ *   Konto-Header: row[0] = 4-stellige Zahl, row[6] leer
+ *   Total Haben: row[3] = "Total Haben", row[10] = Saldo (Netto)
+ */
+export async function parseSageKontoblattExcel(buffer: ArrayBuffer): Promise<ExcelParseResult> {
+  const warnings: string[] = [];
+  const rows: ParsedCSVRow[] = [];
+
+  let workbook: XLSX.WorkBook;
+  try {
+    workbook = XLSX.read(buffer, { type: 'array' });
+  } catch (e) {
+    warnings.push(`Excel-Datei konnte nicht geöffnet werden: ${String(e)}`);
+    return { rows, warnings };
+  }
+
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) {
+    warnings.push('Excel-Datei enthält kein Blatt.');
+    return { rows, warnings };
+  }
+
+  const sheet = workbook.Sheets[sheetName];
+  const data: (string | number | null)[][] = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: null,
+    raw: true,
+  }) as (string | number | null)[][];
+
+  // Monat/Jahr aus Zeile 1 ("vom: 01.01.26 bis 31.01.26")
+  let detectedMonth: number | undefined;
+  let detectedYear: number | undefined;
+  const headerLine = String(data[1]?.join(' ') ?? '');
+  const sageVomM = headerLine.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+  if (sageVomM) {
+    const yy = parseInt(sageVomM[3]);
+    detectedMonth = parseInt(sageVomM[2]);
+    detectedYear  = yy < 100 ? (yy < 50 ? 2000 + yy : 1900 + yy) : yy;
+  }
+
+  // State-Machine: Konto-Header → Total Haben → Saldo erfassen
+  const accountTotals = new Map<string, { name: string; saldo: number }>();
+  let currentAccount: { number: string; name: string } | null = null;
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    if (!row) continue;
+
+    const col0 = row[0];
+    const col3 = String(row[3] ?? '').trim();
+    const col6 = row[6]; // Soll-Betrag
+    const col10 = row[10]; // Saldo
+
+    // Konto-Header: col0 ist eine 4-stellige Zahl, col6 ist leer
+    if (typeof col0 === 'number' && col0 >= 1000 && col0 <= 9999 && !col6 && col3) {
+      const cleanName = col3.replace(/^\s+|\s+$/g, '');
+      if (cleanName.length >= 2) {
+        currentAccount = { number: String(Math.round(col0)), name: cleanName };
+      }
+      continue;
+    }
+
+    // "Total Haben" Zeile: col3 === "Total Haben", col10 = Netto-Saldo
+    if (col3 === 'Total Haben' && currentAccount) {
+      const saldo = typeof col10 === 'number' ? col10 : parseFloat(String(col10 ?? '0').replace(/[^0-9.-]/g, ''));
+      if (!isNaN(saldo) && saldo > 0) {
+        accountTotals.set(currentAccount.number, { name: currentAccount.name, saldo });
+      }
+      currentAccount = null;
+      continue;
+    }
+  }
+
+  let lineIndex = 0;
+  for (const [accNum, { name, saldo }] of accountTotals.entries()) {
+    rows.push({
+      lineIndex:     ++lineIndex,
+      rawLine:       `${accNum} ${name} → Saldo ${saldo.toFixed(2)}`,
+      accountNumber: accNum.padStart(4, '0'),
+      accountName:   name,
+      rawAmount:     saldo.toFixed(2),
+      amount:        saldo,
+    });
+  }
+
+  if (rows.length === 0) {
+    warnings.push(
+      'Keine Konten gefunden. Prüfe ob das Excel im Sage-Kontoblatt-Format vorliegt ' +
+      '(Konto-Header in Spalte A, "Total Haben" in Spalte D, Saldo in Spalte K).',
+    );
+  } else {
+    warnings.push(`Sage Kontoblatt (Excel) erkannt: ${rows.length} Konten mit Netto-Saldo importiert.`);
+  }
+
+  return { rows, detectedMonth, detectedYear, warnings };
 }

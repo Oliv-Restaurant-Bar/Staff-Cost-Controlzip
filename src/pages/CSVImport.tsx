@@ -30,7 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import {
   Upload, CheckCircle2, AlertTriangle, XCircle, FileText,
-  ChevronRight, ChevronLeft, Save, RefreshCw, Info, FileType,
+  ChevronRight, ChevronLeft, Save, RefreshCw, Info, FileType, FileSpreadsheet,
   Loader2, ShoppingCart,
 } from 'lucide-react';
 import { GastronoviImportSection } from '@/components/GastronoviImportSection';
@@ -39,7 +39,7 @@ import {
   processCSV, matchCSVRows, buildMonthRecord,
   CSVParseResult, MatchedCSVRow, ImportConfig,
 } from '@/lib/csv-import-engine';
-import { parsePDF, detectMonthYear } from '@/lib/pdf-import-engine';
+import { parsePDF, parseSageKontoblattExcel, detectMonthYear } from '@/lib/pdf-import-engine';
 import { saveMonth } from '@/lib/reporting-store';
 import { toast } from 'sonner';
 
@@ -54,7 +54,7 @@ const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2];
 
 type Step = 'upload' | 'preview' | 'done';
-type FileKind = 'csv' | 'pdf';
+type FileKind = 'csv' | 'pdf' | 'excel';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -78,6 +78,9 @@ function fileKindBadge(kind: FileKind) {
   if (kind === 'pdf') return (
     <Badge className="bg-orange-100 text-orange-800 border-orange-200 text-[10px]">PDF</Badge>
   );
+  if (kind === 'excel') return (
+    <Badge className="bg-green-100 text-green-800 border-green-200 text-[10px]">Excel</Badge>
+  );
   return (
     <Badge className="bg-sky-100 text-sky-800 border-sky-200 text-[10px]">CSV</Badge>
   );
@@ -96,7 +99,9 @@ function UploadZone({ onFile, parsing }: UploadZoneProps) {
 
   const handleFile = (file: File) => {
     const ext  = file.name.split('.').pop()?.toLowerCase();
-    const kind: FileKind = ext === 'pdf' ? 'pdf' : 'csv';
+    const kind: FileKind =
+      ext === 'pdf'  ? 'pdf'  :
+      (ext === 'xlsx' || ext === 'xls') ? 'excel' : 'csv';
     const reader = new FileReader();
     reader.onload = e => {
       const buf = e.target?.result as ArrayBuffer;
@@ -140,18 +145,19 @@ function UploadZone({ onFile, parsing }: UploadZoneProps) {
       <div className="flex justify-center gap-3 mb-3">
         <FileText className="h-9 w-9 text-sky-400" />
         <FileType className="h-9 w-9 text-orange-400" />
+        <FileSpreadsheet className="h-9 w-9 text-green-500" />
       </div>
-      <p className="font-medium text-sm">CSV oder PDF hier ablegen oder klicken</p>
+      <p className="font-medium text-sm">CSV, PDF oder Excel hier ablegen oder klicken</p>
       <p className="text-xs text-muted-foreground mt-1">
         CSV: Banana, AbaNinja, Bexio, Sage 50, Excel-Export
       </p>
       <p className="text-xs text-muted-foreground">
-        PDF: Kontenblatt-Export (Text-PDF, kein Scan)
+        PDF / Excel: Sage Kontoblatt-Export (empfohlen: Excel)
       </p>
       <input
         ref={inputRef}
         type="file"
-        accept=".csv,text/csv,.pdf,application/pdf"
+        accept=".csv,text/csv,.pdf,application/pdf,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
         className="hidden"
         onChange={e => {
           const file = e.target.files?.[0];
@@ -271,6 +277,30 @@ export default function CSVImportPage() {
         }
       } catch (e) {
         setWarnings([`PDF-Verarbeitung fehlgeschlagen: ${String(e)}`]);
+      } finally {
+        setParsing(false);
+      }
+    } else if (kind === 'excel') {
+      // Excel-Import (Sage Kontoblatt)
+      setParsing(true);
+      try {
+        const excelResult = await parseSageKontoblattExcel(buffer);
+        const matchResult = matchCSVRows(excelResult.rows);
+        matchResult.warnings.push(...excelResult.warnings);
+
+        setParseResult(matchResult);
+        setWarnings(matchResult.warnings);
+
+        if (excelResult.detectedYear) setYear(excelResult.detectedYear);
+        if (excelResult.detectedMonth) setMonth(excelResult.detectedMonth);
+
+        if (excelResult.detectedMonth || excelResult.detectedYear) {
+          toast.info(
+            `Zeitraum erkannt: ${excelResult.detectedMonth ? MONTHS[excelResult.detectedMonth - 1] : ''} ${excelResult.detectedYear ?? ''}`.trim(),
+          );
+        }
+      } catch (e) {
+        setWarnings([`Excel-Verarbeitung fehlgeschlagen: ${String(e)}`]);
       } finally {
         setParsing(false);
       }
