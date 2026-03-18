@@ -34,7 +34,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { usePermissions } from '@/hooks/usePermissions';
 import { loadYear, saveMonth } from '@/lib/reporting-store';
-import { lookupAccount } from '@/lib/account-mapping-store';
+import { lookupAccount, saveMappingCustom } from '@/lib/account-mapping-store';
+import { AccountMapping } from '@/types/account-mapping';
 import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE } from '@/lib/pl-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
@@ -625,9 +626,14 @@ function computeBPLRows(
 
       const its = items.filter(i => i.categoryId === cat.id).sort((a, b) => a.sortOrder - b.sortOrder);
       for (const item of its) {
+        if (item.accountNumber) {
+          const acc = lookupAccount(item.accountNumber);
+          if (acc.mapping?.isActive === false) continue;
+        }
         const iB = item.monthlyValues[mIdx] ?? 0;
         const iA = (rec?.expenseCategories ?? []).find(c => c.categoryId === item.accountNumber)?.amount ?? 0;
         const iP = (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === item.accountNumber)?.amount ?? 0;
+        if (iA === 0 && iB === 0 && iP === 0) continue;
         rows.push({
           catId: cat.id, catLabel: cat.label, catType: 'items',
           isExpense: cat.isExpense, isCategory: false,
@@ -637,10 +643,16 @@ function computeBPLRows(
       }
 
       const actualRows = (actualByCat[cat.id] ?? [])
-        .filter(a => !budgetItemAccounts.has(a.accountNum))
+        .filter(a => {
+          if (budgetItemAccounts.has(a.accountNum)) return false;
+          const acc = lookupAccount(a.accountNum);
+          if (acc.mapping?.isActive === false) return false;
+          return true;
+        })
         .sort((a, b) => parseInt(a.accountNum) - parseInt(b.accountNum));
       for (const ar of actualRows) {
         const iP = (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === ar.accountNum)?.amount ?? 0;
+        if (ar.amount === 0 && iP === 0) continue;
         rows.push({
           catId: cat.id, catLabel: cat.label, catType: 'items',
           isExpense: cat.isExpense, isCategory: false,
@@ -981,6 +993,127 @@ const BudgetPLDrilldownDialog = ({
   );
 };
 
+// ─── Konto-Schnellaktionen Dialog ─────────────────────────────────────────────
+
+const AccountActionDialog = ({
+  row,
+  year,
+  onClose,
+  onRefresh,
+  onOpenDrilldown,
+}: {
+  row: BPLRowWithValues;
+  year: number;
+  onClose: () => void;
+  onRefresh: () => void;
+  onOpenDrilldown: () => void;
+}) => {
+  const accountNum = row.itemAccountNumber ?? '';
+  const result     = lookupAccount(accountNum);
+  const mapping    = result.mapping;
+  const isActive   = mapping?.isActive !== false;
+  const isBudgetItem = !!(row.itemId && !row.itemId.startsWith('actual_'));
+
+  const handleToggleActive = () => {
+    if (mapping) {
+      saveMappingCustom({ ...mapping, isActive: !isActive, source: 'custom' });
+    } else {
+      saveMappingCustom({
+        accountNumber: accountNum,
+        accountName:   row.itemLabel ?? accountNum,
+        plCategory:    'cogs_other',
+        plSection:     'cogs',
+        department:    'general',
+        sign:          'expense',
+        source:        'custom',
+        isActive:      false,
+        canOverride:   true,
+      } as AccountMapping);
+    }
+    onRefresh();
+    onClose();
+  };
+
+  const handleDelete = () => {
+    if (isBudgetItem && row.itemId) {
+      deletePLLineItem(year, row.itemId);
+    }
+    onRefresh();
+    onClose();
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <span className="font-mono text-muted-foreground text-sm">{accountNum}</span>
+            <span className="text-base">{row.itemLabel}</span>
+          </DialogTitle>
+          <DialogDescription>
+            Konto-Aktionen für diese Zeile in der Erfolgsrechnung
+          </DialogDescription>
+        </DialogHeader>
+
+        {mapping && (
+          <div className="text-xs text-muted-foreground rounded-md bg-muted/40 border border-border px-3 py-2 space-y-0.5">
+            <div className="flex justify-between">
+              <span>Kategorie:</span>
+              <span className="font-medium">{mapping.plCategory}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Status:</span>
+              <span className={cn('font-medium', isActive ? 'text-emerald-600' : 'text-red-500')}>
+                {isActive ? 'Aktiv' : 'Inaktiv'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <Button
+            variant="outline"
+            className={cn('w-full justify-start gap-2 text-sm', !isActive && 'border-emerald-300 text-emerald-700')}
+            onClick={handleToggleActive}
+          >
+            {isActive ? (
+              <><X className="h-4 w-4 text-amber-500" /> Konto inaktiv setzen (ausblenden)</>
+            ) : (
+              <><Check className="h-4 w-4 text-emerald-500" /> Konto wieder aktivieren</>
+            )}
+          </Button>
+
+          {isBudgetItem && (
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-2 text-sm text-blue-600 border-blue-200"
+              onClick={() => { onClose(); setTimeout(onOpenDrilldown, 50); }}
+            >
+              <Pencil className="h-4 w-4" /> Budget-Werte bearbeiten
+            </Button>
+          )}
+
+          <Link to={`/kontenplan?q=${accountNum}`} onClick={onClose}>
+            <Button variant="outline" className="w-full justify-start gap-2 text-sm mt-0">
+              <ArrowUpRight className="h-4 w-4 text-muted-foreground" /> Im Kontenplan bearbeiten
+            </Button>
+          </Link>
+
+          {isBudgetItem && (
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-2 text-sm text-red-600 border-red-200"
+              onClick={handleDelete}
+            >
+              <Trash2 className="h-4 w-4" /> Zeile aus P&L entfernen
+            </Button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 // ─── Haupt-Seite ──────────────────────────────────────────────────────────────
 
 const currentYear  = new Date().getFullYear();
@@ -996,10 +1129,11 @@ const PLViewPage = () => {
   const [year,   setYear]   = useState(currentYear);
   const [month,  setMonth]  = useState(currentMonth);
   const [mode,   setMode]   = useState<ViewMode>('budget_pl');
-  const [drilldown,    setDrilldown]    = useState<PLDrilldown | null>(null);
-  const [bplDrilldown, setBplDrilldown] = useState<BPLRowWithValues | null>(null);
-  const [compact,      setCompact]      = useState(false);
-  const [refreshKey,   setRefreshKey]   = useState(0);
+  const [drilldown,       setDrilldown]       = useState<PLDrilldown | null>(null);
+  const [bplDrilldown,    setBplDrilldown]    = useState<BPLRowWithValues | null>(null);
+  const [accountAction,   setAccountAction]   = useState<BPLRowWithValues | null>(null);
+  const [compact,         setCompact]         = useState(false);
+  const [refreshKey,      setRefreshKey]       = useState(0);
 
   // Daten laden & P&L berechnen
   const records = useMemo(() => loadYear(year), [year, month, refreshKey]);
@@ -1227,7 +1361,13 @@ const PLViewPage = () => {
           {mode === 'budget_pl'
             ? <BudgetPLView
                 rows={bplRows}
-                onRowClick={row => setBplDrilldown(row)}
+                onRowClick={row => {
+                  if (row.isCategory) {
+                    setBplDrilldown(row);
+                  } else {
+                    setAccountAction(row);
+                  }
+                }}
                 compact={compact}
                 onDeleteItem={itemId => {
                   deletePLLineItem(year, itemId);
@@ -1268,6 +1408,17 @@ const PLViewPage = () => {
           year={year}
           onClose={() => setBplDrilldown(null)}
           onSaved={() => { setBplDrilldown(null); setRefreshKey(k => k + 1); }}
+        />
+      )}
+
+      {/* Konto-Schnellaktionen */}
+      {accountAction && (
+        <AccountActionDialog
+          row={accountAction}
+          year={year}
+          onClose={() => setAccountAction(null)}
+          onRefresh={() => setRefreshKey(k => k + 1)}
+          onOpenDrilldown={() => { setAccountAction(null); setBplDrilldown(accountAction); }}
         />
       )}
     </div>

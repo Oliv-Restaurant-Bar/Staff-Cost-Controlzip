@@ -15,7 +15,7 @@
  */
 
 import { useState, useMemo, useCallback, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Navigate } from 'react-router-dom';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Search, X,
@@ -919,11 +919,12 @@ const AccountMappingPage = () => {
   const { isAdmin } = usePermissions();
   if (!isAdmin) return <Navigate to="/" replace />;
 
+  const [searchParams] = useSearchParams();
   const [mappings,    setMappings]    = useState<AccountMappingType[]>(() => loadAllMappings());
   const [editTarget,  setEditTarget]  = useState<AccountMappingType | null>(null);
   const [showNew,     setShowNew]     = useState(false);
   const [showImport,  setShowImport]  = useState(false);
-  const [search,      setSearch]      = useState('');
+  const [search,      setSearch]      = useState(() => searchParams.get('q') ?? '');
   const [filterSection, setFilterSection] = useState<PLSection | 'all'>('all');
   const [filterDept,  setFilterDept]  = useState<DepartmentHint | 'all'>('all');
 
