@@ -1120,13 +1120,25 @@ const AccountActionDialog = ({
               </div>
             </div>
           ) : (
-            <div className="rounded-md border border-border bg-muted/30 px-4 py-6 text-center">
-              <Database className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground font-medium">Keine Buchungszeilen vorhanden</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Buchungsdetails werden beim Excel-Import aus dem Sage-Kontoblatt gelesen.
-                Importiere das Kontoblatt erneut, um Einzelbuchungen anzuzeigen.
-              </p>
+            <div className="rounded-md border border-border bg-muted/30 px-4 py-5 space-y-3">
+              <div className="flex flex-col items-center text-center mb-1">
+                <Database className="h-7 w-7 text-muted-foreground/40 mb-2" />
+                <p className="text-sm text-foreground font-semibold">Keine Buchungszeilen vorhanden</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Einzelbuchungen sind nur nach einem Excel-Import des Sage-Kontoblatts verfügbar.
+                </p>
+              </div>
+              <div className="rounded border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 px-3 py-2.5 text-xs text-amber-800 dark:text-amber-300 space-y-1.5">
+                <p className="font-semibold">So werden Buchungszeilen aktiviert:</p>
+                <ol className="list-decimal list-inside space-y-1 text-amber-700 dark:text-amber-400">
+                  <li>In <strong>Sage</strong>: Konto <span className="font-mono">{accountNum}</span> aufrufen → <em>Kontoblatt</em> als <strong>Excel (.xlsx)</strong> exportieren</li>
+                  <li>Im <Link to="/csv-import" className="underline font-medium" onClick={onClose}>Buchh.-Import</Link>: Datei hochladen, Format «Excel (Sage Kontoblatt)» wählen</li>
+                  <li>Nach dem Import erscheinen hier die Einzelbuchungen</li>
+                </ol>
+                <p className="text-amber-600 dark:text-amber-500 mt-1">
+                  <strong>Hinweis:</strong> Ein normaler CSV-Summarien-Export enthält nur Kontototale, keine Einzelbuchungen.
+                </p>
+              </div>
             </div>
           )}
         </div>
