@@ -726,7 +726,71 @@ const BPLVarCell = ({ value, pct }: { value: number; pct?: number }) => {
   );
 };
 
-const BPLRowComp = ({ row, onClick, compact, onDelete }: { row: BPLRowWithValues; onClick: () => void; compact: boolean; onDelete?: (itemId: string) => void }) => {
+// ─── Inline Ist-Zellen-Editor ─────────────────────────────────────────────────
+
+const InlineIstCell = ({
+  value, row, month, year, onSaved, onCancel,
+}: {
+  value: number;
+  row: BPLRowWithValues;
+  month: number;
+  year: number;
+  onSaved: () => void;
+  onCancel: () => void;
+}) => {
+  const [input, setInput] = useState(value !== 0 ? String(value) : '');
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
+
+  const save = () => {
+    const raw = input.replace(/['\s]/g, '').replace(',', '.');
+    const num = parseFloat(raw);
+    if (isNaN(num)) { onCancel(); return; }
+
+    const account = row.itemAccountNumber;
+    if (row.catId === 'pl_revenue') {
+      saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' });
+    } else if (row.catId === 'pl_wages' && row.isCategory) {
+      saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' });
+    } else if (!row.isCategory && account) {
+      const existing = loadYear(year)[month - 1];
+      const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
+      cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? account });
+      saveMonth({ year, month, expenseCategories: cats }, 'manual_entry', 'update', { note: `Manuelle Eingabe Konto ${account}` });
+    } else {
+      onCancel();
+      return;
+    }
+    onSaved();
+  };
+
+  return (
+    <div className="flex items-center justify-end" onClick={e => e.stopPropagation()}>
+      <input
+        ref={ref}
+        className="w-24 h-6 text-right font-mono text-xs border border-primary rounded px-1 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+        value={input}
+        onChange={e => setInput(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') save();
+          if (e.key === 'Escape') onCancel();
+        }}
+        onBlur={save}
+      />
+    </div>
+  );
+};
+
+const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved }: {
+  row: BPLRowWithValues;
+  onClick: () => void;
+  compact: boolean;
+  onDelete?: (itemId: string) => void;
+  month: number;
+  year: number;
+  onSaved: () => void;
+}) => {
+  const [editingIst, setEditingIst] = useState(false);
   const { values: v } = row;
   const py = compact ? 'py-1' : 'py-2';
   const pyResult = compact ? 'py-1' : 'py-2.5';
@@ -766,6 +830,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete }: { row: BPLRowWithValues
   }
 
   const isBudgetItem = row.itemId && !row.itemId.startsWith('actual_');
+  const canEdit = !row.isCategory;
   return (
     <tr
       className={cn(
@@ -795,7 +860,27 @@ const BPLRowComp = ({ row, onClick, compact, onDelete }: { row: BPLRowWithValues
           <ChevronDown className="h-3 w-3 text-muted-foreground opacity-30 cursor-pointer" onClick={onClick} />
         )}
       </td>
-      <td className={cn('px-2 text-right text-sm font-mono tabular-nums cursor-pointer', pyItem)} onClick={onClick}>{v.actual > 0 ? fmt(v.actual) : <span className="text-muted-foreground/40">—</span>}</td>
+      {/* Ist-Zelle: inline editierbar beim Klick */}
+      <td
+        className={cn('px-2 text-right text-sm font-mono tabular-nums', pyItem,
+          canEdit ? 'cursor-pointer hover:bg-primary/10 rounded transition-colors' : 'cursor-pointer',
+        )}
+        onClick={e => { if (canEdit && !editingIst) { e.stopPropagation(); setEditingIst(true); } else onClick(); }}
+        title={canEdit ? 'Klicken zum direkten Bearbeiten' : undefined}
+      >
+        {editingIst && canEdit ? (
+          <InlineIstCell
+            value={v.actual}
+            row={row}
+            month={month}
+            year={year}
+            onSaved={() => { setEditingIst(false); onSaved(); }}
+            onCancel={() => setEditingIst(false)}
+          />
+        ) : (
+          v.actual > 0 ? fmt(v.actual) : <span className="text-muted-foreground/40">—</span>
+        )}
+      </td>
       <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.budget > 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>
       <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />
       <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.prevYear > 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>
@@ -809,11 +894,17 @@ const BudgetPLView = ({
   onRowClick,
   onDeleteItem,
   compact,
+  month,
+  year,
+  onSaved,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
   onDeleteItem?: (itemId: string) => void;
   compact: boolean;
+  month: number;
+  year: number;
+  onSaved: () => void;
 }) => (
   <div className="overflow-x-auto">
     <table className="w-full text-sm border-collapse min-w-[820px]">
@@ -821,7 +912,7 @@ const BudgetPLView = ({
         <tr className="bg-slate-900 text-white text-xs">
           <th className={cn('text-left px-3 min-w-[230px]', compact ? 'py-1.5' : 'py-2.5')}>Position</th>
           <th className={cn('w-5', compact ? 'py-1.5' : 'py-2.5')} />
-          <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Ist (CHF)</th>
+          <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')} title="Klick auf Ist-Wert = direkt bearbeiten">Ist (CHF) ✎</th>
           <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Budget (CHF)</th>
           <th className={cn('text-right px-2 min-w-[130px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. Budget</th>
           <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Vorjahr (CHF)</th>
@@ -836,6 +927,9 @@ const BudgetPLView = ({
             onClick={() => onRowClick(row)}
             compact={compact}
             onDelete={onDeleteItem}
+            month={month}
+            year={year}
+            onSaved={onSaved}
           />
         ))}
       </tbody>
@@ -1628,6 +1722,9 @@ const PLViewPage = () => {
                   deletePLLineItem(year, itemId);
                   setRefreshKey(k => k + 1);
                 }}
+                month={month}
+                year={year}
+                onSaved={() => setRefreshKey(k => k + 1)}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
@@ -1637,14 +1734,17 @@ const PLViewPage = () => {
 
         {/* Legende */}
         {(mode === 'monthly' || mode === 'budget_pl') && (
-          <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+          <p className="text-[11px] text-muted-foreground flex items-center gap-1 flex-wrap">
             <Info className="h-3 w-3" />
-            Klicken Sie auf eine Zeilenposition für Quelldaten und Details.
-            {mode === 'budget_pl' && (
-              <span className="ml-1">
+            {mode === 'budget_pl' ? (
+              <>
+                <span className="font-semibold text-foreground">Ist-Wert direkt bearbeiten:</span> Klick auf die Ist-Zelle einer Kontozeile → Inline-Eingabe (Enter = speichern, Esc = abbrechen).
+                · Kategorie-Zeilen (dunkel): Klick → Dialog mit Bearbeitung.
                 · <span className="text-emerald-600 font-semibold">Grün</span> = besser als geplant
                 · <span className="text-red-600 font-semibold">Rot</span> = schlechter als geplant
-              </span>
+              </>
+            ) : (
+              'Klicken Sie auf eine Zeilenposition für Quelldaten und Details.'
             )}
           </p>
         )}
