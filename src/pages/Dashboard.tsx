@@ -825,13 +825,6 @@ const Dashboard = () => {
                   <>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                       <KpiCard
-                        title="Budget Umsatz"
-                        value={formatCHF(budgetData.revenueBudget)}
-                        subtitle={`Monatsbudget ${currentYear}`}
-                        icon={<BookOpen className="h-5 w-5" />}
-                        color="blue"
-                      />
-                      <KpiCard
                         title="Ist Umsatz"
                         value={revenueMonth > 0 ? formatCHF(revenueMonth) : '–'}
                         subtitle="Tatsächlich erfasst"
@@ -842,6 +835,13 @@ const Dashboard = () => {
                         }
                         delta={revVsBudgetPct}
                         deltaLabel="% vs. Budget"
+                      />
+                      <KpiCard
+                        title="Budget Umsatz"
+                        value={formatCHF(budgetData.revenueBudget)}
+                        subtitle={`Monatsbudget ${currentYear}`}
+                        icon={<BookOpen className="h-5 w-5" />}
+                        color="blue"
                       />
                       {revVsBudgetAbs !== null && (
                         <KpiCard
