@@ -26,6 +26,8 @@ import {
   ActualHourEntry,
 } from '@/lib/supabase-db';
 import { Employee } from '@/types/personnel';
+import { useStichtag } from '@/contexts/StichtagContext';
+import { StichtagBanner } from '@/components/StichtagBanner';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -169,6 +171,7 @@ const Dashboard = () => {
     isAdmin, isManager, allowedDepartment,
     canSeeHourlyWages, canSeeFullFinancials, canSeePersonnelCostTotals,
   } = usePermissions();
+  const { isActive: stichtagActive, stichtagYear, stichtagMonth, formatted: stichtagFormatted } = useStichtag();
 
   const deptLabel = allowedDepartment === 'service' ? 'Service'
     : allowedDepartment === 'küche' ? 'Küche'
@@ -423,6 +426,9 @@ const Dashboard = () => {
 
         {!loading && (
           <>
+            {/* ── Stichtag-Hinweisbanner ────────────────────────────────────── */}
+            <StichtagBanner />
+
             {/* ── Warnung: Kostenquote überschritten ───────────────────────── */}
             {canSeePersonnelCostTotals && plannedRatioStatus === 'high' && (
               <div className="flex items-start gap-3 rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/20 dark:border-red-800 p-4">

@@ -51,6 +51,8 @@ import {
 import { usePermissions } from '@/hooks/usePermissions';
 import { Navigate } from 'react-router-dom';
 import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue-import';
+import { useStichtag } from '@/contexts/StichtagContext';
+import { StichtagBanner } from '@/components/StichtagBanner';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -505,6 +507,7 @@ const Reporting = () => {
   // Route-Schutz
   if (!isAdmin) return <Navigate to="/" replace />;
 
+  const { isInScope, isActive: stichtagActive } = useStichtag();
   const years       = availableYears();
   const [year, setYear]               = useState(currentYear);
   const [months, setMonths]           = useState<MonthlyFinancialRecord[]>(() => loadYear(year));
@@ -599,6 +602,9 @@ const Reporting = () => {
       </header>
 
       <div className="flex-1 max-w-6xl mx-auto w-full px-4 py-5 space-y-5 pb-20">
+
+        {/* Stichtag-Hinweisbanner */}
+        <StichtagBanner />
 
         {/* Fundament-Hinweis */}
         <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800 p-4 flex items-start gap-3">
@@ -759,6 +765,7 @@ const Reporting = () => {
                     const isCurrent = m.year === currentYear && m.month === currentMonth;
                     const isFuture  = m.year > currentYear ||
                       (m.year === currentYear && m.month > currentMonth);
+                    const isOutOfScope = stichtagActive && !isInScope(m.year, m.month);
 
                     const revPct = m.revenueActual != null && m.revenueBudget != null && m.revenueBudget !== 0
                       ? ((m.revenueActual - m.revenueBudget) / Math.abs(m.revenueBudget)) * 100
@@ -777,15 +784,19 @@ const Reporting = () => {
                           'hover:bg-muted/30 transition-colors',
                           isCurrent && !isVarHighlighted && 'bg-primary/5',
                           isEmpty && 'opacity-60',
+                          isOutOfScope && 'opacity-40 bg-muted/10',
                           varRowClass,
                         )}
                       >
                         <td className="px-3 py-2.5 font-semibold">
-                          <span className={cn(isCurrent && 'text-primary')}>
+                          <span className={cn(isCurrent && 'text-primary', isOutOfScope && 'line-through text-muted-foreground')}>
                             {MONTH_NAMES_SHORT_DE[m.month]}
                           </span>
-                          {isCurrent && (
+                          {isCurrent && !isOutOfScope && (
                             <span className="ml-1 text-[9px] text-primary font-bold">●</span>
+                          )}
+                          {isOutOfScope && (
+                            <span className="ml-1 text-[9px] text-muted-foreground font-bold" title="Ausserhalb Stichtag">✕</span>
                           )}
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono">

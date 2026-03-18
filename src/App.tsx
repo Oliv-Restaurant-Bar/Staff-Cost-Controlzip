@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { RevenueDisplayProvider } from "@/contexts/RevenueDisplayContext";
 import { PlanDisplayProvider } from "@/contexts/PlanDisplayContext";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { StichtagProvider } from "@/contexts/StichtagContext";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LoginPage } from "@/components/LoginPage";
@@ -119,6 +120,7 @@ const AppContent = () => {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
+      <StichtagProvider>
       <RevenueDisplayProvider>
         <PlanDisplayProvider>
           <Sonner />
@@ -135,6 +137,7 @@ const App = () => (
           </AuthProvider>
         </PlanDisplayProvider>
       </RevenueDisplayProvider>
+      </StichtagProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );

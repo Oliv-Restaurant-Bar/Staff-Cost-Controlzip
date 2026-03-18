@@ -42,6 +42,8 @@ import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
 import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem } from '@/lib/budget-store';
 import { BudgetYear, BudgetPLCategory } from '@/types/budget';
+import { useStichtag } from '@/contexts/StichtagContext';
+import { StichtagBanner } from '@/components/StichtagBanner';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -1573,6 +1575,15 @@ const PLViewPage = () => {
   const [refreshKey,       setRefreshKey]       = useState(0);
   const [addKontoOpen,    setAddKontoOpen]    = useState(false);
 
+  // Stichtag — wenn aktiv, springt die Ansicht automatisch zu Jahr/Monat des Stichtags
+  const { isActive: stichtagActive, stichtagYear, stichtagMonth } = useStichtag();
+  useEffect(() => {
+    if (stichtagActive && stichtagYear && stichtagMonth) {
+      setYear(stichtagYear);
+      setMonth(stichtagMonth);
+    }
+  }, [stichtagActive, stichtagYear, stichtagMonth]);
+
   // Daten laden & P&L berechnen
   const records = useMemo(() => loadYear(year), [year, month, refreshKey]);
   const prevYearRecords = useMemo(() => loadYear(year - 1), [year]);
@@ -1806,6 +1817,9 @@ const PLViewPage = () => {
       </header>
 
       <div className="flex-1 px-4 py-5 space-y-5 pb-20 max-w-full">
+
+        {/* Stichtag-Hinweisbanner */}
+        <StichtagBanner />
 
         {/* KPI-Karten (Monatsansicht + Budget P&L) */}
         {(mode === 'monthly' || mode === 'budget_pl') && (

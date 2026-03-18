@@ -196,6 +196,29 @@ Datei: `src/lib/supabase-db.ts` — Funktionen:
 - "Ausstehende Anmeldungen" Sektion oben in der Mitarbeiterliste (orange)
 - Detail-Banner für pending Employee: Prüfen → "Ablehnen" oder "Aktivieren"
 
+## Globaler Stichtag-Filter
+
+**Zweck:** Auswertungen auf einen bestimmten Stichtag (z.B. Monatsende) begrenzen — nützlich für Revisionen und Periodenabschlüsse.
+
+**Dateien:**
+- `src/contexts/StichtagContext.tsx` — Context mit `stichtag`, `isInScope(year, month)`, localStorage-Persistenz unter `stichtag_v1`
+- `src/components/StichtagBanner.tsx` — Amber-Banner ("Stichtag-Auswertung per TT.MM.JJJJ") mit Aufheben-Button
+
+**API des Contexts:**
+- `stichtag: Date | null` — Stichtag-Datum
+- `stichtagYear / stichtagMonth / stichtagDay` — aufgeschlüsselt
+- `isActive: boolean` — ob Stichtag gesetzt
+- `isInScope(year, month): boolean` — true wenn <= Stichtag-Monat
+- `formatted` — "TT.MM.JJJJ"
+- `formattedMonthYear` — "MMMM JJJJ" (z.B. "März 2026")
+- `setStichtag(date)` / `clearStichtag()`
+
+**Integration:**
+- **AppNav Sidebar** — `StichtagPicker` (Amber-Widget mit Datum-Input + X-Button)
+- **Dashboard** — `StichtagBanner` am Seitenanfang
+- **PLView** — `StichtagBanner` + auto-jump zu Stichtag-Jahr/Monat per `useEffect`
+- **Reporting** — `StichtagBanner` + Monatstabellenzeilen ausserhalb Stichtag werden gedimmt (opacity-40) und durchgestrichen
+
 ## Nächste Schritte
 1. **KRITISCH**: Alle 3 SQL-Migrationen im Supabase SQL-Editor ausführen (in Reihenfolge)
 2. Manager-Accounts in Supabase Authentication erstellen

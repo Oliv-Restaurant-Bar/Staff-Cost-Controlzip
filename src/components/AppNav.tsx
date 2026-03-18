@@ -14,11 +14,12 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, BarChart2, Users,
   Settings, LogOut, ChefHat, Utensils, ShieldCheck,
-  TrendingUp, Upload, Truck, Calculator,
+  TrendingUp, Upload, Truck, Calculator, CalendarClock, X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useStichtag } from '@/contexts/StichtagContext';
 import { Button } from '@/components/ui/button';
 import {
   Tooltip, TooltipContent, TooltipTrigger,
@@ -135,6 +136,73 @@ const ROLE_CONFIG = {
   },
 };
 
+// ─── Stichtag-Picker (Sidebar-Widget) ───────────────────────────────────────
+
+const StichtagPicker = () => {
+  const { stichtag, isActive, setStichtag, clearStichtag, formatted } = useStichtag();
+
+  const inputValue = stichtag
+    ? stichtag.toISOString().split('T')[0]  // "YYYY-MM-DD"
+    : '';
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    if (!val) {
+      clearStichtag();
+    } else {
+      setStichtag(new Date(val + 'T12:00:00'));
+    }
+  };
+
+  return (
+    <div className={cn(
+      'mx-3 mb-2 rounded-md border p-2.5 space-y-1.5 transition-colors',
+      isActive
+        ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30'
+        : 'border-border bg-muted/30',
+    )}>
+      <div className="flex items-center gap-1.5">
+        <CalendarClock className={cn('h-3.5 w-3.5 flex-shrink-0', isActive ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')} />
+        <span className={cn('text-[10px] font-semibold uppercase tracking-wider', isActive ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground')}>
+          Stichtag
+        </span>
+        {isActive && (
+          <button
+            onClick={clearStichtag}
+            className="ml-auto h-4 w-4 flex items-center justify-center rounded-full bg-amber-200 dark:bg-amber-800 hover:bg-amber-300 dark:hover:bg-amber-700 text-amber-700 dark:text-amber-300 transition-colors"
+            title="Stichtag aufheben"
+          >
+            <X className="h-2.5 w-2.5" />
+          </button>
+        )}
+      </div>
+
+      {isActive ? (
+        <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
+          per {formatted}
+        </p>
+      ) : (
+        <p className="text-[10px] text-muted-foreground leading-tight">
+          Auswertungen auf Datum begrenzen
+        </p>
+      )}
+
+      <input
+        type="date"
+        value={inputValue}
+        onChange={handleChange}
+        max={new Date().toISOString().split('T')[0]}
+        className={cn(
+          'w-full text-[11px] rounded px-1.5 py-1 border bg-background transition-colors',
+          isActive
+            ? 'border-amber-300 dark:border-amber-700 focus:ring-amber-400'
+            : 'border-border focus:ring-primary',
+        )}
+      />
+    </div>
+  );
+};
+
 // ─── Desktop-Sidebar ─────────────────────────────────────────────────────────
 
 export const AppSidebar = () => {
@@ -207,6 +275,9 @@ export const AppSidebar = () => {
           );
         })}
       </nav>
+
+      {/* Stichtag-Picker */}
+      <StichtagPicker />
 
       {/* Rollen-Bereich + Abmelden */}
       <div className="border-t border-border px-3 py-3 space-y-2">
