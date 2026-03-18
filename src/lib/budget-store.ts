@@ -418,10 +418,33 @@ function migrateToSingleRevenueItem(budget: BudgetYear): BudgetYear {
  * existieren NICHT mehr in DEFAULT_PL_LINE_ITEMS.
  */
 const OBSOLETE_PL_IDS = [
+  // Alte Rohbezeichnungen
   'pli_waren_wein', 'pli_waren_bier', 'pli_waren_spirit', 'pli_waren_mineral', 'pli_waren_kueche',
   'pli_lohn_zulagen',
   'pli_nebenkosten', 'pli_verwaltung', 'pli_uebrig_aufwand',
   'pli_reinigung',
+  // Kontoplan-Umbau 2026 – entfernte / umbenannte Konten
+  'pli_umsatz',        // 3000 → aufgeteilt in pli_ertrag_a / pli_ertrag_ta / …
+  'pli_growa',         // 4000 GROWA → 4020 Wein
+  'pli_alligro',       // 4001 Alligro → 4040 Spirituosen
+  'pli_bier',          // 4002 → 4030 Bier
+  'pli_wein',          // 4010 → 4020 Wein
+  'pli_kueche',        // 4060 → pli_kueche_wa
+  'pli_bvg',           // 5710 BVG → 5720 (neue Nr.)
+  'pli_uvg',           // 5720 UVG → 5730 (neue Nr.)
+  'pli_ktg',           // 5730 KTG → entfällt (UVG übernimmt 5730)
+  'pli_quellst',       // 5770 Quellensteuer → nicht mehr im Kontoplan
+  'pli_personalverpf', // 5850 → nicht mehr im Kontoplan
+  'pli_zulagen',       // 5010 war in pl_social → neu in pl_wages
+  'pli_weiterbildung', // 5830 → neu 5810
+  'pli_energie',       // 6001 Heizung in Raumaufwand → neu 6400 in pl_energy
+  'pli_hauswart',      // 6002 Reinigung/Hauswart → neu pli_miete_park (Parkplatz)
+  'pli_unterhalt',     // 6200 Unterhalt Gebäude → nicht mehr im Kontoplan
+  'pli_leasing',       // 6101 Leasing Maschinen → nicht mehr im Kontoplan
+  'pli_ure_edv',       // 61409 (5-stellig) → neu pli_ure_edv mit 6140
+  'pli_versicherungen',// 6300 → neu 6310 Haftpflicht
+  'pli_abschreibungen',// 6800 → nicht mehr im Kontoplan
+  'pli_bankspesen',    // 6900 → neu 6940
 ];
 
 function migrateObsoletePLItems(budget: BudgetYear): BudgetYear {
@@ -432,7 +455,7 @@ function migrateObsoletePLItems(budget: BudgetYear): BudgetYear {
   const kept = items.filter(i => !OBSOLETE_PL_IDS.includes(i.id));
   const existingIds = new Set(kept.map(i => i.id));
   const toAdd = DEFAULT_PL_LINE_ITEMS
-    .filter(d => !existingIds.has(d.id) && d.id !== 'pli_umsatz')
+    .filter(d => !existingIds.has(d.id))
     .map(createDefaultPLLineItem);
 
   return { ...budget, plLineItems: [...kept, ...toAdd] };
@@ -455,6 +478,29 @@ function ensureDefaultPLItems(budget: BudgetYear): BudgetYear {
 }
 
 /**
+ * Stellt sicher, dass alle Standard-P&L-Kategorien im Budget vorhanden sind.
+ * Fügt neue Kategorien hinzu (ohne bestehende zu löschen), aktualisiert
+ * sortOrder und resultFormula falls geändert.
+ */
+function ensureDefaultPLCategories(budget: BudgetYear): BudgetYear {
+  const existing = budget.plCategories ?? [];
+  const existingMap = new Map(existing.map(c => [c.id, c]));
+  let changed = false;
+  const merged = DEFAULT_PL_CATEGORIES.map(def => {
+    const ex = existingMap.get(def.id);
+    if (!ex) { changed = true; return { ...def }; }
+    // Update sortOrder + resultFormula if changed; keep user label edits
+    const needsUpdate =
+      ex.sortOrder !== def.sortOrder ||
+      JSON.stringify(ex.resultFormula) !== JSON.stringify(def.resultFormula);
+    if (needsUpdate) { changed = true; return { ...ex, sortOrder: def.sortOrder, resultFormula: def.resultFormula }; }
+    return ex;
+  });
+  if (!changed) return budget;
+  return { ...budget, plCategories: merged };
+}
+
+/**
  * Budgetjahr laden und P&L-Struktur sicherstellen.
  */
 export function loadBudgetWithPL(year: number): BudgetYear {
@@ -464,6 +510,7 @@ export function loadBudgetWithPL(year: number): BudgetYear {
   }
   budget = migrateToSingleRevenueItem(budget);
   budget = migrateObsoletePLItems(budget);
+  budget = ensureDefaultPLCategories(budget);
   budget = ensureDefaultPLItems(budget);
   saveBudgetYear(budget);
   return budget;

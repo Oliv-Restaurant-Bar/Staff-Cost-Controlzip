@@ -497,14 +497,21 @@ interface BPLRowWithValues extends BPLRow {
   values: BPLCell;
 }
 
+// Kontoplan Oliv Gastro AG 2026 – Kategoriegrenzen für Ist-Zuweisung
 const BPL_CAT_RANGES: Record<string, [number, number]> = {
-  pl_wages:           [5000, 5009],
-  pl_goods_cost:      [4000, 4999],
-  pl_social:          [5010, 5799],
-  pl_personnel_other: [5800, 5899],
-  pl_rent:            [6000, 6099],  // 6000–6099: Miete, Energie, Reinigung/Hauswart
-  pl_maintenance:     [6100, 6299],  // 6100–6299: Unterhalt, Leasing, URE inkl. 5-stellige 61xxx
-  pl_admin:           [6300, 6999],  // 6300–6999: Versicherungen, Verwaltung, Abschreibungen, Bank
+  pl_revenue:         [3000, 3999],  // 3000-3990: Betriebsertrag
+  pl_goods_cost:      [4000, 4899],  // 4020-4801: Warenaufwand
+  pl_wages:           [5000, 5019],  // 5000-5010: Löhne inkl. Zulagen
+  pl_social:          [5700, 5799],  // 5700-5740: AHV/BVG/UVG/KVG
+  pl_personnel_other: [5800, 5899],  // 5810-5890: Übriger Personalaufwand
+  pl_rent:            [6000, 6099],  // 6000-6050: Miete, Reinigung, Unterhalt Räume
+  pl_maintenance:     [6100, 6299],  // 6100-6140: URE Maschinen/Mobiliar/EDV
+  pl_insurance:       [6300, 6399],  // 6310-6360: Haftpflicht, Abgaben, Gebühren
+  pl_energy:          [6400, 6499],  // 6400: Strom, Gas, Heizöl, Wasser
+  pl_admin:           [6500, 6599],  // 6500-6530: Büro, Telefon, Buchhaltung
+  pl_marketing:       [6600, 6699],  // 6600-6640: Werbung, Kost&Logis, Geschenke
+  pl_other_op:        [6700, 6899],  // 6790: Sonst. betr. Aufwand
+  pl_finance:         [6900, 6999],  // 6940: Bankspesen
 };
 
 /**
@@ -550,30 +557,42 @@ function makeCell(actual: number, budget: number, prevYear: number, isExpense: b
   };
 }
 
+// Mappt account-mapping-store plCategory → BPL-Kategorie (Kontoplan 2026)
 const PL_CAT_TO_BPL: Partial<Record<string, string>> = {
+  // Ertrag
   revenue_food:      'pl_revenue',
   revenue_beverage:  'pl_revenue',
   revenue_catering:  'pl_revenue',
   revenue_other:     'pl_revenue',
+  // Warenaufwand
   cogs_food:         'pl_goods_cost',
   cogs_beverage:     'pl_goods_cost',
   cogs_other:        'pl_goods_cost',
+  // Personal
   personnel_kitchen: 'pl_wages',
   personnel_service: 'pl_wages',
   personnel_admin:   'pl_wages',
   personnel_social:  'pl_social',
   personnel_other:   'pl_personnel_other',
+  // Raumaufwand (6000–6099: Miete, Reinigung, Unterhalt Räume)
   rent:              'pl_rent',
-  utilities:         'pl_rent',
-  cleaning:          'pl_maintenance',
+  cleaning:          'pl_rent',
+  // URE (6100–6299)
   maintenance:       'pl_maintenance',
-  insurance:         'pl_admin',
-  marketing:         'pl_admin',
+  // Sachversicherungen / Abgaben (6300–6399)
+  insurance:         'pl_insurance',
+  // Energie (6400–6499)
+  utilities:         'pl_energy',
+  // Verwaltung (6500–6599)
   admin_costs:       'pl_admin',
   office:            'pl_admin',
-  bank_fees:         'pl_admin',
-  other_operating:   'pl_admin',
-  depreciation:      'pl_admin',
+  // Werbung (6600–6699)
+  marketing:         'pl_marketing',
+  // Übriger Betriebsaufwand (6700–6899)
+  other_operating:   'pl_other_op',
+  depreciation:      'pl_other_op',
+  // Finanzaufwand (6900–6999)
+  bank_fees:         'pl_finance',
 };
 
 function computeBPLRows(

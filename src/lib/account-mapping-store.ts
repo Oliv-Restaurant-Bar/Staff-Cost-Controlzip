@@ -242,7 +242,7 @@ export const DEFAULT_ACCOUNTS: AccountMapping[] = [
   // Versicherungen
   { accountNumber: '6300', accountName: 'Versicherungen',            plCategory: 'insurance', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: false, isActive: true, source: 'default' },
   { accountNumber: '6310', accountName: 'Betriebshaftpflicht',       plCategory: 'insurance', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true,  isActive: true, source: 'default' },
-  { accountNumber: '6360', accountName: 'Abgaben, Gebühren',         plCategory: 'other_operating', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
+  { accountNumber: '6360', accountName: 'Abgaben, Gebühren',         plCategory: 'insurance',       plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
   { accountNumber: '6370', accountName: 'Bewilligungen',             plCategory: 'other_operating', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
   // Energie
   { accountNumber: '6400', accountName: 'Strom, Gas, Heizöl und Wasser', plCategory: 'utilities', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: false, isActive: true, source: 'default' },
@@ -264,7 +264,7 @@ export const DEFAULT_ACCOUNTS: AccountMapping[] = [
   // Marketing & Werbung
   { accountNumber: '6600', accountName: 'Werbeinserate',         plCategory: 'marketing', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
   { accountNumber: '6610', accountName: 'Werbedrucksachen',      plCategory: 'marketing', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
-  { accountNumber: '6611', accountName: 'Kost & Logis',          plCategory: 'other_operating', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
+  { accountNumber: '6611', accountName: 'Kost & Logis',          plCategory: 'marketing',       plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
   { accountNumber: '6612', accountName: 'Beiträge und Spenden',  plCategory: 'other_operating', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
   { accountNumber: '6620', accountName: 'Schaufenster, Dekoration', plCategory: 'marketing', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
   { accountNumber: '6640', accountName: 'Kundengeschenke',       plCategory: 'marketing', plSection: 'operating_expenses', department: 'general', sign: 'expense', canOverride: true, isActive: true, source: 'default' },
