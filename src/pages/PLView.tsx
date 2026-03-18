@@ -1645,9 +1645,35 @@ const PLViewPage = () => {
   const records = useMemo(() => loadYear(year), [year, month, refreshKey]);
   const prevYearRecords = useMemo(() => loadYear(year - 1), [year]);
 
+  // Fallback: Ist-Umsatz aus Gastronovi-Tagesdaten summieren (dailyBudgets)
+  // wenn kein manueller Monatswert in reporting_v1 vorhanden
+  const dailyRevenueForMonth = useMemo(() => {
+    const rec = records[month - 1];
+    if (rec?.revenueActual) return 0; // bereits gesetzt, kein Fallback nötig
+    try {
+      const db: Record<string, { actualRevenue?: number }> = JSON.parse(
+        localStorage.getItem('dailyBudgets') || '{}'
+      );
+      const daysInMonth = new Date(year, month, 0).getDate();
+      let sum = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const key = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        sum += db[key]?.actualRevenue ?? 0;
+      }
+      return sum;
+    } catch { return 0; }
+  }, [records, year, month, refreshKey]);
+
+  // Effektiver Monatsdatensatz: revenueActual aus dailyBudgets injizieren falls nicht manuell gesetzt
+  const effectiveMonthRecord = useMemo(() => {
+    const rec = records[month - 1];
+    if (!dailyRevenueForMonth) return rec;
+    return { ...rec, revenueActual: dailyRevenueForMonth };
+  }, [records, month, dailyRevenueForMonth]);
+
   const monthResult = useMemo(
-    () => computePLForMonth(records[month - 1]),
-    [records, month],
+    () => computePLForMonth(effectiveMonthRecord),
+    [effectiveMonthRecord],
   );
 
   const yearResult = useMemo(
@@ -1659,8 +1685,8 @@ const PLViewPage = () => {
   const budgetData = useMemo(() => loadBudgetWithPL(year), [year, refreshKey]);
 
   const bplRows = useMemo(
-    () => computeBPLRows(budgetData, records[month - 1], month - 1, prevYearRecords[month - 1]),
-    [budgetData, records, month, prevYearRecords],
+    () => computeBPLRows(budgetData, effectiveMonthRecord, month - 1, prevYearRecords[month - 1]),
+    [budgetData, effectiveMonthRecord, month, prevYearRecords],
   );
 
   const bplRevenue = useMemo(
@@ -1939,8 +1965,8 @@ const PLViewPage = () => {
           </div>
         )}
 
-        {/* Kein Ist-Umsatz – inline Schnelleingabe */}
-        {(mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && !records[month - 1]?.revenueActual && (
+        {/* Kein Ist-Umsatz – inline Schnelleingabe (nur wenn KEINE Quelle vorhanden) */}
+        {(mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && !records[month - 1]?.revenueActual && !dailyRevenueForMonth && (
           <InlineRevenueEntry
             year={year}
             month={month}
