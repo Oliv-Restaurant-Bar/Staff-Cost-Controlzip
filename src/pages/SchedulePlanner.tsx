@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
   loadEmployees,
@@ -121,7 +121,7 @@ const defaultEmployees: Employee[] = [
 
 type ViewMode = Department | 'all';
 
-type CalendarView = 'month' | 'week';
+type CalendarView = 'month' | 'week' | 'day';
 
 const SchedulePlanner = () => {
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
@@ -144,6 +144,7 @@ const SchedulePlanner = () => {
   const [calendarView, setCalendarView] = useState<CalendarView>('month');
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
   const [visibleWeekInMonth, setVisibleWeekInMonth] = useState(0);
+  const [selectedDayOffset, setSelectedDayOffset] = useState(0);
   const [copyWeekDialogOpen, setCopyWeekDialogOpen] = useState(false);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [dayDetailDialogOpen, setDayDetailDialogOpen] = useState(false);
@@ -287,12 +288,15 @@ const SchedulePlanner = () => {
   // Get days in current month
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
-  const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
+  const daysInMonth = useMemo(
+    () => eachDayOfInterval({ start: monthStart, end: monthEnd }),
+    [monthStart.getTime(), monthEnd.getTime()],
+  );
 
-  // Get weeks in month
-  const weeksInMonth = eachWeekOfInterval(
-    { start: monthStart, end: monthEnd },
-    { weekStartsOn: 1 }
+  // Get weeks in month — memoized so the scroll useEffect doesn't fire on every render
+  const weeksInMonth = useMemo(
+    () => eachWeekOfInterval({ start: monthStart, end: monthEnd }, { weekStartsOn: 1 }),
+    [monthStart.getTime(), monthEnd.getTime()],
   );
 
   // Ref for scrolling to week
@@ -338,23 +342,31 @@ const SchedulePlanner = () => {
           e.preventDefault();
           setSelectedWeekIndex(prev => Math.min(weeksInMonth.length - 1, prev + 1));
         }
+      } else if (calendarView === 'day') {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          setSelectedDayOffset(prev => Math.max(0, prev - 1));
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          setSelectedDayOffset(prev => Math.min(daysInMonth.length - 1, prev + 1));
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [calendarView, weeksInMonth.length]);
+  }, [calendarView, weeksInMonth.length, daysInMonth.length]);
 
   // Get displayed days based on view mode
-  const displayDays = calendarView === 'month' 
-    ? daysInMonth 
-    : (() => {
-        const weekStart = weeksInMonth[selectedWeekIndex] || weeksInMonth[0];
-        const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
-        return eachDayOfInterval({ start: weekStart, end: weekEnd }).filter(
-          d => isWithinInterval(d, { start: monthStart, end: monthEnd })
-        );
-      })();
+  const displayDays = useMemo(() => {
+    if (calendarView === 'month') return daysInMonth;
+    if (calendarView === 'day') return [daysInMonth[Math.min(selectedDayOffset, daysInMonth.length - 1)]];
+    const weekStart = weeksInMonth[selectedWeekIndex] || weeksInMonth[0];
+    const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+    return eachDayOfInterval({ start: weekStart, end: weekEnd }).filter(
+      d => isWithinInterval(d, { start: monthStart, end: monthEnd })
+    );
+  }, [calendarView, daysInMonth, selectedDayOffset, selectedWeekIndex, weeksInMonth, monthStart, monthEnd]);
 
   // Calculate hours from a time slot
   const calculateSlotHours = (slot: TimeSlot | null | undefined): number => {
@@ -1288,6 +1300,15 @@ const SchedulePlanner = () => {
                 <Calendar className="h-3 w-3" />
                 <span className="hidden sm:inline">Woche</span>
               </Button>
+              <Button
+                variant={calendarView === 'day' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setCalendarView('day')}
+                className="h-7 gap-1"
+              >
+                <Clock className="h-3 w-3" />
+                <span className="hidden sm:inline">Tag</span>
+              </Button>
             </div>
             
             <div className="w-px h-6 bg-border mx-1" />
@@ -1307,6 +1328,16 @@ const SchedulePlanner = () => {
                 <ChevronLeft className="h-4 w-4" />
               </Button>
             )}
+            {calendarView === 'day' && (
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => setSelectedDayOffset(prev => Math.max(0, prev - 1))}
+                disabled={selectedDayOffset === 0}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+            )}
           </div>
           
           <div className="text-center flex-1">
@@ -1316,6 +1347,11 @@ const SchedulePlanner = () => {
             {calendarView === 'week' && weeksInMonth[selectedWeekIndex] && (
               <p className="text-sm text-muted-foreground">
                 KW {format(weeksInMonth[selectedWeekIndex], 'w')} ({format(weeksInMonth[selectedWeekIndex], 'd.MM.')} - {format(endOfWeek(weeksInMonth[selectedWeekIndex], { weekStartsOn: 1 }), 'd.MM.')})
+              </p>
+            )}
+            {calendarView === 'day' && daysInMonth[selectedDayOffset] && (
+              <p className="text-sm text-muted-foreground">
+                {format(daysInMonth[selectedDayOffset], 'EEEE, d. MMMM', { locale: de })}
               </p>
             )}
             {calendarView === 'month' && (
@@ -1360,6 +1396,16 @@ const SchedulePlanner = () => {
                 size="sm"
                 onClick={() => setSelectedWeekIndex(Math.min(weeksInMonth.length - 1, selectedWeekIndex + 1))}
                 disabled={selectedWeekIndex >= weeksInMonth.length - 1}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            )}
+            {calendarView === 'day' && (
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => setSelectedDayOffset(prev => Math.min(daysInMonth.length - 1, prev + 1))}
+                disabled={selectedDayOffset >= daysInMonth.length - 1}
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
