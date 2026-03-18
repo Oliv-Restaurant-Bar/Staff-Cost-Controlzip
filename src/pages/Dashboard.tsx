@@ -213,7 +213,10 @@ const Dashboard = () => {
     isAdmin, isManager, allowedDepartment,
     canSeeHourlyWages, canSeeFullFinancials, canSeePersonnelCostTotals,
   } = usePermissions();
-  const { isActive: stichtagActive, stichtagYear, stichtagMonth, formatted: stichtagFormatted } = useStichtag();
+  const {
+    isActive: stichtagActive, stichtagYear, stichtagMonth, stichtagDay,
+    stichtag, formatted: stichtagFormatted,
+  } = useStichtag();
 
   const deptLabel = allowedDepartment === 'service' ? 'Service'
     : allowedDepartment === 'küche' ? 'Küche'
@@ -469,6 +472,87 @@ const Dashboard = () => {
     if (ratio <= target + 5) return 'yellow';
     return 'red';
   };
+
+  // ── Stichtag pro-rata Berechnungen ───────────────────────────────────────────
+  // Gilt der Stichtag für den aktuell angezeigten Monat?
+  const stichtagInMonth = stichtagActive
+    && stichtagYear === currentYear
+    && stichtagMonth === currentMonth;
+
+  const stichtagDateStr = stichtagInMonth && stichtag
+    ? format(stichtag as Date, 'yyyy-MM-dd')
+    : null;
+
+  const daysUpToStichtag = stichtagDateStr
+    ? monthDays.filter(d => d <= stichtagDateStr)
+    : [];
+
+  // Budget pro-rata per Stichtag (= Anteil am Monatsbudget)
+  const budgetProRataStichtag = stichtagInMonth && stichtagDay && budgetData.revenueBudget > 0
+    ? Math.round(budgetData.revenueBudget * stichtagDay / daysInRefMonth)
+    : null;
+
+  const personnelBudgetProRata = stichtagInMonth && stichtagDay && budgetData.personnelBudget > 0
+    ? Math.round(budgetData.personnelBudget * stichtagDay / daysInRefMonth)
+    : null;
+
+  // Ist-Umsatz bis Stichtag
+  const revenueIstStichtag = stichtagDateStr
+    ? sumRevenue(daysUpToStichtag, 'actualRevenue')
+    : null;
+
+  // Vorjahr bis Stichtag
+  const revenuePrevYearStichtag = stichtagDateStr
+    ? sumRevenue(daysUpToStichtag, 'previousYearRevenue')
+    : null;
+
+  // Personalkosten bis Stichtag (aus Ist-Stunden × Stundenlohn)
+  const actualLaborCostStichtag = useMemo(() => {
+    if (!stichtagDateStr) return null;
+    const set = new Set(daysUpToStichtag);
+    return visibleEmployees.reduce((sum, emp) => {
+      const hrs = Object.entries(actualData)
+        .filter(([key]) => {
+          const date = key.slice(-10);
+          const empId = key.slice(0, key.length - 11);
+          return empId === emp.id && set.has(date);
+        })
+        .reduce((s, [, e]) => s + e.hours, 0);
+      return sum + hrs * emp.hourlyWage;
+    }, 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleEmployees, actualData, stichtagDateStr]);
+
+  // ── Effektiver Stichtag: letzter Tag mit Ist-Umsatz (oder expliziter Stichtag) ──
+  // Für den "zweiten Budget pro rata"-Vergleich
+  const lastRevenueDay = monthDays.reduce<string | null>((last, d) => {
+    return (dailyBudgets[d]?.actualRevenue ?? 0) > 0 ? d : last;
+  }, null);
+
+  // Wir bevorzugen den expliziten Stichtag (wenn im aktuellen Monat), sonst letzten Ist-Tag
+  const effectiveCutoff = stichtagDateStr ?? lastRevenueDay;
+  const effectiveDayNum = effectiveCutoff ? parseInt(effectiveCutoff.slice(-2), 10) : null;
+  const effectiveDays   = effectiveCutoff ? monthDays.filter(d => d <= effectiveCutoff) : [];
+
+  const budgetEffective = effectiveDayNum && budgetData.revenueBudget > 0
+    ? Math.round(budgetData.revenueBudget * effectiveDayNum / daysInRefMonth)
+    : null;
+
+  const revenueIstEffective = effectiveCutoff
+    ? sumRevenue(effectiveDays, 'actualRevenue')
+    : null;
+
+  const revEffectiveVsBudgetAbs = budgetEffective !== null && revenueIstEffective !== null
+    ? revenueIstEffective - budgetEffective
+    : null;
+
+  const revEffectiveVsBudgetPct = budgetEffective && revenueIstEffective !== null && budgetEffective > 0
+    ? ((revenueIstEffective - budgetEffective) / budgetEffective) * 100
+    : null;
+
+  const effectiveCutoffLabel = effectiveCutoff
+    ? format(new Date(effectiveCutoff), 'd. MMM', { locale: de })
+    : null;
 
   // ─── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -738,53 +822,179 @@ const Dashboard = () => {
 
                 {/* Umsatz: Budget vs. Ist (nur Admin) */}
                 {isAdmin && (
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                    <KpiCard
-                      title="Budget Umsatz"
-                      value={formatCHF(budgetData.revenueBudget)}
-                      subtitle={`Jahresplanung ${currentYear}`}
-                      icon={<BookOpen className="h-5 w-5" />}
-                      color="blue"
-                    />
-                    <KpiCard
-                      title="Ist Umsatz"
-                      value={revenueMonth > 0 ? formatCHF(revenueMonth) : '–'}
-                      subtitle="Tatsächlich erfasst"
-                      icon={<TrendingUp className="h-5 w-5" />}
-                      color={
-                        revVsBudgetPct === null ? 'default' :
-                        revVsBudgetPct >= 0 ? 'green' : 'red'
-                      }
-                      delta={revVsBudgetPct}
-                      deltaLabel="% vs. Budget"
-                    />
-                    {revVsBudgetAbs !== null && (
+                  <>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                       <KpiCard
-                        title="Abweichung CHF"
-                        value={`${revVsBudgetAbs >= 0 ? '+' : ''}${formatCHF(revVsBudgetAbs)}`}
-                        subtitle={revVsBudgetAbs >= 0 ? 'Über Budget' : 'Unter Budget'}
-                        icon={revVsBudgetAbs >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
-                        color={revVsBudgetAbs >= 0 ? 'green' : 'red'}
-                        badge={revVsBudgetAbs >= 0 ? '✓ Über Budget' : '↓ Unter Budget'}
-                        badgeColor={
-                          revVsBudgetAbs >= 0
-                            ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
-                            : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
+                        title="Budget Umsatz"
+                        value={formatCHF(budgetData.revenueBudget)}
+                        subtitle={`Monatsbudget ${currentYear}`}
+                        icon={<BookOpen className="h-5 w-5" />}
+                        color="blue"
+                      />
+                      <KpiCard
+                        title="Ist Umsatz"
+                        value={revenueMonth > 0 ? formatCHF(revenueMonth) : '–'}
+                        subtitle="Tatsächlich erfasst"
+                        icon={<TrendingUp className="h-5 w-5" />}
+                        color={
+                          revVsBudgetPct === null ? 'default' :
+                          revVsBudgetPct >= 0 ? 'green' : 'red'
                         }
+                        delta={revVsBudgetPct}
+                        deltaLabel="% vs. Budget"
                       />
+                      {revVsBudgetAbs !== null && (
+                        <KpiCard
+                          title="Abweichung CHF"
+                          value={`${revVsBudgetAbs >= 0 ? '+' : ''}${formatCHF(revVsBudgetAbs)}`}
+                          subtitle={revVsBudgetAbs >= 0 ? 'Über Budget' : 'Unter Budget'}
+                          icon={revVsBudgetAbs >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
+                          color={revVsBudgetAbs >= 0 ? 'green' : 'red'}
+                          badge={revVsBudgetAbs >= 0 ? '✓ Über Budget' : '↓ Unter Budget'}
+                          badgeColor={
+                            revVsBudgetAbs >= 0
+                              ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
+                              : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
+                          }
+                        />
+                      )}
+                      {budgetData.operatingResultBudget !== 0 && (
+                        <KpiCard
+                          title="Ergebnis Budget"
+                          value={formatCHF(budgetData.operatingResultBudget)}
+                          subtitle="Geplantes Betriebsergebnis"
+                          icon={<Target className="h-5 w-5" />}
+                          color="default"
+                          delta={budgetResultVariance}
+                          deltaLabel="CHF Abw."
+                        />
+                      )}
+                    </div>
+
+                    {/* ── Pro-rata Vergleich: Budget bis letztem Ist-Tag oder Stichtag ── */}
+                    {budgetEffective !== null && effectiveCutoffLabel && (
+                      <div className="mt-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
+                          <CalendarDays className="h-3.5 w-3.5" />
+                          Budget pro rata bis {effectiveCutoffLabel}
+                          {stichtagDateStr
+                            ? ' (Stichtag)'
+                            : ' (letzter Ist-Tag)'}
+                        </p>
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                          <KpiCard
+                            title="Budget pro rata"
+                            value={formatCHF(budgetEffective)}
+                            subtitle={`${effectiveDayNum} von ${daysInRefMonth} Tagen`}
+                            icon={<CalendarDays className="h-5 w-5" />}
+                            color="blue"
+                            small
+                          />
+                          <KpiCard
+                            title="Ist Umsatz"
+                            value={revenueIstEffective !== null && revenueIstEffective > 0
+                              ? formatCHF(revenueIstEffective) : '–'}
+                            subtitle={`bis ${effectiveCutoffLabel}`}
+                            icon={<TrendingUp className="h-5 w-5" />}
+                            color={
+                              revEffectiveVsBudgetPct === null ? 'default' :
+                              revEffectiveVsBudgetPct >= 0 ? 'green' : 'red'
+                            }
+                            delta={revEffectiveVsBudgetPct}
+                            deltaLabel="% vs. Budget p.r."
+                            small
+                          />
+                          {revEffectiveVsBudgetAbs !== null && (
+                            <KpiCard
+                              title="Abweichung pro rata"
+                              value={`${revEffectiveVsBudgetAbs >= 0 ? '+' : ''}${formatCHF(revEffectiveVsBudgetAbs)}`}
+                              subtitle={revEffectiveVsBudgetAbs >= 0 ? 'Über Ziel' : 'Unter Ziel'}
+                              icon={revEffectiveVsBudgetAbs >= 0
+                                ? <TrendingUp className="h-5 w-5" />
+                                : <TrendingDown className="h-5 w-5" />}
+                              color={revEffectiveVsBudgetAbs >= 0 ? 'green' : 'red'}
+                              badge={revEffectiveVsBudgetAbs >= 0 ? '✓ Im Ziel' : '↓ Unter Ziel'}
+                              badgeColor={
+                                revEffectiveVsBudgetAbs >= 0
+                                  ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
+                                  : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
+                              }
+                              small
+                            />
+                          )}
+                          {revenuePrevYearStichtag !== null && revenuePrevYearStichtag > 0 ? (
+                            <KpiCard
+                              title="Vorjahr bis Stichtag"
+                              value={formatCHF(revenuePrevYearStichtag)}
+                              subtitle={`Vorjahr bis ${effectiveCutoffLabel}`}
+                              icon={<TrendingUp className="h-5 w-5" />}
+                              color="default"
+                              small
+                            />
+                          ) : sumRevenue(effectiveDays, 'previousYearRevenue') > 0 ? (
+                            <KpiCard
+                              title="Vorjahr bis dato"
+                              value={formatCHF(sumRevenue(effectiveDays, 'previousYearRevenue'))}
+                              subtitle={`Vorjahr bis ${effectiveCutoffLabel}`}
+                              icon={<TrendingUp className="h-5 w-5" />}
+                              color="default"
+                              small
+                            />
+                          ) : null}
+                        </div>
+                      </div>
                     )}
-                    {budgetData.operatingResultBudget !== 0 && (
-                      <KpiCard
-                        title="Ergebnis Budget"
-                        value={formatCHF(budgetData.operatingResultBudget)}
-                        subtitle="Geplantes Betriebsergebnis"
-                        icon={<Target className="h-5 w-5" />}
-                        color="default"
-                        delta={budgetResultVariance}
-                        deltaLabel="CHF Abw."
-                      />
+
+                    {/* ── Stichtag-Vergleich (nur wenn Stichtag im aktuellen Monat) ── */}
+                    {stichtagInMonth && budgetProRataStichtag !== null && (
+                      <div className="mt-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
+                          <BookOpen className="h-3.5 w-3.5" />
+                          Stichtag-Vergleich per {stichtagFormatted}
+                        </p>
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                          <KpiCard
+                            title="Budget pro rata"
+                            value={formatCHF(budgetProRataStichtag)}
+                            subtitle={`${stichtagDay} / ${daysInRefMonth} Tage`}
+                            icon={<BookOpen className="h-5 w-5" />}
+                            color="blue"
+                            small
+                          />
+                          {revenueIstStichtag !== null && (
+                            <KpiCard
+                              title="Ist Umsatz bis Stichtag"
+                              value={revenueIstStichtag > 0 ? formatCHF(revenueIstStichtag) : '–'}
+                              subtitle={`bis ${stichtagFormatted}`}
+                              icon={<TrendingUp className="h-5 w-5" />}
+                              color={
+                                revenueIstStichtag >= budgetProRataStichtag ? 'green' : 'red'
+                              }
+                              delta={budgetProRataStichtag > 0
+                                ? ((revenueIstStichtag - budgetProRataStichtag) / budgetProRataStichtag) * 100
+                                : null}
+                              deltaLabel="% vs. Budget p.r."
+                              small
+                            />
+                          )}
+                          {revenuePrevYearStichtag !== null && revenuePrevYearStichtag > 0 && (
+                            <KpiCard
+                              title="Vorjahr bis Stichtag"
+                              value={formatCHF(revenuePrevYearStichtag)}
+                              subtitle={`Vorjahr bis ${stichtagFormatted}`}
+                              icon={<TrendingUp className="h-5 w-5" />}
+                              color="default"
+                              delta={revenuePrevYearStichtag > 0 && revenueIstStichtag !== null
+                                ? ((revenueIstStichtag - revenuePrevYearStichtag) / revenuePrevYearStichtag) * 100
+                                : null}
+                              deltaLabel="% vs. VJ"
+                              small
+                            />
+                          )}
+                        </div>
+                      </div>
                     )}
-                  </div>
+                  </>
                 )}
 
                 {/* Personalkosten: Budget vs. Ist */}
@@ -840,6 +1050,55 @@ const Dashboard = () => {
                         }
                       />
                     )}
+                  </div>
+                )}
+
+                {/* Personalkosten Stichtag-Vergleich */}
+                {canSeePersonnelCostTotals && stichtagInMonth && personnelBudgetProRata !== null && (
+                  <div className="mt-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
+                      <Users className="h-3.5 w-3.5" />
+                      Personalkosten bis Stichtag {stichtagFormatted}
+                    </p>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      <KpiCard
+                        title="Budget pro rata"
+                        value={formatCHF(personnelBudgetProRata)}
+                        subtitle={`${stichtagDay} / ${daysInRefMonth} Tage`}
+                        icon={<BookOpen className="h-5 w-5" />}
+                        color="blue"
+                        small
+                      />
+                      {actualLaborCostStichtag !== null && actualLaborCostStichtag > 0 && (
+                        <KpiCard
+                          title="Ist Personalkosten"
+                          value={formatCHF(actualLaborCostStichtag)}
+                          subtitle={`bis ${stichtagFormatted}`}
+                          icon={<Users className="h-5 w-5" />}
+                          color={actualLaborCostStichtag <= personnelBudgetProRata ? 'green' : 'red'}
+                          delta={personnelBudgetProRata > 0
+                            ? ((actualLaborCostStichtag - personnelBudgetProRata) / personnelBudgetProRata) * 100
+                            : null}
+                          deltaLabel="% vs. Budget p.r."
+                          small
+                        />
+                      )}
+                      {revenueIstStichtag !== null && revenueIstStichtag > 0 && actualLaborCostStichtag !== null && actualLaborCostStichtag > 0 && (
+                        <KpiCard
+                          title="Ist-Quote bis Stichtag"
+                          value={`${((actualLaborCostStichtag / revenueIstStichtag) * 100).toFixed(1)} %`}
+                          subtitle="Personalkosten / Umsatz"
+                          icon={<Target className="h-5 w-5" />}
+                          color={budgetData.personnelRatioTarget !== null
+                            ? budgetRatioColor(
+                                (actualLaborCostStichtag / revenueIstStichtag) * 100,
+                                budgetData.personnelRatioTarget,
+                              )
+                            : 'default'}
+                          small
+                        />
+                      )}
+                    </div>
                   </div>
                 )}
 
