@@ -381,8 +381,12 @@ function BudgetContent() {
                     Konto / Bezeichnung
                   </th>
                   {/* Kumuliert (Jahressumme) */}
-                  <th className="text-right py-2.5 px-2 font-bold text-xs bg-amber-50/80 dark:bg-amber-950/20 border-r-2 border-amber-300 min-w-[100px]">
+                  <th className="text-right py-2.5 px-2 font-bold text-xs bg-amber-50/80 dark:bg-amber-950/20 border-amber-300 min-w-[90px]">
                     Kumuliert
+                  </th>
+                  {/* % Anteil Umsatz */}
+                  <th className="text-right py-2.5 px-2 font-bold text-xs bg-amber-50/80 dark:bg-amber-950/20 border-r-2 border-amber-300 min-w-[52px] text-amber-700">
+                    %
                   </th>
                   {/* Monatsspalten */}
                   {BUDGET_MONTH_NAMES.map(m => (
@@ -403,15 +407,21 @@ function BudgetContent() {
 
                     // ── Zwischenergebnis-Zeile (type='result') ────────────────
                     if (cat.type === 'result') {
+                      const catPct = totalRevenue > 0 ? yearTotal / totalRevenue * 100 : null;
                       return (
                         <tr key={cat.id} className={cn('border-t-2 border-b border-border', style.result)}>
                           <td className={cn('sticky left-0 z-10 py-2.5 px-4 font-bold text-sm border-r border-border', style.result)}>
                             {cat.label}
                           </td>
-                          {/* Kumuliert: Jahressumme */}
-                          <td className={cn('text-right py-2.5 px-3 font-mono font-bold text-sm border-r-2 border-amber-300', style.kum,
+                          {/* Kumuliert CHF */}
+                          <td className={cn('text-right py-2.5 px-3 font-mono font-bold text-sm', style.kum,
                             yearTotal < 0 ? 'text-red-700 dark:text-red-400' : '')}>
                             {CHF(yearTotal)}
+                          </td>
+                          {/* Kumuliert % */}
+                          <td className={cn('text-right py-2.5 px-2 font-mono font-bold text-xs border-r-2 border-amber-300', style.kum,
+                            catPct !== null && catPct < 0 ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400')}>
+                            {catPct !== null ? `${catPct.toFixed(1)}%` : '–'}
                           </td>
                           {monthly.map((v, m) => (
                             <td key={m} className={cn('text-right py-2.5 px-2 font-mono font-bold text-xs', style.result,
@@ -456,9 +466,13 @@ function BudgetContent() {
                             </button>
                           </div>
                         </td>
-                        {/* Kumuliert: Kategoriesumme */}
-                        <td className={cn('text-right py-2.5 px-3 font-mono font-bold text-xs border-r-2 border-amber-300', style.kum)}>
+                        {/* Kumuliert CHF: Kategoriesumme */}
+                        <td className={cn('text-right py-2.5 px-3 font-mono font-bold text-xs', style.kum)}>
                           {yearTotal !== 0 ? CHF(yearTotal) : '–'}
+                        </td>
+                        {/* Kumuliert %: Anteil am Umsatz */}
+                        <td className={cn('text-right py-2.5 px-2 font-mono font-bold text-xs border-r-2 border-amber-300 text-amber-700 dark:text-amber-400', style.kum)}>
+                          {totalRevenue > 0 ? `${(yearTotal / totalRevenue * 100).toFixed(1)}%` : '–'}
                         </td>
                         {monthly.map((v, m) => (
                           <td key={m} className={cn('text-right py-2.5 px-2 font-mono font-semibold text-xs', style.header)}>
@@ -500,9 +514,9 @@ function BudgetContent() {
                               </div>
                             </td>
 
-                            {/* Kumuliert-Zelle (editierbar → Jahreswert eingeben → verteilen) */}
+                            {/* Kumuliert CHF (editierbar) */}
                             <td
-                              className="text-right py-1.5 px-2 font-mono text-xs font-semibold border-r-2 border-amber-300 bg-amber-50/40 dark:bg-amber-950/10 cursor-pointer hover:bg-amber-100/60 dark:hover:bg-amber-900/20 transition-colors"
+                              className="text-right py-1.5 px-2 font-mono text-xs font-semibold bg-amber-50/40 dark:bg-amber-950/10 cursor-pointer hover:bg-amber-100/60 dark:hover:bg-amber-900/20 transition-colors"
                               onClick={() => !isEditKum && item.valueType !== 'percent' && setEditKumuliert(item.id)}
                               title={item.valueType === 'percent' ? '%-Positionen: Monate direkt bearbeiten' : 'Jahreswert eingeben → gleichmässig verteilen'}
                             >
@@ -513,21 +527,24 @@ function BudgetContent() {
                                   onCancel={() => setEditKumuliert(null)}
                                 />
                               ) : (
-                                <div className="flex flex-col items-end">
+                                <div className="flex items-center justify-end gap-1">
                                   {item.valueType === 'percent'
-                                    ? <span className="text-blue-700 dark:text-blue-300 flex items-center gap-1">
-                                        {CHF(iyearly)}
-                                        <span className="text-[9px] opacity-60">(CHF)</span>
-                                      </span>
-                                    : <span className="flex items-center gap-1">
-                                        {iyearly !== 0 ? CHF(iyearly) : <span className="text-muted-foreground/30">–</span>}
+                                    ? <span className="text-blue-700 dark:text-blue-300">{CHF(iyearly)}</span>
+                                    : <>
+                                        <span>{iyearly !== 0 ? CHF(iyearly) : <span className="text-muted-foreground/30">–</span>}</span>
                                         {iyearly !== 0 && (
-                                          <SplitSquareHorizontal className="h-3 w-3 text-amber-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                          <SplitSquareHorizontal className="h-3 w-3 text-amber-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                                         )}
-                                      </span>
+                                      </>
                                   }
                                 </div>
                               )}
+                            </td>
+                            {/* Kumuliert % (Anteil am Jahresumsatz) */}
+                            <td className="text-right py-1.5 px-2 font-mono text-xs border-r-2 border-amber-300 bg-amber-50/40 dark:bg-amber-950/10 text-amber-700 dark:text-amber-400">
+                              {totalRevenue > 0 && iyearly !== 0
+                                ? `${(iyearly / totalRevenue * 100).toFixed(1)}%`
+                                : <span className="text-muted-foreground/30">–</span>}
                             </td>
 
                             {/* Monatszellen (inline-editierbar) */}
@@ -596,6 +613,7 @@ function BudgetContent() {
                             ), 0)
                           );
                           const direktYearly = direktMonthly.reduce((s, v) => s + v, 0);
+                          const direktPct = totalRevenue > 0 ? direktYearly / totalRevenue * 100 : null;
                           const subtotalRow = (
                             <tr key="subtotal-direkter-warenaufwand" className="border-t border-b-2 border-orange-200 bg-orange-50/60 dark:bg-orange-950/20">
                               <td className="sticky left-0 z-10 py-1.5 pl-8 pr-2 border-r border-border bg-orange-50/60 dark:bg-orange-950/20">
@@ -603,8 +621,11 @@ function BudgetContent() {
                                   Direkter Warenaufwand
                                 </span>
                               </td>
-                              <td className="text-right py-1.5 px-3 font-mono font-bold text-xs border-r-2 border-amber-300 bg-amber-50/40 dark:bg-amber-950/10 text-orange-800 dark:text-orange-200">
+                              <td className="text-right py-1.5 px-3 font-mono font-bold text-xs bg-amber-50/40 dark:bg-amber-950/10 text-orange-800 dark:text-orange-200">
                                 {direktYearly !== 0 ? CHF(direktYearly) : '–'}
+                              </td>
+                              <td className="text-right py-1.5 px-2 font-mono font-bold text-xs border-r-2 border-amber-300 bg-amber-50/40 dark:bg-amber-950/10 text-amber-700 dark:text-amber-400">
+                                {direktPct !== null ? `${direktPct.toFixed(1)}%` : '–'}
                               </td>
                               {direktMonthly.map((v, m) => (
                                 <td key={m} className="text-right py-1.5 px-2 font-mono text-xs font-semibold text-orange-800 dark:text-orange-200">
