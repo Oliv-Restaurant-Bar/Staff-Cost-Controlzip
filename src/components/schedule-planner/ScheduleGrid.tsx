@@ -54,6 +54,7 @@ interface ScheduleGridProps {
   showFooter?: boolean;
   showCosts?: boolean;
   dailyBudgets?: Record<string, { plannedRevenue?: number; actualRevenue?: number }>;
+  laborCostThreshold?: number;
 }
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -134,13 +135,14 @@ export const ScheduleGrid = ({
   showFooter = true,
   showCosts = false,
   dailyBudgets = {},
+  laborCostThreshold: laborCostThresholdProp,
 }: ScheduleGridProps) => {
   const { shiftMap, absenceShifts } = useShiftConfig();
   
-  // Load labor cost threshold from settings
+  // Use prop if provided (allows per-department threshold), else fall back to localStorage
   const LABOR_COST_THRESHOLD_KEY = 'labor_cost_threshold';
   const DEFAULT_LABOR_COST_THRESHOLD = 40;
-  const laborCostThreshold = parseFloat(localStorage.getItem(LABOR_COST_THRESHOLD_KEY) || String(DEFAULT_LABOR_COST_THRESHOLD));
+  const laborCostThreshold = laborCostThresholdProp ?? parseFloat(localStorage.getItem(LABOR_COST_THRESHOLD_KEY) || String(DEFAULT_LABOR_COST_THRESHOLD));
   const sundayIndices = getSundayIndices(days);
 
   // Calculate daily totals including costs and budget comparison

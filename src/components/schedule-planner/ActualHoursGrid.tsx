@@ -28,6 +28,7 @@ interface ActualHoursGridProps {
   getTargetHours: (employee: Employee) => number;
   showCosts?: boolean;
   dailyBudgets?: Record<string, { plannedRevenue?: number; actualRevenue?: number }>;
+  laborCostThreshold?: number;
 }
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -362,6 +363,7 @@ export const ActualHoursGrid = ({
   getTargetHours,
   showCosts = false,
   dailyBudgets = {},
+  laborCostThreshold: laborCostThresholdProp,
 }: ActualHoursGridProps) => {
   const isWeekView = days.length <= 7;
 
@@ -369,7 +371,8 @@ export const ActualHoursGrid = ({
   const [openDialogDay, setOpenDialogDay] = useState<string | null>(null);
   const [showIdealPlan, setShowIdealPlan] = useState(false);
 
-  const LABOR_COST_THRESHOLD = parseFloat(localStorage.getItem('labor_cost_threshold') || '40');
+  // Use prop if provided (allows per-department threshold), else fall back to localStorage
+  const LABOR_COST_THRESHOLD = laborCostThresholdProp ?? parseFloat(localStorage.getItem('labor_cost_threshold') || '40');
 
   // Calculate daily totals with budget awareness
   const getDailyStats = (day: Date) => {

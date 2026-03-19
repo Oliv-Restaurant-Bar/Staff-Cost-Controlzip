@@ -1145,6 +1145,24 @@ const SchedulePlanner = () => {
     return sum + hrs * emp.hourlyWage;
   }, 0);
 
+  // ── Ist-Personalkosten: aus tatsächlich erfassten Stunden ──────────────────
+  const weeklyIstLaborCost = visibleEmployees.reduce((sum, emp) => {
+    const hrs = displayDays.reduce((h, day) => {
+      const cellKey = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
+      const entry = actualHoursData[cellKey];
+      return h + (entry?.hours || 0);
+    }, 0);
+    return sum + hrs * emp.hourlyWage;
+  }, 0);
+
+  const monthlyIstLaborCost = visibleEmployees.reduce((sum, emp) => {
+    const hrs = daysInMonth.reduce((h, day) => {
+      const cellKey = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
+      const entry = actualHoursData[cellKey];
+      return h + (entry?.hours || 0);
+    }, 0);
+    return sum + hrs * emp.hourlyWage;
+  }, 0);
 
   // ── Ist-Umsatz ─────────────────────────────────────────────────────────────
   const monthlyActualRevenue = Object.entries(dailyBudgets)
@@ -1163,9 +1181,19 @@ const SchedulePlanner = () => {
     calendarView === 'month' ? monthlyActualRevenue : weeklyActualRevenue;
   const activeRevenue = scheduleMode === 'ist' ? activeIstRevenue : activePlannedRevenue;
 
-  const activeLaborCost =
-    calendarView === 'month' ? totalPlannedLaborCost :
-    weeklyPlannedLaborCost; // woche + tag nutzen beide displayDays
+  // Im Ist-Modus: Kosten aus erfassten Ist-Stunden, nicht aus Planung
+  const activeLaborCost = scheduleMode === 'ist'
+    ? (calendarView === 'month' ? monthlyIstLaborCost : weeklyIstLaborCost)
+    : (calendarView === 'month' ? totalPlannedLaborCost : weeklyPlannedLaborCost);
+
+  // ── Effektiver Zielwert: pro Abteilung halb so hoch wie Gesamtziel ─────────
+  // (Service + Küche = 40% total → je 20% pro Abteilung)
+  const effectiveLaborCostThreshold = activeDepartment !== 'all'
+    ? laborCostThreshold / 2
+    : laborCostThreshold;
+
+  // Jedes ScheduleGrid zeigt immer nur eine Abteilung → immer Abteilungs-Zielwert
+  const gridLaborCostThreshold = laborCostThreshold / 2;
 
   // ── Label für die aktive Periode ─────────────────────────────────────────
   const pkqPeriodLabel = useMemo(() => {
@@ -1221,8 +1249,8 @@ const SchedulePlanner = () => {
     : null;
   const costRatioStatus: 'good' | 'ok' | 'high' | 'unknown' =
     plannedCostRatio === null ? 'unknown' :
-    plannedCostRatio <= laborCostThreshold ? 'good' :
-    plannedCostRatio <= laborCostThreshold + 5 ? 'ok' : 'high';
+    plannedCostRatio <= effectiveLaborCostThreshold ? 'good' :
+    plannedCostRatio <= effectiveLaborCostThreshold + 5 ? 'ok' : 'high';
 
   // ── Feature 3: Soll/Ist-Vergleich ────────────────────────────────────────
   // Stunden ebenfalls nur für die sichtbare Abteilung
@@ -1652,9 +1680,9 @@ const SchedulePlanner = () => {
                   {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '– %'}
                 </p>
                 <p className="text-sm mt-1">
-                  {costRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {laborCostThreshold}% erreicht</span>}
-                  {costRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({laborCostThreshold}%)</span>}
-                  {costRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {laborCostThreshold}% überschritten</span>}
+                  {costRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {effectiveLaborCostThreshold}% erreicht</span>}
+                  {costRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({effectiveLaborCostThreshold}%)</span>}
+                  {costRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {effectiveLaborCostThreshold}% überschritten</span>}
                   {costRatioStatus === 'unknown' && <span className="text-muted-foreground">Kein Umsatzbudget – Quote noch nicht berechenbar</span>}
                 </p>
               </div>
@@ -1682,8 +1710,10 @@ const SchedulePlanner = () => {
                 <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
               </div>
               <div className="text-center">
-                <p className="text-xl font-bold tabular-nums">{laborCostThreshold} %</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">Zielwert</p>
+                <p className="text-xl font-bold tabular-nums">{effectiveLaborCostThreshold} %</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Zielwert{activeDepartment !== 'all' && <span className="block text-[10px] text-muted-foreground/70">(pro Abteilung)</span>}
+                </p>
               </div>
             </div>
           </div>
@@ -1869,6 +1899,7 @@ const SchedulePlanner = () => {
                           showFooter={showFooter}
                           showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
+                          laborCostThreshold={gridLaborCostThreshold}
                         />
                       </div>
                       
@@ -1894,6 +1925,7 @@ const SchedulePlanner = () => {
                           showFooter={showFooter}
                           showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
+                          laborCostThreshold={gridLaborCostThreshold}
                         />
                       </div>
                     </div>
@@ -1914,6 +1946,7 @@ const SchedulePlanner = () => {
                       showFooter={showFooter}
                       showCosts={effectiveShowCosts}
                       dailyBudgets={dailyBudgets}
+                      laborCostThreshold={gridLaborCostThreshold}
                     />
                   )}
                 </>
@@ -1949,6 +1982,7 @@ const SchedulePlanner = () => {
                           getTargetHours={getMonthlyTargetHours}
                           showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
+                          laborCostThreshold={gridLaborCostThreshold}
                         />
                       </div>
                       
@@ -1967,6 +2001,7 @@ const SchedulePlanner = () => {
                           getTargetHours={getMonthlyTargetHours}
                           showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
+                          laborCostThreshold={gridLaborCostThreshold}
                         />
                       </div>
                     </div>
@@ -1980,6 +2015,7 @@ const SchedulePlanner = () => {
                       getTargetHours={getMonthlyTargetHours}
                       showCosts={effectiveShowCosts}
                       dailyBudgets={dailyBudgets}
+                      laborCostThreshold={gridLaborCostThreshold}
                     />
                   )}
                 </>
@@ -2111,16 +2147,16 @@ const SchedulePlanner = () => {
                     <span className="text-sm text-muted-foreground">Ist</span>
                     <span className={cn(
                       "text-base font-bold tabular-nums",
-                      actualCostRatio === null                        ? "text-muted-foreground" :
-                      actualCostRatio <= laborCostThreshold           ? "text-green-600" :
-                      actualCostRatio <= laborCostThreshold + 5       ? "text-yellow-600" : "text-red-600"
+                      actualCostRatio === null                                  ? "text-muted-foreground" :
+                      actualCostRatio <= effectiveLaborCostThreshold            ? "text-green-600" :
+                      actualCostRatio <= effectiveLaborCostThreshold + 5        ? "text-yellow-600" : "text-red-600"
                     )}>
                       {actualCostRatio !== null ? `${actualCostRatio.toFixed(1)} %` : '–'}
                     </span>
                   </div>
                   <div className="flex justify-between items-baseline border-t pt-2 mt-1">
                     <span className="text-sm text-muted-foreground">Ziel</span>
-                    <span className="text-base font-bold tabular-nums">{laborCostThreshold} %</span>
+                    <span className="text-base font-bold tabular-nums">{effectiveLaborCostThreshold} %</span>
                   </div>
                 </div>
               </div>
