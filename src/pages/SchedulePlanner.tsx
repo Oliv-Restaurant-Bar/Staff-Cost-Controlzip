@@ -1128,6 +1128,12 @@ const SchedulePlanner = () => {
 
   const overhoursEmployees = employeeSummaries.filter(s => s.status === 'over');
 
+  // Estimated hours for variable employees from Personal FIX page
+  const varEstimatedHours: Record<string, number> = (() => {
+    try { return JSON.parse(localStorage.getItem('personal_fix_var_hours_v1') ?? '{}'); }
+    catch { return {}; }
+  })();
+
   // Variable employees whose planned hours exceed the estimated hours from Personal FIX
   const varHoursExceeded = employees
     .filter(e => !((e.employmentType === 'vollzeit' || e.employmentType === 'teilzeit') && (e.monthlySalary ?? 0) > 0))
@@ -1140,12 +1146,6 @@ const SchedulePlanner = () => {
   // Kosten und Stunden werden auf die sichtbare Abteilung gefiltert.
   // Ein Manager sieht nur die Zahlen seiner eigenen Abteilung.
   const visibleEmployees = filteredEmployees; // enthält schon die Rollen-Filterung
-
-  // Estimated hours for variable employees from Personal FIX page
-  const varEstimatedHours: Record<string, number> = (() => {
-    try { return JSON.parse(localStorage.getItem('personal_fix_var_hours_v1') ?? '{}'); }
-    catch { return {}; }
-  })();
 
   const totalPlannedLaborCost = visibleEmployees.reduce((sum, emp) => {
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
