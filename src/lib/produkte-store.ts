@@ -56,8 +56,14 @@ export function mergeProductCosts(
 }
 
 /**
- * Parser für Gastronovi / eigene WES-Listen.
- * Erkennt Spalten: Bezeichnung, Brutto, Netto, WES, WES-Q
+ * Parser für WES-Preislisten (Gastronovi oder eigene Exports).
+ *
+ * Strategie:
+ * 1. Keyword-Scan: Sucht in den ersten 15 Zeilen nach Spaltenköpfen
+ *    (Bezeichnung/Rezept/Artikel/Name + Brutto/Netto/WES/WES-Q)
+ * 2. Positions-Fallback: Wenn Keywords nicht gefunden, suche die erste Zeile
+ *    bei der Spalte 0 Text ist und Spalten 1–4 numerische Werte haben.
+ *    → Annahme: [Name, Brutto, Netto, WES, WES-Q]
  */
 export async function parseCostExcel(
   file: File,
@@ -66,59 +72,140 @@ export async function parseCostExcel(
   const buffer = await file.arrayBuffer();
   const wb = XLSX.read(buffer, { type: 'array' });
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows: (string | number | undefined)[][] = XLSX.utils.sheet_to_json(ws, {
+
+  // Einmal mit raw=true (echte Zahlen), einmal mit raw=false (für Header-Strings)
+  const rowsRaw: (string | number | undefined)[][] = XLSX.utils.sheet_to_json(ws, {
+    header: 1, defval: undefined, raw: true,
+  });
+  const rowsStr: (string | number | undefined)[][] = XLSX.utils.sheet_to_json(ws, {
     header: 1, defval: undefined, raw: false,
   });
 
-  // Spalten-Mapping ermitteln
   let nameCol = -1, bruttoCol = -1, nettoCol = -1, wesCol = -1, wesQCol = -1;
   let headerRow = -1;
 
-  for (let r = 0; r < Math.min(rows.length, 8); r++) {
-    const row = rows[r];
+  // ── Schritt 1: Keyword-Scan (bis zu 15 Zeilen) ─────────────────────────────
+  for (let r = 0; r < Math.min(rowsStr.length, 15); r++) {
+    const row = rowsStr[r];
     if (!row) continue;
-    let found = false;
+    let hits = 0;
+    let localName = -1, localBrutto = -1, localNetto = -1, localWes = -1, localWesQ = -1;
+
     for (let c = 0; c < row.length; c++) {
-      const cell = String(row[c] ?? '').toLowerCase().trim();
+      const cell = String(row[c] ?? '').toLowerCase().trim()
+        .replace(/[.\-_\s]+/g, ' '); // Normalisiere Trennzeichen
       if (!cell) continue;
-      if (nameCol < 0 && (cell.includes('rezept') || cell.includes('bezeich') || cell.includes('artikel') || cell.includes('produkt'))) {
-        nameCol = c; found = true;
-      } else if (wesQCol < 0 && (cell.includes('wes-q') || cell.includes('wesq') || cell === 'wes q' || (cell.includes('wes') && cell.includes('%')))) {
-        wesQCol = c; found = true;
-      } else if (wesCol < 0 && cell === 'wes') {
-        wesCol = c; found = true;
-      } else if (bruttoCol < 0 && cell.includes('brutto')) {
-        bruttoCol = c; found = true;
-      } else if (nettoCol < 0 && (cell.includes('netto') || cell.includes('vp'))) {
-        nettoCol = c; found = true;
-      }
+
+      // Produktname-Spalte
+      if (localName < 0 && (
+        cell.includes('rezept') || cell.includes('bezeich') ||
+        cell.includes('artikel') || cell.includes('produkt') ||
+        cell.includes('name') || cell === 'nr' || cell.startsWith('pos')
+      )) { localName = c; hits++; continue; }
+
+      // WES-Q (muss vor WES geprüft werden, da es "wes" enthält)
+      if (localWesQ < 0 && (
+        cell.includes('wes q') || cell.includes('wesq') ||
+        cell.includes('wes-q') || cell.includes('w e s q') ||
+        (cell.includes('wes') && (cell.includes('%') || cell.includes('quot') || cell.includes('anteil'))) ||
+        cell.includes('wa %') || cell.includes('wa%') || cell.includes('waquote')
+      )) { localWesQ = c; hits++; continue; }
+
+      // WES / Wareneinsatz
+      if (localWes < 0 && (
+        cell === 'wes' || cell === 'w e s' || cell.includes('wes') ||
+        cell.includes('wareneinsatz') || cell.includes('einstandsp') ||
+        cell.includes('einkaufsp') || cell.includes('ek preis') ||
+        cell.includes('ek-preis') || cell.includes('kostenp')
+      )) { localWes = c; hits++; continue; }
+
+      // Brutto-Preis
+      if (localBrutto < 0 && (
+        cell.includes('brutto') || cell.includes('brp') ||
+        cell.includes('vkp brutto') || cell.includes('vk brutto')
+      )) { localBrutto = c; hits++; continue; }
+
+      // Netto-Preis
+      if (localNetto < 0 && (
+        cell.includes('netto') || cell.includes('nettp') ||
+        cell.includes('vkp netto') || cell.includes('vk netto') ||
+        cell === 'vp' || cell.includes('verk preis')
+      )) { localNetto = c; hits++; continue; }
     }
-    if (found && (nameCol >= 0 || wesCol >= 0)) { headerRow = r; break; }
+
+    if (hits >= 2) {
+      headerRow = r;
+      nameCol   = localName;
+      bruttoCol = localBrutto;
+      nettoCol  = localNetto;
+      wesCol    = localWes;
+      wesQCol   = localWesQ;
+      break;
+    }
   }
 
-  if (headerRow < 0 || nameCol < 0) return [];
+  // ── Schritt 2: Positions-Fallback ──────────────────────────────────────────
+  // Suche erste Zeile bei der Spalte 0 Text ist und Spalten 1–2 Zahlen enthalten
+  if (headerRow < 0) {
+    for (let r = 0; r < Math.min(rowsRaw.length, 20); r++) {
+      const row = rowsRaw[r];
+      if (!row || row.length < 3) continue;
+      const col0 = String(row[0] ?? '').trim();
+      const col1 = typeof row[1] === 'number' ? row[1] : parseGastronomyNumber(row[1]);
+      const col2 = typeof row[2] === 'number' ? row[2] : parseGastronomyNumber(row[2]);
+      // Erste Datanzeile: Text in Spalte 0, Zahlen in 1+2, Zahlen > 0
+      if (col0.length >= 2 && col1 > 0 && col2 > 0) {
+        // Zählen wir das als Daten-Start direkt
+        headerRow = r - 1; // Zeile davor als "Header"
+        nameCol   = 0;
+        bruttoCol = 1;
+        nettoCol  = 2;
+        wesCol    = 3;
+        wesQCol   = 4;
+        break;
+      }
+    }
+    if (headerRow < 0) return [];
+  }
 
+  // ── Daten einlesen ─────────────────────────────────────────────────────────
   const entries: ProductCostEntry[] = [];
-  for (let r = headerRow + 1; r < rows.length; r++) {
-    const row = rows[r];
-    if (!row) continue;
+  const dataStart = Math.max(0, headerRow + 1);
+
+  for (let r = dataStart; r < rowsRaw.length; r++) {
+    const rowR = rowsRaw[r];
+    const rowS = rowsStr[r];
+    if (!rowR && !rowS) continue;
+    const row  = rowR ?? rowS;
+
+    if (nameCol < 0) continue;
     const nameRaw = String(row[nameCol] ?? '').trim();
     if (!nameRaw || nameRaw.length < 2) continue;
     const nameLower = nameRaw.toLowerCase();
-    if (nameLower.startsWith('total') || nameLower.startsWith('gesamt') || nameLower.startsWith('summe')) continue;
+    if (nameLower.startsWith('total') || nameLower.startsWith('gesamt') ||
+        nameLower.startsWith('summe') || nameLower === 'alle') continue;
+    // Überspringe numerische "Namen" (z.B. reine Zeilennummern)
+    if (/^\d+$/.test(nameRaw)) continue;
 
-    const brutto = parseGastronomyNumber(bruttoCol >= 0 ? row[bruttoCol] : undefined);
-    const netto  = parseGastronomyNumber(nettoCol  >= 0 ? row[nettoCol]  : undefined);
-    const wes    = parseGastronomyNumber(wesCol    >= 0 ? row[wesCol]    : undefined);
-    let wesQ     = parseGastronomyNumber(wesQCol   >= 0 ? row[wesQCol]   : undefined);
+    const getNum = (col: number) => {
+      if (col < 0) return 0;
+      const v = rowR?.[col];
+      return typeof v === 'number' ? v : parseGastronomyNumber(rowS?.[col]);
+    };
+
+    const brutto = getNum(bruttoCol);
+    const netto  = getNum(nettoCol);
+    const wes    = getNum(wesCol);
+    let wesQ     = getNum(wesQCol);
 
     // WES-Q automatisch berechnen wenn nicht vorhanden
     if (wesQ <= 0 && wes > 0 && netto > 0) wesQ = (wes / netto) * 100;
     if (wesQ <= 0 && wes > 0 && brutto > 0) wesQ = (wes / brutto) * 100;
 
-    if (nameRaw) {
-      entries.push({ name: nameRaw, category, bruttoPrice: brutto, nettoPrice: netto, wes, wesQ });
-    }
+    // Mindestens WES oder Brutto muss vorhanden sein
+    if (wes <= 0 && brutto <= 0 && netto <= 0) continue;
+
+    entries.push({ name: nameRaw, category, bruttoPrice: brutto, nettoPrice: netto, wes, wesQ });
   }
   return entries;
 }
