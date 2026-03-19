@@ -12,7 +12,7 @@
  * Nur für Admin zugänglich.
  */
 
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Navigate } from 'react-router-dom';
 import {
@@ -181,6 +181,8 @@ const MonthRow = ({
 
 // ─── Jahres-Zeile ─────────────────────────────────────────────────────────────
 
+const NET_REV_ROW_IDX = PL_STRUCTURE.findIndex(r => r.id === 'net_revenue');
+
 const YearRow = ({
   rows, rowIndex, onClickMonth, pctMode = 'off', revenueTotal = 0,
 }: {
@@ -191,7 +193,9 @@ const YearRow = ({
   revenueTotal?: number;
 }) => {
   const def = PL_STRUCTURE[rowIndex];
-  const colCount = 14 + (pctMode !== 'off' ? 1 : 0);
+  const showPct = pctMode !== 'off';
+  // 1 label + 1 total + optional 1 pct-total + 12 months × (1 + optional 1 pct)
+  const colCount = 2 + (showPct ? 1 : 0) + 12 * (showPct ? 2 : 1);
   if (!def) return null;
   if (def.type === 'spacer') return <tr className="h-2"><td colSpan={colCount} /></tr>;
   if (def.type === 'section') {
@@ -208,9 +212,15 @@ const YearRow = ({
     .map(r => r[rowIndex]?.values.actual)
     .filter((v): v is number => v !== undefined);
   const total = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : undefined;
-  const pctStr = pctMode !== 'off' && revenueTotal > 0 && total !== undefined && total !== 0
+  const pctStr = showPct && revenueTotal > 0 && total !== undefined && total !== 0
     ? `${(total / revenueTotal * 100).toFixed(1)}%`
     : null;
+
+  const pctCls = cn(
+    'px-1.5 py-1.5 text-right font-mono whitespace-nowrap tabular-nums',
+    def.type === 'result' ? 'font-bold text-[10px]' : 'text-[10px]',
+    pctMode === 'subtle' ? 'italic text-muted-foreground/40' : 'text-amber-600 dark:text-amber-400',
+  );
 
   return (
     <tr className={cn(ROW_STYLE[def.type] || ROW_STYLE.line, 'group')}>
@@ -226,37 +236,46 @@ const YearRow = ({
       <td className={cn(
         'px-2 py-1.5 text-right text-sm font-mono',
         def.type === 'result' ? 'font-bold' : 'font-semibold',
-        pctMode === 'off' && 'border-r-2 border-slate-300 dark:border-slate-600',
+        !showPct && 'border-r-2 border-slate-300 dark:border-slate-600',
       )}>
         {total !== undefined ? fmt(total) : '—'}
       </td>
-      {/* % vom Jahresumsatz */}
-      {pctMode !== 'off' && (
+      {/* % vom Jahresumsatz (Total) */}
+      {showPct && (
         <td className={cn(
-          'px-2 py-1.5 text-right font-mono whitespace-nowrap border-r-2 border-slate-300 dark:border-slate-600',
-          def.type === 'result' ? 'font-bold text-xs' : 'text-xs',
-          pctMode === 'subtle' ? 'text-[10px] italic text-muted-foreground/50' : 'text-amber-600 dark:text-amber-400',
+          pctCls,
+          'border-r-2 border-slate-300 dark:border-slate-600',
         )}>
           {pctStr ?? <span className="opacity-30">—</span>}
         </td>
       )}
-      {/* Monatswerte */}
+      {/* Monatswerte + optionale % pro Monat */}
       {rows.map((monthRows, mIdx) => {
         const row = monthRows[rowIndex];
         const actual = row?.values.actual;
+        const monthNetRev = showPct ? (monthRows[NET_REV_ROW_IDX]?.values.actual ?? 0) : 0;
+        const monthPctStr = showPct && monthNetRev > 0 && actual !== undefined
+          ? `${(actual / monthNetRev * 100).toFixed(1)}%`
+          : null;
         return (
-          <td
-            key={mIdx}
-            className={cn(
-              'px-2 py-1.5 text-right text-sm font-mono whitespace-nowrap',
-              def.type === 'line' && 'cursor-pointer hover:underline',
-              def.type === 'result' && 'font-bold',
-              actual !== undefined && def.valueRole === 'positive' && actual < 0 && 'text-red-600',
+          <React.Fragment key={mIdx}>
+            <td
+              className={cn(
+                'px-2 py-1.5 text-right text-sm font-mono whitespace-nowrap',
+                def.type === 'line' && 'cursor-pointer hover:underline',
+                def.type === 'result' && 'font-bold',
+                actual !== undefined && def.valueRole === 'positive' && actual < 0 && 'text-red-600',
+              )}
+              onClick={def.type === 'line' ? () => onClickMonth(mIdx + 1) : undefined}
+            >
+              {actual !== undefined ? fmt(actual) : '—'}
+            </td>
+            {showPct && (
+              <td className={pctCls}>
+                {monthPctStr ?? <span className="opacity-30">—</span>}
+              </td>
             )}
-            onClick={def.type === 'line' ? () => onClickMonth(mIdx + 1) : undefined}
-          >
-            {actual !== undefined ? fmt(actual) : '—'}
-          </td>
+          </React.Fragment>
         );
       })}
     </tr>
@@ -478,14 +497,26 @@ const YearView = ({
               </th>
             )}
             {MONTH_NAMES_SHORT_DE.slice(1).map((m, i) => (
-              <th
-                key={i}
-                className="text-right px-2 py-2 cursor-pointer hover:bg-slate-700 whitespace-nowrap"
-                onClick={() => onClickMonth(i + 1)}
-                title={`Zu ${MONTH_NAMES_DE[i + 1]} wechseln`}
-              >
-                {m}
-              </th>
+              <React.Fragment key={i}>
+                <th
+                  className="text-right px-2 py-2 cursor-pointer hover:bg-slate-700 whitespace-nowrap"
+                  onClick={() => onClickMonth(i + 1)}
+                  title={`Zu ${MONTH_NAMES_DE[i + 1]} wechseln`}
+                >
+                  {m}
+                </th>
+                {pctMode !== 'off' && (
+                  <th
+                    className={cn(
+                      'text-right px-1.5 py-2 whitespace-nowrap text-[10px]',
+                      pctMode === 'subtle' ? 'opacity-50 italic' : 'text-amber-300',
+                    )}
+                    title={`% Umsatz ${MONTH_NAMES_DE[i + 1]}`}
+                  >
+                    %
+                  </th>
+                )}
+              </React.Fragment>
             ))}
           </tr>
         </thead>
@@ -1781,92 +1812,90 @@ const PLViewPage = () => {
     catch { return {}; }
   }, [refreshKey]);
 
-  // Fallback: Ist-Umsatz aus Gastronovi-Tagesdaten summieren (actualRevenue)
-  // wenn kein manueller Monatswert in reporting_v1 vorhanden
-  const dailyRevenueForMonth = useMemo(() => {
-    const rec = records[month - 1];
-    if (rec?.revenueActual) return 0; // bereits gesetzt, kein Fallback nötig
-    return sumDailyBudgetField(dailyBudgetsData, year, month, 'actualRevenue');
-  }, [records, year, month, dailyBudgetsData]);
-
-  // Fallback: Vorjahr-Umsatz aus Gastronovi-Tagesdaten summieren (previousYearRevenue)
-  // wenn kein manueller Vorjahreswert vorhanden
-  const dailyPrevYearRevenueForMonth = useMemo(() => {
-    const rec = records[month - 1];
-    if (rec?.revenuePreviousYear) return 0; // bereits gesetzt, kein Fallback nötig
-    // Vorjahr-Spalte: aus dailyBudgets des aktuellen Jahres (Feld previousYearRevenue)
-    const fromCurrent = sumDailyBudgetField(dailyBudgetsData, year, month, 'previousYearRevenue');
-    if (fromCurrent > 0) return fromCurrent;
-    // Alternativ: aus reporting_v1 des Vorjahres
-    const prevRec = prevYearRecords[month - 1];
-    if (prevRec?.revenueActual) return 0; // wird via prevYearRecords in getCatPY gehandhabt
-    // Gastronovi actualRevenue des Vorjahres
-    return sumDailyBudgetField(dailyBudgetsData, year - 1, month, 'actualRevenue');
-  }, [records, prevYearRecords, year, month, dailyBudgetsData]);
-
-  // Effektiver Monatsdatensatz:
-  //   revenueActual       ← dailyBudgets.actualRevenue (falls reporting_v1 leer)
-  //   revenuePreviousYear ← dailyBudgets.previousYearRevenue (falls nicht manuell gesetzt)
-  const effectiveMonthRecord = useMemo(() => {
-    let rec = records[month - 1];
-    if (dailyRevenueForMonth)      rec = { ...rec, revenueActual:       dailyRevenueForMonth };
-    if (dailyPrevYearRevenueForMonth) rec = { ...rec, revenuePreviousYear: dailyPrevYearRevenueForMonth };
-    return rec;
-  }, [records, month, dailyRevenueForMonth, dailyPrevYearRevenueForMonth]);
-
-  // Budget P&L laden (vor monthResult, da Overrides benötigt werden)
+  // Budget P&L laden (vor den Overrides benötigt)
   const budgetData = useMemo(() => loadBudgetWithPL(year), [year, refreshKey]);
 
-  // Budget-Overrides für Klassisch-View: aus Budget-Plan (plLineItems) → PL-Zeilen-ID
-  const monthBudgetByRow = useMemo((): PLMonthOverrides['budgetByRow'] => {
-    const map = new Map<string, number>();
+  // Effektive Records für alle 12 Monate: wendet Gastronovi-Tagesdaten-Fallback an
+  // (revenueActual + revenuePreviousYear) – damit auch Jahresansicht korrekte Werte zeigt
+  const effectiveAllRecords = useMemo(() => {
+    return records.map((rec, idx) => {
+      const m = idx + 1;
+      let r = rec;
+      if (!r.revenueActual) {
+        const dailyRev = sumDailyBudgetField(dailyBudgetsData, year, m, 'actualRevenue');
+        if (dailyRev > 0) r = { ...r, revenueActual: dailyRev };
+      }
+      if (!r.revenuePreviousYear) {
+        const fromCurrent = sumDailyBudgetField(dailyBudgetsData, year, m, 'previousYearRevenue');
+        if (fromCurrent > 0) {
+          r = { ...r, revenuePreviousYear: fromCurrent };
+        } else if (!prevYearRecords[idx]?.revenueActual) {
+          const dailyPY = sumDailyBudgetField(dailyBudgetsData, year - 1, m, 'actualRevenue');
+          if (dailyPY > 0) r = { ...r, revenuePreviousYear: dailyPY };
+        }
+      }
+      return r;
+    });
+  }, [records, prevYearRecords, year, dailyBudgetsData]);
+
+  // Effektiver Datensatz für den ausgewählten Monat
+  const effectiveMonthRecord = useMemo(
+    () => effectiveAllRecords[month - 1],
+    [effectiveAllRecords, month],
+  );
+
+  // Pro-Monat Overrides (Budget + Vorjahr) für alle 12 Monate — zentral für Klassisch & Jahresansicht
+  const allMonthOverrides = useMemo((): PLMonthOverrides[] => {
     const items = budgetData.plLineItems ?? [];
     const cats  = budgetData.plCategories ?? [];
-    for (const item of items) {
-      if (item.isInternal) continue;
-      const val = item.monthlyValues[month - 1] ?? 0;
-      if (val === 0) continue;
-      let rowId: string | null = null;
-      if (item.accountNumber) {
-        const res = lookupAccount(item.accountNumber);
-        if (res.mapping) rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
+    return Array.from({ length: 12 }, (_, idx) => {
+      const budgetByRow = new Map<string, number>();
+      for (const item of items) {
+        if (item.isInternal) continue;
+        const val = item.monthlyValues[idx] ?? 0;
+        if (val === 0) continue;
+        let rowId: string | null = null;
+        if (item.accountNumber) {
+          const res = lookupAccount(item.accountNumber);
+          if (res.mapping) rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
+        }
+        if (!rowId) {
+          const cat = cats.find(c => c.id === item.categoryId);
+          if (cat) rowId = BPL_CAT_TO_PL_ROW[cat.id] ?? null;
+        }
+        if (rowId) budgetByRow.set(rowId, (budgetByRow.get(rowId) ?? 0) + val);
       }
-      if (!rowId) {
-        const cat = cats.find(c => c.id === item.categoryId);
-        if (cat) rowId = BPL_CAT_TO_PL_ROW[cat.id] ?? null;
+      const prevYearByRow = new Map<string, number>();
+      const prevRec = prevYearRecords[idx];
+      if (prevRec) {
+        if (prevRec.revenueActual) prevYearByRow.set('revenue_total', prevRec.revenueActual);
+        if (prevRec.personnelCostActual) prevYearByRow.set('personnel_wages', prevRec.personnelCostActual);
+        for (const cat of (prevRec.expenseCategories ?? [])) {
+          if (!cat.categoryId || !cat.amount) continue;
+          if (/^\d{3,5}$/.test(cat.categoryId)) {
+            const res = lookupAccount(cat.categoryId);
+            if (res.mapping) {
+              const rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
+              if (rowId) prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
+            }
+          }
+        }
       }
-      if (rowId) map.set(rowId, (map.get(rowId) ?? 0) + val);
-    }
-    return map.size > 0 ? map : undefined;
-  }, [budgetData, month]);
-
-  // Vorjahr-Overrides für Klassisch-View: aus Vorjahresdaten (prevYearRecords[month-1])
-  const monthPrevYearByRow = useMemo((): PLMonthOverrides['prevYearByRow'] => {
-    const prevRec = prevYearRecords[month - 1];
-    if (!prevRec) return undefined;
-    const map = new Map<string, number>();
-    if (prevRec.revenueActual) map.set('revenue_total', prevRec.revenueActual);
-    if (prevRec.personnelCostActual) map.set('personnel_wages', prevRec.personnelCostActual);
-    for (const cat of (prevRec.expenseCategories ?? [])) {
-      if (!cat.categoryId || !cat.amount) continue;
-      let rowId: string | null = null;
-      if (/^\d{3,5}$/.test(cat.categoryId)) {
-        const res = lookupAccount(cat.categoryId);
-        if (res.mapping) rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
-      }
-      if (rowId) map.set(rowId, (map.get(rowId) ?? 0) + cat.amount);
-    }
-    return map.size > 0 ? map : undefined;
-  }, [prevYearRecords, month]);
+      return {
+        budgetByRow:   budgetByRow.size   > 0 ? budgetByRow   : undefined,
+        prevYearByRow: prevYearByRow.size > 0 ? prevYearByRow : undefined,
+      };
+    });
+  }, [budgetData, prevYearRecords]);
 
   const monthResult = useMemo(
-    () => computePLForMonth(effectiveMonthRecord, { budgetByRow: monthBudgetByRow, prevYearByRow: monthPrevYearByRow }),
-    [effectiveMonthRecord, monthBudgetByRow, monthPrevYearByRow],
+    () => computePLForMonth(effectiveMonthRecord, allMonthOverrides[month - 1]),
+    [effectiveMonthRecord, allMonthOverrides, month],
   );
 
   const yearResult = useMemo(
-    () => computePLForYear(records),
-    [records],
+    () => computePLForYear(effectiveAllRecords, allMonthOverrides),
+    [effectiveAllRecords, allMonthOverrides],
   );
 
   const bplRows = useMemo(
@@ -2199,7 +2228,7 @@ const PLViewPage = () => {
         )}
 
         {/* Kein Ist-Umsatz – inline Schnelleingabe (nur wenn KEINE Quelle vorhanden) */}
-        {(mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && !records[month - 1]?.revenueActual && !dailyRevenueForMonth && (
+        {(mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && !effectiveMonthRecord?.revenueActual && (
           <InlineRevenueEntry
             year={year}
             month={month}

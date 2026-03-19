@@ -645,8 +645,11 @@ export function computePLForMonth(
 /**
  * Berechnet das P&L für alle 12 Monate eines Jahres + Jahressumme.
  */
-export function computePLForYear(records: MonthlyFinancialRecord[]): PLYearResult {
-  const months = records.map(r => computePLForMonth(r));
+export function computePLForYear(
+  records: MonthlyFinancialRecord[],
+  overridesPerMonth?: PLMonthOverrides[],
+): PLYearResult {
+  const months = records.map((r, i) => computePLForMonth(r, overridesPerMonth?.[i]));
   const year = records[0]?.year ?? new Date().getFullYear();
 
   // Jahressumme: addiere alle Monatswerte Zeile für Zeile
