@@ -893,7 +893,7 @@ const InlineRevenueEntry = ({
   );
 };
 
-const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode = 'off', revenueActual = 0, compareMode = 'all' }: {
+const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode = 'off', revenueActual = 0, revenueBudget = 0, revenuePrevYear = 0, compareMode = 'all' }: {
   row: BPLRowWithValues;
   onClick: () => void;
   compact: boolean;
@@ -904,6 +904,8 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   highlightVariance?: boolean;
   pctMode?: 'off' | 'normal' | 'subtle';
   revenueActual?: number;
+  revenueBudget?: number;
+  revenuePrevYear?: number;
   compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr';
 }) => {
   const [editingIst, setEditingIst] = useState(false);
@@ -918,9 +920,23 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
     revenueActual > 0 && actual !== 0
       ? `${(actual / revenueActual * 100).toFixed(1)}%`
       : null;
+  const pctValBudget = (budget: number) =>
+    revenueBudget > 0 && budget !== 0
+      ? `${(budget / revenueBudget * 100).toFixed(1)}%`
+      : null;
+  const pctValPY = (prevYear: number) =>
+    revenuePrevYear > 0 && prevYear !== 0
+      ? `${(prevYear / revenuePrevYear * 100).toFixed(1)}%`
+      : null;
   const pctNormalClass = 'px-2 text-right font-mono tabular-nums text-xs text-amber-700 dark:text-amber-400';
   const pctSubtleClass  = 'px-2 text-right font-mono tabular-nums text-[10px] italic text-muted-foreground/50';
   const pctClass = pctMode === 'subtle' ? pctSubtleClass : pctNormalClass;
+  const pctBudClass = pctMode === 'subtle'
+    ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-muted-foreground/50'
+    : 'px-2 text-right font-mono tabular-nums text-xs text-slate-400 dark:text-slate-400';
+  const pctPYClass = pctMode === 'subtle'
+    ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-muted-foreground/50'
+    : 'px-2 text-right font-mono tabular-nums text-xs text-slate-400 dark:text-slate-400';
 
   if (row.catType === 'result') {
     const isPos = v.actual >= 0;
@@ -937,8 +953,10 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
           </td>
         )}
         {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.budget)}</td>}
+        {showBudget && pctMode !== 'off' && <td className={cn(pctBudClass, pyResult, 'font-bold')}>{pctValBudget(v.budget) ?? <span className="opacity-30">—</span>}</td>}
         {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
         {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.prevYear)}</td>}
+        {showPrevYear && pctMode !== 'off' && <td className={cn(pctPYClass, pyResult, 'font-bold')}>{pctValPY(v.prevYear) ?? <span className="opacity-30">—</span>}</td>}
         {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
       </tr>
     );
@@ -965,8 +983,10 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
           </td>
         )}
         {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-75', py)}>{fmt(v.budget)}</td>}
+        {showBudget && pctMode !== 'off' && <td className={cn(py, pctMode === 'subtle' ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-white/30' : 'px-2 text-right font-mono tabular-nums text-xs text-slate-300 font-bold')}>{pctValBudget(v.budget) ?? <span className="opacity-30">—</span>}</td>}
         {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
         {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-65', py)}>{fmt(v.prevYear)}</td>}
+        {showPrevYear && pctMode !== 'off' && <td className={cn(py, pctMode === 'subtle' ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-white/30' : 'px-2 text-right font-mono tabular-nums text-xs text-slate-300 font-bold')}>{pctValPY(v.prevYear) ?? <span className="opacity-30">—</span>}</td>}
         {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
       </tr>
     );
@@ -1045,8 +1065,10 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
         </td>
       )}
       {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.budget > 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>}
+      {showBudget && pctMode !== 'off' && <td className={cn(pctBudClass, pyItem)}>{pctValBudget(v.budget) ?? <span className="opacity-25">—</span>}</td>}
       {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
       {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.prevYear > 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>}
+      {showPrevYear && pctMode !== 'off' && <td className={cn(pctPYClass, pyItem)}>{pctValPY(v.prevYear) ?? <span className="opacity-25">—</span>}</td>}
       {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
     </tr>
   );
@@ -1063,6 +1085,8 @@ const BudgetPLView = ({
   highlightVariance,
   pctMode = 'off',
   revenueActual = 0,
+  revenueBudget = 0,
+  revenuePrevYear = 0,
   compareMode = 'all',
   pctIsBudgetBased = false,
 }: {
@@ -1076,6 +1100,8 @@ const BudgetPLView = ({
   highlightVariance?: boolean;
   pctMode?: 'off' | 'normal' | 'subtle';
   revenueActual?: number;
+  revenueBudget?: number;
+  revenuePrevYear?: number;
   compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr';
   pctIsBudgetBased?: boolean;
 }) => {
@@ -1097,8 +1123,10 @@ const BudgetPLView = ({
             </th>
           )}
           {showBudget && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Budget (CHF)</th>}
+          {showBudget && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', compact ? 'py-1.5' : 'py-2.5', 'text-slate-400')} title="% vom Budget-Umsatz">% Bud.</th>}
           {showBudget && <th className={cn('text-right px-2 min-w-[130px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. Budget</th>}
           {showPrevYear && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Vorjahr (CHF)</th>}
+          {showPrevYear && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', compact ? 'py-1.5' : 'py-2.5', 'text-slate-400')} title="% vom Vorjahr-Umsatz">% VJ</th>}
           {showPrevYear && <th className={cn('text-right px-2 min-w-[120px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. VJ</th>}
         </tr>
       </thead>
@@ -1116,6 +1144,8 @@ const BudgetPLView = ({
             highlightVariance={highlightVariance}
             pctMode={pctMode}
             revenueActual={revenueActual}
+            revenueBudget={revenueBudget}
+            revenuePrevYear={revenuePrevYear}
             compareMode={compareMode}
           />
         ))}
@@ -1759,6 +1789,10 @@ const PLViewPage = () => {
     () => bplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.budget ?? 0,
     [bplRows],
   );
+  const bplPrevYearRevenue = useMemo(
+    () => bplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.prevYear ?? 0,
+    [bplRows],
+  );
   const bplEffectiveRevenue = bplRevenue > 0 ? bplRevenue : bplBudgetRevenue;
   const pctIsBudgetBased = pctMode !== 'off' && bplRevenue === 0 && bplBudgetRevenue > 0;
 
@@ -2090,6 +2124,8 @@ const PLViewPage = () => {
                 highlightVariance={highlightVariance}
                 pctMode={pctMode}
                 revenueActual={bplEffectiveRevenue}
+                revenueBudget={bplBudgetRevenue}
+                revenuePrevYear={bplPrevYearRevenue}
                 compareMode={compareMode}
                 pctIsBudgetBased={pctIsBudgetBased}
               />
