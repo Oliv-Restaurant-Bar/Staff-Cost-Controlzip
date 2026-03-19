@@ -683,6 +683,17 @@ function computeBPLRows(
         values: makeCell(catA[cat.id] ?? 0, catB[cat.id] ?? 0, catP[cat.id] ?? 0, cat.isExpense),
       });
 
+      // Ob die Kategorie individuelle 3xxx-Konten in expenseCategories hat (Sage-Import)
+      // Falls nicht → Gastronovi-revenueActual auf das primäre Konto (3000) mappen
+      const catHas3xxxActual = cat.id === 'pl_revenue' && (rec?.expenseCategories ?? []).some(c => {
+        const n = normalizeAccountNum(c.categoryId ?? '');
+        return !isNaN(n) && n >= 3000 && n <= 3999;
+      });
+      const catHas3xxxPY = cat.id === 'pl_revenue' && (
+        (prevRec?.expenseCategories ?? []).some(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= 3000 && n <= 3999; }) ||
+        (rec?.expenseCategoriesPreviousYear ?? []).some(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= 3000 && n <= 3999; })
+      );
+
       const its = items.filter(i => i.categoryId === cat.id).sort((a, b) => a.sortOrder - b.sortOrder);
       for (const item of its) {
         if (item.accountNumber) {
@@ -690,11 +701,22 @@ function computeBPLRows(
           if (acc.mapping?.isActive === false) continue;
         }
         const iB = item.monthlyValues[mIdx] ?? 0;
-        const iA = (rec?.expenseCategories ?? []).find(c => c.categoryId === item.accountNumber)?.amount ?? 0;
-        const iP =
+        const iA_ec = (rec?.expenseCategories ?? []).find(c => c.categoryId === item.accountNumber)?.amount ?? 0;
+        const iP_ec =
           (prevRec?.expenseCategories ?? []).find(c => c.categoryId === item.accountNumber)?.amount
           ?? (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === item.accountNumber)?.amount
           ?? 0;
+
+        // Gastronovi-Fallback: revenueActual / revenuePreviousYear auf primäres Konto 3000 mappen
+        // wenn keine Sage 3xxx-Einträge vorhanden sind
+        const isPrimaryRevenueItem = cat.id === 'pl_revenue' && item.accountNumber === '3000';
+        const iA = isPrimaryRevenueItem && !catHas3xxxActual && iA_ec === 0
+          ? (catA[cat.id] ?? 0)
+          : iA_ec;
+        const iP = isPrimaryRevenueItem && !catHas3xxxPY && iP_ec === 0
+          ? (catP[cat.id] ?? 0)
+          : iP_ec;
+
         if (!item.isInternal && iA === 0 && iB === 0 && iP === 0) continue;
         rows.push({
           catId: cat.id, catLabel: cat.label, catType: 'items',
