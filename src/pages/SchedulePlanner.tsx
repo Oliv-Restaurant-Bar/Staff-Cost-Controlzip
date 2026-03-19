@@ -1948,6 +1948,7 @@ const SchedulePlanner = () => {
                           getEmployeeActualHours={calculateEmployeeActualHours}
                           getTargetHours={getMonthlyTargetHours}
                           showCosts={effectiveShowCosts}
+                          dailyBudgets={dailyBudgets}
                         />
                       </div>
                       
@@ -1965,6 +1966,7 @@ const SchedulePlanner = () => {
                           getEmployeeActualHours={calculateEmployeeActualHours}
                           getTargetHours={getMonthlyTargetHours}
                           showCosts={effectiveShowCosts}
+                          dailyBudgets={dailyBudgets}
                         />
                       </div>
                     </div>
@@ -1977,6 +1979,7 @@ const SchedulePlanner = () => {
                       getEmployeeActualHours={calculateEmployeeActualHours}
                       getTargetHours={getMonthlyTargetHours}
                       showCosts={effectiveShowCosts}
+                      dailyBudgets={dailyBudgets}
                     />
                   )}
                 </>

@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Check, X, Clock } from 'lucide-react';
+import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb } from 'lucide-react';
 
 export interface ActualHoursEntry {
   hours: number;
@@ -27,6 +27,7 @@ interface ActualHoursGridProps {
   getEmployeeActualHours: (employeeId: string) => number;
   getTargetHours: (employee: Employee) => number;
   showCosts?: boolean;
+  dailyBudgets?: Record<string, { plannedRevenue?: number; actualRevenue?: number }>;
 }
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -360,10 +361,17 @@ export const ActualHoursGrid = ({
   getEmployeeActualHours,
   getTargetHours,
   showCosts = false,
+  dailyBudgets = {},
 }: ActualHoursGridProps) => {
   const isWeekView = days.length <= 7;
 
-  // Calculate daily totals
+  // Over-budget dialog state
+  const [openDialogDay, setOpenDialogDay] = useState<string | null>(null);
+  const [showIdealPlan, setShowIdealPlan] = useState(false);
+
+  const LABOR_COST_THRESHOLD = parseFloat(localStorage.getItem('labor_cost_threshold') || '40');
+
+  // Calculate daily totals with budget awareness
   const getDailyStats = (day: Date) => {
     const dateStr = format(day, 'yyyy-MM-dd');
     let totalHours = 0;
@@ -374,14 +382,55 @@ export const ActualHoursGrid = ({
       const entry = actualHoursData[cellKey];
       if (entry?.hours) {
         totalHours += entry.hours;
-        totalCosts += entry.hours * emp.hourlyWage;
+        totalCosts += entry.hours * (emp.hourlyWage || 0);
       }
     });
 
-    return { totalHours, totalCosts };
+    const plannedRevenue = dailyBudgets[dateStr]?.plannedRevenue || 0;
+    const laborCostPct = plannedRevenue > 0 ? (totalCosts / plannedRevenue * 100) : null;
+    const maxAllowedCosts = plannedRevenue * (LABOR_COST_THRESHOLD / 100);
+    const excessCosts = Math.max(0, totalCosts - maxAllowedCosts);
+    const isOverBudget = plannedRevenue > 0 && totalCosts > maxAllowedCosts;
+    const avgWage = employees.filter(e => e.hourlyWage).reduce((s, e) => s + e.hourlyWage, 0) / Math.max(1, employees.filter(e => e.hourlyWage).length);
+    const excessHours = avgWage > 0 ? excessCosts / avgWage : 0;
+
+    return { totalHours, totalCosts, plannedRevenue, laborCostPct, isOverBudget, excessCosts, excessHours };
+  };
+
+  // Per-employee breakdown for a specific day
+  const getDayEmployeeBreakdown = (dateStr: string) => {
+    return employees.map(emp => {
+      const cellKey = `${emp.id}-${dateStr}`;
+      const entry = actualHoursData[cellKey];
+      const hours = entry?.hours || 0;
+      const cost = hours * (emp.hourlyWage || 0);
+      return { employee: emp, hours, cost };
+    }).filter(e => e.hours > 0).sort((a, b) => b.cost - a.cost);
+  };
+
+  // Calculate ideal planning suggestions for a day
+  const getIdealPlanSuggestions = (dateStr: string) => {
+    const stats = getDailyStats(new Date(dateStr));
+    if (!stats.isOverBudget) return [];
+    const breakdown = getDayEmployeeBreakdown(dateStr);
+    const targetTotalCosts = stats.plannedRevenue * (LABOR_COST_THRESHOLD / 100);
+    let remainingExcess = stats.excessCosts;
+    const suggestions: { employee: typeof employees[0]; currentHours: number; suggestedCut: number; saving: number }[] = [];
+    for (const { employee, hours, cost } of breakdown) {
+      if (remainingExcess <= 0) break;
+      const maxCut = Math.min(hours, remainingExcess / (employee.hourlyWage || 1));
+      const actualCut = Math.ceil(maxCut * 2) / 2; // round to 0.5h
+      const saving = actualCut * (employee.hourlyWage || 0);
+      if (actualCut > 0) {
+        suggestions.push({ employee, currentHours: hours, suggestedCut: actualCut, saving });
+        remainingExcess -= saving;
+      }
+    }
+    return suggestions;
   };
 
   return (
+    <div>
     <ScrollArea className={cn("w-full", isWeekView && "overflow-visible")}>
       <div className={cn("min-w-max", isWeekView && "min-w-0")}>
         <table className={cn("w-full border-collapse", isWeekView && "table-fixed")}>
@@ -407,30 +456,51 @@ export const ActualHoursGrid = ({
                 const isWeekendDay = isWeekend(day);
                 const isSundayDay = isSunday(day);
                 const stats = getDailyStats(day);
+                const dateStr = format(day, 'yyyy-MM-dd');
                 return (
                   <th
                     key={day.toISOString()}
                     className={cn(
-                      "px-1 py-1 text-center font-medium border-b",
+                      "px-1 py-1 text-center font-medium border-b transition-colors",
                       "border-r border-border/50",
-                      isWeekendDay && "bg-amber-100 dark:bg-amber-900/30",
-                      isSundayDay && "bg-amber-200/70 dark:bg-amber-900/50 border-r-2 border-r-primary/30",
+                      stats.isOverBudget && showCosts
+                        ? "bg-red-100 dark:bg-red-900/30 cursor-pointer hover:bg-red-200 dark:hover:bg-red-900/40"
+                        : isWeekendDay
+                          ? "bg-amber-100 dark:bg-amber-900/30"
+                          : "",
+                      isSundayDay && !stats.isOverBudget && "bg-amber-200/70 dark:bg-amber-900/50 border-r-2 border-r-primary/30",
                       isWeekView ? "min-w-[80px] text-xs" : "min-w-[60px] text-[10px]"
                     )}
+                    onClick={() => {
+                      if (stats.isOverBudget && showCosts) {
+                        setShowIdealPlan(false);
+                        setOpenDialogDay(dateStr);
+                      }
+                    }}
+                    title={stats.isOverBudget && showCosts ? "⚠️ Ziel überschritten – Klicken für Details" : undefined}
                   >
                     <div className={cn(
                       "text-muted-foreground text-[9px]",
-                      isWeekendDay && "text-amber-700 dark:text-amber-400 font-semibold"
+                      isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400 font-semibold",
+                      stats.isOverBudget && showCosts && "text-red-700 dark:text-red-400 font-semibold"
                     )}>
                       {WEEKDAY_NAMES[day.getDay()]}
                     </div>
                     <div className={cn(
                       "font-semibold text-[10px]",
-                      isWeekendDay && "text-amber-700 dark:text-amber-400"
+                      isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400",
+                      stats.isOverBudget && showCosts && "text-red-700 dark:text-red-400"
                     )}>
                       {format(day, 'd.M.')}
                     </div>
-                    {stats.totalHours > 0 && (
+                    {showCosts && stats.isOverBudget ? (
+                      <div className="flex items-center justify-center gap-0.5 bg-red-200 dark:bg-red-900/60 border border-red-400 dark:border-red-700 rounded px-1 py-0.5 mt-0.5">
+                        <AlertTriangle className="h-2.5 w-2.5 text-red-700 dark:text-red-400 shrink-0" />
+                        <span className="text-[8px] font-bold text-red-700 dark:text-red-400">
+                          +{stats.excessCosts.toFixed(0)} CHF
+                        </span>
+                      </div>
+                    ) : stats.totalHours > 0 ? (
                       <div className="flex flex-col items-center mt-0.5">
                         <span className="text-[8px] text-green-600 dark:text-green-400 font-medium">
                           {stats.totalHours.toFixed(1)}h
@@ -441,7 +511,7 @@ export const ActualHoursGrid = ({
                           </span>
                         )}
                       </div>
-                    )}
+                    ) : null}
                   </th>
                 );
               })}
@@ -632,5 +702,116 @@ export const ActualHoursGrid = ({
       </div>
       <ScrollBar orientation="horizontal" />
     </ScrollArea>
+
+    {/* ── Over-budget Ist Dialog ─────────────────────────────────────── */}
+    {openDialogDay && showCosts && (() => {
+      const stats = getDailyStats(new Date(openDialogDay));
+      const breakdown = getDayEmployeeBreakdown(openDialogDay);
+      const suggestions = getIdealPlanSuggestions(openDialogDay);
+      const parsedDate = new Date(openDialogDay);
+      const dateLabel = format(parsedDate, 'EEEE, d. MMMM yyyy', { locale: de });
+      const totalSaving = suggestions.reduce((s, x) => s + x.saving, 0);
+
+      return (
+        <Dialog open={true} onOpenChange={() => { setOpenDialogDay(null); setShowIdealPlan(false); }}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-red-600">
+                <AlertTriangle className="h-5 w-5" />
+                Ist-Kostenübersicht: {dateLabel}
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              {/* Actual overview */}
+              <div className="rounded-lg bg-muted/50 p-3 space-y-2">
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tagesübersicht (Ist)</div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                  <span className="text-muted-foreground">Budgetierter Umsatz</span>
+                  <span className="font-medium">CHF {stats.plannedRevenue.toFixed(0)}</span>
+                  <span className="text-muted-foreground">Ist-Stunden total</span>
+                  <span className="font-medium">{stats.totalHours.toFixed(1)} h</span>
+                  <span className="text-muted-foreground">Ist-Kosten total</span>
+                  <span className="font-medium">CHF {stats.totalCosts.toFixed(0)}</span>
+                  <span className="text-muted-foreground">Personalkostenquote (PKQ)</span>
+                  <span className="font-semibold text-red-600">
+                    {stats.laborCostPct !== null ? `${stats.laborCostPct.toFixed(1)}%` : '–'}
+                    <span className="text-xs font-normal text-muted-foreground ml-1">(Ziel: {LABOR_COST_THRESHOLD}%)</span>
+                  </span>
+                </div>
+                <div className="border-t pt-2 mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                  <span className="text-red-600 font-medium">Zu viel Kosten</span>
+                  <span className="font-bold text-red-600">CHF {stats.excessCosts.toFixed(0)}</span>
+                  <span className="text-red-600 font-medium">Zu viel Stunden (ca.)</span>
+                  <span className="font-bold text-red-600">{stats.excessHours.toFixed(1)} h</span>
+                </div>
+              </div>
+
+              {/* Employee breakdown */}
+              {breakdown.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ist-Stunden nach Mitarbeiter</div>
+                  {breakdown.map(({ employee, hours, cost }) => (
+                    <div key={employee.id} className="flex items-center gap-2 text-xs">
+                      <div className="flex-1 truncate">{employee.name}</div>
+                      <div className="text-muted-foreground shrink-0">{hours.toFixed(1)}h × CHF {employee.hourlyWage.toFixed(2)}</div>
+                      <div className="font-semibold shrink-0 w-20 text-right">CHF {cost.toFixed(0)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Ideal Plan section */}
+              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide flex items-center gap-1">
+                    <Lightbulb className="h-3.5 w-3.5" />
+                    Ideale Planung
+                  </div>
+                  {!showIdealPlan && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs border-blue-300 text-blue-700 hover:bg-blue-100"
+                      onClick={() => setShowIdealPlan(true)}
+                    >
+                      <TrendingDown className="h-3 w-3 mr-1" />
+                      Sparvorschläge anzeigen
+                    </Button>
+                  )}
+                </div>
+                {showIdealPlan && suggestions.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Um die PKQ-Ziel von {LABOR_COST_THRESHOLD}% zu erreichen, hätten folgende Anpassungen helfen können:
+                    </p>
+                    {suggestions.map(({ employee, currentHours, suggestedCut, saving }) => (
+                      <div key={employee.id} className="bg-white dark:bg-card rounded p-2 border border-blue-200 dark:border-blue-700 text-xs space-y-0.5">
+                        <div className="font-semibold">{employee.name}</div>
+                        <div className="text-muted-foreground">
+                          Gearbeitet: {currentHours.toFixed(1)}h → Vorschlag: {(currentHours - suggestedCut).toFixed(1)}h
+                          <span className="ml-2 text-[10px]">(−{suggestedCut.toFixed(1)}h)</span>
+                        </div>
+                        <div className="text-emerald-600 dark:text-emerald-400 font-medium">
+                          Einsparung: CHF {saving.toFixed(0)}
+                        </div>
+                      </div>
+                    ))}
+                    <div className="border-t pt-2 flex justify-between text-xs font-semibold">
+                      <span>Gesamteinsparung</span>
+                      <span className="text-emerald-600 dark:text-emerald-400">CHF {totalSaving.toFixed(0)}</span>
+                    </div>
+                  </div>
+                )}
+                {showIdealPlan && suggestions.length === 0 && (
+                  <p className="text-xs text-muted-foreground">Keine konkreten Vorschläge verfügbar.</p>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      );
+    })()}
+    </div>
   );
 };

@@ -1,13 +1,14 @@
 // Schedule Grid Component - Updated to use onOpen8HoursDialog
 import React, { useState } from 'react';
 import { format, isWeekend, getDay, isSunday } from 'date-fns';
+import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { TimeInputCell } from './TimeInputCell';
 import { cn } from '@/lib/utils';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
-import { Trash2, CalendarOff, Clock, X } from 'lucide-react';
+import { Trash2, CalendarOff, Clock, X, AlertTriangle, TrendingDown } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,6 +20,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useShiftConfig, calculateBreakDeduction } from '@/hooks/useShiftConfig';
 
@@ -268,6 +272,39 @@ export const ScheduleGrid = ({
   // Absence paint-tool state
   const [activeTool, setActiveTool] = useState<string | null>(null);
 
+  // Over-budget dialog state
+  const [openDialogDay, setOpenDialogDay] = useState<string | null>(null);
+  const [whatIfRevenue, setWhatIfRevenue] = useState<string>('');
+
+  // Per-employee cost breakdown for a specific day (for the dialog)
+  const getDayEmployeeBreakdown = (dateStr: string) => {
+    return employees.map(emp => {
+      const cellKey = `${emp.id}-${dateStr}`;
+      const daySchedule = scheduleData[cellKey] || {};
+      let hours = 0;
+
+      if (daySchedule.frühAbsence || daySchedule.spätAbsence) {
+        // absences – minimal hours contribution
+        hours = 0;
+      } else {
+        const calcSlot = (slot: TimeSlot | null | undefined) => {
+          if (!slot?.start || !slot?.end) return 0;
+          const [sh, sm] = slot.start.split(':').map(Number);
+          const [eh, em] = slot.end.split(':').map(Number);
+          let h = eh - sh + (em - sm) / 60;
+          if (h < 0) h += 24;
+          return h;
+        };
+        const gross = calcSlot(daySchedule.früh) + calcSlot(daySchedule.spät);
+        const breakDeduction = calculateBreakDeduction(gross);
+        hours = Math.max(0, gross - breakDeduction);
+      }
+
+      const cost = hours * (emp.hourlyWage || 0);
+      return { employee: emp, hours, cost };
+    }).filter(e => e.hours > 0).sort((a, b) => b.cost - a.cost);
+  };
+
   // Apply absence to both früh and spät when paint-tool is active
   const handleCellChange = (
     employeeId: string,
@@ -361,61 +398,79 @@ export const ScheduleGrid = ({
                 const showWeekSum = sundayIndices.includes(idx) && getWeeklyHours;
                 return (
                   <React.Fragment key={day.toISOString()}>
-                    <th
-                      colSpan={2}
-                      className={cn(
-                        "px-0.5 py-1 text-center font-medium border-b cursor-pointer hover:bg-muted/50 transition-colors",
-                        "border-r-4 border-r-primary/30",
-                        isWeekendDay && "bg-amber-100 dark:bg-amber-900/30",
-                        isSundayDay && "bg-amber-200/70 dark:bg-amber-900/50 border-r-primary/50",
-                        isWeekView ? "min-w-[120px] text-xs" : "min-w-[100px] text-[10px]"
-                      )}
-                      onClick={() => onDayClick?.(day)}
-                      title="Klicken für Tagesdetails"
-                    >
-                      <div className={cn(
-                        "text-muted-foreground text-[9px]",
-                        isWeekendDay && "text-amber-700 dark:text-amber-400 font-semibold"
-                      )}>
-                        {WEEKDAY_NAMES[day.getDay()]}
-                      </div>
-                      <div className={cn(
-                        "font-semibold text-[10px]",
-                        isWeekendDay && "text-amber-700 dark:text-amber-400"
-                      )}>
-                        {format(day, 'd.M.')}
-                      </div>
-                      {showCosts && (() => {
-                        const stats = getDailyStats(day);
-                        const laborCostQuote = stats.plannedRevenue > 0 
-                          ? (stats.totalCosts / stats.plannedRevenue * 100) 
-                          : null;
-                        return (
-                          <div className="flex flex-col items-center">
-                            <div className={cn(
-                              "text-[8px] font-medium mt-0.5",
-                              stats.isOverBudget 
-                                ? "text-red-600 dark:text-red-400" 
-                                : stats.totalCosts > 0 
-                                  ? "text-emerald-600 dark:text-emerald-400"
-                                  : "text-muted-foreground"
-                            )}>
-                              {stats.totalCosts > 0 ? `CHF ${stats.totalCosts.toFixed(0)}` : '-'}
-                            </div>
-                            {laborCostQuote !== null && (
-                              <div className={cn(
-                                "text-[7px] font-medium",
-                                laborCostQuote > laborCostThreshold 
-                                  ? "text-red-600 dark:text-red-400" 
-                                  : "text-emerald-600 dark:text-emerald-400"
-                              )}>
-                                {laborCostQuote.toFixed(1)}%
-                              </div>
-                            )}
+                    {(() => {
+                      const dateStr = format(day, 'yyyy-MM-dd');
+                      const stats = getDailyStats(day);
+                      const laborCostQuote = stats.plannedRevenue > 0
+                        ? (stats.totalCosts / stats.plannedRevenue * 100)
+                        : null;
+                      return (
+                        <th
+                          colSpan={2}
+                          className={cn(
+                            "px-0.5 py-1 text-center font-medium border-b cursor-pointer transition-colors",
+                            "border-r-4 border-r-primary/30",
+                            stats.isOverBudget && showCosts
+                              ? "bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/40"
+                              : isWeekendDay
+                                ? "bg-amber-100 dark:bg-amber-900/30 hover:bg-muted/50"
+                                : "hover:bg-muted/50",
+                            isSundayDay && !stats.isOverBudget && "bg-amber-200/70 dark:bg-amber-900/50 border-r-primary/50",
+                            isWeekView ? "min-w-[120px] text-xs" : "min-w-[100px] text-[10px]"
+                          )}
+                          onClick={() => {
+                            if (stats.isOverBudget && showCosts) {
+                              setWhatIfRevenue('');
+                              setOpenDialogDay(dateStr);
+                            } else {
+                              onDayClick?.(day);
+                            }
+                          }}
+                          title={stats.isOverBudget && showCosts ? "⚠️ Ziel überschritten – Klicken für Details" : "Klicken für Tagesdetails"}
+                        >
+                          <div className={cn(
+                            "text-muted-foreground text-[9px]",
+                            isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400 font-semibold",
+                            stats.isOverBudget && showCosts && "text-red-700 dark:text-red-400 font-semibold"
+                          )}>
+                            {WEEKDAY_NAMES[day.getDay()]}
                           </div>
-                        );
-                      })()}
-                    </th>
+                          <div className={cn(
+                            "font-semibold text-[10px]",
+                            isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400",
+                            stats.isOverBudget && showCosts && "text-red-700 dark:text-red-400"
+                          )}>
+                            {format(day, 'd.M.')}
+                          </div>
+                          {showCosts && (
+                            <div className="flex flex-col items-center mt-0.5">
+                              {stats.isOverBudget ? (
+                                <div className="flex items-center gap-0.5 bg-red-200 dark:bg-red-900/60 border border-red-400 dark:border-red-700 rounded px-1 py-0.5 mt-0.5">
+                                  <AlertTriangle className="h-2.5 w-2.5 text-red-700 dark:text-red-400 shrink-0" />
+                                  <span className="text-[8px] font-bold text-red-700 dark:text-red-400">
+                                    +{stats.excessCosts.toFixed(0)} CHF
+                                  </span>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className={cn(
+                                    "text-[8px] font-medium",
+                                    stats.totalCosts > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
+                                  )}>
+                                    {stats.totalCosts > 0 ? `CHF ${stats.totalCosts.toFixed(0)}` : '-'}
+                                  </div>
+                                  {laborCostQuote !== null && (
+                                    <div className="text-[7px] font-medium text-emerald-600 dark:text-emerald-400">
+                                      {laborCostQuote.toFixed(1)}%
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </th>
+                      );
+                    })()}
                     {/* Weekly sum header after Sunday */}
                     {showWeekSum && (
                       <th
@@ -851,6 +906,112 @@ export const ScheduleGrid = ({
       <ScrollBar orientation="horizontal" />
     </ScrollArea>
     </div>
+
+    {/* ── Over-budget Plan Dialog ─────────────────────────────────────── */}
+    {openDialogDay && showCosts && (() => {
+      const stats = getDailyStats(new Date(openDialogDay));
+      const maxAllowed = stats.plannedRevenue * (laborCostThreshold / 100);
+      const excessCosts = Math.max(0, stats.totalCosts - maxAllowed);
+      const breakdown = getDayEmployeeBreakdown(openDialogDay);
+      const whatIfRev = parseFloat(whatIfRevenue);
+      const whatIfPkq = whatIfRev > 0 ? (stats.totalCosts / whatIfRev * 100) : null;
+      const revenueNeeded = stats.totalCosts / (laborCostThreshold / 100);
+      const parsedDate = new Date(openDialogDay);
+      const dateLabel = format(parsedDate, 'EEEE, d. MMMM yyyy', { locale: de });
+
+      return (
+        <Dialog open={true} onOpenChange={() => setOpenDialogDay(null)}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-red-600">
+                <AlertTriangle className="h-5 w-5" />
+                Kostenwarnung: {dateLabel}
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              {/* Overview section */}
+              <div className="rounded-lg bg-muted/50 p-3 space-y-2">
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tagesübersicht</div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                  <span className="text-muted-foreground">Budgetierter Umsatz</span>
+                  <span className="font-medium">CHF {stats.plannedRevenue.toFixed(0)}</span>
+                  <span className="text-muted-foreground">Geplante Stunden</span>
+                  <span className="font-medium">{stats.totalHours.toFixed(1)} h</span>
+                  <span className="text-muted-foreground">Geplante Kosten</span>
+                  <span className="font-medium">CHF {stats.totalCosts.toFixed(0)}</span>
+                  <span className="text-muted-foreground">Personalkostenquote (PKQ)</span>
+                  <span className="font-semibold text-red-600">
+                    {stats.plannedRevenue > 0 ? (stats.totalCosts / stats.plannedRevenue * 100).toFixed(1) : '–'}%
+                    <span className="text-xs font-normal text-muted-foreground ml-1">(Ziel: {laborCostThreshold}%)</span>
+                  </span>
+                </div>
+                <div className="border-t pt-2 mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                  <span className="text-red-600 font-medium">Zu viel geplante Kosten</span>
+                  <span className="font-bold text-red-600">CHF {excessCosts.toFixed(0)}</span>
+                  <span className="text-red-600 font-medium">Zu viel geplante Stunden</span>
+                  <span className="font-bold text-red-600">{stats.excessHours.toFixed(1)} h</span>
+                  <span className="text-muted-foreground text-xs">Umsatz für Ziel-PKQ nötig</span>
+                  <span className="font-medium text-xs">CHF {revenueNeeded.toFixed(0)}</span>
+                </div>
+              </div>
+
+              {/* Employee breakdown */}
+              {breakdown.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Kostenverteilung Mitarbeiter</div>
+                  {breakdown.slice(0, 5).map(({ employee, hours, cost }) => (
+                    <div key={employee.id} className="flex items-center gap-2 text-xs">
+                      <div className="flex-1 truncate">{employee.name}</div>
+                      <div className="text-muted-foreground shrink-0">{hours.toFixed(1)}h × {employee.hourlyWage.toFixed(2)}</div>
+                      <div className="font-semibold shrink-0 w-20 text-right">CHF {cost.toFixed(0)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* What-if revenue calculator */}
+              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3 space-y-2">
+                <div className="text-xs font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">Umsatz-Szenario</div>
+                <p className="text-xs text-muted-foreground">
+                  Welcher Umsatz wäre nötig, damit die Kosten wieder im Zielbereich liegen?
+                </p>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="whatif" className="text-xs shrink-0">Hypothetischer Umsatz:</Label>
+                  <div className="relative flex-1">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">CHF</span>
+                    <Input
+                      id="whatif"
+                      type="number"
+                      placeholder={revenueNeeded.toFixed(0)}
+                      value={whatIfRevenue}
+                      onChange={e => setWhatIfRevenue(e.target.value)}
+                      className="pl-10 h-8 text-sm"
+                    />
+                  </div>
+                </div>
+                {whatIfPkq !== null && (
+                  <div className={cn(
+                    "text-sm font-semibold text-center py-1.5 rounded",
+                    whatIfPkq <= laborCostThreshold
+                      ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
+                      : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                  )}>
+                    PKQ bei CHF {whatIfRev.toFixed(0)}: {whatIfPkq.toFixed(1)}%
+                    {whatIfPkq <= laborCostThreshold
+                      ? ' ✓ Im Zielbereich'
+                      : ` ✗ Noch ${(whatIfPkq - laborCostThreshold).toFixed(1)}% über Ziel`}
+                  </div>
+                )}
+                <p className="text-[10px] text-muted-foreground italic">
+                  * Dieser Wert überschreibt den budgetierten Umsatz nicht.
+                </p>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      );
+    })()}
     </div>
   );
 };
