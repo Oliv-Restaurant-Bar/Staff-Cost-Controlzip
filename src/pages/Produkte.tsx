@@ -2,7 +2,7 @@ import { useState, useRef, useMemo } from 'react';
 import {
   Upload, Trash2, Package, TrendingUp, TrendingDown,
   Hash, RotateCcw, ChevronDown, X, Award, CalendarDays, LayoutGrid,
-  AlertTriangle, CheckSquare, Utensils, Wine, Search, Settings2, Receipt,
+  AlertTriangle, CheckSquare, Utensils, Wine, Search, Settings2, Receipt, Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -142,10 +142,15 @@ export default function ProdukteSeite() {
 
   const [costs, setCosts] = useState<ProductCostEntry[]>(() => loadProductCosts());
   const [importingCost, setImportingCost] = useState(false);
+  const [editingCost, setEditingCost] = useState<{
+    name: string; field: 'brutto' | 'netto' | 'wes' | 'wesQ';
+  } | null>(null);
+  const [editingValue, setEditingValue] = useState('');
 
   const anzahlRef = useRef<HTMLInputElement>(null);
   const umsatzRef = useRef<HTMLInputElement>(null);
   const costRef   = useRef<HTMLInputElement>(null);
+  const costEditRef = useRef<HTMLInputElement>(null);
 
   // Schnelle Name→Kosten Lookup-Map (gefiltert nach aktiver Kategorie)
   const costMap = useMemo(() => {
@@ -155,6 +160,54 @@ export default function ProdukteSeite() {
     }
     return m;
   }, [costs, category]);
+
+  // ── Inline-Bearbeitung WES-Zellen ─────────────────────────────────────────
+  const startCostEdit = (
+    name: string,
+    field: 'brutto' | 'netto' | 'wes' | 'wesQ',
+    currentVal: number,
+  ) => {
+    setEditingCost({ name, field });
+    setEditingValue(currentVal > 0 ? String(currentVal) : '');
+    setTimeout(() => costEditRef.current?.select(), 30);
+  };
+
+  const commitCostEdit = () => {
+    if (!editingCost) return;
+    const raw = editingValue.replace(/[^0-9.,]/g, '').replace(',', '.');
+    const val = parseFloat(raw);
+    if (isNaN(val) || val < 0) { setEditingCost(null); return; }
+
+    const updated = costs.map(c => {
+      if (c.name.toLowerCase() !== editingCost.name.toLowerCase() || c.category !== category) return c;
+      const patch: Partial<ProductCostEntry> = {};
+      if (editingCost.field === 'brutto') patch.bruttoPrice = val;
+      if (editingCost.field === 'netto')  patch.nettoPrice  = val;
+      if (editingCost.field === 'wes')    patch.wes         = val;
+      if (editingCost.field === 'wesQ')   patch.wesQ        = val;
+      return { ...c, ...patch };
+    });
+
+    // Wenn Produkt noch kein Cost-Entry hat → neu anlegen
+    const exists = updated.some(
+      c => c.name.toLowerCase() === editingCost.name.toLowerCase() && c.category === category,
+    );
+    if (!exists) {
+      const newEntry: ProductCostEntry = {
+        name: editingCost.name,
+        category,
+        bruttoPrice: editingCost.field === 'brutto' ? val : 0,
+        nettoPrice:  editingCost.field === 'netto'  ? val : 0,
+        wes:         editingCost.field === 'wes'    ? val : 0,
+        wesQ:        editingCost.field === 'wesQ'   ? val : 0,
+      };
+      updated.push(newEntry);
+    }
+
+    saveProductCosts(updated);
+    setCosts(updated);
+    setEditingCost(null);
+  };
 
   const monthsOnly = useMemo(() => getAvailableMonths(data?.entries ?? [], category), [data, category]);
 
@@ -606,24 +659,56 @@ export default function ProdukteSeite() {
                               ? <span className={cn('font-medium', sortBy === 'revenue' ? valueColor : '')}>{formatCHF(r.revenue)}</span>
                               : <span className="text-muted-foreground">–</span>}
                           </td>
-                          {costs.length > 0 && <>
-                            <td className="px-3 py-2.5 text-right tabular-nums text-xs">
-                              {cost?.wes ? <span className="text-purple-700 dark:text-purple-300">{formatCHF(cost.wes)}</span>
-                                : <span className="text-muted-foreground">–</span>}
-                            </td>
-                            <td className="px-3 py-2.5 text-right tabular-nums text-xs">
-                              {warenaufwand > 0
-                                ? <span className="font-medium text-purple-700 dark:text-purple-300">{formatCHF(warenaufwand)}</span>
-                                : <span className="text-muted-foreground">–</span>}
-                            </td>
-                            <td className="px-3 py-2.5 text-right tabular-nums text-xs">
-                              {wesQEffektiv > 0
-                                ? <span className={cn('font-medium', wesQEffektiv > 35 ? 'text-red-600 dark:text-red-400' : wesQEffektiv > 25 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400')}>
-                                    {wesQEffektiv.toFixed(1)}%
-                                  </span>
-                                : <span className="text-muted-foreground">–</span>}
-                            </td>
-                          </>}
+                          {costs.length > 0 && (() => {
+                            const isEditingWes  = editingCost?.name.toLowerCase() === r.name.toLowerCase() && editingCost.field === 'wes';
+                            const isEditingWesQ = editingCost?.name.toLowerCase() === r.name.toLowerCase() && editingCost.field === 'wesQ';
+
+                            const cellBase = 'px-1 py-1.5 text-right tabular-nums text-xs cursor-pointer select-none group/cell';
+                            const inputCls = 'w-20 text-right text-xs bg-purple-50 dark:bg-purple-950/50 border border-purple-400 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-purple-500 tabular-nums';
+
+                            return <>
+                              {/* WES/Stk. — editierbar */}
+                              <td className={cellBase} onClick={() => startCostEdit(r.name, 'wes', cost?.wes ?? 0)}>
+                                {isEditingWes
+                                  ? <input ref={costEditRef} className={inputCls} value={editingValue}
+                                      onChange={e => setEditingValue(e.target.value)}
+                                      onBlur={commitCostEdit}
+                                      onKeyDown={e => { if (e.key === 'Enter') commitCostEdit(); if (e.key === 'Escape') setEditingCost(null); }}
+                                      onClick={e => e.stopPropagation()} autoFocus />
+                                  : <span className={cn('flex items-center justify-end gap-1',
+                                      cost?.wes ? 'text-purple-700 dark:text-purple-300' : 'text-muted-foreground')}>
+                                      {cost?.wes ? formatCHF(cost.wes) : '–'}
+                                      <Pencil className="h-2.5 w-2.5 opacity-0 group-hover/cell:opacity-40 shrink-0" />
+                                    </span>}
+                              </td>
+
+                              {/* Warenaufwand — berechnet, nicht editierbar */}
+                              <td className="px-3 py-2.5 text-right tabular-nums text-xs">
+                                {warenaufwand > 0
+                                  ? <span className="font-medium text-purple-700 dark:text-purple-300">{formatCHF(warenaufwand)}</span>
+                                  : <span className="text-muted-foreground">–</span>}
+                              </td>
+
+                              {/* WES-Q % — editierbar */}
+                              <td className={cellBase} onClick={() => startCostEdit(r.name, 'wesQ', cost?.wesQ ?? 0)}>
+                                {isEditingWesQ
+                                  ? <input ref={costEditRef} className={inputCls} value={editingValue}
+                                      onChange={e => setEditingValue(e.target.value)}
+                                      onBlur={commitCostEdit}
+                                      onKeyDown={e => { if (e.key === 'Enter') commitCostEdit(); if (e.key === 'Escape') setEditingCost(null); }}
+                                      onClick={e => e.stopPropagation()} autoFocus />
+                                  : <span className={cn('flex items-center justify-end gap-1',
+                                      wesQEffektiv > 0
+                                        ? wesQEffektiv > 35 ? 'text-red-600 dark:text-red-400'
+                                          : wesQEffektiv > 25 ? 'text-amber-600 dark:text-amber-400'
+                                          : 'text-emerald-600 dark:text-emerald-400'
+                                        : 'text-muted-foreground')}>
+                                      {wesQEffektiv > 0 ? `${wesQEffektiv.toFixed(1)}%` : '–'}
+                                      <Pencil className="h-2.5 w-2.5 opacity-0 group-hover/cell:opacity-40 shrink-0" />
+                                    </span>}
+                              </td>
+                            </>;
+                          })()}
                           <td className="px-2 py-2.5">
                             <button onClick={() => ignoreProduct(r.name)}
                               className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground">
