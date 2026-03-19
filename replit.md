@@ -62,12 +62,28 @@ RLS-Policies: Nur eingeloggte Nutzer haben Zugriff.
 - `loadActualHoursForMonth`, `saveActualHourEntry`
 - `loadSetting`, `saveSetting`
 
+## Datenpersistenz / Supabase-Sync
+Finanz- und Tagesbudget-Daten werden bidirektional zwischen localStorage (primär, schnell) und Supabase `app_settings` (sekundär, persistent) synchronisiert.
+
+**Neue Dateien:**
+- `src/lib/supabase-kv.ts` — kvGet/kvSet auf `app_settings`-Tabelle + syncLocalToSupabase / syncSupabaseToLocal
+- `src/hooks/useSyncStore.ts` — einmalige Sync-Hook nach Login (push lokal → Supabase, dann pull Supabase → lokal wenn leer)
+
+**Ablauf nach Login:**
+1. `useSyncStore` in App.tsx läuft einmalig → schreibt lokale Daten nach Supabase
+2. Falls localStorage leer → lädt Supabase-Daten lokal → feuert `store-synced`-Event
+3. Alle Seiten hören auf `store-synced` und laden Daten neu
+
+**Keys die synced werden:** `reporting_v1`, `budget_v1`, `dailyBudgets`
+
 ## Migrationsstatus
 - SchedulePlanner.tsx: vollständig auf Supabase migriert (localStorage als Backup)
 - usePersonnelData.ts: Mitarbeiter-Sync auf Supabase
 - Settings.tsx: Wochentag-Prozentsätze + Schwellenwert auf Supabase
 - useShiftConfig.ts: noch localStorage (Schicht-Konfiguration, tief integriert)
-- Tagesbudgets: noch localStorage
+- reporting_v1: localStorage primär + Supabase `app_settings` als Backup
+- budget_v1: localStorage primär + Supabase `app_settings` als Backup
+- dailyBudgets: localStorage primär + Supabase `app_settings` als Backup
 - UI-Präferenzen: bewusst in localStorage (nutzerspezifisch)
 
 ## Routing

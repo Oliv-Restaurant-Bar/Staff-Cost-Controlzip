@@ -39,10 +39,11 @@ import {
   SageJournalEntry,
 } from '@/types/reporting';
 import { v4 as uuidv4 } from 'uuid';
+import { kvSet } from './supabase-kv';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'reporting_v1';
+export const STORAGE_KEY = 'reporting_v1';
 
 // ─── Interne Hilfsfunktionen ──────────────────────────────────────────────────
 
@@ -56,6 +57,8 @@ function loadAll(): Record<string, MonthlyFinancialRecord> {
 
 function saveAll(data: Record<string, MonthlyFinancialRecord>): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  // Asynchron zu Supabase synchronisieren (fire-and-forget)
+  kvSet(STORAGE_KEY, data).catch(() => { /* silently ignore */ });
 }
 
 // ─── Öffentliche API ──────────────────────────────────────────────────────────

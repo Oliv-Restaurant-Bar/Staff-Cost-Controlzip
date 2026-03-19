@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useSyncStore } from "@/hooks/useSyncStore";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -41,6 +42,9 @@ const queryClient = new QueryClient();
 const AppContent = () => {
   const { user, loading } = useAuth();
   const { canAccessSettings, canAccessModule } = usePermissions();
+
+  // Daten aus Supabase nach localStorage synchronisieren (einmalig nach Login)
+  useSyncStore(!!user);
 
   // Check for valid guest session
   const hasGuestSession = (() => {

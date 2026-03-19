@@ -653,6 +653,7 @@ const SchedulePlanner = () => {
     localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(scheduleData));
     localStorage.setItem('schedule-employees', JSON.stringify(employees));
     localStorage.setItem('dailyBudgets', JSON.stringify(dailyBudgets));
+    import('@/lib/supabase-kv').then(({ kvSet }) => kvSet('dailyBudgets', dailyBudgets).catch(() => {}));
     localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(actualHoursData));
     
     window.dispatchEvent(new CustomEvent('schedule-updated'));

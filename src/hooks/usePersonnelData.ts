@@ -533,10 +533,11 @@ export const usePersonnelData = () => {
     }
   }, [employees, isInitialized]);
 
-  // Sync daily budgets to localStorage
+  // Sync daily budgets to localStorage and Supabase
   useEffect(() => {
     if (isInitialized) {
       localStorage.setItem(DAILY_BUDGETS_KEY, JSON.stringify(dailyBudgets));
+      import('@/lib/supabase-kv').then(({ kvSet }) => kvSet(DAILY_BUDGETS_KEY, dailyBudgets).catch(() => {}));
     }
   }, [dailyBudgets, isInitialized]);
 

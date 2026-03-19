@@ -1804,6 +1804,13 @@ const PLViewPage = () => {
     }
   }, [stichtagActive, stichtagYear, stichtagMonth]);
 
+  // Nach Supabase-Sync Daten neu laden
+  useEffect(() => {
+    const handler = () => setRefreshKey(k => k + 1);
+    window.addEventListener('store-synced', handler);
+    return () => window.removeEventListener('store-synced', handler);
+  }, []);
+
   // Daten laden & P&L berechnen
   const records = useMemo(() => loadYear(year), [year, month, refreshKey]);
   const prevYearRecords = useMemo(() => loadYear(year - 1), [year]);
@@ -1869,10 +1876,32 @@ const PLViewPage = () => {
       }
       const prevYearByRow = new Map<string, number>();
       const prevRec = prevYearRecords[idx];
+      const effRec  = effectiveAllRecords[idx];
       if (prevRec) {
         if (prevRec.revenueActual) prevYearByRow.set('revenue_total', prevRec.revenueActual);
         if (prevRec.personnelCostActual) prevYearByRow.set('personnel_wages', prevRec.personnelCostActual);
         for (const cat of (prevRec.expenseCategories ?? [])) {
+          if (!cat.categoryId || !cat.amount) continue;
+          if (/^\d{3,5}$/.test(cat.categoryId)) {
+            const res = lookupAccount(cat.categoryId);
+            if (res.mapping) {
+              const rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
+              if (rowId) prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
+            }
+          }
+        }
+      }
+      // Fallback: revenuePreviousYear / personnelCostPreviousYear aus den effektiven Records
+      // (z.B. manuell eingetragen oder aus Gastronovi-Tagesdaten)
+      if (!prevYearByRow.has('revenue_total') && effRec?.revenuePreviousYear) {
+        prevYearByRow.set('revenue_total', effRec.revenuePreviousYear);
+      }
+      if (!prevYearByRow.has('personnel_wages') && effRec?.personnelCostPreviousYear) {
+        prevYearByRow.set('personnel_wages', effRec.personnelCostPreviousYear);
+      }
+      // Fallback: expenseCategoriesPreviousYear aus den effektiven Records
+      if (!prevRec) {
+        for (const cat of (effRec?.expenseCategoriesPreviousYear ?? [])) {
           if (!cat.categoryId || !cat.amount) continue;
           if (/^\d{3,5}$/.test(cat.categoryId)) {
             const res = lookupAccount(cat.categoryId);
@@ -1888,7 +1917,7 @@ const PLViewPage = () => {
         prevYearByRow: prevYearByRow.size > 0 ? prevYearByRow : undefined,
       };
     });
-  }, [budgetData, prevYearRecords]);
+  }, [budgetData, prevYearRecords, effectiveAllRecords]);
 
   const monthResult = useMemo(
     () => computePLForMonth(effectiveMonthRecord, allMonthOverrides[month - 1]),

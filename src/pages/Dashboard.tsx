@@ -255,6 +255,18 @@ const Dashboard = () => {
     catch { return {}; }
   });
 
+  // Nach Supabase-Sync dailyBudgets neu laden
+  useEffect(() => {
+    const handler = () => {
+      try {
+        const data = JSON.parse(localStorage.getItem('dailyBudgets') || '{}');
+        setDailyBudgets(data);
+      } catch { /* ignore */ }
+    };
+    window.addEventListener('store-synced', handler);
+    return () => window.removeEventListener('store-synced', handler);
+  }, []);
+
   // Schnelleingabe-State
   const [editingRevenue, setEditingRevenue] = useState(false);
   const [pendingRevenue, setPendingRevenue] = useState('');
@@ -319,6 +331,7 @@ const Dashboard = () => {
       },
     };
     localStorage.setItem('dailyBudgets', JSON.stringify(updated));
+    import('@/lib/supabase-kv').then(({ kvSet }) => kvSet('dailyBudgets', updated).catch(() => {}));
     setDailyBudgets(updated);
     setEditingRevenue(false);
     setPendingRevenue('');

@@ -34,7 +34,7 @@ import { createSeededBudget2026, SEED_2026_LINE_ITEMS } from '@/lib/budget-seed-
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'budget_v1';
+export const STORAGE_KEY = 'budget_v1';
 
 // ─── Interne Hilfsfunktionen ──────────────────────────────────────────────────
 
@@ -48,6 +48,10 @@ function loadAll(): Record<number, BudgetYear> {
 
 function saveAll(data: Record<number, BudgetYear>): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  // Asynchron zu Supabase synchronisieren (fire-and-forget)
+  import('./supabase-kv').then(({ kvSet }) => {
+    kvSet(STORAGE_KEY, data).catch(() => { /* silently ignore */ });
+  });
 }
 
 /** Erstellt ein leeres Budgetjahr mit den Standard-Positionen */

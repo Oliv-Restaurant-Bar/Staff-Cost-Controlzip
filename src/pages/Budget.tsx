@@ -188,6 +188,13 @@ function BudgetContent() {
 
   useEffect(() => { reload(selectedYear); }, [selectedYear, reload]);
 
+  // Nach Supabase-Sync Budget neu laden
+  useEffect(() => {
+    const handler = () => reload(selectedYear);
+    window.addEventListener('store-synced', handler);
+    return () => window.removeEventListener('store-synced', handler);
+  }, [selectedYear, reload]);
+
   // ── Berechnungen ─────────────────────────────────────────────────────────────
 
   const categories  = budget.plCategories ?? [];

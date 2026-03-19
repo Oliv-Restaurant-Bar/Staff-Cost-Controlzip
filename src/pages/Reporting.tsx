@@ -14,7 +14,7 @@
  *   - Mehrjahresvergleich
  */
 
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Plus,
@@ -534,6 +534,13 @@ const Reporting = () => {
   const [months, setMonths]           = useState<MonthlyFinancialRecord[]>(() => loadYear(year));
   const [editRecord, setEditRecord]   = useState<MonthlyFinancialRecord | null>(null);
   const [highlightVariance, setHighlightVariance] = useState(false);
+
+  // Nach Supabase-Sync Daten neu laden
+  useEffect(() => {
+    const handler = () => setMonths(loadYear(year));
+    window.addEventListener('store-synced', handler);
+    return () => window.removeEventListener('store-synced', handler);
+  }, [year]);
 
   // Gastronovi-Tagesdaten aus localStorage (gleiche Logik wie Erfolgsrechnung)
   const dailyBudgetsData = useMemo<Record<string, Record<string, number>>>(() => {
