@@ -387,7 +387,7 @@ export default function PersonalFixPage() {
       <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
 
         {/* ── KPI-Zusammenfassung ─────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           <KpiCard
             title="Personal FIX / Monat"
             value={fmtCHF(totalFixCost)}
@@ -411,18 +411,42 @@ export default function PersonalFixPage() {
             icon={<Users className="h-5 w-5" />}
             color={totalCombined > 0 ? 'green' : 'default'}
           />
-          {personnelBudget > 0 && (
+        </div>
+
+        {/* ── Budget-Vergleich ────────────────────────────────────────────── */}
+        {personnelBudget > 0 && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            <KpiCard
+              title="FIX vs. Budget / Monat"
+              value={fmtCHF(totalFixCost - personnelBudget)}
+              sub={totalFixCost <= personnelBudget
+                ? `FIX liegt ${fmtCHF(personnelBudget - totalFixCost)} unter Budget`
+                : `FIX übersteigt Budget um ${fmtCHF(totalFixCost - personnelBudget)}`}
+              icon={<BookOpen className="h-5 w-5" />}
+              color={totalFixCost <= personnelBudget ? 'green' : 'red'}
+              delta={totalFixCost - personnelBudget}
+              deltaLabel="FIX − Budget"
+            />
+            <KpiCard
+              title="Total vs. Budget / Monat"
+              value={fmtCHF(totalCombined - personnelBudget)}
+              sub={totalCombined <= personnelBudget
+                ? `Total liegt ${fmtCHF(personnelBudget - totalCombined)} unter Budget`
+                : `Total übersteigt Budget um ${fmtCHF(totalCombined - personnelBudget)}`}
+              icon={<TrendingUp className="h-5 w-5" />}
+              color={totalCombined <= personnelBudget ? 'green' : 'red'}
+              delta={totalCombined - personnelBudget}
+              deltaLabel="Total − Budget"
+            />
             <KpiCard
               title="Budget Personalkosten"
               value={fmtCHF(personnelBudget)}
               sub={`Monatsbudget ${currentYear}`}
               icon={<BookOpen className="h-5 w-5" />}
-              color={totalCombined > personnelBudget ? 'red' : 'green'}
-              delta={totalCombined > 0 ? totalCombined - personnelBudget : null}
-              deltaLabel="Total vs. Budget/Mt"
+              color="default"
             />
-          )}
-        </div>
+          </div>
+        )}
 
         {/* ── Erklärung ───────────────────────────────────────────────────── */}
         <div className="flex items-start gap-2.5 rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20 p-3 text-xs text-blue-800 dark:text-blue-200">
