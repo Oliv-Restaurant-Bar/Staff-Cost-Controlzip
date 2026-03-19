@@ -22,7 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
-import { loadMonth } from '@/lib/reporting-store';
+import { loadMonth, loadYear } from '@/lib/reporting-store';
 import {
   loadEmployees,
   loadScheduleForMonth,
@@ -353,13 +353,23 @@ const Dashboard = () => {
   );
   const revenueMonth = revenueMonthDaily > 0 ? revenueMonthDaily : reportingActualRevenue;
 
+  // Fallback Vorjahr: reporting_v1 des Vorjahres (Monat) oder Summe aller Monate (Jahr)
+  const reportingPrevYearRevenue = useMemo(() => {
+    if (period === 'month') return loadMonth(currentYear - 1, currentMonth).revenueActual ?? 0;
+    if (period === 'year')  return loadYear(currentYear - 1).reduce((s, m) => s + (m.revenueActual ?? 0), 0);
+    return 0;
+  }, [period, currentYear, currentMonth]);
+
   // Periodenspezifische Umsatz-Werte
   // Für 'month' nutzen wir denselben Fallback; für today/week nur Tagesdaten
   const revenueActiveDailyRaw = sumRevenue(activeDays, 'actualRevenue');
   const revenueActive = (period === 'month' && revenueActiveDailyRaw === 0)
     ? reportingActualRevenue
     : revenueActiveDailyRaw;
-  const revenuePrevYearActive = sumRevenuePrevYear(activeDays);
+  const revenuePrevYearDailyRaw = sumRevenuePrevYear(activeDays);
+  const revenuePrevYearActive = revenuePrevYearDailyRaw > 0
+    ? revenuePrevYearDailyRaw
+    : reportingPrevYearRevenue;
 
   // Budget pro Periode: aus budget_v1 Monatsbudget anteilig berechnen
   const daysInRefMonth = getDaysInMonth(referenceDate);
