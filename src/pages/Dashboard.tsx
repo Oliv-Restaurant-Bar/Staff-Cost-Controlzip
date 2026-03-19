@@ -407,10 +407,20 @@ const Dashboard = () => {
   );
   const revenueMonth = revenueMonthDaily > 0 ? revenueMonthDaily : reportingActualRevenue;
 
-  // Fallback Vorjahr: reporting_v1 des Vorjahres (Monat) oder Summe aller Monate (Jahr)
+  // Fallback Vorjahr: zuerst revenuePreviousYear im aktuellen Datensatz (manuell eingegeben),
+  // dann Vorjahres-Ist aus reporting_v1 des Vorjahres
   const reportingPrevYearRevenue = useMemo(() => {
-    if (period === 'month') return loadMonth(currentYear - 1, currentMonth).revenueActual ?? 0;
-    if (period === 'year')  return loadYear(currentYear - 1).reduce((s, m) => s + (m.revenueActual ?? 0), 0);
+    if (period === 'month') {
+      const directPY = loadMonth(currentYear, currentMonth).revenuePreviousYear;
+      if (directPY) return directPY;
+      return loadMonth(currentYear - 1, currentMonth).revenueActual ?? 0;
+    }
+    if (period === 'year') {
+      const currentYearRecs = loadYear(currentYear);
+      const directPYSum = currentYearRecs.reduce((s, m) => s + (m.revenuePreviousYear ?? 0), 0);
+      if (directPYSum > 0) return directPYSum;
+      return loadYear(currentYear - 1).reduce((s, m) => s + (m.revenueActual ?? 0), 0);
+    }
     return 0;
   }, [period, currentYear, currentMonth]);
 

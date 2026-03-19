@@ -17,6 +17,7 @@ export interface ActualHoursEntry {
   hours: number;
   start?: string;
   end?: string;
+  absenceType?: 'FE' | 'K';
 }
 
 interface ActualHoursGridProps {
@@ -139,6 +140,12 @@ const ActualHoursCell = ({
 
   const hours = entry?.hours || 0;
   const cost = hours * employee.hourlyWage;
+  const absenceType = entry?.absenceType;
+
+  const handleAbsenceQuick = (type: 'FE' | 'K') => {
+    onSave({ hours: 8.4, absenceType: type });
+    setIsEditing(false);
+  };
 
   return (
     <>
@@ -149,12 +156,29 @@ const ActualHoursCell = ({
           isWeekendDay && "bg-amber-50 dark:bg-amber-900/20",
           isSundayDay && "bg-amber-100/50 dark:bg-amber-900/30 border-r-2 border-r-primary/30",
           isDayOffDay && "bg-muted/50",
-          hours > 0 && "bg-green-50 dark:bg-green-900/20"
+          absenceType === 'FE' && "bg-gray-100 dark:bg-gray-800/50",
+          absenceType === 'K' && "bg-red-50 dark:bg-red-900/20",
+          !absenceType && hours > 0 && "bg-green-50 dark:bg-green-900/20"
         )}
         onClick={handleCellClick}
         title="Klicken zum Bearbeiten"
       >
-        {hours > 0 ? (
+        {absenceType ? (
+          <div className="flex flex-col items-center gap-0.5">
+            <span className={cn(
+              "font-bold text-xs px-1.5 py-0.5 rounded",
+              absenceType === 'FE' && "text-gray-600 dark:text-gray-300",
+              absenceType === 'K' && "text-red-600 dark:text-red-400"
+            )}>
+              {absenceType}
+            </span>
+            {showCosts && (
+              <span className="text-[9px] text-muted-foreground">
+                {cost.toFixed(0)} CHF
+              </span>
+            )}
+          </div>
+        ) : hours > 0 ? (
           <div className="flex flex-col items-center gap-0.5">
             <span className="font-medium text-green-700 dark:text-green-400">
               {hours.toFixed(1)}h
@@ -185,6 +209,32 @@ const ActualHoursCell = ({
           </DialogHeader>
           <div className="text-sm text-muted-foreground mb-4">
             {format(day, 'EEEE, d. MMMM yyyy', { locale: de })}
+          </div>
+
+          {/* FE / K Schnellauswahl */}
+          <div className="flex gap-2 mb-4">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleAbsenceQuick('FE')}
+              className={cn("flex-1 font-semibold", absenceType === 'FE' && "border-gray-400 bg-gray-100 dark:bg-gray-800")}
+            >
+              FE – Ferien (8.4h)
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleAbsenceQuick('K')}
+              className={cn("flex-1 font-semibold text-red-600 border-red-300 hover:bg-red-50", absenceType === 'K' && "bg-red-50 dark:bg-red-900/30")}
+            >
+              K – Krank (8.4h)
+            </Button>
+          </div>
+          <div className="relative mb-4">
+            <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-background px-2 text-muted-foreground">oder Stunden eingeben</span>
+            </div>
           </div>
 
           {/* Mode Toggle */}

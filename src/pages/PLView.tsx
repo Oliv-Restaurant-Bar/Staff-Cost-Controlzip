@@ -1258,11 +1258,14 @@ const BudgetPLDrilldownDialog = ({
   const account = row.itemAccountNumber;
   const v       = row.values;
 
-  const [istInput, setIstInput] = useState(v.actual !== 0 ? String(v.actual) : '');
-  const [saved,    setSaved]    = useState(false);
+  const [istInput,      setIstInput]      = useState(v.actual !== 0 ? String(v.actual) : '');
+  const [saved,         setSaved]         = useState(false);
+  const [vjInput,       setVjInput]       = useState(v.prevYear !== 0 ? String(v.prevYear) : '');
+  const [vjSaved,       setVjSaved]       = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const canEdit = row.catType !== 'result';
+  const canEditVorjahr = row.catId === 'pl_revenue' && row.isCategory;
 
   useEffect(() => {
     if (inputRef.current) inputRef.current.focus();
@@ -1287,6 +1290,15 @@ const BudgetPLDrilldownDialog = ({
     }
 
     setSaved(true);
+    setTimeout(() => { onSaved(); }, 600);
+  };
+
+  const handleSaveVorjahr = () => {
+    const raw = vjInput.replace(/['\s]/g, '').replace(',', '.');
+    const num = parseFloat(raw);
+    if (isNaN(num)) return;
+    saveMonth({ year, month, revenuePreviousYear: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe Vorjahr-Umsatz' });
+    setVjSaved(true);
     setTimeout(() => { onSaved(); }, 600);
   };
 
@@ -1349,6 +1361,45 @@ const BudgetPLDrilldownDialog = ({
                   Hinweis: Kategorie-Summen werden aus Einzelkonten berechnet. Bitte die Unterkonten einzeln eingeben.
                 </p>
               )}
+            </div>
+          )}
+
+          {/* Manuelle Vorjahr-Eingabe (nur für Umsatz) */}
+          {canEditVorjahr && (
+            <div className="rounded-lg border-2 border-slate-200 bg-slate-50 dark:bg-slate-800/40 p-3 space-y-2">
+              <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <Pencil className="h-3.5 w-3.5 text-slate-500" />
+                Vorjahr-Umsatz manuell eingeben
+                <span className="font-normal text-muted-foreground ml-1">({MONTH_NAMES_DE[month]} {year - 1})</span>
+              </p>
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">CHF</span>
+                  <Input
+                    className="pl-10 font-mono text-right text-base h-9"
+                    placeholder="0"
+                    value={vjInput}
+                    onChange={e => { setVjInput(e.target.value); setVjSaved(false); }}
+                    onKeyDown={e => e.key === 'Enter' && handleSaveVorjahr()}
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  className="h-9 px-4"
+                  onClick={handleSaveVorjahr}
+                  disabled={vjSaved}
+                  variant={vjSaved ? 'outline' : 'secondary'}
+                >
+                  {vjSaved ? (
+                    <><Check className="h-3.5 w-3.5 mr-1 text-emerald-600" /> Gespeichert</>
+                  ) : (
+                    'Speichern'
+                  )}
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Dieser Wert erscheint in der Vorjahr-Spalte und im Dashboard-Vergleich.
+              </p>
             </div>
           )}
 
