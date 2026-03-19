@@ -181,10 +181,14 @@ export default function ProdukteSeite() {
         return;
       }
 
-      // Prüfe ob Monate dieser Kategorie bereits vorhanden sind
+      // Prüfe ob Monate dieser Kategorie + dieses Typs bereits vorhanden sind
+      // Anzahl und Umsatz sind SEPARATE Daten — jeder Typ hat eigene Duplikat-Prüfung
       const existingMonths = new Set(
         (data?.entries ?? [])
-          .filter(e => (e.category ?? 'food') === category && (e.count > 0 || e.revenue > 0))
+          .filter(e => {
+            if ((e.category ?? 'food') !== category) return false;
+            return type === 'anzahl' ? e.count > 0 : e.revenue > 0;
+          })
           .map(e => e.month)
       );
       const newMonths = [...new Set(parsed.map(e => e.month))];
@@ -243,12 +247,53 @@ export default function ProdukteSeite() {
     toast.success(`«${name}» wieder in Rangliste`);
   };
 
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [resetCat, setResetCat] = useState<'food' | 'beverage' | 'all'>('all');
+  const [resetMonth, setResetMonth] = useState<string>('all');
+
+  // Alle vorhandenen Monate (beide Kategorien, für Reset-Dialog)
+  const allMonthsForReset = useMemo(() => {
+    const set = new Set((data?.entries ?? []).map(e => e.month).filter(m => m !== 'gesamt'));
+    return Array.from(set).sort();
+  }, [data]);
+
+  const doReset = () => {
+    if (!data) return;
+    let remaining = data.entries;
+
+    if (resetCat !== 'all' && resetMonth !== 'all') {
+      // Bestimmte Kategorie + bestimmter Monat
+      remaining = remaining.filter(e =>
+        !((e.category ?? 'food') === resetCat && e.month === resetMonth)
+      );
+    } else if (resetCat !== 'all') {
+      // Bestimmte Kategorie, alle Monate
+      remaining = remaining.filter(e => (e.category ?? 'food') !== resetCat);
+    } else if (resetMonth !== 'all') {
+      // Alle Kategorien, bestimmter Monat
+      remaining = remaining.filter(e => e.month !== resetMonth);
+    } else {
+      // Alles löschen
+      remaining = [];
+    }
+
+    if (remaining.length === 0) {
+      localStorage.removeItem('produkte_data_v2');
+      localStorage.removeItem('produkte_ignored_v1');
+      setData(null);
+      setIgnored([]);
+    } else {
+      const newData = { ...data, entries: remaining, importedAt: new Date().toISOString() };
+      saveProdukteData(newData);
+      setData(newData);
+    }
+    setShowResetDialog(false);
+    toast.info('Daten gelöscht');
+  };
+
   const clearAllData = () => {
-    localStorage.removeItem('produkte_data_v2');
-    localStorage.removeItem('produkte_ignored_v1');
-    setData(null);
-    setIgnored([]);
-    toast.info('Alle Produktdaten gelöscht');
+    // kept for compatibility — now just opens the dialog
+    setShowResetDialog(true);
   };
 
   return (
@@ -613,6 +658,66 @@ export default function ProdukteSeite() {
           </div>
         )}
       </main>
+
+      {/* ── Reset-Dialog ─────────────────────────────────────────────────────── */}
+      {showResetDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-sm p-6 space-y-5">
+            <div className="flex items-start gap-3">
+              <Trash2 className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
+              <div>
+                <h2 className="text-sm font-bold">Daten löschen</h2>
+                <p className="text-xs text-muted-foreground mt-1">Wähle aus, welche Daten gelöscht werden sollen.</p>
+              </div>
+            </div>
+
+            {/* Kategorie */}
+            <div className="space-y-1.5">
+              <p className="text-xs font-semibold text-muted-foreground">Kategorie</p>
+              <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+                {(['all', 'food', 'beverage'] as const).map(c => (
+                  <button key={c} onClick={() => setResetCat(c)}
+                    className={cn('flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium flex-1 justify-center transition-all',
+                      resetCat === c ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                    {c === 'food' && <Utensils className="h-3 w-3" />}
+                    {c === 'beverage' && <Wine className="h-3 w-3" />}
+                    {c === 'all' ? 'Alle' : c === 'food' ? 'Food' : 'Beverage'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Monat */}
+            <div className="space-y-1.5">
+              <p className="text-xs font-semibold text-muted-foreground">Monat</p>
+              <select
+                value={resetMonth}
+                onChange={e => setResetMonth(e.target.value)}
+                className="w-full h-9 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <option value="all">Alle Monate</option>
+                {allMonthsForReset.map(m => (
+                  <option key={m} value={m}>{formatMonthLong(m)}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Vorschau was gelöscht wird */}
+            <div className="rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+              Löscht: <span className="font-semibold">
+                {resetCat === 'all' ? 'Food + Beverage' : resetCat === 'food' ? 'Food' : 'Beverage'}
+                {' · '}
+                {resetMonth === 'all' ? 'Alle Monate' : formatMonthLong(resetMonth)}
+              </span>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setShowResetDialog(false)}>Abbrechen</Button>
+              <Button size="sm" variant="destructive" onClick={doReset}>Löschen</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Duplikat-Bestätigung ──────────────────────────────────────────────── */}
       {pendingImport && (
