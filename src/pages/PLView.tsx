@@ -1265,7 +1265,7 @@ const BudgetPLDrilldownDialog = ({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const canEdit = row.catType !== 'result';
-  const canEditVorjahr = row.catId === 'pl_revenue' && row.isCategory;
+  const canEditVorjahr = row.catId === 'pl_revenue';
 
   useEffect(() => {
     if (inputRef.current) inputRef.current.focus();
@@ -2377,7 +2377,7 @@ const PLViewPage = () => {
             ? <BudgetPLView
                 rows={bplRows}
                 onRowClick={row => {
-                  if (row.isCategory) {
+                  if (row.isCategory || row.catId === 'pl_revenue') {
                     setBplDrilldown(row);
                   } else {
                     setAccountAction(row);
