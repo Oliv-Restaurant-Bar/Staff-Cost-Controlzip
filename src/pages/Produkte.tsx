@@ -105,10 +105,7 @@ function MonthCard({
               <div key={r.name} className="px-3 py-2 group hover:bg-muted/30 transition-colors">
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-muted-foreground tabular-nums w-4 shrink-0 text-center">
-                    {r.rank === 1 && (isFlop ? '💀' : '🥇')}
-                    {r.rank === 2 && (isFlop ? '😬' : '🥈')}
-                    {r.rank === 3 && (isFlop ? '😕' : '🥉')}
-                    {r.rank > 3 && r.rank}
+                    {r.rank}
                   </span>
                   <span className="text-xs font-medium truncate flex-1 min-w-0">{r.name}</span>
                   <span className={cn(
@@ -542,10 +539,6 @@ export default function ProdukteSeite() {
                           ? 'text-blue-600 dark:text-blue-400'
                           : 'text-emerald-600 dark:text-emerald-400';
 
-                      const rankEmoji = isFlop
-                        ? ([,'💀','😬','😕'] as const)[Math.min(r.rank,3)] ?? null
-                        : ([,'🥇','🥈','🥉'] as const)[Math.min(r.rank,3)] ?? null;
-
                       return (
                         <tr key={r.name}
                           className={cn(
@@ -556,9 +549,7 @@ export default function ProdukteSeite() {
                           )}
                         >
                           <td className="px-3 py-2.5 text-center">
-                            {rankEmoji
-                              ? <span className="text-base leading-none">{rankEmoji}</span>
-                              : <span className="text-xs font-bold tabular-nums text-muted-foreground">{r.rank}</span>}
+                            <span className="text-xs font-medium tabular-nums text-muted-foreground">{r.rank}</span>
                           </td>
                           <td className="px-3 py-2.5">
                             <div className="space-y-1">
