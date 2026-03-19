@@ -302,6 +302,43 @@ export function getTopProducts(
     }));
 }
 
+// ── Flop-Ranking (schlechteste Produkte zuerst) ────────────────────────────────
+export function getFlopProducts(
+  entries: ProductEntry[],
+  month: string,
+  sortBy: 'count' | 'revenue',
+  limit: number,
+  ignoredByUser: string[],
+): RankedProduct[] {
+  const agg: Record<string, { count: number; revenue: number }> = {};
+  const filtered = month === 'alle' ? entries : entries.filter(e => e.month === month);
+
+  for (const e of filtered) {
+    if (shouldIgnoreProduct(e.name, ignoredByUser)) continue;
+    // Für Flops nur Einträge mit tatsächlichem Wert einbeziehen
+    if (type_hasValue(e, sortBy)) {
+      if (!agg[e.name]) agg[e.name] = { count: 0, revenue: 0 };
+      agg[e.name].count   += e.count;
+      agg[e.name].revenue += e.revenue;
+    }
+  }
+
+  return Object.entries(agg)
+    .filter(([, v]) => v[sortBy] > 0) // Nur Produkte mit mindestens einem Verkauf
+    .sort((a, b) => a[1][sortBy] - b[1][sortBy]) // aufsteigend = schlechteste zuerst
+    .slice(0, limit)
+    .map(([name, vals], i) => ({
+      rank: i + 1,
+      name,
+      count: vals.count,
+      revenue: vals.revenue,
+    }));
+}
+
+function type_hasValue(e: ProductEntry, sortBy: 'count' | 'revenue'): boolean {
+  return sortBy === 'count' ? e.count > 0 : e.revenue > 0;
+}
+
 // ── Verfügbare Monate ermitteln ────────────────────────────────────────────────
 export function getAvailableMonths(entries: ProductEntry[]): string[] {
   const set = new Set(entries.map(e => e.month));

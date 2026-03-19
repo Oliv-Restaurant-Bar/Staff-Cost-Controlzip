@@ -1,5 +1,8 @@
 import { useState, useRef, useMemo } from 'react';
-import { Upload, Trash2, Package, TrendingUp, Hash, RotateCcw, ChevronDown, X, Award } from 'lucide-react';
+import {
+  Upload, Trash2, Package, TrendingUp, TrendingDown,
+  Hash, RotateCcw, ChevronDown, X, Award,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -12,6 +15,7 @@ import {
   saveIgnoredProducts,
   mergeProdukteData,
   getTopProducts,
+  getFlopProducts,
   getAvailableMonths,
   DEFAULT_IGNORE_TERMS,
   type ProdukteData,
@@ -24,6 +28,14 @@ const formatCHF = (v: number) =>
   v.toLocaleString('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 2 });
 
 const formatMonth = (ym: string) => {
+  if (ym === 'alle') return 'Alle';
+  if (ym === 'gesamt') return 'Gesamt';
+  try {
+    return format(parse(ym, 'yyyy-MM', new Date()), 'MMM yy', { locale: de });
+  } catch { return ym; }
+};
+
+const formatMonthLong = (ym: string) => {
   if (ym === 'alle') return 'Alle Monate';
   if (ym === 'gesamt') return 'Gesamtperiode';
   try {
@@ -31,21 +43,20 @@ const formatMonth = (ym: string) => {
   } catch { return ym; }
 };
 
-const RANK_COLORS: Record<number, string> = {
-  1: 'text-yellow-500',
-  2: 'text-slate-400',
-  3: 'text-amber-600',
-};
+type ChartMode = 'top' | 'flop';
 
-const TOP_OPTIONS = [10, 20, 50, 100];
+const TOP_OPTIONS  = [10, 20, 50, 100];
+const FLOP_OPTIONS = [10, 20, 50];
 
 export default function ProdukteSeite() {
-  const [data, setData]             = useState<ProdukteData | null>(() => loadProdukteData());
-  const [ignoredByUser, setIgnored] = useState<string[]>(() => loadIgnoredProducts());
-  const [sortBy, setSortBy]         = useState<'count' | 'revenue'>('count');
-  const [topN, setTopN]             = useState(20);
-  const [selectedMonth, setMonth]   = useState<string>('alle');
-  const [importing, setImporting]   = useState<'anzahl' | 'umsatz' | null>(null);
+  const [data, setData]              = useState<ProdukteData | null>(() => loadProdukteData());
+  const [ignoredByUser, setIgnored]  = useState<string[]>(() => loadIgnoredProducts());
+  const [sortBy, setSortBy]          = useState<'count' | 'revenue'>('count');
+  const [mode, setMode]              = useState<ChartMode>('top');
+  const [topN, setTopN]              = useState(20);
+  const [flopN, setFlopN]            = useState(10);
+  const [selectedMonth, setMonth]    = useState<string>('alle');
+  const [importing, setImporting]    = useState<'anzahl' | 'umsatz' | null>(null);
   const [showIgnored, setShowIgnored] = useState(false);
 
   const anzahlRef = useRef<HTMLInputElement>(null);
@@ -56,10 +67,14 @@ export default function ProdukteSeite() {
     [data],
   );
 
-  const ranked: RankedProduct[] = useMemo(
-    () => getTopProducts(data?.entries ?? [], selectedMonth, sortBy, topN, ignoredByUser),
-    [data, selectedMonth, sortBy, topN, ignoredByUser],
-  );
+  const limit = mode === 'top' ? topN : flopN;
+
+  const ranked: RankedProduct[] = useMemo(() => {
+    const entries = data?.entries ?? [];
+    return mode === 'top'
+      ? getTopProducts(entries, selectedMonth, sortBy, limit, ignoredByUser)
+      : getFlopProducts(entries, selectedMonth, sortBy, limit, ignoredByUser);
+  }, [data, selectedMonth, sortBy, mode, limit, ignoredByUser]);
 
   // ── Import Handler ───────────────────────────────────────────────────────────
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>, type: 'anzahl' | 'umsatz') => {
@@ -84,7 +99,6 @@ export default function ProdukteSeite() {
       saveProdukteData(newData);
       setData(newData);
 
-      // Setze Monat auf den ersten verfügbaren Monat aus den neuen Daten
       const newMonths = getAvailableMonths(merged);
       if (newMonths.length > 0 && selectedMonth === 'alle') {
         setMonth(newMonths[newMonths.length - 1]);
@@ -101,14 +115,11 @@ export default function ProdukteSeite() {
     }
   };
 
-  // ── Produkt ignorieren (User-seitig löschen) ─────────────────────────────────
   const ignoreProduct = (name: string) => {
     const updated = [...ignoredByUser, name];
     setIgnored(updated);
     saveIgnoredProducts(updated);
-    toast.info(`«${name}» aus Rangliste entfernt`, {
-      description: 'Produkt wird in Bewertung nicht mehr berücksichtigt.',
-    });
+    toast.info(`«${name}» aus Rangliste entfernt`);
   };
 
   const restoreProduct = (name: string) => {
@@ -126,140 +137,175 @@ export default function ProdukteSeite() {
     toast.info('Alle Produktdaten gelöscht');
   };
 
-  // ── Medalliensymbol ──────────────────────────────────────────────────────────
+  // ── Rang-Symbol ──────────────────────────────────────────────────────────────
   const RankBadge = ({ rank }: { rank: number }) => {
-    if (rank === 1) return <span className="text-lg leading-none">🥇</span>;
-    if (rank === 2) return <span className="text-lg leading-none">🥈</span>;
-    if (rank === 3) return <span className="text-lg leading-none">🥉</span>;
+    if (mode === 'top') {
+      if (rank === 1) return <span className="text-lg leading-none">🥇</span>;
+      if (rank === 2) return <span className="text-lg leading-none">🥈</span>;
+      if (rank === 3) return <span className="text-lg leading-none">🥉</span>;
+    } else {
+      if (rank === 1) return <span className="text-lg leading-none">💀</span>;
+      if (rank === 2) return <span className="text-lg leading-none">😬</span>;
+      if (rank === 3) return <span className="text-lg leading-none">😕</span>;
+    }
     return (
-      <span className={cn('text-xs font-bold tabular-nums w-6 text-center inline-block text-muted-foreground')}>
+      <span className="text-xs font-bold tabular-nums w-6 text-center inline-block text-muted-foreground">
         {rank}
       </span>
     );
   };
 
-  // ── Bar-Width (relativ zum Maximum) ─────────────────────────────────────────
   const maxVal = ranked.length > 0
     ? Math.max(...ranked.map(r => sortBy === 'count' ? r.count : r.revenue))
     : 1;
+
+  const isFlop = mode === 'flop';
+  const nOptions = isFlop ? FLOP_OPTIONS : TOP_OPTIONS;
+  const currentN = isFlop ? flopN : topN;
+  const setN = isFlop ? setFlopN : setTopN;
 
   return (
     <div className="min-h-screen bg-background">
       {/* ── Header ────────────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
         <div className="max-w-5xl mx-auto px-4 py-3 space-y-2">
+
+          {/* Zeile 1: Titel + Import-Buttons */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3">
               <Package className="h-5 w-5 text-muted-foreground" />
               <div>
                 <h1 className="text-base font-bold leading-tight">Produkte</h1>
-                <p className="text-xs text-muted-foreground">Top-Ranglisten nach Anzahl & Umsatz</p>
+                <p className="text-xs text-muted-foreground">Ranglisten nach Anzahl & Umsatz</p>
               </div>
             </div>
 
-            {/* Import-Buttons */}
             <div className="flex items-center gap-2 flex-wrap">
-              <input
-                ref={anzahlRef} type="file" accept=".xlsx,.xls" className="hidden"
-                onChange={e => handleImport(e, 'anzahl')}
-              />
-              <input
-                ref={umsatzRef} type="file" accept=".xlsx,.xls" className="hidden"
-                onChange={e => handleImport(e, 'umsatz')}
-              />
-              <Button
-                variant="outline" size="sm" className="h-8"
-                onClick={() => anzahlRef.current?.click()}
-                disabled={importing !== null}
-              >
+              <input ref={anzahlRef} type="file" accept=".xlsx,.xls" className="hidden"
+                onChange={e => handleImport(e, 'anzahl')} />
+              <input ref={umsatzRef} type="file" accept=".xlsx,.xls" className="hidden"
+                onChange={e => handleImport(e, 'umsatz')} />
+
+              <Button variant="outline" size="sm" className="h-8"
+                onClick={() => anzahlRef.current?.click()} disabled={importing !== null}>
                 {importing === 'anzahl'
-                  ? <span className="h-3.5 w-3.5 mr-1.5 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" />
-                  : <Upload className="h-3.5 w-3.5 mr-1.5" />}
-                <Hash className="h-3 w-3 mr-1" />
-                Anzahl importieren
+                  ? <span className="h-3 w-3 mr-1.5 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" />
+                  : <Upload className="h-3 w-3 mr-1.5" />}
+                <Hash className="h-3 w-3 mr-1" /> Anzahl
               </Button>
-              <Button
-                variant="outline" size="sm" className="h-8"
-                onClick={() => umsatzRef.current?.click()}
-                disabled={importing !== null}
-              >
+
+              <Button variant="outline" size="sm" className="h-8"
+                onClick={() => umsatzRef.current?.click()} disabled={importing !== null}>
                 {importing === 'umsatz'
-                  ? <span className="h-3.5 w-3.5 mr-1.5 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" />
-                  : <Upload className="h-3.5 w-3.5 mr-1.5" />}
-                <TrendingUp className="h-3 w-3 mr-1" />
-                Umsatz importieren
+                  ? <span className="h-3 w-3 mr-1.5 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" />
+                  : <Upload className="h-3 w-3 mr-1.5" />}
+                <TrendingUp className="h-3 w-3 mr-1" /> Umsatz
               </Button>
+
               {data && (
-                <Button
-                  variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive"
-                  onClick={clearAllData}
-                >
-                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-                  Zurücksetzen
+                <Button variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive"
+                  onClick={clearAllData}>
+                  <RotateCcw className="h-3 w-3 mr-1.5" /> Reset
                 </Button>
               )}
             </div>
           </div>
 
-          {/* ── Filter-Zeile ─────────────────────────────────────────────────── */}
+          {/* Zeile 2: Filter-Controls (nur wenn Daten vorhanden) */}
           {data && (
-            <div className="border-t border-border/60 pt-2 flex items-center gap-2 flex-wrap">
-              {/* Monat */}
-              <div className="relative">
-                <select
-                  value={selectedMonth}
-                  onChange={e => setMonth(e.target.value)}
-                  className="h-7 pl-2 pr-7 rounded-md border border-input bg-background text-xs font-medium appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
-                >
-                  {months.map(m => (
-                    <option key={m} value={m}>{formatMonth(m)}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-1.5 top-1.5 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-              </div>
+            <div className="border-t border-border/60 pt-2 space-y-2">
 
-              {/* Top N */}
-              <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
-                {TOP_OPTIONS.map(n => (
+              {/* Monat-Pills */}
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-xs text-muted-foreground font-medium mr-1 shrink-0">Monat:</span>
+                {months.map(m => (
                   <button
-                    key={n}
-                    onClick={() => setTopN(n)}
+                    key={m}
+                    onClick={() => setMonth(m)}
                     className={cn(
-                      'px-2 py-0.5 text-xs font-medium rounded-md transition-all',
-                      topN === n
-                        ? 'bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground',
+                      'px-2.5 py-0.5 rounded-full text-xs font-medium border transition-all',
+                      selectedMonth === m
+                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                        : 'bg-background text-muted-foreground border-border hover:border-primary/50 hover:text-foreground',
                     )}
                   >
-                    Top {n}
+                    {formatMonth(m)}
                   </button>
                 ))}
               </div>
 
-              {/* Sort-Tabs */}
-              <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5 ml-auto">
-                <button
-                  onClick={() => setSortBy('count')}
-                  className={cn(
-                    'flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium rounded-md transition-all',
-                    sortBy === 'count'
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  <Hash className="h-3 w-3" /> Nach Anzahl
-                </button>
-                <button
-                  onClick={() => setSortBy('revenue')}
-                  className={cn(
-                    'flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium rounded-md transition-all',
-                    sortBy === 'revenue'
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  <TrendingUp className="h-3 w-3" /> Nach Umsatz
-                </button>
+              {/* Zweite Zeile: Top/Flop + N + Sortierung */}
+              <div className="flex items-center gap-2 flex-wrap">
+
+                {/* Top / Flop Umschalter */}
+                <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+                  <button
+                    onClick={() => setMode('top')}
+                    className={cn(
+                      'flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all',
+                      mode === 'top'
+                        ? 'bg-emerald-500 text-white shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <TrendingUp className="h-3 w-3" /> Top
+                  </button>
+                  <button
+                    onClick={() => setMode('flop')}
+                    className={cn(
+                      'flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all',
+                      mode === 'flop'
+                        ? 'bg-red-500 text-white shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <TrendingDown className="h-3 w-3" /> Flop
+                  </button>
+                </div>
+
+                {/* N-Auswahl */}
+                <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+                  {nOptions.map(n => (
+                    <button
+                      key={n}
+                      onClick={() => setN(n)}
+                      className={cn(
+                        'px-2 py-1 text-xs font-medium rounded-md transition-all',
+                        currentN === n
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {isFlop ? 'Flop' : 'Top'} {n}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Sortierung */}
+                <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5 ml-auto">
+                  <button
+                    onClick={() => setSortBy('count')}
+                    className={cn(
+                      'flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-all',
+                      sortBy === 'count'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <Hash className="h-3 w-3" /> Nach Anzahl
+                  </button>
+                  <button
+                    onClick={() => setSortBy('revenue')}
+                    className={cn(
+                      'flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-all',
+                      sortBy === 'revenue'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <TrendingUp className="h-3 w-3" /> Nach Umsatz
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -276,7 +322,7 @@ export default function ProdukteSeite() {
             </div>
             <div>
               <p className="text-base font-semibold">Noch keine Produktdaten importiert</p>
-              <p className="text-sm text-muted-foreground mt-1">
+              <p className="text-sm text-muted-foreground mt-1 max-w-sm">
                 Importiere die Gastronovi-Exporte «Anzahl Rezepte» und «Umsatz Rezepte»
                 über die Schaltflächen oben rechts.
               </p>
@@ -289,54 +335,81 @@ export default function ProdukteSeite() {
                 <TrendingUp className="h-4 w-4 mr-2" /> Umsatz Rezepte
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Unterstützt: Gastronovi Excel-Export (.xlsx)
-            </p>
           </div>
         )}
 
         {/* ── Rangliste ───────────────────────────────────────────────────────── */}
         {data && (
           <>
-            {/* Zusammenfassung */}
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
-                <Award className="h-4 w-4 text-primary" />
-                <span className="text-sm font-semibold">
-                  Top {Math.min(topN, ranked.length)} Produkte
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  · {formatMonth(selectedMonth)} · {sortBy === 'count' ? 'Nach Anzahl' : 'Nach Umsatz'}
-                </span>
-              </div>
-              {ranked.length === 0 && (
-                <Badge variant="outline" className="text-xs text-muted-foreground">
-                  Keine Daten für diesen Zeitraum
+            {/* Titel */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {isFlop
+                ? <TrendingDown className="h-4 w-4 text-red-500" />
+                : <Award className="h-4 w-4 text-primary" />}
+              <span className="text-sm font-semibold">
+                {isFlop ? 'Flop' : 'Top'} {Math.min(currentN, ranked.length)} Produkte
+              </span>
+              <span className="text-xs text-muted-foreground">
+                · {formatMonthLong(selectedMonth)}
+                · {sortBy === 'count' ? 'Nach Anzahl' : 'Nach Umsatz'}
+              </span>
+              {isFlop && (
+                <Badge variant="outline" className="text-xs text-red-600 border-red-300 bg-red-50 dark:bg-red-950/20">
+                  Schlechteste Produkte
                 </Badge>
               )}
             </div>
 
+            {ranked.length === 0 && (
+              <div className="flex items-center justify-center py-12 text-center">
+                <p className="text-sm text-muted-foreground">
+                  Keine Daten für diesen Zeitraum. Importiere zuerst die entsprechenden Dateien.
+                </p>
+              </div>
+            )}
+
             {/* Tabelle */}
             {ranked.length > 0 && (
-              <div className="rounded-xl border border-border bg-card overflow-hidden">
+              <div className={cn(
+                'rounded-xl border overflow-hidden',
+                isFlop ? 'border-red-200 dark:border-red-900' : 'border-border',
+              )}>
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-border bg-muted/40">
+                    <tr className={cn(
+                      'border-b',
+                      isFlop
+                        ? 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
+                        : 'border-border bg-muted/40',
+                    )}>
                       <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground w-10">#</th>
                       <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Produkt</th>
-                      <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground w-20">Anzahl</th>
+                      <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground w-24">Anzahl</th>
                       <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground w-28">Umsatz</th>
                       <th className="px-2 py-2.5 w-8" />
                     </tr>
                   </thead>
                   <tbody>
                     {ranked.map(r => {
-                      const val = sortBy === 'count' ? r.count : r.revenue;
+                      const val      = sortBy === 'count' ? r.count : r.revenue;
                       const barWidth = maxVal > 0 ? (val / maxVal) * 100 : 0;
+                      const barColor = isFlop
+                        ? 'bg-red-400 dark:bg-red-600'
+                        : sortBy === 'count' ? 'bg-blue-500' : 'bg-emerald-500';
+                      const valueColor = isFlop
+                        ? 'text-red-600 dark:text-red-400'
+                        : sortBy === 'count'
+                          ? 'text-blue-600 dark:text-blue-400'
+                          : 'text-emerald-600 dark:text-emerald-400';
+
                       return (
-                        <tr
-                          key={r.name}
-                          className="border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors group"
+                        <tr key={r.name}
+                          className={cn(
+                            'border-b last:border-0 transition-colors group',
+                            isFlop
+                              ? 'border-red-100 dark:border-red-900/40 hover:bg-red-50/40 dark:hover:bg-red-950/10'
+                              : 'border-border/50 hover:bg-muted/30',
+                          )}
                         >
                           <td className="px-3 py-2.5 text-center">
                             <RankBadge rank={r.rank} />
@@ -345,17 +418,15 @@ export default function ProdukteSeite() {
                             <div className="space-y-1">
                               <span className={cn(
                                 'font-medium',
-                                r.rank <= 3 ? RANK_COLORS[r.rank] : 'text-foreground',
+                                isFlop
+                                  ? r.rank <= 3 ? 'text-red-600 dark:text-red-400' : 'text-foreground'
+                                  : r.rank <= 3 ? (['text-yellow-500', 'text-slate-400', 'text-amber-600'] as const)[r.rank - 1] : 'text-foreground',
                               )}>
                                 {r.name}
                               </span>
-                              {/* Balken */}
                               <div className="h-1.5 rounded-full bg-muted overflow-hidden max-w-xs">
                                 <div
-                                  className={cn(
-                                    'h-full rounded-full transition-all',
-                                    sortBy === 'count' ? 'bg-blue-500' : 'bg-emerald-500',
-                                  )}
+                                  className={cn('h-full rounded-full transition-all', barColor)}
                                   style={{ width: `${barWidth}%` }}
                                 />
                               </div>
@@ -363,14 +434,14 @@ export default function ProdukteSeite() {
                           </td>
                           <td className="px-3 py-2.5 text-right tabular-nums">
                             {r.count > 0
-                              ? <span className={cn('font-medium', sortBy === 'count' ? 'text-blue-600 dark:text-blue-400' : '')}>
+                              ? <span className={cn('font-medium', sortBy === 'count' ? valueColor : '')}>
                                   {r.count.toLocaleString('de-CH')}×
                                 </span>
                               : <span className="text-muted-foreground">–</span>}
                           </td>
                           <td className="px-3 py-2.5 text-right tabular-nums">
                             {r.revenue > 0
-                              ? <span className={cn('font-medium', sortBy === 'revenue' ? 'text-emerald-600 dark:text-emerald-400' : '')}>
+                              ? <span className={cn('font-medium', sortBy === 'revenue' ? valueColor : '')}>
                                   {formatCHF(r.revenue)}
                                 </span>
                               : <span className="text-muted-foreground">–</span>}
@@ -405,12 +476,11 @@ export default function ProdukteSeite() {
                 {showIgnored && (
                   <div className="rounded-lg border border-border bg-muted/30 p-3">
                     <p className="text-xs text-muted-foreground mb-2">
-                      Diese Produkte wurden manuell aus der Rangliste entfernt. Klicke «Wiederherstellen» um sie zurückzunehmen.
+                      Diese Produkte wurden manuell entfernt. «Wiederherstellen» nimmt sie zurück in die Rangliste.
                     </p>
                     <div className="flex flex-wrap gap-2">
                       {ignoredByUser.map(name => (
-                        <div
-                          key={name}
+                        <div key={name}
                           className="flex items-center gap-1.5 bg-background border border-border rounded-full px-3 py-1 text-xs"
                         >
                           <span className="text-muted-foreground line-through">{name}</span>
@@ -428,7 +498,7 @@ export default function ProdukteSeite() {
               </div>
             )}
 
-            {/* ── Standard-Ignorier-Liste ─────────────────────────────────────── */}
+            {/* ── Ignorier-Liste ─────────────────────────────────────────────── */}
             <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-1.5">
               <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
                 <Trash2 className="h-3.5 w-3.5" />
@@ -441,17 +511,14 @@ export default function ProdukteSeite() {
                   </Badge>
                 ))}
               </div>
-              <p className="text-[10px] text-muted-foreground">
-                Produkte die einen dieser Begriffe enthalten, werden automatisch aus der Rangliste ausgeblendet.
-              </p>
             </div>
 
-            {/* ── Import-Info ────────────────────────────────────────────────── */}
+            {/* Info-Footer */}
             <div className="text-[10px] text-muted-foreground text-right">
               {data.importedAt && (
                 <>Zuletzt importiert: {format(new Date(data.importedAt), 'dd.MM.yyyy HH:mm', { locale: de })} · </>
               )}
-              {data.entries.length} Produkt-Einträge gespeichert
+              {data.entries.length} Einträge gespeichert
             </div>
           </>
         )}
