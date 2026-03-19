@@ -666,6 +666,46 @@ const Dashboard = () => {
     ? format(new Date(effectiveCutoff), 'd. MMM', { locale: de })
     : null;
 
+  // ── Personalkosten pro rata (bis effectiveCutoff) ───────────────────────────
+  const personnelBudgetEffective = effectiveDayNum && budgetData.personnelBudget > 0
+    ? Math.round(budgetData.personnelBudget * effectiveDayNum / daysInRefMonth)
+    : null;
+
+  const actualLaborCostEffective = useMemo(() => {
+    if (!effectiveCutoff || effectiveDays.length === 0) return null;
+    const daySet = new Set(effectiveDays);
+    return visibleEmployees.reduce((sum, emp) => {
+      const hrs = Object.entries(actualData)
+        .filter(([key]) => {
+          const date  = key.slice(-10);
+          const empId = key.slice(0, key.length - 11);
+          return empId === emp.id && daySet.has(date);
+        })
+        .reduce((s, [, e]) => s + e.hours, 0);
+      return sum + hrs * emp.hourlyWage;
+    }, 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleEmployees, actualData, effectiveCutoff]);
+
+  const plannedLaborCostEffective = useMemo(() => {
+    if (!effectiveCutoff || !effectiveDayNum || effectiveDays.length === 0) return null;
+    const daySet = new Set(effectiveDays);
+    return visibleEmployees.reduce((sum, emp) => {
+      if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
+        return sum + emp.monthlySalary * effectiveDayNum / daysInRefMonth;
+      }
+      const hrs = Object.entries(scheduleData)
+        .filter(([key]) => {
+          const date  = key.slice(-10);
+          const empId = key.slice(0, key.length - 11);
+          return empId === emp.id && daySet.has(date);
+        })
+        .reduce((s, [, day]) => s + calcDayHours(day), 0);
+      return sum + hrs * emp.hourlyWage;
+    }, 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleEmployees, scheduleData, effectiveCutoff, effectiveDayNum, daysInRefMonth]);
+
   // Vorjahr pro rata: gleicher Cutoff-Tag, aber Vorjahresdaten
   // Fallback-Kette: 1. Tagesdaten Vorjahr (dailyBudgets), 2. Monatswert aus reporting_v1 pro rata
   const prevYearEffective = (() => {
@@ -1379,6 +1419,82 @@ const Dashboard = () => {
                     />
                   )}
                 </div>
+
+                {/* Pro-Rata-Vergleich bis effektivem Stichtag */}
+                {period === 'month' && effectiveCutoffLabel && (
+                  personnelBudgetEffective !== null || actualLaborCostEffective !== null
+                ) && (
+                  <div className="mt-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
+                      <TrendingUp className="h-3.5 w-3.5" />
+                      Personalkosten pro rata · bis {effectiveCutoffLabel}
+                      <span className="normal-case font-normal ml-1">({effectiveDayNum} / {daysInRefMonth} Tage)</span>
+                    </p>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      {plannedLaborCostEffective !== null && plannedLaborCostEffective > 0 && (
+                        <KpiCard
+                          title="Plan pro rata"
+                          value={formatCHF(plannedLaborCostEffective)}
+                          subtitle="Aus Dienstplanung"
+                          icon={<Users className="h-5 w-5" />}
+                          color="blue"
+                          small
+                        />
+                      )}
+                      {actualLaborCostEffective !== null && actualLaborCostEffective > 0 && (
+                        <KpiCard
+                          title="Ist pro rata"
+                          value={formatCHF(actualLaborCostEffective)}
+                          subtitle={plannedLaborCostEffective && plannedLaborCostEffective > 0
+                            ? `${actualLaborCostEffective <= plannedLaborCostEffective ? '✓' : '↑'} vs. Plan p.r.`
+                            : `bis ${effectiveCutoffLabel}`}
+                          icon={<Users className="h-5 w-5" />}
+                          color={plannedLaborCostEffective && plannedLaborCostEffective > 0
+                            ? actualLaborCostEffective <= plannedLaborCostEffective ? 'green' : 'red'
+                            : 'default'}
+                          delta={plannedLaborCostEffective && plannedLaborCostEffective > 0
+                            ? actualLaborCostEffective - plannedLaborCostEffective
+                            : null}
+                          deltaLabel="CHF vs. Plan"
+                          small
+                        />
+                      )}
+                      {personnelBudgetEffective !== null && (
+                        <KpiCard
+                          title="Budget pro rata"
+                          value={formatCHF(personnelBudgetEffective)}
+                          subtitle={`${effectiveDayNum} / ${daysInRefMonth} Tage`}
+                          icon={<BookOpen className="h-5 w-5" />}
+                          color={actualLaborCostEffective !== null && actualLaborCostEffective > 0
+                            ? actualLaborCostEffective <= personnelBudgetEffective ? 'green' : 'red'
+                            : 'blue'}
+                          delta={actualLaborCostEffective !== null && actualLaborCostEffective > 0
+                            ? ((actualLaborCostEffective - personnelBudgetEffective) / personnelBudgetEffective) * 100
+                            : null}
+                          deltaLabel="% Ist vs. Budget"
+                          small
+                        />
+                      )}
+                      {actualLaborCostEffective !== null && actualLaborCostEffective > 0 && revenueIstEffective !== null && revenueIstEffective > 0 && (
+                        <KpiCard
+                          title="PKQ pro rata"
+                          value={`${((actualLaborCostEffective / revenueIstEffective) * 100).toFixed(1)} %`}
+                          subtitle="Ist-Kosten / Ist-Umsatz p.r."
+                          icon={<Target className="h-5 w-5" />}
+                          color={budgetData.personnelRatioTarget !== null
+                            ? budgetRatioColor(
+                                (actualLaborCostEffective / revenueIstEffective) * 100,
+                                budgetData.personnelRatioTarget,
+                              )
+                            : ratioStatus((actualLaborCostEffective / revenueIstEffective) * 100) === 'good' ? 'green'
+                            : ratioStatus((actualLaborCostEffective / revenueIstEffective) * 100) === 'ok' ? 'yellow'
+                            : 'red'}
+                          small
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
               </>
             )}
 
