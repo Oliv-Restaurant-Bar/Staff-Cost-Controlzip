@@ -14,7 +14,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, BarChart2, Users,
   Settings, LogOut, ChefHat, Utensils, ShieldCheck,
-  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye, DollarSign,
+  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye, DollarSign, Package,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -114,6 +114,13 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Personal FIX',
     shortLabel: 'FIX',
     icon: DollarSign,
+    adminOnly: true,
+  },
+  {
+    path: '/produkte',
+    label: 'Produkte',
+    shortLabel: 'Produkte',
+    icon: Package,
     adminOnly: true,
   },
 ];
