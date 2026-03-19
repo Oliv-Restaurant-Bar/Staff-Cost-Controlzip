@@ -50,8 +50,9 @@ const formatMonthShort = (ym: string) => {
 type ChartMode = 'top' | 'flop';
 type ViewTab   = 'monat' | 'jahr';
 
-const TOP_OPTIONS  = [10, 20, 50, 100];
-const FLOP_OPTIONS = [10, 20, 50];
+const TOP_OPTIONS  = [10, 20, 50, 100, 9999];
+const FLOP_OPTIONS = [10, 20, 50, 9999];
+const ALL_SENTINEL = 9999;
 
 // ── Kompakte Monatskarte ─────────────────────────────────────────────────────
 function MonthCard({
@@ -458,7 +459,7 @@ export default function ProdukteSeite() {
                       currentN === n
                         ? 'bg-background text-foreground shadow-sm'
                         : 'text-muted-foreground hover:text-foreground')}>
-                    {isFlop ? 'Flop' : 'Top'} {n}
+                    {n === ALL_SENTINEL ? 'Alle' : `${isFlop ? 'Flop' : 'Top'} ${n}`}
                   </button>
                 ))}
               </div>
@@ -534,7 +535,7 @@ export default function ProdukteSeite() {
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 {isFlop ? <TrendingDown className="h-4 w-4 text-red-500" /> : <Award className="h-4 w-4 text-primary" />}
                 <span className="font-semibold text-foreground">
-                  {isFlop ? 'Flop' : 'Top'} {Math.min(currentN, ranked.length)}
+                  {currentN === ALL_SENTINEL ? 'Alle' : `${isFlop ? 'Flop' : 'Top'} ${Math.min(currentN, ranked.length)}`}
                 </span>
                 <span>· {sortBy === 'count' ? 'Nach Anzahl' : 'Nach Umsatz'}</span>
                 {isFlop && <Badge variant="outline" className="text-xs text-red-600 border-red-300 bg-red-50 dark:bg-red-950/20">Schlechteste Produkte</Badge>}
@@ -666,7 +667,7 @@ export default function ProdukteSeite() {
             <div className="flex items-center gap-2">
               <LayoutGrid className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-semibold">
-                {isFlop ? 'Flop' : 'Top'} {currentN} pro Monat
+                {currentN === ALL_SENTINEL ? 'Alle' : `${isFlop ? 'Flop' : 'Top'} ${currentN}`} pro Monat
               </span>
               <span className="text-xs text-muted-foreground">
                 · {sortBy === 'count' ? 'Nach Anzahl' : 'Nach Umsatz'} · {monthsOnly.length} Monate
@@ -691,7 +692,7 @@ export default function ProdukteSeite() {
                       {isFlop ? '🔴' : '⭐'} Kumuliert gesamt
                     </span>
                     <span className="text-[10px] text-muted-foreground">
-                      {isFlop ? 'Flop' : 'Top'} {Math.min(currentN, totalRanked.length)} · alle Monate
+                      {currentN === ALL_SENTINEL ? 'Alle' : `${isFlop ? 'Flop' : 'Top'} ${Math.min(currentN, totalRanked.length)}`} · alle Monate
                     </span>
                   </div>
                   {totalRanked.length === 0 ? (
