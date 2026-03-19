@@ -157,6 +157,61 @@ const InlineSalaryEditor = ({ empId, field, value, onSaved }: InlineSalaryEditor
   );
 };
 
+// ── Inline-Editor für Stundenlohn ────────────────────────────────────────────
+
+interface InlineHourlyWageEditorProps {
+  empId: string;
+  value: number | undefined;
+  onSaved: (empId: string, val: number) => void;
+}
+
+const InlineHourlyWageEditor = ({ empId, value, onSaved }: InlineHourlyWageEditorProps) => {
+  const [editing, setEditing] = useState(false);
+  const [input, setInput]   = useState('');
+
+  const start  = () => { setInput(value ? String(value) : ''); setEditing(true); };
+  const cancel = () => setEditing(false);
+  const save   = () => {
+    const num = parseFloat(input.replace(/['\s]/g, '').replace(',', '.'));
+    if (!isNaN(num) && num >= 0) { onSaved(empId, num); }
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1 justify-end">
+        <Input
+          autoFocus
+          className="h-7 w-20 text-right font-mono text-sm"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }}
+          placeholder="0.00"
+        />
+        <span className="text-xs text-muted-foreground">/h</span>
+        <Button size="icon" variant="ghost" className="h-6 w-6 text-emerald-600" onClick={save}>
+          <Check className="h-3.5 w-3.5" />
+        </Button>
+        <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground" onClick={cancel}>
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      className="group flex items-center justify-end gap-1.5 hover:text-primary transition-colors w-full"
+      onClick={start}
+    >
+      <span className="font-mono text-sm text-muted-foreground">
+        {value ? `${fmtCHFDec(value)}/h` : <span className="italic text-xs">–</span>}
+      </span>
+      <Edit2 className="h-3 w-3 opacity-0 group-hover:opacity-50 transition-opacity shrink-0" />
+    </button>
+  );
+};
+
 // ── Inline-Editor für Stunden ─────────────────────────────────────────────────
 
 interface InlineHoursEditorProps {
@@ -243,7 +298,18 @@ export default function PersonalFixPage() {
     });
   }, []);
 
-  // ── Lohn-Bearbeitung ─────────────────────────────────────────────────────
+  // ── Stundenlohn-Bearbeitung (variabel) → auch im Personalstamm ───────────
+  const handleHourlyWageSaved = useCallback(async (empId: string, val: number) => {
+    setSaving(empId);
+    const emp = employees.find(e => e.id === empId);
+    if (!emp) { setSaving(null); return; }
+    const updated: Employee = { ...emp, hourlyWage: val };
+    await upsertEmployee(updated);
+    setEmployees(prev => prev.map(e => e.id === empId ? updated : e));
+    setSaving(null);
+  }, [employees]);
+
+  // ── Fixlohn-Bearbeitung ───────────────────────────────────────────────────
   const handleSaved = async (empId: string, field: 'monthlySalary' | 'monthlySalaryWith13th', val: number) => {
     setSaving(empId);
     const emp = employees.find(e => e.id === empId);
@@ -540,8 +606,18 @@ export default function PersonalFixPage() {
                         <td className="px-4 py-2.5">
                           <Badge variant="outline" className="text-xs">{EMP_TYPE_LABEL[emp.employmentType]}</Badge>
                         </td>
-                        <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">
-                          {emp.hourlyWage ? fmtCHFDec(emp.hourlyWage) : '–'}/h
+                        <td className={cn('px-4 py-2.5 text-right', saving === emp.id && 'opacity-50')}>
+                          {isAdmin ? (
+                            <InlineHourlyWageEditor
+                              empId={emp.id}
+                              value={emp.hourlyWage}
+                              onSaved={handleHourlyWageSaved}
+                            />
+                          ) : (
+                            <span className="font-mono text-sm text-muted-foreground">
+                              {emp.hourlyWage ? `${fmtCHFDec(emp.hourlyWage)}/h` : '–'}
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           <InlineHoursEditor
