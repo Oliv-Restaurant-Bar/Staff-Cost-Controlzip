@@ -14,7 +14,7 @@ import {
   CalendarDays, AlertTriangle, CheckCircle2,
   LayoutDashboard, Calendar, BarChart2,
   BookOpen, Target, Upload, ChevronLeft, ChevronRight,
-  Pencil, Check, X as XIcon,
+  Pencil, Check, X as XIcon, Scale,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -443,6 +443,28 @@ const Dashboard = () => {
     : null;
   const actualCostRatio = revenueMonth > 0 && actualLaborCost > 0
     ? (actualLaborCost / revenueMonth) * 100
+    : null;
+
+  // ── Buchhaltungs-Personalkosten (aus P&L-Import, 5xxx Konten) ───────────────
+  const accountingMonthRecord = useMemo(
+    () => loadMonth(currentYear, currentMonth),
+    [currentYear, currentMonth]
+  );
+  const accountingPersonnelCost = useMemo(() => {
+    const fromCategories = accountingMonthRecord.expenseCategories
+      .filter(cat => {
+        const n = parseInt(cat.categoryId);
+        return !isNaN(n) && n >= 5000 && n <= 5999;
+      })
+      .reduce((sum, cat) => sum + (cat.amount ?? 0), 0);
+    if (fromCategories > 0) return fromCategories;
+    return accountingMonthRecord.personnelCostActual ?? 0;
+  }, [accountingMonthRecord]);
+  const pkDiff = accountingPersonnelCost > 0 && actualLaborCost > 0
+    ? accountingPersonnelCost - actualLaborCost
+    : null;
+  const pkDiffPct = pkDiff !== null && actualLaborCost > 0
+    ? (pkDiff / actualLaborCost) * 100
     : null;
 
   // ── Kostenquote-Status ───────────────────────────────────────────────────────
@@ -1312,6 +1334,57 @@ const Dashboard = () => {
                     icon={deptIcon}
                     color="default"
                   />
+                </div>
+              </>
+            )}
+
+            {/* ── Personalkosten-Vergleich: Dienstplan vs. Buchhaltung ─────── */}
+            {canSeePersonnelCostTotals && (actualLaborCost > 0 || accountingPersonnelCost > 0) && (
+              <>
+                <SectionTitle icon={<Scale className="h-4 w-4" />}>
+                  Personalkosten-Vergleich · {monthName}
+                </SectionTitle>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <KpiCard
+                    title="Ist-Dienstplan"
+                    value={actualLaborCost > 0 ? formatCHF(actualLaborCost) : '–'}
+                    subtitle="Aus Ist-Stunden × Lohn"
+                    icon={<Users className="h-5 w-5" />}
+                    color="blue"
+                  />
+                  <KpiCard
+                    title="Buchhaltung Ist"
+                    value={accountingPersonnelCost > 0 ? formatCHF(accountingPersonnelCost) : '–'}
+                    subtitle="Total Personalaufwand (5xxx)"
+                    icon={<BookOpen className="h-5 w-5" />}
+                    color={accountingPersonnelCost > 0 ? 'default' : 'default'}
+                  />
+                  {pkDiff !== null && (
+                    <KpiCard
+                      title="Abweichung CHF"
+                      value={`${pkDiff >= 0 ? '+' : ''}${formatCHF(pkDiff)}`}
+                      subtitle="Buchhaltung − Dienstplan"
+                      icon={pkDiff >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
+                      color={Math.abs(pkDiff) / Math.max(actualLaborCost, 1) < 0.05 ? 'green' : Math.abs(pkDiff) / Math.max(actualLaborCost, 1) < 0.15 ? 'yellow' : 'red'}
+                    />
+                  )}
+                  {pkDiffPct !== null && (
+                    <KpiCard
+                      title="Abweichung %"
+                      value={`${pkDiffPct >= 0 ? '+' : ''}${pkDiffPct.toFixed(1)} %`}
+                      subtitle="Relativ zum Dienstplan"
+                      icon={<TrendingUp className="h-5 w-5" />}
+                      color={Math.abs(pkDiffPct) < 5 ? 'green' : Math.abs(pkDiffPct) < 15 ? 'yellow' : 'red'}
+                    />
+                  )}
+                  {accountingPersonnelCost === 0 && actualLaborCost > 0 && (
+                    <div className="col-span-2 lg:col-span-2 flex items-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-3">
+                      <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <p className="text-xs text-muted-foreground">
+                        Kein Buchhaltungsimport für {monthName} vorhanden. Importiere die Sage-Kontoblatt-Datei unter «Reporting», um den Vergleich zu aktivieren.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </>
             )}
