@@ -146,12 +146,14 @@ export default function ProdukteSeite() {
   const umsatzRef = useRef<HTMLInputElement>(null);
   const costRef   = useRef<HTMLInputElement>(null);
 
-  // Schnelle Name→Kosten Lookup-Map
+  // Schnelle Name→Kosten Lookup-Map (gefiltert nach aktiver Kategorie)
   const costMap = useMemo(() => {
     const m = new Map<string, ProductCostEntry>();
-    for (const c of costs) m.set(c.name.toLowerCase(), c);
+    for (const c of costs) {
+      if (c.category === category) m.set(c.name.toLowerCase(), c);
+    }
     return m;
-  }, [costs]);
+  }, [costs, category]);
 
   const monthsOnly = useMemo(() => getAvailableMonths(data?.entries ?? [], category), [data, category]);
 
@@ -254,18 +256,23 @@ export default function ProdukteSeite() {
     if (!file) return;
     setImportingCost(true);
     try {
-      const parsed = await parseCostExcel(file, category);
+      const parsed = await parseCostExcel(file);
       if (parsed.length === 0) {
         toast.error('Keine WES-Daten gefunden', {
-          description: 'Bitte prüfe das Format — erwartet werden Spalten: Bezeichnung, Brutto, Netto, WES, WES-Q',
+          description: 'Erwartet: Excel mit Sheet "Food"/"Beverage", Spalten A=Kategorie, B=Titel, C=Brutto, D=Netto, E=WES, F=WES-Q',
         });
         return;
       }
       const merged = mergeProductCosts(costs, parsed);
       saveProductCosts(merged);
       setCosts(merged);
+      const foodCount = parsed.filter(p => p.category === 'food').length;
+      const bevCount  = parsed.filter(p => p.category === 'beverage').length;
+      const parts = [];
+      if (foodCount > 0) parts.push(`${foodCount} Food`);
+      if (bevCount  > 0) parts.push(`${bevCount} Beverage`);
       toast.success(`WES-Daten importiert`, {
-        description: `${parsed.length} Produkte aus ${file.name}`,
+        description: `${parts.join(' · ')} aus ${file.name}`,
       });
     } catch (err) {
       toast.error('WES-Import fehlgeschlagen', { description: String(err) });
@@ -398,7 +405,7 @@ export default function ProdukteSeite() {
               <Button variant="outline" size="sm" className={cn('h-8', costs.length > 0 && 'border-purple-400 text-purple-700 dark:text-purple-300')}
                 onClick={() => costRef.current?.click()} disabled={importingCost}>
                 {importingCost ? <span className="h-3 w-3 mr-1 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" /> : <Receipt className="h-3 w-3 mr-1" />}
-                WES {costs.length > 0 && <Badge className="ml-1 text-[9px] py-0 px-1 bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border-0">{costs.length}</Badge>}
+                WES {costMap.size > 0 && <Badge className="ml-1 text-[9px] py-0 px-1 bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border-0">{costMap.size}</Badge>}
               </Button>
               {data && (
                 <Button variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive" onClick={clearAllData}>
