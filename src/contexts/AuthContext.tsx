@@ -24,15 +24,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<UserRole>('admin');
 
-  // Feste E-Mail → Rollen-Zuordnung (greift sofort, unabhängig von DB)
+  // E-Mail-Fallback (greift nur wenn kein user_profiles-Eintrag existiert)
   const EMAIL_ROLE_MAP: Record<string, UserRole> = {
     'admin@olivbern.ch':   'admin',
     'service@olivbern.ch': 'service_manager',
     'kueche@olivbern.ch':  'kueche_manager',
   };
 
+  const applyRole = (r: UserRole) => {
+    setRole(r);
+    localStorage.setItem('user_role', r);
+  };
+
   const loadUserRole = async (userId: string, email?: string) => {
-    // 1. Zuerst DB-Tabelle versuchen (wenn vorhanden, hat sie Vorrang)
+    // Immer frisch aus Supabase laden — kein Cache, kein Skip
     try {
       const { data, error } = await (supabase as any)
         .from('user_profiles')
@@ -41,9 +46,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .maybeSingle();
 
       if (!error && data?.role) {
-        setRole(data.role as UserRole);
-        // E-Mail in user_profiles aktualisieren (fire-and-forget)
-        if (email && (!data.email || data.email !== email)) {
+        applyRole(data.role as UserRole);
+
+        // E-Mail aktuell halten (fire-and-forget, kein Await)
+        if (email && (!data.email || data.email !== email.toLowerCase())) {
           (supabase as any)
             .from('user_profiles')
             .update({ email: email.toLowerCase() })
@@ -53,24 +59,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
     } catch {
-      // Tabelle fehlt — weiter mit E-Mail-Fallback
+      // DB nicht erreichbar → Fallback
     }
 
-    // 2. E-Mail-basierte Rollenzuweisung (funktioniert ohne DB)
+    // Fallback: feste E-Mail-Zuordnung
     if (email && EMAIL_ROLE_MAP[email.toLowerCase()]) {
       const mappedRole = EMAIL_ROLE_MAP[email.toLowerCase()];
-      setRole(mappedRole);
-      // Eintrag in user_profiles anlegen (falls fehlend)
+      applyRole(mappedRole);
+      // Eintrag für zukünftige Logins anlegen
       try {
         await (supabase as any)
           .from('user_profiles')
-          .upsert({ id: userId, email: email.toLowerCase(), role: mappedRole }, { onConflict: 'id' });
-      } catch { /* ignore */ }
+          .upsert(
+            { id: userId, email: email.toLowerCase(), role: mappedRole },
+            { onConflict: 'id' },
+          );
+      } catch { /* ignorieren */ }
       return;
     }
 
-    // 3. Sicherster Fallback: kein Zugriff auf Admin-Bereiche
-    setRole('kueche_manager');
+    // Letzter Fallback
+    applyRole('kueche_manager');
   };
 
   useEffect(() => {
