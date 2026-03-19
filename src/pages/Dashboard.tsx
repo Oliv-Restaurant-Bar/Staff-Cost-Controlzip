@@ -237,8 +237,8 @@ const Dashboard = () => {
     const load = async () => {
       const [emps, sched, actual] = await Promise.all([
         loadEmployees(),
-        loadScheduleForMonth(today),
-        loadActualHoursForMonth(today),
+        loadScheduleForMonth(referenceDate),
+        loadActualHoursForMonth(referenceDate),
       ]);
       if (emps)   setEmployees(emps);
       if (sched)  setScheduleData(sched);
