@@ -5,6 +5,7 @@ export interface ProductEntry {
   month: string; // 'yyyy-MM' oder 'gesamt'
   count: number;
   revenue: number;
+  category: 'food' | 'beverage';
 }
 
 export interface ProdukteData {
@@ -89,6 +90,7 @@ export function saveIgnoredProducts(list: string[]): void {
 export async function parseProdukteExcel(
   file: File,
   type: 'anzahl' | 'umsatz',
+  category: 'food' | 'beverage' = 'food',
 ): Promise<ProductEntry[]> {
   const buffer = await file.arrayBuffer();
   const wb = XLSX.read(buffer, { type: 'array' });
@@ -188,7 +190,7 @@ export async function parseProdukteExcel(
       for (const [colIdx, month] of colMonthMap) {
         const val = parseGastronomyNumber(row[colIdx]);
         if (val <= 0) continue;
-        upsertEntry(entries, nameRaw, month, type, val);
+        upsertEntry(entries, nameRaw, month, type, val, category);
       }
     }
   } else {
@@ -207,7 +209,7 @@ export async function parseProdukteExcel(
       for (let c = 1; c < row.length; c++) {
         total += parseGastronomyNumber(row[c]);
       }
-      if (total > 0) upsertEntry(entries, nameRaw, 'gesamt', type, total);
+      if (total > 0) upsertEntry(entries, nameRaw, 'gesamt', type, total, category);
     }
   }
 
@@ -250,8 +252,9 @@ function upsertEntry(
   month: string,
   type: 'anzahl' | 'umsatz',
   val: number,
+  category: 'food' | 'beverage' = 'food',
 ): void {
-  const existing = entries.find(e => e.name === name && e.month === month);
+  const existing = entries.find(e => e.name === name && e.month === month && e.category === category);
   if (existing) {
     if (type === 'anzahl') existing.count  += val;
     else                    existing.revenue += val;
@@ -259,6 +262,7 @@ function upsertEntry(
     entries.push({
       name,
       month,
+      category,
       count:   type === 'anzahl' ? val : 0,
       revenue: type === 'umsatz' ? val : 0,
     });
@@ -273,12 +277,15 @@ export function mergeProdukteData(
 ): ProductEntry[] {
   const merged = [...existing];
   for (const inc of incoming) {
-    const idx = merged.findIndex(e => e.name === inc.name && e.month === inc.month);
+    const idx = merged.findIndex(
+      e => e.name === inc.name && e.month === inc.month && (e.category ?? 'food') === (inc.category ?? 'food'),
+    );
     if (idx >= 0) {
       if (type === 'anzahl') merged[idx].count   = inc.count;
       else                    merged[idx].revenue = inc.revenue;
+      merged[idx].category = inc.category ?? 'food';
     } else {
-      merged.push({ ...inc });
+      merged.push({ ...inc, category: inc.category ?? 'food' });
     }
   }
   return merged;
@@ -292,16 +299,21 @@ export interface RankedProduct {
   revenue: number;
 }
 
+function filterByCategory(entries: ProductEntry[], category: 'food' | 'beverage'): ProductEntry[] {
+  return entries.filter(e => (e.category ?? 'food') === category);
+}
+
 export function getTopProducts(
   entries: ProductEntry[],
   month: string,
   sortBy: 'count' | 'revenue',
   limit: number,
   ignoredByUser: string[],
+  category: 'food' | 'beverage' = 'food',
 ): RankedProduct[] {
-  // Aggregiere nach Produktname für den Monat (oder alle Monate wenn 'alle')
+  const byCat = filterByCategory(entries, category);
   const agg: Record<string, { count: number; revenue: number }> = {};
-  const filtered = month === 'alle' ? entries : entries.filter(e => e.month === month);
+  const filtered = month === 'alle' ? byCat : byCat.filter(e => e.month === month);
 
   for (const e of filtered) {
     if (shouldIgnoreProduct(e.name, ignoredByUser)) continue;
@@ -328,13 +340,14 @@ export function getFlopProducts(
   sortBy: 'count' | 'revenue',
   limit: number,
   ignoredByUser: string[],
+  category: 'food' | 'beverage' = 'food',
 ): RankedProduct[] {
+  const byCat = filterByCategory(entries, category);
   const agg: Record<string, { count: number; revenue: number }> = {};
-  const filtered = month === 'alle' ? entries : entries.filter(e => e.month === month);
+  const filtered = month === 'alle' ? byCat : byCat.filter(e => e.month === month);
 
   for (const e of filtered) {
     if (shouldIgnoreProduct(e.name, ignoredByUser)) continue;
-    // Für Flops nur Einträge mit tatsächlichem Wert einbeziehen
     if (type_hasValue(e, sortBy)) {
       if (!agg[e.name]) agg[e.name] = { count: 0, revenue: 0 };
       agg[e.name].count   += e.count;
@@ -343,8 +356,8 @@ export function getFlopProducts(
   }
 
   return Object.entries(agg)
-    .filter(([, v]) => v[sortBy] > 0) // Nur Produkte mit mindestens einem Verkauf
-    .sort((a, b) => a[1][sortBy] - b[1][sortBy]) // aufsteigend = schlechteste zuerst
+    .filter(([, v]) => v[sortBy] > 0)
+    .sort((a, b) => a[1][sortBy] - b[1][sortBy])
     .slice(0, limit)
     .map(([name, vals], i) => ({
       rank: i + 1,
@@ -359,7 +372,8 @@ function type_hasValue(e: ProductEntry, sortBy: 'count' | 'revenue'): boolean {
 }
 
 // ── Verfügbare Monate ermitteln ────────────────────────────────────────────────
-export function getAvailableMonths(entries: ProductEntry[]): string[] {
-  const set = new Set(entries.map(e => e.month));
-  return Array.from(set).sort();
+export function getAvailableMonths(entries: ProductEntry[], category: 'food' | 'beverage' = 'food'): string[] {
+  const filtered = entries.filter(e => (e.category ?? 'food') === category);
+  const set = new Set(filtered.map(e => e.month));
+  return Array.from(set).filter(m => m !== 'gesamt').sort();
 }

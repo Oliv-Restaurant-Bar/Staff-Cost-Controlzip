@@ -2,7 +2,7 @@ import { useState, useRef, useMemo } from 'react';
 import {
   Upload, Trash2, Package, TrendingUp, TrendingDown,
   Hash, RotateCcw, ChevronDown, X, Award, CalendarDays, LayoutGrid,
-  AlertTriangle, CheckSquare,
+  AlertTriangle, CheckSquare, Utensils, Wine,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -50,7 +50,7 @@ const FLOP_OPTIONS = [10, 20, 50];
 
 // ── Kompakte Monatskarte ─────────────────────────────────────────────────────
 function MonthCard({
-  month, entries, ignoredByUser, sortBy, mode, n,
+  month, entries, ignoredByUser, sortBy, mode, n, category,
 }: {
   month: string;
   entries: Parameters<typeof getTopProducts>[0];
@@ -58,12 +58,13 @@ function MonthCard({
   sortBy: 'count' | 'revenue';
   mode: ChartMode;
   n: number;
+  category: 'food' | 'beverage';
 }) {
   const ranked = useMemo(
     () => mode === 'top'
-      ? getTopProducts(entries, month, sortBy, n, ignoredByUser)
-      : getFlopProducts(entries, month, sortBy, n, ignoredByUser),
-    [entries, month, sortBy, mode, n, ignoredByUser],
+      ? getTopProducts(entries, month, sortBy, n, ignoredByUser, category)
+      : getFlopProducts(entries, month, sortBy, n, ignoredByUser, category),
+    [entries, month, sortBy, mode, n, ignoredByUser, category],
   );
   const maxVal = ranked.length > 0
     ? Math.max(...ranked.map(r => sortBy === 'count' ? r.count : r.revenue)) : 1;
@@ -124,8 +125,10 @@ export default function ProdukteSeite() {
   const [selectedMonth, setMonth]     = useState<string>('');
   const [importing, setImporting]     = useState<'anzahl' | 'umsatz' | null>(null);
   const [showIgnored, setShowIgnored] = useState(false);
+  const [category, setCategory]       = useState<'food' | 'beverage'>('food');
   const [pendingImport, setPendingImport] = useState<{
     type: 'anzahl' | 'umsatz';
+    category: 'food' | 'beverage';
     parsed: import('@/lib/produkte-store').ProductEntry[];
     overlappingMonths: string[];
     fileName: string;
@@ -134,10 +137,10 @@ export default function ProdukteSeite() {
   const anzahlRef = useRef<HTMLInputElement>(null);
   const umsatzRef = useRef<HTMLInputElement>(null);
 
-  const monthsOnly = useMemo(() => getAvailableMonths(data?.entries ?? []), [data]);
+  const monthsOnly = useMemo(() => getAvailableMonths(data?.entries ?? [], category), [data, category]);
 
-  // Setze ersten Monat als Standard wenn noch keiner gewählt
-  const activeMonth = selectedMonth || monthsOnly[monthsOnly.length - 1] || '';
+  // Setze letzten Monat als Standard wenn noch keiner gewählt oder nicht in dieser Kategorie vorhanden
+  const activeMonth = (monthsOnly.includes(selectedMonth) ? selectedMonth : '') || monthsOnly[monthsOnly.length - 1] || '';
 
   const isFlop   = mode === 'flop';
   const limit    = isFlop ? flopN : topN;
@@ -149,9 +152,17 @@ export default function ProdukteSeite() {
     if (view !== 'monat' || !activeMonth) return [];
     const entries = data?.entries ?? [];
     return isFlop
-      ? getFlopProducts(entries, activeMonth, sortBy, limit, ignoredByUser)
-      : getTopProducts(entries, activeMonth, sortBy, limit, ignoredByUser);
-  }, [data, activeMonth, sortBy, mode, limit, ignoredByUser, view]);
+      ? getFlopProducts(entries, activeMonth, sortBy, limit, ignoredByUser, category)
+      : getTopProducts(entries, activeMonth, sortBy, limit, ignoredByUser, category);
+  }, [data, activeMonth, sortBy, mode, limit, ignoredByUser, view, category]);
+
+  const totalRanked: RankedProduct[] = useMemo(() => {
+    if (view !== 'jahr') return [];
+    const entries = data?.entries ?? [];
+    return isFlop
+      ? getFlopProducts(entries, 'alle', sortBy, limit, ignoredByUser, category)
+      : getTopProducts(entries, 'alle', sortBy, limit, ignoredByUser, category);
+  }, [data, sortBy, mode, limit, ignoredByUser, view, category]);
 
   const maxVal = ranked.length > 0
     ? Math.max(...ranked.map(r => sortBy === 'count' ? r.count : r.revenue)) : 1;
@@ -162,7 +173,7 @@ export default function ProdukteSeite() {
     if (!file) return;
     setImporting(type);
     try {
-      const parsed = await parseProdukteExcel(file, type);
+      const parsed = await parseProdukteExcel(file, type, category);
       if (parsed.length === 0) {
         toast.error('Keine Produktdaten gefunden', {
           description: 'Bitte prüfe das Dateiformat (Gastronovi Rezept-Export)',
@@ -170,17 +181,17 @@ export default function ProdukteSeite() {
         return;
       }
 
-      // Prüfe ob Monate bereits vorhanden
+      // Prüfe ob Monate dieser Kategorie bereits vorhanden sind
       const existingMonths = new Set(
         (data?.entries ?? [])
-          .filter(e => e.count > 0 || e.revenue > 0)
+          .filter(e => (e.category ?? 'food') === category && (e.count > 0 || e.revenue > 0))
           .map(e => e.month)
       );
       const newMonths = [...new Set(parsed.map(e => e.month))];
       const overlappingMonths = newMonths.filter(m => existingMonths.has(m));
 
       if (overlappingMonths.length > 0) {
-        setPendingImport({ type, parsed, overlappingMonths, fileName: file.name });
+        setPendingImport({ type, category, parsed, overlappingMonths, fileName: file.name });
         return;
       }
 
@@ -246,7 +257,7 @@ export default function ProdukteSeite() {
       <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
         <div className="max-w-6xl mx-auto px-4 py-3 space-y-2">
 
-          {/* Zeile 1: Titel + Import */}
+          {/* Zeile 1: Titel + Kategorie + Import */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3">
               <Package className="h-5 w-5 text-muted-foreground" />
@@ -255,6 +266,21 @@ export default function ProdukteSeite() {
                 <p className="text-xs text-muted-foreground">Ranglisten nach Anzahl & Umsatz</p>
               </div>
             </div>
+
+            {/* Food / Beverage Toggle */}
+            <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+              <button onClick={() => setCategory('food')}
+                className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all',
+                  category === 'food' ? 'bg-orange-500 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                <Utensils className="h-3 w-3" /> Food
+              </button>
+              <button onClick={() => setCategory('beverage')}
+                className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all',
+                  category === 'beverage' ? 'bg-blue-500 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                <Wine className="h-3 w-3" /> Beverage
+              </button>
+            </div>
+
             <div className="flex items-center gap-2">
               <input ref={anzahlRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => handleImport(e, 'anzahl')} />
               <input ref={umsatzRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => handleImport(e, 'umsatz')} />
@@ -506,6 +532,55 @@ export default function ProdukteSeite() {
               <p className="text-sm text-muted-foreground text-center py-12">Keine Monatsdaten vorhanden.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {/* Kumuliertes Total (alle Monate) — ganz links */}
+                <div className={cn(
+                  'rounded-xl border overflow-hidden',
+                  isFlop ? 'border-red-300 dark:border-red-800 bg-red-50/40 dark:bg-red-950/10'
+                         : 'border-primary/30 bg-primary/5',
+                )}>
+                  <div className={cn(
+                    'px-3 py-2.5 border-b flex items-center justify-between',
+                    isFlop ? 'border-red-200 dark:border-red-800 bg-red-100/60 dark:bg-red-900/20'
+                           : 'border-primary/20 bg-primary/10',
+                  )}>
+                    <span className="text-sm font-bold">
+                      {isFlop ? '🔴' : '⭐'} Kumuliert gesamt
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {isFlop ? 'Flop' : 'Top'} {Math.min(currentN, totalRanked.length)} · alle Monate
+                    </span>
+                  </div>
+                  {totalRanked.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-xs text-muted-foreground">Keine Daten</div>
+                  ) : (
+                    <div className="divide-y divide-border/40">
+                      {totalRanked.map(r => {
+                        const val = sortBy === 'count' ? r.count : r.revenue;
+                        const maxTotalVal = Math.max(...totalRanked.map(x => sortBy === 'count' ? x.count : x.revenue));
+                        const barPct = maxTotalVal > 0 ? (val / maxTotalVal) * 100 : 0;
+                        const barColor = isFlop ? 'bg-red-400 dark:bg-red-600'
+                          : sortBy === 'count' ? 'bg-blue-500' : 'bg-emerald-500';
+                        return (
+                          <div key={r.name} className="px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-muted-foreground tabular-nums w-4 shrink-0 text-center">{r.rank}</span>
+                              <span className="text-xs font-medium truncate flex-1 min-w-0">{r.name}</span>
+                              <span className={cn('text-xs tabular-nums shrink-0',
+                                isFlop ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground')}>
+                                {sortBy === 'count' ? `${r.count.toLocaleString('de-CH')}×` : formatCHF(r.revenue)}
+                              </span>
+                            </div>
+                            <div className="mt-1 ml-6 h-1 rounded-full bg-muted overflow-hidden">
+                              <div className={cn('h-full rounded-full', barColor)} style={{ width: `${barPct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Monatskarten (neueste zuerst) */}
                 {[...monthsOnly].reverse().map(m => (
                   <MonthCard
                     key={m}
@@ -515,6 +590,7 @@ export default function ProdukteSeite() {
                     sortBy={sortBy}
                     mode={mode}
                     n={currentN}
+                    category={category}
                   />
                 ))}
               </div>
