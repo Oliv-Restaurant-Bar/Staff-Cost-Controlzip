@@ -37,48 +37,47 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const loadUserRole = async (userId: string, email?: string) => {
-    // Immer frisch aus Supabase laden — kein Cache, kein Skip
+    // ── Schritt 1: Rolle aus user_profiles laden (nur 'role', immer vorhanden) ──
     try {
       const { data, error } = await (supabase as any)
         .from('user_profiles')
-        .select('role, email')
+        .select('role')          // NUR 'role' – kein Email-Join, kein Fehlerrisiko
         .eq('id', userId)
         .maybeSingle();
 
       if (!error && data?.role) {
         applyRole(data.role as UserRole);
 
-        // E-Mail aktuell halten (fire-and-forget, kein Await)
-        if (email && (!data.email || data.email !== email.toLowerCase())) {
+        // ── Schritt 2: E-Mail separat aktualisieren (völlig isoliert, nie blockierend) ──
+        // Schlägt lautlos fehl wenn email-Spalte noch nicht existiert (Migration ausstehend)
+        if (email) {
           (supabase as any)
             .from('user_profiles')
             .update({ email: email.toLowerCase() })
             .eq('id', userId)
-            .then(() => {});
+            .then(() => {})
+            .catch(() => {});    // Fehler werden bewusst ignoriert
         }
-        return;
+        return;                  // Fertig – Rolle gesetzt
       }
     } catch {
       // DB nicht erreichbar → Fallback
     }
 
-    // Fallback: feste E-Mail-Zuordnung
+    // ── Fallback: feste E-Mail-Zuordnung (nur wenn kein DB-Eintrag) ──
     if (email && EMAIL_ROLE_MAP[email.toLowerCase()]) {
       const mappedRole = EMAIL_ROLE_MAP[email.toLowerCase()];
       applyRole(mappedRole);
-      // Eintrag für zukünftige Logins anlegen
-      try {
-        await (supabase as any)
-          .from('user_profiles')
-          .upsert(
-            { id: userId, email: email.toLowerCase(), role: mappedRole },
-            { onConflict: 'id' },
-          );
-      } catch { /* ignorieren */ }
+      // Eintrag für zukünftige Logins anlegen (fire-and-forget)
+      (supabase as any)
+        .from('user_profiles')
+        .upsert({ id: userId, role: mappedRole }, { onConflict: 'id' })
+        .then(() => {})
+        .catch(() => {});
       return;
     }
 
-    // Letzter Fallback
+    // ── Letzter Fallback (kein DB-Eintrag, E-Mail nicht bekannt) ──
     applyRole('kueche_manager');
   };
 
