@@ -21,6 +21,7 @@ interface TimeInputCellProps {
   isWeekend?: boolean;
   isDayOff?: boolean;
   department?: 'service' | 'küche' | 'all';
+  activeTool?: string | null;
 }
 
 // Quick time presets for each slot type (fallback)
@@ -46,7 +47,8 @@ export const TimeInputCell = ({
   slotType,
   isWeekend,
   isDayOff,
-  department
+  department,
+  activeTool
 }: TimeInputCellProps) => {
   const { shiftMap, absenceShifts, workShifts } = useShiftConfig();
   
@@ -134,6 +136,33 @@ export const TimeInputCell = ({
 
   const absenceConfig = absenceType ? getAbsenceConfig(absenceType) : null;
   const quickTimes = DEFAULT_QUICK_TIMES[slotType];
+
+  // When paint-tool is active, click directly applies the absence
+  if (activeTool) {
+    const toolConfig = absenceShifts.find(s => shiftMap[s]?.abbrev === activeTool)
+      ? shiftMap[absenceShifts.find(s => shiftMap[s]?.abbrev === activeTool)!]
+      : null;
+    const alreadySet = absenceType === activeTool;
+    return (
+      <button
+        onClick={() => onChange(null, alreadySet ? null : activeTool)}
+        title={alreadySet ? 'Klicken zum Entfernen' : `${activeTool} eintragen`}
+        className={cn(
+          "w-full h-8 px-1 text-[10px] font-medium border rounded transition-all",
+          "hover:ring-2 hover:ring-offset-1 hover:ring-foreground focus:outline-none",
+          "cursor-crosshair",
+          alreadySet && toolConfig?.color,
+          alreadySet && "ring-1 ring-foreground/30",
+          !alreadySet && absenceType && absenceConfig?.color,
+          !alreadySet && !absenceType && value?.start && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
+          !alreadySet && !absenceType && !value?.start && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground",
+          !alreadySet && "hover:opacity-70"
+        )}
+      >
+        {displayValue || '—'}
+      </button>
+    );
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

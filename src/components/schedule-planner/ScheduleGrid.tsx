@@ -1,5 +1,5 @@
 // Schedule Grid Component - Updated to use onOpen8HoursDialog
-import React from 'react';
+import React, { useState } from 'react';
 import { format, isWeekend, getDay, isSunday } from 'date-fns';
 import { Employee } from '@/types/personnel';
 import { TimeInputCell } from './TimeInputCell';
@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
-import { Trash2, CalendarOff, Clock } from 'lucide-react';
+import { Trash2, CalendarOff, Clock, X } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -131,7 +131,7 @@ export const ScheduleGrid = ({
   showCosts = false,
   dailyBudgets = {},
 }: ScheduleGridProps) => {
-  const { shiftMap } = useShiftConfig();
+  const { shiftMap, absenceShifts } = useShiftConfig();
   
   // Load labor cost threshold from settings
   const LABOR_COST_THRESHOLD_KEY = 'labor_cost_threshold';
@@ -265,13 +265,77 @@ export const ScheduleGrid = ({
   // Determine if this is week view (7 or fewer days) for compact styling
   const isWeekView = days.length <= 7;
 
+  // Absence paint-tool state
+  const [activeTool, setActiveTool] = useState<string | null>(null);
+
+  // Apply absence to both früh and spät when paint-tool is active
+  const handleCellChange = (
+    employeeId: string,
+    dateStr: string,
+    slotType: 'früh' | 'spät',
+    val: TimeSlot | null,
+    absence?: string | null
+  ) => {
+    if (activeTool) {
+      // Apply to both slots at once
+      onSlotChange(employeeId, dateStr, 'früh', null, activeTool);
+      onSlotChange(employeeId, dateStr, 'spät', null, activeTool);
+    } else {
+      onSlotChange(employeeId, dateStr, slotType, val, absence);
+    }
+  };
+
   return (
+    <div>
+      {/* Absence paint-tool bar */}
+      <div className="flex flex-wrap items-center gap-1.5 mb-2 p-2 bg-muted/30 rounded-md border border-border/50">
+        <span className="text-[10px] font-medium text-muted-foreground shrink-0">Abwesenheit:</span>
+        {absenceShifts.map(shift => {
+          const config = shiftMap[shift];
+          if (!config) return null;
+          const isActive = activeTool === config.abbrev;
+          return (
+            <button
+              key={shift}
+              onClick={() => setActiveTool(isActive ? null : config.abbrev)}
+              title={`${config.label ?? config.abbrev} – Klicken zum Aktivieren, dann auf Mitarbeiterzellen klicken`}
+              className={cn(
+                "px-2 py-0.5 text-xs rounded border transition-all font-medium",
+                config.color,
+                isActive && "ring-2 ring-offset-1 ring-foreground scale-105",
+                !isActive && "opacity-70 hover:opacity-100"
+              )}
+            >
+              {config.abbrev}
+              {config.label && config.label !== config.abbrev && (
+                <span className="ml-1 text-[9px] opacity-75">{config.label}</span>
+              )}
+            </button>
+          );
+        })}
+        {activeTool && (
+          <button
+            onClick={() => setActiveTool(null)}
+            className="ml-auto flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors"
+          >
+            <X className="h-3 w-3" />
+            Beenden
+          </button>
+        )}
+        {activeTool && (
+          <span className="text-[10px] text-muted-foreground italic">
+            Aktiv: <strong>{activeTool}</strong> — auf Mitarbeiterzelle klicken zum Eintragen
+          </span>
+        )}
+      </div>
+
+    <div className="overflow-auto max-h-[calc(100vh-280px)]">
     <ScrollArea className={cn("w-full", isWeekView && "overflow-visible")}>
       <div className={cn("min-w-max", isWeekView && "min-w-0")}>
         <table className={cn("w-full border-collapse", isWeekView && "table-fixed")}>
-          <thead>
+          <thead className="sticky top-0 z-30">
             {/* Date row */}
-            <tr>
+            <tr className="bg-card">
               <th 
                 className={cn(
                   "sticky left-0 z-20 bg-card px-2 py-1 text-left text-xs font-semibold border-b border-r-2 border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
@@ -589,10 +653,11 @@ export const ScheduleGrid = ({
                           <TimeInputCell
                             value={daySchedule.früh || null}
                             absenceType={daySchedule.frühAbsence || null}
-                            onChange={(val, absence) => onSlotChange(employee.id, dateStr, 'früh', val, absence)}
+                            onChange={(val, absence) => handleCellChange(employee.id, dateStr, 'früh', val, absence)}
                             slotType="früh"
                             isWeekend={isWeekendDay}
                             isDayOff={isConfiguredDayOff}
+                            activeTool={activeTool}
                           />
                           {isOverlapping && (
                             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center" title="Schichten überlappen sich!">
@@ -616,10 +681,11 @@ export const ScheduleGrid = ({
                           <TimeInputCell
                             value={daySchedule.spät || null}
                             absenceType={daySchedule.spätAbsence || null}
-                            onChange={(val, absence) => onSlotChange(employee.id, dateStr, 'spät', val, absence)}
+                            onChange={(val, absence) => handleCellChange(employee.id, dateStr, 'spät', val, absence)}
                             slotType="spät"
                             isWeekend={isWeekendDay}
                             isDayOff={isConfiguredDayOff}
+                            activeTool={activeTool}
                           />
                           {isOverlapping && (
                             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center" title="Schichten überlappen sich!">
@@ -784,5 +850,7 @@ export const ScheduleGrid = ({
       </div>
       <ScrollBar orientation="horizontal" />
     </ScrollArea>
+    </div>
+    </div>
   );
 };
