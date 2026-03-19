@@ -34,14 +34,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const loadUserRole = async (userId: string, email?: string) => {
     // 1. Zuerst DB-Tabelle versuchen (wenn vorhanden, hat sie Vorrang)
     try {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from('user_profiles')
-        .select('role')
+        .select('role, email')
         .eq('id', userId)
         .maybeSingle();
 
       if (!error && data?.role) {
         setRole(data.role as UserRole);
+        // E-Mail in user_profiles aktualisieren (fire-and-forget)
+        if (email && (!data.email || data.email !== email)) {
+          (supabase as any)
+            .from('user_profiles')
+            .update({ email: email.toLowerCase() })
+            .eq('id', userId)
+            .then(() => {});
+        }
         return;
       }
     } catch {
@@ -50,7 +58,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     // 2. E-Mail-basierte Rollenzuweisung (funktioniert ohne DB)
     if (email && EMAIL_ROLE_MAP[email.toLowerCase()]) {
-      setRole(EMAIL_ROLE_MAP[email.toLowerCase()]);
+      const mappedRole = EMAIL_ROLE_MAP[email.toLowerCase()];
+      setRole(mappedRole);
+      // Eintrag in user_profiles anlegen (falls fehlend)
+      try {
+        await (supabase as any)
+          .from('user_profiles')
+          .upsert({ id: userId, email: email.toLowerCase(), role: mappedRole }, { onConflict: 'id' });
+      } catch { /* ignore */ }
       return;
     }
 

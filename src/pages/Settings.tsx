@@ -24,6 +24,7 @@ import { CronJobOverview } from '@/components/CronJobOverview';
 import { migrateLocalStorageToSupabase } from '@/hooks/useSupabaseSchedule';
 import { saveSetting } from '@/lib/supabase-db';
 import { CapacitySettingsCard } from '@/components/CapacitySettingsCard';
+import { UserManagementCard } from '@/components/UserManagementCard';
 
 const DEFAULT_PASSWORD = 'admin123';
 
@@ -1941,6 +1942,9 @@ const Settings = () => {
 
           {/* Cron Job Overview */}
           <CronJobOverview />
+
+          {/* Benutzer-Verwaltung */}
+          <UserManagementCard />
 
           {/* Department Access Tokens */}
           <DepartmentTokenManager />
