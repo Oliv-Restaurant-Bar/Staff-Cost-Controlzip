@@ -491,12 +491,6 @@ const Dashboard = () => {
     ? (actualLaborCost / budgetData.revenueBudget) * 100
     : null;
 
-  // Budget-Betriebsergebnis-Vergleich: Ist-Ergebnis = Ist-Umsatz - Ist-Personalkosten
-  const actualOperatingApprox = revenueMonth - actualLaborCost;
-  const budgetResultVariance   = budgetData.operatingResultBudget !== 0
-    ? actualOperatingApprox - budgetData.operatingResultBudget
-    : null;
-
   // Hilfsfunktion: Ratio-Statusfarbe (Budget-Target als Basis)
   const budgetRatioColor = (ratio: number | null, target: number | null): 'green' | 'yellow' | 'red' | 'default' => {
     if (ratio === null || target === null) return 'default';
@@ -905,17 +899,6 @@ const Dashboard = () => {
                               ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
                               : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
                           }
-                        />
-                      )}
-                      {budgetData.operatingResultBudget !== 0 && (
-                        <KpiCard
-                          title="Ergebnis Budget"
-                          value={formatCHF(budgetData.operatingResultBudget)}
-                          subtitle="Geplantes Betriebsergebnis"
-                          icon={<Target className="h-5 w-5" />}
-                          color="default"
-                          delta={budgetResultVariance}
-                          deltaLabel="CHF Abw."
                         />
                       )}
                     </div>
