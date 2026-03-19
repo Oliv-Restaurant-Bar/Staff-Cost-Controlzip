@@ -333,6 +333,16 @@ const Dashboard = () => {
   const sumRevenue = (days: string[], field: keyof DailyBudget) =>
     days.reduce((s, d) => s + (dailyBudgets[d]?.[field] ?? 0), 0);
 
+  // Vorjahr-Umsatz: erst 'previousYearRevenue' des aktuellen Datums prüfen,
+  // Fallback: 'actualRevenue' vom gleichen Tag im Vorjahr (z.B. 2025-02-15)
+  const sumRevenuePrevYear = (days: string[]) =>
+    days.reduce((s, d) => {
+      const direct = dailyBudgets[d]?.previousYearRevenue ?? 0;
+      if (direct > 0) return s + direct;
+      const prevYearDate = d.replace(/^(\d{4})/, (_, y) => String(parseInt(y) - 1));
+      return s + (dailyBudgets[prevYearDate]?.actualRevenue ?? 0);
+    }, 0);
+
   const revenueMonthDaily    = sumRevenue(monthDays,  'actualRevenue');
   const revenuePlannedMonth  = sumRevenue(monthDays,  'plannedRevenue');
 
@@ -349,7 +359,7 @@ const Dashboard = () => {
   const revenueActive = (period === 'month' && revenueActiveDailyRaw === 0)
     ? reportingActualRevenue
     : revenueActiveDailyRaw;
-  const revenuePrevYearActive = sumRevenue(activeDays, 'previousYearRevenue');
+  const revenuePrevYearActive = sumRevenuePrevYear(activeDays);
 
   // Budget pro Periode: aus budget_v1 Monatsbudget anteilig berechnen
   const daysInRefMonth = getDaysInMonth(referenceDate);
@@ -515,7 +525,7 @@ const Dashboard = () => {
 
   // Vorjahr bis Stichtag
   const revenuePrevYearStichtag = stichtagDateStr
-    ? sumRevenue(daysUpToStichtag, 'previousYearRevenue')
+    ? sumRevenuePrevYear(daysUpToStichtag)
     : null;
 
   // Personalkosten bis Stichtag (aus Ist-Stunden × Stundenlohn)
@@ -931,15 +941,15 @@ const Dashboard = () => {
                               small
                             />
                           )}
-                          {sumRevenue(effectiveDays, 'previousYearRevenue') > 0 && (
+                          {sumRevenuePrevYear(effectiveDays) > 0 && (
                             <KpiCard
                               title="Vorjahr bis dato"
-                              value={formatCHF(sumRevenue(effectiveDays, 'previousYearRevenue'))}
+                              value={formatCHF(sumRevenuePrevYear(effectiveDays))}
                               subtitle={`Vorjahr bis ${effectiveCutoffLabel}`}
                               icon={<TrendingUp className="h-5 w-5" />}
                               color="default"
-                              delta={revenueIstEffective !== null && sumRevenue(effectiveDays, 'previousYearRevenue') > 0
-                                ? ((revenueIstEffective - sumRevenue(effectiveDays, 'previousYearRevenue')) / sumRevenue(effectiveDays, 'previousYearRevenue')) * 100
+                              delta={revenueIstEffective !== null && sumRevenuePrevYear(effectiveDays) > 0
+                                ? ((revenueIstEffective - sumRevenuePrevYear(effectiveDays)) / sumRevenuePrevYear(effectiveDays)) * 100
                                 : null}
                               deltaLabel="% vs. Vorjahr"
                               small
