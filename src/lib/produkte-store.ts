@@ -42,6 +42,7 @@ export const DEFAULT_IGNORE_TERMS: string[] = [
   'gipfeli',
   'extra ei',
   'aufpreis gamberi',
+  'ohne',
 ];
 
 export function shouldIgnoreProduct(name: string, extraIgnored: string[] = []): boolean {
