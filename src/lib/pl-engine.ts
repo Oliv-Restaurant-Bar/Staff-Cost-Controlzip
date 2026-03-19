@@ -306,9 +306,22 @@ function variancePct(actual: number | undefined, reference: number | undefined):
 // ─── Haupt-Berechnungslogik ───────────────────────────────────────────────────
 
 /**
+ * Optionale Overrides für computePLForMonth:
+ * - budgetByRow:   PL-row-ID → Budget-Betrag (aus Budget-Planung)
+ * - prevYearByRow: PL-row-ID → Vorjahrswert (aus Vorjahresdaten)
+ */
+export interface PLMonthOverrides {
+  budgetByRow?:   Map<string, number>;
+  prevYearByRow?: Map<string, number>;
+}
+
+/**
  * Berechnet alle P&L-Werte für einen einzelnen Monat.
  */
-export function computePLForMonth(record: MonthlyFinancialRecord): PLMonthResult {
+export function computePLForMonth(
+  record: MonthlyFinancialRecord,
+  overrides?: PLMonthOverrides,
+): PLMonthResult {
   const hasData = !!(
     record.revenueActual !== undefined ||
     record.personnelCostActual !== undefined ||
@@ -524,6 +537,29 @@ export function computePLForMonth(record: MonthlyFinancialRecord): PLMonthResult
       monthId: record.id,
     });
     rowSources.set(rowId, sources);
+  }
+
+  // Schritt 3b: Budget- und Vorjahr-Overrides aus Budget-Planung / Vorjahresdaten injizieren
+  // Diese Overrides ersetzen allfällige Direktfeld-Werte (revenueBudget, personnelCostPlanned etc.)
+  // und ergänzen fehlende Werte für alle anderen Zeilen.
+  if (overrides?.budgetByRow) {
+    for (const [rowId, val] of overrides.budgetByRow) {
+      if (val === 0) continue;
+      const existing = rowValues.get(rowId);
+      if (existing === undefined) continue; // nur bekannte PL-Zeilen überschreiben
+      rowValues.set(rowId, { ...existing, budget: val });
+    }
+  }
+  if (overrides?.prevYearByRow) {
+    for (const [rowId, val] of overrides.prevYearByRow) {
+      if (val === 0) continue;
+      const existing = rowValues.get(rowId);
+      if (existing === undefined) continue;
+      // Nur setzen wenn noch kein Vorjahreswert aus expenseCategories/directField vorhanden
+      if (existing.prevYear === undefined) {
+        rowValues.set(rowId, { ...existing, prevYear: val });
+      }
+    }
   }
 
   // Schritt 4: Berechnete Zeilen (subtotal / result) mit Topologischer Reihenfolge auflösen

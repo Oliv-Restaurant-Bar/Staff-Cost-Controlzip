@@ -37,7 +37,8 @@ import { loadYear, saveMonth, loadJournalYear } from '@/lib/reporting-store';
 import type { SageJournalEntry } from '@/types/reporting';
 import { lookupAccount, saveMappingCustom } from '@/lib/account-mapping-store';
 import { AccountMapping } from '@/types/account-mapping';
-import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE } from '@/lib/pl-engine';
+import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMonthOverrides } from '@/lib/pl-engine';
+import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
 import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem } from '@/lib/budget-store';
@@ -660,6 +661,24 @@ const PL_CAT_TO_BPL: Partial<Record<string, string>> = {
   depreciation:      'pl_other_op',
   // Finanzaufwand (6900–6999)
   bank_fees:         'pl_finance',
+};
+
+// Mappt BPL-Kategorie-ID → PL_STRUCTURE-Zeilen-ID (für Budget-Override in Klassisch-View)
+const BPL_CAT_TO_PL_ROW: Record<string, string> = {
+  pl_revenue:         'revenue_total',
+  pl_goods_cost:      'total_cogs',
+  pl_wages:           'personnel_wages',
+  pl_social:          'personnel_social',
+  pl_personnel_other: 'personnel_other',
+  pl_rent:            'rent',
+  pl_maintenance:     'maintenance',
+  pl_vehicles:        'other_operating',
+  pl_insurance:       'insurance',
+  pl_energy:          'utilities',
+  pl_admin:           'admin',
+  pl_marketing:       'marketing',
+  pl_other_op:        'other_operating',
+  pl_finance:         'other_operating',
 };
 
 function computeBPLRows(
@@ -1795,18 +1814,60 @@ const PLViewPage = () => {
     return rec;
   }, [records, month, dailyRevenueForMonth, dailyPrevYearRevenueForMonth]);
 
+  // Budget P&L laden (vor monthResult, da Overrides benötigt werden)
+  const budgetData = useMemo(() => loadBudgetWithPL(year), [year, refreshKey]);
+
+  // Budget-Overrides für Klassisch-View: aus Budget-Plan (plLineItems) → PL-Zeilen-ID
+  const monthBudgetByRow = useMemo((): PLMonthOverrides['budgetByRow'] => {
+    const map = new Map<string, number>();
+    const items = budgetData.plLineItems ?? [];
+    const cats  = budgetData.plCategories ?? [];
+    for (const item of items) {
+      if (item.isInternal) continue;
+      const val = item.monthlyValues[month - 1] ?? 0;
+      if (val === 0) continue;
+      let rowId: string | null = null;
+      if (item.accountNumber) {
+        const res = lookupAccount(item.accountNumber);
+        if (res.mapping) rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
+      }
+      if (!rowId) {
+        const cat = cats.find(c => c.id === item.categoryId);
+        if (cat) rowId = BPL_CAT_TO_PL_ROW[cat.id] ?? null;
+      }
+      if (rowId) map.set(rowId, (map.get(rowId) ?? 0) + val);
+    }
+    return map.size > 0 ? map : undefined;
+  }, [budgetData, month]);
+
+  // Vorjahr-Overrides für Klassisch-View: aus Vorjahresdaten (prevYearRecords[month-1])
+  const monthPrevYearByRow = useMemo((): PLMonthOverrides['prevYearByRow'] => {
+    const prevRec = prevYearRecords[month - 1];
+    if (!prevRec) return undefined;
+    const map = new Map<string, number>();
+    if (prevRec.revenueActual) map.set('revenue_total', prevRec.revenueActual);
+    if (prevRec.personnelCostActual) map.set('personnel_wages', prevRec.personnelCostActual);
+    for (const cat of (prevRec.expenseCategories ?? [])) {
+      if (!cat.categoryId || !cat.amount) continue;
+      let rowId: string | null = null;
+      if (/^\d{3,5}$/.test(cat.categoryId)) {
+        const res = lookupAccount(cat.categoryId);
+        if (res.mapping) rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
+      }
+      if (rowId) map.set(rowId, (map.get(rowId) ?? 0) + cat.amount);
+    }
+    return map.size > 0 ? map : undefined;
+  }, [prevYearRecords, month]);
+
   const monthResult = useMemo(
-    () => computePLForMonth(effectiveMonthRecord),
-    [effectiveMonthRecord],
+    () => computePLForMonth(effectiveMonthRecord, { budgetByRow: monthBudgetByRow, prevYearByRow: monthPrevYearByRow }),
+    [effectiveMonthRecord, monthBudgetByRow, monthPrevYearByRow],
   );
 
   const yearResult = useMemo(
     () => computePLForYear(records),
     [records],
   );
-
-  // Budget P&L laden
-  const budgetData = useMemo(() => loadBudgetWithPL(year), [year, refreshKey]);
 
   const bplRows = useMemo(
     () => computeBPLRows(budgetData, effectiveMonthRecord, month - 1, prevYearRecords[month - 1]),
