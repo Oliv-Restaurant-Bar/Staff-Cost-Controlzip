@@ -335,14 +335,28 @@ export default function ProdukteSeite() {
         {/* ══ MONATSANSICHT ════════════════════════════════════════════════════ */}
         {data && view === 'monat' && (
           <>
-            {/* Titel */}
-            <div className="flex items-center gap-2 flex-wrap">
-              {isFlop ? <TrendingDown className="h-4 w-4 text-red-500" /> : <Award className="h-4 w-4 text-primary" />}
-              <span className="text-sm font-semibold">
-                {isFlop ? 'Flop' : 'Top'} {Math.min(currentN, ranked.length)} — {formatMonthLong(activeMonth)}
-              </span>
-              <span className="text-xs text-muted-foreground">· {sortBy === 'count' ? 'Nach Anzahl' : 'Nach Umsatz'}</span>
-              {isFlop && <Badge variant="outline" className="text-xs text-red-600 border-red-300 bg-red-50 dark:bg-red-950/20">Schlechteste Produkte</Badge>}
+            {/* Aktiver Monat — gross & klar sichtbar */}
+            <div className={cn(
+              'rounded-xl border px-5 py-4 flex items-center justify-between flex-wrap gap-3',
+              isFlop ? 'border-red-200 bg-red-50/40 dark:border-red-900 dark:bg-red-950/10'
+                     : 'border-primary/20 bg-primary/5',
+            )}>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">
+                  Ausgewählter Zeitraum
+                </p>
+                <p className={cn('text-2xl font-bold', isFlop ? 'text-red-600 dark:text-red-400' : 'text-primary')}>
+                  {formatMonthLong(activeMonth)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                {isFlop ? <TrendingDown className="h-4 w-4 text-red-500" /> : <Award className="h-4 w-4 text-primary" />}
+                <span className="font-semibold text-foreground">
+                  {isFlop ? 'Flop' : 'Top'} {Math.min(currentN, ranked.length)}
+                </span>
+                <span>· {sortBy === 'count' ? 'Nach Anzahl' : 'Nach Umsatz'}</span>
+                {isFlop && <Badge variant="outline" className="text-xs text-red-600 border-red-300 bg-red-50 dark:bg-red-950/20">Schlechteste Produkte</Badge>}
+              </div>
             </div>
 
             {ranked.length === 0 && (
