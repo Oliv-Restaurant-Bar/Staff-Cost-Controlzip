@@ -31,7 +31,7 @@ const employeeToDb = (emp: Employee) => ({
   weekly_hours:             emp.weeklyHours             ?? null,
   monthly_salary:           emp.monthlySalary           ?? null,
   monthly_salary_with_13th: emp.monthlySalaryWith13th   ?? null,
-  social_cost_factor:       emp.socialCostFactor        ?? 1.13,
+  social_cost_factor:       emp.socialCostFactor        ?? 1.03,
   has_13th_salary:          emp.has13thSalary           ?? false,
   // ── Saldi ────────────────────────────────────────────────────────────────
   hours_balance:            emp.hoursBalance            ?? null,

@@ -233,6 +233,18 @@ const loadEmployeesFromStorage = (): Employee[] => {
     
     const storedEmployees: Employee[] = JSON.parse(stored);
     
+    // One-time migration: update socialCostFactor from 1.13 → 1.03
+    let migrated = false;
+    for (const emp of storedEmployees) {
+      if ((emp as Employee & { socialCostFactor?: number }).socialCostFactor === 1.13) {
+        (emp as Employee & { socialCostFactor?: number }).socialCostFactor = 1.03;
+        migrated = true;
+      }
+    }
+    if (migrated) {
+      localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(storedEmployees));
+    }
+
     // Merge: use stored data for existing employees, add new defaults if missing
     const mergedEmployees: Employee[] = [];
     const storedIds = new Set(storedEmployees.map(e => e.id));

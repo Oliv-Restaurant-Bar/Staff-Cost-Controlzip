@@ -123,7 +123,7 @@ interface LocalEmployeeData {
 
 // ─── Standardwerte ────────────────────────────────────────────────────────────
 
-const DEFAULT_SOCIAL_COST_FACTOR = 1.13; // 13% AG-Anteil (Schweizer Durchschnitt)
+const DEFAULT_SOCIAL_COST_FACTOR = 1.03; // 3% AG-Anteil
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -1987,7 +1987,7 @@ CREATE POLICY "Anon self-register new employee"
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block">
                               AG-Sozialkostenfaktor
-                              <span className="ml-1 text-[10px] italic opacity-60">z.B. 1.13 = 13%</span>
+                              <span className="ml-1 text-[10px] italic opacity-60">z.B. 1.03 = 3%</span>
                             </Label>
                             <div className="flex items-center gap-2">
                               <Input
