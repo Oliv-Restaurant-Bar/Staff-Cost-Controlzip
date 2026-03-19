@@ -226,6 +226,8 @@ export const AppSidebar = () => {
   const { role, isAdmin, isManager, allowedDepartment, canAccessModule } = usePermissions();
   const { isGuest, guestMinutesLeft, clearGuestSession } = useGuestSession();
 
+  console.log('[NAV] AppSidebar render', { role, isAdmin, userEmail: user?.email });
+
   const roleConfig = ROLE_CONFIG[role as keyof typeof ROLE_CONFIG] ?? ROLE_CONFIG.admin;
   const RoleIcon = isGuest ? Eye : roleConfig.Icon;
 

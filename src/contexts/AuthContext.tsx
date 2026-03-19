@@ -32,43 +32,51 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const applyRole = (r: UserRole) => {
+    console.log('[AUTH] applyRole →', r);
     setRole(r);
     localStorage.setItem('user_role', r);
   };
 
   const loadUserRole = async (userId: string, email?: string) => {
-    // ── Schritt 1: Rolle aus user_profiles laden (nur 'role', immer vorhanden) ──
+    console.log('[AUTH] loadUserRole called', { userId, email });
+
+    // ── Schritt 1: Rolle aus user_profiles laden ──
     try {
       const { data, error } = await (supabase as any)
         .from('user_profiles')
-        .select('role')          // NUR 'role' – kein Email-Join, kein Fehlerrisiko
+        .select('role')
         .eq('id', userId)
         .maybeSingle();
 
+      console.log('[AUTH] user_profiles query result', { data, error });
+
       if (!error && data?.role) {
+        console.log('[AUTH] ✅ Role from DB:', data.role);
         applyRole(data.role as UserRole);
 
-        // ── Schritt 2: E-Mail separat aktualisieren (völlig isoliert, nie blockierend) ──
-        // Schlägt lautlos fehl wenn email-Spalte noch nicht existiert (Migration ausstehend)
+        // E-Mail separat aktualisieren (fire-and-forget, nie blockierend)
         if (email) {
           (supabase as any)
             .from('user_profiles')
             .update({ email: email.toLowerCase() })
             .eq('id', userId)
             .then(() => {})
-            .catch(() => {});    // Fehler werden bewusst ignoriert
+            .catch(() => {});
         }
-        return;                  // Fertig – Rolle gesetzt
+        return;
       }
-    } catch {
-      // DB nicht erreichbar → Fallback
+
+      // Row fehlt oder Fehler
+      console.warn('[AUTH] ⚠️ No role in DB – data:', data, '– error:', error);
+    } catch (ex) {
+      console.error('[AUTH] ❌ Exception during user_profiles query:', ex);
     }
 
-    // ── Fallback: feste E-Mail-Zuordnung (nur wenn kein DB-Eintrag) ──
+    // ── Fallback: feste E-Mail-Zuordnung ──
     if (email && EMAIL_ROLE_MAP[email.toLowerCase()]) {
       const mappedRole = EMAIL_ROLE_MAP[email.toLowerCase()];
+      console.log('[AUTH] 📧 Email fallback triggered →', mappedRole);
       applyRole(mappedRole);
-      // Eintrag für zukünftige Logins anlegen (fire-and-forget)
       (supabase as any)
         .from('user_profiles')
         .upsert({ id: userId, role: mappedRole }, { onConflict: 'id' })
@@ -77,29 +85,48 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
-    // ── Letzter Fallback (kein DB-Eintrag, E-Mail nicht bekannt) ──
+    // ── Letzter Fallback ──
+    console.error('[AUTH] 🔴 All fallbacks exhausted – defaulting to kueche_manager',
+      { userId, email });
     applyRole('kueche_manager');
   };
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // Initial session check – wait for role before hiding spinner
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      console.log('[AUTH] getSession resolved', {
+        hasSession: !!session,
+        userId: session?.user?.id,
+        email: session?.user?.email,
+      });
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        loadUserRole(session.user.id, session.user.email);
+        await loadUserRole(session.user.id, session.user.email);  // ← awaited
       }
-      setLoading(false);
+      setLoading(false);  // spinner hidden only after role is known
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('[AUTH] onAuthStateChange', {
+        event,
+        hasSession: !!session,
+        userId: session?.user?.id,
+        email: session?.user?.email,
+      });
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        loadUserRole(session.user.id, session.user.email);
+        // Keep spinner up while we load the role so the wrong badge never flashes
+        setLoading(true);
+        await loadUserRole(session.user.id, session.user.email);  // ← awaited
+        console.log('[AUTH] onAuthStateChange role load complete');
+        setLoading(false);
       } else {
+        console.log('[AUTH] No session → setting kueche_manager');
         setRole('kueche_manager');
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
