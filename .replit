@@ -48,3 +48,8 @@ externalPort = 8081
 VITE_SUPABASE_URL = "https://ajflrvuzmkfspsxkdyfe.supabase.co"
 VITE_SUPABASE_ANON_KEY = "sb_publishable_QXf-21IX_EQ_cwLGqNc24w_-fFS23ht"
 VITE_SUPABASE_PROJECT_ID = "ajflrvuzmkfspsxkdyfe"
+
+[deployment]
+deploymentTarget = "static"
+build = ["npm", "run", "build"]
+publicDir = "dist"

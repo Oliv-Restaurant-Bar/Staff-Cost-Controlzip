@@ -14,12 +14,13 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, BarChart2, Users,
   Settings, LogOut, ChefHat, Utensils, ShieldCheck,
-  TrendingUp, Upload, Truck, Calculator, CalendarClock, X,
+  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useStichtag } from '@/contexts/StichtagContext';
+import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { Button } from '@/components/ui/button';
 import {
   Tooltip, TooltipContent, TooltipTrigger,
@@ -209,20 +210,25 @@ export const AppSidebar = () => {
   const location      = useLocation();
   const { user, signOut } = useAuth();
   const { role, isAdmin, isManager, allowedDepartment, canAccessModule } = usePermissions();
+  const { isGuest, guestMinutesLeft, clearGuestSession } = useGuestSession();
 
   const roleConfig = ROLE_CONFIG[role as keyof typeof ROLE_CONFIG] ?? ROLE_CONFIG.admin;
-  const RoleIcon = roleConfig.Icon;
+  const RoleIcon = isGuest ? Eye : roleConfig.Icon;
 
   const visibleItems = NAV_ITEMS.filter(item => {
-    if (item.comingSoon && !isAdmin) return false;
-    if (item.adminOnly && !isAdmin) return false;
-    if (item.module && !canAccessModule(item.module)) return false;
+    if (item.comingSoon && !isAdmin && !isGuest) return false;
+    if (item.adminOnly && !isAdmin && !isGuest) return false;
+    if (item.module && !canAccessModule(item.module) && !isGuest) return false;
     return true;
   });
 
   const emailShort = user?.email
     ? user.email.length > 22 ? user.email.slice(0, 22) + '…' : user.email
     : '';
+
+  const guestH = Math.floor(guestMinutesLeft / 60);
+  const guestM = guestMinutesLeft % 60;
+  const guestLabel = guestH > 0 ? `${guestH}h ${guestM}min` : `${guestMinutesLeft} Min.`;
 
   return (
     <aside className="hidden md:flex flex-col flex-shrink-0 w-[220px] min-h-screen bg-card border-r border-border sticky top-0 h-screen overflow-y-auto">
@@ -281,39 +287,49 @@ export const AppSidebar = () => {
 
       {/* Rollen-Bereich + Abmelden */}
       <div className="border-t border-border px-3 py-3 space-y-2">
-        {/* Rollen-Badge */}
-        <div className={cn(
-          'flex items-center gap-2 rounded-md px-2.5 py-2 border text-xs font-semibold',
-          roleConfig.color,
-        )}>
-          <RoleIcon className="h-3.5 w-3.5 flex-shrink-0" />
-          <div className="min-w-0">
-            <p className="font-bold truncate">{roleConfig.label}</p>
-            {isManager && allowedDepartment !== 'all' && (
-              <p className="text-[10px] opacity-80 font-normal">
-                Bereich: {allowedDepartment === 'service' ? 'Service' : 'Küche'}
-              </p>
-            )}
-            {isAdmin && (
-              <p className="text-[10px] opacity-80 font-normal">Alle Abteilungen</p>
-            )}
+        {/* Rollen-Badge / Gast-Badge */}
+        {isGuest ? (
+          <div className="flex items-center gap-2 rounded-md px-2.5 py-2 border text-xs font-semibold bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/30 dark:text-violet-300 dark:border-violet-700">
+            <Eye className="h-3.5 w-3.5 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="font-bold">Gast-Zugang</p>
+              <p className="text-[10px] opacity-80 font-normal">Nur Lesen · {guestLabel}</p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className={cn(
+            'flex items-center gap-2 rounded-md px-2.5 py-2 border text-xs font-semibold',
+            roleConfig.color,
+          )}>
+            <RoleIcon className="h-3.5 w-3.5 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="font-bold truncate">{roleConfig.label}</p>
+              {isManager && allowedDepartment !== 'all' && (
+                <p className="text-[10px] opacity-80 font-normal">
+                  Bereich: {allowedDepartment === 'service' ? 'Service' : 'Küche'}
+                </p>
+              )}
+              {isAdmin && (
+                <p className="text-[10px] opacity-80 font-normal">Alle Abteilungen</p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* E-Mail */}
-        {emailShort && (
+        {emailShort && !isGuest && (
           <p className="text-[10px] text-muted-foreground px-1 truncate">{emailShort}</p>
         )}
 
-        {/* Abmelden */}
+        {/* Abmelden / Sitzung beenden */}
         <Button
           variant="outline"
           size="sm"
-          onClick={signOut}
+          onClick={isGuest ? () => { clearGuestSession(); window.location.href = '/gast'; } : signOut}
           className="w-full h-8 text-xs text-destructive border-destructive/30 hover:bg-destructive/10 justify-start gap-2"
         >
           <LogOut className="h-3.5 w-3.5" />
-          Abmelden
+          {isGuest ? 'Sitzung beenden' : 'Abmelden'}
         </Button>
       </div>
     </aside>
@@ -325,12 +341,13 @@ export const AppSidebar = () => {
 export const AppBottomNav = () => {
   const location = useLocation();
   const { isAdmin, canAccessModule } = usePermissions();
+  const { isGuest } = useGuestSession();
 
   // Mobile zeigt max. 4 Hauptpunkte
   const mobileItems = NAV_ITEMS.filter(item => {
     if (item.comingSoon) return false;
-    if (item.adminOnly && !isAdmin) return false;
-    if (item.module && !canAccessModule(item.module)) return false;
+    if (item.adminOnly && !isAdmin && !isGuest) return false;
+    if (item.module && !canAccessModule(item.module) && !isGuest) return false;
     // Einstellungen auf Mobile weglassen (zu wenig Platz)
     if (item.path === '/settings') return false;
     return true;

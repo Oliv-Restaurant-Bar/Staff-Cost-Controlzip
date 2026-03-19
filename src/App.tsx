@@ -7,9 +7,11 @@ import { RevenueDisplayProvider } from "@/contexts/RevenueDisplayContext";
 import { PlanDisplayProvider } from "@/contexts/PlanDisplayContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { StichtagProvider } from "@/contexts/StichtagContext";
+import { GuestSessionProvider, GUEST_SESSION_KEY } from "@/contexts/GuestSessionContext";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LoginPage } from "@/components/LoginPage";
+import { GuestBanner } from "@/components/GuestBanner";
 import { Loader2 } from "lucide-react";
 import { AppNav } from "@/components/AppNav";
 import Dashboard from "./pages/Dashboard";
@@ -30,6 +32,7 @@ import DepartmentPlannerWrapper from "./pages/DepartmentPlannerWrapper";
 import NotFound from "./pages/NotFound";
 import OnboardingForm from "./pages/OnboardingForm";
 import ImportHub from "./pages/ImportHub";
+import GuestAccess from "./pages/GuestAccess";
 
 const queryClient = new QueryClient();
 
@@ -39,17 +42,27 @@ const AppContent = () => {
   const { user, loading } = useAuth();
   const { canAccessSettings, canAccessModule } = usePermissions();
 
+  // Check for valid guest session
+  const hasGuestSession = (() => {
+    try {
+      const raw = sessionStorage.getItem(GUEST_SESSION_KEY);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      return parsed.expiresAt > Date.now();
+    } catch { return false; }
+  })();
+
   useEffect(() => {
     if (user) {
       sessionStorage.setItem('dashboard_unlocked', 'true');
       sessionStorage.setItem('settings_unlocked', 'true');
       sessionStorage.setItem('salary_columns_unlocked', 'true');
-    } else {
+    } else if (!hasGuestSession) {
       sessionStorage.removeItem('dashboard_unlocked');
       sessionStorage.removeItem('settings_unlocked');
       sessionStorage.removeItem('salary_columns_unlocked');
     }
-  }, [user]);
+  }, [user, hasGuestSession]);
 
   if (loading) {
     return (
@@ -59,59 +72,62 @@ const AppContent = () => {
     );
   }
 
-  if (!user) {
+  if (!user && !hasGuestSession) {
     return <LoginPage />;
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
-      <AppNav />
+    <div className="flex flex-col min-h-screen bg-background">
+      <GuestBanner />
+      <div className="flex flex-1 min-h-0">
+        <AppNav />
 
-      {/* Haupt-Inhaltsbereich */}
-      <div className="flex-1 min-w-0 pb-16 md:pb-0">
-        <Routes>
-          {/* Routen mit Rollenprüfung */}
-          <Route path="/"
-            element={canAccessModule('dashboard')
-              ? <Dashboard />
-              : <Navigate to="/personal" replace />}
-          />
-          <Route path="/personal"         element={<SchedulePlanner />} />
-          <Route path="/schedule-planner" element={<SchedulePlanner />} />
-          <Route path="/analyse"
-            element={canAccessModule('soll_ist_analyse')
-              ? <SollIstAnalyse />
-              : <Navigate to="/personal" replace />}
-          />
+        {/* Haupt-Inhaltsbereich */}
+        <div className="flex-1 min-w-0 pb-16 md:pb-0">
+          <Routes>
+            {/* Routen mit Rollenprüfung */}
+            <Route path="/"
+              element={canAccessModule('dashboard')
+                ? <Dashboard />
+                : <Navigate to="/personal" replace />}
+            />
+            <Route path="/personal"         element={<SchedulePlanner />} />
+            <Route path="/schedule-planner" element={<SchedulePlanner />} />
+            <Route path="/analyse"
+              element={canAccessModule('soll_ist_analyse')
+                ? <SollIstAnalyse />
+                : <Navigate to="/personal" replace />}
+            />
 
-          {/* Personalstamm: alle Rollen, Inhalt rollenbasiert gefiltert */}
-          <Route path="/personal-stamm" element={<Personalstamm />} />
+            {/* Personalstamm: alle Rollen, Inhalt rollenbasiert gefiltert */}
+            <Route path="/personal-stamm" element={<Personalstamm />} />
 
-          {/* Einstellungen: nur Admin */}
-          <Route
-            path="/settings"
-            element={canAccessSettings ? <Settings /> : <Navigate to="/" replace />}
-          />
+            {/* Einstellungen: nur Admin */}
+            <Route
+              path="/settings"
+              element={canAccessSettings ? <Settings /> : <Navigate to="/" replace />}
+            />
 
-          {/* Reporting: Finanzmodul (nur Admin) */}
-          <Route path="/reporting"        element={<Reporting />} />
-          <Route path="/kontenplan"       element={<AccountMappingPage />} />
-          <Route path="/erfolgsrechnung"  element={<PLViewPage />} />
-          <Route path="/csv-import"       element={<CSVImportPage />} />
-          <Route path="/import"           element={<ImportHub />} />
-          <Route path="/lieferanten"          element={<SupplierDocumentsPage />} />
-          <Route path="/lieferanten-vergleich" element={<SupplierComparisonPage />} />
-          <Route path="/budget"           element={<BudgetPage />} />
+            {/* Reporting: Finanzmodul (nur Admin) */}
+            <Route path="/reporting"        element={<Reporting />} />
+            <Route path="/kontenplan"       element={<AccountMappingPage />} />
+            <Route path="/erfolgsrechnung"  element={<PLViewPage />} />
+            <Route path="/csv-import"       element={<CSVImportPage />} />
+            <Route path="/import"           element={<ImportHub />} />
+            <Route path="/lieferanten"          element={<SupplierDocumentsPage />} />
+            <Route path="/lieferanten-vergleich" element={<SupplierComparisonPage />} />
+            <Route path="/budget"           element={<BudgetPage />} />
 
-          {/* Abteilungs-Dienstpläne */}
-          <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />
-          <Route path="/plan/:department"       element={<DepartmentPlannerWrapper />} />
+            {/* Abteilungs-Dienstpläne */}
+            <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />
+            <Route path="/plan/:department"       element={<DepartmentPlannerWrapper />} />
 
-          {/* Legacy */}
-          <Route path="/overview" element={<Index />} />
+            {/* Legacy */}
+            <Route path="/overview" element={<Index />} />
 
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </div>
       </div>
     </div>
   );
@@ -125,18 +141,21 @@ const App = () => (
       <StichtagProvider>
       <RevenueDisplayProvider>
         <PlanDisplayProvider>
-          <Sonner />
-          <AuthProvider>
-            <BrowserRouter>
-              <Routes>
-                {/* ── Öffentliche Route — kein Login erforderlich ── */}
-                <Route path="/onboarding/:token" element={<OnboardingForm />} />
+          <GuestSessionProvider>
+            <Sonner />
+            <AuthProvider>
+              <BrowserRouter>
+                <Routes>
+                  {/* ── Öffentliche Routen — kein Login erforderlich ── */}
+                  <Route path="/onboarding/:token" element={<OnboardingForm />} />
+                  <Route path="/gast" element={<GuestAccess />} />
 
-                {/* ── Alle anderen Routen → Auth-Check ── */}
-                <Route path="/*" element={<AppContent />} />
-              </Routes>
-            </BrowserRouter>
-          </AuthProvider>
+                  {/* ── Alle anderen Routen → Auth-Check ── */}
+                  <Route path="/*" element={<AppContent />} />
+                </Routes>
+              </BrowserRouter>
+            </AuthProvider>
+          </GuestSessionProvider>
         </PlanDisplayProvider>
       </RevenueDisplayProvider>
       </StichtagProvider>

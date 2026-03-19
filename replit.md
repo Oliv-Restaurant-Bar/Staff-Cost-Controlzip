@@ -219,6 +219,30 @@ Datei: `src/lib/supabase-db.ts` — Funktionen:
 - **PLView** — `StichtagBanner` + auto-jump zu Stichtag-Jahr/Monat per `useEffect`
 - **Reporting** — `StichtagBanner` + Monatstabellenzeilen ausserhalb Stichtag werden gedimmt (opacity-40) und durchgestrichen
 
+## Gastlink-System (Sitzungs-Sharing)
+
+Admins können zeitbegrenzte, passwortgeschützte Links für Sitzungs-Teilnehmende generieren.
+
+**Flow:**
+1. Admin klickt "Gastlink" im Dashboard-Header → öffnet Dialog
+2. Admin setzt Passwort + Dauer (1h / 2h / 4h / 8h / 1 Tag)
+3. Generierter Link: `/gast?t=BASE64_TOKEN` (Token = SHA-256-Hash + Ablaufzeitstempel)
+4. Gäste besuchen den Link, geben das Passwort ein → Zugang für die gesetzten Stunden
+5. Gäste sehen alle Seiten (wie Admin) aber im Lesemodus; GuestBanner + Ablauf-Timer oben
+
+**Dateien:**
+- `src/contexts/GuestSessionContext.tsx` — Session-State, Crypto-Hilfsfunktionen
+- `src/pages/GuestAccess.tsx` — öffentliche Seite unter `/gast` (kein Login nötig)
+- `src/components/GuestLinkGenerator.tsx` — Admin-Dialog zum Link generieren
+- `src/components/GuestBanner.tsx` — violettes Banner oben mit Timer + "Beenden"-Button
+- `src/App.tsx` — `/gast`-Route öffentlich; AppContent lässt gültige Guest-Sessions durch
+
+## Deployment
+
+Konfiguriert als **Static Site** (Vite Build → `dist/`).
+- Build: `npm run build`
+- Öffentliche URL nach Deploy: `*.replit.app`
+
 ## Nächste Schritte
 1. **KRITISCH**: Alle 3 SQL-Migrationen im Supabase SQL-Editor ausführen (in Reihenfolge)
 2. Manager-Accounts in Supabase Authentication erstellen

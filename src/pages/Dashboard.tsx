@@ -21,6 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { usePermissions } from '@/hooks/usePermissions';
+import { GuestLinkGenerator } from '@/components/GuestLinkGenerator';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { loadMonth, loadYear } from '@/lib/reporting-store';
 import {
@@ -116,7 +117,7 @@ const KpiCard = ({
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground truncate mb-1">
               {title}
             </p>
-            <p className={cn('font-bold tabular-nums leading-tight', small ? 'text-xl' : 'text-2xl')}>
+            <p className={cn('font-bold tabular-nums leading-tight', small ? 'text-lg sm:text-xl' : 'text-xl sm:text-2xl')}>
               {value}
             </p>
             {subtitle && (
@@ -635,7 +636,7 @@ const Dashboard = () => {
             </div>
 
             {/* Zeitraum-Auswahl + Navigation */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               {/* Perioden-Typ */}
               <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
                 {(['today', 'week', 'month', 'year'] as Period[]).map(p => (
@@ -643,7 +644,7 @@ const Dashboard = () => {
                     key={p}
                     onClick={() => { setPeriod(p); setReferenceDate(new Date()); }}
                     className={cn(
-                      'px-3 py-1 text-xs font-medium rounded-md transition-all',
+                      'px-2 sm:px-3 py-1 text-xs font-medium rounded-md transition-all',
                       period === p
                         ? 'bg-background text-foreground shadow-sm'
                         : 'text-muted-foreground hover:text-foreground',
@@ -704,12 +705,15 @@ const Dashboard = () => {
                 </Badge>
               )}
               {isAdmin && (
-                <Link to="/import">
-                  <Button variant="outline" size="sm" className="h-8">
-                    <Upload className="h-3.5 w-3.5 mr-1.5" />
-                    <span className="hidden sm:inline">Import</span>
-                  </Button>
-                </Link>
+                <>
+                  <GuestLinkGenerator />
+                  <Link to="/import">
+                    <Button variant="outline" size="sm" className="h-8">
+                      <Upload className="h-3.5 w-3.5 mr-1.5" />
+                      <span className="hidden sm:inline">Import</span>
+                    </Button>
+                  </Link>
+                </>
               )}
               <Link to="/personal">
                 <Button variant="outline" size="sm" className="h-8">
