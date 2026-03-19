@@ -215,46 +215,89 @@ export function saveIgnoredProducts(list: string[]): void {
   localStorage.setItem(IGNORED_KEY, JSON.stringify(list));
 }
 
-// ── Supabase-Sync für Produktdaten + Ignorier-Liste ───────────────────────────
+// ── Supabase-Sync via app_settings (existierende Tabelle mit RLS) ─────────────
+// Wir verwenden app_settings statt app_kv_store, da app_settings bereits in der
+// Datenbank vorhanden ist. value-Spalte ist JSONB → kein JSON.stringify nötig.
+
+async function settingsGet<T>(key: string): Promise<{ found: true; value: T } | { found: false; error?: string }> {
+  const { data, error } = await supabase
+    .from('app_settings').select('value').eq('key', key).maybeSingle();
+  if (error) return { found: false, error: `${error.code}: ${error.message}` };
+  if (!data?.value) return { found: false };
+  return { found: true, value: data.value as T };
+}
+
+async function settingsSave(key: string, value: unknown): Promise<string | null> {
+  const { error } = await supabase.from('app_settings')
+    .upsert({ key, value: value as object }, { onConflict: 'key' });
+  return error ? `${error.code}: ${error.message}` : null;
+}
+
+// ── Produktdaten ──────────────────────────────────────────────────────────────
 
 export async function loadProdukteDataFromDB(): Promise<ProdukteData | null> {
   try {
-    const { data, error } = await supabase
-      .from('app_kv_store').select('value').eq('key', STORAGE_KEY).maybeSingle();
-    if (error || !data?.value) return loadProdukteData();
-    const parsed: ProdukteData = JSON.parse(data.value);
-    localStorage.setItem(STORAGE_KEY, data.value);
-    return parsed;
-  } catch { return loadProdukteData(); }
+    const result = await settingsGet<ProdukteData>(STORAGE_KEY);
+
+    if (!result.found) {
+      if ('error' in result) {
+        console.error('[Produkte] Supabase Ladefehler:', result.error);
+      }
+      // Supabase leer oder Fehler → localStorage prüfen und ggf. sync
+      const local = loadProdukteData();
+      if (local && (local.entries?.length ?? 0) > 0) {
+        console.log('[Produkte] Supabase leer – sync localStorage→Supabase:', local.entries.length, 'Einträge');
+        saveProdukteDataToDB(local); // fire-and-forget
+      } else {
+        console.log('[Produkte] Keine Daten in Supabase und kein localStorage');
+      }
+      return local;
+    }
+
+    const dbData = result.value;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(dbData));
+    console.log('[Produkte] Aus Supabase (app_settings) geladen:', dbData.entries?.length, 'Einträge');
+    return dbData;
+  } catch (err) {
+    console.error('[Produkte] loadProdukteDataFromDB Exception:', err);
+    return loadProdukteData();
+  }
 }
 
 export async function saveProdukteDataToDB(data: ProdukteData): Promise<void> {
-  const value = JSON.stringify(data);
-  localStorage.setItem(STORAGE_KEY, value);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   try {
-    await supabase.from('app_kv_store')
-      .upsert({ key: STORAGE_KEY, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
-  } catch { /* fallback: localStorage only */ }
+    const err = await settingsSave(STORAGE_KEY, data);
+    if (err) console.error('[Produkte] Supabase Speicherfehler:', err);
+    else console.log('[Produkte] Nach Supabase (app_settings) gespeichert:', data.entries?.length, 'Einträge');
+  } catch (err) { console.error('[Produkte] saveProdukteDataToDB Exception:', err); }
 }
+
+// ── Ignorier-Liste ────────────────────────────────────────────────────────────
 
 export async function loadIgnoredProductsFromDB(): Promise<string[]> {
   try {
-    const { data, error } = await supabase
-      .from('app_kv_store').select('value').eq('key', IGNORED_KEY).maybeSingle();
-    if (error || !data?.value) return loadIgnoredProducts();
-    const parsed: string[] = JSON.parse(data.value);
-    localStorage.setItem(IGNORED_KEY, data.value);
+    const result = await settingsGet<string[]>(IGNORED_KEY);
+    if (!result.found) {
+      const local = loadIgnoredProducts();
+      if (local.length > 0) saveIgnoredProductsToDB(local);
+      return local;
+    }
+    const parsed = result.value;
+    localStorage.setItem(IGNORED_KEY, JSON.stringify(parsed));
     return parsed;
-  } catch { return loadIgnoredProducts(); }
+  } catch (err) {
+    console.error('[Produkte] loadIgnoredProductsFromDB Exception:', err);
+    return loadIgnoredProducts();
+  }
 }
 
 export async function saveIgnoredProductsToDB(list: string[]): Promise<void> {
-  const value = JSON.stringify(list);
-  localStorage.setItem(IGNORED_KEY, value);
+  localStorage.setItem(IGNORED_KEY, JSON.stringify(list));
   try {
-    await supabase.from('app_kv_store')
-      .upsert({ key: IGNORED_KEY, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
-  } catch { /* fallback: localStorage only */ }
+    const err = await settingsSave(IGNORED_KEY, list);
+    if (err) console.error('[Produkte] saveIgnoredProductsToDB Fehler:', err);
+  } catch { /* localStorage bleibt Fallback */ }
 }
 
 // ── Gastronovi Excel-Parser ────────────────────────────────────────────────────
@@ -561,42 +604,29 @@ export function getAvailableMonths(entries: ProductEntry[], category: 'food' | '
   return Array.from(set).filter(m => m !== 'gesamt').sort();
 }
 
-// ── Supabase-Sync für Produktkosten ───────────────────────────────────────────
+// ── Supabase-Sync für Produktkosten (via app_settings) ───────────────────────
 const DB_KV_KEY = 'produkte_cost_v1';
 
-/**
- * Lädt Produktkosten aus Supabase (app_kv_store).
- * Fällt auf localStorage zurück wenn nicht eingeloggt oder kein Netz.
- */
 export async function loadProductCostsFromDB(): Promise<ProductCostEntry[]> {
   try {
-    const { data, error } = await supabase
-      .from('app_kv_store')
-      .select('value')
-      .eq('key', DB_KV_KEY)
-      .maybeSingle();
-    if (error || !data?.value) return loadProductCosts(); // localStorage-Fallback
-    const parsed: ProductCostEntry[] = JSON.parse(data.value);
-    // Lokalen Cache aktualisieren
-    localStorage.setItem(DB_KV_KEY, data.value);
-    return parsed;
+    const result = await settingsGet<ProductCostEntry[]>(DB_KV_KEY);
+    if (!result.found) {
+      if ('error' in result) console.error('[Produkte] WES Ladefehler:', result.error);
+      const local = loadProductCosts();
+      if (local.length > 0) saveProductCostsToDB(local); // einmalige Migration
+      return local;
+    }
+    localStorage.setItem(DB_KV_KEY, JSON.stringify(result.value));
+    return result.value;
   } catch {
     return loadProductCosts();
   }
 }
 
-/**
- * Speichert Produktkosten in Supabase (app_kv_store) UND localStorage.
- */
 export async function saveProductCostsToDB(costs: ProductCostEntry[]): Promise<void> {
-  const value = JSON.stringify(costs);
-  // Immer sofort lokal speichern (kein Warten auf Netz)
-  localStorage.setItem(DB_KV_KEY, value);
+  localStorage.setItem(DB_KV_KEY, JSON.stringify(costs));
   try {
-    await supabase
-      .from('app_kv_store')
-      .upsert({ key: DB_KV_KEY, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
-  } catch {
-    // Netzfehler → nur localStorage
-  }
+    const err = await settingsSave(DB_KV_KEY, costs);
+    if (err) console.error('[Produkte] WES Speicherfehler:', err);
+  } catch { /* localStorage bleibt Fallback */ }
 }
