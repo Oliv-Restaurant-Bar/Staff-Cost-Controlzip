@@ -46,7 +46,6 @@ type ViewTab   = 'monat' | 'jahr';
 
 const TOP_OPTIONS  = [10, 20, 50, 100];
 const FLOP_OPTIONS = [10, 20, 50];
-const PM_OPTIONS   = [3, 5, 10];
 
 // ── Kompakte Monatskarte ─────────────────────────────────────────────────────
 function MonthCard({
@@ -121,7 +120,6 @@ export default function ProdukteSeite() {
   const [view, setView]               = useState<ViewTab>('monat');
   const [topN, setTopN]               = useState(20);
   const [flopN, setFlopN]             = useState(10);
-  const [pmN, setPmN]                 = useState(5);
   const [selectedMonth, setMonth]     = useState<string>('');
   const [importing, setImporting]     = useState<'anzahl' | 'umsatz' | null>(null);
   const [showIgnored, setShowIgnored] = useState(false);
@@ -271,11 +269,11 @@ export default function ProdukteSeite() {
 
               {/* N-Auswahl */}
               <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
-                {(view === 'jahr' ? PM_OPTIONS : nOptions).map(n => (
+                {nOptions.map(n => (
                   <button key={n}
-                    onClick={() => view === 'jahr' ? setPmN(n) : setN(n)}
+                    onClick={() => setN(n)}
                     className={cn('px-2 py-1 text-xs font-medium rounded-md transition-all',
-                      (view === 'jahr' ? pmN : currentN) === n
+                      currentN === n
                         ? 'bg-background text-foreground shadow-sm'
                         : 'text-muted-foreground hover:text-foreground')}>
                     {isFlop ? 'Flop' : 'Top'} {n}
@@ -443,7 +441,7 @@ export default function ProdukteSeite() {
             <div className="flex items-center gap-2">
               <LayoutGrid className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-semibold">
-                {isFlop ? 'Flop' : 'Top'} {pmN} pro Monat
+                {isFlop ? 'Flop' : 'Top'} {currentN} pro Monat
               </span>
               <span className="text-xs text-muted-foreground">
                 · {sortBy === 'count' ? 'Nach Anzahl' : 'Nach Umsatz'} · {monthsOnly.length} Monate
@@ -461,7 +459,7 @@ export default function ProdukteSeite() {
                     ignoredByUser={ignoredByUser}
                     sortBy={sortBy}
                     mode={mode}
-                    n={pmN}
+                    n={currentN}
                   />
                 ))}
               </div>
