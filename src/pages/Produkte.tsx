@@ -2,6 +2,7 @@ import { useState, useRef, useMemo } from 'react';
 import {
   Upload, Trash2, Package, TrendingUp, TrendingDown,
   Hash, RotateCcw, ChevronDown, X, Award, CalendarDays, LayoutGrid,
+  AlertTriangle, CheckSquare,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -123,6 +124,12 @@ export default function ProdukteSeite() {
   const [selectedMonth, setMonth]     = useState<string>('');
   const [importing, setImporting]     = useState<'anzahl' | 'umsatz' | null>(null);
   const [showIgnored, setShowIgnored] = useState(false);
+  const [pendingImport, setPendingImport] = useState<{
+    type: 'anzahl' | 'umsatz';
+    parsed: import('@/lib/produkte-store').ProductEntry[];
+    overlappingMonths: string[];
+    fileName: string;
+  } | null>(null);
 
   const anzahlRef = useRef<HTMLInputElement>(null);
   const umsatzRef = useRef<HTMLInputElement>(null);
@@ -162,19 +169,53 @@ export default function ProdukteSeite() {
         });
         return;
       }
-      const merged  = mergeProdukteData(data?.entries ?? [], parsed, type);
-      const newData: ProdukteData = { entries: merged, importedAt: new Date().toISOString(), source: 'combined' };
-      saveProdukteData(newData);
-      setData(newData);
-      toast.success(`${type === 'anzahl' ? 'Anzahl' : 'Umsatz'}-Daten importiert`, {
-        description: `${parsed.length} Einträge aus ${file.name}`,
-      });
+
+      // Prüfe ob Monate bereits vorhanden
+      const existingMonths = new Set(
+        (data?.entries ?? [])
+          .filter(e => e.count > 0 || e.revenue > 0)
+          .map(e => e.month)
+      );
+      const newMonths = [...new Set(parsed.map(e => e.month))];
+      const overlappingMonths = newMonths.filter(m => existingMonths.has(m));
+
+      if (overlappingMonths.length > 0) {
+        setPendingImport({ type, parsed, overlappingMonths, fileName: file.name });
+        return;
+      }
+
+      applyImport(parsed, type, file.name);
     } catch (err) {
       toast.error('Import fehlgeschlagen', { description: String(err) });
     } finally {
       setImporting(null);
       e.target.value = '';
     }
+  };
+
+  const applyImport = (
+    parsed: import('@/lib/produkte-store').ProductEntry[],
+    type: 'anzahl' | 'umsatz',
+    fileName: string,
+  ) => {
+    const merged = mergeProdukteData(data?.entries ?? [], parsed, type);
+    const newData: ProdukteData = { entries: merged, importedAt: new Date().toISOString(), source: 'combined' };
+    saveProdukteData(newData);
+    setData(newData);
+    toast.success(`${type === 'anzahl' ? 'Anzahl' : 'Umsatz'}-Daten importiert`, {
+      description: `${parsed.length} Einträge aus ${fileName}`,
+    });
+  };
+
+  const confirmImport = () => {
+    if (!pendingImport) return;
+    applyImport(pendingImport.parsed, pendingImport.type, pendingImport.fileName);
+    setPendingImport(null);
+  };
+
+  const cancelImport = () => {
+    setPendingImport(null);
+    toast.info('Import abgebrochen');
   };
 
   const ignoreProduct = (name: string) => {
@@ -496,6 +537,51 @@ export default function ProdukteSeite() {
           </div>
         )}
       </main>
+
+      {/* ── Duplikat-Bestätigung ──────────────────────────────────────────────── */}
+      {pendingImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-md p-6 space-y-5">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-amber-500 mt-0.5 shrink-0" />
+              <div>
+                <h2 className="text-sm font-bold">Daten bereits vorhanden</h2>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Die Datei <span className="font-medium text-foreground">«{pendingImport.fileName}»</span> enthält
+                  Monate, die bereits importiert wurden:
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3">
+              <ul className="space-y-1">
+                {pendingImport.overlappingMonths.map(m => (
+                  <li key={m} className="flex items-center gap-2 text-xs">
+                    <CheckSquare className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                    <span className="font-medium text-amber-800 dark:text-amber-200">
+                      {formatMonthLong(m)}
+                    </span>
+                    <span className="text-amber-600 dark:text-amber-400">wird überschrieben</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Willst du die bestehenden Daten für diese Monate durch die neuen Werte aus der Datei ersetzen?
+            </p>
+
+            <div className="flex gap-3 justify-end">
+              <Button variant="outline" size="sm" onClick={cancelImport}>
+                Abbrechen
+              </Button>
+              <Button size="sm" className="bg-amber-500 hover:bg-amber-600 text-white" onClick={confirmImport}>
+                Trotzdem importieren & überschreiben
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
