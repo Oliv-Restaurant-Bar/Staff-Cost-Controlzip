@@ -620,7 +620,13 @@ function getCatPY(
   rec: MonthlyFinancialRecord | undefined,
   prevRec?: MonthlyFinancialRecord,
 ): number {
-  // Bevorzuge Ist-Daten aus dem Vorjahresdatensatz (z.B. 2025-Actual)
+  // Manuelle Eingabe hat immer höchste Priorität (überschreibt Vorjahres-Ist)
+  if (rec && catId === 'pl_revenue') {
+    const manual = (rec as any).revenuePreviousYear as number | undefined;
+    if (manual && manual !== 0) return manual;
+  }
+
+  // Automatisch: Ist-Daten aus dem Vorjahresdatensatz (z.B. 2025-Actual)
   if (prevRec) {
     if (catId === 'pl_revenue') {
       const fromActual = prevRec.revenueActual ?? 0;
