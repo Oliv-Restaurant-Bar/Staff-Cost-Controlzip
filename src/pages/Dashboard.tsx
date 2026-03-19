@@ -178,6 +178,8 @@ const PERIOD_LABELS: Record<Period, string> = {
   year:  'Jahr',
 };
 
+type DashView = 'alle' | 'umsatz' | 'personal';
+
 const Dashboard = () => {
   const today = useMemo(() => new Date(), []);
   const [referenceDate, setReferenceDate] = useState<Date>(() => new Date());
@@ -226,6 +228,9 @@ const Dashboard = () => {
   const deptIcon = allowedDepartment === 'service' ? <Utensils className="h-4 w-4" />
     : allowedDepartment === 'küche' ? <ChefHat className="h-4 w-4" />
     : <Users className="h-4 w-4" />;
+
+  // ── Dashboard-Ansicht ───────────────────────────────────────────────────────
+  const [dashView, setDashView] = useState<DashView>('alle');
 
   // ── Rohdaten ────────────────────────────────────────────────────────────────
   const [employees, setEmployees]       = useState<Employee[]>([]);
@@ -731,6 +736,10 @@ const Dashboard = () => {
     ? revenueIstEffective - prevYearEffective
     : null;
 
+  // ── Ansicht-Filter-Helfer ────────────────────────────────────────────────────
+  const showUmsatz   = dashView === 'alle' || dashView === 'umsatz';
+  const showPersonal = dashView === 'alle' || dashView === 'personal';
+
   // ─── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background">
@@ -848,6 +857,30 @@ const Dashboard = () => {
               </Button>
             </div>
           </div>
+
+          {/* ── Ansicht-Filter ─────────────────────────────────────────────── */}
+          <div className="border-t border-border/60 pt-2 pb-0.5 flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-muted-foreground font-medium mr-1">Ansicht:</span>
+            {([
+              { id: 'alle',     label: 'Alle',     icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { id: 'umsatz',   label: 'Umsatz',   icon: <TrendingUp className="h-3.5 w-3.5" /> },
+              { id: 'personal', label: 'Personal',  icon: <Users className="h-3.5 w-3.5" /> },
+            ] as { id: DashView; label: string; icon: React.ReactNode }[]).map(v => (
+              <button
+                key={v.id}
+                onClick={() => setDashView(v.id)}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border',
+                  dashView === v.id
+                    ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                    : 'bg-background text-muted-foreground border-border hover:border-primary/50 hover:text-foreground',
+                )}
+              >
+                {v.icon}
+                {v.label}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -865,7 +898,7 @@ const Dashboard = () => {
             <StichtagBanner />
 
             {/* ── Warnung: Kostenquote überschritten ───────────────────────── */}
-            {canSeePersonnelCostTotals && plannedRatioStatus === 'high' && (
+            {showPersonal && canSeePersonnelCostTotals && plannedRatioStatus === 'high' && (
               <div className="flex items-start gap-3 rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/20 dark:border-red-800 p-4">
                 <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
                 <div>
@@ -880,7 +913,7 @@ const Dashboard = () => {
               </div>
             )}
 
-            {canSeePersonnelCostTotals && plannedRatioStatus === 'good' && plannedCostRatio !== null && (
+            {showPersonal && canSeePersonnelCostTotals && plannedRatioStatus === 'good' && plannedCostRatio !== null && (
               <div className="flex items-start gap-3 rounded-lg border border-green-300 bg-green-50 dark:bg-green-950/20 dark:border-green-800 p-4">
                 <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
                 <div>
@@ -895,7 +928,7 @@ const Dashboard = () => {
             )}
 
             {/* ── Admin: Umsatz ────────────────────────────────────────────── */}
-            {isAdmin && (
+            {isAdmin && showUmsatz && (
               <>
                 <SectionTitle icon={<TrendingUp className="h-4 w-4" />}>
                   Umsatz · {PERIOD_LABELS[period]}
@@ -1008,7 +1041,7 @@ const Dashboard = () => {
             )}
 
             {/* ── Jahresbudget-Vergleich ───────────────────────────────────── */}
-            {budgetData.hasBudget && (
+            {budgetData.hasBudget && showUmsatz && (
               <>
                 <SectionTitle icon={<BookOpen className="h-4 w-4" />}>
                   Jahresbudget-Vergleich · {monthName}
@@ -1374,7 +1407,7 @@ const Dashboard = () => {
             )}
 
             {/* ── Personalkosten ───────────────────────────────────────────── */}
-            {canSeePersonnelCostTotals && (
+            {canSeePersonnelCostTotals && showPersonal && (
               <>
                 <SectionTitle icon={deptIcon}>
                   Personalkosten {deptLabel} · {monthName}
@@ -1561,7 +1594,7 @@ const Dashboard = () => {
             )}
 
             {/* ── Stunden ──────────────────────────────────────────────────── */}
-            {canSeePersonnelCostTotals && (
+            {canSeePersonnelCostTotals && showPersonal && (
               <>
                 <SectionTitle icon={<Clock className="h-4 w-4" />}>
                   Stunden {deptLabel} · {monthName}
@@ -1598,7 +1631,7 @@ const Dashboard = () => {
             )}
 
             {/* ── Personalkosten-Vergleich: Dienstplan vs. Buchhaltung ─────── */}
-            {canSeePersonnelCostTotals && (actualLaborCost > 0 || accountingPersonnelCost > 0) && (
+            {canSeePersonnelCostTotals && showPersonal && (actualLaborCost > 0 || accountingPersonnelCost > 0) && (
               <>
                 <SectionTitle icon={<Scale className="h-4 w-4" />}>
                   Personalkosten-Vergleich · {monthName}
