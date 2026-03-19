@@ -13,12 +13,13 @@
  * Nur für Administratoren zugänglich.
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -179,19 +180,32 @@ function UploadZone({ onFile, parsing }: UploadZoneProps) {
 interface PreviewTableProps {
   rows: MatchedCSVRow[];
   emptyLabel: string;
+  selectedIndices: Set<number>;
+  onToggle: (index: number) => void;
+  onToggleAll: (selectAll: boolean) => void;
 }
 
-function PreviewTable({ rows, emptyLabel }: PreviewTableProps) {
+function PreviewTable({ rows, emptyLabel, selectedIndices, onToggle, onToggleAll }: PreviewTableProps) {
   if (rows.length === 0) {
     return (
       <div className="py-10 text-center text-muted-foreground text-sm">{emptyLabel}</div>
     );
   }
+  const allSelected = selectedIndices.size === rows.length;
+  const someSelected = selectedIndices.size > 0 && !allSelected;
   return (
     <div className="overflow-auto max-h-96">
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-10">
+              <Checkbox
+                checked={allSelected}
+                data-state={someSelected ? 'indeterminate' : undefined}
+                onCheckedChange={(v) => onToggleAll(!!v)}
+                aria-label="Alle auswählen"
+              />
+            </TableHead>
             <TableHead className="w-20">Konto</TableHead>
             <TableHead>Bezeichnung</TableHead>
             <TableHead className="text-right">Betrag CHF</TableHead>
@@ -201,24 +215,40 @@ function PreviewTable({ rows, emptyLabel }: PreviewTableProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((row, i) => (
-            <TableRow key={i} className={row.status === 'unresolved' ? 'bg-red-50/50' : ''}>
-              <TableCell className="font-mono text-xs">{row.parsed.accountNumber}</TableCell>
-              <TableCell className="text-sm">{row.parsed.accountName}</TableCell>
-              <TableCell className="text-right font-mono text-sm">
-                {formatAmount(row.parsed.amount)}
-              </TableCell>
-              <TableCell className="text-sm">
-                {row.status === 'unresolved'
-                  ? <span className="text-muted-foreground italic">—</span>
-                  : row.plCategoryLabel}
-              </TableCell>
-              <TableCell className="text-xs text-muted-foreground">
-                {row.status === 'unresolved' ? '—' : row.plSection}
-              </TableCell>
-              <TableCell>{statusBadge(row.status)}</TableCell>
-            </TableRow>
-          ))}
+          {rows.map((row, i) => {
+            const checked = selectedIndices.has(i);
+            return (
+              <TableRow
+                key={i}
+                className={cn(
+                  row.status === 'unresolved' ? 'bg-red-50/50' : '',
+                  !checked ? 'opacity-40' : '',
+                )}
+              >
+                <TableCell>
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={() => onToggle(i)}
+                    aria-label={`Zeile ${i + 1} auswählen`}
+                  />
+                </TableCell>
+                <TableCell className="font-mono text-xs">{row.parsed.accountNumber}</TableCell>
+                <TableCell className="text-sm">{row.parsed.accountName}</TableCell>
+                <TableCell className="text-right font-mono text-sm">
+                  {formatAmount(row.parsed.amount)}
+                </TableCell>
+                <TableCell className="text-sm">
+                  {row.status === 'unresolved'
+                    ? <span className="text-muted-foreground italic">—</span>
+                    : row.plCategoryLabel}
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {row.status === 'unresolved' ? '—' : row.plSection}
+                </TableCell>
+                <TableCell>{statusBadge(row.status)}</TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>
@@ -351,6 +381,7 @@ export default function CSVImportPage() {
   const [importMode, setImportMode]         = useState<'replace' | 'update'>('update');
   const [savedMonth, setSavedMonth]         = useState<{ year: number; month: number } | null>(null);
   const [loading, setLoading]               = useState(false);
+  const [selectedMatchedIndices, setSelectedMatchedIndices] = useState<Set<number>>(new Set());
 
   if (!isAdmin) {
     return (
@@ -378,6 +409,7 @@ export default function CSVImportPage() {
 
         setParseResult(matchResult);
         setWarnings(matchResult.warnings);
+        setSelectedMatchedIndices(new Set(matchResult.matched.map((_, i) => i)));
 
         // Erkannten Monat/Jahr vorbelegen
         if (pdfResult.detectedYear) setYear(pdfResult.detectedYear);
@@ -404,6 +436,7 @@ export default function CSVImportPage() {
 
         setParseResult(matchResult);
         setWarnings(matchResult.warnings);
+        setSelectedMatchedIndices(new Set(matchResult.matched.map((_, i) => i)));
 
         if (excelResult.detectedYear) setYear(excelResult.detectedYear);
         if (excelResult.detectedMonth) setMonth(excelResult.detectedMonth);
@@ -424,6 +457,7 @@ export default function CSVImportPage() {
       const { parseResult: result, warnings: w } = processCSV(text);
       setParseResult(result);
       setWarnings(w);
+      setSelectedMatchedIndices(new Set(result.matched.map((_, i) => i)));
     }
   }
 
@@ -473,10 +507,31 @@ export default function CSVImportPage() {
     const allParsed = [...parseResult.matched, ...parseResult.unresolved].map(r => r.parsed);
     const newResult = matchCSVRows(allParsed);
     setParseResult(newResult);
+    setSelectedMatchedIndices(new Set(newResult.matched.map((_, i) => i)));
 
     toast.success(
       `Konto ${accountNumber} «${accountName}» → ${getCategoryLabel(plCategory)} gespeichert`,
     );
+  }
+
+  // ─── Zeilen-Selektion ─────────────────────────────────────────────────────
+
+  function toggleMatchedRow(index: number) {
+    setSelectedMatchedIndices(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  function toggleAllMatchedRows(selectAll: boolean) {
+    if (!parseResult) return;
+    if (selectAll) {
+      setSelectedMatchedIndices(new Set(parseResult.matched.map((_, i) => i)));
+    } else {
+      setSelectedMatchedIndices(new Set());
+    }
   }
 
   // ─── Speichern ────────────────────────────────────────────────────────────
@@ -485,8 +540,9 @@ export default function CSVImportPage() {
     if (!parseResult) return;
     setLoading(true);
 
+    const selectedMatched = parseResult.matched.filter((_, i) => selectedMatchedIndices.has(i));
     const config: ImportConfig = { year, month, dataType, mode: importMode, fileName };
-    const record = buildMonthRecord(parseResult.matched, parseResult.unresolved, config);
+    const record = buildMonthRecord(selectedMatched, parseResult.unresolved, config);
 
     try {
       const source: import('@/types/reporting').ImportSource =
@@ -523,12 +579,13 @@ export default function CSVImportPage() {
 
   // ─── Hilfswerte ───────────────────────────────────────────────────────────
 
-  const revenueTotal = parseResult
-    ? parseResult.matched.filter(r => r.sign === 'income').reduce((s, r) => s + r.parsed.amount, 0)
-    : 0;
-  const expenseTotal = parseResult
-    ? parseResult.matched.filter(r => r.sign !== 'income').reduce((s, r) => s + r.parsed.amount, 0)
-    : 0;
+  const selectedMatched = useMemo(
+    () => parseResult ? parseResult.matched.filter((_, i) => selectedMatchedIndices.has(i)) : [],
+    [parseResult, selectedMatchedIndices],
+  );
+
+  const revenueTotal = selectedMatched.filter(r => r.sign === 'income').reduce((s, r) => s + r.parsed.amount, 0);
+  const expenseTotal = selectedMatched.filter(r => r.sign !== 'income').reduce((s, r) => s + r.parsed.amount, 0);
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -800,7 +857,9 @@ export default function CSVImportPage() {
             <CardContent className="p-0">
               <Tabs defaultValue="matched">
                 <TabsList className="mx-4 mt-2">
-                  <TabsTrigger value="matched">Zugeordnet ({parseResult.matchedCount})</TabsTrigger>
+                  <TabsTrigger value="matched">
+                    Zugeordnet ({selectedMatchedIndices.size}/{parseResult.matchedCount})
+                  </TabsTrigger>
                   <TabsTrigger
                     value="unresolved"
                     className={parseResult.unresolvedCount > 0 ? 'text-red-600' : ''}
@@ -809,7 +868,13 @@ export default function CSVImportPage() {
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="matched" className="mt-0">
-                  <PreviewTable rows={parseResult.matched} emptyLabel="Keine zugeordneten Zeilen" />
+                  <PreviewTable
+                    rows={parseResult.matched}
+                    emptyLabel="Keine zugeordneten Zeilen"
+                    selectedIndices={selectedMatchedIndices}
+                    onToggle={toggleMatchedRow}
+                    onToggleAll={toggleAllMatchedRows}
+                  />
                 </TabsContent>
                 <TabsContent value="unresolved" className="mt-0">
                   <UnresolvedTable
