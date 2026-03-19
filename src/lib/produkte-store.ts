@@ -75,18 +75,16 @@ export function saveIgnoredProducts(list: string[]): void {
 
 // ── Gastronovi Excel-Parser ────────────────────────────────────────────────────
 /**
- * Gastronovi "Anzahl Rezepte" oder "Umsatz Rezepte" Export.
+ * Gastronovi "Anzahl Rezepte" / "Umsatz Rezepte" Export.
  *
- * Typisches Format:
- *   Zeile 1-N: Header-Info (Firmenname, Zeitraum, etc.)
- *   Dann eine Zeile mit Spaltentiteln
- *   Dann Datenzeilen: Produktname | Wert1 | Wert2 | ...
+ * Zeile 1 (Row 0): Ab Spalte C (Index 2) stehen Tages-Header im Format "DD.MM."
+ *   z.B. "01.01.", "02.01.", ..., "31.01.", "01.02.", ...
+ *   Die ersten zwei Ziffern = Tag, die nächsten zwei Ziffern = Monat.
+ *   Das Jahr fehlt im Header und wird aus dem Dateinamen oder dem aktuellen Jahr abgeleitet.
  *
- * Strategie:
- *   1. Alle Zeilen als rohe Arrays einlesen
- *   2. Erste Zeile finden, in der Spalte 0 Text ist UND Spalte 1+ Zahlen enthält → das ist Datenbeginn
- *   3. Falls es Monats-Spalten gibt (Spaltentitel = Monatsnamen), diese verwenden
- *   4. Ansonsten: alle Zeilen summieren → Spalte "gesamt"
+ * Ab Zeile 2: Datenzeilen — Spalte A = Produktname, Spalten C+ = Tageswerte.
+ *
+ * Aggregation: Alle Tageswerte desselben Monats werden pro Produkt summiert.
  */
 export async function parseProdukteExcel(
   file: File,
@@ -101,8 +99,19 @@ export async function parseProdukteExcel(
     raw: false,
   });
 
-  // Monats-Name → yyyy-MM Mapping (Deutsch)
-  const MONTH_MAP: Record<string, string> = {
+  if (rows.length < 2) return [];
+
+  // Jahr aus Dateinamen extrahieren (z.B. "Anzahl_Rezepte_01.01.-19.03.2026")
+  const yearMatch = file.name.match(/(\d{4})/);
+  const year = yearMatch ? yearMatch[1] : String(new Date().getFullYear());
+
+  // ── Header-Zeile analysieren ───────────────────────────────────────────────
+  // Suche die Zeile mit den Datumsangaben (DD.MM.) — meistens Zeile 0 oder 1
+  // Regex: "01.01." = Tag.Monat. (mit oder ohne trailing point)
+  const DAY_COL_RE = /^(\d{1,2})\.(\d{2})\.?$/;
+
+  // Monatsname-Fallback für alternative Formate
+  const MONTH_NAME_MAP: Record<string, string> = {
     januar: '01', jänner: '01', jan: '01',
     februar: '02', feb: '02',
     märz: '03', maerz: '03', mar: '03',
@@ -117,78 +126,88 @@ export async function parseProdukteExcel(
     dezember: '12', dez: '12',
   };
 
-  // Jahr aus Dateinamen oder aktuell ableiten
-  const yearMatch = file.name.match(/(\d{4})/);
-  const year = yearMatch ? yearMatch[1] : String(new Date().getFullYear());
-
-  // Finde Header-Zeile (Zeile mit Spaltentiteln)
   let headerRowIdx = -1;
-  let dataColMap: { colIdx: number; month: string }[] = []; // Spalten mit Monatszuordnung
+  // colMap: Spaltenindex → Monat 'YYYY-MM'
+  const colMonthMap: Map<number, string> = new Map();
 
-  for (let r = 0; r < rows.length; r++) {
+  for (let r = 0; r < Math.min(rows.length, 5); r++) {
     const row = rows[r];
     if (!row) continue;
-    // Suche Zeile die "Artikel" / "Rezept" / "Produkt" oder Monatsnamen enthält
-    const cellsLower = row.map(c => String(c ?? '').toLowerCase().trim());
-    const hasMonthCol = cellsLower.some(c => Object.keys(MONTH_MAP).some(m => c.startsWith(m)));
-    const hasProductCol = cellsLower.some(c =>
-      c.includes('rezept') || c.includes('artikel') || c.includes('produkt') || c.includes('bezeich'),
-    );
 
-    if (hasMonthCol || hasProductCol) {
-      headerRowIdx = r;
-      // Analysiere Spalten
-      for (let c = 0; c < row.length; c++) {
-        const cell = String(row[c] ?? '').toLowerCase().trim();
-        if (!cell) continue;
-        for (const [mName, mNum] of Object.entries(MONTH_MAP)) {
-          if (cell.startsWith(mName)) {
-            dataColMap.push({ colIdx: c, month: `${year}-${mNum}` });
-            break;
-          }
+    let dayColCount = 0;
+    let monthColCount = 0;
+    const tempMap: Map<number, string> = new Map();
+
+    for (let c = 0; c < row.length; c++) {
+      const cell = String(row[c] ?? '').trim();
+      if (!cell) continue;
+
+      // Format "DD.MM." → Tages-Spalten (Gastronovi-typisch)
+      const dayMatch = cell.match(DAY_COL_RE);
+      if (dayMatch) {
+        const mm = dayMatch[2].padStart(2, '0');
+        tempMap.set(c, `${year}-${mm}`);
+        dayColCount++;
+        continue;
+      }
+
+      // Fallback: Monatsnamen
+      const cellLower = cell.toLowerCase();
+      for (const [mName, mNum] of Object.entries(MONTH_NAME_MAP)) {
+        if (cellLower.startsWith(mName)) {
+          tempMap.set(c, `${year}-${mNum}`);
+          monthColCount++;
+          break;
         }
       }
+    }
+
+    if (dayColCount >= 3 || monthColCount >= 2) {
+      headerRowIdx = r;
+      tempMap.forEach((v, k) => colMonthMap.set(k, v));
       break;
     }
   }
 
-  // Wenn keine Monatsspalten gefunden → alle numerischen Spalten als "gesamt"
-  const hasMonthColumns = dataColMap.length > 0;
-
   const entries: ProductEntry[] = [];
-  const dataStartRow = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
 
-  for (let r = dataStartRow; r < rows.length; r++) {
-    const row = rows[r];
-    if (!row) continue;
+  // ── Datenzeilen verarbeiten ────────────────────────────────────────────────
+  if (colMonthMap.size > 0 && headerRowIdx >= 0) {
+    // Tages-/Monats-Spalten gefunden → aggregiere pro Monat
+    for (let r = headerRowIdx + 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row) continue;
 
-    // Produktname ist typischerweise erste nicht-leere Text-Spalte
-    const nameRaw = String(row[0] ?? '').trim();
-    if (!nameRaw || nameRaw.length < 2) continue;
-    // Überspringe Summen-/Total-Zeilen
-    const nameLower = nameRaw.toLowerCase();
-    if (nameLower.startsWith('total') || nameLower.startsWith('gesamt') ||
-        nameLower.startsWith('summe') || nameLower === 'alle') continue;
+      const nameRaw = String(row[0] ?? '').trim();
+      if (!nameRaw || nameRaw.length < 2) continue;
+      const nameLower = nameRaw.toLowerCase();
+      if (nameLower.startsWith('total') || nameLower.startsWith('gesamt') ||
+          nameLower.startsWith('summe') || nameLower === 'alle') continue;
 
-    if (hasMonthColumns) {
-      for (const { colIdx, month } of dataColMap) {
+      // Summiere Tageswerte pro Monat
+      for (const [colIdx, month] of colMonthMap) {
         const val = parseGastronomyNumber(row[colIdx]);
         if (val <= 0) continue;
         upsertEntry(entries, nameRaw, month, type, val);
       }
-    } else {
-      // Suche ersten numerischen Wert in den Spalten 1+
-      let foundVal = 0;
+    }
+  } else {
+    // Fallback: Keine erkannten Spalten → alles als "gesamt" importieren
+    const dataStart = headerRowIdx >= 0 ? headerRowIdx + 1 : 1;
+    for (let r = dataStart; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row) continue;
+      const nameRaw = String(row[0] ?? '').trim();
+      if (!nameRaw || nameRaw.length < 2) continue;
+      const nameLower = nameRaw.toLowerCase();
+      if (nameLower.startsWith('total') || nameLower.startsWith('gesamt') ||
+          nameLower.startsWith('summe') || nameLower === 'alle') continue;
+
+      let total = 0;
       for (let c = 1; c < row.length; c++) {
-        const v = parseGastronomyNumber(row[c]);
-        if (v > 0) { foundVal = v; break; }
+        total += parseGastronomyNumber(row[c]);
       }
-      if (foundVal > 0) {
-        // Versuche Datum aus zweiter Spalte zu lesen
-        const dateCell = String(row[1] ?? '').trim();
-        const month = extractMonth(dateCell, year);
-        upsertEntry(entries, nameRaw, month, type, foundVal);
-      }
+      if (total > 0) upsertEntry(entries, nameRaw, 'gesamt', type, total);
     }
   }
 
