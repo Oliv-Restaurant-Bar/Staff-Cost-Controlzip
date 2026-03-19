@@ -57,6 +57,22 @@ import { StichtagBanner } from '@/components/StichtagBanner';
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
 const currentYear = new Date().getFullYear();
+
+/** Summiert ein Tagesdaten-Feld (z.B. actualRevenue) für einen bestimmten Monat */
+function sumDailyBudgetField(
+  db: Record<string, Record<string, number>>,
+  yr: number,
+  mo: number,
+  field: string,
+): number {
+  const daysInMonth = new Date(yr, mo, 0).getDate();
+  let sum = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${yr}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    sum += (db[key]?.[field] as number) ?? 0;
+  }
+  return sum;
+}
 const currentMonth = new Date().getMonth() + 1;
 
 function varianceColor(actual?: number, budget?: number): string {
@@ -514,8 +530,31 @@ const Reporting = () => {
   const [editRecord, setEditRecord]   = useState<MonthlyFinancialRecord | null>(null);
   const [highlightVariance, setHighlightVariance] = useState(false);
 
+  // Gastronovi-Tagesdaten aus localStorage (gleiche Logik wie Erfolgsrechnung)
+  const dailyBudgetsData = useMemo<Record<string, Record<string, number>>>(() => {
+    try { return JSON.parse(localStorage.getItem('dailyBudgets') || '{}'); }
+    catch { return {}; }
+  }, [year, months]);
+
+  // Effektive Monatsdaten: Gastronovi-Tagesdaten als Fallback für fehlenden Ist-Umsatz
+  const effectiveMonths = useMemo<MonthlyFinancialRecord[]>(() => {
+    return months.map((rec, idx) => {
+      const m = idx + 1;
+      let r = rec;
+      if (!r.revenueActual) {
+        const dailyRev = sumDailyBudgetField(dailyBudgetsData, year, m, 'actualRevenue');
+        if (dailyRev > 0) r = { ...r, revenueActual: dailyRev };
+      }
+      if (!r.revenuePreviousYear) {
+        const fromCurrent = sumDailyBudgetField(dailyBudgetsData, year, m, 'previousYearRevenue');
+        if (fromCurrent > 0) r = { ...r, revenuePreviousYear: fromCurrent };
+      }
+      return r;
+    });
+  }, [months, year, dailyBudgetsData]);
+
   const summary = useMemo(() => calcAnnualSummary(year), [year, months]);
-  const chartData = useMemo(() => buildChartData(months), [months]);
+  const chartData = useMemo(() => buildChartData(effectiveMonths), [effectiveMonths]);
   const threshold = useMemo(
     () => parseInt(localStorage.getItem('labor_cost_threshold') || '40'),
     [],
@@ -530,7 +569,7 @@ const Reporting = () => {
     setMonths(loadYear(y));
   };
 
-  const hasAnyData = months.some(m =>
+  const hasAnyData = effectiveMonths.some(m =>
     m.revenueActual !== undefined || m.personnelCostActual !== undefined
   );
 
@@ -757,7 +796,7 @@ const Reporting = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {months.map(m => {
+                  {effectiveMonths.map(m => {
                     const completeness = calcCompleteness(m);
                     const isEmpty = !m.revenueActual && !m.revenueBudget &&
                       !m.personnelCostActual && !m.personnelCostPlanned &&
