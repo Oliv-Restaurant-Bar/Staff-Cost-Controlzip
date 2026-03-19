@@ -23,6 +23,10 @@ import {
   saveProductCosts,
   saveProductCostsToDB,
   loadProductCostsFromDB,
+  saveProdukteDataToDB,
+  loadProdukteDataFromDB,
+  saveIgnoredProductsToDB,
+  loadIgnoredProductsFromDB,
   mergeProductCosts,
   parseCostExcel,
   type ProdukteData,
@@ -145,8 +149,19 @@ export default function ProdukteSeite() {
   const [costs, setCosts] = useState<ProductCostEntry[]>(() => loadProductCosts());
   const [importingCost, setImportingCost] = useState(false);
 
-  // Beim Start: Kosten aus Supabase laden (überschreibt localStorage-Cache)
+  // Beim Start: alle Daten aus Supabase laden (domain-unabhängig)
   useEffect(() => {
+    loadProdukteDataFromDB().then(dbData => {
+      if (dbData) {
+        console.log('[Produkte] DB-Daten geladen:', dbData.entries?.length, 'Einträge');
+        setData(dbData);
+      } else {
+        console.log('[Produkte] Keine DB-Daten, localStorage-Fallback aktiv');
+      }
+    });
+    loadIgnoredProductsFromDB().then(dbIgnored => {
+      if (dbIgnored.length > 0) setIgnored(dbIgnored);
+    });
     loadProductCostsFromDB().then(dbCosts => {
       if (dbCosts.length > 0) setCosts(dbCosts);
     });
@@ -340,7 +355,7 @@ export default function ProdukteSeite() {
   ) => {
     const merged = mergeProdukteData(data?.entries ?? [], parsed, type);
     const newData: ProdukteData = { entries: merged, importedAt: new Date().toISOString(), source: 'combined' };
-    saveProdukteData(newData);
+    saveProdukteDataToDB(newData);
     setData(newData);
     toast.success(`${type === 'anzahl' ? 'Anzahl' : 'Umsatz'}-Daten importiert`, {
       description: `${parsed.length} Einträge aus ${fileName}`,
@@ -392,14 +407,14 @@ export default function ProdukteSeite() {
   const ignoreProduct = (name: string) => {
     const updated = [...ignoredByUser, name];
     setIgnored(updated);
-    saveIgnoredProducts(updated);
+    saveIgnoredProductsToDB(updated);
     toast.info(`«${name}» aus Rangliste entfernt`);
   };
 
   const restoreProduct = (name: string) => {
     const updated = ignoredByUser.filter(n => n !== name);
     setIgnored(updated);
-    saveIgnoredProducts(updated);
+    saveIgnoredProductsToDB(updated);
     toast.success(`«${name}» wieder in Rangliste`);
   };
 
@@ -452,11 +467,15 @@ export default function ProdukteSeite() {
     if (remaining.length === 0) {
       localStorage.removeItem('produkte_data_v2');
       localStorage.removeItem('produkte_ignored_v1');
+      // Auch aus Supabase löschen
+      import('@/integrations/supabase/client').then(({ supabase }) => {
+        supabase.from('app_kv_store').delete().in('key', ['produkte_data_v2', 'produkte_ignored_v1']).then(() => {});
+      });
       setData(null);
       setIgnored([]);
     } else {
       const newData = { ...data, entries: remaining, importedAt: new Date().toISOString() };
-      saveProdukteData(newData);
+      saveProdukteDataToDB(newData);
       setData(newData);
     }
     setShowResetDialog(false);

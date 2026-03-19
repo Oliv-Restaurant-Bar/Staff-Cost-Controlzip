@@ -215,6 +215,48 @@ export function saveIgnoredProducts(list: string[]): void {
   localStorage.setItem(IGNORED_KEY, JSON.stringify(list));
 }
 
+// ── Supabase-Sync für Produktdaten + Ignorier-Liste ───────────────────────────
+
+export async function loadProdukteDataFromDB(): Promise<ProdukteData | null> {
+  try {
+    const { data, error } = await supabase
+      .from('app_kv_store').select('value').eq('key', STORAGE_KEY).maybeSingle();
+    if (error || !data?.value) return loadProdukteData();
+    const parsed: ProdukteData = JSON.parse(data.value);
+    localStorage.setItem(STORAGE_KEY, data.value);
+    return parsed;
+  } catch { return loadProdukteData(); }
+}
+
+export async function saveProdukteDataToDB(data: ProdukteData): Promise<void> {
+  const value = JSON.stringify(data);
+  localStorage.setItem(STORAGE_KEY, value);
+  try {
+    await supabase.from('app_kv_store')
+      .upsert({ key: STORAGE_KEY, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  } catch { /* fallback: localStorage only */ }
+}
+
+export async function loadIgnoredProductsFromDB(): Promise<string[]> {
+  try {
+    const { data, error } = await supabase
+      .from('app_kv_store').select('value').eq('key', IGNORED_KEY).maybeSingle();
+    if (error || !data?.value) return loadIgnoredProducts();
+    const parsed: string[] = JSON.parse(data.value);
+    localStorage.setItem(IGNORED_KEY, data.value);
+    return parsed;
+  } catch { return loadIgnoredProducts(); }
+}
+
+export async function saveIgnoredProductsToDB(list: string[]): Promise<void> {
+  const value = JSON.stringify(list);
+  localStorage.setItem(IGNORED_KEY, value);
+  try {
+    await supabase.from('app_kv_store')
+      .upsert({ key: IGNORED_KEY, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  } catch { /* fallback: localStorage only */ }
+}
+
 // ── Gastronovi Excel-Parser ────────────────────────────────────────────────────
 /**
  * Gastronovi "Anzahl Rezepte" / "Umsatz Rezepte" Export.
