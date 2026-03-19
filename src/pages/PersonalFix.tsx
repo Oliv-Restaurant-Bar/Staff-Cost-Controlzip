@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import { Navigate } from 'react-router-dom';
 import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
   Utensils, Edit2, Check, X, Info, Building2, AlertCircle, Clock,
@@ -271,6 +272,7 @@ const InlineHoursEditor = ({ empId, value, onChange }: InlineHoursEditorProps) =
 
 export default function PersonalFixPage() {
   const { isAdmin } = usePermissions();
+  if (!isAdmin) return <Navigate to="/personal" replace />;
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState<string | null>(null);

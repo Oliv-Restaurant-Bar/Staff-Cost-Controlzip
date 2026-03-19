@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   Upload, TrendingUp, Clock, BookOpen, ArrowLeft,
   CheckCircle2, AlertCircle, Loader2, ChevronDown,
@@ -571,6 +572,9 @@ const PlaceholderSection = ({ label }: { label: string }) => (
 // ─── Hauptseite ───────────────────────────────────────────────────────────────
 
 const ImportHub = () => {
+  const { isAdmin } = usePermissions();
+  if (!isAdmin) return <Navigate to="/personal" replace />;
+
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">

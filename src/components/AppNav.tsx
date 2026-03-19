@@ -6,8 +6,8 @@
  *
  * Sichtbarkeit der Navigationspunkte wird nach Rolle gefiltert:
  *   admin           → alle Punkte
- *   service_manager → Dashboard, Dienstplan, Soll/Ist
- *   kueche_manager  → Dashboard, Dienstplan, Soll/Ist
+ *   service_manager → Dienstplanung (Service), Soll/Ist Analyse (Service)
+ *   kueche_manager  → Dienstplanung (Küche),   Soll/Ist Analyse (Küche)
  */
 
 import { NavLink, useLocation } from 'react-router-dom';

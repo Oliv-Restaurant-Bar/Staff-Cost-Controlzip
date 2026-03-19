@@ -7,8 +7,18 @@
  *
  * Rollen:
  *   admin           → Inhaber / Admin: sieht alles
- *   service_manager → Service-Manager: nur Service, keine Einzellöhne
- *   kueche_manager  → Küchen-Manager:  nur Küche, keine Einzellöhne
+ *   service_manager → Service-Manager: Dienstplanung (Service) + Soll/Ist-Analyse
+ *   kueche_manager  → Küchen-Manager:  Dienstplanung (Küche)  + Soll/Ist-Analyse
+ *
+ * Modul-Zugriff im Überblick:
+ *   Modul               admin  service_mgr  kueche_mgr
+ *   ──────────────────  ─────  ───────────  ──────────
+ *   Dashboard           ✓      –            –
+ *   Dienstplanung       ✓      ✓ (Service)  ✓ (Küche)
+ *   Soll/Ist Analyse    ✓      ✓ (Service)  ✓ (Küche)
+ *   Personalstamm       ✓      –            –
+ *   Reporting / P&L     ✓      –            –
+ *   Budget / Import     ✓      –            –
  */
 
 import { useAuth } from './useAuth';
@@ -95,7 +105,7 @@ export const usePermissions = (): Permissions => {
       case 'dienstplanung':
         return true; // alle (aber gefiltert nach Abteilung)
       case 'soll_ist_analyse':
-        return isAdmin; // nur Admin
+        return true; // alle Rollen (Seite filtert Finanzdaten und Abteilung selbst)
       case 'personalstamm':
         return isAdmin; // nur Admin
       case 'reporting':

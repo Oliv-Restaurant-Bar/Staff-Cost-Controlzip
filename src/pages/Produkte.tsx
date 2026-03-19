@@ -1,4 +1,6 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
+import { Navigate } from 'react-router-dom';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   Upload, Trash2, Package, TrendingUp, TrendingDown,
   Hash, RotateCcw, ChevronDown, X, Award, CalendarDays, LayoutGrid,
@@ -127,6 +129,9 @@ function MonthCard({
 
 // ── Haupt-Komponente ─────────────────────────────────────────────────────────
 export default function ProdukteSeite() {
+  const { isAdmin } = usePermissions();
+  if (!isAdmin) return <Navigate to="/personal" replace />;
+
   const [data, setData]               = useState<ProdukteData | null>(() => loadProdukteData());
   const [ignoredByUser, setIgnored]   = useState<string[]>(() => loadIgnoredProducts());
   const [sortBy, setSortBy]           = useState<'count' | 'revenue'>('count');
