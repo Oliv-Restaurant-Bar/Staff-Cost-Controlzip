@@ -48,6 +48,7 @@ import {
   loadYear, saveMonth, availableYears,
   calcAnnualSummary, formatCHF, formatMonthLabel,
 } from '@/lib/reporting-store';
+import { loadBudgetWithPL, resolveBudgetYear } from '@/lib/budget-store';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Navigate } from 'react-router-dom';
 import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue-import';
@@ -536,22 +537,70 @@ const Reporting = () => {
     catch { return {}; }
   }, [year, months]);
 
-  // Effektive Monatsdaten: Gastronovi-Tagesdaten als Fallback für fehlenden Ist-Umsatz
+  // Budget-Daten aus budget_v1 (Jahresplanung)
+  const resolvedBudget = useMemo(() => {
+    try { return resolveBudgetYear(loadBudgetWithPL(year)); }
+    catch { return null; }
+  }, [year]);
+
+  // Vorjahres-Reporting-Daten als Fallback für revenuePreviousYear
+  const prevYearMonths = useMemo(() => {
+    try { return loadYear(year - 1); }
+    catch { return [] as MonthlyFinancialRecord[]; }
+  }, [year]);
+
+  // Effektive Monatsdaten: Fallbacks für Umsatz-Ist, Budget, Vorjahr, PK Ist
   const effectiveMonths = useMemo<MonthlyFinancialRecord[]>(() => {
+    const findBudget = (id: string) => resolvedBudget?.positions.find(p => p.position.id === id);
+    const revBudgetPos = findBudget('budget_revenue');
+    const perBudgetPos = findBudget('budget_personnel');
+
     return months.map((rec, idx) => {
-      const m = idx + 1;
+      const m = idx + 1; // 1-basierter Monat
       let r = rec;
+
+      // 1) Ist-Umsatz: Gastronovi-Tagesdaten als Fallback
       if (!r.revenueActual) {
         const dailyRev = sumDailyBudgetField(dailyBudgetsData, year, m, 'actualRevenue');
         if (dailyRev > 0) r = { ...r, revenueActual: dailyRev };
       }
+
+      // 2) Vorjahr: erst Gastronovi, dann Vorjahres-Reporting-Monatsdaten
       if (!r.revenuePreviousYear) {
-        const fromCurrent = sumDailyBudgetField(dailyBudgetsData, year, m, 'previousYearRevenue');
-        if (fromCurrent > 0) r = { ...r, revenuePreviousYear: fromCurrent };
+        const fromGastronovi = sumDailyBudgetField(dailyBudgetsData, year, m, 'previousYearRevenue');
+        if (fromGastronovi > 0) {
+          r = { ...r, revenuePreviousYear: fromGastronovi };
+        } else {
+          const prevRec = prevYearMonths[idx];
+          const prevActual = prevRec?.revenueActual;
+          if (prevActual) r = { ...r, revenuePreviousYear: prevActual };
+        }
       }
+
+      // 3) Budget: aus budget_v1 übernehmen wenn nicht manuell erfasst
+      if (!r.revenueBudget && revBudgetPos) {
+        const budgetRev = revBudgetPos.resolvedCHF[idx] ?? 0; // idx = 0-basiert (Jan=0)
+        if (budgetRev > 0) r = { ...r, revenueBudget: budgetRev };
+      }
+      if (!r.personnelCostPlanned && perBudgetPos) {
+        const budgetPer = perBudgetPos.resolvedCHF[idx] ?? 0;
+        if (budgetPer > 0) r = { ...r, personnelCostPlanned: budgetPer };
+      }
+
+      // 4) PK Ist: aus expenseCategories (5xxx) wenn personnelCostActual nicht gesetzt
+      if (!r.personnelCostActual && r.expenseCategories.length > 0) {
+        const pkFromCats = r.expenseCategories
+          .filter(cat => {
+            const n = parseInt(cat.categoryId);
+            return !isNaN(n) && n >= 5000 && n <= 5999;
+          })
+          .reduce((sum, cat) => sum + (cat.amount ?? 0), 0);
+        if (pkFromCats > 0) r = { ...r, personnelCostActual: pkFromCats };
+      }
+
       return r;
     });
-  }, [months, year, dailyBudgetsData]);
+  }, [months, year, dailyBudgetsData, resolvedBudget, prevYearMonths]);
 
   const summary = useMemo(() => calcAnnualSummary(year), [year, months]);
   const chartData = useMemo(() => buildChartData(effectiveMonths), [effectiveMonths]);
