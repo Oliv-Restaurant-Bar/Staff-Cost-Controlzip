@@ -451,6 +451,32 @@ const SchedulePlanner = () => {
     return totalHours;
   };
 
+  // Like calculateEmployeeHours, but skips Ferien (FE) and Krank (K) absences for cost calculation.
+  // These are covered separately (insurance, separate budget) and should not generate hourly-wage costs.
+  const ABSENCE_NO_COST = new Set(['FE', 'K']);
+  const calculateCostableHours = (employeeId: string): number => {
+    let totalHours = 0;
+    daysInMonth.forEach(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const cellKey = `${employeeId}-${dateStr}`;
+      const daySchedule = scheduleData[cellKey];
+      if (!daySchedule) return;
+      if (daySchedule.frühAbsence || daySchedule.spätAbsence) {
+        const getAbsenceHours = (abbrev: string | null | undefined): number => {
+          if (!abbrev) return 0;
+          if (ABSENCE_NO_COST.has(abbrev)) return 0; // Ferien/Krank → keine Kosten
+          const shift = Object.keys(shiftMap).find(k => shiftMap[k].abbrev === abbrev);
+          if (shift && shiftMap[shift].countsToTarget) return shiftMap[shift].hours;
+          return 0;
+        };
+        totalHours += getAbsenceHours(daySchedule.frühAbsence);
+        totalHours += getAbsenceHours(daySchedule.spätAbsence);
+      }
+      totalHours += calculateDayHours(daySchedule);
+    });
+    return totalHours;
+  };
+
   // Calculate weekly hours for an employee up to a specific week end date (Sunday)
   const calculateWeeklyHours = (employeeId: string, weekEndDate: Date): number => {
     const weekStart = startOfWeek(weekEndDate, { weekStartsOn: 1 });
@@ -1102,6 +1128,12 @@ const SchedulePlanner = () => {
 
   const overhoursEmployees = employeeSummaries.filter(s => s.status === 'over');
 
+  // Variable employees whose planned hours exceed the estimated hours from Personal FIX
+  const varHoursExceeded = employees
+    .filter(e => !((e.employmentType === 'vollzeit' || e.employmentType === 'teilzeit') && (e.monthlySalary ?? 0) > 0))
+    .map(e => ({ emp: e, planned: calculateEmployeeHours(e.id), estimated: varEstimatedHours[e.id] ?? 0 }))
+    .filter(r => r.estimated > 0 && r.planned > r.estimated);
+
   // ── Feature 1: Personalkostenquote ──────────────────────────────────────
   const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 40);
 
@@ -1109,11 +1141,17 @@ const SchedulePlanner = () => {
   // Ein Manager sieht nur die Zahlen seiner eigenen Abteilung.
   const visibleEmployees = filteredEmployees; // enthält schon die Rollen-Filterung
 
+  // Estimated hours for variable employees from Personal FIX page
+  const varEstimatedHours: Record<string, number> = (() => {
+    try { return JSON.parse(localStorage.getItem('personal_fix_var_hours_v1') ?? '{}'); }
+    catch { return {}; }
+  })();
+
   const totalPlannedLaborCost = visibleEmployees.reduce((sum, emp) => {
-    const hrs = calculateEmployeeHours(emp.id);
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
       return sum + emp.monthlySalary;
     }
+    const hrs = calculateCostableHours(emp.id); // Ferien/Krank excluded
     return sum + hrs * emp.hourlyWage;
   }, 0);
 
@@ -1743,6 +1781,33 @@ const SchedulePlanner = () => {
           </Card>
         )}
 
+        {/* Variable hours exceeded estimated (Personal FIX) */}
+        {varHoursExceeded.length > 0 && (
+          <Card className="border-orange-400/50 bg-orange-50/50 dark:bg-orange-950/20 dark:border-orange-700/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold text-orange-700 dark:text-orange-300 flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />
+                Geschätzte Stunden überschritten — Variable Mitarbeiter ({varHoursExceeded.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="text-xs text-orange-600 dark:text-orange-400 mb-2">
+                Die geplanten Stunden übersteigen die in Personal FIX eingetragene Schätzung.
+              </p>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {varHoursExceeded.map(({ emp, planned, estimated }) => (
+                  <div key={emp.id} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground truncate">{emp.name}</span>
+                    <span className="text-orange-700 dark:text-orange-300 font-medium shrink-0 ml-2">
+                      +{(planned - estimated).toFixed(1)}h geplant ({planned.toFixed(1)}h / {estimated.toFixed(1)}h gesch.)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Shift Legend */}
         <ShiftLegend 
           onEditClick={() => setShiftConfigDialogOpen(true)} 
@@ -2188,7 +2253,18 @@ const SchedulePlanner = () => {
         />
 
         {/* Employee Hours Summary */}
-        <EmployeeHoursSummary summaries={departmentSummaries} />
+        <EmployeeHoursSummary
+          summaries={departmentSummaries}
+          varEstimatedHours={varEstimatedHours}
+          actualHoursPerEmp={Object.fromEntries(
+            employees.map(emp => [
+              emp.id,
+              Object.entries(actualHoursData)
+                .filter(([k]) => monthDateSet.has(k.slice(-10)) && k.startsWith(`${emp.id}-`))
+                .reduce((s, [, e]) => s + e.hours, 0),
+            ])
+          )}
+        />
 
         {/* Employees List - Password Protected for hourly wages */}
         {effectiveShowCosts && (
