@@ -20,6 +20,7 @@ import {
   AccountMapping, AccountRange, PLSectionDef, PLCategoryDef,
   PLSection, PLCategory, AccountLookupResult,
 } from '@/types/account-mapping';
+import { kvGet, kvSet } from './supabase-kv';
 
 // ─── localStorage-Schlüssel ───────────────────────────────────────────────────
 
@@ -338,6 +339,36 @@ function loadCustomMappings(): Record<string, AccountMapping> {
 
 function saveCustomMappings(data: Record<string, AccountMapping>): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  // Supabase sync (fire-and-forget)
+  kvSet(STORAGE_KEY, data).catch(() => {});
+}
+
+/**
+ * Custom-Mappings aus Supabase laden (async).
+ * Wenn Supabase leer ist aber localStorage Daten hat: einmalige Auto-Migration.
+ * Gibt true zurück wenn neue Daten geladen wurden (Seite sollte neu rendern).
+ */
+export async function loadCustomMappingsFromDB(): Promise<boolean> {
+  try {
+    const remote = await kvGet(STORAGE_KEY);
+    if (remote !== null && typeof remote === 'object' && Object.keys(remote as object).length > 0) {
+      const data = remote as Record<string, AccountMapping>;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      console.log(`[Konten] Aus Supabase geladen: ${Object.keys(data).length} Custom-Mappings`);
+      return true;
+    }
+    const local = loadCustomMappings();
+    if (Object.keys(local).length > 0) {
+      console.log(`[Konten] Supabase leer – sync localStorage→Supabase: ${Object.keys(local).length} Mappings`);
+      kvSet(STORAGE_KEY, local).catch(() => {});
+    } else {
+      console.log('[Konten] Keine Custom-Mappings in Supabase oder localStorage');
+    }
+    return false;
+  } catch (err) {
+    console.error('[Konten] loadCustomMappingsFromDB Fehler:', err);
+    return false;
+  }
 }
 
 // ─── Öffentliche API ──────────────────────────────────────────────────────────

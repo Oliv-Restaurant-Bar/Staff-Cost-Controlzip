@@ -984,6 +984,7 @@ const SchedulePlanner = () => {
       overrides[dateStr] = value;
     }
     localStorage.setItem('dailyRevenueOverrides', JSON.stringify(overrides));
+    import('@/lib/supabase-kv').then(({ kvSet }) => kvSet('dailyRevenueOverrides', overrides).catch(() => {}));
     // State aktualisieren
     setDailyBudgets(prev => {
       const next = { ...prev };

@@ -39,7 +39,7 @@ import {
   SageJournalEntry,
 } from '@/types/reporting';
 import { v4 as uuidv4 } from 'uuid';
-import { kvSet } from './supabase-kv';
+import { kvGet, kvSet } from './supabase-kv';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -270,10 +270,13 @@ function mergeExpenseCategories(
 
 const JOURNAL_KEY = 'sage_journal_v1';
 
+function journalMonthKey(year: number, month: number): string {
+  return `${JOURNAL_KEY}_${year}_${String(month).padStart(2, '0')}`;
+}
+
 /**
  * Buchungszeilen für einen Monat speichern.
- * Bei "replace" werden bestehende Einträge überschrieben.
- * Bei "update" werden Einträge gemergt (bestehende bleiben erhalten).
+ * Schreibt immer nach localStorage UND Supabase (fire-and-forget).
  */
 export function saveJournalEntries(
   year: number,
@@ -281,21 +284,23 @@ export function saveJournalEntries(
   entries: SageJournalEntry[],
   mode: ImportMode = 'replace',
 ): void {
-  const key = `${JOURNAL_KEY}_${year}_${String(month).padStart(2, '0')}`;
+  const key = journalMonthKey(year, month);
+  let final: SageJournalEntry[];
   if (mode === 'replace') {
-    localStorage.setItem(key, JSON.stringify(entries));
+    final = entries;
   } else {
-    const existing = loadJournalEntries(year, month);
-    const merged = [...existing, ...entries];
-    localStorage.setItem(key, JSON.stringify(merged));
+    final = [...loadJournalEntries(year, month), ...entries];
   }
+  localStorage.setItem(key, JSON.stringify(final));
+  kvSet(key, final).catch(() => {});
+  console.log(`[Journal] Gespeichert: ${key} (${final.length} Einträge) → localStorage + Supabase`);
 }
 
 /**
- * Buchungszeilen für einen Monat laden.
+ * Buchungszeilen für einen Monat aus localStorage laden (sync, sofort).
  */
 export function loadJournalEntries(year: number, month: number): SageJournalEntry[] {
-  const key = `${JOURNAL_KEY}_${year}_${String(month).padStart(2, '0')}`;
+  const key = journalMonthKey(year, month);
   try {
     return JSON.parse(localStorage.getItem(key) ?? '[]');
   } catch {
@@ -304,7 +309,36 @@ export function loadJournalEntries(year: number, month: number): SageJournalEntr
 }
 
 /**
- * Buchungszeilen für ein ganzes Jahr laden (alle 12 Monate).
+ * Buchungszeilen für einen Monat aus Supabase laden (async).
+ * Führt einmalige Auto-Migration durch wenn Supabase leer ist aber localStorage Daten hat.
+ */
+export async function loadJournalEntriesFromDB(year: number, month: number): Promise<SageJournalEntry[]> {
+  const key = journalMonthKey(year, month);
+  try {
+    const remote = await kvGet(key);
+    if (remote !== null && Array.isArray(remote) && (remote as SageJournalEntry[]).length > 0) {
+      const entries = remote as SageJournalEntry[];
+      localStorage.setItem(key, JSON.stringify(entries));
+      console.log(`[Journal] Aus Supabase geladen: ${key} (${entries.length} Einträge)`);
+      return entries;
+    }
+    // Supabase leer — localStorage prüfen und ggf. migrieren
+    const local = loadJournalEntries(year, month);
+    if (local.length > 0) {
+      console.log(`[Journal] Supabase leer – sync localStorage→Supabase: ${key} (${local.length} Einträge)`);
+      kvSet(key, local).catch(() => {});
+    } else {
+      console.log(`[Journal] Keine Daten: ${key}`);
+    }
+    return local;
+  } catch (err) {
+    console.error(`[Journal] loadJournalEntriesFromDB Fehler: ${key}`, err);
+    return loadJournalEntries(year, month);
+  }
+}
+
+/**
+ * Buchungszeilen für ein ganzes Jahr laden (alle 12 Monate, sync).
  */
 export function loadJournalYear(year: number): SageJournalEntry[] {
   const all: SageJournalEntry[] = [];
@@ -312,6 +346,16 @@ export function loadJournalYear(year: number): SageJournalEntry[] {
     all.push(...loadJournalEntries(year, m));
   }
   return all;
+}
+
+/**
+ * Ganzes Journal-Jahr aus Supabase laden und in localStorage synchronisieren.
+ * Für Auto-Migration beim Seitenaufruf.
+ */
+export async function syncJournalYearFromDB(year: number): Promise<void> {
+  for (let m = 1; m <= 12; m++) {
+    await loadJournalEntriesFromDB(year, m);
+  }
 }
 
 // ─── Formatierungshilfen ──────────────────────────────────────────────────────

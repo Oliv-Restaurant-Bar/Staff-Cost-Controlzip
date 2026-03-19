@@ -16,7 +16,10 @@
 import { useEffect, useRef } from 'react';
 import { syncLocalToSupabase, syncSupabaseToLocal } from '@/lib/supabase-kv';
 
-const SYNC_KEYS = ['reporting_v1', 'budget_v1', 'dailyBudgets'];
+const SYNC_KEYS = [
+  'reporting_v1', 'budget_v1', 'dailyBudgets', 'dailyRevenueOverrides',
+  'account_mappings_v1', 'shift-config',
+];
 
 export function useSyncStore(authenticated: boolean) {
   const synced = useRef(false);

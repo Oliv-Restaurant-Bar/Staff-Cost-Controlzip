@@ -13,7 +13,7 @@
  * Nur für Administratoren zugänglich.
  */
 
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -46,7 +46,7 @@ import {
   saveMappingCustom, PL_CATEGORIES, getCategoryLabel, getSectionLabel,
 } from '@/lib/account-mapping-store';
 import { PLCategory } from '@/types/account-mapping';
-import { saveMonth, saveJournalEntries } from '@/lib/reporting-store';
+import { saveMonth, saveJournalEntries, syncJournalYearFromDB } from '@/lib/reporting-store';
 import { toast } from 'sonner';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
@@ -382,6 +382,11 @@ export default function CSVImportPage() {
   const [savedMonth, setSavedMonth]         = useState<{ year: number; month: number } | null>(null);
   const [loading, setLoading]               = useState(false);
   const [selectedMatchedIndices, setSelectedMatchedIndices] = useState<Set<number>>(new Set());
+
+  // Beim Seitenaufruf: Sage Journal aus Supabase laden (auto-migration)
+  useEffect(() => {
+    syncJournalYearFromDB(year);
+  }, [year]);
 
   if (!isAdmin) {
     return (

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { kvGet, kvSet } from '@/lib/supabase-kv';
 
 export interface ShiftConfigItem {
   name: string;
@@ -339,8 +340,39 @@ function loadShiftsFromStorage(): ShiftConfigItem[] {
 function saveShiftsToStorage(shifts: ShiftConfigItem[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(shifts));
+    // Supabase sync (fire-and-forget)
+    kvSet(STORAGE_KEY, shifts).catch(() => {});
   } catch (e) {
     console.error('Failed to save shift config to localStorage:', e);
+  }
+}
+
+/**
+ * Schichtkonfiguration aus Supabase laden (async).
+ * Auto-Migration: wenn Supabase leer aber localStorage hat Daten → sync.
+ * Gibt null zurück wenn nichts Neues geladen wurde.
+ */
+async function loadShiftsFromDB(): Promise<ShiftConfigItem[] | null> {
+  try {
+    const remote = await kvGet(STORAGE_KEY);
+    if (remote !== null && Array.isArray(remote) && (remote as ShiftConfigItem[]).length > 0) {
+      const shifts = remote as ShiftConfigItem[];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(shifts));
+      console.log(`[Schichten] Aus Supabase geladen: ${shifts.length} Schichttypen`);
+      return shifts;
+    }
+    const local = loadShiftsFromStorage();
+    const isDefault = local === DEFAULT_SHIFTS;
+    if (!isDefault && local.length > 0) {
+      console.log(`[Schichten] Supabase leer – sync localStorage→Supabase: ${local.length} Schichttypen`);
+      kvSet(STORAGE_KEY, local).catch(() => {});
+    } else {
+      console.log('[Schichten] Standard-Schichtkonfiguration aktiv, kein Supabase-Sync nötig');
+    }
+    return null;
+  } catch (err) {
+    console.error('[Schichten] loadShiftsFromDB Fehler:', err);
+    return null;
   }
 }
 
@@ -386,9 +418,21 @@ export function useShiftConfig() {
   const [shiftMap, setShiftMap] = useState<ShiftConfigMap>(() => shiftsToMap(loadShiftsFromStorage()));
 
   useEffect(() => {
+    // Sync localStorage initial state
     const loaded = loadShiftsFromStorage();
     setShifts(loaded);
     setShiftMap(shiftsToMap(loaded));
+    // Dann aus Supabase laden (überschreibt lokalen Stand wenn Supabase neuere Daten hat)
+    loadShiftsFromDB().then(dbShifts => {
+      if (dbShifts) {
+        // Merge in any new defaults that don't exist in stored config
+        const storedNames = new Set(dbShifts.map(s => s.name));
+        const newDefaults = DEFAULT_SHIFTS.filter(d => !storedNames.has(d.name));
+        const merged = newDefaults.length > 0 ? [...dbShifts, ...newDefaults] : dbShifts;
+        setShifts(merged);
+        setShiftMap(shiftsToMap(merged));
+      }
+    });
   }, []);
 
   const updateShifts = useCallback((newShifts: ShiftConfigItem[]) => {

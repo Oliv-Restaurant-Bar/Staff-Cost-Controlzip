@@ -33,7 +33,7 @@ import {
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { usePermissions } from '@/hooks/usePermissions';
-import { loadYear, saveMonth, loadJournalYear } from '@/lib/reporting-store';
+import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB } from '@/lib/reporting-store';
 import type { SageJournalEntry } from '@/types/reporting';
 import { lookupAccount, saveMappingCustom } from '@/lib/account-mapping-store';
 import { AccountMapping } from '@/types/account-mapping';
@@ -1867,6 +1867,11 @@ const PLViewPage = () => {
     window.addEventListener('store-synced', handler);
     return () => window.removeEventListener('store-synced', handler);
   }, []);
+
+  // Sage Journal für das gewählte Jahr aus Supabase laden (auto-migration)
+  useEffect(() => {
+    syncJournalYearFromDB(year).then(() => setRefreshKey(k => k + 1));
+  }, [year]);
 
   // Daten laden & P&L berechnen
   const records = useMemo(() => loadYear(year), [year, month, refreshKey]);

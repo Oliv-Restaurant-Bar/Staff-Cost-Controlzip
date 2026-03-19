@@ -14,7 +14,7 @@
  * Nur für Admin zugänglich.
  */
 
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Navigate } from 'react-router-dom';
 import {
@@ -51,6 +51,7 @@ import {
   lookupAccount, PL_SECTIONS, PL_CATEGORIES, ACCOUNT_RANGES,
   getCategoryLabel, getSectionLabel, DEPARTMENT_LABELS,
   DEFAULT_ACCOUNTS, autoAssignFromNumber, importAccountsBatch,
+  loadCustomMappingsFromDB,
 } from '@/lib/account-mapping-store';
 
 // ─── Farben ───────────────────────────────────────────────────────────────────
@@ -929,6 +930,13 @@ const AccountMappingPage = () => {
   const [filterDept,  setFilterDept]  = useState<DepartmentHint | 'all'>('all');
 
   const reload = useCallback(() => setMappings(loadAllMappings()), []);
+
+  // Beim Seitenaufruf: Custom-Mappings aus Supabase laden (auto-migration)
+  useEffect(() => {
+    loadCustomMappingsFromDB().then(changed => {
+      if (changed) setMappings(loadAllMappings());
+    });
+  }, []);
 
   const existingNumbers = useMemo(
     () => new Set(mappings.map(m => m.accountNumber)),
