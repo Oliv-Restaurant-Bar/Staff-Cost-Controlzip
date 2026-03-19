@@ -1,7 +1,7 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
-  Utensils, Edit2, Check, X, Info, Building2, AlertCircle,
+  Utensils, Edit2, Check, X, Info, Building2, AlertCircle, Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee } from '@/lib/supabase-db';
@@ -47,6 +47,17 @@ const EMP_TYPE_LABEL: Record<string, string> = {
   minijob: 'Minijob', aushilfe: 'Aushilfe',
 };
 
+const VAR_HOURS_KEY = 'personal_fix_var_hours_v1';
+
+function loadVarHours(): Record<string, number> {
+  try { return JSON.parse(localStorage.getItem(VAR_HOURS_KEY) ?? '{}'); }
+  catch { return {}; }
+}
+
+function saveVarHours(data: Record<string, number>) {
+  localStorage.setItem(VAR_HOURS_KEY, JSON.stringify(data));
+}
+
 // ── KPI-Card ──────────────────────────────────────────────────────────────────
 
 interface KpiProps {
@@ -54,7 +65,7 @@ interface KpiProps {
   value: string;
   sub?: string;
   icon: React.ReactNode;
-  color?: 'blue' | 'green' | 'red' | 'yellow' | 'default';
+  color?: 'blue' | 'green' | 'red' | 'yellow' | 'orange' | 'default';
   delta?: number | null;
   deltaLabel?: string;
 }
@@ -65,6 +76,7 @@ const KpiCard = ({ title, value, sub, icon, color = 'default', delta, deltaLabel
     green:   'border-emerald-200 dark:border-emerald-800',
     red:     'border-red-200 dark:border-red-800',
     yellow:  'border-yellow-200 dark:border-yellow-800',
+    orange:  'border-orange-200 dark:border-orange-800',
     default: 'border-border',
   }[color];
   const iconBg = {
@@ -72,6 +84,7 @@ const KpiCard = ({ title, value, sub, icon, color = 'default', delta, deltaLabel
     green:   'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40',
     red:     'bg-red-50 text-red-600 dark:bg-red-950/40',
     yellow:  'bg-yellow-50 text-yellow-600 dark:bg-yellow-950/40',
+    orange:  'bg-orange-50 text-orange-600 dark:bg-orange-950/40',
     default: 'bg-muted text-muted-foreground',
   }[color];
   return (
@@ -92,7 +105,7 @@ const KpiCard = ({ title, value, sub, icon, color = 'default', delta, deltaLabel
   );
 };
 
-// ── Inline-Editor für eine Zelle ──────────────────────────────────────────────
+// ── Inline-Editor für Lohn-Felder ─────────────────────────────────────────────
 
 interface InlineSalaryEditorProps {
   empId: string;
@@ -144,6 +157,61 @@ const InlineSalaryEditor = ({ empId, field, value, onSaved }: InlineSalaryEditor
   );
 };
 
+// ── Inline-Editor für Stunden ─────────────────────────────────────────────────
+
+interface InlineHoursEditorProps {
+  empId: string;
+  value: number;
+  onChange: (empId: string, val: number) => void;
+}
+
+const InlineHoursEditor = ({ empId, value, onChange }: InlineHoursEditorProps) => {
+  const [editing, setEditing] = useState(false);
+  const [input, setInput]   = useState('');
+
+  const start  = () => { setInput(value > 0 ? String(value) : ''); setEditing(true); };
+  const cancel = () => setEditing(false);
+  const save   = () => {
+    const num = parseFloat(input.replace(/['\s]/g, '').replace(',', '.'));
+    if (!isNaN(num) && num >= 0) { onChange(empId, num); }
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1 justify-end">
+        <Input
+          autoFocus
+          className="h-7 w-20 text-right font-mono text-sm"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }}
+          placeholder="0"
+        />
+        <span className="text-xs text-muted-foreground">h</span>
+        <Button size="icon" variant="ghost" className="h-6 w-6 text-emerald-600" onClick={save}>
+          <Check className="h-3.5 w-3.5" />
+        </Button>
+        <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground" onClick={cancel}>
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      className="group flex items-center justify-end gap-1.5 hover:text-primary transition-colors w-full"
+      onClick={start}
+    >
+      {value > 0
+        ? <span className="font-mono text-sm">{value} h</span>
+        : <span className="text-muted-foreground italic text-xs">Eingabe</span>}
+      <Edit2 className="h-3 w-3 opacity-0 group-hover:opacity-50 transition-opacity shrink-0" />
+    </button>
+  );
+};
+
 // ── Hauptseite ────────────────────────────────────────────────────────────────
 
 export default function PersonalFixPage() {
@@ -151,6 +219,7 @@ export default function PersonalFixPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState<string | null>(null);
+  const [varHours, setVarHours] = useState<Record<string, number>>(() => loadVarHours());
   const currentYear  = new Date().getFullYear();
   const currentMonth = new Date().getMonth() + 1;
 
@@ -165,7 +234,16 @@ export default function PersonalFixPage() {
   const budgetData = useBudgetMonth(currentYear, currentMonth);
   const personnelBudget = budgetData.personnelBudget;
 
-  // ── Berechnungen ─────────────────────────────────────────────────────────
+  // ── Variable Stunden aktualisieren (localStorage) ─────────────────────────
+  const handleVarHoursChange = useCallback((empId: string, hours: number) => {
+    setVarHours(prev => {
+      const next = { ...prev, [empId]: hours };
+      saveVarHours(next);
+      return next;
+    });
+  }, []);
+
+  // ── Lohn-Bearbeitung ─────────────────────────────────────────────────────
   const handleSaved = async (empId: string, field: 'monthlySalary' | 'monthlySalaryWith13th', val: number) => {
     setSaving(empId);
     const emp = employees.find(e => e.id === empId);
@@ -194,9 +272,21 @@ export default function PersonalFixPage() {
     [employees],
   );
 
-  const totalFixCost     = fixedEmployees.reduce((s, e) => s + getFixCost(e), 0);
-  const totalFixBase     = fixedEmployees.reduce((s, e) => s + (e.monthlySalary ?? 0), 0);
-  const totalFixAnnual   = totalFixCost * 12;
+  const totalFixCost   = fixedEmployees.reduce((s, e) => s + getFixCost(e), 0);
+  const totalFixBase   = fixedEmployees.reduce((s, e) => s + (e.monthlySalary ?? 0), 0);
+  const totalFixAnnual = totalFixCost * 12;
+
+  const totalVarCost = useMemo(() =>
+    variableEmployees.reduce((s, e) => s + (varHours[e.id] ?? 0) * (e.hourlyWage ?? 0), 0),
+    [variableEmployees, varHours],
+  );
+
+  const totalVarHours = useMemo(() =>
+    variableEmployees.reduce((s, e) => s + (varHours[e.id] ?? 0), 0),
+    [variableEmployees, varHours],
+  );
+
+  const totalCombined = totalFixCost + totalVarCost;
 
   const byDept = useMemo(() => {
     const map: Record<string, Employee[]> = {};
@@ -222,8 +312,8 @@ export default function PersonalFixPage() {
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
           <DollarSign className="h-5 w-5 text-muted-foreground shrink-0" />
           <div>
-            <h1 className="text-base font-bold leading-tight">Personal FIX</h1>
-            <p className="text-xs text-muted-foreground">Fixe Monatslöhne · Übersicht & Vergleich {currentYear}</p>
+            <h1 className="text-base font-bold leading-tight">Personal FIX + VARIABEL</h1>
+            <p className="text-xs text-muted-foreground">Lohnkosten-Übersicht & Hochrechnung · {currentYear}</p>
           </div>
         </div>
       </header>
@@ -240,28 +330,30 @@ export default function PersonalFixPage() {
             color="blue"
           />
           <KpiCard
-            title="Personal FIX / Jahr"
-            value={fmtCHF(totalFixAnnual)}
-            sub="12 × Monats-Fixkosten"
-            icon={<TrendingUp className="h-5 w-5" />}
-            color="default"
+            title="Personal VARIABEL / Monat"
+            value={fmtCHF(totalVarCost)}
+            sub={totalVarHours > 0
+              ? `${totalVarHours} h × Stundenlohn`
+              : `${variableEmployees.length} MA · Stunden eintragen ↓`}
+            icon={<Clock className="h-5 w-5" />}
+            color={totalVarCost > 0 ? 'orange' : 'default'}
           />
           <KpiCard
-            title="Basis (ohne 13.)"
-            value={fmtCHF(totalFixBase)}
-            sub="Monatslohn netto"
+            title="Total Personal / Monat"
+            value={fmtCHF(totalCombined)}
+            sub="FIX + VARIABEL (Hochrechnung)"
             icon={<Users className="h-5 w-5" />}
-            color="default"
+            color={totalCombined > 0 ? 'green' : 'default'}
           />
           {personnelBudget > 0 && (
             <KpiCard
               title="Budget Personalkosten"
               value={fmtCHF(personnelBudget)}
-              sub={`Jahresplan ${currentYear}`}
+              sub={`Monatsbudget ${currentYear}`}
               icon={<BookOpen className="h-5 w-5" />}
-              color={totalFixAnnual > personnelBudget ? 'red' : 'green'}
-              delta={totalFixAnnual - personnelBudget}
-              deltaLabel="FIX vs. Budget/Jahr"
+              color={totalCombined > personnelBudget ? 'red' : 'green'}
+              delta={totalCombined > 0 ? totalCombined - personnelBudget : null}
+              deltaLabel="Total vs. Budget/Mt"
             />
           )}
         </div>
@@ -270,9 +362,9 @@ export default function PersonalFixPage() {
         <div className="flex items-start gap-2.5 rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20 p-3 text-xs text-blue-800 dark:text-blue-200">
           <Info className="h-4 w-4 shrink-0 mt-0.5" />
           <p>
-            <strong>Personal FIX</strong> zeigt die garantierten monatlichen Lohnkosten unabhängig von geplanten oder effektiven Stunden.
-            Die «Fix-Kosten» entsprechen dem Monatslohn <em>inkl. 13. Monatslohn</em> (amortisiert, falls zutreffend).
-            Klicke auf einen Wert um ihn direkt zu bearbeiten.
+            <strong>Personal FIX</strong> zeigt garantierte Monatslöhne inkl. amortisierten 13. Monatslohn.{' '}
+            <strong>Personal VARIABEL</strong> rechnet die eingetragenen Monatsstunden mit dem jeweiligen Stundenlohn hoch.
+            Klicke auf beliebige Werte um sie direkt zu bearbeiten. Die Stunden-Eingaben werden lokal gespeichert.
           </p>
         </div>
 
@@ -380,7 +472,7 @@ export default function PersonalFixPage() {
           );
         })}
 
-        {/* ── Gesamt-Total ────────────────────────────────────────────────── */}
+        {/* ── Gesamt-Total FIX ─────────────────────────────────────────────── */}
         <div className="rounded-xl border-2 border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-950/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm font-bold">
             <Building2 className="h-4 w-4 text-blue-600" />
@@ -394,14 +486,29 @@ export default function PersonalFixPage() {
           </div>
         </div>
 
-        {/* ── Variable / ohne Fixlohn ──────────────────────────────────────── */}
+        {/* ── Variable Mitarbeiter mit Stunden-Hochrechnung ─────────────────── */}
         {variableEmployees.length > 0 && (
-          <section className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/30">
-              <AlertCircle className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-semibold">Variable Mitarbeiter — kein Fixlohn</span>
-              <Badge variant="outline" className="text-xs">{variableEmployees.length}</Badge>
+          <section className="rounded-xl border border-orange-200 dark:border-orange-800 bg-card shadow-sm overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-orange-200 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-orange-600" />
+                <span className="text-sm font-semibold">Variable Mitarbeiter — Stunden-Hochrechnung</span>
+                <Badge variant="outline" className="text-xs">{variableEmployees.length}</Badge>
+              </div>
+              {totalVarHours > 0 && (
+                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                  <span><strong className="font-mono text-foreground">{totalVarHours} h</strong> total</span>
+                  <span>Hochrechnung: <strong className="font-mono text-orange-700 dark:text-orange-400">{fmtCHF(totalVarCost)}</strong>/Mt</span>
+                </div>
+              )}
             </div>
+
+            {/* Hinweis */}
+            <div className="px-4 py-2 bg-orange-50/30 dark:bg-orange-950/10 border-b border-orange-100 dark:border-orange-900 text-xs text-orange-700 dark:text-orange-300 flex items-center gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              Trage die geschätzten Monatsstunden ein — die Hochrechnung erfolgt automatisch (Stunden × Stundenlohn).
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -410,25 +517,97 @@ export default function PersonalFixPage() {
                     <th className="text-left px-4 py-2 font-medium">Abteilung</th>
                     <th className="text-left px-4 py-2 font-medium">Anstellung</th>
                     <th className="text-right px-4 py-2 font-medium">Stundenlohn</th>
-                    <th className="text-right px-4 py-2 font-medium">Wochenstunden</th>
+                    <th className="text-right px-4 py-2 font-medium">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="cursor-help underline decoration-dotted">Gesch. Std./Mt</span>
+                        </TooltipTrigger>
+                        <TooltipContent>Geschätzte Monatsstunden — klicken zum Bearbeiten</TooltipContent>
+                      </Tooltip>
+                    </th>
+                    <th className="text-right px-4 py-2 font-medium">Hochrechnung/Mt</th>
+                    <th className="text-right px-4 py-2 font-medium">Hochrechnung/Jahr</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {variableEmployees.map(emp => (
-                    <tr key={emp.id} className="hover:bg-muted/30 transition-colors text-muted-foreground">
-                      <td className="px-4 py-2 font-medium text-foreground">{emp.name}</td>
-                      <td className="px-4 py-2">{DEPT_LABEL[emp.department] ?? emp.department}</td>
-                      <td className="px-4 py-2">
-                        <Badge variant="outline" className="text-xs">{EMP_TYPE_LABEL[emp.employmentType]}</Badge>
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono">{fmtCHFDec(emp.hourlyWage)}/h</td>
-                      <td className="px-4 py-2 text-right font-mono">{emp.weeklyHours ?? '–'} h/W</td>
-                    </tr>
-                  ))}
+                  {variableEmployees.map(emp => {
+                    const hours = varHours[emp.id] ?? 0;
+                    const projected = hours * (emp.hourlyWage ?? 0);
+                    return (
+                      <tr key={emp.id} className="hover:bg-muted/30 transition-colors">
+                        <td className="px-4 py-2.5 font-medium">{emp.name}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{DEPT_LABEL[emp.department] ?? emp.department}</td>
+                        <td className="px-4 py-2.5">
+                          <Badge variant="outline" className="text-xs">{EMP_TYPE_LABEL[emp.employmentType]}</Badge>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">
+                          {emp.hourlyWage ? fmtCHFDec(emp.hourlyWage) : '–'}/h
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <InlineHoursEditor
+                            empId={emp.id}
+                            value={hours}
+                            onChange={handleVarHoursChange}
+                          />
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-semibold font-mono">
+                          {projected > 0
+                            ? <span className="text-orange-700 dark:text-orange-400">{fmtCHF(projected)}</span>
+                            : <span className="text-muted-foreground italic text-xs">–</span>}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono text-muted-foreground text-sm">
+                          {projected > 0 ? fmtCHF(projected * 12) : '–'}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
+                {/* Gesamt-Zeile variabel */}
+                {totalVarHours > 0 && (
+                  <tfoot>
+                    <tr className="bg-orange-50/40 dark:bg-orange-950/20 font-semibold border-t-2 border-orange-200 dark:border-orange-800">
+                      <td className="px-4 py-2.5 text-sm" colSpan={3}>Total Variabel</td>
+                      <td className="px-4 py-2.5" />
+                      <td className="px-4 py-2.5 text-right font-mono text-sm">{totalVarHours} h</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(totalVarCost)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(totalVarCost * 12)}</td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </section>
+        )}
+
+        {/* ── Gesamt-Total FIX + VARIABEL ──────────────────────────────────── */}
+        {totalVarCost > 0 && (
+          <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm font-bold">
+              <Users className="h-4 w-4 text-emerald-600" />
+              Total Personal FIX + VARIABEL
+            </div>
+            <div className="flex flex-wrap items-center gap-6 text-sm">
+              <span className="text-muted-foreground">
+                FIX: <strong className="font-mono text-blue-700 dark:text-blue-300">{fmtCHF(totalFixCost)}</strong>
+              </span>
+              <span className="text-muted-foreground">+</span>
+              <span className="text-muted-foreground">
+                VARIABEL: <strong className="font-mono text-orange-700 dark:text-orange-400">{fmtCHF(totalVarCost)}</strong>
+              </span>
+              <span className="text-muted-foreground">=</span>
+              <span className="text-emerald-700 dark:text-emerald-300 font-bold text-lg font-mono">{fmtCHF(totalCombined)}/Mt</span>
+              {personnelBudget > 0 && (
+                <span className={cn(
+                  'text-xs font-medium px-2 py-0.5 rounded-full',
+                  totalCombined <= personnelBudget
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                    : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+                )}>
+                  {totalCombined <= personnelBudget ? '✓ im Budget' : `↑ ${fmtCHF(totalCombined - personnelBudget)} über Budget`}
+                </span>
+              )}
+            </div>
+          </div>
         )}
 
       </main>
