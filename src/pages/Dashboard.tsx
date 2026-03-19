@@ -259,6 +259,46 @@ const Dashboard = () => {
   const [editingRevenue, setEditingRevenue] = useState(false);
   const [pendingRevenue, setPendingRevenue] = useState('');
   const revenueInputRef = useRef<HTMLInputElement>(null);
+  const dashboardMainRef = useRef<HTMLDivElement>(null);
+  const [exportingPDF, setExportingPDF] = useState(false);
+
+  const handleExportPDF = useCallback(async () => {
+    const el = dashboardMainRef.current;
+    if (!el) { window.print(); return; }
+    setExportingPDF(true);
+    try {
+      const [html2canvas, { default: jsPDF }] = await Promise.all([
+        import('html2canvas').then(m => m.default),
+        import('jspdf'),
+      ]);
+      const canvas = await html2canvas(el, {
+        scale: 1.5,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+        windowWidth: el.scrollWidth,
+        windowHeight: el.scrollHeight,
+      });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const pdfW = pdf.internal.pageSize.getWidth();
+      const pdfH = pdf.internal.pageSize.getHeight();
+      const imgH = pdfW * (canvas.height / canvas.width);
+      const pages = Math.ceil(imgH / pdfH);
+      for (let i = 0; i < pages; i++) {
+        if (i > 0) pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, -(i * pdfH), pdfW, imgH);
+      }
+      const now = new Date();
+      pdf.save(`Dashboard_${now.toISOString().slice(0,10)}.pdf`);
+    } catch (err) {
+      console.error('PDF export error', err);
+      window.print();
+    } finally {
+      setExportingPDF(false);
+    }
+  }, []);
 
   const openRevenueEdit = useCallback(() => {
     const existing = dailyBudgets[refDateStr]?.actualRevenue;
@@ -724,18 +764,23 @@ const Dashboard = () => {
               <Button
                 variant="outline" size="sm"
                 className="h-8 print:hidden"
-                onClick={() => window.print()}
-                title="Dashboard drucken / als PDF speichern"
+                onClick={handleExportPDF}
+                disabled={exportingPDF}
+                title="Dashboard als PDF speichern (mit Farben & Charts)"
               >
-                <Printer className="h-3.5 w-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Drucken</span>
+                {exportingPDF ? (
+                  <span className="h-3.5 w-3.5 mr-1.5 inline-block animate-spin border-2 border-current border-t-transparent rounded-full" />
+                ) : (
+                  <Printer className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                <span className="hidden sm:inline">{exportingPDF ? 'PDF…' : 'PDF'}</span>
               </Button>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-6 pb-24 space-y-2">
+      <main ref={dashboardMainRef} className="max-w-6xl mx-auto px-4 py-6 pb-24 space-y-2">
 
         {loading && (
           <div className="flex items-center justify-center py-16 text-muted-foreground text-sm">

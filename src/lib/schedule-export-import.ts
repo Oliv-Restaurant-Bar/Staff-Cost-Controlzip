@@ -3,7 +3,7 @@ import * as ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Employee } from '@/types/personnel';
-import { format } from 'date-fns';
+import { format, eachWeekOfInterval, startOfMonth, endOfMonth, endOfWeek, eachDayOfInterval, isWithinInterval } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { getShiftConfig, getShiftConfigMap } from '@/hooks/useShiftConfig';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
@@ -15,6 +15,7 @@ interface ExportOptionsV2 {
   department?: 'service' | 'küche' | 'all';
   dailyBudgets?: Record<string, { plannedRevenue?: number; actualRevenue?: number }>;
   showCosts?: boolean;
+  includeWeeklyPages?: boolean;
 }
 
 export interface NameMatchInfo {
@@ -1645,7 +1646,143 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
   if (department === 'all' || department === 'küche') {
     createPage(kücheEmployees, 'Küche', isFirst);
   }
-  
+
+  // ── Wochenansichten (optional) ────────────────────────────────────
+  if (options.includeWeeklyPages) {
+    const monthStart = startOfMonth(currentMonth);
+    const monthEnd = endOfMonth(currentMonth);
+    const weeks = eachWeekOfInterval({ start: monthStart, end: monthEnd }, { weekStartsOn: 1 });
+
+    weeks.forEach((weekStart) => {
+      const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+      const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd }).filter(d =>
+        isWithinInterval(d, { start: monthStart, end: monthEnd })
+      );
+      if (weekDays.length === 0) return;
+
+      const kwLabel = `KW ${format(weekStart, 'w')} (${format(weekStart, 'd.MM.')}–${format(weekDays[weekDays.length - 1], 'd.MM.yyyy')})`;
+
+      const createWeekPage = (deptEmployees: Employee[], deptName: string) => {
+        pdf.addPage();
+        pdf.setFontSize(13);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text(`Dienstplan ${deptName} – ${kwLabel}`, 10, 12);
+        pdf.setFontSize(7);
+        pdf.setFont('helvetica', 'normal');
+        let legendX = 10;
+        absenceShifts.forEach((shift) => {
+          pdf.text(`${shift.abbrev} = ${shift.name}`, legendX, 18);
+          legendX += 28;
+        });
+
+        const headers: string[] = ['Name'];
+        weekDays.forEach(d => {
+          const wd = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][d.getDay()];
+          headers.push(`${wd} ${format(d, 'd.MM.')}`);
+        });
+        headers.push('Plan', 'Soll', '+/-');
+
+        const body: (string | number)[][] = [];
+        deptEmployees.forEach((emp) => {
+          const rowData: (string | number)[] = [emp.name];
+          let plannedHours = 0;
+          weekDays.forEach(day => {
+            const dateStr = format(day, 'yyyy-MM-dd');
+            const daySchedule = scheduleData[`${emp.id}-${dateStr}`] || {};
+            let cell = '';
+            if (daySchedule.frühAbsence && daySchedule.spätAbsence) {
+              cell = daySchedule.frühAbsence === daySchedule.spätAbsence ? daySchedule.frühAbsence : `${daySchedule.frühAbsence}/${daySchedule.spätAbsence}`;
+            } else if (daySchedule.frühAbsence) {
+              cell = daySchedule.spät ? `${daySchedule.frühAbsence}/${formatTimeSlot(daySchedule.spät)}` : daySchedule.frühAbsence;
+            } else if (daySchedule.spätAbsence) {
+              cell = daySchedule.früh ? `${formatTimeSlot(daySchedule.früh)}/${daySchedule.spätAbsence}` : daySchedule.spätAbsence;
+            } else if (daySchedule.früh || daySchedule.spät) {
+              const parts = [];
+              if (daySchedule.früh) parts.push(formatTimeSlot(daySchedule.früh));
+              if (daySchedule.spät) parts.push(formatTimeSlot(daySchedule.spät));
+              cell = parts.join('/');
+            }
+            rowData.push(cell);
+            plannedHours += calculateSlotHours(daySchedule.früh) + calculateSlotHours(daySchedule.spät);
+            if (daySchedule.frühAbsence) {
+              const s = absenceShifts.find(a => shiftMap[a.name]?.abbrev === daySchedule.frühAbsence);
+              if (s && shiftMap[s.name]?.countsToTarget) plannedHours += shiftMap[s.name]?.hours || 0;
+            }
+            if (daySchedule.spätAbsence) {
+              const s = absenceShifts.find(a => shiftMap[a.name]?.abbrev === daySchedule.spätAbsence);
+              if (s && shiftMap[s.name]?.countsToTarget) plannedHours += shiftMap[s.name]?.hours || 0;
+            }
+          });
+          const targetHours = emp.weeklyHours ? emp.weeklyHours : 42;
+          const diff = plannedHours - targetHours;
+          rowData.push(plannedHours.toFixed(1), targetHours.toFixed(0), diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1));
+          body.push(rowData);
+        });
+
+        const footerRow: (string | number)[] = ['Gesamt'];
+        let totH = 0;
+        weekDays.forEach(day => {
+          const stats = getDailyStats(day, deptEmployees);
+          footerRow.push(`${stats.totalHours.toFixed(1)}h`);
+          totH += stats.totalHours;
+        });
+        footerRow.push(totH.toFixed(1), '', '');
+        body.push(footerRow);
+
+        const nameColW = 30;
+        const dayColW = (pageWidth - 20 - nameColW - 30) / weekDays.length;
+        const colStyles: Record<number, { cellWidth: number; halign?: 'left' | 'center' | 'right' }> = {
+          0: { cellWidth: nameColW, halign: 'left' },
+        };
+        weekDays.forEach((_, i) => { colStyles[i + 1] = { cellWidth: dayColW, halign: 'center' }; });
+        colStyles[weekDays.length + 1] = { cellWidth: 12, halign: 'center' };
+        colStyles[weekDays.length + 2] = { cellWidth: 10, halign: 'center' };
+        colStyles[weekDays.length + 3] = { cellWidth: 10, halign: 'center' };
+
+        autoTable(pdf, {
+          head: [headers],
+          body,
+          startY: 22,
+          theme: 'grid',
+          styles: { fontSize: 8, cellPadding: 1.5, overflow: 'linebreak' },
+          headStyles: { fillColor: [30, 64, 175], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8, halign: 'center' },
+          columnStyles: colStyles,
+          didParseCell(data) {
+            const colIdx = data.column.index;
+            const rowIdx = data.row.index;
+            const isFooter = data.section === 'body' && rowIdx === body.length - 1;
+            if (isFooter) {
+              data.cell.styles.fillColor = [229, 231, 235];
+              data.cell.styles.fontStyle = 'bold';
+              return;
+            }
+            if (data.section === 'body' && rowIdx < deptEmployees.length && colIdx > 0 && colIdx <= weekDays.length) {
+              const day = weekDays[colIdx - 1];
+              const dateStr = format(day, 'yyyy-MM-dd');
+              const emp = deptEmployees[rowIdx];
+              const ds = scheduleData[`${emp.id}-${dateStr}`] || {};
+              if (ds.frühAbsence || ds.spätAbsence) {
+                data.cell.styles.fillColor = [254, 243, 199];
+              } else if (ds.früh || ds.spät) {
+                data.cell.styles.fillColor = [219, 234, 254];
+                data.cell.styles.textColor = [30, 64, 175];
+              } else if (day.getDay() === 0 || day.getDay() === 6) {
+                data.cell.styles.fillColor = [249, 250, 251];
+              }
+            }
+          },
+        });
+      };
+
+      if (department === 'all' || department === 'service') {
+        createWeekPage(serviceEmployees, 'Service');
+      }
+      if (department === 'all' || department === 'küche') {
+        createWeekPage(kücheEmployees, 'Küche');
+      }
+    });
+  }
+
   // Save PDF
   const fileName = `Dienstplan_${format(currentMonth, 'MMMM_yyyy', { locale: de })}.pdf`;
   pdf.save(fileName);

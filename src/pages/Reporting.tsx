@@ -630,8 +630,8 @@ const Reporting = () => {
 
   const handleExportPDF = () => {
     try {
-      exportReportingToPDF(effectiveMonths, totals, year);
-      toast.success('PDF exportiert');
+      exportReportingToPDF(effectiveMonths, totals, year, threshold);
+      toast.success('PDF exportiert (3 Seiten)');
     } catch {
       toast.error('PDF-Export fehlgeschlagen');
     }

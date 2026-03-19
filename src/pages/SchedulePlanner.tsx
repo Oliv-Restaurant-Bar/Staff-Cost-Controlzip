@@ -24,6 +24,7 @@ import { ShiftLegend } from '@/components/schedule-planner/ShiftLegend';
 import { AddAushilfeDialog } from '@/components/schedule-planner/AddAushilfeDialog';
 import { CopyWeekDialog } from '@/components/schedule-planner/CopyWeekDialog';
 import { PrintScheduleDialog } from '@/components/schedule-planner/PrintScheduleDialog';
+import { SchedulePDFDialog } from '@/components/schedule-planner/SchedulePDFDialog';
 import { DayDetailDialog } from '@/components/schedule-planner/DayDetailDialog';
 import { ShiftConfigDialog } from '@/components/schedule-planner/ShiftConfigDialog';
 import { DaysOffConfigDialog } from '@/components/schedule-planner/DaysOffConfigDialog';
@@ -162,6 +163,7 @@ const SchedulePlanner = () => {
   const [costPassword, setCostPassword] = useState('');
   const [dailyBudgets, setDailyBudgets] = useState<{[key: string]: { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }}>({});
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [pendingImportResult, setPendingImportResult] = useState<{
     scheduleData: Record<string, DaySchedule>;
@@ -774,21 +776,8 @@ const SchedulePlanner = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleExportPDF = async () => {
-    try {
-      await exportScheduleToPDF({
-        employees,
-        scheduleData,
-        currentMonth,
-        department: activeDepartment === 'all' ? 'all' : activeDepartment,
-        dailyBudgets,
-        showCosts
-      });
-      toast.success('PDF erfolgreich exportiert');
-    } catch (error) {
-      toast.error('Fehler beim PDF-Export');
-      console.error('PDF export error:', error);
-    }
+  const handleExportPDF = () => {
+    setPdfDialogOpen(true);
   };
 
   const handleExportWithRange = async (options: ExportOptions) => {
@@ -2419,6 +2408,16 @@ const SchedulePlanner = () => {
         existingEmployees={employees}
         onConfirm={handleConfirmImport}
         onCancel={handleCancelImport}
+      />
+
+      <SchedulePDFDialog
+        open={pdfDialogOpen}
+        onOpenChange={setPdfDialogOpen}
+        employees={employees}
+        scheduleData={scheduleData}
+        currentMonth={currentMonth}
+        dailyBudgets={dailyBudgets}
+        showCosts={showCosts}
       />
     </div>
   );

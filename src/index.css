@@ -238,11 +238,25 @@
 
 /* ─── Print-Styles (Dashboard window.print()) ─────────────────────── */
 @media print {
+  /* Farben + Hintergründe vollständig drucken */
+  *,
+  *::before,
+  *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  @page {
+    size: A4 landscape;
+    margin: 8mm;
+  }
+
   /* Allgemein */
   body {
     background: white !important;
     color: black !important;
-    font-size: 11pt;
+    font-size: 10pt;
   }
 
   /* Header nicht drucken */
