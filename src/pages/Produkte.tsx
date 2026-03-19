@@ -209,6 +209,50 @@ export default function ProdukteSeite() {
     setEditingCost(null);
   };
 
+  // Varianten für Produktdatenbank-Dialog (arbeiten mit expliziter Kategorie)
+  const startCostEditForCategory = (
+    name: string,
+    cat: 'food' | 'beverage',
+    field: 'brutto' | 'netto' | 'wes' | 'wesQ',
+    currentVal: number,
+  ) => {
+    setEditingCost({ name, field });
+    setEditingValue(currentVal > 0 ? String(currentVal) : '');
+    setTimeout(() => costEditRef.current?.select(), 30);
+  };
+
+  const commitCostEditForCategory = (name: string, cat: 'food' | 'beverage') => {
+    if (!editingCost) return;
+    const raw = editingValue.replace(/[^0-9.,]/g, '').replace(',', '.');
+    const val = parseFloat(raw);
+    if (isNaN(val) || val < 0) { setEditingCost(null); return; }
+
+    const updated = costs.map(c => {
+      if (c.name.toLowerCase() !== name.toLowerCase() || c.category !== cat) return c;
+      const patch: Partial<ProductCostEntry> = {};
+      if (editingCost.field === 'brutto') patch.bruttoPrice = val;
+      if (editingCost.field === 'netto')  patch.nettoPrice  = val;
+      if (editingCost.field === 'wes')    patch.wes         = val;
+      if (editingCost.field === 'wesQ')   patch.wesQ        = val;
+      return { ...c, ...patch };
+    });
+
+    const exists = updated.some(c => c.name.toLowerCase() === name.toLowerCase() && c.category === cat);
+    if (!exists) {
+      updated.push({
+        name,
+        category: cat,
+        bruttoPrice: editingCost.field === 'brutto' ? val : 0,
+        nettoPrice:  editingCost.field === 'netto'  ? val : 0,
+        wes:         editingCost.field === 'wes'    ? val : 0,
+        wesQ:        editingCost.field === 'wesQ'   ? val : 0,
+      });
+    }
+    saveProductCosts(updated);
+    setCosts(updated);
+    setEditingCost(null);
+  };
+
   const monthsOnly = useMemo(() => getAvailableMonths(data?.entries ?? [], category), [data, category]);
 
   // Setze letzten Monat als Standard wenn noch keiner gewählt oder nicht in dieser Kategorie vorhanden
@@ -356,6 +400,7 @@ export default function ProdukteSeite() {
   const [showProductManager, setShowProductManager] = useState(false);
   const [productSearch, setProductSearch] = useState('');
   const [productFilterCat, setProductFilterCat] = useState<'all' | 'food' | 'beverage'>('all');
+  const [productFilterWes, setProductFilterWes] = useState<'all' | 'missing'>('all');
 
   // Alle vorhandenen Monate (beide Kategorien, für Reset-Dialog)
   const allMonthsForReset = useMemo(() => {
@@ -851,36 +896,37 @@ export default function ProdukteSeite() {
         )}
       </main>
 
-      {/* ── Produkt-Manager ──────────────────────────────────────────────────── */}
+      {/* ── Produktdatenbank ─────────────────────────────────────────────────── */}
       {showProductManager && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-lg flex flex-col" style={{ maxHeight: '80vh' }}>
+          <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-5xl flex flex-col" style={{ maxHeight: '88vh' }}>
+
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
               <div>
-                <h2 className="text-sm font-bold">Produkte verwalten</h2>
+                <h2 className="text-sm font-bold flex items-center gap-2">
+                  <Package className="h-4 w-4 text-primary" />
+                  Produktdatenbank
+                </h2>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Produkte aus der Rangliste ausblenden oder wiederherstellen
+                  Zentrale WES-Werte — Änderungen gelten für alle Monate und Auswertungen
                 </p>
               </div>
-              <button onClick={() => setShowProductManager(false)} className="p-1.5 rounded-md hover:bg-muted text-muted-foreground">
+              <button onClick={() => { setShowProductManager(false); setEditingCost(null); }}
+                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground">
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            {/* Suche + Kategorie-Filter */}
-            <div className="px-5 py-3 border-b border-border/60 shrink-0 space-y-2">
-              <div className="relative">
+            {/* Suche + Filter */}
+            <div className="px-5 py-3 border-b border-border/60 shrink-0 flex items-center gap-3">
+              <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                <input
-                  type="text"
-                  placeholder="Produkt suchen…"
-                  value={productSearch}
+                <input type="text" placeholder="Produkt suchen…" value={productSearch}
                   onChange={e => setProductSearch(e.target.value)}
-                  className="w-full h-8 rounded-md border border-border bg-background pl-8 pr-3 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                />
+                  className="w-full h-8 rounded-md border border-border bg-background pl-8 pr-3 text-xs focus:outline-none focus:ring-1 focus:ring-primary" />
               </div>
-              <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5 w-fit">
+              <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
                 {(['all', 'food', 'beverage'] as const).map(c => (
                   <button key={c} onClick={() => setProductFilterCat(c)}
                     className={cn('flex items-center gap-1 px-3 py-1 rounded-md text-xs font-medium transition-all',
@@ -891,71 +937,175 @@ export default function ProdukteSeite() {
                   </button>
                 ))}
               </div>
+              <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5 text-xs">
+                <button onClick={() => setProductFilterWes('all')}
+                  className={cn('px-2.5 py-1 rounded-md font-medium transition-all',
+                    productFilterWes === 'all' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                  Alle
+                </button>
+                <button onClick={() => setProductFilterWes('missing')}
+                  className={cn('px-2.5 py-1 rounded-md font-medium transition-all',
+                    productFilterWes === 'missing' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                  Ohne WES
+                </button>
+              </div>
             </div>
 
-            {/* Produkt-Liste */}
-            <div className="overflow-y-auto flex-1 divide-y divide-border/40">
+            {/* Tabelle */}
+            <div className="overflow-y-auto flex-1">
               {(() => {
                 const q = productSearch.toLowerCase();
                 const filtered = allProductNames.filter(p => {
                   if (productFilterCat !== 'all' && p.category !== productFilterCat) return false;
                   if (q && !p.name.toLowerCase().includes(q)) return false;
+                  if (productFilterWes === 'missing') {
+                    const c = costs.find(cc => cc.name.toLowerCase() === p.name.toLowerCase() && cc.category === p.category);
+                    if (c && c.wes > 0) return false;
+                  }
                   return true;
                 });
                 if (filtered.length === 0) {
-                  return <p className="text-center text-xs text-muted-foreground py-8">Keine Produkte gefunden</p>;
+                  return <p className="text-center text-xs text-muted-foreground py-12">Keine Produkte gefunden</p>;
                 }
-                return filtered.map(({ name, category: pCat }) => {
-                  const isAutoIgnored = DEFAULT_IGNORE_TERMS.some(t => name.toLowerCase().includes(t));
-                  const isManualIgnored = ignoredByUser.includes(name);
-                  const isIgnored = isAutoIgnored || isManualIgnored;
-                  return (
-                    <div key={name} className={cn(
-                      'flex items-center gap-3 px-5 py-2.5 hover:bg-muted/40 transition-colors',
-                      isIgnored && 'opacity-50',
-                    )}>
-                      {/* Checkbox */}
-                      <button
-                        disabled={isAutoIgnored}
-                        onClick={() => isManualIgnored ? restoreProduct(name) : ignoreProduct(name)}
-                        className={cn(
-                          'shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors',
-                          isIgnored
-                            ? 'bg-muted border-border text-muted-foreground'
-                            : 'border-primary bg-primary text-primary-foreground',
-                          isAutoIgnored && 'cursor-not-allowed',
-                        )}
-                        title={isAutoIgnored ? 'Automatisch ignoriert (Systemregel)' : isManualIgnored ? 'Wiederherstellen' : 'Ausblenden'}
-                      >
-                        {isIgnored && <X className="h-2.5 w-2.5" />}
-                      </button>
+                return (
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10 bg-card">
+                      <tr className="border-b border-border bg-muted/50">
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground w-8">
+                          <CheckSquare className="h-3.5 w-3.5" />
+                        </th>
+                        <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Produkt</th>
+                        <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground w-20">Kat.</th>
+                        <th className="px-3 py-2.5 text-right text-xs font-semibold text-purple-600 dark:text-purple-400 w-28">Brutto</th>
+                        <th className="px-3 py-2.5 text-right text-xs font-semibold text-purple-600 dark:text-purple-400 w-28">Netto</th>
+                        <th className="px-3 py-2.5 text-right text-xs font-semibold text-purple-600 dark:text-purple-400 w-28">WES/Stk.</th>
+                        <th className="px-3 py-2.5 text-right text-xs font-semibold text-purple-600 dark:text-purple-400 w-24">WES-Q %</th>
+                        <th className="px-3 py-2.5 w-8" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map(({ name, category: pCat }) => {
+                        const isAutoIgnored = DEFAULT_IGNORE_TERMS.some(t => name.toLowerCase().includes(t));
+                        const isManualIgnored = ignoredByUser.includes(name);
+                        const isIgnored = isAutoIgnored || isManualIgnored;
+                        const cost = costs.find(c => c.name.toLowerCase() === name.toLowerCase() && c.category === pCat);
+                        const hasWes = cost && cost.wes > 0;
 
-                      <span className={cn('text-xs flex-1 min-w-0 truncate', isIgnored && 'line-through text-muted-foreground')}>
-                        {name}
-                      </span>
+                        const mkField = (field: 'brutto' | 'netto' | 'wes' | 'wesQ') => {
+                          const isEditing = editingCost?.name.toLowerCase() === name.toLowerCase() && editingCost.field === field;
+                          const val = field === 'brutto' ? (cost?.bruttoPrice ?? 0)
+                                    : field === 'netto'  ? (cost?.nettoPrice  ?? 0)
+                                    : field === 'wes'    ? (cost?.wes         ?? 0)
+                                    :                      (cost?.wesQ        ?? 0);
+                          const display = field === 'wesQ'
+                            ? (val > 0 ? `${val.toFixed(1)}%` : '–')
+                            : (val > 0 ? formatCHF(val) : '–');
+                          const colorCls = field === 'wesQ' && val > 0
+                            ? val > 35 ? 'text-red-600 dark:text-red-400'
+                              : val > 25 ? 'text-amber-600 dark:text-amber-400'
+                              : 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-purple-700 dark:text-purple-300';
+                          return (
+                            <td key={field}
+                              className="px-1 py-1.5 text-right tabular-nums text-xs cursor-pointer group/cell"
+                              onClick={() => startCostEditForCategory(name, pCat, field, val)}>
+                              {isEditing
+                                ? <input ref={costEditRef}
+                                    className="w-20 text-right text-xs bg-purple-50 dark:bg-purple-950/50 border border-purple-400 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-purple-500 tabular-nums"
+                                    value={editingValue}
+                                    onChange={e => setEditingValue(e.target.value)}
+                                    onBlur={() => commitCostEditForCategory(name, pCat)}
+                                    onKeyDown={e => { if (e.key === 'Enter') commitCostEditForCategory(name, pCat); if (e.key === 'Escape') setEditingCost(null); }}
+                                    onClick={e => e.stopPropagation()} autoFocus />
+                                : <span className={cn('flex items-center justify-end gap-1',
+                                    val > 0 ? colorCls : 'text-muted-foreground')}>
+                                    {display}
+                                    <Pencil className="h-2.5 w-2.5 opacity-0 group-hover/cell:opacity-40 shrink-0" />
+                                  </span>}
+                            </td>
+                          );
+                        };
 
-                      {/* Kategorie-Badge */}
-                      <span className={cn(
-                        'text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0',
-                        pCat === 'food' ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
-                                        : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
-                      )}>
-                        {pCat === 'food' ? 'Food' : 'Bev.'}
-                      </span>
-
-                      {isAutoIgnored && (
-                        <span className="text-[10px] text-muted-foreground shrink-0">System</span>
-                      )}
-                    </div>
-                  );
-                });
+                        return (
+                          <tr key={`${pCat}-${name}`}
+                            className={cn('border-b border-border/40 hover:bg-muted/30 transition-colors group',
+                              isIgnored && 'opacity-40')}>
+                            {/* Sichtbarkeit-Toggle */}
+                            <td className="px-4 py-2.5">
+                              <button disabled={isAutoIgnored}
+                                onClick={() => isManualIgnored ? restoreProduct(name) : ignoreProduct(name)}
+                                className={cn('w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0',
+                                  isIgnored ? 'bg-muted border-border text-muted-foreground' : 'border-primary bg-primary text-primary-foreground',
+                                  isAutoIgnored && 'cursor-not-allowed')}
+                                title={isAutoIgnored ? 'System' : isManualIgnored ? 'Wiederherstellen' : 'Ausblenden'}>
+                                {isIgnored && <X className="h-2.5 w-2.5" />}
+                              </button>
+                            </td>
+                            {/* Name */}
+                            <td className="px-3 py-2.5">
+                              <div className="flex items-center gap-2">
+                                <span className={cn('text-xs font-medium truncate max-w-xs', isIgnored && 'line-through text-muted-foreground')}>
+                                  {name}
+                                </span>
+                                {!hasWes && !isIgnored && (
+                                  <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 shrink-0">
+                                    Kein WES
+                                  </span>
+                                )}
+                                {isAutoIgnored && <span className="text-[9px] text-muted-foreground shrink-0">System</span>}
+                              </div>
+                            </td>
+                            {/* Kategorie */}
+                            <td className="px-3 py-2.5 text-center">
+                              <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium',
+                                pCat === 'food'
+                                  ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
+                                  : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300')}>
+                                {pCat === 'food' ? 'Food' : 'Bev.'}
+                              </span>
+                            </td>
+                            {/* WES-Felder (alle 4 editierbar) */}
+                            {mkField('brutto')}
+                            {mkField('netto')}
+                            {mkField('wes')}
+                            {mkField('wesQ')}
+                            {/* Löschen-Knopf für WES */}
+                            <td className="px-2 py-2.5">
+                              {hasWes && (
+                                <button
+                                  onClick={() => {
+                                    const updated = costs.map(c =>
+                                      c.name.toLowerCase() === name.toLowerCase() && c.category === pCat
+                                        ? { ...c, bruttoPrice: 0, nettoPrice: 0, wes: 0, wesQ: 0 }
+                                        : c
+                                    );
+                                    saveProductCosts(updated);
+                                    setCosts(updated);
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground"
+                                  title="WES-Werte löschen">
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                );
               })()}
             </div>
 
             {/* Footer */}
-            <div className="px-5 py-3 border-t border-border/60 shrink-0 flex items-center justify-between text-xs text-muted-foreground">
-              <span>{ignoredByUser.length} manuell ausgeblendet · {DEFAULT_IGNORE_TERMS.length} System-Regeln</span>
-              <Button size="sm" variant="outline" className="h-7" onClick={() => setShowProductManager(false)}>
+            <div className="px-5 py-3 border-t border-border/60 shrink-0 flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">
+                {costs.filter(c => c.wes > 0).length} mit WES ·{' '}
+                {allProductNames.length - costs.filter(c => c.wes > 0).length} ohne ·{' '}
+                {ignoredByUser.length} ausgeblendet
+              </span>
+              <Button size="sm" variant="outline" className="h-7"
+                onClick={() => { setShowProductManager(false); setEditingCost(null); }}>
                 Schliessen
               </Button>
             </div>
