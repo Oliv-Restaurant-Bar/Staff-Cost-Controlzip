@@ -388,26 +388,6 @@ export default function ProdukteSeite() {
                 </div>
               </div>
 
-              {/* Monat-Pills — nur im Einzelmonat-Modus */}
-              {!isPM && (
-                <div className="flex items-center gap-1 flex-wrap">
-                  <span className="text-xs text-muted-foreground font-medium mr-1 shrink-0">Monat:</span>
-                  {months.map(m => (
-                    <button
-                      key={m}
-                      onClick={() => setMonth(m)}
-                      className={cn(
-                        'px-2.5 py-0.5 rounded-full text-xs font-medium border transition-all',
-                        selectedMonth === m
-                          ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                          : 'bg-background text-muted-foreground border-border hover:border-primary/50 hover:text-foreground',
-                      )}
-                    >
-                      {formatMonth(m)}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -479,6 +459,28 @@ export default function ProdukteSeite() {
         {/* ══ EINZELMONAT-ANSICHT ═════════════════════════════════════════════ */}
         {data && !isPM && (
           <>
+            {/* Monatsauswahl */}
+            <div className="bg-card border border-border rounded-xl px-4 py-3">
+              <p className="text-xs font-semibold text-muted-foreground mb-2">Monat auswählen</p>
+              <div className="flex flex-wrap gap-2">
+                {months.map(m => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMonth(m)}
+                    className={cn(
+                      'px-3 py-1 rounded-lg text-xs font-medium border transition-all cursor-pointer',
+                      selectedMonth === m
+                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                        : 'bg-background text-foreground border-border hover:bg-muted',
+                    )}
+                  >
+                    {formatMonthLong(m)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="flex items-center gap-2 flex-wrap">
               {isFlop
                 ? <TrendingDown className="h-4 w-4 text-red-500" />
