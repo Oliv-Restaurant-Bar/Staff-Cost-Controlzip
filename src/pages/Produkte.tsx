@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import {
   Upload, Trash2, Package, TrendingUp, TrendingDown,
   Hash, RotateCcw, ChevronDown, X, Award, CalendarDays, LayoutGrid,
@@ -21,6 +21,8 @@ import {
   DEFAULT_IGNORE_TERMS,
   loadProductCosts,
   saveProductCosts,
+  saveProductCostsToDB,
+  loadProductCostsFromDB,
   mergeProductCosts,
   parseCostExcel,
   type ProdukteData,
@@ -142,6 +144,13 @@ export default function ProdukteSeite() {
 
   const [costs, setCosts] = useState<ProductCostEntry[]>(() => loadProductCosts());
   const [importingCost, setImportingCost] = useState(false);
+
+  // Beim Start: Kosten aus Supabase laden (überschreibt localStorage-Cache)
+  useEffect(() => {
+    loadProductCostsFromDB().then(dbCosts => {
+      if (dbCosts.length > 0) setCosts(dbCosts);
+    });
+  }, []);
   const [editingCost, setEditingCost] = useState<{
     name: string; field: 'brutto' | 'netto' | 'wes' | 'wesQ';
   } | null>(null);
@@ -204,7 +213,7 @@ export default function ProdukteSeite() {
       updated.push(newEntry);
     }
 
-    saveProductCosts(updated);
+    saveProductCostsToDB(updated);
     setCosts(updated);
     setEditingCost(null);
   };
@@ -248,7 +257,7 @@ export default function ProdukteSeite() {
         wesQ:        editingCost.field === 'wesQ'   ? val : 0,
       });
     }
-    saveProductCosts(updated);
+    saveProductCostsToDB(updated);
     setCosts(updated);
     setEditingCost(null);
   };
@@ -362,7 +371,7 @@ export default function ProdukteSeite() {
         return;
       }
       const merged = mergeProductCosts(costs, parsed);
-      saveProductCosts(merged);
+      saveProductCostsToDB(merged);
       setCosts(merged);
       const foodCount = parsed.filter(p => p.category === 'food').length;
       const bevCount  = parsed.filter(p => p.category === 'beverage').length;
@@ -1079,7 +1088,7 @@ export default function ProdukteSeite() {
                                         ? { ...c, bruttoPrice: 0, nettoPrice: 0, wes: 0, wesQ: 0 }
                                         : c
                                     );
-                                    saveProductCosts(updated);
+                                    saveProductCostsToDB(updated);
                                     setCosts(updated);
                                   }}
                                   className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground"

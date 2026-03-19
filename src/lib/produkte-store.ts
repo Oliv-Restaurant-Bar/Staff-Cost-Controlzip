@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { supabase } from '@/integrations/supabase/client';
 
 export interface ProductEntry {
   name: string;
@@ -516,4 +517,44 @@ export function getAvailableMonths(entries: ProductEntry[], category: 'food' | '
   const filtered = entries.filter(e => (e.category ?? 'food') === category);
   const set = new Set(filtered.map(e => e.month));
   return Array.from(set).filter(m => m !== 'gesamt').sort();
+}
+
+// ── Supabase-Sync für Produktkosten ───────────────────────────────────────────
+const DB_KV_KEY = 'produkte_cost_v1';
+
+/**
+ * Lädt Produktkosten aus Supabase (app_kv_store).
+ * Fällt auf localStorage zurück wenn nicht eingeloggt oder kein Netz.
+ */
+export async function loadProductCostsFromDB(): Promise<ProductCostEntry[]> {
+  try {
+    const { data, error } = await supabase
+      .from('app_kv_store')
+      .select('value')
+      .eq('key', DB_KV_KEY)
+      .maybeSingle();
+    if (error || !data?.value) return loadProductCosts(); // localStorage-Fallback
+    const parsed: ProductCostEntry[] = JSON.parse(data.value);
+    // Lokalen Cache aktualisieren
+    localStorage.setItem(DB_KV_KEY, data.value);
+    return parsed;
+  } catch {
+    return loadProductCosts();
+  }
+}
+
+/**
+ * Speichert Produktkosten in Supabase (app_kv_store) UND localStorage.
+ */
+export async function saveProductCostsToDB(costs: ProductCostEntry[]): Promise<void> {
+  const value = JSON.stringify(costs);
+  // Immer sofort lokal speichern (kein Warten auf Netz)
+  localStorage.setItem(DB_KV_KEY, value);
+  try {
+    await supabase
+      .from('app_kv_store')
+      .upsert({ key: DB_KV_KEY, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  } catch {
+    // Netzfehler → nur localStorage
+  }
 }
