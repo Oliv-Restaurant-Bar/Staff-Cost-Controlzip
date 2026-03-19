@@ -15,11 +15,12 @@ Internes Reporting-Tool für Umsatz, Personalkosten, Dienstplan und KPIs. 2–3 
 - Datei: `src/integrations/supabase/client.ts`
 
 ## Ziel-Modulstruktur (in Umsetzung)
-1. **Dashboard** — Übersicht KPIs, Umsatz, Kosten
+1. **Dashboard** — Übersicht KPIs, Umsatz, Kosten; pro-rata Personalkosten; Personal FIX-Sektion
 2. **Dienstplanung** — Plan- und Ist-Dienstplan (SchedulePlanner.tsx)
 3. **Soll / Ist Analyse** — Vergleich geplant vs. tatsächlich
 4. **Personalstamm** — Mitarbeiterdaten (nur Admin)
-5. **Reporting / Finanzmodul** — Vollständige Finanzdaten (nur Admin)
+5. **Reporting / Finanzmodul** — Vollständige Finanzdaten inkl. Vorjahr (PLView.tsx)
+6. **Personal FIX** — Fixlohn-Übersicht: Monatslöhne inkl. 13. pro Abt., Vergleich vs. Budget (`/personal-fix`, nur Admin)
 
 ## Rollen-System (Phase 1 implementiert)
 - **admin** → sieht alles, incl. Einzellöhne und alle Abteilungen

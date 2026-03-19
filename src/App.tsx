@@ -33,6 +33,7 @@ import DepartmentPlannerWrapper from "./pages/DepartmentPlannerWrapper";
 import NotFound from "./pages/NotFound";
 import OnboardingForm from "./pages/OnboardingForm";
 import ImportHub from "./pages/ImportHub";
+import PersonalFixPage from "./pages/PersonalFix";
 import GuestAccess from "./pages/GuestAccess";
 
 const queryClient = new QueryClient();
@@ -121,6 +122,7 @@ const AppContent = () => {
             <Route path="/lieferanten"          element={<SupplierDocumentsPage />} />
             <Route path="/lieferanten-vergleich" element={<SupplierComparisonPage />} />
             <Route path="/budget"           element={<BudgetPage />} />
+            <Route path="/personal-fix"     element={<PersonalFixPage />} />
 
             {/* Abteilungs-Dienstpläne */}
             <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />

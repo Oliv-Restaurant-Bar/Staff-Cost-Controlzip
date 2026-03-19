@@ -14,7 +14,7 @@ import {
   CalendarDays, AlertTriangle, CheckCircle2,
   LayoutDashboard, Calendar, BarChart2,
   BookOpen, Target, Upload, ChevronLeft, ChevronRight,
-  Pencil, Check, X as XIcon, Scale, Printer,
+  Pencil, Check, X as XIcon, Scale, Printer, DollarSign,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -477,6 +477,14 @@ const Dashboard = () => {
     }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleEmployees, actualData]);
+
+  // Personal FIX: garantierter Monatslohn inkl. 13. für Vollzeit/Teilzeit-Mitarbeiter
+  const personalFixCost = useMemo(() => {
+    return visibleEmployees
+      .filter(e => (e.employmentType === 'vollzeit' || e.employmentType === 'teilzeit') && (e.monthlySalary ?? 0) > 0)
+      .reduce((sum, e) => sum + (e.monthlySalaryWith13th ?? e.monthlySalary ?? 0), 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleEmployees]);
 
   const plannedHours = useMemo(() => {
     return Object.entries(scheduleData)
@@ -1489,6 +1497,60 @@ const Dashboard = () => {
                             : ratioStatus((actualLaborCostEffective / revenueIstEffective) * 100) === 'good' ? 'green'
                             : ratioStatus((actualLaborCostEffective / revenueIstEffective) * 100) === 'ok' ? 'yellow'
                             : 'red'}
+                          small
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Personal FIX – Fixlohn-Vergleich */}
+                {personalFixCost > 0 && (
+                  <div className="mt-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
+                      <DollarSign className="h-3.5 w-3.5" />
+                      Personal FIX · Monat
+                    </p>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      <KpiCard
+                        title="Personal FIX"
+                        value={formatCHF(personalFixCost)}
+                        subtitle="Fixlohn inkl. 13. / Monat"
+                        icon={<DollarSign className="h-5 w-5" />}
+                        color="blue"
+                        small
+                      />
+                      {actualLaborCost > 0 && (
+                        <KpiCard
+                          title="Ist vs. FIX"
+                          value={formatCHF(actualLaborCost - personalFixCost)}
+                          subtitle={`${actualLaborCost >= personalFixCost ? '↑ Ist über Fix' : '↓ Ist unter Fix'}`}
+                          icon={<Users className="h-5 w-5" />}
+                          color={actualLaborCost <= personalFixCost ? 'green' : 'red'}
+                          delta={(actualLaborCost - personalFixCost) / personalFixCost * 100}
+                          deltaLabel="% Ist vs. FIX"
+                          small
+                        />
+                      )}
+                      {budgetData.personnelBudget > 0 && (
+                        <KpiCard
+                          title="FIX vs. Budget"
+                          value={formatCHF(personalFixCost - budgetData.personnelBudget)}
+                          subtitle={`${personalFixCost <= budgetData.personnelBudget ? '✓ FIX im Budget' : '↑ FIX über Budget'}`}
+                          icon={<BookOpen className="h-5 w-5" />}
+                          color={personalFixCost <= budgetData.personnelBudget ? 'green' : 'red'}
+                          small
+                        />
+                      )}
+                      {actualLaborCost > 0 && revenueMonth > 0 && (
+                        <KpiCard
+                          title="FIX-Quote"
+                          value={`${((personalFixCost / revenueMonth) * 100).toFixed(1)} %`}
+                          subtitle="FIX-Lohn / Ist-Umsatz"
+                          icon={<Target className="h-5 w-5" />}
+                          color={budgetData.personnelRatioTarget !== null
+                            ? budgetRatioColor((personalFixCost / revenueMonth) * 100, budgetData.personnelRatioTarget)
+                            : 'default'}
                           small
                         />
                       )}
