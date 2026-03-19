@@ -178,7 +178,7 @@ const PERIOD_LABELS: Record<Period, string> = {
   year:  'Jahr',
 };
 
-type DashView = 'alle' | 'umsatz' | 'personal';
+type DashView = 'alle' | 'umsatz' | 'personal' | 'budget' | 'vorjahr';
 
 const Dashboard = () => {
   const today = useMemo(() => new Date(), []);
@@ -737,8 +737,11 @@ const Dashboard = () => {
     : null;
 
   // ── Ansicht-Filter-Helfer ────────────────────────────────────────────────────
-  const showUmsatz   = dashView === 'alle' || dashView === 'umsatz';
-  const showPersonal = dashView === 'alle' || dashView === 'personal';
+  const showUmsatz    = ['alle', 'umsatz', 'vorjahr'].includes(dashView);
+  const showJbv       = ['alle', 'umsatz', 'budget', 'vorjahr'].includes(dashView);
+  const showPersonal  = ['alle', 'personal', 'budget'].includes(dashView);
+  const showStunden   = ['alle', 'personal'].includes(dashView);
+  const showPkVergl   = ['alle', 'personal', 'budget'].includes(dashView);
 
   // ─── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -862,9 +865,11 @@ const Dashboard = () => {
           <div className="border-t border-border/60 pt-2 pb-0.5 flex items-center gap-1.5 flex-wrap">
             <span className="text-xs text-muted-foreground font-medium mr-1">Ansicht:</span>
             {([
-              { id: 'alle',     label: 'Alle',     icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
-              { id: 'umsatz',   label: 'Umsatz',   icon: <TrendingUp className="h-3.5 w-3.5" /> },
-              { id: 'personal', label: 'Personal',  icon: <Users className="h-3.5 w-3.5" /> },
+              { id: 'alle',     label: 'Alle',          icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { id: 'umsatz',   label: 'Umsatz',        icon: <TrendingUp className="h-3.5 w-3.5" /> },
+              { id: 'budget',   label: 'Ist vs. Budget', icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { id: 'vorjahr',  label: 'Ist vs. Vorjahr', icon: <CalendarDays className="h-3.5 w-3.5" /> },
+              { id: 'personal', label: 'Personal',      icon: <Users className="h-3.5 w-3.5" /> },
             ] as { id: DashView; label: string; icon: React.ReactNode }[]).map(v => (
               <button
                 key={v.id}
@@ -1041,7 +1046,7 @@ const Dashboard = () => {
             )}
 
             {/* ── Jahresbudget-Vergleich ───────────────────────────────────── */}
-            {budgetData.hasBudget && showUmsatz && (
+            {budgetData.hasBudget && showJbv && (
               <>
                 <SectionTitle icon={<BookOpen className="h-4 w-4" />}>
                   Jahresbudget-Vergleich · {monthName}
@@ -1594,7 +1599,7 @@ const Dashboard = () => {
             )}
 
             {/* ── Stunden ──────────────────────────────────────────────────── */}
-            {canSeePersonnelCostTotals && showPersonal && (
+            {canSeePersonnelCostTotals && showStunden && (
               <>
                 <SectionTitle icon={<Clock className="h-4 w-4" />}>
                   Stunden {deptLabel} · {monthName}
@@ -1631,7 +1636,7 @@ const Dashboard = () => {
             )}
 
             {/* ── Personalkosten-Vergleich: Dienstplan vs. Buchhaltung ─────── */}
-            {canSeePersonnelCostTotals && showPersonal && (actualLaborCost > 0 || accountingPersonnelCost > 0) && (
+            {canSeePersonnelCostTotals && showPkVergl && (actualLaborCost > 0 || accountingPersonnelCost > 0) && (
               <>
                 <SectionTitle icon={<Scale className="h-4 w-4" />}>
                   Personalkosten-Vergleich · {monthName}

@@ -1889,20 +1889,49 @@ CREATE POLICY "Anon self-register new employee"
                               <p className="text-xs font-semibold text-blue-800 dark:text-blue-300 mb-2">
                                 Monatslohn-Vertrag (ML) — Festanstellung
                               </p>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 <div>
                                   <Label className="text-xs text-muted-foreground mb-1 block">
-                                    Monatslohn brutto (CHF)
-                                    <span className="ml-1 text-[10px] italic opacity-60">exkl. 13. Monatslohn</span>
+                                    Fixlohn / Monat (CHF)
+                                    <span className="ml-1 text-[10px] italic opacity-60">exkl. 13. ML</span>
                                   </Label>
                                   <Input
                                     type="number" min="0" step="50"
                                     value={editData?.monthlySalary ?? ''}
-                                    onChange={e => setEditData(d => d ? { ...d, monthlySalary: parseFloat(e.target.value) || undefined } : d)}
+                                    onChange={e => {
+                                      const val = parseFloat(e.target.value) || undefined;
+                                      setEditData(d => {
+                                        if (!d) return d;
+                                        const auto13 = val && d.has13thSalary && !d.monthlySalaryWith13th
+                                          ? parseFloat((val * 13 / 12).toFixed(2))
+                                          : d.monthlySalaryWith13th;
+                                        return { ...d, monthlySalary: val, monthlySalaryWith13th: auto13 };
+                                      });
+                                    }}
                                     placeholder="z.B. 4800"
                                     className="h-9 text-sm"
                                     autoFocus
                                   />
+                                </div>
+                                <div>
+                                  <Label className="text-xs text-muted-foreground mb-1 block">
+                                    Fixlohn / Monat (CHF)
+                                    <span className="ml-1 text-[10px] italic opacity-60">inkl. 13. ML</span>
+                                  </Label>
+                                  <Input
+                                    type="number" min="0" step="50"
+                                    value={editData?.monthlySalaryWith13th ?? (editData?.has13thSalary && editData?.monthlySalary ? parseFloat((editData.monthlySalary * 13 / 12).toFixed(2)) : '')}
+                                    onChange={e => setEditData(d => d ? { ...d, monthlySalaryWith13th: parseFloat(e.target.value) || undefined } : d)}
+                                    placeholder={editData?.monthlySalary && editData?.has13thSalary
+                                      ? `≈ ${(editData.monthlySalary * 13 / 12).toFixed(0)}`
+                                      : 'z.B. 5200'}
+                                    className="h-9 text-sm"
+                                  />
+                                  {editData?.monthlySalary && editData?.has13thSalary && (
+                                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                                      Berechnet: {formatCHF(editData.monthlySalary * 13 / 12)}/Mt.
+                                    </p>
+                                  )}
                                 </div>
                                 <div>
                                   <Label className="text-xs text-muted-foreground mb-1 block">
@@ -1949,7 +1978,7 @@ CREATE POLICY "Anon self-register new employee"
                               />
                               <span className="text-sm">Ja – 13. Monatslohn vereinbart</span>
                             </label>
-                            {editData?.has13thSalary && editData?.monthlySalary && (
+                            {editData?.has13thSalary && editData?.contractType !== 'monthly' && editData?.monthlySalary && (
                               <p className="text-[11px] text-muted-foreground mt-1 ml-6">
                                 ≈ {formatCHF(editData.monthlySalary * 13 / 12)}/Mt. effektiv
                               </p>
@@ -2062,6 +2091,18 @@ CREATE POLICY "Anon self-register new employee"
                                 value={`${factor.toFixed(2)} (${((factor - 1) * 100).toFixed(1)}%)`}
                               />
                               <DataRow label="13. Monatslohn" value={has13th ? 'Ja – vereinbart' : 'Nicht vereinbart'} />
+                              {hasML && empForCost.monthlySalary && (
+                                <DataRow
+                                  label="Fixlohn / Monat exkl. 13."
+                                  value={formatCHF(empForCost.monthlySalary)}
+                                />
+                              )}
+                              {hasML && (empForCost.monthlySalaryWith13th || (empForCost.monthlySalary && has13th)) && (
+                                <DataRow
+                                  label="Fixlohn / Monat inkl. 13."
+                                  value={formatCHF(empForCost.monthlySalaryWith13th ?? (empForCost.monthlySalary! * 13 / 12))}
+                                />
+                              )}
                             </div>
                             <div className="rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 p-3 space-y-1">
                               <p className="font-semibold text-purple-800 dark:text-purple-300 flex items-center gap-1 mb-2 text-xs">
