@@ -235,3 +235,44 @@
     @apply backdrop-blur-sm bg-card/80;
   }
 }
+
+/* ─── Print-Styles (Dashboard window.print()) ─────────────────────── */
+@media print {
+  /* Allgemein */
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 11pt;
+  }
+
+  /* Header nicht drucken */
+  header {
+    display: none !important;
+  }
+
+  /* Scrollable Bereiche aufklappen */
+  main, [class*="overflow"] {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  /* Seitenumbrüche */
+  .print\:break-before {
+    break-before: page;
+  }
+  .print\:avoid-break {
+    break-inside: avoid;
+  }
+
+  /* Interaktive Elemente ausblenden */
+  button:not(.print\:show),
+  [role="dialog"],
+  [data-radix-popper-content-wrapper] {
+    display: none !important;
+  }
+
+  /* Karten-Border für den Druck sichtbar halten */
+  .border {
+    border: 1px solid #e5e7eb !important;
+  }
+}

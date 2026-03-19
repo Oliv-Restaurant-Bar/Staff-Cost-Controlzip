@@ -20,6 +20,7 @@ import {
   LayoutDashboard, TrendingUp, ChevronRight, Plus,
   Edit3, Upload, CheckCircle2, AlertCircle, Clock,
   Info, Save, X, FileText, BarChart2, RefreshCw, Settings2, AlertTriangle,
+  FileDown, FileSpreadsheet,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -49,6 +50,9 @@ import {
   calcAnnualSummary, formatCHF, formatMonthLabel,
 } from '@/lib/reporting-store';
 import { loadBudgetWithPL, resolveBudgetYear } from '@/lib/budget-store';
+import {
+  exportReportingToPDF, exportReportingToExcel, calcEffectiveTotals,
+} from '@/lib/reporting-export';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Navigate } from 'react-router-dom';
 import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue-import';
@@ -622,6 +626,26 @@ const Reporting = () => {
     m.revenueActual !== undefined || m.personnelCostActual !== undefined
   );
 
+  const totals = useMemo(() => calcEffectiveTotals(effectiveMonths), [effectiveMonths]);
+
+  const handleExportPDF = () => {
+    try {
+      exportReportingToPDF(effectiveMonths, totals, year);
+      toast.success('PDF exportiert');
+    } catch {
+      toast.error('PDF-Export fehlgeschlagen');
+    }
+  };
+
+  const handleExportExcel = () => {
+    try {
+      exportReportingToExcel(effectiveMonths, totals, year);
+      toast.success('Excel exportiert');
+    } catch {
+      toast.error('Excel-Export fehlgeschlagen');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
 
@@ -658,9 +682,31 @@ const Reporting = () => {
             <Link to="/csv-import">
               <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-blue-300 text-blue-700 hover:bg-blue-50">
                 <Upload className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">CSV / PDF</span>
+                <span className="hidden sm:inline">Import</span>
               </Button>
             </Link>
+
+            {/* Export PDF */}
+            <Button
+              variant="outline" size="sm"
+              className="h-8 text-xs gap-1 border-rose-300 text-rose-700 hover:bg-rose-50"
+              onClick={handleExportPDF}
+              title="Jahrestabelle als PDF exportieren"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">PDF</span>
+            </Button>
+
+            {/* Export Excel */}
+            <Button
+              variant="outline" size="sm"
+              className="h-8 text-xs gap-1 border-green-300 text-green-700 hover:bg-green-50"
+              onClick={handleExportExcel}
+              title="Jahrestabelle als Excel exportieren"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Excel</span>
+            </Button>
 
             {/* Kontenplan-Link */}
             <Link to="/kontenplan">
@@ -953,6 +999,55 @@ const Reporting = () => {
                       </tr>
                     );
                   })}
+                  {/* ── Total-Zeile ──────────────────────────────────────── */}
+                  {hasAnyData && (
+                    <tr className="bg-slate-100 dark:bg-slate-800 border-t-2 border-border font-bold">
+                      <td className="px-3 py-2.5 text-sm font-bold text-foreground">
+                        Σ Total {year}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm">
+                        {totals.revenueActual > 0 ? formatCHF(totals.revenueActual) : '–'}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-muted-foreground">
+                        {totals.revenueBudget > 0 ? formatCHF(totals.revenueBudget) : '–'}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-muted-foreground">
+                        {totals.revenuePreviousYear > 0
+                          ? <>
+                              {formatCHF(totals.revenuePreviousYear)}
+                              {totals.revenueActual > 0 && totals.revenuePreviousYear > 0 && (
+                                <span className="ml-1 text-[9px] font-normal">
+                                  {totals.revenueActual >= totals.revenuePreviousYear
+                                    ? `+${(((totals.revenueActual - totals.revenuePreviousYear) / totals.revenuePreviousYear) * 100).toFixed(1)} %`
+                                    : `${(((totals.revenueActual - totals.revenuePreviousYear) / totals.revenuePreviousYear) * 100).toFixed(1)} %`
+                                  }
+                                </span>
+                              )}
+                            </>
+                          : '–'
+                        }
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm">
+                        {totals.personnelCostActual > 0
+                          ? <>
+                              {formatCHF(totals.personnelCostActual)}
+                              {totals.revenueActual > 0 && (
+                                <span className="ml-1 text-[9px] font-normal text-muted-foreground">
+                                  {((totals.personnelCostActual / totals.revenueActual) * 100).toFixed(1)} %
+                                </span>
+                              )}
+                            </>
+                          : '–'
+                        }
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-muted-foreground">
+                        {totals.personnelCostPlanned > 0 ? formatCHF(totals.personnelCostPlanned) : '–'}
+                      </td>
+                      <td className="px-3 py-2.5 text-center text-sm text-muted-foreground">–</td>
+                      <td className="px-3 py-2.5 text-center text-sm text-muted-foreground">–</td>
+                      <td className="px-3 py-2.5 text-center"></td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

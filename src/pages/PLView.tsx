@@ -19,7 +19,7 @@ import {
   LayoutDashboard, TrendingUp, ChevronRight, Info,
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
-  Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle,
+  Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle, FileDown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -45,6 +45,8 @@ import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem } from '@/lib/b
 import { BudgetYear, BudgetPLCategory } from '@/types/budget';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
+import { exportPLToPDF } from '@/lib/pl-export';
+import { toast } from 'sonner';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -1925,6 +1927,15 @@ const PLViewPage = () => {
     if (dd) setDrilldown(dd);
   }, [monthResult]);
 
+  const handleExportPDF = useCallback(() => {
+    try {
+      exportPLToPDF(monthResult, yearResult, year, month);
+      toast.success('PDF exportiert (3 Ansichten)');
+    } catch {
+      toast.error('PDF-Export fehlgeschlagen');
+    }
+  }, [monthResult, yearResult, year, month]);
+
   const handleYearMonthClick = useCallback((m: number) => {
     setMonth(m);
     setMode('monthly');
@@ -2140,6 +2151,17 @@ const PLViewPage = () => {
                 </span>
               </button>
             )}
+
+            {/* PDF Export – alle 3 Ansichten */}
+            <Button
+              variant="outline" size="sm"
+              className="h-8 text-xs gap-1 border-rose-300 text-rose-700 hover:bg-rose-50"
+              onClick={handleExportPDF}
+              title="Alle 3 Ansichten als PDF exportieren (Budget P&L, Klassisch, Jahresübersicht)"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">PDF</span>
+            </Button>
           </div>
         </div>
       </header>

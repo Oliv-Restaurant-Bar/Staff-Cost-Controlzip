@@ -14,7 +14,7 @@ import {
   CalendarDays, AlertTriangle, CheckCircle2,
   LayoutDashboard, Calendar, BarChart2,
   BookOpen, Target, Upload, ChevronLeft, ChevronRight,
-  Pencil, Check, X as XIcon, Scale,
+  Pencil, Check, X as XIcon, Scale, Printer,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -717,6 +717,15 @@ const Dashboard = () => {
                   Dienstplan
                 </Button>
               </Link>
+              <Button
+                variant="outline" size="sm"
+                className="h-8 print:hidden"
+                onClick={() => window.print()}
+                title="Dashboard drucken / als PDF speichern"
+              >
+                <Printer className="h-3.5 w-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Drucken</span>
+              </Button>
             </div>
           </div>
         </div>
