@@ -181,24 +181,35 @@ const MonthRow = ({
 // ─── Jahres-Zeile ─────────────────────────────────────────────────────────────
 
 const YearRow = ({
-  rows, rowIndex, onClickMonth,
+  rows, rowIndex, onClickMonth, pctMode = 'off', revenueTotal = 0,
 }: {
   rows: PLComputedRow[][];  // rows[monthIndex][rowIndex]
   rowIndex: number;
   onClickMonth: (month: number) => void;
+  pctMode?: 'off' | 'normal' | 'subtle';
+  revenueTotal?: number;
 }) => {
   const def = PL_STRUCTURE[rowIndex];
+  const colCount = 14 + (pctMode !== 'off' ? 1 : 0);
   if (!def) return null;
-  if (def.type === 'spacer') return <tr className="h-2"><td colSpan={15} /></tr>;
+  if (def.type === 'spacer') return <tr className="h-2"><td colSpan={colCount} /></tr>;
   if (def.type === 'section') {
     return (
       <tr className={ROW_STYLE.section}>
-        <td colSpan={15} className="px-3 py-2 text-xs font-bold tracking-wider sticky left-0 bg-slate-700 dark:bg-slate-800">
+        <td colSpan={colCount} className="px-3 py-2 text-xs font-bold tracking-wider sticky left-0 bg-slate-700 dark:bg-slate-800">
           {def.label}
         </td>
       </tr>
     );
   }
+
+  const vals = rows
+    .map(r => r[rowIndex]?.values.actual)
+    .filter((v): v is number => v !== undefined);
+  const total = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : undefined;
+  const pctStr = pctMode !== 'off' && revenueTotal > 0 && total !== undefined && total !== 0
+    ? `${(total / revenueTotal * 100).toFixed(1)}%`
+    : null;
 
   return (
     <tr className={cn(ROW_STYLE[def.type] || ROW_STYLE.line, 'group')}>
@@ -210,18 +221,24 @@ const YearRow = ({
       )}>
         {def.label}
       </td>
-      {/* Jahressumme (vor den Monaten) */}
+      {/* Jahressumme */}
       <td className={cn(
-        'px-2 py-1.5 text-right text-sm font-mono border-r-2 border-slate-300 dark:border-slate-600',
+        'px-2 py-1.5 text-right text-sm font-mono',
         def.type === 'result' ? 'font-bold' : 'font-semibold',
+        pctMode === 'off' && 'border-r-2 border-slate-300 dark:border-slate-600',
       )}>
-        {(() => {
-          const vals = rows
-            .map(r => r[rowIndex]?.values.actual)
-            .filter((v): v is number => v !== undefined);
-          return vals.length > 0 ? fmt(vals.reduce((a, b) => a + b, 0)) : '—';
-        })()}
+        {total !== undefined ? fmt(total) : '—'}
       </td>
+      {/* % vom Jahresumsatz */}
+      {pctMode !== 'off' && (
+        <td className={cn(
+          'px-2 py-1.5 text-right font-mono whitespace-nowrap border-r-2 border-slate-300 dark:border-slate-600',
+          def.type === 'result' ? 'font-bold text-xs' : 'text-xs',
+          pctMode === 'subtle' ? 'text-[10px] italic text-muted-foreground/50' : 'text-amber-600 dark:text-amber-400',
+        )}>
+          {pctStr ?? <span className="opacity-30">—</span>}
+        </td>
+      )}
       {/* Monatswerte */}
       {rows.map((monthRows, mIdx) => {
         const row = monthRows[rowIndex];
@@ -429,9 +446,13 @@ const MonthlyView = ({
 const YearView = ({
   results,
   onClickMonth,
+  pctMode = 'off',
+  revenueTotal = 0,
 }: {
   results: PLMonthResult[];
   onClickMonth: (month: number) => void;
+  pctMode?: 'off' | 'normal' | 'subtle';
+  revenueTotal?: number;
 }) => {
   const allRows = results.map(r => r.rows);
 
@@ -441,9 +462,20 @@ const YearView = ({
         <thead>
           <tr className="bg-slate-800 text-white text-xs">
             <th className="text-left px-3 py-2 sticky left-0 bg-slate-800 z-10 min-w-[180px]">Position</th>
-            <th className="text-right px-2 py-2 border-r-2 border-slate-500 whitespace-nowrap font-bold bg-slate-700">
+            <th className={cn(
+              'text-right px-2 py-2 whitespace-nowrap font-bold bg-slate-700',
+              pctMode === 'off' && 'border-r-2 border-slate-500',
+            )}>
               Total
             </th>
+            {pctMode !== 'off' && (
+              <th className={cn(
+                'text-right px-2 py-2 whitespace-nowrap border-r-2 border-slate-500 bg-slate-700',
+                pctMode === 'subtle' ? 'opacity-50 italic text-[10px]' : 'text-amber-300',
+              )} title="% vom Jahres-Umsatz">
+                % Ums.
+              </th>
+            )}
             {MONTH_NAMES_SHORT_DE.slice(1).map((m, i) => (
               <th
                 key={i}
@@ -463,6 +495,8 @@ const YearView = ({
               rows={allRows}
               rowIndex={rowIndex}
               onClickMonth={onClickMonth}
+              pctMode={pctMode}
+              revenueTotal={revenueTotal}
             />
           ))}
         </tbody>
@@ -1806,7 +1840,7 @@ const PLViewPage = () => {
     setMode('monthly');
   }, []);
 
-  // KPI-Karten oben
+  // KPI-Karten oben (Monats- & Budget-Ansicht)
   const netRev  = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values;
   const gp1     = monthResult.rows.find(r => r.def.id === 'gross_profit_1')?.values;
   const gp2     = monthResult.rows.find(r => r.def.id === 'gross_profit_2')?.values;
@@ -1817,6 +1851,18 @@ const PLViewPage = () => {
     { label: 'Bruttogewinn 1',       values: gp1,   suffix: netRev?.actual ? ` (${((gp1?.actual ?? 0) / netRev.actual * 100).toFixed(1)} %)` : '' },
     { label: 'Deckungsbeitrag',       values: gp2,   suffix: netRev?.actual ? ` (${((gp2?.actual ?? 0) / netRev.actual * 100).toFixed(1)} %)` : '' },
     { label: 'Betriebsergebnis EBIT', values: ebit,  suffix: netRev?.actual ? ` (${((ebit?.actual ?? 0) / netRev.actual * 100).toFixed(1)} %)` : '' },
+  ];
+
+  // KPI-Karten Jahresansicht (Summe über alle Monate)
+  const yearNetRevTotal  = useMemo(() => yearResult.months.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'net_revenue')?.values.actual ?? 0), 0), [yearResult]);
+  const yearGP1Total     = useMemo(() => yearResult.months.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'gross_profit_1')?.values.actual ?? 0), 0), [yearResult]);
+  const yearGP2Total     = useMemo(() => yearResult.months.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'gross_profit_2')?.values.actual ?? 0), 0), [yearResult]);
+  const yearEbitTotal    = useMemo(() => yearResult.months.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'ebit')?.values.actual ?? 0), 0), [yearResult]);
+  const yearKpis = [
+    { label: 'Betriebsertrag netto', val: yearNetRevTotal, suffix: '' },
+    { label: 'Bruttogewinn 1',       val: yearGP1Total,    suffix: yearNetRevTotal > 0 ? `(${(yearGP1Total / yearNetRevTotal * 100).toFixed(1)} %)` : '' },
+    { label: 'Deckungsbeitrag',       val: yearGP2Total,    suffix: yearNetRevTotal > 0 ? `(${(yearGP2Total / yearNetRevTotal * 100).toFixed(1)} %)` : '' },
+    { label: 'Betriebsergebnis EBIT', val: yearEbitTotal,   suffix: yearNetRevTotal > 0 ? `(${(yearEbitTotal / yearNetRevTotal * 100).toFixed(1)} %)` : '' },
   ];
 
   return (
@@ -1946,7 +1992,7 @@ const PLViewPage = () => {
             )}
 
             {/* % Anteil am Umsatz */}
-            {mode === 'budget_pl' && (
+            {(mode === 'budget_pl' || mode === 'yearly') && (
               <button
                 title={
                   pctMode === 'off'
@@ -2032,6 +2078,38 @@ const PLViewPage = () => {
                       <>
                         <p className={cn('text-lg font-bold', isPositive ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600')}>
                           {fmt(val)}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">{kpi.suffix || 'CHF'}</p>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground/50 italic">Keine Daten</p>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+
+        {/* KPI-Karten Jahresansicht */}
+        {mode === 'yearly' && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {yearKpis.map(kpi => {
+              const isPositive = kpi.val >= 0;
+              const hasData = kpi.val !== 0;
+              return (
+                <Card key={kpi.label} className={cn(
+                  'border',
+                  hasData
+                    ? isPositive ? 'border-emerald-200 dark:border-emerald-800' : 'border-red-200 dark:border-red-800'
+                    : 'border-border',
+                )}>
+                  <CardContent className="p-3">
+                    <p className="text-[11px] text-muted-foreground mb-1 leading-tight">{kpi.label}</p>
+                    {hasData ? (
+                      <>
+                        <p className={cn('text-lg font-bold', isPositive ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600')}>
+                          {fmt(kpi.val)}
                         </p>
                         <p className="text-[10px] text-muted-foreground">{kpi.suffix || 'CHF'}</p>
                       </>
@@ -2131,7 +2209,7 @@ const PLViewPage = () => {
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
-            : <YearView results={yearResult.months} onClickMonth={handleYearMonthClick} />
+            : <YearView results={yearResult.months} onClickMonth={handleYearMonthClick} pctMode={pctMode} revenueTotal={yearNetRevTotal} />
           }
         </div>
 
