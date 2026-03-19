@@ -16,6 +16,112 @@ export interface ProdukteData {
 
 const STORAGE_KEY   = 'produkte_data_v2';
 const IGNORED_KEY   = 'produkte_ignored_v1';
+const COST_KEY      = 'produkte_cost_v1';
+
+// ── Produktkosten (WES) ───────────────────────────────────────────────────────
+export interface ProductCostEntry {
+  name: string;
+  category: 'food' | 'beverage';
+  bruttoPrice: number;  // Brutto-Verkaufspreis
+  nettoPrice: number;   // Netto-Verkaufspreis
+  wes: number;          // Einkaufspreis / Wareneinsatz pro Einheit
+  wesQ: number;         // Warenkostenaufwand in % (WES-Quotient)
+}
+
+export function loadProductCosts(): ProductCostEntry[] {
+  try { const r = localStorage.getItem(COST_KEY); return r ? JSON.parse(r) : []; }
+  catch { return []; }
+}
+
+export function saveProductCosts(list: ProductCostEntry[]): void {
+  localStorage.setItem(COST_KEY, JSON.stringify(list));
+}
+
+/**
+ * Merge neue Kostendaten in bestehende — überschreibt nach Name+Kategorie.
+ */
+export function mergeProductCosts(
+  existing: ProductCostEntry[],
+  incoming: ProductCostEntry[],
+): ProductCostEntry[] {
+  const merged = [...existing];
+  for (const inc of incoming) {
+    const idx = merged.findIndex(
+      e => e.name.toLowerCase() === inc.name.toLowerCase() && e.category === inc.category,
+    );
+    if (idx >= 0) merged[idx] = inc;
+    else merged.push(inc);
+  }
+  return merged;
+}
+
+/**
+ * Parser für Gastronovi / eigene WES-Listen.
+ * Erkennt Spalten: Bezeichnung, Brutto, Netto, WES, WES-Q
+ */
+export async function parseCostExcel(
+  file: File,
+  category: 'food' | 'beverage' = 'food',
+): Promise<ProductCostEntry[]> {
+  const buffer = await file.arrayBuffer();
+  const wb = XLSX.read(buffer, { type: 'array' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows: (string | number | undefined)[][] = XLSX.utils.sheet_to_json(ws, {
+    header: 1, defval: undefined, raw: false,
+  });
+
+  // Spalten-Mapping ermitteln
+  let nameCol = -1, bruttoCol = -1, nettoCol = -1, wesCol = -1, wesQCol = -1;
+  let headerRow = -1;
+
+  for (let r = 0; r < Math.min(rows.length, 8); r++) {
+    const row = rows[r];
+    if (!row) continue;
+    let found = false;
+    for (let c = 0; c < row.length; c++) {
+      const cell = String(row[c] ?? '').toLowerCase().trim();
+      if (!cell) continue;
+      if (nameCol < 0 && (cell.includes('rezept') || cell.includes('bezeich') || cell.includes('artikel') || cell.includes('produkt'))) {
+        nameCol = c; found = true;
+      } else if (wesQCol < 0 && (cell.includes('wes-q') || cell.includes('wesq') || cell === 'wes q' || (cell.includes('wes') && cell.includes('%')))) {
+        wesQCol = c; found = true;
+      } else if (wesCol < 0 && cell === 'wes') {
+        wesCol = c; found = true;
+      } else if (bruttoCol < 0 && cell.includes('brutto')) {
+        bruttoCol = c; found = true;
+      } else if (nettoCol < 0 && (cell.includes('netto') || cell.includes('vp'))) {
+        nettoCol = c; found = true;
+      }
+    }
+    if (found && (nameCol >= 0 || wesCol >= 0)) { headerRow = r; break; }
+  }
+
+  if (headerRow < 0 || nameCol < 0) return [];
+
+  const entries: ProductCostEntry[] = [];
+  for (let r = headerRow + 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row) continue;
+    const nameRaw = String(row[nameCol] ?? '').trim();
+    if (!nameRaw || nameRaw.length < 2) continue;
+    const nameLower = nameRaw.toLowerCase();
+    if (nameLower.startsWith('total') || nameLower.startsWith('gesamt') || nameLower.startsWith('summe')) continue;
+
+    const brutto = parseGastronomyNumber(bruttoCol >= 0 ? row[bruttoCol] : undefined);
+    const netto  = parseGastronomyNumber(nettoCol  >= 0 ? row[nettoCol]  : undefined);
+    const wes    = parseGastronomyNumber(wesCol    >= 0 ? row[wesCol]    : undefined);
+    let wesQ     = parseGastronomyNumber(wesQCol   >= 0 ? row[wesQCol]   : undefined);
+
+    // WES-Q automatisch berechnen wenn nicht vorhanden
+    if (wesQ <= 0 && wes > 0 && netto > 0) wesQ = (wes / netto) * 100;
+    if (wesQ <= 0 && wes > 0 && brutto > 0) wesQ = (wes / brutto) * 100;
+
+    if (nameRaw) {
+      entries.push({ name: nameRaw, category, bruttoPrice: brutto, nettoPrice: netto, wes, wesQ });
+    }
+  }
+  return entries;
+}
 
 // ── Werksseitige Ignorier-Liste ────────────────────────────────────────────────
 export const DEFAULT_IGNORE_TERMS: string[] = [

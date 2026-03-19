@@ -2,7 +2,7 @@ import { useState, useRef, useMemo } from 'react';
 import {
   Upload, Trash2, Package, TrendingUp, TrendingDown,
   Hash, RotateCcw, ChevronDown, X, Award, CalendarDays, LayoutGrid,
-  AlertTriangle, CheckSquare, Utensils, Wine, Search, Settings2,
+  AlertTriangle, CheckSquare, Utensils, Wine, Search, Settings2, Receipt,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -19,8 +19,13 @@ import {
   getFlopProducts,
   getAvailableMonths,
   DEFAULT_IGNORE_TERMS,
+  loadProductCosts,
+  saveProductCosts,
+  mergeProductCosts,
+  parseCostExcel,
   type ProdukteData,
   type RankedProduct,
+  type ProductCostEntry,
 } from '@/lib/produkte-store';
 import { format, parse } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -134,8 +139,19 @@ export default function ProdukteSeite() {
     fileName: string;
   } | null>(null);
 
+  const [costs, setCosts] = useState<ProductCostEntry[]>(() => loadProductCosts());
+  const [importingCost, setImportingCost] = useState(false);
+
   const anzahlRef = useRef<HTMLInputElement>(null);
   const umsatzRef = useRef<HTMLInputElement>(null);
+  const costRef   = useRef<HTMLInputElement>(null);
+
+  // Schnelle Name→Kosten Lookup-Map
+  const costMap = useMemo(() => {
+    const m = new Map<string, ProductCostEntry>();
+    for (const c of costs) m.set(c.name.toLowerCase(), c);
+    return m;
+  }, [costs]);
 
   const monthsOnly = useMemo(() => getAvailableMonths(data?.entries ?? [], category), [data, category]);
 
@@ -231,6 +247,32 @@ export default function ProdukteSeite() {
   const cancelImport = () => {
     setPendingImport(null);
     toast.info('Import abgebrochen');
+  };
+
+  const handleCostImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportingCost(true);
+    try {
+      const parsed = await parseCostExcel(file, category);
+      if (parsed.length === 0) {
+        toast.error('Keine WES-Daten gefunden', {
+          description: 'Bitte prüfe das Format — erwartet werden Spalten: Bezeichnung, Brutto, Netto, WES, WES-Q',
+        });
+        return;
+      }
+      const merged = mergeProductCosts(costs, parsed);
+      saveProductCosts(merged);
+      setCosts(merged);
+      toast.success(`WES-Daten importiert`, {
+        description: `${parsed.length} Produkte aus ${file.name}`,
+      });
+    } catch (err) {
+      toast.error('WES-Import fehlgeschlagen', { description: String(err) });
+    } finally {
+      setImportingCost(false);
+      e.target.value = '';
+    }
   };
 
   const ignoreProduct = (name: string) => {
@@ -344,6 +386,7 @@ export default function ProdukteSeite() {
             <div className="flex items-center gap-2">
               <input ref={anzahlRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => handleImport(e, 'anzahl')} />
               <input ref={umsatzRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => handleImport(e, 'umsatz')} />
+              <input ref={costRef}   type="file" accept=".xlsx,.xls" className="hidden" onChange={handleCostImport} />
               <Button variant="outline" size="sm" className="h-8" onClick={() => anzahlRef.current?.click()} disabled={importing !== null}>
                 {importing === 'anzahl' ? <span className="h-3 w-3 mr-1 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" /> : <Upload className="h-3 w-3 mr-1" />}
                 <Hash className="h-3 w-3 mr-1" /> Anzahl
@@ -351,6 +394,11 @@ export default function ProdukteSeite() {
               <Button variant="outline" size="sm" className="h-8" onClick={() => umsatzRef.current?.click()} disabled={importing !== null}>
                 {importing === 'umsatz' ? <span className="h-3 w-3 mr-1 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" /> : <Upload className="h-3 w-3 mr-1" />}
                 <TrendingUp className="h-3 w-3 mr-1" /> Umsatz
+              </Button>
+              <Button variant="outline" size="sm" className={cn('h-8', costs.length > 0 && 'border-purple-400 text-purple-700 dark:text-purple-300')}
+                onClick={() => costRef.current?.click()} disabled={importingCost}>
+                {importingCost ? <span className="h-3 w-3 mr-1 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" /> : <Receipt className="h-3 w-3 mr-1" />}
+                WES {costs.length > 0 && <Badge className="ml-1 text-[9px] py-0 px-1 bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border-0">{costs.length}</Badge>}
               </Button>
               {data && (
                 <Button variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive" onClick={clearAllData}>
@@ -503,6 +551,11 @@ export default function ProdukteSeite() {
                       <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Produkt</th>
                       <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground w-24">Anzahl</th>
                       <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground w-28">Umsatz</th>
+                      {costs.length > 0 && <>
+                        <th className="px-3 py-2.5 text-right text-xs font-semibold text-purple-600 dark:text-purple-400 w-24">WES/Stk.</th>
+                        <th className="px-3 py-2.5 text-right text-xs font-semibold text-purple-600 dark:text-purple-400 w-28">Warenaufw.</th>
+                        <th className="px-3 py-2.5 text-right text-xs font-semibold text-purple-600 dark:text-purple-400 w-20">WES-Q %</th>
+                      </>}
                       <th className="px-2 py-2.5 w-8" />
                     </tr>
                   </thead>
@@ -514,6 +567,12 @@ export default function ProdukteSeite() {
                         : sortBy === 'count' ? 'bg-blue-500' : 'bg-emerald-500';
                       const valueColor = isFlop ? 'text-red-600 dark:text-red-400'
                         : sortBy === 'count' ? 'text-blue-600 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-400';
+                      const cost = costMap.get(r.name.toLowerCase());
+                      const warenaufwand = cost && r.count > 0 ? cost.wes * r.count : 0;
+                      // WES-Q berechnen: Warenaufwand / Umsatz × 100
+                      const wesQEffektiv = cost && r.revenue > 0 && warenaufwand > 0
+                        ? (warenaufwand / r.revenue) * 100
+                        : (cost?.wesQ ?? 0);
                       return (
                         <tr key={r.name}
                           className={cn('border-b last:border-0 transition-colors group',
@@ -539,6 +598,24 @@ export default function ProdukteSeite() {
                               ? <span className={cn('font-medium', sortBy === 'revenue' ? valueColor : '')}>{formatCHF(r.revenue)}</span>
                               : <span className="text-muted-foreground">–</span>}
                           </td>
+                          {costs.length > 0 && <>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-xs">
+                              {cost?.wes ? <span className="text-purple-700 dark:text-purple-300">{formatCHF(cost.wes)}</span>
+                                : <span className="text-muted-foreground">–</span>}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-xs">
+                              {warenaufwand > 0
+                                ? <span className="font-medium text-purple-700 dark:text-purple-300">{formatCHF(warenaufwand)}</span>
+                                : <span className="text-muted-foreground">–</span>}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-xs">
+                              {wesQEffektiv > 0
+                                ? <span className={cn('font-medium', wesQEffektiv > 35 ? 'text-red-600 dark:text-red-400' : wesQEffektiv > 25 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400')}>
+                                    {wesQEffektiv.toFixed(1)}%
+                                  </span>
+                                : <span className="text-muted-foreground">–</span>}
+                            </td>
+                          </>}
                           <td className="px-2 py-2.5">
                             <button onClick={() => ignoreProduct(r.name)}
                               className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground">
