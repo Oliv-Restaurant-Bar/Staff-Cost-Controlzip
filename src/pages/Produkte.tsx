@@ -2,7 +2,7 @@ import { useState, useRef, useMemo } from 'react';
 import {
   Upload, Trash2, Package, TrendingUp, TrendingDown,
   Hash, RotateCcw, ChevronDown, X, Award, CalendarDays, LayoutGrid,
-  AlertTriangle, CheckSquare, Utensils, Wine,
+  AlertTriangle, CheckSquare, Utensils, Wine, Search, Settings2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -250,11 +250,26 @@ export default function ProdukteSeite() {
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [resetCat, setResetCat] = useState<'food' | 'beverage' | 'all'>('all');
   const [resetMonth, setResetMonth] = useState<string>('all');
+  const [showProductManager, setShowProductManager] = useState(false);
+  const [productSearch, setProductSearch] = useState('');
+  const [productFilterCat, setProductFilterCat] = useState<'all' | 'food' | 'beverage'>('all');
 
   // Alle vorhandenen Monate (beide Kategorien, für Reset-Dialog)
   const allMonthsForReset = useMemo(() => {
     const set = new Set((data?.entries ?? []).map(e => e.month).filter(m => m !== 'gesamt'));
     return Array.from(set).sort();
+  }, [data]);
+
+  // Alle eindeutigen Produktnamen aus importierten Daten (für Produkt-Manager)
+  const allProductNames = useMemo(() => {
+    const entries = data?.entries ?? [];
+    const map = new Map<string, 'food' | 'beverage'>();
+    for (const e of entries) {
+      if (!map.has(e.name)) map.set(e.name, e.category ?? 'food');
+    }
+    return Array.from(map.entries())
+      .map(([name, cat]) => ({ name, category: cat }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'de'));
   }, [data]);
 
   const doReset = () => {
@@ -645,11 +660,18 @@ export default function ProdukteSeite() {
 
         {/* Ignorier-Liste (beide Ansichten) */}
         {data && (
-          <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-1.5">
-            <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <Trash2 className="h-3.5 w-3.5" />
-              Automatisch ignorierte Begriffe ({DEFAULT_IGNORE_TERMS.length})
-            </p>
+          <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                <Trash2 className="h-3.5 w-3.5" />
+                Automatisch ignorierte Begriffe ({DEFAULT_IGNORE_TERMS.length})
+              </p>
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5"
+                onClick={() => { setProductSearch(''); setProductFilterCat('all'); setShowProductManager(true); }}>
+                <Settings2 className="h-3 w-3" />
+                Produkte verwalten ({allProductNames.length})
+              </Button>
+            </div>
             <div className="flex flex-wrap gap-1.5">
               {DEFAULT_IGNORE_TERMS.map(t => (
                 <Badge key={t} variant="outline" className="text-[10px] py-0 px-1.5 text-muted-foreground">{t}</Badge>
@@ -658,6 +680,118 @@ export default function ProdukteSeite() {
           </div>
         )}
       </main>
+
+      {/* ── Produkt-Manager ──────────────────────────────────────────────────── */}
+      {showProductManager && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-lg flex flex-col" style={{ maxHeight: '80vh' }}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+              <div>
+                <h2 className="text-sm font-bold">Produkte verwalten</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Produkte aus der Rangliste ausblenden oder wiederherstellen
+                </p>
+              </div>
+              <button onClick={() => setShowProductManager(false)} className="p-1.5 rounded-md hover:bg-muted text-muted-foreground">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Suche + Kategorie-Filter */}
+            <div className="px-5 py-3 border-b border-border/60 shrink-0 space-y-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Produkt suchen…"
+                  value={productSearch}
+                  onChange={e => setProductSearch(e.target.value)}
+                  className="w-full h-8 rounded-md border border-border bg-background pl-8 pr-3 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5 w-fit">
+                {(['all', 'food', 'beverage'] as const).map(c => (
+                  <button key={c} onClick={() => setProductFilterCat(c)}
+                    className={cn('flex items-center gap-1 px-3 py-1 rounded-md text-xs font-medium transition-all',
+                      productFilterCat === c ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                    {c === 'food' && <Utensils className="h-3 w-3" />}
+                    {c === 'beverage' && <Wine className="h-3 w-3" />}
+                    {c === 'all' ? 'Alle' : c === 'food' ? 'Food' : 'Beverage'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Produkt-Liste */}
+            <div className="overflow-y-auto flex-1 divide-y divide-border/40">
+              {(() => {
+                const q = productSearch.toLowerCase();
+                const filtered = allProductNames.filter(p => {
+                  if (productFilterCat !== 'all' && p.category !== productFilterCat) return false;
+                  if (q && !p.name.toLowerCase().includes(q)) return false;
+                  return true;
+                });
+                if (filtered.length === 0) {
+                  return <p className="text-center text-xs text-muted-foreground py-8">Keine Produkte gefunden</p>;
+                }
+                return filtered.map(({ name, category: pCat }) => {
+                  const isAutoIgnored = DEFAULT_IGNORE_TERMS.some(t => name.toLowerCase().includes(t));
+                  const isManualIgnored = ignoredByUser.includes(name);
+                  const isIgnored = isAutoIgnored || isManualIgnored;
+                  return (
+                    <div key={name} className={cn(
+                      'flex items-center gap-3 px-5 py-2.5 hover:bg-muted/40 transition-colors',
+                      isIgnored && 'opacity-50',
+                    )}>
+                      {/* Checkbox */}
+                      <button
+                        disabled={isAutoIgnored}
+                        onClick={() => isManualIgnored ? restoreProduct(name) : ignoreProduct(name)}
+                        className={cn(
+                          'shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors',
+                          isIgnored
+                            ? 'bg-muted border-border text-muted-foreground'
+                            : 'border-primary bg-primary text-primary-foreground',
+                          isAutoIgnored && 'cursor-not-allowed',
+                        )}
+                        title={isAutoIgnored ? 'Automatisch ignoriert (Systemregel)' : isManualIgnored ? 'Wiederherstellen' : 'Ausblenden'}
+                      >
+                        {isIgnored && <X className="h-2.5 w-2.5" />}
+                      </button>
+
+                      <span className={cn('text-xs flex-1 min-w-0 truncate', isIgnored && 'line-through text-muted-foreground')}>
+                        {name}
+                      </span>
+
+                      {/* Kategorie-Badge */}
+                      <span className={cn(
+                        'text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0',
+                        pCat === 'food' ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
+                                        : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
+                      )}>
+                        {pCat === 'food' ? 'Food' : 'Bev.'}
+                      </span>
+
+                      {isAutoIgnored && (
+                        <span className="text-[10px] text-muted-foreground shrink-0">System</span>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 border-t border-border/60 shrink-0 flex items-center justify-between text-xs text-muted-foreground">
+              <span>{ignoredByUser.length} manuell ausgeblendet · {DEFAULT_IGNORE_TERMS.length} System-Regeln</span>
+              <Button size="sm" variant="outline" className="h-7" onClick={() => setShowProductManager(false)}>
+                Schliessen
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Reset-Dialog ─────────────────────────────────────────────────────── */}
       {showResetDialog && (
