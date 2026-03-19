@@ -587,7 +587,15 @@ const Dashboard = () => {
     : null;
 
   // Vorjahr pro rata: gleicher Cutoff-Tag, aber Vorjahresdaten
-  const prevYearEffective = effectiveDays.length > 0 ? sumRevenuePrevYear(effectiveDays) : 0;
+  // Fallback-Kette: 1. Tagesdaten Vorjahr (dailyBudgets), 2. Monatswert aus reporting_v1 pro rata
+  const prevYearEffective = (() => {
+    const daily = effectiveDays.length > 0 ? sumRevenuePrevYear(effectiveDays) : 0;
+    if (daily > 0) return daily;
+    if (effectiveDayNum && reportingPrevYearRevenue > 0) {
+      return Math.round(reportingPrevYearRevenue * effectiveDayNum / daysInRefMonth);
+    }
+    return 0;
+  })();
   const istVsPrevYearPct = prevYearEffective > 0 && revenueIstEffective !== null
     ? ((revenueIstEffective - prevYearEffective) / prevYearEffective) * 100
     : null;
