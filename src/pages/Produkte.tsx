@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo } from 'react';
 import {
   Upload, Trash2, Package, TrendingUp, TrendingDown,
-  Hash, RotateCcw, ChevronDown, X, Award,
+  Hash, RotateCcw, ChevronDown, X, Award, LayoutGrid, Filter,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -30,33 +30,127 @@ const formatCHF = (v: number) =>
 const formatMonth = (ym: string) => {
   if (ym === 'alle') return 'Alle';
   if (ym === 'gesamt') return 'Gesamt';
-  try {
-    return format(parse(ym, 'yyyy-MM', new Date()), 'MMM yy', { locale: de });
-  } catch { return ym; }
+  try { return format(parse(ym, 'yyyy-MM', new Date()), 'MMM yy', { locale: de }); }
+  catch { return ym; }
 };
 
 const formatMonthLong = (ym: string) => {
   if (ym === 'alle') return 'Alle Monate';
   if (ym === 'gesamt') return 'Gesamtperiode';
-  try {
-    return format(parse(ym, 'yyyy-MM', new Date()), 'MMMM yyyy', { locale: de });
-  } catch { return ym; }
+  try { return format(parse(ym, 'yyyy-MM', new Date()), 'MMMM yyyy', { locale: de }); }
+  catch { return ym; }
 };
 
-type ChartMode = 'top' | 'flop';
+type ChartMode  = 'top' | 'flop';
+type ViewMode   = 'einzel' | 'promonat';
 
 const TOP_OPTIONS  = [10, 20, 50, 100];
 const FLOP_OPTIONS = [10, 20, 50];
+const PM_OPTIONS   = [3, 5, 10];  // Pro-Monat: kompakte Top/Flop N
 
+// ── Mini-Rangliste für Pro-Monat-Karte ──────────────────────────────────────
+function MonthCard({
+  month, entries, ignoredByUser, sortBy, mode, n, onIgnore,
+}: {
+  month: string;
+  entries: Parameters<typeof getTopProducts>[0];
+  ignoredByUser: string[];
+  sortBy: 'count' | 'revenue';
+  mode: ChartMode;
+  n: number;
+  onIgnore: (name: string) => void;
+}) {
+  const ranked = useMemo(
+    () => mode === 'top'
+      ? getTopProducts(entries, month, sortBy, n, ignoredByUser)
+      : getFlopProducts(entries, month, sortBy, n, ignoredByUser),
+    [entries, month, sortBy, mode, n, ignoredByUser],
+  );
+
+  const maxVal = ranked.length > 0
+    ? Math.max(...ranked.map(r => sortBy === 'count' ? r.count : r.revenue))
+    : 1;
+
+  const isFlop = mode === 'flop';
+
+  return (
+    <div className={cn(
+      'rounded-xl border bg-card overflow-hidden',
+      isFlop ? 'border-red-200 dark:border-red-900' : 'border-border',
+    )}>
+      {/* Karten-Header */}
+      <div className={cn(
+        'px-3 py-2 border-b flex items-center justify-between',
+        isFlop
+          ? 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
+          : 'border-border bg-muted/40',
+      )}>
+        <span className="text-xs font-bold">{formatMonthLong(month)}</span>
+        <span className="text-[10px] text-muted-foreground">
+          {isFlop ? 'Flop' : 'Top'} {Math.min(n, ranked.length)}
+        </span>
+      </div>
+
+      {ranked.length === 0 ? (
+        <div className="px-3 py-4 text-center text-xs text-muted-foreground">Keine Daten</div>
+      ) : (
+        <div className="divide-y divide-border/40">
+          {ranked.map(r => {
+            const val      = sortBy === 'count' ? r.count : r.revenue;
+            const barPct   = maxVal > 0 ? (val / maxVal) * 100 : 0;
+            const barColor = isFlop ? 'bg-red-400 dark:bg-red-600'
+              : sortBy === 'count' ? 'bg-blue-500' : 'bg-emerald-500';
+
+            return (
+              <div key={r.name} className="px-3 py-2 group hover:bg-muted/30 transition-colors">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted-foreground tabular-nums w-4 shrink-0 text-center">
+                    {r.rank === 1 && (isFlop ? '💀' : '🥇')}
+                    {r.rank === 2 && (isFlop ? '😬' : '🥈')}
+                    {r.rank === 3 && (isFlop ? '😕' : '🥉')}
+                    {r.rank > 3 && r.rank}
+                  </span>
+                  <span className="text-xs font-medium truncate flex-1 min-w-0">{r.name}</span>
+                  <span className={cn(
+                    'text-xs tabular-nums shrink-0',
+                    isFlop ? 'text-red-600 dark:text-red-400' : 'text-foreground',
+                  )}>
+                    {sortBy === 'count'
+                      ? `${r.count.toLocaleString('de-CH')}×`
+                      : formatCHF(r.revenue)}
+                  </span>
+                  <button
+                    onClick={() => onIgnore(r.name)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground shrink-0"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+                <div className="mt-1 ml-6 h-1 rounded-full bg-muted overflow-hidden">
+                  <div className={cn('h-full rounded-full transition-all', barColor)}
+                    style={{ width: `${barPct}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Haupt-Komponente ─────────────────────────────────────────────────────────
 export default function ProdukteSeite() {
-  const [data, setData]              = useState<ProdukteData | null>(() => loadProdukteData());
-  const [ignoredByUser, setIgnored]  = useState<string[]>(() => loadIgnoredProducts());
-  const [sortBy, setSortBy]          = useState<'count' | 'revenue'>('count');
-  const [mode, setMode]              = useState<ChartMode>('top');
-  const [topN, setTopN]              = useState(20);
-  const [flopN, setFlopN]            = useState(10);
-  const [selectedMonth, setMonth]    = useState<string>('alle');
-  const [importing, setImporting]    = useState<'anzahl' | 'umsatz' | null>(null);
+  const [data, setData]               = useState<ProdukteData | null>(() => loadProdukteData());
+  const [ignoredByUser, setIgnored]   = useState<string[]>(() => loadIgnoredProducts());
+  const [sortBy, setSortBy]           = useState<'count' | 'revenue'>('count');
+  const [mode, setMode]               = useState<ChartMode>('top');
+  const [viewMode, setViewMode]       = useState<ViewMode>('einzel');
+  const [topN, setTopN]               = useState(20);
+  const [flopN, setFlopN]             = useState(10);
+  const [pmN, setPmN]                 = useState(5);
+  const [selectedMonth, setMonth]     = useState<string>('alle');
+  const [importing, setImporting]     = useState<'anzahl' | 'umsatz' | null>(null);
   const [showIgnored, setShowIgnored] = useState(false);
 
   const anzahlRef = useRef<HTMLInputElement>(null);
@@ -66,15 +160,22 @@ export default function ProdukteSeite() {
     () => ['alle', ...getAvailableMonths(data?.entries ?? [])],
     [data],
   );
+  const monthsOnly = useMemo(
+    () => getAvailableMonths(data?.entries ?? []),
+    [data],
+  );
 
-  const limit = mode === 'top' ? topN : flopN;
+  const limit   = mode === 'top' ? topN : flopN;
+  const isFlop  = mode === 'flop';
+  const isPM    = viewMode === 'promonat';
 
   const ranked: RankedProduct[] = useMemo(() => {
+    if (isPM) return [];
     const entries = data?.entries ?? [];
-    return mode === 'top'
-      ? getTopProducts(entries, selectedMonth, sortBy, limit, ignoredByUser)
-      : getFlopProducts(entries, selectedMonth, sortBy, limit, ignoredByUser);
-  }, [data, selectedMonth, sortBy, mode, limit, ignoredByUser]);
+    return isFlop
+      ? getFlopProducts(entries, selectedMonth, sortBy, limit, ignoredByUser)
+      : getTopProducts(entries, selectedMonth, sortBy, limit, ignoredByUser);
+  }, [data, selectedMonth, sortBy, mode, limit, ignoredByUser, isPM]);
 
   // ── Import Handler ───────────────────────────────────────────────────────────
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>, type: 'anzahl' | 'umsatz') => {
@@ -89,23 +190,18 @@ export default function ProdukteSeite() {
         });
         return;
       }
-      const existing = data?.entries ?? [];
-      const merged   = mergeProdukteData(existing, parsed, type);
+      const merged  = mergeProdukteData(data?.entries ?? [], parsed, type);
       const newData: ProdukteData = {
-        entries: merged,
-        importedAt: new Date().toISOString(),
-        source: 'combined',
+        entries: merged, importedAt: new Date().toISOString(), source: 'combined',
       };
       saveProdukteData(newData);
       setData(newData);
 
-      const newMonths = getAvailableMonths(merged);
-      if (newMonths.length > 0 && selectedMonth === 'alle') {
-        setMonth(newMonths[newMonths.length - 1]);
-      }
+      const nm = getAvailableMonths(merged);
+      if (nm.length > 0 && selectedMonth === 'alle') setMonth(nm[nm.length - 1]);
 
       toast.success(`${type === 'anzahl' ? 'Anzahl' : 'Umsatz'}-Daten importiert`, {
-        description: `${parsed.length} Produkt-Einträge aus ${file.name}`,
+        description: `${parsed.length} Einträge aus ${file.name}`,
       });
     } catch (err) {
       toast.error('Import fehlgeschlagen', { description: String(err) });
@@ -137,38 +233,19 @@ export default function ProdukteSeite() {
     toast.info('Alle Produktdaten gelöscht');
   };
 
-  // ── Rang-Symbol ──────────────────────────────────────────────────────────────
-  const RankBadge = ({ rank }: { rank: number }) => {
-    if (mode === 'top') {
-      if (rank === 1) return <span className="text-lg leading-none">🥇</span>;
-      if (rank === 2) return <span className="text-lg leading-none">🥈</span>;
-      if (rank === 3) return <span className="text-lg leading-none">🥉</span>;
-    } else {
-      if (rank === 1) return <span className="text-lg leading-none">💀</span>;
-      if (rank === 2) return <span className="text-lg leading-none">😬</span>;
-      if (rank === 3) return <span className="text-lg leading-none">😕</span>;
-    }
-    return (
-      <span className="text-xs font-bold tabular-nums w-6 text-center inline-block text-muted-foreground">
-        {rank}
-      </span>
-    );
-  };
+  const nOptions  = isFlop ? FLOP_OPTIONS : TOP_OPTIONS;
+  const currentN  = isFlop ? flopN : topN;
+  const setN      = isFlop ? setFlopN : setTopN;
 
   const maxVal = ranked.length > 0
     ? Math.max(...ranked.map(r => sortBy === 'count' ? r.count : r.revenue))
     : 1;
 
-  const isFlop = mode === 'flop';
-  const nOptions = isFlop ? FLOP_OPTIONS : TOP_OPTIONS;
-  const currentN = isFlop ? flopN : topN;
-  const setN = isFlop ? setFlopN : setTopN;
-
   return (
     <div className="min-h-screen bg-background">
       {/* ── Header ────────────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
-        <div className="max-w-5xl mx-auto px-4 py-3 space-y-2">
+        <div className="max-w-6xl mx-auto px-4 py-3 space-y-2">
 
           {/* Zeile 1: Titel + Import-Buttons */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -179,13 +256,11 @@ export default function ProdukteSeite() {
                 <p className="text-xs text-muted-foreground">Ranglisten nach Anzahl & Umsatz</p>
               </div>
             </div>
-
             <div className="flex items-center gap-2 flex-wrap">
               <input ref={anzahlRef} type="file" accept=".xlsx,.xls" className="hidden"
                 onChange={e => handleImport(e, 'anzahl')} />
               <input ref={umsatzRef} type="file" accept=".xlsx,.xls" className="hidden"
                 onChange={e => handleImport(e, 'umsatz')} />
-
               <Button variant="outline" size="sm" className="h-8"
                 onClick={() => anzahlRef.current?.click()} disabled={importing !== null}>
                 {importing === 'anzahl'
@@ -193,7 +268,6 @@ export default function ProdukteSeite() {
                   : <Upload className="h-3 w-3 mr-1.5" />}
                 <Hash className="h-3 w-3 mr-1" /> Anzahl
               </Button>
-
               <Button variant="outline" size="sm" className="h-8"
                 onClick={() => umsatzRef.current?.click()} disabled={importing !== null}>
                 {importing === 'umsatz'
@@ -201,7 +275,6 @@ export default function ProdukteSeite() {
                   : <Upload className="h-3 w-3 mr-1.5" />}
                 <TrendingUp className="h-3 w-3 mr-1" /> Umsatz
               </Button>
-
               {data && (
                 <Button variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive"
                   onClick={clearAllData}>
@@ -215,27 +288,37 @@ export default function ProdukteSeite() {
           {data && (
             <div className="border-t border-border/60 pt-2 space-y-2">
 
-              {/* Monat-Pills */}
-              <div className="flex items-center gap-1 flex-wrap">
-                <span className="text-xs text-muted-foreground font-medium mr-1 shrink-0">Monat:</span>
-                {months.map(m => (
+              {/* Ansicht + Top/Flop + N + Sortierung */}
+              <div className="flex items-center gap-2 flex-wrap">
+
+                {/* Ansichts-Umschalter: Einzelmonat / Pro Monat */}
+                <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
                   <button
-                    key={m}
-                    onClick={() => setMonth(m)}
+                    onClick={() => setViewMode('einzel')}
                     className={cn(
-                      'px-2.5 py-0.5 rounded-full text-xs font-medium border transition-all',
-                      selectedMonth === m
-                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                        : 'bg-background text-muted-foreground border-border hover:border-primary/50 hover:text-foreground',
+                      'flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all',
+                      viewMode === 'einzel'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
                     )}
                   >
-                    {formatMonth(m)}
+                    <Filter className="h-3 w-3" /> Einzelmonat
                   </button>
-                ))}
-              </div>
+                  <button
+                    onClick={() => setViewMode('promonat')}
+                    className={cn(
+                      'flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all',
+                      viewMode === 'promonat'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <LayoutGrid className="h-3 w-3" /> Pro Monat
+                  </button>
+                </div>
 
-              {/* Zweite Zeile: Top/Flop + N + Sortierung */}
-              <div className="flex items-center gap-2 flex-wrap">
+                {/* Trennlinie */}
+                <div className="h-5 w-px bg-border" />
 
                 {/* Top / Flop Umschalter */}
                 <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
@@ -263,15 +346,15 @@ export default function ProdukteSeite() {
                   </button>
                 </div>
 
-                {/* N-Auswahl */}
+                {/* N-Auswahl — je nach Modus */}
                 <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
-                  {nOptions.map(n => (
+                  {(isPM ? PM_OPTIONS : nOptions).map(n => (
                     <button
                       key={n}
-                      onClick={() => setN(n)}
+                      onClick={() => isPM ? setPmN(n) : setN(n)}
                       className={cn(
                         'px-2 py-1 text-xs font-medium rounded-md transition-all',
-                        currentN === n
+                        (isPM ? pmN : currentN) === n
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground',
                       )}
@@ -307,12 +390,33 @@ export default function ProdukteSeite() {
                   </button>
                 </div>
               </div>
+
+              {/* Monat-Pills — nur im Einzelmonat-Modus */}
+              {!isPM && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="text-xs text-muted-foreground font-medium mr-1 shrink-0">Monat:</span>
+                  {months.map(m => (
+                    <button
+                      key={m}
+                      onClick={() => setMonth(m)}
+                      className={cn(
+                        'px-2.5 py-0.5 rounded-full text-xs font-medium border transition-all',
+                        selectedMonth === m
+                          ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                          : 'bg-background text-muted-foreground border-border hover:border-primary/50 hover:text-foreground',
+                      )}
+                    >
+                      {formatMonth(m)}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-6 pb-24 space-y-4">
+      <main className="max-w-6xl mx-auto px-4 py-6 pb-24 space-y-4">
 
         {/* ── Kein Daten-State ────────────────────────────────────────────────── */}
         {!data && (
@@ -338,10 +442,46 @@ export default function ProdukteSeite() {
           </div>
         )}
 
-        {/* ── Rangliste ───────────────────────────────────────────────────────── */}
-        {data && (
+        {/* ══ PRO-MONAT-ANSICHT ═══════════════════════════════════════════════ */}
+        {data && isPM && (
           <>
-            {/* Titel */}
+            <div className="flex items-center gap-2">
+              <LayoutGrid className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold">
+                {isFlop ? 'Flop' : 'Top'} {pmN} pro Monat
+              </span>
+              <span className="text-xs text-muted-foreground">
+                · {sortBy === 'count' ? 'Nach Anzahl' : 'Nach Umsatz'}
+                · {monthsOnly.length} Monate
+              </span>
+            </div>
+
+            {monthsOnly.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-12">
+                Keine Monatsdaten vorhanden.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                {[...monthsOnly].reverse().map(m => (
+                  <MonthCard
+                    key={m}
+                    month={m}
+                    entries={data.entries}
+                    ignoredByUser={ignoredByUser}
+                    sortBy={sortBy}
+                    mode={mode}
+                    n={pmN}
+                    onIgnore={ignoreProduct}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ══ EINZELMONAT-ANSICHT ═════════════════════════════════════════════ */}
+        {data && !isPM && (
+          <>
             <div className="flex items-center gap-2 flex-wrap">
               {isFlop
                 ? <TrendingDown className="h-4 w-4 text-red-500" />
@@ -354,7 +494,8 @@ export default function ProdukteSeite() {
                 · {sortBy === 'count' ? 'Nach Anzahl' : 'Nach Umsatz'}
               </span>
               {isFlop && (
-                <Badge variant="outline" className="text-xs text-red-600 border-red-300 bg-red-50 dark:bg-red-950/20">
+                <Badge variant="outline"
+                  className="text-xs text-red-600 border-red-300 bg-red-50 dark:bg-red-950/20">
                   Schlechteste Produkte
                 </Badge>
               )}
@@ -363,12 +504,11 @@ export default function ProdukteSeite() {
             {ranked.length === 0 && (
               <div className="flex items-center justify-center py-12 text-center">
                 <p className="text-sm text-muted-foreground">
-                  Keine Daten für diesen Zeitraum. Importiere zuerst die entsprechenden Dateien.
+                  Keine Daten für diesen Zeitraum.
                 </p>
               </div>
             )}
 
-            {/* Tabelle */}
             {ranked.length > 0 && (
               <div className={cn(
                 'rounded-xl border overflow-hidden',
@@ -402,6 +542,10 @@ export default function ProdukteSeite() {
                           ? 'text-blue-600 dark:text-blue-400'
                           : 'text-emerald-600 dark:text-emerald-400';
 
+                      const rankEmoji = isFlop
+                        ? ([,'💀','😬','😕'] as const)[Math.min(r.rank,3)] ?? null
+                        : ([,'🥇','🥈','🥉'] as const)[Math.min(r.rank,3)] ?? null;
+
                       return (
                         <tr key={r.name}
                           className={cn(
@@ -412,23 +556,16 @@ export default function ProdukteSeite() {
                           )}
                         >
                           <td className="px-3 py-2.5 text-center">
-                            <RankBadge rank={r.rank} />
+                            {rankEmoji
+                              ? <span className="text-base leading-none">{rankEmoji}</span>
+                              : <span className="text-xs font-bold tabular-nums text-muted-foreground">{r.rank}</span>}
                           </td>
                           <td className="px-3 py-2.5">
                             <div className="space-y-1">
-                              <span className={cn(
-                                'font-medium',
-                                isFlop
-                                  ? r.rank <= 3 ? 'text-red-600 dark:text-red-400' : 'text-foreground'
-                                  : r.rank <= 3 ? (['text-yellow-500', 'text-slate-400', 'text-amber-600'] as const)[r.rank - 1] : 'text-foreground',
-                              )}>
-                                {r.name}
-                              </span>
+                              <span className="font-medium">{r.name}</span>
                               <div className="h-1.5 rounded-full bg-muted overflow-hidden max-w-xs">
-                                <div
-                                  className={cn('h-full rounded-full transition-all', barColor)}
-                                  style={{ width: `${barWidth}%` }}
-                                />
+                                <div className={cn('h-full rounded-full transition-all', barColor)}
+                                  style={{ width: `${barWidth}%` }} />
                               </div>
                             </div>
                           </td>
@@ -463,7 +600,7 @@ export default function ProdukteSeite() {
               </div>
             )}
 
-            {/* ── Entfernte Produkte ─────────────────────────────────────────── */}
+            {/* Entfernte Produkte */}
             {ignoredByUser.length > 0 && (
               <div className="space-y-2">
                 <button
@@ -476,7 +613,7 @@ export default function ProdukteSeite() {
                 {showIgnored && (
                   <div className="rounded-lg border border-border bg-muted/30 p-3">
                     <p className="text-xs text-muted-foreground mb-2">
-                      Diese Produkte wurden manuell entfernt. «Wiederherstellen» nimmt sie zurück in die Rangliste.
+                      Diese Produkte wurden manuell entfernt.
                     </p>
                     <div className="flex flex-wrap gap-2">
                       {ignoredByUser.map(name => (
@@ -484,10 +621,8 @@ export default function ProdukteSeite() {
                           className="flex items-center gap-1.5 bg-background border border-border rounded-full px-3 py-1 text-xs"
                         >
                           <span className="text-muted-foreground line-through">{name}</span>
-                          <button
-                            onClick={() => restoreProduct(name)}
-                            className="text-primary hover:text-primary/80 font-medium"
-                          >
+                          <button onClick={() => restoreProduct(name)}
+                            className="text-primary hover:text-primary/80 font-medium">
                             ↺ Wiederherstellen
                           </button>
                         </div>
@@ -498,7 +633,7 @@ export default function ProdukteSeite() {
               </div>
             )}
 
-            {/* ── Ignorier-Liste ─────────────────────────────────────────────── */}
+            {/* Ignorier-Liste */}
             <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-1.5">
               <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
                 <Trash2 className="h-3.5 w-3.5" />
@@ -513,13 +648,12 @@ export default function ProdukteSeite() {
               </div>
             </div>
 
-            {/* Info-Footer */}
-            <div className="text-[10px] text-muted-foreground text-right">
-              {data.importedAt && (
-                <>Zuletzt importiert: {format(new Date(data.importedAt), 'dd.MM.yyyy HH:mm', { locale: de })} · </>
-              )}
-              {data.entries.length} Einträge gespeichert
-            </div>
+            {data.importedAt && (
+              <div className="text-[10px] text-muted-foreground text-right">
+                Zuletzt importiert: {format(new Date(data.importedAt), 'dd.MM.yyyy HH:mm', { locale: de })} ·{' '}
+                {data.entries.length} Einträge
+              </div>
+            )}
           </>
         )}
       </main>
