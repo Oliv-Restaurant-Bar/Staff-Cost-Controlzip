@@ -586,6 +586,15 @@ const Dashboard = () => {
     ? format(new Date(effectiveCutoff), 'd. MMM', { locale: de })
     : null;
 
+  // Vorjahr pro rata: gleicher Cutoff-Tag, aber Vorjahresdaten
+  const prevYearEffective = effectiveDays.length > 0 ? sumRevenuePrevYear(effectiveDays) : 0;
+  const istVsPrevYearPct = prevYearEffective > 0 && revenueIstEffective !== null
+    ? ((revenueIstEffective - prevYearEffective) / prevYearEffective) * 100
+    : null;
+  const istVsPrevYearAbs = prevYearEffective > 0 && revenueIstEffective !== null
+    ? revenueIstEffective - prevYearEffective
+    : null;
+
   // ─── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background">
@@ -908,17 +917,10 @@ const Dashboard = () => {
                       <div className="mt-3">
                         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
                           <CalendarDays className="h-3.5 w-3.5" />
-                          Budget pro rata bis {effectiveCutoffLabel} (letzter Ist-Tag)
+                          Pro rata bis {effectiveCutoffLabel} (letzter Ist-Tag)
                         </p>
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                          <KpiCard
-                            title="Budget pro rata"
-                            value={formatCHF(budgetEffective)}
-                            subtitle={`${effectiveDayNum} von ${daysInRefMonth} Tagen`}
-                            icon={<CalendarDays className="h-5 w-5" />}
-                            color="blue"
-                            small
-                          />
+                          {/* 1. IST Umsatz – zuerst links */}
                           <KpiCard
                             title="Ist Umsatz"
                             value={revenueIstEffective !== null && revenueIstEffective > 0
@@ -933,35 +935,45 @@ const Dashboard = () => {
                             deltaLabel="% vs. Budget p.r."
                             small
                           />
-                          {revEffectiveVsBudgetAbs !== null && (
+                          {/* 2. Budget pro rata */}
+                          <KpiCard
+                            title="Budget pro rata"
+                            value={formatCHF(budgetEffective)}
+                            subtitle={`${effectiveDayNum} von ${daysInRefMonth} Tagen`}
+                            icon={<CalendarDays className="h-5 w-5" />}
+                            color="blue"
+                            small
+                          />
+                          {/* 3. Vorjahr pro rata (immer anzeigen, auch wenn 0) */}
+                          <KpiCard
+                            title="Vorjahr p.r."
+                            value={prevYearEffective > 0 ? formatCHF(prevYearEffective) : '–'}
+                            subtitle={`Vorjahr bis ${effectiveCutoffLabel}`}
+                            icon={<TrendingUp className="h-5 w-5" />}
+                            color={
+                              istVsPrevYearPct === null ? 'default' :
+                              istVsPrevYearPct >= 0 ? 'green' : 'red'
+                            }
+                            delta={istVsPrevYearPct}
+                            deltaLabel="% Ist vs. VJ"
+                            small
+                          />
+                          {/* 4. Abweichung IST vs. Vorjahr */}
+                          {istVsPrevYearAbs !== null && (
                             <KpiCard
-                              title="Abw. vs. Budget p.r."
-                              value={`${revEffectiveVsBudgetAbs >= 0 ? '+' : ''}${formatCHF(revEffectiveVsBudgetAbs)}`}
-                              subtitle={`Ist vs. Budget pro rata · ${revEffectiveVsBudgetAbs >= 0 ? 'über Ziel' : 'unter Ziel'}`}
-                              icon={revEffectiveVsBudgetAbs >= 0
+                              title="Abw. Ist vs. VJ p.r."
+                              value={`${istVsPrevYearAbs >= 0 ? '+' : ''}${formatCHF(istVsPrevYearAbs)}`}
+                              subtitle={`Ist vs. Vorjahr pro rata · ${istVsPrevYearAbs >= 0 ? 'über Vorjahr' : 'unter Vorjahr'}`}
+                              icon={istVsPrevYearAbs >= 0
                                 ? <TrendingUp className="h-5 w-5" />
                                 : <TrendingDown className="h-5 w-5" />}
-                              color={revEffectiveVsBudgetAbs >= 0 ? 'green' : 'red'}
-                              badge={revEffectiveVsBudgetAbs >= 0 ? '✓ Über Budget' : '↓ Unter Budget'}
+                              color={istVsPrevYearAbs >= 0 ? 'green' : 'red'}
+                              badge={istVsPrevYearAbs >= 0 ? '✓ Über Vorjahr' : '↓ Unter Vorjahr'}
                               badgeColor={
-                                revEffectiveVsBudgetAbs >= 0
+                                istVsPrevYearAbs >= 0
                                   ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
                                   : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
                               }
-                              small
-                            />
-                          )}
-                          {sumRevenuePrevYear(effectiveDays) > 0 && (
-                            <KpiCard
-                              title="Vorjahr bis dato"
-                              value={formatCHF(sumRevenuePrevYear(effectiveDays))}
-                              subtitle={`Vorjahr bis ${effectiveCutoffLabel}`}
-                              icon={<TrendingUp className="h-5 w-5" />}
-                              color="default"
-                              delta={revenueIstEffective !== null && sumRevenuePrevYear(effectiveDays) > 0
-                                ? ((revenueIstEffective - sumRevenuePrevYear(effectiveDays)) / sumRevenuePrevYear(effectiveDays)) * 100
-                                : null}
-                              deltaLabel="% vs. Vorjahr"
                               small
                             />
                           )}
