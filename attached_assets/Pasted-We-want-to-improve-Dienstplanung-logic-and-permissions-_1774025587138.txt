@@ -1,0 +1,55 @@
+We want to improve Dienstplanung logic and permissions for real operational use.
+
+Goal:
+Make shift behavior, quick selection, and planning logic much more practical and consistent.
+
+Important:
+Do not change unrelated modules.
+Keep all existing data intact.
+Keep Supabase as primary storage.
+
+Implement these requirements:
+
+1. Break logic for work shifts
+Breaks must NOT be automatically deducted for every shift.
+New rule:
+- if effective shift duration is 9:00 hours or less → no automatic break deduction
+- if shift duration is more than 9:00 hours → automatically deduct 30 minutes
+Manual fixed-hours override must still remain possible.
+
+2. Automatic Früh / Spät slot assignment
+Work shifts must automatically be assigned to the correct slot in the schedule:
+- F (Früh) = 07:00 to 16:00
+- S (Spät) = 16:00 to 23:59
+Example:
+A = 17:00–23:00 must appear under S, not F.
+
+3. Configurable quick selection bar
+The quick legend / quick selection area should be configurable.
+Admins should be able to choose which legend items appear in the quick-access row.
+Not every existing shift/code must appear there automatically.
+
+4. Dienstplanung permissions for service and kitchen managers
+Service manager and kitchen manager should have the same functional tools inside Dienstplanung as admin:
+- click-to-apply
+- legend usage
+- applying custom shifts
+- saving plans
+- PDF export
+- normal planning actions
+But do NOT automatically grant them full admin rights in all other modules.
+Only the Dienstplanung feature set should match admin where intended.
+
+5. Keep custom shifts operationally correct
+Custom shifts like A must still:
+- calculate hours correctly
+- affect planning totals and personnel costs
+- appear in the correct F/S slot
+- display either code or full times depending on display mode
+
+6. Explain in simple German:
+- how the new automatic pause rule works
+- how F/S assignment works
+- how quick selection can be configured
+- what service/kitchen managers can now do in Dienstplanung
+- what I should test next

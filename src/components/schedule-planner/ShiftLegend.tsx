@@ -35,6 +35,7 @@ export const ShiftLegend = ({
   const filteredWorkShifts = workShifts.filter(shiftName => {
     const config = shiftMap[shiftName];
     if (!config) return false;
+    if (config.showInQuickSelect === false) return false;
     if (!config.department || config.department === 'all') return true;
     if (department === 'all') return true;
     return config.department === department;
@@ -43,6 +44,7 @@ export const ShiftLegend = ({
   const filteredAbsenceShifts = absenceShifts.filter(shiftName => {
     const config = shiftMap[shiftName];
     if (!config) return false;
+    if (config.showInQuickSelect === false) return false;
     if (!config.department || config.department === 'all') return true;
     if (department === 'all') return true;
     return config.department === department;
@@ -300,9 +302,9 @@ export const ShiftLegend = ({
                 <TooltipContent className="max-w-xs">
                   <div className="text-xs space-y-1">
                     <div className="font-medium">Pausenregelung:</div>
-                    <div>• ab 5:30 Stunden → 15 Min. Pause</div>
-                    <div>• ab 7:00 Stunden → 30 Min. Pause</div>
-                    <div>• ab 9:00 Stunden → 60 Min. Pause</div>
+                    <div>• bis 9:00 Stunden → keine automatische Pause</div>
+                    <div>• über 9:00 Stunden → 30 Min. Pause automatisch</div>
+                    <div className="text-muted-foreground pt-1">Manuelle Stundenüberschreibung bleibt möglich.</div>
                   </div>
                 </TooltipContent>
               </Tooltip>

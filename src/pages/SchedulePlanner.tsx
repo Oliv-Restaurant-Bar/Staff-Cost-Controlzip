@@ -1818,7 +1818,7 @@ const SchedulePlanner = () => {
 
         {/* Shift Legend */}
         <ShiftLegend 
-          onEditClick={() => setShiftConfigDialogOpen(true)} 
+          onEditClick={isAdmin ? () => setShiftConfigDialogOpen(true) : undefined}
           department={activeDepartment === 'all' ? 'all' : activeDepartment as 'service' | 'küche'}
           activeTool={paintTool}
           onToolSelect={setPaintTool}

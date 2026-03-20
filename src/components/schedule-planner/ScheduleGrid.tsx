@@ -341,24 +341,30 @@ export const ScheduleGrid = ({
         const shiftName = resolvedActiveTool.slice(6);
         const config = shiftMap[shiftName];
         if (!config) return;
+
+        // Auto-assign to Früh (start < 16:00) or Spät (start >= 16:00)
+        const startHour = config.start ? parseInt(config.start.split(':')[0], 10) : 0;
+        const primarySlot: 'früh' | 'spät' = startHour >= 16 ? 'spät' : 'früh';
+        const secondarySlot: 'früh' | 'spät' = primarySlot === 'früh' ? 'spät' : 'früh';
+
         const alreadySet =
-          current.früh?.start === config.start &&
-          current.früh?.end === config.end &&
-          !current.frühAbsence;
+          primarySlot === 'früh'
+            ? current.früh?.start === config.start && current.früh?.end === config.end && !current.frühAbsence
+            : current.spät?.start === config.start && current.spät?.end === config.end && !current.spätAbsence;
 
         if (alreadySet) {
-          // Toggle off
+          // Toggle off both slots
           onSlotChange(employeeId, dateStr, 'früh', null, null);
           onSlotChange(employeeId, dateStr, 'spät', null, null);
         } else {
-          // Apply work shift to früh
-          onSlotChange(employeeId, dateStr, 'früh', { start: config.start, end: config.end }, null);
+          // Apply to auto-determined primary slot
+          onSlotChange(employeeId, dateStr, primarySlot, { start: config.start, end: config.end }, null);
           if (config.start2 && config.end2) {
-            // Split shift: also fill spät
-            onSlotChange(employeeId, dateStr, 'spät', { start: config.start2, end: config.end2 }, null);
+            // Split shift: fill the secondary slot with the second part
+            onSlotChange(employeeId, dateStr, secondarySlot, { start: config.start2, end: config.end2 }, null);
           } else {
-            // Single shift: clear spät absence to avoid confusion
-            onSlotChange(employeeId, dateStr, 'spät', null, null);
+            // Single shift: clear the other slot
+            onSlotChange(employeeId, dateStr, secondarySlot, null, null);
           }
         }
       } else {

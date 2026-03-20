@@ -5,8 +5,8 @@ export interface ShiftConfigItem {
   name: string;
   start: string;
   end: string;
-  start2?: string;  // For split shifts
-  end2?: string;    // For split shifts
+  start2?: string;
+  end2?: string;
   hours: number;
   color: string;
   isPaid: boolean;
@@ -14,9 +14,10 @@ export interface ShiftConfigItem {
   abbrev: string;
   excelColor: string;
   textColor: string;
-  department?: 'service' | 'küche' | 'all';  // Department-specific shifts
-  fixedHours?: boolean;  // If true, use hours directly without break calculation
-  displayMode?: 'default' | 'code-in-cell'; // How to render in schedule cells
+  department?: 'service' | 'küche' | 'all';
+  fixedHours?: boolean;
+  displayMode?: 'default' | 'code-in-cell';
+  showInQuickSelect?: boolean; // If false, hidden from the quick-access legend bar
 }
 
 export interface ShiftConfigMap {
@@ -24,16 +25,11 @@ export interface ShiftConfigMap {
 }
 
 // Break deduction rules (Pausenregelung)
-// - ab 5:30 Stunden → 15 Minuten
-// - ab 7:00 Stunden → 30 Minuten
-// - ab 9:00 Stunden → 60 Minuten
+// - bis und mit 9:00 Stunden → keine automatische Pause
+// - über 9:00 Stunden → 30 Minuten Pause
 export function calculateBreakDeduction(grossHours: number): number {
-  if (grossHours >= 9) {
-    return 1; // 60 minutes = 1 hour
-  } else if (grossHours >= 7) {
+  if (grossHours > 9) {
     return 0.5; // 30 minutes
-  } else if (grossHours >= 5.5) {
-    return 0.25; // 15 minutes
   }
   return 0;
 }
@@ -95,7 +91,7 @@ const DEFAULT_SHIFTS: ShiftConfigItem[] = [
     name: 'Spät', 
     start: '17:00', 
     end: '23:00', 
-    hours: 5.75, // 6h gross - 15min break = 5.75h
+    hours: 6, // 6h gross - no break (≤9h)
     color: 'bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 border-blue-300 dark:border-blue-700', 
     isPaid: true, 
     countsToTarget: true, 
@@ -110,15 +106,14 @@ const DEFAULT_SHIFTS: ShiftConfigItem[] = [
     end: '14:00', 
     start2: '17:00',
     end2: '23:30',
-    hours: 8.4, // 42h ÷ 5 Tage = 8h 24min = 8.4h (fixed, no break calc)
+    hours: 9, // 9.5h gross - 30min break (>9h) = 9.0h
     color: 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-800 dark:text-cyan-200 border-cyan-300 dark:border-cyan-700', 
     isPaid: true, 
     countsToTarget: true, 
     abbrev: 'ZI',
     excelColor: 'FFCFFAFE',
     textColor: 'FF155E75',
-    department: 'service',
-    fixedHours: true
+    department: 'service'
   },
 
   // === KÜCHE Shifts ===
@@ -128,21 +123,20 @@ const DEFAULT_SHIFTS: ShiftConfigItem[] = [
     end: '14:00', 
     start2: '17:30',
     end2: '23:00',
-    hours: 8.4, // 42h ÷ 5 Tage = 8h 24min = 8.4h (fixed, no break calc)
+    hours: 9, // 9.5h gross - 30min break (>9h) = 9.0h
     color: 'bg-pink-100 dark:bg-pink-900/40 text-pink-800 dark:text-pink-200 border-pink-300 dark:border-pink-700', 
     isPaid: true, 
     countsToTarget: true, 
     abbrev: 'GT',
     excelColor: 'FFFCE7F3',
     textColor: 'FF9D174D',
-    department: 'küche',
-    fixedHours: true
+    department: 'küche'
   },
   { 
     name: 'Durchgehend', 
     start: '11:30', 
     end: '21:30', 
-    hours: 9, // 10h gross - 1h break = 9h
+    hours: 9.5, // 10h gross - 30min break (>9h) = 9.5h
     color: 'bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-200 border-orange-300 dark:border-orange-700', 
     isPaid: true, 
     countsToTarget: true, 
@@ -168,7 +162,7 @@ const DEFAULT_SHIFTS: ShiftConfigItem[] = [
     name: 'Küche Spät', 
     start: '17:30', 
     end: '23:00', 
-    hours: 5.25, // 5.5h gross - 15min break = 5.25h
+    hours: 5.5, // 5.5h gross - no break (≤9h)
     color: 'bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-700', 
     isPaid: true, 
     countsToTarget: true, 
@@ -181,7 +175,7 @@ const DEFAULT_SHIFTS: ShiftConfigItem[] = [
     name: 'Küche Lang', 
     start: '14:00', 
     end: '23:00', 
-    hours: 8.5, // 9h gross - 30min break = 8.5h
+    hours: 9, // 9h gross - no break (≤9h, not >9h)
     color: 'bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-200 border-rose-300 dark:border-rose-700', 
     isPaid: true, 
     countsToTarget: true, 

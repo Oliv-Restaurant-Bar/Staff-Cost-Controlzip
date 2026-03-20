@@ -59,10 +59,8 @@ function calculateEffectiveHours(start: string, end: string, start2?: string, en
     if (e2 < s2) e2 += 24;
     gross += e2 - s2;
   }
-  let deduction = 0;
-  if (gross >= 9) deduction = 1;
-  else if (gross >= 7) deduction = 0.5;
-  else if (gross >= 5.5) deduction = 0.25;
+  // Break rule: >9h → 30min deduction, ≤9h → no deduction
+  const deduction = gross > 9 ? 0.5 : 0;
   return Math.round((gross - deduction) * 100) / 100;
 }
 
@@ -496,6 +494,27 @@ export const ShiftConfigDialog = ({
                   </Label>
                 </div>
               )}
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={shift.showInQuickSelect !== false}
+                  onCheckedChange={checked =>
+                    updateShift(index, { showInQuickSelect: checked ? undefined : false })
+                  }
+                />
+                <Label className="text-xs flex items-center gap-1">
+                  In Schnellzuweisung
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="text-xs max-w-[220px]">
+                        Wenn deaktiviert, erscheint dieser Eintrag nicht in der Legenden-Leiste. Er bleibt im System gespeichert und kann weiterhin über Excel-Import oder manuell verwendet werden.
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </Label>
+              </div>
             </div>
           </div>
         )}
