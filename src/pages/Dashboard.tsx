@@ -260,13 +260,30 @@ const Dashboard = () => {
     catch { return {}; }
   });
 
-  // Nach Supabase-Sync dailyBudgets neu laden
+  // Tick-Zähler: wird hochgezählt wenn Supabase→localStorage-Sync 'reporting_v1' aktualisiert hat.
+  // Dadurch re-berechnen alle useMemos die loadMonth/loadYear nutzen – auch nach dem Sync.
+  const [reportingTick, setReportingTick] = useState(0);
+
+  // Nach Supabase-Sync dailyBudgets + reporting_v1 neu laden
   useEffect(() => {
     const handler = () => {
+      // dailyBudgets neu einlesen
       try {
         const data = JSON.parse(localStorage.getItem('dailyBudgets') || '{}');
         setDailyBudgets(data);
       } catch { /* ignore */ }
+
+      // reporting_v1 Diagnose-Log + Tick auslösen damit useMemos neu laufen
+      try {
+        const raw = localStorage.getItem('reporting_v1') ?? '{}';
+        const obj = JSON.parse(raw) as Record<string, { revenuePreviousYear?: number; revenueActual?: number }>;
+        const months = Object.keys(obj);
+        const pyMonths = Object.values(obj).filter(m => (m?.revenuePreviousYear ?? 0) > 0).length;
+        console.log('[DASH] store-synced – reporting_v1 neu geladen',
+          { totalMonths: months.length, monthsWithPY: pyMonths });
+      } catch { /* ignore */ }
+
+      setReportingTick(t => t + 1);
     };
     window.addEventListener('store-synced', handler);
     return () => window.removeEventListener('store-synced', handler);
@@ -406,17 +423,23 @@ const Dashboard = () => {
   const revenuePlannedMonth  = sumRevenue(monthDays,  'plannedRevenue');
 
   // Fallback: wenn keine Gastronovi-Tagesdaten, lese Ist-Umsatz aus Reporting-Modul
+  // reportingTick als Dep damit der Memo nach Supabase-Sync neu berechnet wird
   const reportingActualRevenue = useMemo(
     () => loadMonth(currentYear, currentMonth).revenueActual ?? 0,
-    [currentYear, currentMonth]
+    [currentYear, currentMonth, reportingTick] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const revenueMonth = revenueMonthDaily > 0 ? revenueMonthDaily : reportingActualRevenue;
 
   // Fallback Vorjahr: zuerst revenuePreviousYear im aktuellen Datensatz (manuell eingegeben),
-  // dann Vorjahres-Ist aus reporting_v1 des Vorjahres
+  // dann Vorjahres-Ist aus reporting_v1 des Vorjahres.
+  // reportingTick als Dep damit der Memo nach Supabase-Sync neu berechnet wird.
   const reportingPrevYearRevenue = useMemo(() => {
     if (period === 'month') {
-      const directPY = loadMonth(currentYear, currentMonth).revenuePreviousYear;
+      const rec = loadMonth(currentYear, currentMonth);
+      const directPY = rec.revenuePreviousYear;
+      console.log('[DASH] reportingPrevYearRevenue (month)',
+        { currentYear, currentMonth, reportingTick, directPY,
+          prevYearActual: loadMonth(currentYear - 1, currentMonth).revenueActual });
       if (directPY) return directPY;
       return loadMonth(currentYear - 1, currentMonth).revenueActual ?? 0;
     }
@@ -427,7 +450,7 @@ const Dashboard = () => {
       return loadYear(currentYear - 1).reduce((s, m) => s + (m.revenueActual ?? 0), 0);
     }
     return 0;
-  }, [period, currentYear, currentMonth]);
+  }, [period, currentYear, currentMonth, reportingTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Periodenspezifische Umsatz-Werte
   // Für 'month' nutzen wir denselben Fallback; für today/week nur Tagesdaten
@@ -525,7 +548,7 @@ const Dashboard = () => {
   // ── Buchhaltungs-Personalkosten (aus P&L-Import, 5xxx Konten) ───────────────
   const accountingMonthRecord = useMemo(
     () => loadMonth(currentYear, currentMonth),
-    [currentYear, currentMonth]
+    [currentYear, currentMonth, reportingTick] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const accountingPersonnelCost = useMemo(() => {
     const fromCategories = accountingMonthRecord.expenseCategories
