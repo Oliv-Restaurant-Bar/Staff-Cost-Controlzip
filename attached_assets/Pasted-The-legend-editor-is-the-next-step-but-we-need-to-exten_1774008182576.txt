@@ -1,0 +1,67 @@
+The legend editor is the next step, but we need to extend the requirements so the custom shifts work correctly in operations, calculations, and exports.
+
+Goal:
+Custom legend items like "A" must not be only visual. They must behave like real shifts in the planning logic, in calculations, and in PDF export.
+
+Important:
+Do not break the new click-to-apply workflow.
+Keep all current schedule data intact.
+Use Supabase as the primary source of truth.
+
+Additional requirements to implement:
+
+1. Custom shift items must affect calculations
+If a custom legend item like "A" is created as a work shift with:
+- start/end time
+or
+- fixed hours
+
+then it must count correctly in:
+- planned hours
+- employee totals
+- department totals
+- personnel cost calculations
+- planning KPIs in the Dienstplanung view
+
+2. Time-based display must work properly
+If a legend item has actual work times defined, the schedule cell should be able to show:
+- the full time range directly in the cell
+for example:
+11:00–15:00
+instead of only showing the code.
+
+This must work especially for custom shifts.
+
+3. PDF export must include the legend
+When the Dienstplan is exported as a PDF for employees, include a legend section at the bottom or end of the PDF.
+The legend should explain all used codes and/or times in the exported schedule.
+Example:
+A = Anlass, 11:00–15:00
+FE = Ferien
+K = Krank
+
+4. Legend item configuration
+Each legend item should support:
+- code
+- label
+- color
+- type (work shift or absence)
+- optional start/end time
+- optional fixed hours
+- display mode:
+  - code only
+  - full time in cell
+  - time only in legend
+
+5. Existing logic must stay consistent
+Standard shifts and absence types must still work exactly as before.
+The new custom shifts should integrate into the same planning and export system.
+
+6. Persistence
+All custom legend items and their calculation/display settings must be stored in Supabase and loaded identically in Preview and Published app.
+
+7. Explain in simple German:
+- how custom shift A is calculated in the background
+- how I define whether A shows code or full time
+- where the legend appears in the PDF export
+- what I should test next

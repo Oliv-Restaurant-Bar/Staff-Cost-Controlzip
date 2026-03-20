@@ -65,6 +65,201 @@ function calculateSlotHours(slot: TimeSlot | null | undefined): number {
   return Math.round(hours * 100) / 100;
 }
 
+function buildCompactLegendLine(
+  pdf: jsPDF,
+  allShifts: ReturnType<typeof getShiftConfig>,
+  pageWidth: number,
+  y: number
+): void {
+  pdf.setFontSize(6.5);
+  pdf.setFont('helvetica', 'normal');
+
+  const workShifts = allShifts.filter(s => s.start && s.end && s.abbrev);
+  const absShifts = allShifts.filter(s => (!s.start || !s.end) && s.abbrev);
+
+  let legendX = 10;
+  const maxX = pageWidth - 15;
+
+  if (workShifts.length > 0) {
+    pdf.setTextColor(30, 64, 175);
+    pdf.text('Schichten:', legendX, y);
+    pdf.setTextColor(0, 0, 0);
+    legendX += 18;
+    for (const s of workShifts) {
+      const timeStr = `${s.start!.replace(':00', '')}–${s.end!.replace(':00', '')}`;
+      const label = `${s.abbrev}=${s.name}(${timeStr})`;
+      if (legendX + label.length * 1.6 > maxX) break;
+      pdf.text(label, legendX, y);
+      legendX += label.length * 1.6 + 3;
+    }
+    legendX += 4;
+  }
+
+  if (absShifts.length > 0 && legendX < maxX) {
+    pdf.setTextColor(120, 53, 15);
+    pdf.text('Abwesenheiten:', legendX, y);
+    pdf.setTextColor(0, 0, 0);
+    legendX += 26;
+    for (const s of absShifts) {
+      const label = `${s.abbrev}=${s.name}`;
+      if (legendX + label.length * 1.6 > maxX) break;
+      pdf.text(label, legendX, y);
+      legendX += label.length * 1.6 + 3;
+    }
+  }
+
+  pdf.setTextColor(0, 0, 0);
+}
+
+function addLegendPage(
+  pdf: jsPDF,
+  allShifts: ReturnType<typeof getShiftConfig>,
+  shiftMap: ReturnType<typeof getShiftConfigMap>,
+  monthName: string
+): void {
+  pdf.addPage();
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+
+  pdf.setFillColor(30, 64, 175);
+  pdf.rect(0, 0, pageWidth, 22, 'F');
+  pdf.setFontSize(15);
+  pdf.setFont('helvetica', 'bold');
+  pdf.setTextColor(255, 255, 255);
+  pdf.text('Legende – Schichtkonfiguration', 10, 14);
+  pdf.setFontSize(9);
+  pdf.setFont('helvetica', 'normal');
+  pdf.text(monthName, pageWidth - 10, 14, { align: 'right' });
+  pdf.setTextColor(0, 0, 0);
+
+  const workShifts = allShifts.filter(s => s.start && s.end);
+  const absShifts = allShifts.filter(s => !s.start || !s.end);
+
+  let currentY = 30;
+
+  if (workShifts.length > 0) {
+    pdf.setFontSize(10);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setTextColor(30, 64, 175);
+    pdf.text('Arbeitsschichten', 10, currentY);
+    pdf.setTextColor(0, 0, 0);
+    currentY += 2;
+
+    autoTable(pdf, {
+      startY: currentY,
+      margin: { left: 10, right: 10 },
+      head: [['Kürzel', 'Name', 'Zeiten', 'Std./Schicht', 'Anzeigemodus', 'Bezahlt', 'Zählt zu Soll']],
+      body: workShifts.map(s => {
+        const cfg = shiftMap[s.name];
+        const timeStr = s.start && s.end ? `${s.start} – ${s.end}` : '–';
+        const displayMode = cfg?.displayMode === 'code-in-cell' ? 'Kürzel in Zelle' : 'Zeiten in Zelle';
+        return [
+          s.abbrev || '–',
+          s.name,
+          timeStr,
+          `${s.hours.toFixed(1)} h`,
+          displayMode,
+          cfg?.isPaid !== false ? 'Ja' : 'Nein',
+          cfg?.countsToTarget !== false ? 'Ja' : 'Nein',
+        ];
+      }),
+      theme: 'grid',
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [30, 64, 175], textColor: [255, 255, 255], fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+        1: { cellWidth: 40 },
+        2: { cellWidth: 30, halign: 'center' },
+        3: { cellWidth: 28, halign: 'center' },
+        4: { cellWidth: 35, halign: 'center' },
+        5: { cellWidth: 22, halign: 'center' },
+        6: { cellWidth: 28, halign: 'center' },
+      },
+      didParseCell(data) {
+        if (data.section === 'body' && data.column.index === 0) {
+          const shiftName = workShifts[data.row.index]?.name;
+          const color = shiftMap[shiftName]?.color;
+          if (color) {
+            const hex = color.replace('#', '');
+            const r = parseInt(hex.substring(0, 2), 16);
+            const g = parseInt(hex.substring(2, 4), 16);
+            const b = parseInt(hex.substring(4, 6), 16);
+            if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+              data.cell.styles.fillColor = [r, g, b];
+              data.cell.styles.textColor = [255, 255, 255];
+            }
+          }
+        }
+      },
+    });
+
+    currentY = (pdf as any).lastAutoTable.finalY + 12;
+  }
+
+  if (absShifts.length > 0 && currentY < pageHeight - 40) {
+    pdf.setFontSize(10);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setTextColor(120, 53, 15);
+    pdf.text('Abwesenheitscodes', 10, currentY);
+    pdf.setTextColor(0, 0, 0);
+    currentY += 2;
+
+    autoTable(pdf, {
+      startY: currentY,
+      margin: { left: 10, right: 10 },
+      head: [['Kürzel', 'Name', 'Std./Tag', 'Bezahlt', 'Zählt zu Soll', 'Abteilung']],
+      body: absShifts.map(s => {
+        const cfg = shiftMap[s.name];
+        return [
+          s.abbrev || s.name.substring(0, 3),
+          s.name,
+          `${s.hours.toFixed(1)} h`,
+          cfg?.isPaid !== false ? 'Ja' : 'Nein',
+          cfg?.countsToTarget !== false ? 'Ja' : 'Nein',
+          cfg?.department || 'Alle',
+        ];
+      }),
+      theme: 'grid',
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [120, 53, 15], textColor: [255, 255, 255], fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+        1: { cellWidth: 50 },
+        2: { cellWidth: 25, halign: 'center' },
+        3: { cellWidth: 22, halign: 'center' },
+        4: { cellWidth: 28, halign: 'center' },
+        5: { cellWidth: 30 },
+      },
+      didParseCell(data) {
+        if (data.section === 'body' && data.column.index === 0) {
+          const shiftName = absShifts[data.row.index]?.name;
+          const color = shiftMap[shiftName]?.color;
+          if (color) {
+            const hex = color.replace('#', '');
+            const r = parseInt(hex.substring(0, 2), 16);
+            const g = parseInt(hex.substring(2, 4), 16);
+            const b = parseInt(hex.substring(4, 6), 16);
+            if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+              data.cell.styles.fillColor = [r, g, b];
+              data.cell.styles.textColor = [255, 255, 255];
+            }
+          }
+        }
+      },
+    });
+  }
+
+  pdf.setFontSize(7);
+  pdf.setFont('helvetica', 'italic');
+  pdf.setTextColor(100, 100, 100);
+  pdf.text(
+    'Alle Legendenkonfigurationen werden in Supabase synchronisiert und sind in Preview und Published App identisch.',
+    10,
+    pageHeight - 8
+  );
+  pdf.setTextColor(0, 0, 0);
+}
+
 export async function exportScheduleToExcelV2(options: ExportOptionsV2): Promise<void> {
   const { employees, scheduleData, currentMonth, department = 'all', dailyBudgets = {}, showCosts = false } = options;
   
@@ -1403,14 +1598,8 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     pdf.setFont('helvetica', 'bold');
     pdf.text(`Dienstplan ${deptName} - ${monthName}`, 10, 12);
     
-    // Legend
-    pdf.setFontSize(7);
-    pdf.setFont('helvetica', 'normal');
-    let legendX = 10;
-    absenceShifts.forEach((shift) => {
-      pdf.text(`${shift.abbrev} = ${shift.name}`, legendX, 18);
-      legendX += 25;
-    });
+    // Compact legend header (all shifts)
+    buildCompactLegendLine(pdf, shifts, pageWidth, 18);
     
     // Prepare table data
     const headers: string[] = ['Name'];
@@ -1667,13 +1856,8 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
         pdf.setFontSize(13);
         pdf.setFont('helvetica', 'bold');
         pdf.text(`Dienstplan ${deptName} – ${kwLabel}`, 10, 12);
-        pdf.setFontSize(7);
-        pdf.setFont('helvetica', 'normal');
-        let legendX = 10;
-        absenceShifts.forEach((shift) => {
-          pdf.text(`${shift.abbrev} = ${shift.name}`, legendX, 18);
-          legendX += 28;
-        });
+        // Compact legend header (all shifts)
+        buildCompactLegendLine(pdf, shifts, pageWidth, 18);
 
         const headers: string[] = ['Name'];
         weekDays.forEach(d => {
@@ -1782,6 +1966,9 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
       }
     });
   }
+
+  // Legend page at the end
+  addLegendPage(pdf, shifts, shiftMap, monthName);
 
   // Save PDF
   const fileName = `Dienstplan_${format(currentMonth, 'MMMM_yyyy', { locale: de })}.pdf`;
