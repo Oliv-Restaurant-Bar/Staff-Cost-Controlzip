@@ -16,6 +16,7 @@ export interface ShiftConfigItem {
   textColor: string;
   department?: 'service' | 'küche' | 'all';  // Department-specific shifts
   fixedHours?: boolean;  // If true, use hours directly without break calculation
+  displayMode?: 'default' | 'code-in-cell'; // How to render in schedule cells
 }
 
 export interface ShiftConfigMap {

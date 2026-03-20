@@ -174,6 +174,7 @@ const SchedulePlanner = () => {
   // New state for Plan/Ist toggle
   const [scheduleMode, setScheduleMode] = useState<'plan' | 'ist'>('plan');
   const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string }>>({});
+  const [paintTool, setPaintTool] = useState<string | null>(null);
 
   // ── Rollenbasierter Zugriff ───────────────────────────────────────────────
   // Wenn der User kein Admin ist, wird die Abteilung automatisch gesetzt
@@ -344,11 +345,17 @@ const SchedulePlanner = () => {
     }
   }, [visibleWeekInMonth, calendarView, weeksInMonth]);
 
-  // Keyboard navigation for week switching
+  // Keyboard navigation for week switching + ESC to cancel paint mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Only handle if not in an input field
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      // ESC cancels paint mode
+      if (e.key === 'Escape') {
+        setPaintTool(null);
         return;
       }
       
@@ -1813,6 +1820,8 @@ const SchedulePlanner = () => {
         <ShiftLegend 
           onEditClick={() => setShiftConfigDialogOpen(true)} 
           department={activeDepartment === 'all' ? 'all' : activeDepartment as 'service' | 'küche'}
+          activeTool={paintTool}
+          onToolSelect={setPaintTool}
         />
 
         {/* Schedule Grid with Plan/Ist Tabs */}
@@ -1966,6 +1975,8 @@ const SchedulePlanner = () => {
                           showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
                           laborCostThreshold={gridLaborCostThreshold}
+                          externalActiveTool={paintTool}
+                          onExternalToolChange={setPaintTool}
                         />
                       </div>
                       
@@ -1992,6 +2003,8 @@ const SchedulePlanner = () => {
                           showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
                           laborCostThreshold={gridLaborCostThreshold}
+                          externalActiveTool={paintTool}
+                          onExternalToolChange={setPaintTool}
                         />
                       </div>
                     </div>
@@ -2013,6 +2026,8 @@ const SchedulePlanner = () => {
                       showCosts={effectiveShowCosts}
                       dailyBudgets={dailyBudgets}
                       laborCostThreshold={gridLaborCostThreshold}
+                      externalActiveTool={paintTool}
+                      onExternalToolChange={setPaintTool}
                     />
                   )}
                 </>

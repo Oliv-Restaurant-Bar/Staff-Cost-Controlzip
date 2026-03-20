@@ -122,10 +122,18 @@ export const TimeInputCell = ({
     setOpen(false);
   };
 
-  const displayValue = absenceType 
+  // Find if current time value matches a configured work shift (for displayMode support)
+  const matchedWorkShift = value?.start && value?.end
+    ? workShifts.find(s => shiftMap[s]?.start === value.start && shiftMap[s]?.end === value.end)
+    : undefined;
+  const matchedConfig = matchedWorkShift ? shiftMap[matchedWorkShift] : undefined;
+
+  const displayValue = absenceType
     ? absenceType
-    : value?.start && value?.end 
-      ? `${formatTime(value.start)}-${formatTime(value.end)}`
+    : value?.start && value?.end
+      ? matchedConfig?.displayMode === 'code-in-cell' && matchedConfig.abbrev
+        ? matchedConfig.abbrev
+        : `${formatTime(value.start)}-${formatTime(value.end)}`
       : '';
 
   const getAbsenceConfig = (abbrev: string) => {
@@ -137,15 +145,50 @@ export const TimeInputCell = ({
   const absenceConfig = absenceType ? getAbsenceConfig(absenceType) : null;
   const quickTimes = DEFAULT_QUICK_TIMES[slotType];
 
-  // When paint-tool is active, click directly applies the absence
+  // When paint-tool is active, click directly applies the shift / absence
   if (activeTool) {
+    const isShiftMode = activeTool.startsWith('shift:');
+
+    if (isShiftMode) {
+      // Work-shift paint mode
+      const shiftName = activeTool.slice(6);
+      const config = shiftMap[shiftName];
+      const alreadySet =
+        !absenceType &&
+        !!value?.start &&
+        value.start === config?.start &&
+        value.end === config?.end;
+
+      return (
+        <button
+          onClick={() => onChange(null, null)}
+          title={alreadySet ? 'Klicken zum Entfernen' : `${shiftName} eintragen`}
+          className={cn(
+            "w-full h-8 px-1 text-[10px] font-medium border rounded transition-all",
+            "hover:ring-2 hover:ring-offset-1 hover:ring-foreground focus:outline-none",
+            "cursor-crosshair",
+            alreadySet && config?.color,
+            alreadySet && "ring-1 ring-foreground/30",
+            !alreadySet && absenceType && absenceConfig?.color,
+            !alreadySet && !absenceType && value?.start && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
+            !alreadySet && !absenceType && !value?.start && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground hover:bg-primary/10 hover:border-primary/40",
+          )}
+        >
+          {alreadySet
+            ? (config?.displayMode === 'code-in-cell' && config.abbrev ? config.abbrev : displayValue)
+            : (displayValue || '—')}
+        </button>
+      );
+    }
+
+    // Absence paint mode
     const toolConfig = absenceShifts.find(s => shiftMap[s]?.abbrev === activeTool)
       ? shiftMap[absenceShifts.find(s => shiftMap[s]?.abbrev === activeTool)!]
       : null;
     const alreadySet = absenceType === activeTool;
     return (
       <button
-        onClick={() => onChange(null, alreadySet ? null : activeTool)}
+        onClick={() => onChange(null, null)}
         title={alreadySet ? 'Klicken zum Entfernen' : `${activeTool} eintragen`}
         className={cn(
           "w-full h-8 px-1 text-[10px] font-medium border rounded transition-all",
@@ -155,8 +198,7 @@ export const TimeInputCell = ({
           alreadySet && "ring-1 ring-foreground/30",
           !alreadySet && absenceType && absenceConfig?.color,
           !alreadySet && !absenceType && value?.start && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
-          !alreadySet && !absenceType && !value?.start && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground",
-          !alreadySet && "hover:opacity-70"
+          !alreadySet && !absenceType && !value?.start && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground hover:bg-primary/10 hover:border-primary/40",
         )}
       >
         {displayValue || '—'}

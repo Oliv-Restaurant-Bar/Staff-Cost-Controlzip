@@ -55,6 +55,10 @@ interface ScheduleGridProps {
   showCosts?: boolean;
   dailyBudgets?: Record<string, { plannedRevenue?: number; actualRevenue?: number }>;
   laborCostThreshold?: number;
+  /** External paint-tool controlled by parent (activates paint mode from ShiftLegend) */
+  externalActiveTool?: string | null;
+  /** Notifies parent when internal tool bar changes the active tool */
+  onExternalToolChange?: (tool: string | null) => void;
 }
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -136,6 +140,8 @@ export const ScheduleGrid = ({
   showCosts = false,
   dailyBudgets = {},
   laborCostThreshold: laborCostThresholdProp,
+  externalActiveTool,
+  onExternalToolChange,
 }: ScheduleGridProps) => {
   const { shiftMap, absenceShifts } = useShiftConfig();
   
@@ -271,8 +277,19 @@ export const ScheduleGrid = ({
   // Determine if this is week view (7 or fewer days) for compact styling
   const isWeekView = days.length <= 7;
 
-  // Absence paint-tool state
+  // Absence paint-tool state (internal; overridden by externalActiveTool when provided)
   const [activeTool, setActiveTool] = useState<string | null>(null);
+
+  // Resolved tool: external takes priority when it is explicitly provided (not undefined)
+  const resolvedActiveTool = externalActiveTool !== undefined ? externalActiveTool : activeTool;
+
+  const setResolvedTool = (tool: string | null) => {
+    if (externalActiveTool !== undefined) {
+      onExternalToolChange?.(tool);
+    } else {
+      setActiveTool(tool);
+    }
+  };
 
   // Over-budget dialog state
   const [openDialogDay, setOpenDialogDay] = useState<string | null>(null);
@@ -307,7 +324,7 @@ export const ScheduleGrid = ({
     }).filter(e => e.hours > 0).sort((a, b) => b.cost - a.cost);
   };
 
-  // Apply absence to both früh and spät when paint-tool is active
+  // Apply paint-tool (absence or work shift) when active; fall through to normal edit otherwise
   const handleCellChange = (
     employeeId: string,
     dateStr: string,
@@ -315,10 +332,48 @@ export const ScheduleGrid = ({
     val: TimeSlot | null,
     absence?: string | null
   ) => {
-    if (activeTool) {
-      // Apply to both slots at once
-      onSlotChange(employeeId, dateStr, 'früh', null, activeTool);
-      onSlotChange(employeeId, dateStr, 'spät', null, activeTool);
+    if (resolvedActiveTool) {
+      const cellKey = `${employeeId}-${dateStr}`;
+      const current = scheduleData[cellKey] || {};
+
+      if (resolvedActiveTool.startsWith('shift:')) {
+        // Work-shift paint mode
+        const shiftName = resolvedActiveTool.slice(6);
+        const config = shiftMap[shiftName];
+        if (!config) return;
+        const alreadySet =
+          current.früh?.start === config.start &&
+          current.früh?.end === config.end &&
+          !current.frühAbsence;
+
+        if (alreadySet) {
+          // Toggle off
+          onSlotChange(employeeId, dateStr, 'früh', null, null);
+          onSlotChange(employeeId, dateStr, 'spät', null, null);
+        } else {
+          // Apply work shift to früh
+          onSlotChange(employeeId, dateStr, 'früh', { start: config.start, end: config.end }, null);
+          if (config.start2 && config.end2) {
+            // Split shift: also fill spät
+            onSlotChange(employeeId, dateStr, 'spät', { start: config.start2, end: config.end2 }, null);
+          } else {
+            // Single shift: clear spät absence to avoid confusion
+            onSlotChange(employeeId, dateStr, 'spät', null, null);
+          }
+        }
+      } else {
+        // Absence paint mode
+        const alreadySet = current.frühAbsence === resolvedActiveTool;
+        if (alreadySet) {
+          // Toggle off
+          onSlotChange(employeeId, dateStr, 'früh', null, null);
+          onSlotChange(employeeId, dateStr, 'spät', null, null);
+        } else {
+          // Apply absence to both slots (full-day absence)
+          onSlotChange(employeeId, dateStr, 'früh', null, resolvedActiveTool);
+          onSlotChange(employeeId, dateStr, 'spät', null, resolvedActiveTool);
+        }
+      }
     } else {
       onSlotChange(employeeId, dateStr, slotType, val, absence);
     }
@@ -326,47 +381,46 @@ export const ScheduleGrid = ({
 
   return (
     <div>
-      {/* Absence paint-tool bar */}
-      <div className="flex flex-wrap items-center gap-1.5 mb-2 p-2 bg-muted/30 rounded-md border border-border/50">
-        <span className="text-[10px] font-medium text-muted-foreground shrink-0">Abwesenheit:</span>
-        {absenceShifts.map(shift => {
-          const config = shiftMap[shift];
-          if (!config) return null;
-          const isActive = activeTool === config.abbrev;
-          return (
+      {/* Absence paint-tool bar — only shown when no external tool controller */}
+      {externalActiveTool === undefined && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-2 p-2 bg-muted/30 rounded-md border border-border/50">
+          <span className="text-[10px] font-medium text-muted-foreground shrink-0">Abwesenheit:</span>
+          {absenceShifts.map(shift => {
+            const config = shiftMap[shift];
+            if (!config) return null;
+            const isActive = resolvedActiveTool === config.abbrev;
+            return (
+              <button
+                key={shift}
+                onClick={() => setResolvedTool(isActive ? null : config.abbrev)}
+                title={`${config.abbrev} – Klicken zum Aktivieren, dann auf Mitarbeiterzellen klicken`}
+                className={cn(
+                  "px-2 py-0.5 text-xs rounded border transition-all font-medium",
+                  config.color,
+                  isActive && "ring-2 ring-offset-1 ring-foreground scale-105",
+                  !isActive && "opacity-70 hover:opacity-100"
+                )}
+              >
+                {config.abbrev}
+              </button>
+            );
+          })}
+          {resolvedActiveTool && (
             <button
-              key={shift}
-              onClick={() => setActiveTool(isActive ? null : config.abbrev)}
-              title={`${config.label ?? config.abbrev} – Klicken zum Aktivieren, dann auf Mitarbeiterzellen klicken`}
-              className={cn(
-                "px-2 py-0.5 text-xs rounded border transition-all font-medium",
-                config.color,
-                isActive && "ring-2 ring-offset-1 ring-foreground scale-105",
-                !isActive && "opacity-70 hover:opacity-100"
-              )}
+              onClick={() => setResolvedTool(null)}
+              className="ml-auto flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors"
             >
-              {config.abbrev}
-              {config.label && config.label !== config.abbrev && (
-                <span className="ml-1 text-[9px] opacity-75">{config.label}</span>
-              )}
+              <X className="h-3 w-3" />
+              Beenden
             </button>
-          );
-        })}
-        {activeTool && (
-          <button
-            onClick={() => setActiveTool(null)}
-            className="ml-auto flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors"
-          >
-            <X className="h-3 w-3" />
-            Beenden
-          </button>
-        )}
-        {activeTool && (
-          <span className="text-[10px] text-muted-foreground italic">
-            Aktiv: <strong>{activeTool}</strong> — auf Mitarbeiterzelle klicken zum Eintragen
-          </span>
-        )}
-      </div>
+          )}
+          {resolvedActiveTool && (
+            <span className="text-[10px] text-muted-foreground italic">
+              Aktiv: <strong>{resolvedActiveTool}</strong> — auf Mitarbeiterzelle klicken zum Eintragen
+            </span>
+          )}
+        </div>
+      )}
 
     <div className="overflow-auto max-h-[calc(100vh-280px)]">
     <ScrollArea className={cn("w-full", isWeekView && "overflow-visible")}>
@@ -714,7 +768,7 @@ export const ScheduleGrid = ({
                             slotType="früh"
                             isWeekend={isWeekendDay}
                             isDayOff={isConfiguredDayOff}
-                            activeTool={activeTool}
+                            activeTool={resolvedActiveTool}
                           />
                           {isOverlapping && (
                             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center" title="Schichten überlappen sich!">
@@ -742,7 +796,7 @@ export const ScheduleGrid = ({
                             slotType="spät"
                             isWeekend={isWeekendDay}
                             isDayOff={isConfiguredDayOff}
-                            activeTool={activeTool}
+                            activeTool={resolvedActiveTool}
                           />
                           {isOverlapping && (
                             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center" title="Schichten überlappen sich!">

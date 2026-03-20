@@ -1,0 +1,64 @@
+We now want to improve the Dienstplanung UX for real operational use.
+
+Goal:
+Make the shift legend fully editable and allow much faster assignment of shifts/absence codes directly in the schedule.
+
+Important:
+Do not change unrelated modules.
+Do not break existing planning data.
+Keep all existing Supabase persistence working.
+Any new legend configuration must also be stored safely in Supabase, not only in localStorage.
+
+Features to implement now:
+
+1. Editable legend
+The legend at the top of the Dienstplanung must become fully editable.
+Admins should be able to:
+- rename existing legend items
+- change their color
+- change their label/code
+- change their time display
+- define whether the time is shown in the legend only or directly inside the schedule cell
+
+2. Add new legend / shift types
+Admins must be able to add new custom legend items, for example:
+- code: A
+- custom color
+- optional start/end time
+- optional fixed hours
+- optional absence-type behavior
+The new item must then appear in the legend and be selectable like the existing ones.
+
+3. Preselect + click-to-apply mode
+A user should be able to first select one legend item, then click day cells in the schedule to apply it directly.
+This should work for all legend items, including:
+- Ferien
+- Krank
+- Frei
+- custom codes like A
+- normal shifts
+This is especially important for entering 1–2 weeks of vacation or sickness much faster.
+
+4. Flexible display behavior
+For each legend item, support one of these display modes:
+- show times in the legend
+- show full times directly in the schedule cells
+- show only the code in the cell
+This should be configurable per legend item.
+
+5. Preserve existing behavior
+Existing standard shifts and absence codes must still work.
+Do not remove current functionality.
+The new system should extend the existing one, not replace it destructively.
+
+6. Persistence
+All legend configuration changes and custom legend items must be stored in Supabase.
+If localStorage fallback still exists, Supabase must remain the primary source of truth.
+Preview and Published app must behave identically.
+
+7. Explain in simple German:
+- what exactly was added
+- how I can edit the legend
+- how I can add a new code like A
+- how click-to-apply works
+- what I should test next

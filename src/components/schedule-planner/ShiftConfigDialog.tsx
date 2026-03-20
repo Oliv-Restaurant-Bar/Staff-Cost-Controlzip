@@ -601,6 +601,17 @@ export const ShiftConfigDialog = ({
                       />
                       <Label>Zählt zu Soll</Label>
                     </div>
+                    {shift.start && shift.end && (
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={shift.displayMode === 'code-in-cell'}
+                          onCheckedChange={(checked) =>
+                            handleUpdateShift(index, { displayMode: checked ? 'code-in-cell' : 'default' })
+                          }
+                        />
+                        <Label title="Zeigt statt der Uhrzeit nur das Kürzel in der Zelle an">Code in Zelle</Label>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
