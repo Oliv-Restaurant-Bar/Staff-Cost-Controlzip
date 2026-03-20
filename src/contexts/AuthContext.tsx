@@ -40,55 +40,72 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const loadUserRole = async (userId: string, email?: string) => {
     console.log('[AUTH] loadUserRole called', { userId, email });
 
-    // ── Schritt 1: Rolle aus user_profiles laden ──
+    // ── Weg 1: SECURITY DEFINER RPC (umgeht RLS vollständig) ──────────────────
+    // get_my_role() läuft als DB-Owner, liest user_profiles nach auth.uid().
+    // Immunität gegen RLS-Konfigurationsprobleme.
     try {
-      const { data, error } = await (supabase as any)
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_my_role' as any);
+      console.log('[AUTH] get_my_role() RPC result', { rpcData, rpcError });
+
+      if (!rpcError && rpcData) {
+        console.log('[AUTH] ✅ Role via RPC:', rpcData);
+        applyRole(rpcData as UserRole);
+        syncEmail(userId, email);
+        return;
+      }
+      console.warn('[AUTH] ⚠️ RPC returned no role – rpcData:', rpcData, 'rpcError:', rpcError);
+    } catch (ex) {
+      console.error('[AUTH] ❌ RPC exception:', ex);
+    }
+
+    // ── Weg 2: Direktabfrage user_profiles (Fallback, falls RPC fehlt) ────────
+    try {
+      const resp = await (supabase as any)
         .from('user_profiles')
         .select('role')
         .eq('id', userId)
         .maybeSingle();
 
-      console.log('[AUTH] user_profiles query result', { data, error });
+      const { data, error, status, statusText } = resp;
+      console.log('[AUTH] Direct query result', { data, error, status, statusText });
 
       if (!error && data?.role) {
-        console.log('[AUTH] ✅ Role from DB:', data.role);
+        console.log('[AUTH] ✅ Role via direct query:', data.role);
         applyRole(data.role as UserRole);
-
-        // E-Mail separat aktualisieren (fire-and-forget, nie blockierend)
-        if (email) {
-          (supabase as any)
-            .from('user_profiles')
-            .update({ email: email.toLowerCase() })
-            .eq('id', userId)
-            .then(() => {})
-            .catch(() => {});
-        }
+        syncEmail(userId, email);
         return;
       }
-
-      // Row fehlt oder Fehler
-      console.warn('[AUTH] ⚠️ No role in DB – data:', data, '– error:', error);
+      console.warn('[AUTH] ⚠️ Direct query – no role', { data, error, status, statusText });
     } catch (ex) {
-      console.error('[AUTH] ❌ Exception during user_profiles query:', ex);
+      console.error('[AUTH] ❌ Direct query exception:', ex);
     }
 
-    // ── Fallback: feste E-Mail-Zuordnung ──
+    // ── Weg 3: Feste E-Mail-Zuordnung ─────────────────────────────────────────
     if (email && EMAIL_ROLE_MAP[email.toLowerCase()]) {
       const mappedRole = EMAIL_ROLE_MAP[email.toLowerCase()];
-      console.log('[AUTH] 📧 Email fallback triggered →', mappedRole);
+      console.log('[AUTH] 📧 Email fallback →', mappedRole);
       applyRole(mappedRole);
       (supabase as any)
         .from('user_profiles')
         .upsert({ id: userId, role: mappedRole }, { onConflict: 'id' })
-        .then(() => {})
-        .catch(() => {});
+        .then(() => {}).catch(() => {});
       return;
     }
 
-    // ── Letzter Fallback ──
-    console.error('[AUTH] 🔴 All fallbacks exhausted – defaulting to kueche_manager',
+    // ── Weg 4: Letzter Ausweg ─────────────────────────────────────────────────
+    console.error('[AUTH] 🔴 All paths failed – defaulting to kueche_manager',
       { userId, email });
     applyRole('kueche_manager');
+  };
+
+  /** E-Mail in user_profiles nachführen (fire-and-forget, nie blockierend) */
+  const syncEmail = (userId: string, email?: string) => {
+    if (!email) return;
+    (supabase as any)
+      .from('user_profiles')
+      .update({ email: email.toLowerCase() })
+      .eq('id', userId)
+      .then(() => {}).catch(() => {});
   };
 
   useEffect(() => {
