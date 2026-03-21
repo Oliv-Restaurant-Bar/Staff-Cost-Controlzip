@@ -8,7 +8,8 @@ import { cn } from '@/lib/utils';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
-import { Trash2, CalendarOff, Clock, X, AlertTriangle, TrendingDown, Lightbulb } from 'lucide-react';
+import { Trash2, CalendarOff, Clock, X, AlertTriangle, TrendingDown, Lightbulb, CheckCircle2, EyeOff, Clock3 } from 'lucide-react';
+import { computeSuggestions, CorrectionSuggestion } from './correctionSuggestions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -296,6 +297,20 @@ export const ScheduleGrid = ({
   const [openDialogDay, setOpenDialogDay] = useState<string | null>(null);
   const [whatIfRevenue, setWhatIfRevenue] = useState<string>('');
 
+  // Correction suggestion state
+  const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+  const [snoozedIds, setSnoozedIds] = useState<string[]>([]);
+
+  const handleApplySuggestion = (s: CorrectionSuggestion, dateStr: string) => {
+    if (s.actionType === 'remove_all' || s.actionType === 'remove_frueh') {
+      onSlotChange(s.employeeId, dateStr, 'früh', null, null);
+    }
+    if (s.actionType === 'remove_all' || s.actionType === 'remove_spat') {
+      onSlotChange(s.employeeId, dateStr, 'spät', null, null);
+    }
+    setDismissedIds(prev => [...prev, s.id]);
+  };
+
   // Per-employee cost breakdown for a specific day (for the dialog)
   const getDayEmployeeBreakdown = (dateStr: string) => {
     return employees.map(emp => {
@@ -505,13 +520,13 @@ export const ScheduleGrid = ({
                           )}>
                             {format(day, 'd.M.')}
                           </div>
-                          {/* Always-visible planned hours indicator */}
+                          {/* Always-visible planned hours indicator — red whenever overbudget */}
                           <div className={cn(
                             "text-[8px] font-medium mt-0.5",
                             stats.totalHours === 0
                               ? "text-muted-foreground/50"
-                              : stats.isOverBudget && showCosts
-                                ? "text-red-600 dark:text-red-400"
+                              : stats.isOverBudget
+                                ? "text-red-600 dark:text-red-400 font-bold"
                                 : "text-blue-600 dark:text-blue-400"
                           )}>
                             {stats.totalHours > 0 ? `${stats.totalHours.toFixed(1)}h` : '–'}
@@ -1110,53 +1125,119 @@ export const ScheduleGrid = ({
                 </p>
               </div>
 
-              {/* ── Rule-based optimization suggestions ────────────────── */}
+              {/* ── Actionable per-employee correction suggestions ──────── */}
               {(() => {
-                const suggestions: string[] = [];
-                const empCount = breakdown.length;
-                const highCostEmps = breakdown.filter(e => e.cost > 120);
+                const activeSuggestions = computeSuggestions(
+                  openDialogDay,
+                  employees,
+                  scheduleData,
+                  dismissedIds,
+                  excessCosts,
+                );
+                const snoozed = activeSuggestions.filter(s => snoozedIds.includes(s.id));
+                const pending = activeSuggestions.filter(s => !snoozedIds.includes(s.id));
 
-                if (stats.excessHours > 8) {
-                  suggestions.push(`Tag ist stark überplant (+${stats.excessHours.toFixed(1)} h). Überprüfe, ob alle Schichten wirklich nötig sind.`);
-                } else if (stats.excessHours > 3) {
-                  suggestions.push(`${stats.excessHours.toFixed(1)} Stunden zu viel geplant. 1–2 Schichten kürzen oder streichen würde reichen.`);
-                } else if (stats.excessHours > 0) {
-                  suggestions.push(`Nur ${stats.excessHours.toFixed(1)} h über Ziel – kleine Anpassung (z.B. frühere Abgangszeit) genügt.`);
+                if (activeSuggestions.length === 0) {
+                  return (
+                    <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 text-xs text-amber-700 dark:text-amber-400">
+                      <div className="flex items-center gap-2 font-semibold uppercase tracking-wide mb-1">
+                        <Lightbulb className="h-3.5 w-3.5 shrink-0" />
+                        Korrekturvorschläge
+                      </div>
+                      Alle Vorschläge wurden bearbeitet. Überprüfe ggf. die Schichtzusammensetzung manuell.
+                    </div>
+                  );
                 }
 
-                if (excessCosts > 800) {
-                  suggestions.push(`CHF ${excessCosts.toFixed(0)} über Kostenziel. Aushilfen oder teure Spätschichten priorisiert reduzieren.`);
-                } else if (excessCosts > 300) {
-                  suggestions.push(`CHF ${excessCosts.toFixed(0)} über Kostenziel. Spätschichten oder Überstunden kritisch prüfen.`);
-                }
-
-                if (highCostEmps.length >= 3) {
-                  suggestions.push(`${highCostEmps.length} Mitarbeitende mit hohen Einzelkosten geplant. Teurere Stunden zuerst kürzen.`);
-                }
-
-                if (empCount > 0) {
-                  const avgHours = stats.totalHours / empCount;
-                  if (avgHours > 9) {
-                    suggestions.push(`Durchschnittlich ${avgHours.toFixed(1)} h pro Person – manche Mitarbeitende könnten früher gehen.`);
-                  }
-                }
-
-                if (suggestions.length === 0) {
-                  suggestions.push('Überprüfe die Schichtzusammensetzung oder erhöhe den erwarteten Umsatz für diesen Tag.');
-                }
+                const SuggestionCard = ({ s }: { s: CorrectionSuggestion }) => (
+                  <div className="rounded-lg border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20 p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                          <span className={cn(
+                            "text-[10px] font-bold px-1.5 py-0.5 rounded-full border",
+                            s.badge === 'Aushilfe'
+                              ? "bg-purple-100 dark:bg-purple-900/40 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300"
+                              : s.badge === 'Doppelschicht'
+                                ? "bg-blue-100 dark:bg-blue-900/40 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300"
+                                : "bg-amber-100 dark:bg-amber-900/40 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300"
+                          )}>
+                            {s.badge}
+                          </span>
+                          <span className="text-xs font-medium text-foreground">{s.description}</span>
+                        </div>
+                        {s.slotDisplay && (
+                          <div className="text-[10px] text-muted-foreground">{s.slotDisplay}</div>
+                        )}
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                            −{s.savingHours.toFixed(1)}h
+                          </span>
+                          {s.savingCost > 0 && (
+                            <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                              −CHF {s.savingCost.toFixed(0)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 pt-1 border-t border-orange-200 dark:border-orange-700">
+                      <Button
+                        size="sm"
+                        variant="default"
+                        className="h-7 px-2.5 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                        onClick={() => handleApplySuggestion(s, openDialogDay)}
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Übernehmen
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2.5 text-xs gap-1.5 text-muted-foreground"
+                        onClick={() => setDismissedIds(prev => [...prev, s.id])}
+                      >
+                        <EyeOff className="h-3.5 w-3.5" />
+                        Ignorieren
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2.5 text-xs gap-1.5 text-muted-foreground"
+                        onClick={() =>
+                          snoozedIds.includes(s.id)
+                            ? setSnoozedIds(prev => prev.filter(x => x !== s.id))
+                            : setSnoozedIds(prev => [...prev, s.id])
+                        }
+                      >
+                        <Clock3 className="h-3.5 w-3.5" />
+                        Später
+                      </Button>
+                    </div>
+                  </div>
+                );
 
                 return (
-                  <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-2">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wide">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-orange-700 dark:text-orange-400 uppercase tracking-wide">
                       <Lightbulb className="h-3.5 w-3.5 shrink-0" />
-                      Optimierungsvorschläge
+                      Korrekturvorschläge
+                      <span className="font-normal normal-case text-muted-foreground">
+                        — klicke "Übernehmen" um die Änderung direkt anzuwenden
+                      </span>
                     </div>
-                    {suggestions.map((s, i) => (
-                      <div key={i} className="flex items-start gap-2 text-xs text-amber-800 dark:text-amber-300">
-                        <span className="shrink-0 font-bold">•</span>
-                        <span>{s}</span>
-                      </div>
-                    ))}
+                    {pending.map(s => <SuggestionCard key={s.id} s={s} />)}
+                    {snoozed.length > 0 && (
+                      <details className="text-xs text-muted-foreground">
+                        <summary className="cursor-pointer hover:text-foreground transition-colors flex items-center gap-1">
+                          <Clock3 className="h-3 w-3" />
+                          {snoozed.length} zurückgestellt
+                        </summary>
+                        <div className="mt-1 space-y-1.5 pl-2">
+                          {snoozed.map(s => <SuggestionCard key={s.id} s={s} />)}
+                        </div>
+                      </details>
+                    )}
                   </div>
                 );
               })()}

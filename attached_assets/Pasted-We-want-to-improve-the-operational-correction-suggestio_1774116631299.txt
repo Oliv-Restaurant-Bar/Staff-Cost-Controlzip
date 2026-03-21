@@ -1,0 +1,73 @@
+We want to improve the operational correction suggestions directly inside Dienstplanung.
+
+Goal:
+Do not show only a generic overplanning warning.
+Show concrete suggested corrections directly in the employee rows / schedule grid, so the planner can immediately accept or reject them.
+
+Important:
+Do not change unrelated modules.
+Keep all existing planning logic intact.
+Do not build full AI auto-planning yet.
+Extend the current rule-based suggestion layer into actionable row-level suggestions.
+
+Implement these requirements:
+
+1. Day header warning visibility
+If a day is overplanned in hours or personnel cost, then the total planned hours shown at the top of that day column (for example 79.4h) must be visually marked red / warning state immediately in the header.
+It should be obvious at first glance that this day needs attention.
+
+2. Remove unnecessary hour-difference block in the day dialog
+In the day detail / warning dialog, remove the "Differenz between Ist and Plan hours" block as a primary KPI there.
+Keep the focus on:
+- planned total hours
+- planned personnel cost
+- cost target
+- over/under amount in CHF
+- overplanned amount in hours if useful
+The key purpose of this dialog is operational planning correction, not Ist-vs-Plan labor tracking.
+
+3. Better cost warning information
+In the cost warning block, show not only the planned cost and target cost, but also the explicit difference in CHF and the overplanned hours clearly.
+Example:
+- Geplant: CHF 2003
+- Ziel: CHF 1156
+- Überschuss: CHF 847
+- Überplant: +15.4h
+
+4. Concrete correction suggestions directly at employee level
+When a day is overplanned, show visually highlighted correction suggestions directly in the employee rows / schedule cells for the affected day.
+
+Examples:
+- suggest removing a late shift
+- suggest shortening a second shift block
+- suggest removing an extra helper
+- suggest assigning a free day instead
+
+Each suggestion should:
+- be visible in context near the affected employee/shift
+- explain what action is proposed
+- have clear actions like:
+  - Übernehmen
+  - Ignorieren
+  - Später prüfen
+
+5. Suggestion logic
+Use rule-based logic for now, not full AI yet.
+Suggestion logic may consider:
+- cost overrun
+- total hours overrun
+- duplicate / excessive shift density
+- helpers with very low priority
+- very high plus-hour employees if that data is available
+- employees already over target hours
+
+6. Accepting a suggestion
+If the planner clicks "Übernehmen", apply the proposed correction immediately in the plan.
+If "Ignorieren", hide that suggestion for the current context.
+If "Später prüfen", keep it but do not auto-apply.
+
+7. Explain in simple German:
+- how overplanned day headers are now highlighted
+- where I see the concrete correction suggestions
+- how I accept or reject them
+- what I should test next

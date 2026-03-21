@@ -275,74 +275,58 @@ export const DayDetailDialog = ({
             )}
           </div>
 
-          {/* KPI section: planned cost vs target + actual hours if available */}
-          {(hasCostData || hasActualHours) && (
-            <div className="grid grid-cols-2 gap-3">
-              {/* Plan hours vs Actual */}
-              <div className="rounded-lg border bg-card p-3 space-y-1.5">
-                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Stunden</div>
+          {/* KPI section: planned cost vs target — full width */}
+          {hasCostData && (() => {
+            const wageEmployees = employees.filter(e => e.hourlyWage && e.hourlyWage > 0);
+            const avgWage = wageEmployees.length > 0
+              ? wageEmployees.reduce((s, e) => s + (e.hourlyWage || 0), 0) / wageEmployees.length
+              : 0;
+            const overHours = isOverCostTarget && avgWage > 0 ? excessCost! / avgWage : null;
+
+            return (
+              <div className={cn(
+                "rounded-lg border bg-card p-3 space-y-1.5",
+                isOverCostTarget && "border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10"
+              )}>
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Personalkosten
+                </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Plan</span>
+                  <span className="text-muted-foreground">Geplant</span>
+                  <span className="font-semibold">CHF {totalPlannedCost.toFixed(0)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Geplante Stunden</span>
                   <span className="font-semibold">{totalHours.toFixed(1)} h</span>
                 </div>
-                {hasActualHours && (
+                {costTarget !== null && (
                   <>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Ist</span>
-                      <span className="font-semibold">{totalActualHours!.toFixed(1)} h</span>
+                      <span className="text-muted-foreground">Kostenziel ({laborCostThreshold}%)</span>
+                      <span className="font-semibold">CHF {costTarget.toFixed(0)}</span>
                     </div>
                     <div className={cn(
                       "flex justify-between text-sm border-t pt-1.5",
-                      totalActualHours! > totalHours + 1 ? "text-red-600" :
-                      Math.abs(totalActualHours! - totalHours) < 0.5 ? "text-green-600" : "text-amber-600"
+                      isOverCostTarget ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"
                     )}>
-                      <span>Differenz</span>
+                      <span className="font-semibold">{isOverCostTarget ? 'Überschuss' : 'Spielraum'}</span>
                       <span className="font-bold">
-                        {(totalActualHours! - totalHours) >= 0
-                          ? `+${(totalActualHours! - totalHours).toFixed(1)}`
-                          : (totalActualHours! - totalHours).toFixed(1)} h
+                        {isOverCostTarget
+                          ? `+CHF ${excessCost!.toFixed(0)}`
+                          : `–CHF ${Math.abs(excessCost!).toFixed(0)}`}
                       </span>
                     </div>
+                    {isOverCostTarget && overHours !== null && overHours > 0 && (
+                      <div className="flex justify-between text-sm text-red-600 dark:text-red-400">
+                        <span>Überplant (ca.)</span>
+                        <span className="font-bold">+{overHours.toFixed(1)} h</span>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
-
-              {/* Planned cost vs target */}
-              {hasCostData && (
-                <div className={cn(
-                  "rounded-lg border bg-card p-3 space-y-1.5",
-                  isOverCostTarget && "border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10"
-                )}>
-                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                    Personalkosten
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Geplant</span>
-                    <span className="font-semibold">CHF {totalPlannedCost.toFixed(0)}</span>
-                  </div>
-                  {costTarget !== null && (
-                    <>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Ziel ({laborCostThreshold}%)</span>
-                        <span className="font-semibold">CHF {costTarget.toFixed(0)}</span>
-                      </div>
-                      <div className={cn(
-                        "flex justify-between text-sm border-t pt-1.5",
-                        isOverCostTarget ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"
-                      )}>
-                        <span>{isOverCostTarget ? 'Überschuss' : 'Spielraum'}</span>
-                        <span className="font-bold">
-                          {isOverCostTarget
-                            ? `+CHF ${excessCost!.toFixed(0)}`
-                            : `–CHF ${Math.abs(excessCost!).toFixed(0)}`}
-                        </span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+            );
+          })()}
 
           {/* Recommendation */}
           {recommendation && (
