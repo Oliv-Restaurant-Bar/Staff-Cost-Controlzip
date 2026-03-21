@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
-import { Trash2, CalendarOff, Clock, X, AlertTriangle, TrendingDown } from 'lucide-react';
+import { Trash2, CalendarOff, Clock, X, AlertTriangle, TrendingDown, Lightbulb } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -241,6 +241,7 @@ export const ScheduleGrid = ({
       laborCostPercentage,
       isOverBudget,
       excessHours: Math.max(0, excessHours),
+      excessCosts: Math.max(0, excessCosts),
     };
   };
 
@@ -503,6 +504,17 @@ export const ScheduleGrid = ({
                             stats.isOverBudget && showCosts && "text-red-700 dark:text-red-400"
                           )}>
                             {format(day, 'd.M.')}
+                          </div>
+                          {/* Always-visible planned hours indicator */}
+                          <div className={cn(
+                            "text-[8px] font-medium mt-0.5",
+                            stats.totalHours === 0
+                              ? "text-muted-foreground/50"
+                              : stats.isOverBudget && showCosts
+                                ? "text-red-600 dark:text-red-400"
+                                : "text-blue-600 dark:text-blue-400"
+                          )}>
+                            {stats.totalHours > 0 ? `${stats.totalHours.toFixed(1)}h` : '–'}
                           </div>
                           {showCosts && (
                             <div className="flex flex-col items-center mt-0.5">
@@ -1069,6 +1081,57 @@ export const ScheduleGrid = ({
                   * Dieser Wert überschreibt den budgetierten Umsatz nicht.
                 </p>
               </div>
+
+              {/* ── Rule-based optimization suggestions ────────────────── */}
+              {(() => {
+                const suggestions: string[] = [];
+                const empCount = breakdown.length;
+                const highCostEmps = breakdown.filter(e => e.cost > 120);
+
+                if (stats.excessHours > 8) {
+                  suggestions.push(`Tag ist stark überplant (+${stats.excessHours.toFixed(1)} h). Überprüfe, ob alle Schichten wirklich nötig sind.`);
+                } else if (stats.excessHours > 3) {
+                  suggestions.push(`${stats.excessHours.toFixed(1)} Stunden zu viel geplant. 1–2 Schichten kürzen oder streichen würde reichen.`);
+                } else if (stats.excessHours > 0) {
+                  suggestions.push(`Nur ${stats.excessHours.toFixed(1)} h über Ziel – kleine Anpassung (z.B. frühere Abgangszeit) genügt.`);
+                }
+
+                if (excessCosts > 800) {
+                  suggestions.push(`CHF ${excessCosts.toFixed(0)} über Kostenziel. Aushilfen oder teure Spätschichten priorisiert reduzieren.`);
+                } else if (excessCosts > 300) {
+                  suggestions.push(`CHF ${excessCosts.toFixed(0)} über Kostenziel. Spätschichten oder Überstunden kritisch prüfen.`);
+                }
+
+                if (highCostEmps.length >= 3) {
+                  suggestions.push(`${highCostEmps.length} Mitarbeitende mit hohen Einzelkosten geplant. Teurere Stunden zuerst kürzen.`);
+                }
+
+                if (empCount > 0) {
+                  const avgHours = stats.totalHours / empCount;
+                  if (avgHours > 9) {
+                    suggestions.push(`Durchschnittlich ${avgHours.toFixed(1)} h pro Person – manche Mitarbeitende könnten früher gehen.`);
+                  }
+                }
+
+                if (suggestions.length === 0) {
+                  suggestions.push('Überprüfe die Schichtzusammensetzung oder erhöhe den erwarteten Umsatz für diesen Tag.');
+                }
+
+                return (
+                  <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wide">
+                      <Lightbulb className="h-3.5 w-3.5 shrink-0" />
+                      Optimierungsvorschläge
+                    </div>
+                    {suggestions.map((s, i) => (
+                      <div key={i} className="flex items-start gap-2 text-xs text-amber-800 dark:text-amber-300">
+                        <span className="shrink-0 font-bold">•</span>
+                        <span>{s}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </DialogContent>
         </Dialog>

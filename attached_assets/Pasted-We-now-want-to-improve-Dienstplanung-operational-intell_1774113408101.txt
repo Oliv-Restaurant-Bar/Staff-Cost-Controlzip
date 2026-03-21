@@ -1,0 +1,88 @@
+We now want to improve Dienstplanung operational intelligence and visibility.
+
+Goal:
+Make overplanning, cost excess, plan-vs-ist deviations, and schedule usability much clearer in day-to-day planning.
+
+Important:
+Do not change unrelated modules.
+Keep all existing data intact.
+Keep Supabase persistence working.
+Do not start full AI auto-planning yet — first build the operational foundation and visibility layer.
+
+Implement these requirements:
+
+1. Stronger overplanning / warning logic in Dienstplanung
+If a day has too many planned hours or too high planned personnel cost relative to target revenue / labor target, show this clearly.
+Not only as passive KPI cards, but also directly in the day-level planning context.
+
+Requirements:
+- detect overplanned total hours per day
+- detect overplanned personnel cost per day
+- show clear warning state when day exceeds target
+- show how many hours too much
+- show how many CHF too much
+- show whether service and/or kitchen is the cause
+- show a short optimization hint / suggestion text
+
+Example:
+"Montag ist um 18.5h überplant"
+"Service liegt CHF 420 über Zielkosten"
+"Vorschlag: 2 Spätschichten reduzieren oder Aushilfe entfernen"
+
+2. Day-level totals in Plan view
+In the normal Plan view, show total planned hours per day at the top near the date column.
+This should make it obvious how many hours are planned for each day without opening a modal.
+
+3. New third view: Plan vs Ist
+Add a third schedule view next to Plan and Ist:
+- Plan
+- Ist
+- Plan vs Ist
+
+In this new view, show for each employee and each day:
+- planned hours
+- actual hours
+- difference
+
+Visual rules:
+- if actual differs from planned by less than 10 minutes → green
+- if actual is more than planned by 1 minute up to 1 hour → green
+- if absolute difference is more than 1 hour → red
+
+Also show a clear daily summary of total deviation.
+
+4. Sticky header improvement
+In the schedule grid, when scrolling vertically, the top header rows must remain fixed:
+- the day/date row
+- the F / S row
+These should stay visible while scrolling down through employees.
+
+5. Better warning presentation in the day modal / day details
+When opening a day, clearly show:
+- planned total hours
+- actual total hours if available
+- target revenue
+- planned personnel cost
+- cost target
+- over/under status
+- short recommendation text
+
+6. Optimization suggestion layer (not full AI planning yet)
+Build a first rule-based suggestion layer.
+It should generate human-readable suggestions based on:
+- planned hours vs target
+- planned cost vs target
+- department split
+- employee hour balance if already available
+
+Examples:
+- "Service ist deutlich überbesetzt am Abend"
+- "2 Mitarbeitende mit grossem Minussaldo könnten bevorzugt eingeplant werden"
+- "Mitarbeiter X hat bereits viele Plusstunden, freier Tag wäre sinnvoll"
+
+7. Explain in simple German:
+- how overplanning is now detected
+- where I see too many planned hours and too high costs
+- how Plan vs Ist works
+- how the color rules are applied
+- what I should test next

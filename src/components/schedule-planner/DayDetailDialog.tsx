@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Clock, Users, TrendingUp, Pencil, RotateCcw, Check, X } from 'lucide-react';
+import { Clock, Users, TrendingUp, Pencil, RotateCcw, Check, X, AlertTriangle, Lightbulb } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
@@ -21,6 +21,8 @@ interface DayDetailDialogProps {
   plannedRevenue?: number;
   isOverride?: boolean;
   onUpdatePlannedRevenue?: (dateStr: string, value: number | null) => void;
+  laborCostThreshold?: number;
+  actualHoursData?: Record<string, { hours: number; start?: string; end?: string }>;
 }
 
 // Calculate hours from a time slot
@@ -51,6 +53,8 @@ export const DayDetailDialog = ({
   plannedRevenue,
   isOverride,
   onUpdatePlannedRevenue,
+  laborCostThreshold = 40,
+  actualHoursData,
 }: DayDetailDialogProps) => {
   const { shiftMap } = useShiftConfig();
   const [editingRevenue, setEditingRevenue] = useState(false);
@@ -124,6 +128,43 @@ export const DayDetailDialog = ({
       workingCount++;
     }
   });
+
+  // Calculate planned cost (only employees with hourlyWage and work hours)
+  let totalPlannedCost = 0;
+  employees.forEach(emp => {
+    if (!emp.hourlyWage) return;
+    const cellKey = `${emp.id}-${dateStr}`;
+    const ds = scheduleData[cellKey];
+    if (!ds) return;
+    const frühH = calculateSlotHours(ds.früh);
+    const spätH = calculateSlotHours(ds.spät);
+    const gross = frühH + spätH;
+    const net = Math.max(0, gross - calculateBreakDeduction(gross));
+    totalPlannedCost += net * emp.hourlyWage;
+  });
+
+  const hasCostData = totalPlannedCost > 0;
+  const costTarget = plannedRevenue && plannedRevenue > 0
+    ? plannedRevenue * (laborCostThreshold / 100)
+    : null;
+  const excessCost = costTarget !== null ? totalPlannedCost - costTarget : null;
+  const isOverCostTarget = excessCost !== null && excessCost > 0;
+
+  // Actual hours if available
+  const totalActualHours = actualHoursData
+    ? employees.reduce((sum, emp) => sum + (actualHoursData[`${emp.id}-${dateStr}`]?.hours ?? 0), 0)
+    : null;
+  const hasActualHours = totalActualHours !== null && totalActualHours > 0;
+
+  // Recommendation text
+  const recommendation: { type: 'ok' | 'warning' | 'error'; text: string } | null = (() => {
+    if (!costTarget || !hasCostData) return null;
+    const excess = totalPlannedCost - costTarget;
+    if (excess <= 0) return { type: 'ok', text: 'Tag ist innerhalb des Kostenziels. Gut geplant!' };
+    if (excess > 1000) return { type: 'error', text: `CHF ${excess.toFixed(0)} über Kostenziel. Mehrere Schichten kürzen oder einen Mitarbeitenden freistellen.` };
+    if (excess > 400) return { type: 'warning', text: `CHF ${excess.toFixed(0)} über Kostenziel. Spät- oder Zusatzschicht prüfen und ggf. kürzen.` };
+    return { type: 'warning', text: `CHF ${excess.toFixed(0)} über Kostenziel. Kleine Anpassung (z.B. frühere Abgangszeit) genügt.` };
+  })();
 
   const renderEmployeeList = (deptEmployees: Employee[], deptName: string, dotColor: string) => {
     const working = deptEmployees.filter(e => getEmployeeShiftInfo(e.id).hasShift);
@@ -233,6 +274,94 @@ export const DayDetailDialog = ({
               </div>
             )}
           </div>
+
+          {/* KPI section: planned cost vs target + actual hours if available */}
+          {(hasCostData || hasActualHours) && (
+            <div className="grid grid-cols-2 gap-3">
+              {/* Plan hours vs Actual */}
+              <div className="rounded-lg border bg-card p-3 space-y-1.5">
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Stunden</div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Plan</span>
+                  <span className="font-semibold">{totalHours.toFixed(1)} h</span>
+                </div>
+                {hasActualHours && (
+                  <>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Ist</span>
+                      <span className="font-semibold">{totalActualHours!.toFixed(1)} h</span>
+                    </div>
+                    <div className={cn(
+                      "flex justify-between text-sm border-t pt-1.5",
+                      totalActualHours! > totalHours + 1 ? "text-red-600" :
+                      Math.abs(totalActualHours! - totalHours) < 0.5 ? "text-green-600" : "text-amber-600"
+                    )}>
+                      <span>Differenz</span>
+                      <span className="font-bold">
+                        {(totalActualHours! - totalHours) >= 0
+                          ? `+${(totalActualHours! - totalHours).toFixed(1)}`
+                          : (totalActualHours! - totalHours).toFixed(1)} h
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Planned cost vs target */}
+              {hasCostData && (
+                <div className={cn(
+                  "rounded-lg border bg-card p-3 space-y-1.5",
+                  isOverCostTarget && "border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10"
+                )}>
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Personalkosten
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Geplant</span>
+                    <span className="font-semibold">CHF {totalPlannedCost.toFixed(0)}</span>
+                  </div>
+                  {costTarget !== null && (
+                    <>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Ziel ({laborCostThreshold}%)</span>
+                        <span className="font-semibold">CHF {costTarget.toFixed(0)}</span>
+                      </div>
+                      <div className={cn(
+                        "flex justify-between text-sm border-t pt-1.5",
+                        isOverCostTarget ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"
+                      )}>
+                        <span>{isOverCostTarget ? 'Überschuss' : 'Spielraum'}</span>
+                        <span className="font-bold">
+                          {isOverCostTarget
+                            ? `+CHF ${excessCost!.toFixed(0)}`
+                            : `–CHF ${Math.abs(excessCost!).toFixed(0)}`}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Recommendation */}
+          {recommendation && (
+            <div className={cn(
+              "flex items-start gap-2.5 rounded-lg border p-3 text-sm",
+              recommendation.type === 'ok'
+                ? "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-800 dark:text-green-300"
+                : recommendation.type === 'error'
+                  ? "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300"
+                  : "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300"
+            )}>
+              {recommendation.type === 'ok'
+                ? <TrendingUp className="h-4 w-4 shrink-0 mt-0.5" />
+                : recommendation.type === 'error'
+                  ? <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  : <Lightbulb className="h-4 w-4 shrink-0 mt-0.5" />}
+              <span>{recommendation.text}</span>
+            </div>
+          )}
 
           {/* Umsatz-Override: Bearbeitungsbereich */}
           {onUpdatePlannedRevenue && (

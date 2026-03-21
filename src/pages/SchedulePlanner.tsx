@@ -19,6 +19,7 @@ import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
+import { PlanVsIstGrid } from '@/components/schedule-planner/PlanVsIstGrid';
 import { EmployeeHoursSummary } from '@/components/schedule-planner/EmployeeHoursSummary';
 import { ShiftLegend } from '@/components/schedule-planner/ShiftLegend';
 import { AddAushilfeDialog } from '@/components/schedule-planner/AddAushilfeDialog';
@@ -172,7 +173,7 @@ const SchedulePlanner = () => {
   } | null>(null);
   
   // New state for Plan/Ist toggle
-  const [scheduleMode, setScheduleMode] = useState<'plan' | 'ist'>('plan');
+  const [scheduleMode, setScheduleMode] = useState<'plan' | 'ist' | 'compare'>('plan');
   const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string }>>({});
   const [paintTool, setPaintTool] = useState<string | null>(null);
 
@@ -1929,6 +1930,19 @@ const SchedulePlanner = () => {
                     <Clock className="h-3 w-3" />
                     <span className="hidden sm:inline">Ist</span>
                   </Button>
+                  <Button
+                    variant={scheduleMode === 'compare' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setScheduleMode('compare')}
+                    className={cn(
+                      "h-7 gap-1",
+                      scheduleMode === 'compare' && "bg-purple-600 hover:bg-purple-700"
+                    )}
+                    title="Plan/Ist-Vergleich anzeigen"
+                  >
+                    <CalendarDays className="h-3 w-3" />
+                    <span className="hidden sm:inline">Ver.</span>
+                  </Button>
                 </div>
                 <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
                   <Button
@@ -1947,7 +1961,15 @@ const SchedulePlanner = () => {
           </CardHeader>
           <CardContent>
             <div ref={scheduleGridRef}>
-              {scheduleMode === 'plan' ? (
+              {scheduleMode === 'compare' ? (
+                // ── Plan/Ist-Vergleich ─────────────────────────────────────
+                <PlanVsIstGrid
+                  employees={filteredEmployees}
+                  days={displayDays}
+                  scheduleData={scheduleData}
+                  actualHoursData={actualHoursData}
+                />
+              ) : scheduleMode === 'plan' ? (
                 // Plan-Dienstplan (existing schedule grid)
                 <>
                   {activeDepartment === 'all' ? (
@@ -2425,6 +2447,8 @@ const SchedulePlanner = () => {
         plannedRevenue={selectedDay ? dailyBudgets[format(selectedDay, 'yyyy-MM-dd')]?.plannedRevenue : undefined}
         isOverride={selectedDay ? !!dailyBudgets[format(selectedDay, 'yyyy-MM-dd')]?.isOverride : false}
         onUpdatePlannedRevenue={handleUpdatePlannedRevenue}
+        laborCostThreshold={gridLaborCostThreshold}
+        actualHoursData={actualHoursData}
       />
 
       {/* Shift Config Dialog */}
