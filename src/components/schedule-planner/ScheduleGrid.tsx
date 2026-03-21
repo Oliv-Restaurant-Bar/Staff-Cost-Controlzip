@@ -1,5 +1,5 @@
 // Schedule Grid Component - Updated to use onOpen8HoursDialog
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { format, isWeekend, getDay, isSunday } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
@@ -300,6 +300,31 @@ export const ScheduleGrid = ({
   const [dismissedIds, setDismissedIds] = useState<string[]>([]);
   const [snoozedIds, setSnoozedIds] = useState<string[]>([]);
 
+  // Pre-compute which cells are top correction candidates across ALL overbudget days.
+  // Used to render orange suggestion rings in the grid even before the dialog is opened.
+  const gridSuggestionCells = useMemo(() => {
+    const result = new Set<string>();
+    if (!showCosts) return result;
+    days.forEach(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const stats = getDailyStats(day);
+      if (!stats.isOverBudget) return;
+      const suggestions = computeSuggestions(
+        dateStr, employees, scheduleData, dismissedIds, stats.excessCosts,
+      );
+      suggestions.slice(0, 3).forEach(s => {
+        if (s.actionType === 'remove_all' || s.actionType === 'remove_frueh') {
+          result.add(`${s.employeeId}-${dateStr}-früh`);
+        }
+        if (s.actionType === 'remove_all' || s.actionType === 'remove_spat') {
+          result.add(`${s.employeeId}-${dateStr}-spät`);
+        }
+      });
+    });
+    return result;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days, employees, scheduleData, dismissedIds, showCosts, laborCostThreshold, dailyBudgets]);
+
   const handleApplySuggestion = (s: CorrectionSuggestion, dateStr: string) => {
     if (s.actionType === 'remove_all' || s.actionType === 'remove_frueh') {
       onSlotChange(s.employeeId, dateStr, 'früh', null, null);
@@ -486,8 +511,8 @@ export const ScheduleGrid = ({
                           className={cn(
                             "px-0.5 py-1 text-center font-medium border-b cursor-pointer transition-colors",
                             "border-r-4 border-r-primary/30",
-                            stats.isOverBudget && showCosts
-                              ? "bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/40"
+                            stats.isOverBudget
+                              ? "bg-red-200 dark:bg-red-950/80 hover:bg-red-300 dark:hover:bg-red-900/80 border-b-2 border-b-red-500 dark:border-b-red-600"
                               : isWeekendDay
                                 ? "bg-amber-100 dark:bg-amber-900/30 hover:bg-muted/50"
                                 : "hover:bg-muted/50",
@@ -502,19 +527,19 @@ export const ScheduleGrid = ({
                               onDayClick?.(day);
                             }
                           }}
-                          title={stats.isOverBudget && showCosts ? "⚠️ Ziel überschritten – Klicken für Details" : "Klicken für Tagesdetails"}
+                          title={stats.isOverBudget ? "⚠️ Ziel überschritten – Klicken für Details" : "Klicken für Tagesdetails"}
                         >
                           <div className={cn(
                             "text-muted-foreground text-[9px]",
                             isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400 font-semibold",
-                            stats.isOverBudget && showCosts && "text-red-700 dark:text-red-400 font-semibold"
+                            stats.isOverBudget && "text-red-800 dark:text-red-300 font-bold"
                           )}>
                             {WEEKDAY_NAMES[day.getDay()]}
                           </div>
                           <div className={cn(
                             "font-semibold text-[10px]",
                             isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400",
-                            stats.isOverBudget && showCosts && "text-red-700 dark:text-red-400"
+                            stats.isOverBudget && "text-red-800 dark:text-red-300"
                           )}>
                             {format(day, 'd.M.')}
                           </div>
@@ -789,6 +814,9 @@ export const ScheduleGrid = ({
                     const isOverlapping = hasShiftOverlap(daySchedule);
                     const hasShortBreakWarning = hasShortBreak(daySchedule);
                     
+                    const isSuggestedFrüh = showCosts && gridSuggestionCells.has(`${employee.id}-${dateStr}-früh`);
+                    const isSuggestedSpät = showCosts && gridSuggestionCells.has(`${employee.id}-${dateStr}-spät`);
+
                     return (
                       <React.Fragment key={dateStr}>
                         {/* Früh cell */}
@@ -799,9 +827,11 @@ export const ScheduleGrid = ({
                             isSundayDay && !isConfiguredDayOff && "bg-amber-200/40 dark:bg-amber-900/25",
                             isConfiguredDayOff && "bg-slate-300 dark:bg-slate-600",
                             isOverlapping && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
-                            hasShortBreakWarning && !isOverlapping && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset"
+                            hasShortBreakWarning && !isOverlapping && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset",
+                            isSuggestedFrüh && !isOverlapping && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset bg-orange-50 dark:bg-orange-950/30"
                           )}
                           title={
+                            isSuggestedFrüh ? "💡 Korrekturvorschlag – diese Schicht streichen" :
                             isOverlapping ? "⚠️ Schichten überlappen sich!" :
                             hasShortBreakWarning ? "⚠️ Kurze Pause (<30 Min.)" :
                             isConfiguredDayOff ? "📅 Konfigurierter wöchentlicher Ruhetag" :
@@ -822,6 +852,11 @@ export const ScheduleGrid = ({
                               <span className="text-white text-[8px] font-bold">!</span>
                             </div>
                           )}
+                          {isSuggestedFrüh && !isOverlapping && (
+                            <div className="absolute top-0 right-0 w-3.5 h-3.5 bg-orange-500 rounded-bl-sm flex items-center justify-center pointer-events-none" title="Korrekturvorschlag">
+                              <span className="text-white text-[7px] font-bold leading-none">✂</span>
+                            </div>
+                          )}
                         </td>
                         {/* Spät cell */}
                         <td
@@ -832,9 +867,11 @@ export const ScheduleGrid = ({
                             isSundayDay && !isConfiguredDayOff && "bg-amber-200/40 dark:bg-amber-900/25 border-r-primary/50",
                             isConfiguredDayOff && "bg-slate-300 dark:bg-slate-600",
                             isOverlapping && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
-                            hasShortBreakWarning && !isOverlapping && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset"
+                            hasShortBreakWarning && !isOverlapping && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset",
+                            isSuggestedSpät && !isOverlapping && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset bg-orange-50 dark:bg-orange-950/30"
                           )}
                           title={
+                            isSuggestedSpät ? "💡 Korrekturvorschlag – diese Schicht streichen" :
                             isOverlapping ? "⚠️ Schichten überlappen sich!" :
                             hasShortBreakWarning ? "⚠️ Kurze Pause (<30 Min.)" :
                             isConfiguredDayOff ? "📅 Konfigurierter wöchentlicher Ruhetag" :
@@ -853,6 +890,11 @@ export const ScheduleGrid = ({
                           {isOverlapping && (
                             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center" title="Schichten überlappen sich!">
                               <span className="text-white text-[8px] font-bold">!</span>
+                            </div>
+                          )}
+                          {isSuggestedSpät && !isOverlapping && (
+                            <div className="absolute top-0 right-0 w-3.5 h-3.5 bg-orange-500 rounded-bl-sm flex items-center justify-center pointer-events-none" title="Korrekturvorschlag">
+                              <span className="text-white text-[7px] font-bold leading-none">✂</span>
                             </div>
                           )}
                         </td>
@@ -1034,15 +1076,15 @@ export const ScheduleGrid = ({
 
       return (
         <Dialog open={true} onOpenChange={() => setOpenDialogDay(null)}>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
+          <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+            <DialogHeader className="shrink-0">
               <DialogTitle className="flex items-center gap-2 text-red-600">
                 <AlertTriangle className="h-5 w-5" />
                 Kostenwarnung: {dateLabel}
               </DialogTitle>
             </DialogHeader>
 
-            <div className="space-y-4">
+            <div className="space-y-4 overflow-y-auto flex-1 pr-1">
               {/* Overview section */}
               <div className="rounded-lg bg-muted/50 p-3 space-y-2">
                 <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tagesübersicht</div>

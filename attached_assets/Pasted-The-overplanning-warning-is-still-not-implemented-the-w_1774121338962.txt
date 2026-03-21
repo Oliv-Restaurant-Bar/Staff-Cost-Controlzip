@@ -1,0 +1,67 @@
+The overplanning warning is still not implemented the way we need it.
+
+Current problems:
+1. The day dialog still does NOT show concrete actionable correction suggestions in practice.
+2. The schedule grid does NOT visually mark which employee/shift should be reduced or removed.
+3. In the day header, only the hour text becomes red. That is not enough.
+We want the entire day header area (the block containing weekday, date, and total planned hours) to be visually highlighted with a red warning background when the day is overplanned.
+
+Goal:
+Make overplanning visible immediately and make correction suggestions actionable directly in the grid.
+
+Important:
+Do not change unrelated modules.
+Keep all current planning logic intact.
+Do not build full AI planning yet.
+Improve the existing overplanning suggestion layer so it is actually visible and usable.
+
+Tasks:
+
+1. Day header warning block
+When a day is overplanned in cost and/or hours, visually highlight the entire day header block with a red warning background.
+Not only the hour number.
+The whole header cell for that day should look like a warning state.
+
+2. Concrete correction suggestions in the dialog
+In the overplanned day dialog, actually render a visible "Korrekturvorschläge" section with real entries.
+Each entry should show:
+- employee name
+- affected shift
+- proposed action
+- estimated saved hours
+- estimated saved CHF
+
+Actions:
+- Übernehmen
+- Ignorieren
+- Später
+
+3. Visual grid marking in the schedule
+For overplanned days, directly mark the affected employee row/cell visually in the schedule grid.
+Examples:
+- red outline around the shift cell that is suggested for removal
+- small badge or suggestion label near the cell
+- highlight the employee row section for that day
+The planner should immediately see which shift is the proposed correction.
+
+4. Suggestion quality
+Use the current rule-based logic, but make sure it really produces suggestions in common overplanning cases like:
+- extra helper
+- second shift block
+- duplicate late shifts
+- very high total service hours
+If the logic currently returns empty, improve it so it produces meaningful suggestions.
+
+5. Keep current functionality
+Do not break:
+- Plan / Ist / Ver.
+- day dialog
+- click-to-apply
+- PDF export
+- manager/admin permissions
+
+6. Explain in simple German:
+- how overplanned days are now highlighted
+- where I see the concrete correction suggestions
+- how the suggested employee/shift is marked in the grid
+- what I should test next
