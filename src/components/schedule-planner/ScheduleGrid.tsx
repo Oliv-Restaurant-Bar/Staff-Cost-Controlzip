@@ -625,7 +625,7 @@ export const ScheduleGrid = ({
               return (
                 <tr key={employee.id} className="group hover:bg-muted/30">
                   {/* Employee name cell - compact */}
-                  <td className="sticky left-0 z-10 bg-card group-hover:bg-muted/30 px-1.5 py-1 border-b border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                  <td className="sticky left-0 z-10 bg-card group-hover:bg-muted px-1.5 py-1 border-b border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                     <div className="flex items-center justify-between gap-0.5">
                       <div className="flex-1 min-w-0 overflow-hidden">
                         <div className="font-medium text-xs truncate" title={employee.name}>{employee.name}</div>
@@ -717,7 +717,7 @@ export const ScheduleGrid = ({
                   </td>
                   {/* Hours summary cell - compact */}
                   <td className={cn(
-                    "sticky z-10 bg-card group-hover:bg-muted/30 px-1 py-1 border-b border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
+                    "sticky z-10 bg-card group-hover:bg-muted px-1 py-1 border-b border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
                     isWeekView ? "left-[110px]" : "left-[140px]"
                   )}>
                     <div className="space-y-0.5">
@@ -771,13 +771,18 @@ export const ScheduleGrid = ({
                         <td
                           className={cn(
                             "px-0 py-0.5 border-b border-r border-border/30 text-center relative",
-                            isWeekendDay && "bg-amber-100/30 dark:bg-amber-900/15",
-                            isSundayDay && "bg-amber-200/40 dark:bg-amber-900/25",
-                            isConfiguredDayOff && "bg-muted/50",
+                            isWeekendDay && !isConfiguredDayOff && "bg-amber-100/30 dark:bg-amber-900/15",
+                            isSundayDay && !isConfiguredDayOff && "bg-amber-200/40 dark:bg-amber-900/25",
+                            isConfiguredDayOff && "bg-slate-200/80 dark:bg-slate-700/50",
                             isOverlapping && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
                             hasShortBreakWarning && !isOverlapping && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset"
                           )}
-                          title={isOverlapping ? "⚠️ Schichten überlappen sich!" : hasShortBreakWarning ? "⚠️ Kurze Pause (<30 Min.)" : undefined}
+                          title={
+                            isOverlapping ? "⚠️ Schichten überlappen sich!" :
+                            hasShortBreakWarning ? "⚠️ Kurze Pause (<30 Min.)" :
+                            isConfiguredDayOff ? "📅 Konfigurierter wöchentlicher Ruhetag" :
+                            undefined
+                          }
                         >
                           <TimeInputCell
                             value={daySchedule.früh || null}
@@ -799,13 +804,18 @@ export const ScheduleGrid = ({
                           className={cn(
                             "px-0 py-0.5 border-b text-center relative",
                             "border-r-4 border-r-primary/30",
-                            isWeekendDay && "bg-amber-100/30 dark:bg-amber-900/15",
-                            isSundayDay && "bg-amber-200/40 dark:bg-amber-900/25 border-r-primary/50",
-                            isConfiguredDayOff && "bg-muted/50",
+                            isWeekendDay && !isConfiguredDayOff && "bg-amber-100/30 dark:bg-amber-900/15",
+                            isSundayDay && !isConfiguredDayOff && "bg-amber-200/40 dark:bg-amber-900/25 border-r-primary/50",
+                            isConfiguredDayOff && "bg-slate-200/80 dark:bg-slate-700/50",
                             isOverlapping && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
                             hasShortBreakWarning && !isOverlapping && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset"
                           )}
-                          title={isOverlapping ? "⚠️ Schichten überlappen sich!" : hasShortBreakWarning ? "⚠️ Kurze Pause (<30 Min.)" : undefined}
+                          title={
+                            isOverlapping ? "⚠️ Schichten überlappen sich!" :
+                            hasShortBreakWarning ? "⚠️ Kurze Pause (<30 Min.)" :
+                            isConfiguredDayOff ? "📅 Konfigurierter wöchentlicher Ruhetag" :
+                            undefined
+                          }
                         >
                           <TimeInputCell
                             value={daySchedule.spät || null}
@@ -867,11 +877,11 @@ export const ScheduleGrid = ({
           {showFooter && (
             <tfoot>
               <tr className="bg-muted/50 border-t-2 border-border">
-                <td className="sticky left-0 z-10 bg-muted/80 px-1.5 py-1.5 border-b border-r border-border font-semibold text-xs shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                <td className="sticky left-0 z-10 bg-muted px-1.5 py-1.5 border-b border-r border-border font-semibold text-xs shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                   Tages-Σ
                 </td>
                 <td className={cn(
-                  "sticky z-10 bg-muted/80 px-1 py-1.5 border-b border-r border-border text-center shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
+                  "sticky z-10 bg-muted px-1 py-1.5 border-b border-r border-border text-center shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
                   isWeekView ? "left-[110px]" : "left-[140px]"
                 )}>
                   <span className="text-[9px] text-muted-foreground">{employees.length} MA</span>

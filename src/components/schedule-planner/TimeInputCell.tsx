@@ -149,6 +149,12 @@ export const TimeInputCell = ({
   if (activeTool) {
     const isShiftMode = activeTool.startsWith('shift:');
 
+    // Helper: base classes for an "empty" cell in paint mode (respects isDayOff)
+    const emptyPaintClass = isDayOff && !value?.start && !absenceType
+      ? "bg-slate-200 dark:bg-slate-700 border-slate-400/60 dark:border-slate-500/60 text-slate-500 dark:text-slate-400 font-semibold"
+      : "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground hover:bg-primary/10 hover:border-primary/40";
+    const emptyPaintLabel = isDayOff && !value?.start && !absenceType ? 'F' : '—';
+
     if (isShiftMode) {
       // Work-shift paint mode
       const shiftName = activeTool.slice(6);
@@ -171,12 +177,12 @@ export const TimeInputCell = ({
             alreadySet && "ring-1 ring-foreground/30",
             !alreadySet && absenceType && absenceConfig?.color,
             !alreadySet && !absenceType && value?.start && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
-            !alreadySet && !absenceType && !value?.start && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground hover:bg-primary/10 hover:border-primary/40",
+            !alreadySet && !absenceType && !value?.start && emptyPaintClass,
           )}
         >
           {alreadySet
             ? (config?.displayMode === 'code-in-cell' && config.abbrev ? config.abbrev : displayValue)
-            : (displayValue || '—')}
+            : (displayValue || emptyPaintLabel)}
         </button>
       );
     }
@@ -198,13 +204,16 @@ export const TimeInputCell = ({
           alreadySet && "ring-1 ring-foreground/30",
           !alreadySet && absenceType && absenceConfig?.color,
           !alreadySet && !absenceType && value?.start && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
-          !alreadySet && !absenceType && !value?.start && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground hover:bg-primary/10 hover:border-primary/40",
+          !alreadySet && !absenceType && !value?.start && emptyPaintClass,
         )}
       >
-        {displayValue || '—'}
+        {displayValue || emptyPaintLabel}
       </button>
     );
   }
+
+  // A configured day-off with no manually entered content
+  const isEmptyDayOff = isDayOff && !value?.start && !absenceType;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -213,14 +222,21 @@ export const TimeInputCell = ({
           className={cn(
             "w-full h-8 px-1 text-[10px] font-medium border rounded transition-all",
             "hover:ring-1 hover:ring-ring focus:outline-none focus:ring-1 focus:ring-ring",
-            isWeekend && "bg-primary/5",
-            isDayOff && "bg-muted/50",
+            // Base state: empty cell
+            !absenceType && !value?.start && !isDayOff && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground",
+            // Weekend without a day-off override
+            isWeekend && !isDayOff && "bg-primary/5",
+            // Configured free day (empty) — clearly distinct from normal empty cells
+            isEmptyDayOff && "bg-slate-200 dark:bg-slate-700 border-slate-400/60 dark:border-slate-500/60 text-slate-500 dark:text-slate-400 font-semibold",
+            // Configured free day with manually entered content — keep content styling but tint the bg
+            isDayOff && !isEmptyDayOff && "ring-1 ring-slate-400/40 dark:ring-slate-500/40",
+            // Absence colors take priority
             absenceType && absenceConfig?.color,
+            // Shift time colors
             !absenceType && value?.start && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
-            !absenceType && !value?.start && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground"
           )}
         >
-          {displayValue || '—'}
+          {displayValue || (isEmptyDayOff ? 'F' : '—')}
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-56 p-2 z-50" align="center">
