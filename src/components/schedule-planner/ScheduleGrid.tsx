@@ -624,8 +624,15 @@ export const ScheduleGrid = ({
               
               return (
                 <tr key={employee.id} className="group hover:bg-muted/30">
-                  {/* Employee name cell - compact */}
-                  <td className="sticky left-0 z-10 bg-card group-hover:bg-muted px-1.5 py-1 border-b border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                  {/* Employee name cell – explicit width prevents misalignment of sticky second column */}
+                  <td className={cn(
+                    "sticky left-0 z-10 bg-card group-hover:bg-muted",
+                    "px-1.5 py-1 border-b border-r-2 border-border overflow-hidden",
+                    "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
+                    isWeekView
+                      ? "w-[110px] min-w-[110px] max-w-[110px]"
+                      : "w-[140px] min-w-[140px] max-w-[140px]"
+                  )}>
                     <div className="flex items-center justify-between gap-0.5">
                       <div className="flex-1 min-w-0 overflow-hidden">
                         <div className="font-medium text-xs truncate" title={employee.name}>{employee.name}</div>
@@ -717,8 +724,12 @@ export const ScheduleGrid = ({
                   </td>
                   {/* Hours summary cell - compact */}
                   <td className={cn(
-                    "sticky z-10 bg-card group-hover:bg-muted px-1 py-1 border-b border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
-                    isWeekView ? "left-[110px]" : "left-[140px]"
+                    "sticky z-10 bg-card group-hover:bg-muted",
+                    "px-1 py-1 border-b border-r-2 border-border overflow-hidden",
+                    "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
+                    isWeekView
+                      ? "left-[110px] w-[50px] min-w-[50px] max-w-[50px]"
+                      : "left-[140px] w-[60px] min-w-[60px] max-w-[60px]"
                   )}>
                     <div className="space-y-0.5">
                       <div className={cn(
@@ -773,7 +784,7 @@ export const ScheduleGrid = ({
                             "px-0 py-0.5 border-b border-r border-border/30 text-center relative",
                             isWeekendDay && !isConfiguredDayOff && "bg-amber-100/30 dark:bg-amber-900/15",
                             isSundayDay && !isConfiguredDayOff && "bg-amber-200/40 dark:bg-amber-900/25",
-                            isConfiguredDayOff && "bg-slate-200/80 dark:bg-slate-700/50",
+                            isConfiguredDayOff && "bg-slate-300 dark:bg-slate-600",
                             isOverlapping && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
                             hasShortBreakWarning && !isOverlapping && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset"
                           )}
@@ -806,7 +817,7 @@ export const ScheduleGrid = ({
                             "border-r-4 border-r-primary/30",
                             isWeekendDay && !isConfiguredDayOff && "bg-amber-100/30 dark:bg-amber-900/15",
                             isSundayDay && !isConfiguredDayOff && "bg-amber-200/40 dark:bg-amber-900/25 border-r-primary/50",
-                            isConfiguredDayOff && "bg-slate-200/80 dark:bg-slate-700/50",
+                            isConfiguredDayOff && "bg-slate-300 dark:bg-slate-600",
                             isOverlapping && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
                             hasShortBreakWarning && !isOverlapping && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset"
                           )}
@@ -877,12 +888,19 @@ export const ScheduleGrid = ({
           {showFooter && (
             <tfoot>
               <tr className="bg-muted/50 border-t-2 border-border">
-                <td className="sticky left-0 z-10 bg-muted px-1.5 py-1.5 border-b border-r border-border font-semibold text-xs shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                <td className={cn(
+                  "sticky left-0 z-10 bg-muted px-1.5 py-1.5 border-b border-r-2 border-border font-semibold text-xs",
+                  "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
+                  isWeekView ? "w-[110px] min-w-[110px] max-w-[110px]" : "w-[140px] min-w-[140px] max-w-[140px]"
+                )}>
                   Tages-Σ
                 </td>
                 <td className={cn(
-                  "sticky z-10 bg-muted px-1 py-1.5 border-b border-r border-border text-center shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
-                  isWeekView ? "left-[110px]" : "left-[140px]"
+                  "sticky z-10 bg-muted px-1 py-1.5 border-b border-r-2 border-border text-center",
+                  "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
+                  isWeekView
+                    ? "left-[110px] w-[50px] min-w-[50px] max-w-[50px]"
+                    : "left-[140px] w-[60px] min-w-[60px] max-w-[60px]"
                 )}>
                   <span className="text-[9px] text-muted-foreground">{employees.length} MA</span>
                 </td>

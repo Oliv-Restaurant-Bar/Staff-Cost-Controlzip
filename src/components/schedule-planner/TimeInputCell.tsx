@@ -151,7 +151,7 @@ export const TimeInputCell = ({
 
     // Helper: base classes for an "empty" cell in paint mode (respects isDayOff)
     const emptyPaintClass = isDayOff && !value?.start && !absenceType
-      ? "bg-slate-200 dark:bg-slate-700 border-slate-400/60 dark:border-slate-500/60 text-slate-500 dark:text-slate-400 font-semibold"
+      ? "bg-slate-300 dark:bg-slate-600 border-slate-400 dark:border-slate-500 text-slate-600 dark:text-slate-300 font-bold"
       : "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground hover:bg-primary/10 hover:border-primary/40";
     const emptyPaintLabel = isDayOff && !value?.start && !absenceType ? 'F' : '—';
 
@@ -227,7 +227,7 @@ export const TimeInputCell = ({
             // Weekend without a day-off override
             isWeekend && !isDayOff && "bg-primary/5",
             // Configured free day (empty) — clearly distinct from normal empty cells
-            isEmptyDayOff && "bg-slate-200 dark:bg-slate-700 border-slate-400/60 dark:border-slate-500/60 text-slate-500 dark:text-slate-400 font-semibold",
+            isEmptyDayOff && "bg-slate-300 dark:bg-slate-600 border-slate-400 dark:border-slate-500 text-slate-600 dark:text-slate-300 font-bold",
             // Configured free day with manually entered content — keep content styling but tint the bg
             isDayOff && !isEmptyDayOff && "ring-1 ring-slate-400/40 dark:ring-slate-500/40",
             // Absence colors take priority
