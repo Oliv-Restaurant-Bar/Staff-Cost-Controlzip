@@ -11,6 +11,7 @@ import {
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { ShiftConfigItem } from '@/hooks/useShiftConfig';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   Tooltip,
   TooltipContent,
@@ -110,6 +111,7 @@ export const ShiftConfigDialog = ({
   shifts,
   onSave,
 }: ShiftConfigDialogProps) => {
+  const { role } = usePermissions();
   const [localShifts, setLocalShifts] = useState<ShiftConfigItem[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
@@ -201,6 +203,25 @@ export const ShiftConfigDialog = ({
       toast.error('Kürzel müssen eindeutig sein');
       return;
     }
+
+    // ── Logging: detect creates vs updates ──────────────────────────────────
+    const existingNames = new Set(shifts.map(s => s.name.trim().toLowerCase()));
+    const created = localShifts.filter(s => !existingNames.has(s.name.trim().toLowerCase()));
+    const updated = localShifts.filter(s => existingNames.has(s.name.trim().toLowerCase()) && (() => {
+      const orig = shifts.find(o => o.name.trim().toLowerCase() === s.name.trim().toLowerCase());
+      return orig && JSON.stringify(orig) !== JSON.stringify(s);
+    })());
+    if (created.length > 0) {
+      console.log(`[Schichten] ERSTELLT von ${role}:`, created.map(s => `${s.name} (${s.abbrev || '–'})`).join(', '));
+    }
+    if (updated.length > 0) {
+      console.log(`[Schichten] AKTUALISIERT von ${role}:`, updated.map(s => `${s.name} (${s.abbrev || '–'})`).join(', '));
+    }
+    if (created.length === 0 && updated.length === 0) {
+      console.log(`[Schichten] Gespeichert von ${role}: keine inhaltlichen Änderungen (${localShifts.length} Einträge)`);
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     onSave(localShifts);
     onOpenChange(false);
     toast.success('Legende gespeichert und synchronisiert');
