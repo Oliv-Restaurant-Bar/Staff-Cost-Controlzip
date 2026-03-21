@@ -31,6 +31,10 @@ args = "npm run dev"
 waitForPort = 8080
 
 [[ports]]
+localPort = 3099
+externalPort = 3000
+
+[[ports]]
 localPort = 5000
 externalPort = 5000
 
@@ -50,6 +54,7 @@ VITE_SUPABASE_ANON_KEY = "sb_publishable_QXf-21IX_EQ_cwLGqNc24w_-fFS23ht"
 VITE_SUPABASE_PROJECT_ID = "ajflrvuzmkfspsxkdyfe"
 
 [deployment]
-deploymentTarget = "static"
+deploymentTarget = "autoscale"
 build = ["npm", "run", "build"]
 publicDir = "dist"
+run = ["node", "server.js"]
