@@ -4,7 +4,6 @@ import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
 import { calculateBreakDeduction, useShiftConfig } from '@/hooks/useShiftConfig';
 import { cn } from '@/lib/utils';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 
@@ -106,10 +105,9 @@ export const PlanVsIstGrid = ({
       </div>
 
       <div className="overflow-auto max-h-[calc(100vh-320px)]">
-        <ScrollArea className="w-full">
           <div className="min-w-max">
             <table className="w-full border-collapse">
-              <thead className="sticky top-0 z-30">
+              <thead className="sticky top-0 z-30 bg-card">
                 <tr className="bg-card">
                   <th className="sticky left-0 z-20 bg-card px-2 py-1.5 text-left text-xs font-semibold border-b border-r-2 border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] w-[140px] min-w-[140px]">
                     Mitarbeiter
@@ -315,8 +313,6 @@ export const PlanVsIstGrid = ({
               </tfoot>
             </table>
           </div>
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
       </div>
     </div>
   );

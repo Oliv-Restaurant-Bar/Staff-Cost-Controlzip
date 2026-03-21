@@ -4,7 +4,6 @@ import { format, isWeekend, isSunday, getDay } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { cn } from '@/lib/utils';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -483,12 +482,12 @@ export const ActualHoursGrid = ({
   };
 
   return (
-    <div>
-    <ScrollArea className={cn("w-full", isWeekView && "overflow-visible")}>
+    <>
+    <div className="overflow-auto max-h-[calc(100vh-280px)]">
       <div className={cn("min-w-max", isWeekView && "min-w-0")}>
         <table className={cn("w-full border-collapse", isWeekView && "table-fixed")}>
-          <thead>
-            <tr>
+          <thead className="sticky top-0 z-30 bg-card">
+            <tr className="bg-card">
               <th
                 className={cn(
                   "sticky left-0 z-20 bg-card px-2 py-1 text-left text-xs font-semibold border-b border-r-2 border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
@@ -753,8 +752,7 @@ export const ActualHoursGrid = ({
           </tfoot>
         </table>
       </div>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
+    </div>
 
     {/* ── Over-budget Ist Dialog ─────────────────────────────────────── */}
     {openDialogDay && showCosts && (() => {
@@ -865,6 +863,6 @@ export const ActualHoursGrid = ({
         </Dialog>
       );
     })()}
-    </div>
+    </>
   );
 };

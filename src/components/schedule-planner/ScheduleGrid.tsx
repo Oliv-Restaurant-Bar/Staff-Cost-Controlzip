@@ -5,7 +5,6 @@ import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { TimeInputCell } from './TimeInputCell';
 import { cn } from '@/lib/utils';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
 import { Trash2, CalendarOff, Clock, X, AlertTriangle, TrendingDown, Lightbulb, CheckCircle2, EyeOff, Clock3 } from 'lucide-react';
@@ -445,10 +444,9 @@ export const ScheduleGrid = ({
       )}
 
     <div className="overflow-auto max-h-[calc(100vh-280px)]">
-    <ScrollArea className={cn("w-full", isWeekView && "overflow-visible")}>
       <div className={cn("min-w-max", isWeekView && "min-w-0")}>
         <table className={cn("w-full border-collapse", isWeekView && "table-fixed")}>
-          <thead className="sticky top-0 z-30">
+          <thead className="sticky top-0 z-30 bg-card">
             {/* Date row */}
             <tr className="bg-card">
               <th 
@@ -601,7 +599,7 @@ export const ScheduleGrid = ({
               })}
             </tr>
             {/* Früh/Spät row */}
-            <tr className="bg-muted/30">
+            <tr className="bg-card">
               {days.map((day, idx) => {
                 const isWeekendDay = isWeekend(day);
                 const isSundayDay = isSunday(day);
@@ -1020,8 +1018,6 @@ export const ScheduleGrid = ({
           )}
         </table>
       </div>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
     </div>
 
     {/* ── Over-budget Plan Dialog ─────────────────────────────────────── */}
