@@ -86,6 +86,40 @@ function getProRataFixCost(
   return { cost: full, label: null, excluded: false };
 }
 
+/**
+ * Jahreskosten-Berechnung für den Fixlohn eines Mitarbeiters.
+ *
+ * Formel für das gewählte Jahr:
+ *   - Austritt vor dem Jahr           → 0
+ *   - Austritt nach dem Jahr / kein Datum → Monatslohn × 12
+ *   - Austritt IM Jahr               →
+ *       (Austrittsmonat − 1) × volles Monatslohn    [alle vollen Monate davor]
+ *     + Monatslohn × (Austrittsstag / Tage im Monat) [Pro-rata Austrittsmonat]
+ *
+ * Beispiel: David, Austritt 04.03.2026, Monatslohn CHF 4 000
+ *   Jan (voll) + Feb (voll) + Mär (pro rata 4/31)
+ *   = 2 × 4 000 + 4 000 × (4/31) = 8 000 + 516.13 = CHF 8 516
+ */
+function getYearlyFixCost(emp: Employee, year: number): number {
+  const full = getFixCost(emp);
+  if (!full) return 0;
+  if (!emp.employmentEndDate) return full * 12;
+
+  const exit = new Date(emp.employmentEndDate + 'T00:00:00');
+  const ey = exit.getFullYear();
+  const em = exit.getMonth() + 1; // 1-based
+  const ed = exit.getDate();
+
+  if (ey < year) return 0;               // schon vor dem Jahr ausgetreten
+  if (ey > year) return full * 12;       // tritt erst nach dem Jahr aus
+
+  // Austritt im gewählten Jahr
+  const fullMonths  = em - 1;                               // Jan … (Austrittsmonat-1)
+  const daysInExitMonth = new Date(year, em, 0).getDate();  // Tage im Austrittsmonat
+  const proRata     = full * (ed / daysInExitMonth);
+  return Math.round((fullMonths * full + proRata) * 100) / 100;
+}
+
 // ── Slot-Stunden-Rechner (für schedule-v2 Plan-Stunden) ───────────────────────
 
 function calcSlotHours(slot: { start: string; end: string } | null | undefined): number {
@@ -403,6 +437,7 @@ export default function PersonalFixPage() {
     fixedEmployees.map(emp => ({
       emp,
       ...getProRataFixCost(emp, selectedYear, selectedMonth),
+      yearlyCost: getYearlyFixCost(emp, selectedYear),
     })),
     [fixedEmployees, selectedYear, selectedMonth],
   );
@@ -436,7 +471,10 @@ export default function PersonalFixPage() {
 
   const totalFixCost = useMemo(() => activeFixedEmployees.reduce((s, r) => s + r.cost, 0), [activeFixedEmployees]);
   const totalFixBase = useMemo(() => activeFixedEmployees.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0), [activeFixedEmployees]);
-  const totalFixAnnual = totalFixCost * 12;
+  const totalFixAnnual = useMemo(() =>
+    activeFixedEmployees.reduce((s, r) => s + r.yearlyCost, 0),
+    [activeFixedEmployees],
+  );
 
   const totalVarCost = useMemo(() =>
     variableEmployees.reduce((s, e) => s + getVarHoursFor(e.id) * (e.hourlyWage ?? 0), 0),
@@ -670,7 +708,7 @@ export default function PersonalFixPage() {
                               : <span className="text-muted-foreground">–</span>}
                           </td>
                           <td className="px-4 py-2.5 text-right font-mono text-muted-foreground text-sm">
-                            {cost > 0 ? fmtCHF(cost * 12) : '–'}
+                            {yearlyCost > 0 ? fmtCHF(yearlyCost) : '–'}
                           </td>
                         </tr>
                       );
@@ -684,7 +722,7 @@ export default function PersonalFixPage() {
                         {fmtCHF(rows.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0))}
                       </td>
                       <td className="px-4 py-2.5 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(deptTotal)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(deptTotal * 12)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(rows.reduce((s, r) => s + r.yearlyCost, 0))}</td>
                     </tr>
                   </tfoot>
                 </table>
