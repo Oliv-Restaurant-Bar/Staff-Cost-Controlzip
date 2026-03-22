@@ -1,0 +1,77 @@
+We now want to build the next important layer:
+employee hour balance + role-aware planning suggestions.
+
+Goal:
+Use contract-based target hours and actual/planned hour balances to create useful planning support per employee, but in a realistic way that respects positions/stations within a department.
+
+Important:
+Do not break existing planning, budget, FIX/VARIABEL, or replacement logic.
+Do not build full AI auto-planning yet.
+Build a solid rule-based employee planning support layer first.
+
+Very important business rule:
+Employees are not interchangeable just because they are in the same department.
+We must support position/station-specific planning.
+Example:
+A pizzaiolo with +200 overtime cannot simply be replaced by any kitchen employee.
+Within one department there can be different roles/stations that must be respected.
+
+Implement these requirements:
+
+1. Employee target hours / hour balance base
+For each employee, derive or store:
+- contract-based target workload
+- monthly target hours
+- planned hours
+- actual hours if available
+- current plus/minus hour balance
+
+Use existing contract/pensum data where possible.
+
+2. Employee-level hour balance visibility
+Make hour balance visible in a practical way for planning.
+Show per employee:
+- target hours
+- planned hours
+- actual hours if available
+- plus/minus balance
+
+3. Planning support rules
+Create a first rule-based planning aid:
+- employees with minus hours should generally be preferred for planning
+- employees with large plus hours should generally be protected / given more free time
+- but only if they are actually replaceable in that role/station
+
+4. Position/station-specific logic
+Extend planning logic so employees can have a more specific role/station inside a department.
+Examples:
+- Küche → Pizzaiolo, Grill, Gardemanger
+- Service → Chef de Rang, Runner, Bar, Event
+
+Planning support must respect this.
+Do not assume every kitchen employee can replace every other kitchen employee.
+
+5. Suggestion examples
+Generate human-readable suggestions such as:
+- "Mitarbeiter X ist 18h im Minus und kann diese Woche bevorzugt eingeplant werden"
+- "Mitarbeiter Y hat bereits viele Plusstunden, freier Tag wäre sinnvoll"
+- "Pizzaiolo Z ist stark im Plus, aber nur A und B sind positionsgeeignete Alternativen"
+- "In Service ist noch Budget für 12h, bevorzugt bei Mitarbeiter K mit Minussaldo"
+
+6. UI placement
+Show this in useful places, for example:
+- employee planning overview
+- Dienstplanung context
+- Personal FIX + Variabel where appropriate
+Keep it practical and not overloaded.
+
+7. Preserve realism
+Do not create misleading suggestions where no valid replacement exists.
+If a role/station is unique, the system should say so clearly.
+
+8. Explain in simple German:
+- how plus/minus hours are determined
+- how target hours are derived
+- how position/station specificity is handled
+- what kind of planning suggestions now appear
+- what I should test later

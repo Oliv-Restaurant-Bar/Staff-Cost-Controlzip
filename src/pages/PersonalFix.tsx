@@ -1,4 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import HourBalanceSection from '@/components/hour-balance/HourBalanceSection';
+import { buildHourBalances, generatePlanningHints } from '@/lib/hour-balance-utils';
 import { Navigate } from 'react-router-dom';
 import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
@@ -664,6 +666,37 @@ export default function PersonalFixPage() {
   const maxVarHours = availableVarBudget > 0 && avgHourlyWage > 0
     ? Math.round(availableVarBudget / avgHourlyWage)
     : 0;
+
+  // ── Stundensaldo aller Mitarbeiter ────────────────────────────────────────
+
+  const allEmployees = useMemo(() => [...fixedEmployees, ...variableEmployees], [fixedEmployees, variableEmployees]);
+
+  const hourBalances = useMemo(() =>
+    buildHourBalances(
+      allEmployees,
+      planHours,
+      istHours,
+      (empId) => {
+        // Für FIX-MA: nutze Plan-Stunden als Effektiv-Wert (oder Ist wenn verfügbar)
+        const isFix = fixedEmployees.some(e => e.id === empId);
+        if (isFix) {
+          if (varView === 'ist' && istHours[empId]) return istHours[empId];
+          return planHours[empId] ?? 0;
+        }
+        return getVarHoursFor(empId);
+      },
+    ),
+    [allEmployees, planHours, istHours, fixedEmployees, varView, getVarHoursFor],
+  );
+
+  const planningHints = useMemo(() => {
+    const remainingVarHours = maxVarHours > 0
+      ? Math.max(0, maxVarHours - Math.round(totalVarHours))
+      : 0;
+    return generatePlanningHints(hourBalances, availableVarBudget, remainingVarHours);
+  }, [hourBalances, availableVarBudget, maxVarHours, totalVarHours]);
+
+  const varModeLabelShort = varView === 'plan' ? 'Plan' : varView === 'ist' ? 'Ist' : 'Manuell';
 
   // ── Quellen-Labels ────────────────────────────────────────────────────────
 
@@ -1441,6 +1474,16 @@ export default function PersonalFixPage() {
               </div>
             )}
           </section>
+        )}
+
+        {/* ── Stundensaldo & Planungshinweise ──────────────────────────────── */}
+        {allEmployees.length > 0 && (
+          <HourBalanceSection
+            balances={hourBalances}
+            hints={planningHints}
+            mode={varView}
+            modeLabel={varModeLabelShort}
+          />
         )}
 
         {/* ── Gesamt-Total FIX + VARIABEL ──────────────────────────────────── */}
