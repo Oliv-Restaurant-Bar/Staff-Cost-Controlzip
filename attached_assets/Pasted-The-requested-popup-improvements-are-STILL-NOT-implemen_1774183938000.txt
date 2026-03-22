@@ -1,0 +1,65 @@
+The requested popup improvements are STILL NOT implemented in the actual UI.
+
+Verified from the live app:
+- there is still no concrete employee-level suggestion block visible in the popup
+- there are still no direct action buttons attached to a specific employee suggestion
+- popup scrolling/usability is still not actually improved enough in practice
+
+So stop describing intended behavior.
+Stop saying it is implemented unless it is visibly present in the actual rendered popup.
+
+This is now a strict debugging + implementation correction task.
+
+Tasks:
+
+1. Inspect the actual popup component render tree
+Find the exact popup component and identify:
+- where the employee list is rendered
+- where suggestion data is supposed to be rendered
+- why that suggestion block is not actually visible in the real UI
+
+2. Name the exact file/component
+In your response, explicitly name:
+- the popup component file
+- the employee list render section
+- the suggestion render section
+Do not answer vaguely.
+
+3. Fix the actual rendering
+Inside the popup employee list, directly under or beside the affected employee/shift row, render a clearly visible suggestion block.
+It must visibly show:
+- employee name
+- shift
+- proposed action
+- saved hours
+- saved CHF
+- buttons:
+  - Übernehmen
+  - Ignorieren
+  - Später
+
+4. Make popup layout truly usable
+Actually increase popup usability in the rendered UI:
+- larger width
+- larger max-height
+- fixed KPI area
+- separate internal scroll only for the employee/suggestion section
+- no clipping
+- usable on laptop screen
+
+5. Add a temporary unmistakable test marker
+For debugging, add a visible label in the suggestion block such as:
+"KORREKTURVORSCHLAG AKTIV"
+so we can immediately confirm that the right render block is actually appearing.
+
+6. If suggestion generation is empty, show that explicitly
+If no suggestion candidate exists, render a visible fallback message inside the employee area:
+"Kein konkreter Kandidat gefunden"
+and explain why.
+Do not leave the popup looking like nothing happened.
+
+7. In your answer, provide:
+- exact file/component changed
+- exact reason the suggestion block was not appearing
+- exact reason the popup scrolling/layout was still wrong
+- what I should verify in the live UI next

@@ -1230,6 +1230,13 @@ export const ScheduleGrid = ({
       const pendingCount = allSuggestions.filter(s => !snoozedIds.includes(s.id) && !dismissedIds.includes(s.id)).length;
       const totalSaving = allSuggestions.reduce((sum, s) => sum + s.savingCost, 0);
 
+      // DEBUG: log what we have so we can trace issues in the console
+      console.log('[DIALOG] openDialogDay:', openDialogDay);
+      console.log('[DIALOG] breakdown count:', breakdown.length, breakdown.map(b => ({ id: b.employee.id, name: b.employee.name, hours: b.hours, cost: b.cost, shiftDisplay: b.shiftDisplay })));
+      console.log('[DIALOG] allSuggestions count:', allSuggestions.length, allSuggestions.map(s => ({ empId: s.employeeId, name: s.employeeName, action: s.actionType, savingH: s.savingHours, savingCHF: s.savingCost })));
+      console.log('[DIALOG] scheduleData keys for day:', Object.keys(scheduleData).filter(k => k.endsWith(openDialogDay)));
+      console.log('[DIALOG] employees with wage:', employees.map(e => ({ id: e.id, name: e.name, wage: e.hourlyWage, type: e.employmentType })));
+
       // Human-readable suggestion action label
       const getSuggestionActionLabel = (s: CorrectionSuggestion) => {
         if (s.actionType === 'remove_all') return 'Einsatz streichen';
@@ -1299,10 +1306,25 @@ export const ScheduleGrid = ({
 
               {/* ── Scrollable employee + suggestion list ───────────── */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '12px 20px', minHeight: 0 }}>
+
+                {/* DEBUG BANNER — remove after verification */}
+                <div style={{ background: '#1e3a5f', color: '#fff', padding: '6px 10px', borderRadius: 6, marginBottom: 10, fontSize: 11, fontFamily: 'monospace', lineHeight: 1.5 }}>
+                  <div>🔍 DEBUG: breakdown={breakdown.length} | suggestions={allSuggestions.length} | map={suggestionByEmpId.size} | dismissed={dismissedIds.length}</div>
+                  {allSuggestions.map(s => (
+                    <div key={s.id} style={{ color: '#7dd3fc' }}>
+                      ✂ {s.employeeName} → {s.actionType} | {s.savingHours.toFixed(1)}h / CHF {s.savingCost.toFixed(0)} | id: {s.employeeId}
+                    </div>
+                  ))}
+                  {allSuggestions.length === 0 && (
+                    <div style={{ color: '#fca5a5' }}>⚠ Kein konkreter Kandidat gefunden — Prüfe hourlyWage &gt; 0 und Schichtzeiten</div>
+                  )}
+                </div>
+
                 <div className="space-y-2">
                   {breakdown.length === 0 && (
-                    <div className="py-6 text-center text-sm text-muted-foreground">
-                      Keine Schichten mit Kosten für diesen Tag gefunden.
+                    <div style={{ background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 8, padding: '12px 16px', textAlign: 'center', color: '#92400e', fontSize: 13 }}>
+                      ⚠ Kein konkreter Kandidat gefunden — keine Mitarbeiter mit geplanten Arbeitsstunden für diesen Tag.
+                      <div style={{ fontSize: 11, marginTop: 4, color: '#a16207' }}>Prüfe ob Schichtzeiten (nicht Abwesenheiten) eingetragen sind und hourlyWage &gt; 0.</div>
                     </div>
                   )}
                   {breakdown.map(({ employee, hours, cost, shiftDisplay }) => {
@@ -1314,99 +1336,115 @@ export const ScheduleGrid = ({
                     return (
                       <div
                         key={employee.id}
-                        className={cn(
-                          "rounded-lg border overflow-hidden",
-                          showSuggestion && !isSnoozed
-                            ? "border-orange-300 dark:border-orange-600"
-                            : "border-border/60"
-                        )}
+                        style={{
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          border: showSuggestion && !isSnoozed ? '2px solid #f97316' : '1px solid #e2e8f0',
+                        }}
                       >
                         {/* ── Employee row ── */}
-                        <div className={cn(
-                          "flex items-center gap-3 px-3 py-2.5",
-                          showSuggestion && !isSnoozed
-                            ? "bg-orange-50 dark:bg-orange-950/30"
-                            : "bg-muted/20"
-                        )}>
-                          <span className={cn(
-                            "text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 uppercase tracking-wide",
-                            employee.employmentType === 'aushilfe'
-                              ? "bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300"
-                              : employee.employmentType === 'vollzeit'
-                                ? "bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300"
-                                : "bg-muted text-muted-foreground"
-                          )}>
-                            {employee.employmentType === 'aushilfe' ? 'AH'
-                              : employee.employmentType === 'vollzeit' ? 'VZ'
-                              : employee.employmentType === 'teilzeit' ? 'TZ' : 'MJ'}
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '8px 12px',
+                          background: showSuggestion && !isSnoozed ? '#fff7ed' : '#f8fafc',
+                        }}>
+                          <span style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            flexShrink: 0,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            background: employee.employmentType === 'aushilfe' ? '#ede9fe' : employee.employmentType === 'vollzeit' ? '#dbeafe' : '#f1f5f9',
+                            color: employee.employmentType === 'aushilfe' ? '#7c3aed' : employee.employmentType === 'vollzeit' ? '#1d4ed8' : '#64748b',
+                          }}>
+                            {employee.employmentType === 'aushilfe' ? 'AH' : employee.employmentType === 'vollzeit' ? 'VZ' : employee.employmentType === 'teilzeit' ? 'TZ' : 'MJ'}
                           </span>
-                          <span className="font-semibold text-sm flex-1 min-w-0 truncate">{employee.name}</span>
+                          <span style={{ fontWeight: 600, fontSize: 14, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{employee.name}</span>
                           {shiftDisplay && (
-                            <span className="text-[11px] text-muted-foreground shrink-0 font-mono bg-muted/40 px-1.5 py-0.5 rounded">
+                            <span style={{ fontSize: 11, color: '#64748b', flexShrink: 0, fontFamily: 'monospace', background: '#f1f5f9', padding: '2px 6px', borderRadius: 4 }}>
                               {shiftDisplay}
                             </span>
                           )}
-                          <span className="text-[11px] text-muted-foreground shrink-0">{hours.toFixed(1)} h</span>
-                          <span className="text-xs font-semibold shrink-0 w-[68px] text-right">CHF {cost.toFixed(0)}</span>
+                          <span style={{ fontSize: 11, color: '#64748b', flexShrink: 0 }}>{hours.toFixed(1)} h</span>
+                          <span style={{ fontSize: 12, fontWeight: 600, flexShrink: 0, width: 72, textAlign: 'right' }}>CHF {cost.toFixed(0)}</span>
                         </div>
 
-                        {/* ── Inline suggestion block ── */}
+                        {/* ── No suggestion fallback ── */}
+                        {!suggestion && (
+                          <div style={{ padding: '6px 12px', fontSize: 11, color: '#94a3b8', borderTop: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                            Kein konkreter Kandidat — kein Vorschlag für diesen Mitarbeiter
+                          </div>
+                        )}
+
+                        {/* ── KORREKTURVORSCHLAG AKTIV ── */}
                         {showSuggestion && (
-                          <div className={cn(
-                            "px-3 py-2.5 border-t flex items-center gap-3 flex-wrap",
-                            isSnoozed
-                              ? "border-border/30 bg-muted/20 opacity-70"
-                              : "border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20"
-                          )}>
-                            {/* Suggestion text */}
-                            <div className="flex items-center gap-2 flex-1 min-w-[180px]">
-                              <Lightbulb className="h-4 w-4 shrink-0 text-orange-500 dark:text-orange-400" />
-                              <div className="min-w-0">
-                                <span className="text-xs font-bold text-orange-700 dark:text-orange-300">Vorschlag: </span>
-                                <span className="text-xs font-semibold text-foreground">{getSuggestionActionLabel(suggestion)}</span>
-                                {suggestion.slotDisplay && (
-                                  <span className="text-[10px] text-muted-foreground ml-1.5 font-mono">({suggestion.slotDisplay})</span>
-                                )}
+                          <div style={{
+                            borderTop: isSnoozed ? '1px solid #e2e8f0' : '2px solid #f97316',
+                            background: isSnoozed ? '#f8fafc' : '#fff7ed',
+                            padding: '10px 12px',
+                            opacity: isSnoozed ? 0.7 : 1,
+                          }}>
+                            {/* Marker label */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                              <span style={{ background: '#f97316', color: '#fff', fontSize: 9, fontWeight: 800, padding: '2px 8px', borderRadius: 4, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                                KORREKTURVORSCHLAG AKTIV
+                              </span>
+                            </div>
+                            {/* Suggestion details */}
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+                              <div style={{ flex: 1, minWidth: 200 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: '#c2410c', marginBottom: 2 }}>
+                                  {getSuggestionActionLabel(suggestion)}
+                                  {suggestion.slotDisplay && (
+                                    <span style={{ fontFamily: 'monospace', fontWeight: 400, color: '#64748b', marginLeft: 8, fontSize: 11 }}>
+                                      ({suggestion.slotDisplay})
+                                    </span>
+                                  )}
+                                </div>
                                 {suggestion.savingHours > 0 && (
-                                  <span className="ml-2 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
-                                    −{suggestion.savingHours.toFixed(1)} h
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d' }}>
+                                    Ersparnis: −{suggestion.savingHours.toFixed(1)} h
                                     {suggestion.savingCost > 0 && ` / −CHF ${suggestion.savingCost.toFixed(0)}`}
-                                  </span>
+                                  </div>
                                 )}
                               </div>
-                            </div>
-                            {/* Action buttons */}
-                            <div className="flex items-center gap-2 shrink-0 ml-auto">
-                              <Button
-                                size="sm"
-                                className="h-7 px-3 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
-                                onClick={() => handleApplySuggestion(suggestion, openDialogDay)}
-                              >
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                                Übernehmen
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2.5 text-xs gap-1.5"
-                                onClick={() => setDismissedIds(prev => [...prev, suggestion.id])}
-                              >
-                                <EyeOff className="h-3.5 w-3.5" />
-                                Ignorieren
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 px-2.5 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
-                                onClick={() =>
-                                  isSnoozed
-                                    ? setSnoozedIds(prev => prev.filter(x => x !== suggestion.id))
-                                    : setSnoozedIds(prev => [...prev, suggestion.id])
-                                }
-                              >
-                                <Clock3 className="h-3.5 w-3.5" />
-                                {isSnoozed ? 'Reaktivieren' : 'Später'}
-                              </Button>
+                              {/* Action buttons */}
+                              <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+                                <Button
+                                  size="sm"
+                                  className="h-8 px-3 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                                  onClick={() => handleApplySuggestion(suggestion, openDialogDay)}
+                                >
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Übernehmen
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 px-3 text-xs gap-1.5"
+                                  onClick={() => setDismissedIds(prev => [...prev, suggestion.id])}
+                                >
+                                  <EyeOff className="h-3.5 w-3.5" />
+                                  Ignorieren
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-8 px-3 text-xs gap-1.5 text-muted-foreground"
+                                  onClick={() =>
+                                    isSnoozed
+                                      ? setSnoozedIds(prev => prev.filter(x => x !== suggestion.id))
+                                      : setSnoozedIds(prev => [...prev, suggestion.id])
+                                  }
+                                >
+                                  <Clock3 className="h-3.5 w-3.5" />
+                                  {isSnoozed ? 'Reaktivieren' : 'Später'}
+                                </Button>
+                              </div>
                             </div>
                           </div>
                         )}
