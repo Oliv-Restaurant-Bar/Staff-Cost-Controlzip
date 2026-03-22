@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { format, isWithinInterval } from 'date-fns';
+import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   CheckCircle2, XCircle, Clock3, TrendingDown, TrendingUp,
   ShieldAlert, Star, ArrowRight, Users, Lightbulb, ChevronDown, ChevronRight,
+  ArrowUpRight, Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Employee } from '@/types/personnel';
@@ -17,12 +18,11 @@ import { DaySchedule, TimeSlot } from './ScheduleGrid';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import {
   buildHourBalances,
-  generatePlanningHints,
   fmtBalanceHours,
-  normalizeStation,
+  EmployeeHourBalance,
 } from '@/lib/hour-balance-utils';
 
-// ─── Typen ───────────────────────────────────────────────────────────────────
+// ─── Typen ────────────────────────────────────────────────────────────────────
 
 interface Props {
   open: boolean;
@@ -30,14 +30,17 @@ interface Props {
   employees: Employee[];
   scheduleData: Record<string, DaySchedule>;
   actualHoursData: Record<string, { hours: number }>;
-  displayDays: Date[];          // currently visible days (week or month)
-  allMonthDays: Date[];         // all days in the current month
-  personnelBudget: number;      // from settings
-  totalFixCost: number;         // computed from FIX employees
+  displayDays: Date[];
+  allMonthDays: Date[];
+  personnelBudget: number;
+  totalFixCost: number;
+  /** Jump to a specific day in the schedule and optionally highlight an employee */
+  onJumpToDay: (day: Date, empId?: string) => void;
+  /** Directly remove a specific shift slot from the schedule */
+  onRemoveShift: (empId: string, dateStr: string, slot: 'früh' | 'spät') => void;
 }
 
 type HintStatus = 'pending' | 'accepted' | 'ignored' | 'later';
-
 const STORAGE_KEY = 'planning_assistant_v1';
 
 function loadStatuses(): Record<string, HintStatus> {
@@ -48,7 +51,7 @@ function saveStatuses(data: Record<string, HintStatus>) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
-// ─── Slot-Stunden ─────────────────────────────────────────────────────────────
+// ─── Slot-Berechnung ──────────────────────────────────────────────────────────
 
 function calcSlotHours(slot: TimeSlot | null | undefined): number {
   if (!slot?.start || !slot?.end) return 0;
@@ -59,41 +62,100 @@ function calcSlotHours(slot: TimeSlot | null | undefined): number {
   return Math.max(0, h);
 }
 
-function getMonthHours(
-  empId: string,
-  monthDays: Date[],
-  data: Record<string, DaySchedule>,
-): number {
-  return monthDays.reduce((s, day) => {
-    const key = `${empId}-${format(day, 'yyyy-MM-dd')}`;
-    const ds  = data[key];
+function fmtSlot(slot: TimeSlot | null | undefined): string {
+  if (!slot?.start || !slot?.end) return '';
+  return `${slot.start}–${slot.end}`;
+}
+
+function getMonthHours(empId: string, days: Date[], data: Record<string, DaySchedule>): number {
+  return days.reduce((s, day) => {
+    const ds = data[`${empId}-${format(day, 'yyyy-MM-dd')}`];
     if (!ds) return s;
     const gross = calcSlotHours(ds.früh) + calcSlotHours(ds.spät);
     return s + Math.max(0, gross - calculateBreakDeduction(gross));
   }, 0);
 }
 
-function getActualMonthHours(
-  empId: string,
-  monthDays: Date[],
-  actual: Record<string, { hours: number }>,
-): number {
-  return monthDays.reduce((s, day) => {
-    const key = `${empId}-${format(day, 'yyyy-MM-dd')}`;
-    return s + (actual[key]?.hours ?? 0);
-  }, 0);
+function getActualMonthHours(empId: string, days: Date[], actual: Record<string, { hours: number }>): number {
+  return days.reduce((s, day) => s + (actual[`${empId}-${format(day, 'yyyy-MM-dd')}`]?.hours ?? 0), 0);
 }
 
-// Stunden in sichtbarer Periode (Woche/Tag)
-function getPeriodHours(
-  empId: string,
-  days: Date[],
-  data: Record<string, DaySchedule>,
-): number {
-  return getMonthHours(empId, days, data);
+// ─── Konkrete Tages-Analyse ────────────────────────────────────────────────────
+
+interface FreeDayInfo {
+  day: Date;
+  dateStr: string;
+  label: string;
 }
 
-// ─── Farben & Labels ──────────────────────────────────────────────────────────
+interface PlannedDayInfo {
+  day: Date;
+  dateStr: string;
+  label: string;
+  hasFrüh: boolean;
+  hasSpät: boolean;
+  frühDisplay: string;
+  spätDisplay: string;
+  frühHours: number;
+  spätHours: number;
+  isAbsenceFrüh: boolean;
+  isAbsenceSpät: boolean;
+  /** Can this früh slot be safely removed (spät still present)? */
+  canRemoveFrüh: boolean;
+  /** Can this spät slot be safely removed (früh still present OR single shift)? */
+  canRemoveSpät: boolean;
+}
+
+function dayLabel(day: Date): string {
+  return format(day, 'EEE d.M.', { locale: de });
+}
+
+/** Days in period where employee has NO shifts planned (and no absence) */
+function getFreeDays(empId: string, days: Date[], data: Record<string, DaySchedule>): FreeDayInfo[] {
+  return days
+    .filter(day => {
+      const ds = data[`${empId}-${format(day, 'yyyy-MM-dd')}`];
+      if (!ds) return true;
+      const hasFrüh = (calcSlotHours(ds.früh) > 0 && !ds.frühAbsence) || !!ds.frühAbsence;
+      const hasSpät = (calcSlotHours(ds.spät) > 0 && !ds.spätAbsence) || !!ds.spätAbsence;
+      return !hasFrüh && !hasSpät;
+    })
+    .map(day => ({ day, dateStr: format(day, 'yyyy-MM-dd'), label: dayLabel(day) }));
+}
+
+/** Days in period where employee IS scheduled (with shift times, ignoring absences) */
+function getPlannedDays(empId: string, days: Date[], data: Record<string, DaySchedule>): PlannedDayInfo[] {
+  const result: PlannedDayInfo[] = [];
+  for (const day of days) {
+    const ds = data[`${empId}-${format(day, 'yyyy-MM-dd')}`];
+    if (!ds) continue;
+    const fH = calcSlotHours(ds.früh);
+    const sH = calcSlotHours(ds.spät);
+    const hasFrüh = fH > 0 && !ds.frühAbsence;
+    const hasSpät = sH > 0 && !ds.spätAbsence;
+    if (!hasFrüh && !hasSpät) continue;
+    result.push({
+      day,
+      dateStr: format(day, 'yyyy-MM-dd'),
+      label: dayLabel(day),
+      hasFrüh,
+      hasSpät,
+      frühDisplay: ds.früh ? `F: ${fmtSlot(ds.früh)}` : '',
+      spätDisplay: ds.spät ? `S: ${fmtSlot(ds.spät)}` : '',
+      frühHours: fH,
+      spätHours: sH,
+      isAbsenceFrüh: !!ds.frühAbsence,
+      isAbsenceSpät: !!ds.spätAbsence,
+      // Can remove früh if spät still present (keep at least one shift)
+      canRemoveFrüh: hasFrüh && hasSpät,
+      // Always offer removing spät; if single spät offer as "den ganzen Tag"
+      canRemoveSpät: hasSpät,
+    });
+  }
+  return result;
+}
+
+// ─── Farben ───────────────────────────────────────────────────────────────────
 
 function balancePillClass(b: number): string {
   if (b <= -15) return 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400';
@@ -105,7 +167,32 @@ function balancePillClass(b: number): string {
   return 'bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400';
 }
 
-// ─── Status-Aktionen ──────────────────────────────────────────────────────────
+// ─── Urgency-Gruppierung ──────────────────────────────────────────────────────
+
+function getUrgency(balance: number, tab: 'einplanen' | 'reduzieren'): 'dringend' | 'bevorzugt' | 'allgemein' {
+  if (tab === 'einplanen') {
+    if (balance <= -15) return 'dringend';
+    if (balance < -8)   return 'bevorzugt';
+    return 'allgemein';
+  } else {
+    if (balance > 25) return 'dringend';
+    if (balance > 15) return 'bevorzugt';
+    return 'allgemein';
+  }
+}
+
+const urgencyLabel: Record<string, string> = {
+  dringend:  'Dringend',
+  bevorzugt: 'Bevorzugt',
+  allgemein: 'Allgemein',
+};
+const urgencyClass: Record<string, string> = {
+  dringend:  'border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30',
+  bevorzugt: 'border-orange-200 dark:border-orange-800 text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/30',
+  allgemein: 'border-border text-muted-foreground bg-muted/30',
+};
+
+// ─── StatusActions ─────────────────────────────────────────────────────────────
 
 function StatusActions({
   hintId,
@@ -118,64 +205,340 @@ function StatusActions({
 }) {
   if (status === 'accepted') {
     return (
-      <button
-        onClick={() => onChange(hintId, 'pending')}
-        className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-medium"
-        title="Zurücksetzen"
-      >
-        <CheckCircle2 className="h-4 w-4" />
-        Übernommen
+      <button onClick={() => onChange(hintId, 'pending')} className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-medium" title="Zurücksetzen">
+        <CheckCircle2 className="h-4 w-4" /> Übernommen
       </button>
     );
   }
   if (status === 'ignored') {
     return (
-      <button
-        onClick={() => onChange(hintId, 'pending')}
-        className="flex items-center gap-1 text-xs text-muted-foreground"
-        title="Zurücksetzen"
-      >
-        <XCircle className="h-4 w-4" />
-        Ignoriert
+      <button onClick={() => onChange(hintId, 'pending')} className="flex items-center gap-1 text-xs text-muted-foreground" title="Zurücksetzen">
+        <XCircle className="h-4 w-4" /> Ignoriert
       </button>
     );
   }
   if (status === 'later') {
     return (
-      <button
-        onClick={() => onChange(hintId, 'pending')}
-        className="flex items-center gap-1 text-xs text-blue-500 dark:text-blue-400"
-        title="Zurücksetzen"
-      >
-        <Clock3 className="h-4 w-4" />
-        Später
+      <button onClick={() => onChange(hintId, 'pending')} className="flex items-center gap-1 text-xs text-blue-500 dark:text-blue-400" title="Zurücksetzen">
+        <Clock3 className="h-4 w-4" /> Später
       </button>
     );
   }
-  // pending
   return (
     <div className="flex items-center gap-1">
-      <button
-        onClick={() => onChange(hintId, 'accepted')}
-        className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-950/50 text-emerald-600 transition-colors"
-        title="Übernehmen"
-      >
+      <button onClick={() => onChange(hintId, 'accepted')} className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-950/50 text-emerald-600 transition-colors" title="Übernehmen">
         <CheckCircle2 className="h-4 w-4" />
       </button>
-      <button
-        onClick={() => onChange(hintId, 'later')}
-        className="p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-950/50 text-blue-500 transition-colors"
-        title="Später prüfen"
-      >
+      <button onClick={() => onChange(hintId, 'later')} className="p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-950/50 text-blue-500 transition-colors" title="Später prüfen">
         <Clock3 className="h-4 w-4" />
       </button>
-      <button
-        onClick={() => onChange(hintId, 'ignored')}
-        className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-950/50 text-muted-foreground transition-colors"
-        title="Ignorieren"
-      >
+      <button onClick={() => onChange(hintId, 'ignored')} className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-950/50 text-muted-foreground transition-colors" title="Ignorieren">
         <XCircle className="h-4 w-4" />
       </button>
+    </div>
+  );
+}
+
+// ─── Einplanen-Karte ──────────────────────────────────────────────────────────
+
+function EinplanenCard({
+  b,
+  hintId,
+  status,
+  freeDays,
+  onJump,
+  onStatusChange,
+}: {
+  b: EmployeeHourBalance;
+  hintId: string;
+  status: HintStatus;
+  freeDays: FreeDayInfo[];
+  onJump: (day: Date, empId: string) => void;
+  onStatusChange: (id: string, s: HintStatus) => void;
+}) {
+  const balance = b.cumulativeBalance;
+  const dept    = b.emp.department === 'küche' ? 'Küche' : 'Service';
+
+  return (
+    <div className={cn(
+      'rounded-lg border px-3 py-2.5 space-y-2',
+      status === 'accepted' ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/10 opacity-70'
+      : status === 'ignored' ? 'border-border bg-muted/20 opacity-40'
+      : status === 'later'   ? 'border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/10 opacity-80'
+      : balance < -15        ? 'border-red-200 dark:border-red-800 bg-red-50/20 dark:bg-red-950/10'
+      : balance < -8         ? 'border-orange-200 dark:border-orange-800 bg-orange-50/30 dark:bg-orange-950/10'
+      : 'border-border bg-card',
+    )}>
+      {/* Header row */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <TrendingDown className={cn('h-4 w-4 shrink-0', balance < -15 ? 'text-red-500' : 'text-orange-500')} />
+        <span className="text-sm font-semibold">{b.emp.name}</span>
+        <Badge variant="outline" className="text-[10px]">{dept}</Badge>
+        {b.station && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="outline" className={cn(
+                'text-[10px] cursor-help',
+                b.isUniqueInStation
+                  ? 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-300'
+                  : 'border-indigo-200 text-indigo-700 bg-indigo-50 dark:bg-indigo-950/30 dark:text-indigo-300',
+              )}>
+                {b.isUniqueInStation && <ShieldAlert className="h-2.5 w-2.5 mr-0.5" />}
+                {b.emp.positionTitle}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              {b.isUniqueInStation
+                ? `Einzige ${b.emp.positionTitle} in ${dept} — kein gleichwertiger Ersatz`
+                : `Positionsgeeignete Alternativen: ${b.stationPeers.join(', ')}`}
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {b.hasTarget && (
+          <span className={cn('text-xs font-mono font-semibold px-1.5 py-0.5 rounded', balancePillClass(balance))}>
+            {fmtBalanceHours(balance)}
+          </span>
+        )}
+        <div className="ml-auto">
+          <StatusActions hintId={hintId} status={status} onChange={onStatusChange} />
+        </div>
+      </div>
+
+      {/* Empfehlungstext */}
+      <p className="text-xs text-muted-foreground leading-relaxed">
+        {balance < -15
+          ? `Dringend einplanen — ${Math.abs(balance).toFixed(1)} h Minussaldo${b.station ? ` (${b.emp.positionTitle})` : ''}.`
+          : `Bevorzugt einplanen — ${Math.abs(balance).toFixed(1)} h Minussaldo.`}
+        {b.stationPeers.length > 0 && ` Alternativen: ${b.stationPeers.join(', ')}.`}
+      </p>
+
+      {/* Konkrete Tage */}
+      {freeDays.length > 0 ? (
+        <div className="space-y-1">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+            Freie Tage in dieser Periode
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {freeDays.slice(0, 5).map(fd => (
+              <button
+                key={fd.dateStr}
+                onClick={() => onJump(fd.day, b.emp.id)}
+                className={cn(
+                  'flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors',
+                  'bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800',
+                  'text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50',
+                )}
+                title={`Zum ${fd.label} im Dienstplan springen`}
+              >
+                <ArrowUpRight className="h-3 w-3" />
+                {fd.label}
+              </button>
+            ))}
+            {freeDays.length > 5 && (
+              <span className="text-[10px] text-muted-foreground self-center">
+                + {freeDays.length - 5} weitere
+              </span>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <Users className="h-3 w-3" />
+          Alle Tage dieser Periode sind bereits eingeplant.
+        </p>
+      )}
+
+      {/* Station-Hinweis */}
+      {b.isUniqueInStation && b.station && (
+        <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+          <ShieldAlert className="h-3 w-3" />
+          Einzige {b.emp.positionTitle} — bei Abwesenheit kein Ersatz verfügbar
+        </p>
+      )}
+      {b.stationPeers.length > 0 && (
+        <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <ArrowRight className="h-3 w-3" />
+          Mögliche Alternativen bei Überschneidung: <strong className="ml-0.5">{b.stationPeers.join(', ')}</strong>
+        </p>
+      )}
+      {!b.station && (
+        <p className="text-[10px] text-muted-foreground italic">
+          Keine Station hinterlegt — Ersatzbarkeit nicht beurteilbar
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Reduzieren-Karte ─────────────────────────────────────────────────────────
+
+function ReduzierenCard({
+  b,
+  hintId,
+  status,
+  plannedDays,
+  onJump,
+  onRemoveShift,
+  onStatusChange,
+}: {
+  b: EmployeeHourBalance;
+  hintId: string;
+  status: HintStatus;
+  plannedDays: PlannedDayInfo[];
+  onJump: (day: Date, empId: string) => void;
+  onRemoveShift: (empId: string, dateStr: string, slot: 'früh' | 'spät') => void;
+  onStatusChange: (id: string, s: HintStatus) => void;
+}) {
+  const balance = b.cumulativeBalance;
+  const dept    = b.emp.department === 'küche' ? 'Küche' : 'Service';
+
+  return (
+    <div className={cn(
+      'rounded-lg border px-3 py-2.5 space-y-2',
+      status === 'accepted' ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/10 opacity-70'
+      : status === 'ignored' ? 'border-border bg-muted/20 opacity-40'
+      : status === 'later'   ? 'border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/10 opacity-80'
+      : balance > 25         ? 'border-violet-200 dark:border-violet-800 bg-violet-50/30 dark:bg-violet-950/10'
+      : 'border-blue-200 dark:border-blue-800 bg-blue-50/20 dark:bg-blue-950/10',
+    )}>
+      {/* Header row */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <TrendingUp className={cn('h-4 w-4 shrink-0', balance > 25 ? 'text-violet-500' : 'text-blue-500')} />
+        <span className="text-sm font-semibold">{b.emp.name}</span>
+        <Badge variant="outline" className="text-[10px]">{dept}</Badge>
+        {b.station && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="outline" className={cn(
+                'text-[10px] cursor-help',
+                b.isUniqueInStation
+                  ? 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-300'
+                  : 'border-indigo-200 text-indigo-700 bg-indigo-50 dark:bg-indigo-950/30 dark:text-indigo-300',
+              )}>
+                {b.isUniqueInStation && <ShieldAlert className="h-2.5 w-2.5 mr-0.5" />}
+                {b.emp.positionTitle}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              {b.isUniqueInStation
+                ? `Einzige ${b.emp.positionTitle} in ${dept} — Reduktion mit Vorsicht`
+                : `Positionsgeeignete Alternativen: ${b.stationPeers.join(', ')}`}
+            </TooltipContent>
+          </Tooltip>
+        )}
+        <span className={cn('text-xs font-mono font-semibold px-1.5 py-0.5 rounded', balancePillClass(balance))}>
+          {fmtBalanceHours(balance)}
+        </span>
+        <div className="ml-auto">
+          <StatusActions hintId={hintId} status={status} onChange={onStatusChange} />
+        </div>
+      </div>
+
+      {/* Empfehlungstext */}
+      <p className="text-xs text-muted-foreground leading-relaxed">
+        {balance > 25
+          ? `Freier Tag dringend empfohlen — ${balance.toFixed(1)} h Plussaldo.`
+          : `Schichten könnten reduziert werden — ${balance.toFixed(1)} h Plussaldo.`}
+        {b.isUniqueInStation && b.station
+          ? ` Achtung: einzige ${b.emp.positionTitle}, Besetzung prüfen.`
+          : b.stationPeers.length > 0
+            ? ` Ersatz durch ${b.stationPeers.join(' oder ')} möglich.`
+            : ''}
+      </p>
+
+      {/* Konkrete geplante Schichten */}
+      {plannedDays.length > 0 ? (
+        <div className="space-y-1">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+            Geplante Schichten in dieser Periode
+          </p>
+          <div className="space-y-1">
+            {plannedDays.map(pd => (
+              <div key={pd.dateStr} className="flex flex-wrap items-center gap-1.5">
+                {/* Jump chip */}
+                <button
+                  onClick={() => onJump(pd.day, b.emp.id)}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-muted/60 border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  title="Im Dienstplan anzeigen"
+                >
+                  <ArrowUpRight className="h-3 w-3" />
+                  {pd.label}
+                </button>
+                {/* Früh slot */}
+                {pd.hasFrüh && (
+                  <div className="flex items-center gap-0.5">
+                    <span className="text-[11px] text-muted-foreground bg-muted/40 border border-border rounded px-1.5 py-0.5">
+                      {pd.frühDisplay}
+                    </span>
+                    {pd.canRemoveFrüh && !b.isUniqueInStation && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={() => onRemoveShift(b.emp.id, pd.dateStr, 'früh')}
+                            className="p-0.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                            title="Frühschicht streichen"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>Frühschicht am {pd.label} streichen</TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
+                )}
+                {/* Spät slot */}
+                {pd.hasSpät && (
+                  <div className="flex items-center gap-0.5">
+                    <span className="text-[11px] text-muted-foreground bg-muted/40 border border-border rounded px-1.5 py-0.5">
+                      {pd.spätDisplay}
+                    </span>
+                    {pd.canRemoveSpät && !b.isUniqueInStation && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={() => onRemoveShift(b.emp.id, pd.dateStr, 'spät')}
+                            className="p-0.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                            title="Spätschicht streichen"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {pd.hasFrüh ? 'Spätschicht' : 'Schicht'} am {pd.label} streichen
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
+                )}
+                {/* Safety block */}
+                {b.isUniqueInStation && (
+                  <span className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-0.5">
+                    <ShieldAlert className="h-3 w-3" /> Kein Ersatz
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="text-[10px] text-muted-foreground italic">
+          Keine Schichten in dieser Periode geplant — allgemeine Empfehlung für nächste Woche.
+        </p>
+      )}
+
+      {/* Stations-Alternativen */}
+      {!b.isUniqueInStation && b.stationPeers.length > 0 && (
+        <p className="text-[10px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+          <CheckCircle2 className="h-3 w-3" />
+          Reduktion möglich: {b.stationPeers.join(', ')} {b.stationPeers.length === 1 ? 'kann' : 'können'} übernehmen
+        </p>
+      )}
+      {b.isUniqueInStation && b.station && (
+        <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+          <ShieldAlert className="h-3 w-3" />
+          Einzige {b.emp.positionTitle} — direktes Streichen deaktiviert
+        </p>
+      )}
     </div>
   );
 }
@@ -192,6 +555,8 @@ export default function PlanningAssistant({
   allMonthDays,
   personnelBudget,
   totalFixCost,
+  onJumpToDay,
+  onRemoveShift,
 }: Props) {
   const [tab, setTab]           = useState<'einplanen' | 'reduzieren'>('einplanen');
   const [statuses, setStatuses] = useState<Record<string, HintStatus>>(loadStatuses);
@@ -207,13 +572,11 @@ export default function PlanningAssistant({
     });
   };
 
-  // ── Budget-Rechnung ──────────────────────────────────────────────────────
+  // ── Budget ────────────────────────────────────────────────────────────────
 
-  const availableVarBudget = personnelBudget > 0
-    ? Math.max(0, personnelBudget - totalFixCost)
-    : 0;
+  const availableVarBudget = personnelBudget > 0 ? Math.max(0, personnelBudget - totalFixCost) : 0;
 
-  // ── Plan/Ist-Stunden aus vorhandenen Daten aggregieren ───────────────────
+  // ── Stunden-Aggregate ────────────────────────────────────────────────────
 
   const planHoursMap = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
@@ -233,25 +596,12 @@ export default function PlanningAssistant({
     return map;
   }, [employees, allMonthDays, actualHoursData]);
 
-  // ── Stundensaldi ─────────────────────────────────────────────────────────
-
   const balances = useMemo(() =>
-    buildHourBalances(
-      employees,
-      planHoursMap,
-      istHoursMap,
-      (empId) => planHoursMap[empId] ?? 0,
-    ),
+    buildHourBalances(employees, planHoursMap, istHoursMap, empId => planHoursMap[empId] ?? 0),
     [employees, planHoursMap, istHoursMap],
   );
 
-  const balanceByEmpId = useMemo(() => {
-    const map: Record<string, typeof balances[0]> = {};
-    for (const b of balances) map[b.emp.id] = b;
-    return map;
-  }, [balances]);
-
-  // Ø Stundenlohn Variable
+  // Remaining var hours
   const avgVarWage = useMemo(() => {
     const varEmps = employees.filter(e => (e.hourlyWage ?? 0) > 0 && !e.monthlySalary);
     if (!varEmps.length) return 0;
@@ -259,74 +609,73 @@ export default function PlanningAssistant({
   }, [employees]);
 
   const remainingVarHours = useMemo(() => {
-    const totalVarCost = employees.reduce((s, e) => {
-      if (e.monthlySalary) return s;
-      return s + (planHoursMap[e.id] ?? 0) * (e.hourlyWage ?? 0);
-    }, 0);
     if (availableVarBudget <= 0 || avgVarWage <= 0) return 0;
-    const maxH = availableVarBudget / avgVarWage;
-    const usedH = employees.reduce((s, e) => {
-      if (e.monthlySalary) return s;
-      return s + (planHoursMap[e.id] ?? 0);
-    }, 0);
+    const maxH  = availableVarBudget / avgVarWage;
+    const usedH = employees.reduce((s, e) => e.monthlySalary ? s : s + (planHoursMap[e.id] ?? 0), 0);
     return Math.max(0, maxH - usedH);
   }, [employees, planHoursMap, availableVarBudget, avgVarWage]);
 
-  const hints = useMemo(() =>
-    generatePlanningHints(balances, availableVarBudget, remainingVarHours),
-    [balances, availableVarBudget, remainingVarHours],
-  );
-
-  // ── Periode-Info ─────────────────────────────────────────────────────────
+  // ── Perioden-Label ────────────────────────────────────────────────────────
 
   const periodLabel = useMemo(() => {
     if (!displayDays.length) return '';
-    if (displayDays.length === 1)
-      return format(displayDays[0], 'EEEE, d. MMMM yyyy', { locale: de });
+    if (displayDays.length === 1) return format(displayDays[0], 'EEEE, d. MMMM yyyy', { locale: de });
     return `${format(displayDays[0], 'd.M.')} – ${format(displayDays[displayDays.length - 1], 'd.M.yyyy', { locale: de })}`;
   }, [displayDays]);
 
-  // ── Tab-Inhalte ──────────────────────────────────────────────────────────
+  // ── Einplanen-Reihen: employees mit Minus-Saldo ───────────────────────────
 
-  // "Einplanen": alle MA sortiert nach Saldo (negativstes zuerst)
   const einplanenRows = useMemo(() => {
     return balances
-      .filter(b => b.hasTarget || b.emp.hourlyWage > 0)
-      .map(b => {
-        const periodH = getPeriodHours(b.emp.id, displayDays, scheduleData);
-        const hintId  = `einplanen-${b.emp.id}`;
-        return { b, periodH, hintId };
-      })
-      .sort((a, b) => a.b.cumulativeBalance - b.b.cumulativeBalance);
+      .filter(b => b.cumulativeBalance < -8 && b.hasTarget)
+      .map(b => ({
+        b,
+        hintId: `einplanen-${b.emp.id}`,
+        freeDays: getFreeDays(b.emp.id, displayDays, scheduleData),
+        urgency: getUrgency(b.cumulativeBalance, 'einplanen'),
+      }))
+      .sort((a, b_) => a.b.cumulativeBalance - b_.b.cumulativeBalance);
   }, [balances, displayDays, scheduleData]);
 
-  // "Reduzieren": MA mit positivem Saldo und Schichten in der aktuellen Periode
+  // ── Reduzieren-Reihen: employees mit Plus-Saldo + geplanten Schichten ────
+
   const reduzierenRows = useMemo(() => {
     return balances
       .filter(b => {
-        const periodH = getPeriodHours(b.emp.id, displayDays, scheduleData);
-        return b.cumulativeBalance >= 10 && periodH > 0;
+        const pd = getPlannedDays(b.emp.id, displayDays, scheduleData);
+        return b.cumulativeBalance >= 10 && pd.length > 0;
       })
-      .map(b => {
-        const periodH = getPeriodHours(b.emp.id, displayDays, scheduleData);
-        const hintId  = `reduzieren-${b.emp.id}`;
-        return { b, periodH, hintId };
-      })
-      .sort((a, b) => b.b.cumulativeBalance - a.b.cumulativeBalance);
+      .map(b => ({
+        b,
+        hintId: `reduzieren-${b.emp.id}`,
+        plannedDays: getPlannedDays(b.emp.id, displayDays, scheduleData),
+        urgency: getUrgency(b.cumulativeBalance, 'reduzieren'),
+      }))
+      .sort((a, b_) => b_.b.cumulativeBalance - a.b.cumulativeBalance);
   }, [balances, displayDays, scheduleData]);
 
   const einplanenPending  = einplanenRows.filter(r => (statuses[r.hintId] ?? 'pending') === 'pending').length;
   const reduzierenPending = reduzierenRows.filter(r => (statuses[r.hintId] ?? 'pending') === 'pending').length;
   const totalPending = einplanenPending + reduzierenPending;
 
+  // Grouped by urgency for display
+  const grouped = <T extends { urgency: string; hintId: string }>(
+    rows: T[],
+  ): Array<{ urgency: string; rows: T[] }> => {
+    const order = ['dringend', 'bevorzugt', 'allgemein'];
+    return order
+      .map(u => ({ urgency: u, rows: rows.filter(r => r.urgency === u) }))
+      .filter(g => g.rows.length > 0);
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider delayDuration={250}>
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent
         className="max-w-2xl w-full"
-        style={{ display: 'flex', flexDirection: 'column', maxHeight: '88vh' }}
+        style={{ display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -340,26 +689,22 @@ export default function PlanningAssistant({
           </DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
             {periodLabel && <span>{periodLabel} · </span>}
-            Regelbasierte Empfehlungen auf Basis von Stundensaldo, Budget und Stationseignung
+            Regelbasierte Empfehlungen · Klick auf einen Tag öffnet die Woche im Dienstplan
           </DialogDescription>
         </DialogHeader>
 
         {/* Budget-Schnellinfo */}
         {personnelBudget > 0 && (
-          <div className="flex flex-wrap items-center gap-4 px-3 py-2 rounded-lg border bg-muted/30 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-4 px-3 py-2 rounded-lg border bg-muted/30 text-xs text-muted-foreground shrink-0">
             <span>
               Variabel-Budget:
-              <strong className={cn('ml-1 font-mono',
-                availableVarBudget > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
-              )}>
+              <strong className={cn('ml-1 font-mono', availableVarBudget > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
                 {availableVarBudget.toLocaleString('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 })}
               </strong>
               {' '}verfügbar
             </span>
             {remainingVarHours > 0 && (
-              <span>
-                ≈ <strong className="text-foreground font-mono">{Math.round(remainingVarHours)} h</strong> noch planbar
-              </span>
+              <span>≈ <strong className="text-foreground font-mono">{Math.round(remainingVarHours)} h</strong> noch planbar</span>
             )}
           </div>
         )}
@@ -367,9 +712,9 @@ export default function PlanningAssistant({
         {/* Tabs */}
         <div className="flex gap-1 bg-muted/60 rounded-lg p-0.5 shrink-0">
           {([
-            { id: 'einplanen',  label: 'Einplanen',  count: einplanenPending,  icon: <TrendingDown className="h-3.5 w-3.5" /> },
-            { id: 'reduzieren', label: 'Reduzieren', count: reduzierenPending, icon: <TrendingUp    className="h-3.5 w-3.5" /> },
-          ] as const).map(t => (
+            { id: 'einplanen'  as const, label: 'Einplanen',  count: einplanenPending,  icon: <TrendingDown className="h-3.5 w-3.5" /> },
+            { id: 'reduzieren' as const, label: 'Reduzieren', count: reduzierenPending, icon: <TrendingUp    className="h-3.5 w-3.5" /> },
+          ]).map(t => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
@@ -395,238 +740,91 @@ export default function PlanningAssistant({
         </div>
 
         {/* Tab-Inhalt */}
-        <div className="overflow-y-auto flex-1 min-h-0 space-y-2 pr-1">
+        <div className="overflow-y-auto flex-1 min-h-0 space-y-3 pr-1">
 
-          {/* ── TAB: Einplanen ────────────────────────────────────────── */}
+          {/* ── Einplanen ─────────────────────────────────────────────── */}
           {tab === 'einplanen' && (
             <>
               <p className="text-xs text-muted-foreground px-1">
-                Mitarbeiter mit Minussaldo sind bevorzugt einzuplanen. Mitarbeiter mit hohem Plussaldo
-                sollten geschont werden. Station/Positionseignung wird separat ausgewiesen.
+                Mitarbeiter mit Minussaldo — klicke auf einen freien Tag, um direkt dorthin im Dienstplan zu springen und die Zeile zu markieren.
               </p>
 
               {einplanenRows.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-6">
-                  Keine Mitarbeiter gefunden (Wochenstunden hinterlegen im Personalstamm).
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  Kein Mitarbeiter mit ausgeprägtem Minussaldo (unter −8 h) gefunden.
                 </p>
               )}
 
-              {einplanenRows
-                .filter(r => showIgnored || (statuses[r.hintId] ?? 'pending') !== 'ignored')
-                .map(({ b, periodH, hintId }) => {
-                  const status   = statuses[hintId] ?? 'pending';
-                  const balance  = b.cumulativeBalance;
-                  const isMinus  = balance < -8;
-                  const isPlus   = balance > 15;
-                  const isNeutral = !isMinus && !isPlus;
-                  const dept     = b.emp.department === 'küche' ? 'Küche' : 'Service';
+              {grouped(einplanenRows).map(({ urgency, rows }) => (
+                <div key={urgency} className="space-y-2">
+                  <div className={cn('inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border', urgencyClass[urgency])}>
+                    {urgencyLabel[urgency]}
+                  </div>
+                  {rows
+                    .filter(r => showIgnored || (statuses[r.hintId] ?? 'pending') !== 'ignored')
+                    .map(({ b, hintId, freeDays }) => (
+                      <EinplanenCard
+                        key={hintId}
+                        b={b}
+                        hintId={hintId}
+                        status={statuses[hintId] ?? 'pending'}
+                        freeDays={freeDays}
+                        onJump={(day, empId) => { onJumpToDay(day, empId); onClose(); }}
+                        onStatusChange={updateStatus}
+                      />
+                    ))}
+                </div>
+              ))}
 
-                  return (
-                    <div
-                      key={hintId}
-                      className={cn(
-                        'rounded-lg border px-3 py-2.5 flex flex-wrap items-start gap-3',
-                        status === 'accepted' ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/10 opacity-70'
-                        : status === 'ignored' ? 'border-border bg-muted/20 opacity-40'
-                        : status === 'later'   ? 'border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/10 opacity-80'
-                        : isMinus ? 'border-orange-200 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/10'
-                        : isPlus  ? 'border-violet-200 dark:border-violet-800 bg-violet-50/30 dark:bg-violet-950/10'
-                        : 'border-border bg-card',
-                      )}
-                    >
-                      {/* Icon */}
-                      <div className="mt-0.5 shrink-0">
-                        {isMinus ? <TrendingDown className={cn('h-4 w-4', balance < -15 ? 'text-red-500' : 'text-orange-500')} />
-                        : isPlus ? <TrendingUp className="h-4 w-4 text-violet-500" />
-                        : <Users className="h-4 w-4 text-muted-foreground" />}
-                      </div>
-
-                      {/* Inhalt */}
-                      <div className="flex-1 min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-sm font-semibold">{b.emp.name}</span>
-                          <Badge variant="outline" className="text-[10px]">{dept}</Badge>
-                          {b.station && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Badge
-                                  variant="outline"
-                                  className={cn('text-[10px] cursor-help',
-                                    b.isUniqueInStation
-                                      ? 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-300'
-                                      : 'border-indigo-200 text-indigo-700 bg-indigo-50 dark:bg-indigo-950/30 dark:text-indigo-300'
-                                  )}
-                                >
-                                  {b.isUniqueInStation && <ShieldAlert className="h-2.5 w-2.5 mr-0.5" />}
-                                  {b.emp.positionTitle}
-                                </Badge>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {b.isUniqueInStation
-                                  ? `Einzige ${b.emp.positionTitle} in ${dept} — kein gleichwertiger Ersatz`
-                                  : `Mögliche Alternativen: ${b.stationPeers.join(', ')}`}
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
-                          {b.hasTarget && (
-                            <span className={cn('text-xs font-mono font-semibold px-1.5 py-0.5 rounded', balancePillClass(balance))}>
-                              {fmtBalanceHours(balance)}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Empfehlung */}
-                        <p className="text-xs text-muted-foreground leading-relaxed">
-                          {isMinus && balance < -15
-                            ? `Dringend einplanen — ${Math.abs(balance).toFixed(1)} h Minussaldo${b.station ? ` (${b.emp.positionTitle})` : ''}. Aktuell ${periodH > 0 ? `${periodH.toFixed(1)} h geplant` : 'keine Schichten geplant'}.`
-                          : isMinus
-                            ? `Bevorzugt einplanen — ${Math.abs(balance).toFixed(1)} h Minussaldo. Aktuell ${periodH > 0 ? `${periodH.toFixed(1)} h` : 'keine Schichten'}.`
-                          : isPlus && balance > 25
-                            ? `Freier Tag dringend empfohlen — ${balance.toFixed(1)} h Plussaldo${b.isUniqueInStation && b.station ? `; einzige ${b.emp.positionTitle} → Besetzung sicherstellen` : ''}.`
-                          : isPlus
-                            ? `Freier Tag empfohlen — ${balance.toFixed(1)} h Plussaldo. Schichten wenn möglich reduzieren.`
-                          : `Ausgeglichener Saldo (${fmtBalanceHours(balance)}). Normale Planung.`}
-                        </p>
-
-                        {/* Stations-Alternativen */}
-                        {b.station && b.stationPeers.length > 0 && (
-                          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                            <ArrowRight className="h-2.5 w-2.5" />
-                            Positionsgeeignete Alternativen: <strong>{b.stationPeers.join(', ')}</strong>
-                          </p>
-                        )}
-                        {b.station && b.isUniqueInStation && (
-                          <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                            <ShieldAlert className="h-2.5 w-2.5" />
-                            Einzige {b.emp.positionTitle} in {dept} — kein gleichwertiger Ersatz
-                          </p>
-                        )}
-                        {!b.station && (
-                          <p className="text-[10px] text-muted-foreground">
-                            Keine Station hinterlegt — Ersatzbarkeit nicht beurteilbar
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Aktionen */}
-                      <StatusActions hintId={hintId} status={status} onChange={updateStatus} />
-                    </div>
-                  );
-                })}
-
-              {/* Budget-Hinweis am Ende */}
               {availableVarBudget > 0 && remainingVarHours > 0 && (
                 <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/10 px-3 py-2 flex items-start gap-2">
                   <Star className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
                   <p className="text-xs text-emerald-700 dark:text-emerald-300">
-                    Noch ca. <strong className="font-mono">{Math.round(remainingVarHours)} h</strong> Variabel-Budget verfügbar —
-                    bevorzugt bei Mitarbeitern im Minus einplanen.
+                    Noch ca. <strong className="font-mono">{Math.round(remainingVarHours)} h</strong> Variabel-Budget verfügbar — bevorzugt bei Mitarbeitern im Minus einplanen.
                   </p>
                 </div>
               )}
             </>
           )}
 
-          {/* ── TAB: Reduzieren ───────────────────────────────────────── */}
+          {/* ── Reduzieren ────────────────────────────────────────────── */}
           {tab === 'reduzieren' && (
             <>
               <p className="text-xs text-muted-foreground px-1">
-                Mitarbeiter mit hohem Plussaldo und Schichten in der aktuellen Periode.
-                Eine Reduktion schont den Saldo ohne Lohnkosten zu erhöhen.
+                Mitarbeiter mit hohem Plussaldo und Schichten in dieser Periode. Der 🗑-Button streicht eine Schicht direkt im Dienstplan — nur aktiv wenn ein gleichwertiger Ersatz verfügbar ist.
               </p>
 
               {reduzierenRows.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-6">
-                  Keine Mitarbeiter mit positivem Saldo und aktiven Schichten in dieser Periode.
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  Kein Mitarbeiter mit positivem Saldo und aktiven Schichten in dieser Periode.
                 </p>
               )}
 
-              {reduzierenRows
-                .filter(r => showIgnored || (statuses[r.hintId] ?? 'pending') !== 'ignored')
-                .map(({ b, periodH, hintId }) => {
-                  const status  = statuses[hintId] ?? 'pending';
-                  const balance = b.cumulativeBalance;
-                  const dept    = b.emp.department === 'küche' ? 'Küche' : 'Service';
-
-                  return (
-                    <div
-                      key={hintId}
-                      className={cn(
-                        'rounded-lg border px-3 py-2.5 flex flex-wrap items-start gap-3',
-                        status === 'accepted' ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/10 opacity-70'
-                        : status === 'ignored' ? 'border-border bg-muted/20 opacity-40'
-                        : status === 'later'   ? 'border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/10 opacity-80'
-                        : balance > 25 ? 'border-violet-200 dark:border-violet-800 bg-violet-50/30 dark:bg-violet-950/10'
-                        : 'border-blue-200 dark:border-blue-800 bg-blue-50/20 dark:bg-blue-950/10',
-                      )}
-                    >
-                      <TrendingUp className={cn('h-4 w-4 mt-0.5 shrink-0', balance > 25 ? 'text-violet-500' : 'text-blue-500')} />
-
-                      <div className="flex-1 min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-sm font-semibold">{b.emp.name}</span>
-                          <Badge variant="outline" className="text-[10px]">{dept}</Badge>
-                          {b.station && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Badge
-                                  variant="outline"
-                                  className={cn('text-[10px] cursor-help',
-                                    b.isUniqueInStation
-                                      ? 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-300'
-                                      : 'border-indigo-200 text-indigo-700 bg-indigo-50 dark:bg-indigo-950/30 dark:text-indigo-300'
-                                  )}
-                                >
-                                  {b.isUniqueInStation && <ShieldAlert className="h-2.5 w-2.5 mr-0.5" />}
-                                  {b.emp.positionTitle}
-                                </Badge>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {b.isUniqueInStation
-                                  ? `Einzige ${b.emp.positionTitle} in ${dept} — Reduktion nur wenn absolut nötig`
-                                  : `Positionsgeeignete Alternativen: ${b.stationPeers.join(', ')}`}
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
-                          <span className={cn('text-xs font-mono font-semibold px-1.5 py-0.5 rounded', balancePillClass(balance))}>
-                            {fmtBalanceHours(balance)}
-                          </span>
-                        </div>
-
-                        <p className="text-xs text-muted-foreground leading-relaxed">
-                          {balance > 25
-                            ? `${periodH.toFixed(1)} h geplant — freier Tag wäre sinnvoll (${balance.toFixed(1)} h Plussaldo)`
-                            : `${periodH.toFixed(1)} h geplant — Schichten könnten reduziert werden (${balance.toFixed(1)} h Plussaldo)`}
-                          {b.isUniqueInStation && b.station
-                            ? ` — Achtung: einzige ${b.emp.positionTitle}, Besetzung prüfen.`
-                            : b.stationPeers.length > 0
-                              ? ` — Ersatz durch ${b.stationPeers.join(' oder ')} möglich.`
-                              : ''}
-                        </p>
-
-                        {/* Empfehlung */}
-                        {!b.isUniqueInStation && b.stationPeers.length > 0 && (
-                          <p className="text-[10px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                            <CheckCircle2 className="h-2.5 w-2.5" />
-                            Reduktion möglich: Ersatz durch {b.stationPeers.join(', ')} verfügbar
-                          </p>
-                        )}
-                        {b.isUniqueInStation && b.station && (
-                          <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                            <ShieldAlert className="h-2.5 w-2.5" />
-                            Vorsicht: Einzige {b.emp.positionTitle} — Ausfall wäre nicht kompensierbar
-                          </p>
-                        )}
-                      </div>
-
-                      <StatusActions hintId={hintId} status={status} onChange={updateStatus} />
-                    </div>
-                  );
-                })}
+              {grouped(reduzierenRows).map(({ urgency, rows }) => (
+                <div key={urgency} className="space-y-2">
+                  <div className={cn('inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border', urgencyClass[urgency])}>
+                    {urgencyLabel[urgency]}
+                  </div>
+                  {rows
+                    .filter(r => showIgnored || (statuses[r.hintId] ?? 'pending') !== 'ignored')
+                    .map(({ b, hintId, plannedDays }) => (
+                      <ReduzierenCard
+                        key={hintId}
+                        b={b}
+                        hintId={hintId}
+                        status={statuses[hintId] ?? 'pending'}
+                        plannedDays={plannedDays}
+                        onJump={(day, empId) => { onJumpToDay(day, empId); onClose(); }}
+                        onRemoveShift={onRemoveShift}
+                        onStatusChange={updateStatus}
+                      />
+                    ))}
+                </div>
+              ))}
             </>
           )}
 
-          {/* Ignorierte anzeigen */}
+          {/* Ignorierte umschalten */}
           <button
             onClick={() => setShowIgnored(v => !v)}
             className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
@@ -639,11 +837,9 @@ export default function PlanningAssistant({
         {/* Footer */}
         <div className="flex items-center justify-between pt-2 border-t border-border shrink-0">
           <p className="text-[10px] text-muted-foreground">
-            Regelbasiert · Saldo = Vortrag + Monat-Δ · Station aus Personalstamm
+            Saldo = Vortrag + Monat-Δ · Streichen nur bei verfügbarem Ersatz aktiv
           </p>
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Schliessen
-          </Button>
+          <Button variant="ghost" size="sm" onClick={onClose}>Schliessen</Button>
         </div>
       </DialogContent>
     </Dialog>

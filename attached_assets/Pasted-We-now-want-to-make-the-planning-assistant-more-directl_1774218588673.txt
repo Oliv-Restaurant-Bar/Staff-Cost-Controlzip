@@ -1,0 +1,61 @@
+We now want to make the planning assistant more directly actionable inside the actual schedule.
+
+Goal:
+Connect the "Planungshilfe" suggestions much more closely to the real Dienstplanung grid, so the user can immediately see which concrete shifts or days are affected.
+
+Important:
+Do not break existing planning, budget, hour balance, absence, or replacement logic.
+Keep all current data intact.
+Do not overcomplicate the UI.
+Build a practical next step from the current rule-based assistant.
+
+Implement these requirements:
+
+1. Link assistant suggestions to concrete schedule context
+Suggestions in "Einplanen" and "Reduzieren" should not stay abstract only.
+They should reference concrete planning context such as:
+- day
+- shift type / slot
+- department
+- current scheduled situation
+
+Examples:
+- "Freitag Abend Service: Mitarbeiter X bevorzugt einplanen"
+- "Montag Spätschicht Küche: Mitarbeiter Y kann reduziert werden"
+- "Dienstag Mittag Bar: Mitarbeiter Z als Alternative geeignet"
+
+2. Jump/focus from assistant to schedule
+When clicking a suggestion, the system should focus the relevant place in the schedule as much as possible:
+- jump to the relevant day
+- visually highlight the affected employee row and/or day column
+- if useful, temporarily mark the candidate shift or target slot
+
+3. Direct suggestion-to-plan actions
+Add more practical actions where possible:
+For "Einplanen":
+- candidate can be marked as "bevorzugt"
+- optionally prefill/highlight likely day/slot targets
+For "Reduzieren":
+- candidate shift/day can be highlighted as the suggested reduction target
+- where safe, allow direct accept action that removes or reduces an obviously redundant shift
+
+4. Better distinction between abstract and concrete suggestions
+If the system can identify a specific day/shift context, show it clearly.
+If it cannot, say that it is a general planning recommendation only.
+
+5. Preserve role/station realism
+Do not generate misleading direct actions if station/position fit is unclear.
+If no valid direct replacement exists, show that clearly.
+
+6. Practical UI
+Keep the planning assistant readable and useful:
+- grouped by day, period, or department where appropriate
+- easy to scan
+- not overloaded
+- make the link to the actual schedule obvious
+
+7. Explain in simple German:
+- how suggestions are now linked to specific schedule context
+- how I jump from suggestion to the relevant place in the plan
+- which actions can now be applied more directly
+- what I should test later

@@ -60,6 +60,8 @@ interface ScheduleGridProps {
   externalActiveTool?: string | null;
   /** Notifies parent when internal tool bar changes the active tool */
   onExternalToolChange?: (tool: string | null) => void;
+  /** Employee ID to visually highlight (from Planungshilfe jump) */
+  highlightedEmployeeId?: string | null;
 }
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -228,6 +230,7 @@ export const ScheduleGrid = ({
   laborCostThreshold: laborCostThresholdProp,
   externalActiveTool,
   onExternalToolChange,
+  highlightedEmployeeId,
 }: ScheduleGridProps) => {
   const { shiftMap, absenceShifts } = useShiftConfig();
   
@@ -767,7 +770,10 @@ export const ScheduleGrid = ({
               const canRemove = employee.id.startsWith('aush_');
               
               return (
-                <tr key={employee.id} className="group hover:bg-muted/30">
+                <tr key={employee.id} className={cn(
+                  "group hover:bg-muted/30 transition-colors",
+                  highlightedEmployeeId === employee.id && "ring-2 ring-inset ring-indigo-400 dark:ring-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/20",
+                )}>
                   {/* Employee name cell – explicit width prevents misalignment of sticky second column */}
                   <td className={cn(
                     "sticky left-0 z-10 bg-card group-hover:bg-muted",

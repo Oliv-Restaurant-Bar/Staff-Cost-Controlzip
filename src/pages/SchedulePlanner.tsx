@@ -190,6 +190,10 @@ const SchedulePlanner = () => {
     [employees],
   );
 
+  // ── Planungshilfe: Highlight + Jump ──────────────────────────────────────
+  const [highlightedEmpId, setHighlightedEmpId] = useState<string | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // ── Rollenbasierter Zugriff ───────────────────────────────────────────────
   // Wenn der User kein Admin ist, wird die Abteilung automatisch gesetzt
   // und kann nicht verändert werden.
@@ -1348,6 +1352,29 @@ const SchedulePlanner = () => {
   const hasActualHours = totalActualHoursAll > 0;
   const hasActualRevenue = totalActualRevenue > 0;
 
+  // ── Planungshilfe: Jump + Remove-Handler ──────────────────────────────────
+
+  const handleJumpToDay = useCallback((day: Date, empId?: string) => {
+    // Find which week this day belongs to
+    const weekIdx = weeksInMonth.findIndex(weekStart => {
+      const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+      return isWithinInterval(day, { start: weekStart, end: weekEnd });
+    });
+    if (weekIdx >= 0) {
+      setCalendarView('week');
+      setSelectedWeekIndex(weekIdx);
+    }
+    if (empId) {
+      setHighlightedEmpId(empId);
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => setHighlightedEmpId(null), 5000);
+    }
+  }, [weeksInMonth]);
+
+  const handleRemoveShiftFromAssistant = useCallback((empId: string, dateStr: string, slot: 'früh' | 'spät') => {
+    handleSlotChange(empId, dateStr, slot, null, null);
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -2031,6 +2058,7 @@ const SchedulePlanner = () => {
                           laborCostThreshold={gridLaborCostThreshold}
                           externalActiveTool={paintTool}
                           onExternalToolChange={setPaintTool}
+                          highlightedEmployeeId={highlightedEmpId}
                         />
                       </div>
                       
@@ -2059,6 +2087,7 @@ const SchedulePlanner = () => {
                           laborCostThreshold={gridLaborCostThreshold}
                           externalActiveTool={paintTool}
                           onExternalToolChange={setPaintTool}
+                          highlightedEmployeeId={highlightedEmpId}
                         />
                       </div>
                     </div>
@@ -2082,6 +2111,7 @@ const SchedulePlanner = () => {
                       laborCostThreshold={gridLaborCostThreshold}
                       externalActiveTool={paintTool}
                       onExternalToolChange={setPaintTool}
+                      highlightedEmployeeId={highlightedEmpId}
                     />
                   )}
                 </>
@@ -2618,6 +2648,8 @@ const SchedulePlanner = () => {
         allMonthDays={daysInMonth}
         personnelBudget={personnelBudget}
         totalFixCost={paFixCost}
+        onJumpToDay={handleJumpToDay}
+        onRemoveShift={handleRemoveShiftFromAssistant}
       />
     </div>
   );
