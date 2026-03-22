@@ -1,0 +1,69 @@
+The overplanning popup still does not work the way we need.
+
+Current problems:
+1. The concrete optimization/correction suggestions are still not shown directly next to the listed employees and their shifts inside the popup.
+2. The popup is too small and not practical to use.
+3. Scrolling inside the popup is not ideal, and important content is clipped or hard to reach.
+
+Goal:
+Make the popup operationally useful:
+- show concrete suggestions directly in the employee list
+- make them actionable immediately
+- improve popup size and scrolling usability
+
+Important:
+Do not change unrelated modules.
+Keep all existing planning logic intact.
+Do not move this back to only generic text.
+We want concrete actionable correction suggestions inside the popup itself.
+
+Implement these requirements:
+
+1. Employee-level suggestions inside the popup
+In the popup, directly in the employee list section, show the concrete correction suggestion for the affected employee/shift.
+Example:
+- David · 17:00–23:30 → Vorschlag: Spätschicht entfernen
+- Carlos · 11:00–14:00 + 17:00–23:30 → Vorschlag: zweite Schicht kürzen
+- Aushilfe Service → Vorschlag: Aushilfe streichen
+
+2. Action buttons directly there
+For each concrete suggestion, show buttons directly in that employee/shift context:
+- Übernehmen
+- Ignorieren
+- Später
+
+3. Make the suggestion clearly visible
+Do not hide it in subtle styling.
+Use a clear visual block / badge / highlighted line under or beside the affected employee entry.
+
+4. Improve popup layout and size
+The popup must be much more usable:
+- larger width
+- larger max height
+- proper internal scroll area
+- important top KPIs remain visible if possible
+- employee list area scrolls cleanly
+- layout should be comfortable on laptop screens
+
+5. Improve popup scrolling
+The popup content should not feel cramped.
+Ensure:
+- no clipping of content
+- actions remain reachable
+- employee suggestion section is easy to scroll and read
+
+6. Preserve current logic
+Do not break:
+- cost warning calculations
+- overplanned day detection
+- direct grid markings
+- Plan / Ist / Ver.
+- custom shifts
+- Austrittslogik
+
+7. Explain in simple German:
+- how the popup is now structured
+- where I see the concrete suggestion for each employee
+- how I accept/reject/postpone directly there
+- what changed in popup size and scrolling
+- what I should test next

@@ -20,7 +20,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -435,7 +435,6 @@ export const ScheduleGrid = ({
       let hours = 0;
 
       if (daySchedule.frühAbsence || daySchedule.spätAbsence) {
-        // absences – minimal hours contribution
         hours = 0;
       } else {
         const calcSlot = (slot: TimeSlot | null | undefined) => {
@@ -452,7 +451,22 @@ export const ScheduleGrid = ({
       }
 
       const cost = hours * (emp.hourlyWage || 0);
-      return { employee: emp, hours, cost };
+
+      // Build human-readable shift display for the dialog
+      const parts: string[] = [];
+      if (daySchedule.früh?.start && daySchedule.früh?.end && !daySchedule.frühAbsence) {
+        parts.push(`F: ${daySchedule.früh.start}–${daySchedule.früh.end}`);
+      } else if (daySchedule.frühAbsence) {
+        parts.push(daySchedule.frühAbsence);
+      }
+      if (daySchedule.spät?.start && daySchedule.spät?.end && !daySchedule.spätAbsence) {
+        parts.push(`S: ${daySchedule.spät.start}–${daySchedule.spät.end}`);
+      } else if (daySchedule.spätAbsence && daySchedule.spätAbsence !== daySchedule.frühAbsence) {
+        parts.push(daySchedule.spätAbsence);
+      }
+      const shiftDisplay = parts.join(' | ');
+
+      return { employee: emp, hours, cost, shiftDisplay };
     }).filter(e => e.hours > 0).sort((a, b) => b.cost - a.cost);
   };
 
@@ -1210,79 +1224,213 @@ export const ScheduleGrid = ({
       const parsedDate = new Date(openDialogDay);
       const dateLabel = format(parsedDate, 'EEEE, d. MMMM yyyy', { locale: de });
 
+      // Build a map from employeeId → suggestion for this day
+      const allSuggestions = computeSuggestions(openDialogDay, employees, scheduleData, dismissedIds, excessCosts);
+      const suggestionByEmpId = new Map(allSuggestions.map(s => [s.employeeId, s]));
+      const pendingCount = allSuggestions.filter(s => !snoozedIds.includes(s.id) && !dismissedIds.includes(s.id)).length;
+      const totalSaving = allSuggestions.reduce((sum, s) => sum + s.savingCost, 0);
+
+      // Human-readable suggestion action label
+      const getSuggestionActionLabel = (s: CorrectionSuggestion) => {
+        if (s.actionType === 'remove_all') return 'Einsatz streichen';
+        if (s.actionType === 'remove_spat') return 'Spätschicht entfernen';
+        if (s.actionType === 'remove_frueh') return 'Frühschicht entfernen';
+        return 'Schicht entfernen';
+      };
+
       return (
         <Dialog open={true} onOpenChange={() => setOpenDialogDay(null)}>
-          <DialogContent className="max-w-2xl max-h-[92vh] flex flex-col overflow-hidden">
-            <DialogHeader className="shrink-0 pb-1">
-              <DialogTitle className="flex items-center gap-2 text-red-600 text-base">
+          <DialogContent className="max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden p-0">
+            {/* ── Sticky header ──────────────────────────────────── */}
+            <DialogHeader className="shrink-0 px-5 pt-5 pb-3 border-b border-border/50">
+              <DialogTitle className="flex items-center gap-2 text-red-600">
                 <AlertTriangle className="h-5 w-5 shrink-0" />
                 Kostenwarnung — {dateLabel}
               </DialogTitle>
+              <DialogDescription className="sr-only">
+                Überplanungsdetails und Korrekturvorschläge für diesen Tag
+              </DialogDescription>
             </DialogHeader>
 
-            <div className="overflow-y-auto flex-1 pr-1 space-y-3 pt-1">
-              {/* ── KPI Overview ─────────────────────────────────────── */}
-              <div className="rounded-lg bg-muted/50 border border-border/50 p-3">
-                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Tagesübersicht</div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-0.5">
-                    <div className="text-[10px] text-muted-foreground">Budgetierter Umsatz</div>
-                    <div className="text-sm font-semibold">CHF {stats.plannedRevenue.toFixed(0)}</div>
-                  </div>
-                  <div className="space-y-0.5">
-                    <div className="text-[10px] text-muted-foreground">Geplante Stunden</div>
-                    <div className="text-sm font-semibold">{stats.totalHours.toFixed(1)} h</div>
-                  </div>
-                  <div className="space-y-0.5">
-                    <div className="text-[10px] text-muted-foreground">Geplante Kosten</div>
-                    <div className="text-sm font-semibold">CHF {stats.totalCosts.toFixed(0)}</div>
+            {/* ── KPI strip — always visible, not scrolled ───────── */}
+            <div className="shrink-0 px-5 py-3 border-b border-border/50 bg-muted/30">
+              <div className="grid grid-cols-6 gap-3">
+                <div className="space-y-0.5">
+                  <div className="text-[10px] text-muted-foreground">Umsatz budg.</div>
+                  <div className="text-sm font-semibold">CHF {stats.plannedRevenue.toFixed(0)}</div>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-[10px] text-muted-foreground">Kosten plan</div>
+                  <div className="text-sm font-semibold">CHF {stats.totalCosts.toFixed(0)}</div>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-[10px] text-muted-foreground">Stunden plan</div>
+                  <div className="text-sm font-semibold">{stats.totalHours.toFixed(1)} h</div>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-[10px] text-muted-foreground">PKQ aktuell</div>
+                  <div className="text-sm font-bold text-red-600">
+                    {stats.plannedRevenue > 0 ? (stats.totalCosts / stats.plannedRevenue * 100).toFixed(1) : '–'}%
+                    <span className="text-[9px] font-normal text-muted-foreground ml-0.5">/{laborCostThreshold}%</span>
                   </div>
                 </div>
-                <div className="mt-2 pt-2 border-t border-border/50 grid grid-cols-3 gap-3">
-                  <div className="space-y-0.5">
-                    <div className="text-[10px] text-muted-foreground">PKQ aktuell</div>
-                    <div className="text-sm font-bold text-red-600">
-                      {stats.plannedRevenue > 0 ? (stats.totalCosts / stats.plannedRevenue * 100).toFixed(1) : '–'}%
-                      <span className="text-[10px] font-normal text-muted-foreground ml-1">/ Ziel {laborCostThreshold}%</span>
-                    </div>
-                  </div>
-                  <div className="space-y-0.5">
-                    <div className="text-[10px] text-muted-foreground">Zu viele Kosten</div>
-                    <div className="text-sm font-bold text-red-600">CHF {excessCosts.toFixed(0)}</div>
-                  </div>
-                  <div className="space-y-0.5">
-                    <div className="text-[10px] text-muted-foreground">Zu viele Stunden</div>
-                    <div className="text-sm font-bold text-red-600">{stats.excessHours.toFixed(1)} h</div>
-                  </div>
+                <div className="space-y-0.5">
+                  <div className="text-[10px] text-muted-foreground">Zu viel CHF</div>
+                  <div className="text-sm font-bold text-red-600">+CHF {excessCosts.toFixed(0)}</div>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-[10px] text-muted-foreground">Zu viel Std.</div>
+                  <div className="text-sm font-bold text-red-600">+{stats.excessHours.toFixed(1)} h</div>
                 </div>
               </div>
+            </div>
 
-              {/* ── Two-column layout: breakdown + what-if ─────────── */}
-              <div className="grid grid-cols-2 gap-3">
-                {/* Employee cost breakdown */}
-                {breakdown.length > 0 && (
-                  <div className="rounded-lg bg-muted/30 border border-border/50 p-3">
-                    <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Kostenverteilung</div>
-                    <div className="space-y-1.5">
-                      {breakdown.slice(0, 6).map(({ employee, hours, cost }) => (
-                        <div key={employee.id} className="flex items-center gap-2 text-xs">
-                          <div className="flex-1 truncate font-medium">{employee.name}</div>
-                          <div className="text-muted-foreground shrink-0 text-[10px]">{hours.toFixed(1)}h</div>
-                          <div className="font-semibold shrink-0 text-right min-w-[52px]">CHF {cost.toFixed(0)}</div>
-                        </div>
-                      ))}
+            {/* ── Scrollable body ────────────────────────────────── */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 min-h-0">
+
+              {/* ── Employee list with inline suggestions ──────────── */}
+              {breakdown.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Mitarbeiter & Korrekturvorschläge
                     </div>
+                    {pendingCount > 0 && (
+                      <div className="flex items-center gap-1 text-[10px] text-orange-600 dark:text-orange-400 font-medium">
+                        <Lightbulb className="h-3 w-3" />
+                        {pendingCount} Vorschlag{pendingCount !== 1 ? 'schläge' : ''} offen
+                        {totalSaving > 0 && <span className="text-emerald-600 dark:text-emerald-400 ml-0.5">(−CHF {totalSaving.toFixed(0)})</span>}
+                      </div>
+                    )}
                   </div>
-                )}
+                  <div className="space-y-2">
+                    {breakdown.map(({ employee, hours, cost, shiftDisplay }) => {
+                      const suggestion = suggestionByEmpId.get(employee.id);
+                      const isSnoozed = suggestion ? snoozedIds.includes(suggestion.id) : false;
+                      const isDismissed = suggestion ? dismissedIds.includes(suggestion.id) : false;
+                      const showSuggestion = suggestion && !isDismissed;
 
-                {/* What-if revenue calculator */}
-                <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3 space-y-2">
-                  <div className="text-[10px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">Umsatz-Szenario</div>
-                  <p className="text-[10px] text-muted-foreground">
-                    Umsatz nötig für Ziel-PKQ: <span className="font-semibold text-foreground">CHF {revenueNeeded.toFixed(0)}</span>
+                      return (
+                        <div
+                          key={employee.id}
+                          className={cn(
+                            "rounded-lg border overflow-hidden",
+                            showSuggestion && !isSnoozed
+                              ? "border-orange-300 dark:border-orange-700"
+                              : "border-border/50"
+                          )}
+                        >
+                          {/* Employee row */}
+                          <div className={cn(
+                            "flex items-center gap-3 px-3 py-2",
+                            showSuggestion && !isSnoozed
+                              ? "bg-orange-50 dark:bg-orange-900/20"
+                              : "bg-muted/20"
+                          )}>
+                            {/* Employment type badge */}
+                            <span className={cn(
+                              "text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 uppercase",
+                              employee.employmentType === 'aushilfe'
+                                ? "bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300"
+                                : employee.employmentType === 'vollzeit'
+                                  ? "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300"
+                                  : "bg-muted text-muted-foreground"
+                            )}>
+                              {employee.employmentType === 'aushilfe' ? 'AH' :
+                               employee.employmentType === 'vollzeit' ? 'VZ' :
+                               employee.employmentType === 'teilzeit' ? 'TZ' : 'MJ'}
+                            </span>
+                            {/* Name */}
+                            <span className="font-semibold text-sm flex-1 min-w-0 truncate">{employee.name}</span>
+                            {/* Shift times */}
+                            <span className="text-[11px] text-muted-foreground shrink-0 font-mono">{shiftDisplay}</span>
+                            {/* Hours & cost */}
+                            <span className="text-[11px] text-muted-foreground shrink-0">{hours.toFixed(1)} h</span>
+                            <span className="text-xs font-semibold shrink-0 min-w-[62px] text-right">CHF {cost.toFixed(0)}</span>
+                          </div>
+
+                          {/* Inline suggestion block */}
+                          {showSuggestion && (
+                            <div className={cn(
+                              "px-3 py-2 border-t",
+                              isSnoozed
+                                ? "border-border/30 bg-muted/10 opacity-60"
+                                : "border-orange-200 dark:border-orange-800 bg-orange-50/80 dark:bg-orange-900/15"
+                            )}>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                  <Lightbulb className="h-3.5 w-3.5 shrink-0 text-orange-600 dark:text-orange-400" />
+                                  <span className="text-xs font-semibold text-orange-700 dark:text-orange-300">
+                                    Vorschlag:
+                                  </span>
+                                  <span className="text-xs text-foreground font-medium truncate">
+                                    {getSuggestionActionLabel(suggestion)}
+                                  </span>
+                                  {suggestion.savingCost > 0 && (
+                                    <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold shrink-0">
+                                      −{suggestion.savingHours.toFixed(1)} h / −CHF {suggestion.savingCost.toFixed(0)}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <Button
+                                    size="sm"
+                                    className="h-7 px-3 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                                    onClick={() => { handleApplySuggestion(suggestion, openDialogDay); }}
+                                  >
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    Übernehmen
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 px-2.5 text-xs gap-1"
+                                    onClick={() => setDismissedIds(prev => [...prev, suggestion.id])}
+                                  >
+                                    <EyeOff className="h-3 w-3" />
+                                    Ignorieren
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 px-2 text-xs gap-1 text-muted-foreground"
+                                    onClick={() =>
+                                      isSnoozed
+                                        ? setSnoozedIds(prev => prev.filter(x => x !== suggestion.id))
+                                        : setSnoozedIds(prev => [...prev, suggestion.id])
+                                    }
+                                  >
+                                    <Clock3 className="h-3 w-3" />
+                                    {isSnoozed ? 'Reaktivieren' : 'Später'}
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {allSuggestions.length === 0 && breakdown.length > 0 && (
+                    <div className="mt-2 rounded-lg border border-muted bg-muted/20 px-3 py-2 text-xs text-muted-foreground text-center">
+                      Keine entfernbaren Schichten gefunden — Umsatz erhöhen oder Budget anpassen.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── What-if revenue calculator ─────────────────────── */}
+              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3">
+                <div className="text-[10px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-2">
+                  Umsatz-Szenario
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <p className="text-xs text-muted-foreground shrink-0">
+                    Nötig für {laborCostThreshold}% PKQ:&nbsp;
+                    <span className="font-semibold text-foreground">CHF {revenueNeeded.toFixed(0)}</span>
                   </p>
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="whatif" className="text-[10px] shrink-0">Hypothetisch:</Label>
+                  <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                    <Label htmlFor="whatif" className="text-xs shrink-0 text-muted-foreground">Hypothetisch:</Label>
                     <div className="relative flex-1">
                       <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">CHF</span>
                       <Input
@@ -1291,65 +1439,24 @@ export const ScheduleGrid = ({
                         placeholder={revenueNeeded.toFixed(0)}
                         value={whatIfRevenue}
                         onChange={e => setWhatIfRevenue(e.target.value)}
-                        className="pl-9 h-7 text-xs"
+                        className="pl-9 h-8 text-xs"
                       />
                     </div>
+                    {whatIfPkq !== null && (
+                      <div className={cn(
+                        "text-xs font-bold px-2 py-1 rounded shrink-0",
+                        whatIfPkq <= laborCostThreshold
+                          ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
+                          : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                      )}>
+                        PKQ: {whatIfPkq.toFixed(1)}%
+                        {whatIfPkq <= laborCostThreshold ? ' ✓' : ' ✗'}
+                      </div>
+                    )}
                   </div>
-                  {whatIfPkq !== null && (
-                    <div className={cn(
-                      "text-xs font-semibold text-center py-1 rounded",
-                      whatIfPkq <= laborCostThreshold
-                        ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
-                        : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-                    )}>
-                      PKQ: {whatIfPkq.toFixed(1)}%
-                      {whatIfPkq <= laborCostThreshold ? ' ✓ OK' : ` ✗ +${(whatIfPkq - laborCostThreshold).toFixed(1)}%`}
-                    </div>
-                  )}
                 </div>
               </div>
 
-              {/* ── Korrekturvorschläge — Hinweis ────────────────────── */}
-              {(() => {
-                const allSuggestions = computeSuggestions(
-                  openDialogDay,
-                  employees,
-                  scheduleData,
-                  dismissedIds,
-                  excessCosts,
-                );
-                const pending = allSuggestions.filter(s => !snoozedIds.includes(s.id));
-                const totalSavingPossible = allSuggestions.reduce((sum, s) => sum + s.savingCost, 0);
-                const totalHoursSavingPossible = allSuggestions.reduce((sum, s) => sum + s.savingHours, 0);
-
-                if (allSuggestions.length === 0) {
-                  return (
-                    <div className="rounded-lg border border-muted bg-muted/30 p-3 text-sm text-muted-foreground text-center">
-                      <Lightbulb className="h-4 w-4 mx-auto mb-1.5 opacity-40" />
-                      Keine geplanten Schichten gefunden, die entfernt werden könnten.
-                    </div>
-                  );
-                }
-
-                return (
-                  <div className="rounded-lg border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20 p-3 flex items-start gap-3">
-                    <Lightbulb className="h-4 w-4 shrink-0 text-orange-600 dark:text-orange-400 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-semibold text-orange-700 dark:text-orange-400 mb-0.5">
-                        {pending.length} Korrekturvorschlag{pending.length !== 1 ? 'schläge' : ''} verfügbar
-                        {totalSavingPossible > 0 && (
-                          <span className="ml-2 font-normal text-emerald-700 dark:text-emerald-400">
-                            (bis −CHF {totalSavingPossible.toFixed(0)} / −{totalHoursSavingPossible.toFixed(1)} h)
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-muted-foreground leading-relaxed">
-                        Klicken Sie im Dienstplan auf die <span className="inline-flex items-center justify-center w-3 h-3 bg-orange-500 rounded-sm text-[7px] text-white font-bold mx-0.5">✂</span> Badges direkt bei den vorgeschlagenen Zellen, um Korrekturen einzeln zu übernehmen, ignorieren oder zurückzustellen.
-                      </p>
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
           </DialogContent>
         </Dialog>
