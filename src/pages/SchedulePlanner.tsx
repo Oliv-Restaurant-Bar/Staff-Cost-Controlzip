@@ -14,7 +14,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
@@ -43,6 +43,8 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMont
 import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import PlanningAssistant from '@/components/schedule-planner/PlanningAssistant';
+import { TemplateManagerDialog } from '@/components/schedule-planner/TemplateManagerDialog';
+import { TemplateDept } from '@/lib/schedule-templates';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
@@ -179,6 +181,7 @@ const SchedulePlanner = () => {
   const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string }>>({});
   const [paintTool, setPaintTool] = useState<string | null>(null);
   const [planningAssistantOpen, setPlanningAssistantOpen] = useState(false);
+  const [templateDialogOpen, setTemplateDialogOpen]       = useState(false);
 
   // ── Budget-Daten (für PlanningAssistant) ─────────────────────────────────
   const { personnelBudget } = useBudgetMonth(
@@ -1375,6 +1378,12 @@ const SchedulePlanner = () => {
     handleSlotChange(empId, dateStr, slot, null, null);
   }, []);
 
+  /** Merge template delta into scheduleData, then save */
+  const handleApplyTemplate = useCallback((delta: Record<string, DaySchedule>) => {
+    setScheduleData(prev => ({ ...prev, ...delta }));
+    setTimeout(() => handleSave(), 200);
+  }, [handleSave]);
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -1402,6 +1411,16 @@ const SchedulePlanner = () => {
                 accept=".xlsx,.xls"
                 className="hidden"
               />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setTemplateDialogOpen(true)}
+                className="gap-1.5 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                title="Wochenvorlagen verwalten"
+              >
+                <BookOpen className="h-4 w-4" />
+                <span className="hidden sm:inline">Vorlagen</span>
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -2650,6 +2669,16 @@ const SchedulePlanner = () => {
         totalFixCost={paFixCost}
         onJumpToDay={handleJumpToDay}
         onRemoveShift={handleRemoveShiftFromAssistant}
+      />
+
+      <TemplateManagerDialog
+        open={templateDialogOpen}
+        onClose={() => setTemplateDialogOpen(false)}
+        employees={employees}
+        scheduleData={scheduleData}
+        displayDays={displayDays}
+        activeDepartment={'all' as TemplateDept}
+        onApply={handleApplyTemplate}
       />
     </div>
   );

@@ -1,0 +1,70 @@
+We now want to professionalize Dienstplanung further with reusable weekly templates and standard staffing patterns.
+
+Goal:
+Make schedule creation much faster by allowing standard staffing setups that can be reused and adapted instead of planning everything from scratch each time.
+
+Important:
+Do not break current planning, custom shifts, budget warnings, hour balance, or planning assistant logic.
+Keep all current data intact.
+Build practical operational tools, not unnecessary complexity.
+
+Implement these requirements:
+
+1. Weekly templates
+Allow saving a full week or a department-specific week as a reusable template.
+
+Examples:
+- Standardwoche Service
+- Standardwoche Küche
+- Sommerwoche
+- Event-Woche
+
+A template should include:
+- planned shifts
+- custom shift codes
+- relevant slot assignments
+- optional notes if useful
+
+2. Apply template to a target week
+Allow the user to apply a saved template to the currently displayed week.
+The user should be able to:
+- apply it fully
+- apply only to one department
+- optionally overwrite or merge existing entries
+
+3. Standard staffing patterns per weekday
+Add the ability to define default staffing patterns by weekday and/or service period.
+
+Examples:
+- Monday lunch service
+- Friday evening kitchen
+- Sunday reduced staffing
+
+These patterns should help prefill likely staffing needs even before detailed adjustments.
+
+4. Optional link to revenue level / demand band
+If possible, support simple staffing presets by demand level, for example:
+- low revenue day
+- normal day
+- high revenue day
+
+This does NOT need full AI yet.
+Simple selectable presets are enough.
+
+5. Keep workflow practical
+The user should be able to:
+- save current week as template
+- load a template quickly
+- adapt after loading
+- avoid re-entering common weekly structures
+
+6. Preserve existing access logic
+Managers and admins should still behave according to the current Dienstplanung permissions.
+Do not accidentally open unrelated admin modules.
+
+7. Explain in simple German:
+- how weekly templates work
+- how I save a week as template
+- how I apply a template
+- how standard staffing patterns help me
+- what I should test later
