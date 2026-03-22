@@ -14,7 +14,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, BarChart2, Users,
   Settings, LogOut, ChefHat, Utensils, ShieldCheck,
-  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye, DollarSign, Package,
+  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye, DollarSign, Package, UserX,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -121,6 +121,13 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Produkte',
     shortLabel: 'Produkte',
     icon: Package,
+    adminOnly: true,
+  },
+  {
+    path: '/absenzen',
+    label: 'Absenzen & Ersatz',
+    shortLabel: 'Absenzen',
+    icon: UserX,
     adminOnly: true,
   },
 ];

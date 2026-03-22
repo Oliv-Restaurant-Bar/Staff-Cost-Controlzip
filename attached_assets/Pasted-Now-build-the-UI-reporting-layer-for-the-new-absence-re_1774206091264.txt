@@ -1,0 +1,83 @@
+Now build the UI / reporting layer for the new absence + replacement + savings feature.
+
+Goal:
+Make vacation, sickness, replacement cost, and savings clearly visible in the right places of the app so the user can control staffing and cost impact operationally.
+
+Important:
+Do not break existing planning, reporting, or FIX/VARIABEL logic.
+Keep fixed salary unchanged and only show replacement cost / savings as separate controlling views.
+Use the new automatic assignment + manual override logic as the data basis.
+
+Implement the UI in these areas:
+
+1. Dienstplanung — operational day/week view
+Show absence/replacement impact directly where planning happens.
+
+Requirements:
+- On days with Ferien or Krank, show a compact day-level indicator in the schedule header or day details:
+  - absent fixed hours
+  - replacement hours
+  - unreplaced hours
+  - replacement cost
+  - estimated savings from unreplaced absence
+- If useful, allow a click to open a focused "Abwesenheit & Ersatz" detail panel for that day
+- In the day detail view, clearly separate:
+  - Abwesenheit
+  - Ersatz
+  - Einsparung
+
+2. Reporting — monthly controlling view
+Add a dedicated section or KPI block for absence-related labor impact.
+
+Suggested KPIs:
+- Ferienbedingte Ersatzkosten
+- Krankheitsbedingte Ersatzkosten
+- Total Ersatzkosten durch Abwesenheit
+- Nicht ersetzte Abwesenheitsstunden
+- Geschätzte Einsparung durch nicht ersetzten Ausfall
+
+Requirements:
+- Show by month
+- If possible, split by Service and Küche
+- If helpful, allow drilldown by employee or by absence type
+
+3. Dashboard — management summary
+Add a compact high-level visibility layer.
+
+Suggested dashboard cards or indicators:
+- Ersatzkosten Abwesenheit (Monat)
+- Einsparung durch nicht ersetzte Abwesenheit
+- Top affected area: Service or Küche
+- Optional trend vs previous month if data exists
+
+Keep this lightweight and executive-friendly.
+
+4. Personalstamm / employee context
+Where useful, show employee-level absence context:
+- current vacation balance
+- vacation taken
+- sickness days YTD
+- replacement history or absence impact later if appropriate
+
+Do not overload the employee page, but make the data accessible.
+
+5. Manual assignment / override UI
+Where the user manages automatic replacement matching, make the review process understandable:
+- automatically assigned replacements
+- manually reassigned replacements
+- removed assignments
+- confidence or "automatisch erkannt" label if useful
+
+6. Clear language and separation
+The UI must clearly distinguish:
+- Fixkosten (already existing)
+- Zusatzkosten durch Ersatz
+- Einsparung durch nicht ersetzten Ausfall
+
+No double-counting.
+
+7. Explain in simple German:
+- where I now see vacation/sickness replacement costs
+- where I see savings from non-replacement
+- what appears in Dienstplanung, Dashboard, and Reporting
+- what I should test next
