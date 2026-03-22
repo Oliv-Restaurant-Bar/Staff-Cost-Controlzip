@@ -302,9 +302,9 @@ export const ScheduleGrid = ({
 
   // Pre-compute which cells are top correction candidates across ALL overbudget days.
   // Used to render orange suggestion rings in the grid even before the dialog is opened.
+  // NOTE: intentionally NOT gated on showCosts — overplanning markers are useful regardless.
   const gridSuggestionCells = useMemo(() => {
     const result = new Set<string>();
-    if (!showCosts) return result;
     days.forEach(day => {
       const dateStr = format(day, 'yyyy-MM-dd');
       const stats = getDailyStats(day);
@@ -312,7 +312,9 @@ export const ScheduleGrid = ({
       const suggestions = computeSuggestions(
         dateStr, employees, scheduleData, dismissedIds, stats.excessCosts,
       );
-      suggestions.slice(0, 3).forEach(s => {
+      // Mark the TOP priority suggestions (tier 1+2: aushilfe + double-shifts first)
+      const topSuggestions = suggestions.slice(0, 4);
+      topSuggestions.forEach(s => {
         if (s.actionType === 'remove_all' || s.actionType === 'remove_frueh') {
           result.add(`${s.employeeId}-${dateStr}-früh`);
         }
@@ -323,7 +325,7 @@ export const ScheduleGrid = ({
     });
     return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days, employees, scheduleData, dismissedIds, showCosts, laborCostThreshold, dailyBudgets]);
+  }, [days, employees, scheduleData, dismissedIds, laborCostThreshold, dailyBudgets]);
 
   const handleApplySuggestion = (s: CorrectionSuggestion, dateStr: string) => {
     if (s.actionType === 'remove_all' || s.actionType === 'remove_frueh') {
@@ -814,8 +816,8 @@ export const ScheduleGrid = ({
                     const isOverlapping = hasShiftOverlap(daySchedule);
                     const hasShortBreakWarning = hasShortBreak(daySchedule);
                     
-                    const isSuggestedFrüh = showCosts && gridSuggestionCells.has(`${employee.id}-${dateStr}-früh`);
-                    const isSuggestedSpät = showCosts && gridSuggestionCells.has(`${employee.id}-${dateStr}-spät`);
+                    const isSuggestedFrüh = gridSuggestionCells.has(`${employee.id}-${dateStr}-früh`);
+                    const isSuggestedSpät = gridSuggestionCells.has(`${employee.id}-${dateStr}-spät`);
 
                     return (
                       <React.Fragment key={dateStr}>
@@ -1076,124 +1078,140 @@ export const ScheduleGrid = ({
 
       return (
         <Dialog open={true} onOpenChange={() => setOpenDialogDay(null)}>
-          <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
-            <DialogHeader className="shrink-0">
-              <DialogTitle className="flex items-center gap-2 text-red-600">
-                <AlertTriangle className="h-5 w-5" />
-                Kostenwarnung: {dateLabel}
+          <DialogContent className="max-w-2xl max-h-[92vh] flex flex-col overflow-hidden">
+            <DialogHeader className="shrink-0 pb-1">
+              <DialogTitle className="flex items-center gap-2 text-red-600 text-base">
+                <AlertTriangle className="h-5 w-5 shrink-0" />
+                Kostenwarnung — {dateLabel}
               </DialogTitle>
             </DialogHeader>
 
-            <div className="space-y-4 overflow-y-auto flex-1 pr-1">
-              {/* Overview section */}
-              <div className="rounded-lg bg-muted/50 p-3 space-y-2">
-                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tagesübersicht</div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                  <span className="text-muted-foreground">Budgetierter Umsatz</span>
-                  <span className="font-medium">CHF {stats.plannedRevenue.toFixed(0)}</span>
-                  <span className="text-muted-foreground">Geplante Stunden</span>
-                  <span className="font-medium">{stats.totalHours.toFixed(1)} h</span>
-                  <span className="text-muted-foreground">Geplante Kosten</span>
-                  <span className="font-medium">CHF {stats.totalCosts.toFixed(0)}</span>
-                  <span className="text-muted-foreground">Personalkostenquote (PKQ)</span>
-                  <span className="font-semibold text-red-600">
-                    {stats.plannedRevenue > 0 ? (stats.totalCosts / stats.plannedRevenue * 100).toFixed(1) : '–'}%
-                    <span className="text-xs font-normal text-muted-foreground ml-1">(Ziel: {laborCostThreshold}%)</span>
-                  </span>
+            <div className="overflow-y-auto flex-1 pr-1 space-y-3 pt-1">
+              {/* ── KPI Overview ─────────────────────────────────────── */}
+              <div className="rounded-lg bg-muted/50 border border-border/50 p-3">
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Tagesübersicht</div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] text-muted-foreground">Budgetierter Umsatz</div>
+                    <div className="text-sm font-semibold">CHF {stats.plannedRevenue.toFixed(0)}</div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] text-muted-foreground">Geplante Stunden</div>
+                    <div className="text-sm font-semibold">{stats.totalHours.toFixed(1)} h</div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] text-muted-foreground">Geplante Kosten</div>
+                    <div className="text-sm font-semibold">CHF {stats.totalCosts.toFixed(0)}</div>
+                  </div>
                 </div>
-                <div className="border-t pt-2 mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                  <span className="text-red-600 font-medium">Zu viel geplante Kosten</span>
-                  <span className="font-bold text-red-600">CHF {excessCosts.toFixed(0)}</span>
-                  <span className="text-red-600 font-medium">Zu viel geplante Stunden</span>
-                  <span className="font-bold text-red-600">{stats.excessHours.toFixed(1)} h</span>
-                  <span className="text-muted-foreground text-xs">Umsatz für Ziel-PKQ nötig</span>
-                  <span className="font-medium text-xs">CHF {revenueNeeded.toFixed(0)}</span>
+                <div className="mt-2 pt-2 border-t border-border/50 grid grid-cols-3 gap-3">
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] text-muted-foreground">PKQ aktuell</div>
+                    <div className="text-sm font-bold text-red-600">
+                      {stats.plannedRevenue > 0 ? (stats.totalCosts / stats.plannedRevenue * 100).toFixed(1) : '–'}%
+                      <span className="text-[10px] font-normal text-muted-foreground ml-1">/ Ziel {laborCostThreshold}%</span>
+                    </div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] text-muted-foreground">Zu viele Kosten</div>
+                    <div className="text-sm font-bold text-red-600">CHF {excessCosts.toFixed(0)}</div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-[10px] text-muted-foreground">Zu viele Stunden</div>
+                    <div className="text-sm font-bold text-red-600">{stats.excessHours.toFixed(1)} h</div>
+                  </div>
                 </div>
               </div>
 
-              {/* Employee breakdown */}
-              {breakdown.length > 0 && (
-                <div className="space-y-1.5">
-                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Kostenverteilung Mitarbeiter</div>
-                  {breakdown.slice(0, 5).map(({ employee, hours, cost }) => (
-                    <div key={employee.id} className="flex items-center gap-2 text-xs">
-                      <div className="flex-1 truncate">{employee.name}</div>
-                      <div className="text-muted-foreground shrink-0">{hours.toFixed(1)}h × {employee.hourlyWage.toFixed(2)}</div>
-                      <div className="font-semibold shrink-0 w-20 text-right">CHF {cost.toFixed(0)}</div>
+              {/* ── Two-column layout: breakdown + what-if ─────────── */}
+              <div className="grid grid-cols-2 gap-3">
+                {/* Employee cost breakdown */}
+                {breakdown.length > 0 && (
+                  <div className="rounded-lg bg-muted/30 border border-border/50 p-3">
+                    <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Kostenverteilung</div>
+                    <div className="space-y-1.5">
+                      {breakdown.slice(0, 6).map(({ employee, hours, cost }) => (
+                        <div key={employee.id} className="flex items-center gap-2 text-xs">
+                          <div className="flex-1 truncate font-medium">{employee.name}</div>
+                          <div className="text-muted-foreground shrink-0 text-[10px]">{hours.toFixed(1)}h</div>
+                          <div className="font-semibold shrink-0 text-right min-w-[52px]">CHF {cost.toFixed(0)}</div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
-
-              {/* What-if revenue calculator */}
-              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3 space-y-2">
-                <div className="text-xs font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">Umsatz-Szenario</div>
-                <p className="text-xs text-muted-foreground">
-                  Welcher Umsatz wäre nötig, damit die Kosten wieder im Zielbereich liegen?
-                </p>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="whatif" className="text-xs shrink-0">Hypothetischer Umsatz:</Label>
-                  <div className="relative flex-1">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">CHF</span>
-                    <Input
-                      id="whatif"
-                      type="number"
-                      placeholder={revenueNeeded.toFixed(0)}
-                      value={whatIfRevenue}
-                      onChange={e => setWhatIfRevenue(e.target.value)}
-                      className="pl-10 h-8 text-sm"
-                    />
-                  </div>
-                </div>
-                {whatIfPkq !== null && (
-                  <div className={cn(
-                    "text-sm font-semibold text-center py-1.5 rounded",
-                    whatIfPkq <= laborCostThreshold
-                      ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
-                      : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-                  )}>
-                    PKQ bei CHF {whatIfRev.toFixed(0)}: {whatIfPkq.toFixed(1)}%
-                    {whatIfPkq <= laborCostThreshold
-                      ? ' ✓ Im Zielbereich'
-                      : ` ✗ Noch ${(whatIfPkq - laborCostThreshold).toFixed(1)}% über Ziel`}
                   </div>
                 )}
-                <p className="text-[10px] text-muted-foreground italic">
-                  * Dieser Wert überschreibt den budgetierten Umsatz nicht.
-                </p>
+
+                {/* What-if revenue calculator */}
+                <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3 space-y-2">
+                  <div className="text-[10px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">Umsatz-Szenario</div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Umsatz nötig für Ziel-PKQ: <span className="font-semibold text-foreground">CHF {revenueNeeded.toFixed(0)}</span>
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="whatif" className="text-[10px] shrink-0">Hypothetisch:</Label>
+                    <div className="relative flex-1">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">CHF</span>
+                      <Input
+                        id="whatif"
+                        type="number"
+                        placeholder={revenueNeeded.toFixed(0)}
+                        value={whatIfRevenue}
+                        onChange={e => setWhatIfRevenue(e.target.value)}
+                        className="pl-9 h-7 text-xs"
+                      />
+                    </div>
+                  </div>
+                  {whatIfPkq !== null && (
+                    <div className={cn(
+                      "text-xs font-semibold text-center py-1 rounded",
+                      whatIfPkq <= laborCostThreshold
+                        ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
+                        : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                    )}>
+                      PKQ: {whatIfPkq.toFixed(1)}%
+                      {whatIfPkq <= laborCostThreshold ? ' ✓ OK' : ` ✗ +${(whatIfPkq - laborCostThreshold).toFixed(1)}%`}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* ── Actionable per-employee correction suggestions ──────── */}
+              {/* ── Actionable correction suggestions ────────────────── */}
               {(() => {
-                const activeSuggestions = computeSuggestions(
+                const allSuggestions = computeSuggestions(
                   openDialogDay,
                   employees,
                   scheduleData,
                   dismissedIds,
                   excessCosts,
                 );
-                const snoozed = activeSuggestions.filter(s => snoozedIds.includes(s.id));
-                const pending = activeSuggestions.filter(s => !snoozedIds.includes(s.id));
+                const snoozed = allSuggestions.filter(s => snoozedIds.includes(s.id));
+                const pending = allSuggestions.filter(s => !snoozedIds.includes(s.id));
 
-                if (activeSuggestions.length === 0) {
+                const totalSavingPossible = allSuggestions.reduce((sum, s) => sum + s.savingCost, 0);
+                const totalHoursSavingPossible = allSuggestions.reduce((sum, s) => sum + s.savingHours, 0);
+
+                if (allSuggestions.length === 0) {
                   return (
-                    <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 text-xs text-amber-700 dark:text-amber-400">
-                      <div className="flex items-center gap-2 font-semibold uppercase tracking-wide mb-1">
-                        <Lightbulb className="h-3.5 w-3.5 shrink-0" />
-                        Korrekturvorschläge
-                      </div>
-                      Alle Vorschläge wurden bearbeitet. Überprüfe ggf. die Schichtzusammensetzung manuell.
+                    <div className="rounded-lg border border-muted bg-muted/30 p-4 text-sm text-muted-foreground text-center">
+                      <Lightbulb className="h-5 w-5 mx-auto mb-2 opacity-40" />
+                      Keine geplanten Schichten gefunden, die entfernt werden könnten.<br />
+                      <span className="text-xs">Überprüfe die Schichtzusammensetzung oder erhöhe den Umsatzplan.</span>
                     </div>
                   );
                 }
 
-                const SuggestionCard = ({ s }: { s: CorrectionSuggestion }) => (
-                  <div className="rounded-lg border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20 p-3 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
+                const SuggestionCard = ({ s, isSnoozed }: { s: CorrectionSuggestion; isSnoozed?: boolean }) => (
+                  <div className={cn(
+                    "rounded-lg border p-3 space-y-2 transition-opacity",
+                    isSnoozed
+                      ? "border-muted bg-muted/20 opacity-60"
+                      : "border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20"
+                  )}>
+                    <div className="flex items-start gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap mb-1">
                           <span className={cn(
-                            "text-[10px] font-bold px-1.5 py-0.5 rounded-full border",
+                            "text-[10px] font-bold px-1.5 py-0.5 rounded-full border shrink-0",
                             s.badge === 'Aushilfe'
                               ? "bg-purple-100 dark:bg-purple-900/40 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300"
                               : s.badge === 'Doppelschicht'
@@ -1202,28 +1220,25 @@ export const ScheduleGrid = ({
                           )}>
                             {s.badge}
                           </span>
-                          <span className="text-xs font-medium text-foreground">{s.description}</span>
+                          <span className="text-sm font-semibold text-foreground truncate">{s.employeeName}</span>
                         </div>
-                        {s.slotDisplay && (
-                          <div className="text-[10px] text-muted-foreground">{s.slotDisplay}</div>
-                        )}
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
-                            −{s.savingHours.toFixed(1)}h
+                        <div className="text-xs text-muted-foreground mb-1">{s.slotDisplay || s.description}</div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                            −{s.savingHours.toFixed(1)} h
                           </span>
                           {s.savingCost > 0 && (
-                            <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
                               −CHF {s.savingCost.toFixed(0)}
                             </span>
                           )}
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 pt-1 border-t border-orange-200 dark:border-orange-700">
+                    <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/40">
                       <Button
                         size="sm"
-                        variant="default"
-                        className="h-7 px-2.5 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                        className="h-7 px-3 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white flex-1"
                         onClick={() => handleApplySuggestion(s, openDialogDay)}
                       >
                         <CheckCircle2 className="h-3.5 w-3.5" />
@@ -1231,25 +1246,25 @@ export const ScheduleGrid = ({
                       </Button>
                       <Button
                         size="sm"
-                        variant="ghost"
-                        className="h-7 px-2.5 text-xs gap-1.5 text-muted-foreground"
+                        variant="outline"
+                        className="h-7 px-2.5 text-xs gap-1"
                         onClick={() => setDismissedIds(prev => [...prev, s.id])}
                       >
-                        <EyeOff className="h-3.5 w-3.5" />
+                        <EyeOff className="h-3 w-3" />
                         Ignorieren
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 px-2.5 text-xs gap-1.5 text-muted-foreground"
+                        className="h-7 px-2.5 text-xs gap-1 text-muted-foreground"
                         onClick={() =>
                           snoozedIds.includes(s.id)
                             ? setSnoozedIds(prev => prev.filter(x => x !== s.id))
                             : setSnoozedIds(prev => [...prev, s.id])
                         }
                       >
-                        <Clock3 className="h-3.5 w-3.5" />
-                        Später
+                        <Clock3 className="h-3 w-3" />
+                        {isSnoozed ? 'Reaktivieren' : 'Später'}
                       </Button>
                     </div>
                   </div>
@@ -1257,22 +1272,49 @@ export const ScheduleGrid = ({
 
                 return (
                   <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-orange-700 dark:text-orange-400 uppercase tracking-wide">
-                      <Lightbulb className="h-3.5 w-3.5 shrink-0" />
-                      Korrekturvorschläge
-                      <span className="font-normal normal-case text-muted-foreground">
-                        — klicke "Übernehmen" um die Änderung direkt anzuwenden
-                      </span>
+                    {/* Section header with totals */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-orange-700 dark:text-orange-400">
+                        <Lightbulb className="h-4 w-4 shrink-0" />
+                        Korrekturvorschläge
+                        <span className="font-normal text-muted-foreground">({pending.length} offen)</span>
+                      </div>
+                      {totalSavingPossible > 0 && (
+                        <div className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+                          Gesamt möglich: −{totalHoursSavingPossible.toFixed(1)}h / −CHF {totalSavingPossible.toFixed(0)}
+                        </div>
+                      )}
                     </div>
-                    {pending.map(s => <SuggestionCard key={s.id} s={s} />)}
+
+                    {/* Savings progress bar */}
+                    {excessCosts > 0 && totalSavingPossible > 0 && (
+                      <div className="space-y-0.5">
+                        <div className="flex justify-between text-[9px] text-muted-foreground">
+                          <span>Noch offen: CHF {excessCosts.toFixed(0)}</span>
+                          <span>Einsparbar: CHF {Math.min(totalSavingPossible, excessCosts * 2).toFixed(0)}</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-red-200 dark:bg-red-900/50 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-emerald-500 dark:bg-emerald-600 transition-all"
+                            style={{ width: `${Math.min(100, (totalSavingPossible / excessCosts) * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Suggestion cards grid — 2 columns on wide dialog */}
+                    <div className="grid grid-cols-2 gap-2">
+                      {pending.map(s => <SuggestionCard key={s.id} s={s} />)}
+                    </div>
+
                     {snoozed.length > 0 && (
                       <details className="text-xs text-muted-foreground">
-                        <summary className="cursor-pointer hover:text-foreground transition-colors flex items-center gap-1">
+                        <summary className="cursor-pointer hover:text-foreground transition-colors flex items-center gap-1 py-1">
                           <Clock3 className="h-3 w-3" />
                           {snoozed.length} zurückgestellt
                         </summary>
-                        <div className="mt-1 space-y-1.5 pl-2">
-                          {snoozed.map(s => <SuggestionCard key={s.id} s={s} />)}
+                        <div className="mt-1.5 grid grid-cols-2 gap-2">
+                          {snoozed.map(s => <SuggestionCard key={s.id} s={s} isSnoozed />)}
                         </div>
                       </details>
                     )}
