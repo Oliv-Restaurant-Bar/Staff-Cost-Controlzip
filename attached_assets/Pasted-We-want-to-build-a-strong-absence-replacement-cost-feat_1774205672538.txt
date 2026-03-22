@@ -1,0 +1,92 @@
+We want to build a strong absence + replacement cost feature for the restaurant control app.
+
+Goal:
+Track vacation and sickness properly, calculate replacement costs, and also show cost savings when absences were only partially or not replaced.
+
+Important:
+Do not break existing planning, FIX/VARIABEL logic, or reporting.
+Build this in a way that is useful for real operational controlling.
+
+Implement the better option:
+automatic replacement detection first, plus manual assignment/override.
+
+Requirements:
+
+1. Vacation and sickness tracking
+When a fixed employee is marked as:
+- Ferien
+- Krank
+
+the system should track this as an absence event.
+
+For vacation:
+- reduce vacation balance automatically
+- keep fixed salary logic unchanged
+
+For sickness:
+- record sickness days / sickness hours
+- keep fixed salary logic unchanged unless future payroll logic changes it
+
+2. Automatic replacement detection
+For absence days, automatically detect likely replacement shifts using rule-based logic:
+- same day
+- same department
+- variable employee planned or worked
+- overlapping or nearby time coverage
+- reasonable hour match
+
+3. Manual assignment / override
+In addition to automatic detection, allow manual assignment:
+- mark a variable shift as replacement for a specific absent fixed employee
+- edit or override automatic assignment
+- remove wrong assignment
+
+This is important because real operations are messy and automatic matching will not always be perfect.
+
+4. Replacement cost reporting
+Show replacement costs separately:
+- vacation-related replacement costs
+- sickness-related replacement costs
+- total absence-related replacement costs
+
+5. Savings / under-replacement logic
+If an absence was only partially replaced or not replaced at all, show this clearly.
+
+Example:
+- employee absent for 5 vacation days
+- only 4 days of replacement planned
+- 1 day not replaced
+
+The system should show:
+- replaced hours / days
+- unreplaced hours / days
+- estimated cost savings from not replacing that absence
+
+6. Clear cost logic
+Do NOT double-count fixed salary.
+Fixed salary stays as normal cost.
+The separate additional cost should only be:
+- replacement variable cost
+And the separate saving view should show:
+- what was not replaced
+- what variable cost was avoided
+
+7. Suggested outputs
+Build useful outputs in:
+- Dienstplanung
+- Reporting
+- maybe Personal FIX + Variabel later if appropriate
+
+Examples of KPIs:
+- Ferienbedingte Ersatzkosten
+- Krankheitsbedingte Ersatzkosten
+- Total Ersatzkosten durch Abwesenheit
+- Nicht ersetzte Abwesenheitsstunden
+- Geschätzte Einsparung durch nicht ersetzten Ausfall
+
+8. Explain in simple German:
+- how automatic replacement detection works
+- how manual assignment works
+- how replacement costs are calculated
+- how savings from non-replacement are calculated
+- what I should test next
