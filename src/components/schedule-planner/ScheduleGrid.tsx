@@ -101,6 +101,91 @@ const timeToMinutes = (time: string): number => {
   return h * 60 + (m || 0);
 };
 
+// Short label shown on the orange suggestion strip inside a cell
+const getSuggestionLabel = (s: CorrectionSuggestion): string => {
+  if (s.badge === 'Aushilfe') return 'Aushilfe';
+  if (s.actionType === 'remove_spat') return 'Spät';
+  if (s.actionType === 'remove_frueh') return 'Früh';
+  return 'Streichen';
+};
+
+// Suggestion strip rendered at the bottom of an overplanned cell — full width, clearly visible
+interface SuggestionStripProps {
+  s: CorrectionSuggestion;
+  inlineKey: string;
+  dateStr: string;
+  openInlineId: string | null;
+  onOpenChange: (id: string | null) => void;
+  onApply: (s: CorrectionSuggestion, dateStr: string) => void;
+  onDismiss: (id: string) => void;
+  onSnooze: (id: string) => void;
+}
+
+const SuggestionStrip = ({
+  s, inlineKey, dateStr, openInlineId, onOpenChange, onApply, onDismiss, onSnooze,
+}: SuggestionStripProps) => (
+  <Popover
+    open={openInlineId === inlineKey}
+    onOpenChange={(open) => onOpenChange(open ? inlineKey : null)}
+  >
+    <PopoverTrigger asChild>
+      <button
+        className="w-full bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white flex items-center justify-center gap-0.5 py-[3px] border-t border-orange-600 transition-colors cursor-pointer"
+        onClick={(e) => { e.stopPropagation(); }}
+        title={s.description}
+      >
+        <span className="text-[8px] font-bold leading-none">✂</span>
+        <span className="text-[8px] font-bold leading-none ml-0.5">{getSuggestionLabel(s)}</span>
+      </button>
+    </PopoverTrigger>
+    <PopoverContent className="w-64 p-3 space-y-2" align="end" side="bottom">
+      <div>
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/40 border border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300">
+            {s.badge}
+          </span>
+          <span className="text-xs font-semibold truncate">{s.employeeName}</span>
+        </div>
+        <p className="text-[10px] text-muted-foreground">{s.slotDisplay || s.description}</p>
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">−{s.savingHours.toFixed(1)} h</span>
+          {s.savingCost > 0 && (
+            <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">−CHF {s.savingCost.toFixed(0)}</span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/40">
+        <Button
+          size="sm"
+          className="h-7 px-2.5 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white flex-1"
+          onClick={() => { onApply(s, dateStr); onOpenChange(null); }}
+        >
+          <CheckCircle2 className="h-3 w-3" />
+          Übernehmen
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 px-2 text-xs gap-1"
+          onClick={() => { onDismiss(s.id); onOpenChange(null); }}
+        >
+          <EyeOff className="h-3 w-3" />
+          Ignorieren
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-xs gap-1 text-muted-foreground"
+          onClick={() => { onSnooze(s.id); onOpenChange(null); }}
+        >
+          <Clock3 className="h-3 w-3" />
+          Später
+        </Button>
+      </div>
+    </PopoverContent>
+  </Popover>
+);
+
 // Check if shifts overlap (Spät starts before Früh ends)
 const hasShiftOverlap = (daySchedule: DaySchedule | undefined): boolean => {
   if (!daySchedule?.früh?.end || !daySchedule?.spät?.start) return false;
@@ -837,18 +922,17 @@ export const ScheduleGrid = ({
                         {/* Früh cell */}
                         <td
                           className={cn(
-                            "px-0 py-0.5 border-b border-r border-border/30 text-center relative",
+                            "px-0 py-0 border-b border-r border-border/30 text-center relative align-top",
                             isWeekendDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-100/30 dark:bg-amber-900/15",
                             isSundayDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-200/40 dark:bg-amber-900/25",
                             isConfiguredDayOff && !isAfterExitDate && "bg-slate-300 dark:bg-slate-600",
-                            isAfterExitDate && "bg-slate-200 dark:bg-slate-700/50",
+                            isAfterExitDate && "bg-zinc-800 dark:bg-zinc-900",
                             isOverlapping && !isAfterExitDate && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
                             hasShortBreakWarning && !isOverlapping && !isAfterExitDate && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset",
-                            isSuggestedFrüh && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset bg-orange-50 dark:bg-orange-950/30"
+                            isSuggestedFrüh && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset"
                           )}
                           title={
-                            isAfterExitDate ? `Austritt: ${employee.employmentEndDate}` :
-                            isSuggestedFrüh ? "💡 Korrekturvorschlag – Klicken zum Bearbeiten" :
+                            isAfterExitDate ? `Nach Austritt gesperrt (${employee.employmentEndDate})` :
                             isOverlapping ? "⚠️ Schichten überlappen sich!" :
                             hasShortBreakWarning ? "⚠️ Kurze Pause (<30 Min.)" :
                             isConfiguredDayOff ? "📅 Konfigurierter wöchentlicher Ruhetag" :
@@ -856,103 +940,57 @@ export const ScheduleGrid = ({
                           }
                         >
                           {isAfterExitDate ? (
-                            <div className="flex items-center justify-center h-full min-h-[28px]">
-                              <span className="text-[8px] text-slate-400 dark:text-slate-500">–</span>
+                            <div className="flex items-center justify-center min-h-[28px] h-full">
+                              <span className="text-zinc-500 dark:text-zinc-600 text-[10px] font-bold select-none">✕</span>
                             </div>
                           ) : (
-                            <TimeInputCell
-                              value={daySchedule.früh || null}
-                              absenceType={daySchedule.frühAbsence || null}
-                              onChange={(val, absence) => handleCellChange(employee.id, dateStr, 'früh', val, absence)}
-                              slotType="früh"
-                              isWeekend={isWeekendDay}
-                              isDayOff={isConfiguredDayOff}
-                              activeTool={resolvedActiveTool}
-                            />
+                            <div className="flex flex-col">
+                              <div className="py-0.5">
+                                <TimeInputCell
+                                  value={daySchedule.früh || null}
+                                  absenceType={daySchedule.frühAbsence || null}
+                                  onChange={(val, absence) => handleCellChange(employee.id, dateStr, 'früh', val, absence)}
+                                  slotType="früh"
+                                  isWeekend={isWeekendDay}
+                                  isDayOff={isConfiguredDayOff}
+                                  activeTool={resolvedActiveTool}
+                                />
+                              </div>
+                              {isSuggestedFrüh && !isOverlapping && frühSuggestion && (
+                                <SuggestionStrip
+                                  s={frühSuggestion}
+                                  inlineKey={frühInlineKey}
+                                  dateStr={dateStr}
+                                  openInlineId={openInlineId}
+                                  onOpenChange={setOpenInlineId}
+                                  onApply={handleApplySuggestion}
+                                  onDismiss={(id) => setDismissedIds(prev => [...prev, id])}
+                                  onSnooze={(id) => setSnoozedIds(prev => [...prev, id])}
+                                />
+                              )}
+                            </div>
                           )}
                           {isOverlapping && !isAfterExitDate && (
                             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center" title="Schichten überlappen sich!">
                               <span className="text-white text-[8px] font-bold">!</span>
                             </div>
-                          )}
-                          {isSuggestedFrüh && !isOverlapping && !isAfterExitDate && frühSuggestion && (
-                            <Popover
-                              open={openInlineId === frühInlineKey}
-                              onOpenChange={(open) => setOpenInlineId(open ? frühInlineKey : null)}
-                            >
-                              <PopoverTrigger asChild>
-                                <button
-                                  className="absolute top-0 right-0 w-3.5 h-3.5 bg-orange-500 hover:bg-orange-600 rounded-bl-sm flex items-center justify-center transition-colors"
-                                  onClick={(e) => { e.stopPropagation(); }}
-                                  title="Korrekturvorschlag"
-                                >
-                                  <span className="text-white text-[7px] font-bold leading-none">✂</span>
-                                </button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-64 p-3 space-y-2" align="end" side="bottom">
-                                <div>
-                                  <div className="flex items-center gap-1.5 mb-1">
-                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/40 border border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300">
-                                      {frühSuggestion.badge}
-                                    </span>
-                                    <span className="text-xs font-semibold truncate">{frühSuggestion.employeeName}</span>
-                                  </div>
-                                  <p className="text-[10px] text-muted-foreground">{frühSuggestion.slotDisplay || frühSuggestion.description}</p>
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">−{frühSuggestion.savingHours.toFixed(1)} h</span>
-                                    {frühSuggestion.savingCost > 0 && (
-                                      <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">−CHF {frühSuggestion.savingCost.toFixed(0)}</span>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/40">
-                                  <Button
-                                    size="sm"
-                                    className="h-7 px-2.5 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white flex-1"
-                                    onClick={() => { handleApplySuggestion(frühSuggestion, dateStr); setOpenInlineId(null); }}
-                                  >
-                                    <CheckCircle2 className="h-3 w-3" />
-                                    Übernehmen
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-7 px-2 text-xs gap-1"
-                                    onClick={() => { setDismissedIds(prev => [...prev, frühSuggestion.id]); setOpenInlineId(null); }}
-                                  >
-                                    <EyeOff className="h-3 w-3" />
-                                    Ignorieren
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-7 px-2 text-xs gap-1 text-muted-foreground"
-                                    onClick={() => { setSnoozedIds(prev => [...prev, frühSuggestion.id]); setOpenInlineId(null); }}
-                                  >
-                                    <Clock3 className="h-3 w-3" />
-                                    Später
-                                  </Button>
-                                </div>
-                              </PopoverContent>
-                            </Popover>
                           )}
                         </td>
                         {/* Spät cell */}
                         <td
                           className={cn(
-                            "px-0 py-0.5 border-b text-center relative",
+                            "px-0 py-0 border-b text-center relative align-top",
                             "border-r-4 border-r-primary/30",
                             isWeekendDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-100/30 dark:bg-amber-900/15",
                             isSundayDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-200/40 dark:bg-amber-900/25 border-r-primary/50",
                             isConfiguredDayOff && !isAfterExitDate && "bg-slate-300 dark:bg-slate-600",
-                            isAfterExitDate && "bg-slate-200 dark:bg-slate-700/50",
+                            isAfterExitDate && "bg-zinc-800 dark:bg-zinc-900",
                             isOverlapping && !isAfterExitDate && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
                             hasShortBreakWarning && !isOverlapping && !isAfterExitDate && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset",
-                            isSuggestedSpät && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset bg-orange-50 dark:bg-orange-950/30"
+                            isSuggestedSpät && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset"
                           )}
                           title={
-                            isAfterExitDate ? `Austritt: ${employee.employmentEndDate}` :
-                            isSuggestedSpät ? "💡 Korrekturvorschlag – Klicken zum Bearbeiten" :
+                            isAfterExitDate ? `Nach Austritt gesperrt (${employee.employmentEndDate})` :
                             isOverlapping ? "⚠️ Schichten überlappen sich!" :
                             hasShortBreakWarning ? "⚠️ Kurze Pause (<30 Min.)" :
                             isConfiguredDayOff ? "📅 Konfigurierter wöchentlicher Ruhetag" :
@@ -960,85 +998,40 @@ export const ScheduleGrid = ({
                           }
                         >
                           {isAfterExitDate ? (
-                            <div className="flex items-center justify-center h-full min-h-[28px]">
-                              <span className="text-[8px] text-slate-400 dark:text-slate-500">–</span>
+                            <div className="flex items-center justify-center min-h-[28px] h-full">
+                              <span className="text-zinc-500 dark:text-zinc-600 text-[10px] font-bold select-none">✕</span>
                             </div>
                           ) : (
-                            <TimeInputCell
-                              value={daySchedule.spät || null}
-                              absenceType={daySchedule.spätAbsence || null}
-                              onChange={(val, absence) => handleCellChange(employee.id, dateStr, 'spät', val, absence)}
-                              slotType="spät"
-                              isWeekend={isWeekendDay}
-                              isDayOff={isConfiguredDayOff}
-                              activeTool={resolvedActiveTool}
-                            />
+                            <div className="flex flex-col">
+                              <div className="py-0.5">
+                                <TimeInputCell
+                                  value={daySchedule.spät || null}
+                                  absenceType={daySchedule.spätAbsence || null}
+                                  onChange={(val, absence) => handleCellChange(employee.id, dateStr, 'spät', val, absence)}
+                                  slotType="spät"
+                                  isWeekend={isWeekendDay}
+                                  isDayOff={isConfiguredDayOff}
+                                  activeTool={resolvedActiveTool}
+                                />
+                              </div>
+                              {isSuggestedSpät && !isOverlapping && spätSuggestion && (
+                                <SuggestionStrip
+                                  s={spätSuggestion}
+                                  inlineKey={spätInlineKey}
+                                  dateStr={dateStr}
+                                  openInlineId={openInlineId}
+                                  onOpenChange={setOpenInlineId}
+                                  onApply={handleApplySuggestion}
+                                  onDismiss={(id) => setDismissedIds(prev => [...prev, id])}
+                                  onSnooze={(id) => setSnoozedIds(prev => [...prev, id])}
+                                />
+                              )}
+                            </div>
                           )}
                           {isOverlapping && !isAfterExitDate && (
                             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center" title="Schichten überlappen sich!">
                               <span className="text-white text-[8px] font-bold">!</span>
                             </div>
-                          )}
-                          {isSuggestedSpät && !isOverlapping && !isAfterExitDate && spätSuggestion && (
-                            <Popover
-                              open={openInlineId === spätInlineKey}
-                              onOpenChange={(open) => setOpenInlineId(open ? spätInlineKey : null)}
-                            >
-                              <PopoverTrigger asChild>
-                                <button
-                                  className="absolute top-0 right-0 w-3.5 h-3.5 bg-orange-500 hover:bg-orange-600 rounded-bl-sm flex items-center justify-center transition-colors"
-                                  onClick={(e) => { e.stopPropagation(); }}
-                                  title="Korrekturvorschlag"
-                                >
-                                  <span className="text-white text-[7px] font-bold leading-none">✂</span>
-                                </button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-64 p-3 space-y-2" align="end" side="bottom">
-                                <div>
-                                  <div className="flex items-center gap-1.5 mb-1">
-                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/40 border border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300">
-                                      {spätSuggestion.badge}
-                                    </span>
-                                    <span className="text-xs font-semibold truncate">{spätSuggestion.employeeName}</span>
-                                  </div>
-                                  <p className="text-[10px] text-muted-foreground">{spätSuggestion.slotDisplay || spätSuggestion.description}</p>
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">−{spätSuggestion.savingHours.toFixed(1)} h</span>
-                                    {spätSuggestion.savingCost > 0 && (
-                                      <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">−CHF {spätSuggestion.savingCost.toFixed(0)}</span>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/40">
-                                  <Button
-                                    size="sm"
-                                    className="h-7 px-2.5 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white flex-1"
-                                    onClick={() => { handleApplySuggestion(spätSuggestion, dateStr); setOpenInlineId(null); }}
-                                  >
-                                    <CheckCircle2 className="h-3 w-3" />
-                                    Übernehmen
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-7 px-2 text-xs gap-1"
-                                    onClick={() => { setDismissedIds(prev => [...prev, spätSuggestion.id]); setOpenInlineId(null); }}
-                                  >
-                                    <EyeOff className="h-3 w-3" />
-                                    Ignorieren
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-7 px-2 text-xs gap-1 text-muted-foreground"
-                                    onClick={() => { setSnoozedIds(prev => [...prev, spätSuggestion.id]); setOpenInlineId(null); }}
-                                  >
-                                    <Clock3 className="h-3 w-3" />
-                                    Später
-                                  </Button>
-                                </div>
-                              </PopoverContent>
-                            </Popover>
                           )}
                         </td>
                         {/* Weekly sum cell after Sunday - with color coding */}

@@ -1,0 +1,67 @@
+Two important Dienstplanung details are still not correct.
+
+Current problems:
+1. The optimization/correction suggestion still does NOT appear directly in the grid near the affected employee/shift.
+2. Terminated employee blocked days (example: David after Austrittsdatum) are still too light grey. They need to be much darker, clearly blocked, and visually unmistakable.
+
+Goal:
+Make correction suggestions truly visible in the grid, and make post-exit blocked days clearly black/dark-blocked.
+
+Important:
+Do not change unrelated modules.
+Keep all current planning logic intact.
+Keep manager/admin permissions intact.
+Do not move the workflow back into the popup.
+
+Tasks:
+
+1. Direct grid suggestion visibility
+The correction suggestion must appear directly in the Dienstplanung grid for the affected employee/shift/day.
+Not just as a small subtle marker.
+Make it obvious and actionable.
+
+Requirements:
+- show a visible suggestion label/badge near the affected shift cell
+- explain the proposed correction, e.g.:
+  - Spätschicht entfernen
+  - Aushilfe streichen
+  - Schicht kürzen
+- include actions directly there:
+  - Übernehmen
+  - Ignorieren
+  - Später
+
+2. Suggestion placement
+The suggestion must appear in normal real overplanning cases, especially where the system already identifies candidates.
+If needed, improve the rendering logic so suggestions are actually visible in the grid and not hidden by layout/condition issues.
+
+3. Darker blocked days after Austritt
+For employees with an exit date during the displayed month:
+- all days after Austrittsdatum must be clearly blocked in a much darker style
+- use a nearly black / very dark grey blocked appearance
+- make it clearly different from:
+  - normal empty cells
+  - free days
+  - weekends
+  - absences
+- these blocked cells must visually communicate:
+  "employee no longer available"
+
+Optional:
+- add a small icon, slash, or tooltip like "Nach Austritt gesperrt"
+
+4. Preserve logic
+Do not break:
+- current exit-date month logic
+- hiding employees in later months
+- Plan / Ist / Ver.
+- click-to-apply
+- custom shifts
+- overplanning header warnings
+
+5. Explain in simple German:
+- why the optimization suggestion was not yet visible in the grid
+- what exact rendering/logic you fixed
+- how the suggestion now appears directly in the plan
+- how blocked days after Austritt now look
+- what I should test next
