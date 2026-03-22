@@ -1,0 +1,65 @@
+The overplanning dialog and correction suggestion feature is still not usable enough.
+
+Current problems:
+1. In real use, the dialog still often shows no actionable correction suggestions.
+2. The schedule grid still does not visually mark which employee/shift should be corrected.
+3. The popup/dialog is not practical: it is too small, not fully visible, and I cannot comfortably see all relevant information at once.
+
+Goal:
+Make the correction workflow actually usable in operations.
+
+Important:
+Do not change unrelated modules.
+Keep all planning logic intact.
+Do not build full AI auto-planning yet.
+Fix visibility, usability, and actual suggestion rendering.
+
+Tasks:
+
+1. Make correction suggestions actually appear
+Review the current rule-based suggestion logic and ensure it produces suggestions reliably in common overplanning cases, especially:
+- too many service hours on a day
+- extra helper
+- too many evening shifts
+- duplicate or redundant staffing
+- high cost overrun compared to target revenue
+
+If no suggestions are produced, improve the logic until normal overplanning cases generate visible proposals.
+
+2. Show actionable suggestions clearly in the dialog
+In the dialog, render a clearly visible section "Korrekturvorschläge" with entries that contain:
+- employee name
+- affected shift
+- proposed action
+- saved hours
+- saved CHF
+- action buttons:
+  - Übernehmen
+  - Ignorieren
+  - Später
+
+3. Visual marking in the schedule grid
+Directly mark the proposed correction in the grid itself for the affected day:
+- highlight the employee row section and/or specific shift cell
+- use a clear warning outline or badge
+- make it obvious which planned shift is the candidate for removal or reduction
+
+4. Improve dialog usability and size
+The popup must be practical on real screens.
+Please improve it so:
+- it uses more width and height
+- it is scrollable internally if needed
+- all important KPI and suggestion areas are visible without awkward clipping
+- it remains usable on laptop screens
+- layout should prioritize readability over compactness
+
+5. Keep the day header warning
+The entire day header warning block should remain highlighted for overplanned days.
+
+6. Explain in simple German:
+- why suggestions were previously not appearing
+- what exact logic/path you fixed
+- how the suggestion now appears
+- how the affected employee/shift is marked in the grid
+- what changed in the popup size/usability
+- what I should test next
