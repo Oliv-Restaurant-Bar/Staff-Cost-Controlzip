@@ -376,8 +376,15 @@ const Personalstamm = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const load = async () => {
+      console.log('[Personalstamm] load() start — isAdmin:', isAdminRef.current);
+      try {
       const emps = await loadEmployees();
+      console.log('[Personalstamm] loadEmployees result:', {
+        isNull: emps === null,
+        count: emps?.length ?? 'n/a',
+      });
       const local = loadLocalData();
+      console.log('[Personalstamm] localData keys:', Object.keys(local).length);
 
       if (emps) {
         // ── Einmalige Migration: localStorage HR-Daten → Supabase ──────────
@@ -449,16 +456,21 @@ const Personalstamm = () => {
 
         // Migrierte Records in die finale Liste einsetzen
         const finalEmps = emps.map(e => migrated.find(m => m.id === e.id) ?? e);
+        console.log('[Personalstamm] setEmployees:', finalEmps.length, 'employees');
         setEmployees(finalEmps);
         if (migrated.length > 0) {
           console.info(`[Personalstamm] ${migrated.length} Mitarbeiter-Datensätze aus localStorage nach Supabase migriert.`);
         }
+      } else {
+        console.warn('[Personalstamm] loadEmployees returned null — employees will stay empty');
       }
       setLocalData(local);
 
       // Submissions laden (nur für Admin)
       if (isAdminRef.current) {
+        console.log('[Personalstamm] loading onboarding submissions (admin)');
         const { data: subs, tableExists, permissionError, anonInsertBlocked: aib, employeeStatusMissing: esm } = await loadOnboardingSubmissions();
+        console.log('[Personalstamm] submissions result:', { count: subs.length, tableExists, permissionError });
         setSubmissions(subs);
         setSubmissionsDbReady(tableExists);
         setSubmissionsPermissionError(permissionError);
@@ -466,7 +478,14 @@ const Personalstamm = () => {
         setEmployeeStatusMissing(esm);
       }
 
+      console.log('[Personalstamm] load() complete — calling setLoading(false)');
       setLoading(false);
+      } catch (err) {
+        // Safety: always clear loading even if something unexpected throws.
+        // Without this, the left column would show "Wird geladen..." forever.
+        console.error('[Personalstamm] load() threw unexpectedly — forcing setLoading(false):', err);
+        setLoading(false);
+      }
     };
     load();
   }, []); // intentionally empty — see comment above

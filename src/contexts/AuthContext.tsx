@@ -28,6 +28,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // onAuthStateChange will skip INITIAL_SESSION so we don't double-load.
   const bootDoneRef = useRef(false);
 
+  // Track the user ID established by getSession() so we can detect whether a
+  // subsequent SIGNED_IN event is a real new sign-in (different user) or just
+  // a background token refresh that Supabase reports as SIGNED_IN on some
+  // client versions.  Silent if same user post-boot; full reload if new user.
+  const currentUserIdRef = useRef<string | null>(null);
+
   // E-Mail-Fallback (greift nur wenn kein user_profiles-Eintrag existiert)
   const EMAIL_ROLE_MAP: Record<string, UserRole> = {
     'admin@olivbern.ch':   'admin',
@@ -129,6 +135,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
       setSession(session);
       setUser(session?.user ?? null);
+      currentUserIdRef.current = session?.user?.id ?? null;
       if (session?.user) {
         await loadUserRole(session.user.id, session.user.email);
       }
@@ -142,38 +149,71 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         event,
         hasSession: !!session,
         userId: session?.user?.id,
+        bootDone: bootDoneRef.current,
+        sameUser: session?.user?.id === currentUserIdRef.current,
       });
 
-      // INITIAL_SESSION is already handled by getSession() above — skip it.
-      // Firing it again would double-load the role and cause loading to bounce.
+      // ── INITIAL_SESSION: handled by getSession() above — always skip ──────────
       if (event === 'INITIAL_SESSION') {
         console.log('[AUTH] INITIAL_SESSION skipped — handled by getSession()');
         return;
       }
 
-      // TOKEN_REFRESHED: JWT renewed but user/role unchanged — update session
-      // silently WITHOUT touching loading or re-fetching the role.
-      // This prevents the global spinner from appearing every ~hour.
+      // ── TOKEN_REFRESHED: JWT renewed, same user, no role change ───────────────
+      // Update session silently. No spinner, no role reload.
       if (event === 'TOKEN_REFRESHED') {
-        console.log('[AUTH] Token refreshed – updating session silently');
+        console.log('[AUTH] TOKEN_REFRESHED – silent session update');
         setSession(session);
         setUser(session?.user ?? null);
         return;
       }
 
-      // SIGNED_IN, SIGNED_OUT, USER_UPDATED — handle normally
-      setSession(session);
-      setUser(session?.user ?? null);
+      // ── USER_UPDATED: profile changed, same user ───────────────────────────────
+      if (event === 'USER_UPDATED') {
+        console.log('[AUTH] USER_UPDATED – silent session update');
+        setSession(session);
+        setUser(session?.user ?? null);
+        return;
+      }
 
-      if (session?.user) {
-        setLoading(true);
-        await loadUserRole(session.user.id, session.user.email);
-        console.log('[AUTH] onAuthStateChange role load complete');
-        setLoading(false);
-      } else {
-        console.log('[AUTH] No session → clearing role');
+      // ── SIGNED_IN (post-boot, same user) ──────────────────────────────────────
+      // Supabase can fire SIGNED_IN after getSession() completes when it
+      // refreshes an expired JWT in the background. This is NOT a new login —
+      // just a token refresh reported as SIGNED_IN on some client versions.
+      // Treat it silently to avoid unmounting pages with the global spinner.
+      if (event === 'SIGNED_IN' && bootDoneRef.current &&
+          session?.user?.id === currentUserIdRef.current) {
+        console.log('[AUTH] SIGNED_IN (same user, post-boot) – silent session update');
+        setSession(session);
+        setUser(session?.user ?? null);
+        return;
+      }
+
+      // ── SIGNED_IN (new user after sign-out) or pre-boot ───────────────────────
+      // This is a real login event: update user ID tracking and reload role.
+      if (event === 'SIGNED_IN') {
+        console.log('[AUTH] SIGNED_IN (new/different user or pre-boot) – full role reload');
+        setSession(session);
+        setUser(session?.user ?? null);
+        if (session?.user) {
+          currentUserIdRef.current = session.user.id;
+          setLoading(true);
+          await loadUserRole(session.user.id, session.user.email);
+          console.log('[AUTH] SIGNED_IN role load complete');
+          setLoading(false);
+        }
+        return;
+      }
+
+      // ── SIGNED_OUT: full reset ─────────────────────────────────────────────────
+      if (event === 'SIGNED_OUT') {
+        console.log('[AUTH] SIGNED_OUT – clearing auth state');
+        setSession(null);
+        setUser(null);
         setRole('kueche_manager');
         setLoading(false);
+        bootDoneRef.current = false;
+        currentUserIdRef.current = null;
       }
     });
 
