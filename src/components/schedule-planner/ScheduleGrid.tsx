@@ -1240,219 +1240,216 @@ export const ScheduleGrid = ({
 
       return (
         <Dialog open={true} onOpenChange={() => setOpenDialogDay(null)}>
-          <DialogContent className="max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden p-0">
-            {/* ── Sticky header ──────────────────────────────────── */}
-            <DialogHeader className="shrink-0 px-5 pt-5 pb-3 border-b border-border/50">
-              <DialogTitle className="flex items-center gap-2 text-red-600">
-                <AlertTriangle className="h-5 w-5 shrink-0" />
-                Kostenwarnung — {dateLabel}
-              </DialogTitle>
-              <DialogDescription className="sr-only">
-                Überplanungsdetails und Korrekturvorschläge für diesen Tag
-              </DialogDescription>
-            </DialogHeader>
+          <DialogContent className="max-w-3xl p-0 gap-0 overflow-hidden">
+            {/* ── Inner flex wrapper owns all layout — avoids fighting DialogContent base grid/padding ── */}
+            <div style={{ display: 'flex', flexDirection: 'column', maxHeight: '88vh', overflow: 'hidden' }}>
 
-            {/* ── KPI strip — always visible, not scrolled ───────── */}
-            <div className="shrink-0 px-5 py-3 border-b border-border/50 bg-muted/30">
-              <div className="grid grid-cols-6 gap-3">
-                <div className="space-y-0.5">
-                  <div className="text-[10px] text-muted-foreground">Umsatz budg.</div>
-                  <div className="text-sm font-semibold">CHF {stats.plannedRevenue.toFixed(0)}</div>
+              {/* ── Fixed header ───────────────────────────────────── */}
+              <div style={{ flexShrink: 0, padding: '16px 20px 12px', borderBottom: '1px solid var(--border)' }}>
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-red-600" />
+                  <span className="text-base font-semibold text-red-600">Kostenwarnung — {dateLabel}</span>
                 </div>
-                <div className="space-y-0.5">
-                  <div className="text-[10px] text-muted-foreground">Kosten plan</div>
-                  <div className="text-sm font-semibold">CHF {stats.totalCosts.toFixed(0)}</div>
-                </div>
-                <div className="space-y-0.5">
-                  <div className="text-[10px] text-muted-foreground">Stunden plan</div>
-                  <div className="text-sm font-semibold">{stats.totalHours.toFixed(1)} h</div>
-                </div>
-                <div className="space-y-0.5">
-                  <div className="text-[10px] text-muted-foreground">PKQ aktuell</div>
-                  <div className="text-sm font-bold text-red-600">
-                    {stats.plannedRevenue > 0 ? (stats.totalCosts / stats.plannedRevenue * 100).toFixed(1) : '–'}%
-                    <span className="text-[9px] font-normal text-muted-foreground ml-0.5">/{laborCostThreshold}%</span>
-                  </div>
-                </div>
-                <div className="space-y-0.5">
-                  <div className="text-[10px] text-muted-foreground">Zu viel CHF</div>
-                  <div className="text-sm font-bold text-red-600">+CHF {excessCosts.toFixed(0)}</div>
-                </div>
-                <div className="space-y-0.5">
-                  <div className="text-[10px] text-muted-foreground">Zu viel Std.</div>
-                  <div className="text-sm font-bold text-red-600">+{stats.excessHours.toFixed(1)} h</div>
+                <span className="sr-only">Überplanungsdetails und Korrekturvorschläge für diesen Tag</span>
+              </div>
+
+              {/* ── Fixed KPI strip ────────────────────────────────── */}
+              <div style={{ flexShrink: 0, padding: '10px 20px', borderBottom: '1px solid var(--border)', background: 'var(--muted)/0.3' }}
+                className="bg-muted/30">
+                <div className="grid grid-cols-6 gap-x-4 gap-y-1">
+                  {[
+                    { label: 'Umsatz budg.', value: `CHF ${stats.plannedRevenue.toFixed(0)}`, red: false },
+                    { label: 'Kosten plan', value: `CHF ${stats.totalCosts.toFixed(0)}`, red: false },
+                    { label: 'Stunden plan', value: `${stats.totalHours.toFixed(1)} h`, red: false },
+                    {
+                      label: 'PKQ aktuell',
+                      value: `${stats.plannedRevenue > 0 ? (stats.totalCosts / stats.plannedRevenue * 100).toFixed(1) : '–'}% / ${laborCostThreshold}%`,
+                      red: true,
+                    },
+                    { label: 'Zu viel CHF', value: `+CHF ${excessCosts.toFixed(0)}`, red: true },
+                    { label: 'Zu viel Std.', value: `+${stats.excessHours.toFixed(1)} h`, red: true },
+                  ].map(({ label, value, red }) => (
+                    <div key={label} className="space-y-0.5 min-w-0">
+                      <div className="text-[10px] text-muted-foreground truncate">{label}</div>
+                      <div className={cn("text-sm font-bold", red ? "text-red-600 dark:text-red-400" : "text-foreground")}>{value}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </div>
 
-            {/* ── Scrollable body ────────────────────────────────── */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 min-h-0">
-
-              {/* ── Employee list with inline suggestions ──────────── */}
-              {breakdown.length > 0 && (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Mitarbeiter & Korrekturvorschläge
-                    </div>
-                    {pendingCount > 0 && (
-                      <div className="flex items-center gap-1 text-[10px] text-orange-600 dark:text-orange-400 font-medium">
-                        <Lightbulb className="h-3 w-3" />
-                        {pendingCount} Vorschlag{pendingCount !== 1 ? 'schläge' : ''} offen
-                        {totalSaving > 0 && <span className="text-emerald-600 dark:text-emerald-400 ml-0.5">(−CHF {totalSaving.toFixed(0)})</span>}
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    {breakdown.map(({ employee, hours, cost, shiftDisplay }) => {
-                      const suggestion = suggestionByEmpId.get(employee.id);
-                      const isSnoozed = suggestion ? snoozedIds.includes(suggestion.id) : false;
-                      const isDismissed = suggestion ? dismissedIds.includes(suggestion.id) : false;
-                      const showSuggestion = suggestion && !isDismissed;
-
-                      return (
-                        <div
-                          key={employee.id}
-                          className={cn(
-                            "rounded-lg border overflow-hidden",
-                            showSuggestion && !isSnoozed
-                              ? "border-orange-300 dark:border-orange-700"
-                              : "border-border/50"
-                          )}
-                        >
-                          {/* Employee row */}
-                          <div className={cn(
-                            "flex items-center gap-3 px-3 py-2",
-                            showSuggestion && !isSnoozed
-                              ? "bg-orange-50 dark:bg-orange-900/20"
-                              : "bg-muted/20"
-                          )}>
-                            {/* Employment type badge */}
-                            <span className={cn(
-                              "text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 uppercase",
-                              employee.employmentType === 'aushilfe'
-                                ? "bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300"
-                                : employee.employmentType === 'vollzeit'
-                                  ? "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300"
-                                  : "bg-muted text-muted-foreground"
-                            )}>
-                              {employee.employmentType === 'aushilfe' ? 'AH' :
-                               employee.employmentType === 'vollzeit' ? 'VZ' :
-                               employee.employmentType === 'teilzeit' ? 'TZ' : 'MJ'}
-                            </span>
-                            {/* Name */}
-                            <span className="font-semibold text-sm flex-1 min-w-0 truncate">{employee.name}</span>
-                            {/* Shift times */}
-                            <span className="text-[11px] text-muted-foreground shrink-0 font-mono">{shiftDisplay}</span>
-                            {/* Hours & cost */}
-                            <span className="text-[11px] text-muted-foreground shrink-0">{hours.toFixed(1)} h</span>
-                            <span className="text-xs font-semibold shrink-0 min-w-[62px] text-right">CHF {cost.toFixed(0)}</span>
-                          </div>
-
-                          {/* Inline suggestion block */}
-                          {showSuggestion && (
-                            <div className={cn(
-                              "px-3 py-2 border-t",
-                              isSnoozed
-                                ? "border-border/30 bg-muted/10 opacity-60"
-                                : "border-orange-200 dark:border-orange-800 bg-orange-50/80 dark:bg-orange-900/15"
-                            )}>
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                                  <Lightbulb className="h-3.5 w-3.5 shrink-0 text-orange-600 dark:text-orange-400" />
-                                  <span className="text-xs font-semibold text-orange-700 dark:text-orange-300">
-                                    Vorschlag:
-                                  </span>
-                                  <span className="text-xs text-foreground font-medium truncate">
-                                    {getSuggestionActionLabel(suggestion)}
-                                  </span>
-                                  {suggestion.savingCost > 0 && (
-                                    <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold shrink-0">
-                                      −{suggestion.savingHours.toFixed(1)} h / −CHF {suggestion.savingCost.toFixed(0)}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  <Button
-                                    size="sm"
-                                    className="h-7 px-3 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                                    onClick={() => { handleApplySuggestion(suggestion, openDialogDay); }}
-                                  >
-                                    <CheckCircle2 className="h-3 w-3" />
-                                    Übernehmen
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-7 px-2.5 text-xs gap-1"
-                                    onClick={() => setDismissedIds(prev => [...prev, suggestion.id])}
-                                  >
-                                    <EyeOff className="h-3 w-3" />
-                                    Ignorieren
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-7 px-2 text-xs gap-1 text-muted-foreground"
-                                    onClick={() =>
-                                      isSnoozed
-                                        ? setSnoozedIds(prev => prev.filter(x => x !== suggestion.id))
-                                        : setSnoozedIds(prev => [...prev, suggestion.id])
-                                    }
-                                  >
-                                    <Clock3 className="h-3 w-3" />
-                                    {isSnoozed ? 'Reaktivieren' : 'Später'}
-                                  </Button>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {allSuggestions.length === 0 && breakdown.length > 0 && (
-                    <div className="mt-2 rounded-lg border border-muted bg-muted/20 px-3 py-2 text-xs text-muted-foreground text-center">
-                      Keine entfernbaren Schichten gefunden — Umsatz erhöhen oder Budget anpassen.
-                    </div>
+              {/* ── Section header: count + savings ────────────────── */}
+              {(breakdown.length > 0 || allSuggestions.length > 0) && (
+                <div style={{ flexShrink: 0, padding: '8px 20px 6px' }} className="flex items-center justify-between border-b border-border/40 bg-background">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Mitarbeiter &amp; Korrekturvorschläge
+                  </span>
+                  {pendingCount > 0 && (
+                    <span className="flex items-center gap-1 text-[11px] font-medium text-orange-600 dark:text-orange-400">
+                      <Lightbulb className="h-3.5 w-3.5" />
+                      {pendingCount} Vorschlag{pendingCount !== 1 ? 'schläge' : ''} offen
+                      {totalSaving > 0 && (
+                        <span className="text-emerald-700 dark:text-emerald-400 ml-0.5">
+                          (−CHF {totalSaving.toFixed(0)})
+                        </span>
+                      )}
+                    </span>
                   )}
                 </div>
               )}
 
-              {/* ── What-if revenue calculator ─────────────────────── */}
-              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3">
-                <div className="text-[10px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-2">
-                  Umsatz-Szenario
-                </div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <p className="text-xs text-muted-foreground shrink-0">
-                    Nötig für {laborCostThreshold}% PKQ:&nbsp;
-                    <span className="font-semibold text-foreground">CHF {revenueNeeded.toFixed(0)}</span>
-                  </p>
-                  <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-                    <Label htmlFor="whatif" className="text-xs shrink-0 text-muted-foreground">Hypothetisch:</Label>
-                    <div className="relative flex-1">
-                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">CHF</span>
-                      <Input
-                        id="whatif"
-                        type="number"
-                        placeholder={revenueNeeded.toFixed(0)}
-                        value={whatIfRevenue}
-                        onChange={e => setWhatIfRevenue(e.target.value)}
-                        className="pl-9 h-8 text-xs"
-                      />
+              {/* ── Scrollable employee + suggestion list ───────────── */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '12px 20px', minHeight: 0 }}>
+                <div className="space-y-2">
+                  {breakdown.length === 0 && (
+                    <div className="py-6 text-center text-sm text-muted-foreground">
+                      Keine Schichten mit Kosten für diesen Tag gefunden.
                     </div>
-                    {whatIfPkq !== null && (
-                      <div className={cn(
-                        "text-xs font-bold px-2 py-1 rounded shrink-0",
-                        whatIfPkq <= laborCostThreshold
-                          ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
-                          : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-                      )}>
-                        PKQ: {whatIfPkq.toFixed(1)}%
-                        {whatIfPkq <= laborCostThreshold ? ' ✓' : ' ✗'}
+                  )}
+                  {breakdown.map(({ employee, hours, cost, shiftDisplay }) => {
+                    const suggestion = suggestionByEmpId.get(employee.id);
+                    const isSnoozed = suggestion ? snoozedIds.includes(suggestion.id) : false;
+                    const isDismissed = suggestion ? dismissedIds.includes(suggestion.id) : false;
+                    const showSuggestion = !!suggestion && !isDismissed;
+
+                    return (
+                      <div
+                        key={employee.id}
+                        className={cn(
+                          "rounded-lg border overflow-hidden",
+                          showSuggestion && !isSnoozed
+                            ? "border-orange-300 dark:border-orange-600"
+                            : "border-border/60"
+                        )}
+                      >
+                        {/* ── Employee row ── */}
+                        <div className={cn(
+                          "flex items-center gap-3 px-3 py-2.5",
+                          showSuggestion && !isSnoozed
+                            ? "bg-orange-50 dark:bg-orange-950/30"
+                            : "bg-muted/20"
+                        )}>
+                          <span className={cn(
+                            "text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 uppercase tracking-wide",
+                            employee.employmentType === 'aushilfe'
+                              ? "bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300"
+                              : employee.employmentType === 'vollzeit'
+                                ? "bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300"
+                                : "bg-muted text-muted-foreground"
+                          )}>
+                            {employee.employmentType === 'aushilfe' ? 'AH'
+                              : employee.employmentType === 'vollzeit' ? 'VZ'
+                              : employee.employmentType === 'teilzeit' ? 'TZ' : 'MJ'}
+                          </span>
+                          <span className="font-semibold text-sm flex-1 min-w-0 truncate">{employee.name}</span>
+                          {shiftDisplay && (
+                            <span className="text-[11px] text-muted-foreground shrink-0 font-mono bg-muted/40 px-1.5 py-0.5 rounded">
+                              {shiftDisplay}
+                            </span>
+                          )}
+                          <span className="text-[11px] text-muted-foreground shrink-0">{hours.toFixed(1)} h</span>
+                          <span className="text-xs font-semibold shrink-0 w-[68px] text-right">CHF {cost.toFixed(0)}</span>
+                        </div>
+
+                        {/* ── Inline suggestion block ── */}
+                        {showSuggestion && (
+                          <div className={cn(
+                            "px-3 py-2.5 border-t flex items-center gap-3 flex-wrap",
+                            isSnoozed
+                              ? "border-border/30 bg-muted/20 opacity-70"
+                              : "border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20"
+                          )}>
+                            {/* Suggestion text */}
+                            <div className="flex items-center gap-2 flex-1 min-w-[180px]">
+                              <Lightbulb className="h-4 w-4 shrink-0 text-orange-500 dark:text-orange-400" />
+                              <div className="min-w-0">
+                                <span className="text-xs font-bold text-orange-700 dark:text-orange-300">Vorschlag: </span>
+                                <span className="text-xs font-semibold text-foreground">{getSuggestionActionLabel(suggestion)}</span>
+                                {suggestion.slotDisplay && (
+                                  <span className="text-[10px] text-muted-foreground ml-1.5 font-mono">({suggestion.slotDisplay})</span>
+                                )}
+                                {suggestion.savingHours > 0 && (
+                                  <span className="ml-2 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                                    −{suggestion.savingHours.toFixed(1)} h
+                                    {suggestion.savingCost > 0 && ` / −CHF ${suggestion.savingCost.toFixed(0)}`}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {/* Action buttons */}
+                            <div className="flex items-center gap-2 shrink-0 ml-auto">
+                              <Button
+                                size="sm"
+                                className="h-7 px-3 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                                onClick={() => handleApplySuggestion(suggestion, openDialogDay)}
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                Übernehmen
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2.5 text-xs gap-1.5"
+                                onClick={() => setDismissedIds(prev => [...prev, suggestion.id])}
+                              >
+                                <EyeOff className="h-3.5 w-3.5" />
+                                Ignorieren
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2.5 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                                onClick={() =>
+                                  isSnoozed
+                                    ? setSnoozedIds(prev => prev.filter(x => x !== suggestion.id))
+                                    : setSnoozedIds(prev => [...prev, suggestion.id])
+                                }
+                              >
+                                <Clock3 className="h-3.5 w-3.5" />
+                                {isSnoozed ? 'Reaktivieren' : 'Später'}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
+                    );
+                  })}
+                </div>
+
+                {/* ── What-if revenue calculator ───────────────────── */}
+                <div className="mt-4 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3">
+                  <div className="text-[10px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-2">
+                    Umsatz-Szenario
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <p className="text-xs text-muted-foreground shrink-0">
+                      Nötig für {laborCostThreshold}% PKQ:{' '}
+                      <span className="font-semibold text-foreground">CHF {revenueNeeded.toFixed(0)}</span>
+                    </p>
+                    <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                      <Label htmlFor="whatif" className="text-xs shrink-0 text-muted-foreground">Hypothetisch:</Label>
+                      <div className="relative flex-1">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">CHF</span>
+                        <Input
+                          id="whatif"
+                          type="number"
+                          placeholder={revenueNeeded.toFixed(0)}
+                          value={whatIfRevenue}
+                          onChange={e => setWhatIfRevenue(e.target.value)}
+                          className="pl-9 h-8 text-xs"
+                        />
+                      </div>
+                      {whatIfPkq !== null && (
+                        <div className={cn(
+                          "text-xs font-bold px-2 py-1 rounded shrink-0",
+                          whatIfPkq <= laborCostThreshold
+                            ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
+                            : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                        )}>
+                          PKQ: {whatIfPkq.toFixed(1)}%
+                          {whatIfPkq <= laborCostThreshold ? ' ✓' : ' ✗'}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
