@@ -1,0 +1,69 @@
+We want to improve the "Personal FIX + Variabel" module further for operational staffing control.
+
+Goal:
+Make the variable labor section more transparent and more useful for planning variable-hour employees against the remaining personnel budget.
+
+Important:
+Do not change unrelated modules.
+Keep all current FIX / VARIABEL logic intact.
+Preserve the Plan / Ist / Manuell modes that already exist.
+
+Implement these requirements:
+
+1. Show source clearly in the top KPI card
+In the KPI card "Personal Variabel / Monat", clearly show which source is currently active:
+- Plan-Stunden
+- Ist-Stunden
+- Manuell
+
+This should be visible directly inside or below the KPI card so it is immediately obvious what the value is based on.
+
+2. Manual weekly setup for individual variable employees
+In the manual view for variable employees, add a per-employee option to define:
+- fixed days per week
+and/or
+- fixed hours per week
+
+This should help model regular variable staff with recurring work patterns.
+
+3. Remaining budget for variable staff
+Add a calculation over all departments:
+- Budget Personalkosten
+- minus FIX-Personalkosten
+= available budget for variable employees
+
+Show this clearly as a control value.
+
+4. Compare available variable budget vs current variable estimate
+Show:
+- available variable budget
+- currently estimated variable personnel cost
+- remaining amount or overrun
+
+5. First planning aid for variable staff
+Based on the remaining variable budget, create a first practical recommendation layer for variable employees.
+
+Examples:
+- how many total hours are still financially possible
+- whether the current variable estimate is too high
+- suggested weekly/monthly hours for variable staff
+- indication if the current manual setup would exceed the remaining budget
+
+This does NOT need to be full AI yet.
+A rule-based recommendation is enough for now.
+
+6. Keep manual mode practical
+The manual mode should remain easy to edit.
+Do not make it too complicated.
+Per employee, I should still quickly understand:
+- hourly wage
+- current manual monthly hours
+- optional weekly baseline
+- estimated monthly cost
+
+7. Explain in simple German:
+- where I now see whether the variable KPI is based on Plan, Ist, or Manuell
+- how I can define fixed days or hours per week for one employee
+- how the available variable budget is calculated
+- how the recommendation for variable staff works
+- what I should test next

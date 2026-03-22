@@ -3,7 +3,8 @@ import { Navigate } from 'react-router-dom';
 import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
   Utensils, Edit2, Check, X, Info, Building2, AlertCircle, Clock,
-  ChevronLeft, ChevronRight, Calendar, BarChart2,
+  ChevronLeft, ChevronRight, Calendar, BarChart2, Lightbulb, Target,
+  Repeat,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee } from '@/lib/supabase-db';
@@ -200,15 +201,32 @@ function saveVarHours(data: Record<string, number>) {
   localStorage.setItem(VAR_HOURS_KEY, JSON.stringify(data));
 }
 
+// ── Wöchentliches Basismodell (Std/Wo, Tage/Wo) ───────────────────────────────
+
+interface WeeklyBaseline { hours?: number; days?: number; }
+const VAR_WEEKLY_KEY = 'personal_fix_weekly_v1';
+
+function loadVarWeekly(): Record<string, WeeklyBaseline> {
+  try { return JSON.parse(localStorage.getItem(VAR_WEEKLY_KEY) ?? '{}'); }
+  catch { return {}; }
+}
+function saveVarWeekly(data: Record<string, WeeklyBaseline>) {
+  localStorage.setItem(VAR_WEEKLY_KEY, JSON.stringify(data));
+}
+
+/** Durchschnittliche Wochen pro Monat */
+const WEEKS_PER_MONTH = 4.333;
+
 // ── KPI-Card ──────────────────────────────────────────────────────────────────
 
 interface KpiProps {
   title: string; value: string; sub?: string; icon: React.ReactNode;
   color?: 'blue' | 'green' | 'red' | 'yellow' | 'orange' | 'default';
   delta?: number | null; deltaLabel?: string;
+  sourceBadge?: string;
 }
 
-const KpiCard = ({ title, value, sub, icon, color = 'default', delta, deltaLabel }: KpiProps) => {
+const KpiCard = ({ title, value, sub, icon, color = 'default', delta, deltaLabel, sourceBadge }: KpiProps) => {
   const border = {
     blue: 'border-blue-200 dark:border-blue-800', green: 'border-emerald-200 dark:border-emerald-800',
     red: 'border-red-200 dark:border-red-800', yellow: 'border-yellow-200 dark:border-yellow-800',
@@ -226,6 +244,11 @@ const KpiCard = ({ title, value, sub, icon, color = 'default', delta, deltaLabel
         <div className={cn('p-1.5 rounded-lg', iconBg)}>{icon}</div>
       </div>
       <p className="text-2xl font-bold tracking-tight">{value}</p>
+      {sourceBadge && (
+        <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 w-fit">
+          {sourceBadge}
+        </span>
+      )}
       {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
       {delta !== undefined && delta !== null && (
         <p className={cn('text-xs font-medium flex items-center gap-1', delta >= 0 ? 'text-red-600' : 'text-emerald-600')}>
@@ -344,6 +367,48 @@ const InlineHoursEditor = ({ empId, value, onChange }: InlineHoursEditorProps) =
   );
 };
 
+// ── Kleiner Inline-Editor für Wochenwerte (Std/Wo, Tage/Wo) ──────────────────
+
+interface InlineWeeklyEditorProps {
+  value: number | undefined;
+  unit: string;
+  max: number;
+  onSave: (val: number | undefined) => void;
+}
+
+const InlineWeeklyEditor = ({ value, unit, max, onSave }: InlineWeeklyEditorProps) => {
+  const [editing, setEditing] = useState(false);
+  const [input, setInput] = useState('');
+  const start  = () => { setInput(value != null ? String(value) : ''); setEditing(true); };
+  const cancel = () => setEditing(false);
+  const save   = () => {
+    const trimmed = input.trim();
+    if (trimmed === '' || trimmed === '0') { onSave(undefined); setEditing(false); return; }
+    const num = parseFloat(trimmed.replace(',', '.'));
+    if (!isNaN(num) && num >= 0 && num <= max) onSave(num);
+    setEditing(false);
+  };
+  if (editing) return (
+    <div className="flex items-center gap-0.5 justify-end">
+      <Input autoFocus className="h-6 w-14 text-right font-mono text-xs py-0 px-1" value={input}
+        onChange={e => setInput(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }}
+        placeholder="–" />
+      <span className="text-[10px] text-muted-foreground">{unit}</span>
+      <Button size="icon" variant="ghost" className="h-5 w-5 text-emerald-600" onClick={save}><Check className="h-3 w-3" /></Button>
+      <Button size="icon" variant="ghost" className="h-5 w-5 text-muted-foreground" onClick={cancel}><X className="h-3 w-3" /></Button>
+    </div>
+  );
+  return (
+    <button className="group flex items-center justify-end gap-1 hover:text-primary transition-colors w-full" onClick={start}>
+      {value != null
+        ? <span className="font-mono text-xs text-violet-700 dark:text-violet-400">{value}{unit}</span>
+        : <span className="text-muted-foreground italic text-[10px]">–</span>}
+      <Edit2 className="h-2.5 w-2.5 opacity-0 group-hover:opacity-40 transition-opacity shrink-0" />
+    </button>
+  );
+};
+
 // ── Hauptseite ────────────────────────────────────────────────────────────────
 
 export default function PersonalFixPage() {
@@ -357,6 +422,7 @@ export default function PersonalFixPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [varHours, setVarHours] = useState<Record<string, number>>(() => loadVarHours());
+  const [varWeekly, setVarWeekly] = useState<Record<string, WeeklyBaseline>>(() => loadVarWeekly());
   const [varView, setVarView] = useState<VarView>('manual');
   const [planHours, setPlanHours] = useState<Record<string, number>>({});
   const [istHours, setIstHours] = useState<Record<string, number>>({});
@@ -381,6 +447,18 @@ export default function PersonalFixPage() {
     setVarHours(prev => {
       const next = { ...prev, [empId]: hours };
       saveVarHours(next);
+      return next;
+    });
+  }, []);
+
+  const handleVarWeeklyChange = useCallback((empId: string, field: 'hours' | 'days', val: number | undefined) => {
+    setVarWeekly(prev => {
+      const existing = prev[empId] ?? {};
+      const updated = val != null
+        ? { ...existing, [field]: val }
+        : { ...existing, [field]: undefined };
+      const next = { ...prev, [empId]: updated };
+      saveVarWeekly(next);
       return next;
     });
   }, []);
@@ -428,8 +506,13 @@ export default function PersonalFixPage() {
   const getVarHoursFor = useCallback((empId: string): number => {
     if (varView === 'plan') return planHours[empId] ?? 0;
     if (varView === 'ist')  return istHours[empId] ?? 0;
-    return varHours[empId] ?? 0;
-  }, [varView, planHours, istHours, varHours]);
+    // Manuell: manual monthly entry takes priority; weekly baseline as fallback
+    const manual  = varHours[empId];
+    const weekly  = varWeekly[empId];
+    if (manual != null && manual > 0) return manual;
+    if (weekly?.hours)  return Math.round(weekly.hours * WEEKS_PER_MONTH * 10) / 10;
+    return 0;
+  }, [varView, planHours, istHours, varHours, varWeekly]);
 
   // ── Fix-Kosten mit Pro-rata je ausgewähltem Monat ─────────────────────────
 
@@ -497,6 +580,24 @@ export default function PersonalFixPage() {
       return { dept, fix, variabel, total: fix + variabel };
     });
   }, [byDept, varByDept, getVarHoursFor]);
+
+  // ── Budget für variable Mitarbeiter ───────────────────────────────────────
+
+  const availableVarBudget = personnelBudget > 0 ? Math.max(0, personnelBudget - totalFixCost) : 0;
+  const varBudgetDelta     = personnelBudget > 0 ? availableVarBudget - totalVarCost : 0;
+  const varBudgetOverrun   = varBudgetDelta < 0;
+
+  // Ø Stundenlohn aller variablen Mitarbeiter mit Lohn hinterlegt
+  const avgHourlyWage = useMemo(() => {
+    const empsWithWage = variableEmployees.filter(e => (e.hourlyWage ?? 0) > 0);
+    if (!empsWithWage.length) return 0;
+    return empsWithWage.reduce((s, e) => s + e.hourlyWage, 0) / empsWithWage.length;
+  }, [variableEmployees]);
+
+  // Maximal mögliche Stunden mit verfügbarem Variabel-Budget
+  const maxVarHours = availableVarBudget > 0 && avgHourlyWage > 0
+    ? Math.round(availableVarBudget / avgHourlyWage)
+    : 0;
 
   // ── Quellen-Labels ────────────────────────────────────────────────────────
 
@@ -569,6 +670,7 @@ export default function PersonalFixPage() {
           <KpiCard
             title="Personal VARIABEL / Monat"
             value={fmtCHF(totalVarCost)}
+            sourceBadge={varView === 'plan' ? '● Plan-Stunden' : varView === 'ist' ? '● Ist-Stunden' : '● Manuell'}
             sub={totalVarHours > 0
               ? `${Math.round(totalVarHours * 10) / 10} h × Stundenlohn`
               : `${variableEmployees.length} MA · Stunden wählen ↓`}
@@ -832,17 +934,30 @@ export default function PersonalFixPage() {
                           <th className="text-left px-4 py-2 font-medium">Name</th>
                           <th className="text-left px-4 py-2 font-medium">Anstellung</th>
                           <th className="text-right px-4 py-2 font-medium">Stundenlohn</th>
+                          {varView === 'manual' && <>
+                            <th className="text-right px-3 py-2 font-medium text-violet-700 dark:text-violet-400">
+                              <span title="Stunden pro Woche (Basismodell)">Std/Wo</span>
+                            </th>
+                            <th className="text-right px-3 py-2 font-medium text-violet-700 dark:text-violet-400">
+                              <span title="Tage pro Woche (Basismodell)">Tage/Wo</span>
+                            </th>
+                          </>}
                           <th className="text-right px-4 py-2 font-medium">
-                            {varView === 'plan' ? 'Plan-Std./Mt' : varView === 'ist' ? 'Ist-Std./Mt' : 'Gesch. Std./Mt'}
+                            {varView === 'plan' ? 'Plan-Std./Mt' : varView === 'ist' ? 'Ist-Std./Mt' : 'Std./Mt'}
                           </th>
-                          <th className="text-right px-4 py-2 font-medium">Hochrechnung/Mt</th>
-                          <th className="text-right px-4 py-2 font-medium">Hochrechnung/Jahr</th>
+                          <th className="text-right px-4 py-2 font-medium">Kosten/Mt</th>
+                          <th className="text-right px-4 py-2 font-medium">Kosten/Jahr</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
                         {deptEmps.map(emp => {
-                          const hours = getVarHoursFor(emp.id);
+                          const hours     = getVarHoursFor(emp.id);
                           const projected = hours * (emp.hourlyWage ?? 0);
+                          const weekly    = varWeekly[emp.id] ?? {};
+                          // In manual mode: if manual override is set, show it; if only weekly baseline, mark auto
+                          const hasManualOverride = (varHours[emp.id] ?? 0) > 0;
+                          const hasWeeklyBaseline = (weekly.hours ?? 0) > 0;
+                          const isAutoCalc = varView === 'manual' && !hasManualOverride && hasWeeklyBaseline;
                           return (
                             <tr key={emp.id} className="hover:bg-muted/30 transition-colors">
                               <td className="px-4 py-2.5 font-medium">{emp.name}</td>
@@ -858,9 +973,26 @@ export default function PersonalFixPage() {
                                   </span>
                                 )}
                               </td>
+                              {varView === 'manual' && <>
+                                <td className="px-3 py-2.5 text-right">
+                                  <InlineWeeklyEditor value={weekly.hours} unit="h" max={60}
+                                    onSave={val => handleVarWeeklyChange(emp.id, 'hours', val)} />
+                                </td>
+                                <td className="px-3 py-2.5 text-right">
+                                  <InlineWeeklyEditor value={weekly.days} unit="T" max={7}
+                                    onSave={val => handleVarWeeklyChange(emp.id, 'days', val)} />
+                                </td>
+                              </>}
                               <td className="px-4 py-2.5 text-right">
                                 {varView === 'manual' ? (
-                                  <InlineHoursEditor empId={emp.id} value={hours} onChange={handleVarHoursChange} />
+                                  <div className="flex flex-col items-end gap-0.5">
+                                    <InlineHoursEditor empId={emp.id} value={hasManualOverride ? (varHours[emp.id] ?? 0) : 0} onChange={handleVarHoursChange} />
+                                    {isAutoCalc && (
+                                      <span className="text-[9px] text-violet-500 dark:text-violet-400">
+                                        ↑ auto {Math.round(hours * 10) / 10} h ({weekly.hours}h/Wo)
+                                      </span>
+                                    )}
+                                  </div>
                                 ) : (
                                   <span className={cn('font-mono text-sm', hours > 0 ? '' : 'text-muted-foreground italic text-xs')}>
                                     {hours > 0 ? `${Math.round(hours * 10) / 10} h` : '–'}
@@ -882,7 +1014,9 @@ export default function PersonalFixPage() {
                       {deptHours > 0 && (
                         <tfoot>
                           <tr className="bg-orange-50/40 dark:bg-orange-950/20 font-semibold border-t-2 border-orange-200 dark:border-orange-800">
-                            <td className="px-4 py-2.5 text-sm" colSpan={3}>Total {DEPT_LABEL[dept]} Variabel</td>
+                            <td className="px-4 py-2.5 text-sm" colSpan={varView === 'manual' ? 5 : 3}>
+                              Total {DEPT_LABEL[dept]} Variabel
+                            </td>
                             <td className="px-4 py-2.5 text-right font-mono text-sm">{Math.round(deptHours * 10) / 10} h</td>
                             <td className="px-4 py-2.5 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(deptCost)}</td>
                             <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(deptCost * 12)}</td>
@@ -902,6 +1036,113 @@ export default function PersonalFixPage() {
                 <div className="flex items-center gap-4 text-sm">
                   <span className="text-muted-foreground font-mono">{Math.round(totalVarHours * 10) / 10} h</span>
                   <span className="font-bold font-mono text-orange-700 dark:text-orange-400">{fmtCHF(totalVarCost)}/Mt</span>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ── Variable Budget-Planung ──────────────────────────────────────── */}
+        {personnelBudget > 0 && (
+          <section className="rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-card shadow-sm overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-violet-50/40 dark:bg-violet-950/20">
+              <Target className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+              <span className="text-sm font-bold">Budget-Planung Personal — {getMonthLabel(selectedYear, selectedMonth)}</span>
+            </div>
+
+            {/* Budget-Rechnung */}
+            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Budgetverteilung</p>
+                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
+                  <span className="text-sm text-muted-foreground">Personalbudget gesamt</span>
+                  <span className="font-mono font-semibold">{fmtCHF(personnelBudget)}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
+                  <span className="text-sm text-muted-foreground">− Personal FIX</span>
+                  <span className="font-mono text-blue-700 dark:text-blue-400">− {fmtCHF(totalFixCost)}</span>
+                </div>
+                <div className={cn(
+                  'flex justify-between items-center py-2 px-3 rounded-lg',
+                  availableVarBudget > 0
+                    ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
+                    : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300'
+                )}>
+                  <span className="text-sm font-bold">= Verfügbar für Variabel</span>
+                  <span className="font-mono font-bold text-base">{fmtCHF(availableVarBudget)}</span>
+                </div>
+              </div>
+
+              {/* Vergleich: Schätzung vs. Verfügbar */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Schätzung vs. Budget</p>
+                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
+                  <span className="text-sm text-muted-foreground">Verfügbar für Variabel</span>
+                  <span className="font-mono font-semibold">{fmtCHF(availableVarBudget)}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
+                  <span className="text-sm text-muted-foreground">
+                    − Geschätzte Kosten Variabel
+                    <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300">
+                      {varView === 'plan' ? 'Plan' : varView === 'ist' ? 'Ist' : 'Manuell'}
+                    </span>
+                  </span>
+                  <span className="font-mono text-orange-700 dark:text-orange-400">− {fmtCHF(totalVarCost)}</span>
+                </div>
+                <div className={cn(
+                  'flex justify-between items-center py-2 px-3 rounded-lg',
+                  !varBudgetOverrun
+                    ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
+                    : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300'
+                )}>
+                  <span className="text-sm font-bold">
+                    {varBudgetOverrun ? '⚠ Überziehung' : '✓ Verbleibend'}
+                  </span>
+                  <span className="font-mono font-bold text-base">
+                    {varBudgetOverrun ? '– ' : '+ '}{fmtCHF(Math.abs(varBudgetDelta))}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Planungsempfehlung */}
+            {avgHourlyWage > 0 && totalVarHours > 0 && (
+              <div className={cn(
+                'mx-4 mb-4 p-3 rounded-lg border flex flex-wrap items-start gap-3',
+                varBudgetOverrun
+                  ? 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
+                  : varBudgetDelta < availableVarBudget * 0.15
+                    ? 'border-yellow-200 dark:border-yellow-800 bg-yellow-50/60 dark:bg-yellow-950/20'
+                    : 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20'
+              )}>
+                <Lightbulb className={cn('h-4 w-4 mt-0.5 shrink-0',
+                  varBudgetOverrun ? 'text-red-600' : varBudgetDelta < availableVarBudget * 0.15 ? 'text-yellow-600' : 'text-emerald-600'
+                )} />
+                <div className="flex-1 min-w-0 text-sm space-y-1">
+                  <p className="font-semibold">
+                    {varBudgetOverrun
+                      ? `Budgetüberschreitung: ${fmtCHF(Math.abs(varBudgetDelta))} zu viel geplant`
+                      : varBudgetDelta < availableVarBudget * 0.15
+                        ? `Budget knapp: noch ${fmtCHF(varBudgetDelta)} Puffer`
+                        : `Budget im grünen Bereich · Puffer ${fmtCHF(varBudgetDelta)}`}
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    Ø Stundenlohn Variabel: <strong className="font-mono">{fmtCHFDec(avgHourlyWage)}/h</strong>
+                    {maxVarHours > 0 && (
+                      <> · Budget reicht für max. <strong className="font-mono">{maxVarHours} h</strong>
+                      {' '}· Aktuell geplant: <strong className="font-mono">{Math.round(totalVarHours * 10) / 10} h</strong>
+                      {totalVarHours <= maxVarHours
+                        ? <span className="text-emerald-600"> ({maxVarHours - Math.round(totalVarHours)} h Reserve)</span>
+                        : <span className="text-red-600"> ({Math.round(totalVarHours) - maxVarHours} h zu viel)</span>}
+                      </>
+                    )}
+                  </p>
+                </div>
+                {/* Ampel */}
+                <div className="flex gap-1 items-center shrink-0">
+                  <div className={cn('h-3 w-3 rounded-full', varBudgetOverrun ? 'bg-red-500 ring-2 ring-red-300' : 'bg-red-200 dark:bg-red-900')} />
+                  <div className={cn('h-3 w-3 rounded-full', !varBudgetOverrun && varBudgetDelta < availableVarBudget * 0.15 ? 'bg-yellow-500 ring-2 ring-yellow-300' : 'bg-yellow-200 dark:bg-yellow-900')} />
+                  <div className={cn('h-3 w-3 rounded-full', !varBudgetOverrun && varBudgetDelta >= availableVarBudget * 0.15 ? 'bg-emerald-500 ring-2 ring-emerald-300' : 'bg-emerald-200 dark:bg-emerald-900')} />
                 </div>
               </div>
             )}
