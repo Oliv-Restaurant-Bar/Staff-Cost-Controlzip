@@ -217,6 +217,30 @@ function saveVarWeekly(data: Record<string, WeeklyBaseline>) {
 /** Durchschnittliche Wochen pro Monat */
 const WEEKS_PER_MONTH = 4.333;
 
+// ── Tagessatz (Tages-Pauschale) ────────────────────────────────────────────────
+
+type PricingMode = 'hourly' | 'daily';
+
+interface DayRateData { ratePerDay: number; daysPerWeek?: number; daysPerMonth?: number; }
+
+const VAR_PRICING_MODE_KEY = 'personal_fix_pricing_mode_v1';
+function loadVarPricingMode(): Record<string, PricingMode> {
+  try { return JSON.parse(localStorage.getItem(VAR_PRICING_MODE_KEY) ?? '{}'); }
+  catch { return {}; }
+}
+function saveVarPricingMode(data: Record<string, PricingMode>) {
+  localStorage.setItem(VAR_PRICING_MODE_KEY, JSON.stringify(data));
+}
+
+const VAR_DAYRATE_KEY = 'personal_fix_dayrate_v1';
+function loadVarDayRate(): Record<string, DayRateData> {
+  try { return JSON.parse(localStorage.getItem(VAR_DAYRATE_KEY) ?? '{}'); }
+  catch { return {}; }
+}
+function saveVarDayRate(data: Record<string, DayRateData>) {
+  localStorage.setItem(VAR_DAYRATE_KEY, JSON.stringify(data));
+}
+
 // ── KPI-Card ──────────────────────────────────────────────────────────────────
 
 interface KpiProps {
@@ -423,6 +447,8 @@ export default function PersonalFixPage() {
   const [saving, setSaving] = useState<string | null>(null);
   const [varHours, setVarHours] = useState<Record<string, number>>(() => loadVarHours());
   const [varWeekly, setVarWeekly] = useState<Record<string, WeeklyBaseline>>(() => loadVarWeekly());
+  const [varPricingMode, setVarPricingMode] = useState<Record<string, PricingMode>>(() => loadVarPricingMode());
+  const [varDayRate, setVarDayRate] = useState<Record<string, DayRateData>>(() => loadVarDayRate());
   const [varView, setVarView] = useState<VarView>('manual');
   const [planHours, setPlanHours] = useState<Record<string, number>>({});
   const [istHours, setIstHours] = useState<Record<string, number>>({});
@@ -459,6 +485,24 @@ export default function PersonalFixPage() {
         : { ...existing, [field]: undefined };
       const next = { ...prev, [empId]: updated };
       saveVarWeekly(next);
+      return next;
+    });
+  }, []);
+
+  const handlePricingModeToggle = useCallback((empId: string) => {
+    setVarPricingMode(prev => {
+      const current = prev[empId] ?? 'hourly';
+      const next = { ...prev, [empId]: current === 'hourly' ? 'daily' : 'hourly' as PricingMode };
+      saveVarPricingMode(next);
+      return next;
+    });
+  }, []);
+
+  const handleDayRateChange = useCallback((empId: string, field: keyof DayRateData, val: number | undefined) => {
+    setVarDayRate(prev => {
+      const existing = prev[empId] ?? { ratePerDay: 0 };
+      const next = { ...prev, [empId]: { ...existing, [field]: val ?? 0 } };
+      saveVarDayRate(next);
       return next;
     });
   }, []);
@@ -514,6 +558,24 @@ export default function PersonalFixPage() {
     return 0;
   }, [varView, planHours, istHours, varHours, varWeekly]);
 
+  /** Returns monthly cost regardless of pricing mode. */
+  const getVarMonthlyCostFor = useCallback((empId: string, emp?: Employee): number => {
+    const mode = varPricingMode[empId] ?? 'hourly';
+    if (varView !== 'manual' || mode === 'hourly') {
+      const foundEmp = emp ?? variableEmployees.find(e => e.id === empId);
+      return getVarHoursFor(empId) * (foundEmp?.hourlyWage ?? 0);
+    }
+    // Tagessatz
+    const dr = varDayRate[empId];
+    if (!dr?.ratePerDay) return 0;
+    const days = (dr.daysPerMonth ?? 0) > 0
+      ? dr.daysPerMonth!
+      : (dr.daysPerWeek ?? 0) > 0
+        ? Math.round(dr.daysPerWeek! * WEEKS_PER_MONTH * 10) / 10
+        : 0;
+    return days * dr.ratePerDay;
+  }, [varView, varPricingMode, varDayRate, variableEmployees, getVarHoursFor]);
+
   // ── Fix-Kosten mit Pro-rata je ausgewähltem Monat ─────────────────────────
 
   const fixedWithCost = useMemo(() =>
@@ -560,12 +622,16 @@ export default function PersonalFixPage() {
   );
 
   const totalVarCost = useMemo(() =>
-    variableEmployees.reduce((s, e) => s + getVarHoursFor(e.id) * (e.hourlyWage ?? 0), 0),
-    [variableEmployees, getVarHoursFor],
+    variableEmployees.reduce((s, e) => s + getVarMonthlyCostFor(e.id, e), 0),
+    [variableEmployees, getVarMonthlyCostFor],
   );
+  // totalVarHours counts only hourly-mode employees (Tagessatz has no hours)
   const totalVarHours = useMemo(() =>
-    variableEmployees.reduce((s, e) => s + getVarHoursFor(e.id), 0),
-    [variableEmployees, getVarHoursFor],
+    variableEmployees.reduce((s, e) => {
+      if (varView === 'manual' && (varPricingMode[e.id] ?? 'hourly') === 'daily') return s;
+      return s + getVarHoursFor(e.id);
+    }, 0),
+    [variableEmployees, varView, varPricingMode, getVarHoursFor],
   );
   const totalCombined = totalFixCost + totalVarCost;
 
@@ -576,10 +642,10 @@ export default function PersonalFixPage() {
     return depts.map(dept => {
       const fix = (byDept[dept] ?? []).reduce((s, r) => s + r.cost, 0);
       const varEmpList = varByDept[dept] ?? [];
-      const variabel = varEmpList.reduce((s, e) => s + getVarHoursFor(e.id) * (e.hourlyWage ?? 0), 0);
+      const variabel = varEmpList.reduce((s, e) => s + getVarMonthlyCostFor(e.id, e), 0);
       return { dept, fix, variabel, total: fix + variabel };
     });
-  }, [byDept, varByDept, getVarHoursFor]);
+  }, [byDept, varByDept, getVarMonthlyCostFor]);
 
   // ── Budget für variable Mitarbeiter ───────────────────────────────────────
 
@@ -906,8 +972,11 @@ export default function PersonalFixPage() {
             {(['service', 'küche'] as const).map(dept => {
               const deptEmps = varByDept[dept];
               if (!deptEmps || deptEmps.length === 0) return null;
-              const deptHours = deptEmps.reduce((s, e) => s + getVarHoursFor(e.id), 0);
-              const deptCost  = deptEmps.reduce((s, e) => s + getVarHoursFor(e.id) * (e.hourlyWage ?? 0), 0);
+              const deptHours = deptEmps.reduce((s, e) => {
+                if (varView === 'manual' && (varPricingMode[e.id] ?? 'hourly') === 'daily') return s;
+                return s + getVarHoursFor(e.id);
+              }, 0);
+              const deptCost  = deptEmps.reduce((s, e) => s + getVarMonthlyCostFor(e.id, e), 0);
 
               return (
                 <div key={dept} className="border-b border-orange-100 dark:border-orange-900 last:border-b-0">
@@ -933,17 +1002,11 @@ export default function PersonalFixPage() {
                         <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
                           <th className="text-left px-4 py-2 font-medium">Name</th>
                           <th className="text-left px-4 py-2 font-medium">Anstellung</th>
-                          <th className="text-right px-4 py-2 font-medium">Stundenlohn</th>
-                          {varView === 'manual' && <>
-                            <th className="text-right px-3 py-2 font-medium text-violet-700 dark:text-violet-400">
-                              <span title="Stunden pro Woche (Basismodell)">Std/Wo</span>
-                            </th>
-                            <th className="text-right px-3 py-2 font-medium text-violet-700 dark:text-violet-400">
-                              <span title="Tage pro Woche (Basismodell)">Tage/Wo</span>
-                            </th>
-                          </>}
+                          {varView === 'manual'
+                            ? <th className="text-center px-3 py-2 font-medium">Modus</th>
+                            : <th className="text-right px-4 py-2 font-medium">Stundenlohn</th>}
                           <th className="text-right px-4 py-2 font-medium">
-                            {varView === 'plan' ? 'Plan-Std./Mt' : varView === 'ist' ? 'Ist-Std./Mt' : 'Std./Mt'}
+                            {varView === 'manual' ? 'Kalkulation' : varView === 'plan' ? 'Plan-Std./Mt' : 'Ist-Std./Mt'}
                           </th>
                           <th className="text-right px-4 py-2 font-medium">Kosten/Mt</th>
                           <th className="text-right px-4 py-2 font-medium">Kosten/Jahr</th>
@@ -951,54 +1014,123 @@ export default function PersonalFixPage() {
                       </thead>
                       <tbody className="divide-y divide-border">
                         {deptEmps.map(emp => {
+                          const mode      = varPricingMode[emp.id] ?? 'hourly';
+                          const isDaily   = varView === 'manual' && mode === 'daily';
                           const hours     = getVarHoursFor(emp.id);
-                          const projected = hours * (emp.hourlyWage ?? 0);
+                          const projected = getVarMonthlyCostFor(emp.id, emp);
                           const weekly    = varWeekly[emp.id] ?? {};
-                          // In manual mode: if manual override is set, show it; if only weekly baseline, mark auto
+                          const dr        = varDayRate[emp.id] ?? {} as DayRateData;
                           const hasManualOverride = (varHours[emp.id] ?? 0) > 0;
                           const hasWeeklyBaseline = (weekly.hours ?? 0) > 0;
-                          const isAutoCalc = varView === 'manual' && !hasManualOverride && hasWeeklyBaseline;
+                          const isAutoCalcH = varView === 'manual' && !isDaily && !hasManualOverride && hasWeeklyBaseline;
+                          // Tagessatz: resolved monthly days
+                          const autoMonthlyDays = (dr.daysPerWeek ?? 0) > 0 && !(dr.daysPerMonth ?? 0)
+                            ? Math.round(dr.daysPerWeek! * WEEKS_PER_MONTH * 10) / 10 : 0;
+                          const resolvedDays = (dr.daysPerMonth ?? 0) > 0 ? dr.daysPerMonth! : autoMonthlyDays;
                           return (
                             <tr key={emp.id} className="hover:bg-muted/30 transition-colors">
                               <td className="px-4 py-2.5 font-medium">{emp.name}</td>
                               <td className="px-4 py-2.5">
                                 <Badge variant="outline" className="text-xs">{EMP_TYPE_LABEL[emp.employmentType]}</Badge>
                               </td>
-                              <td className={cn('px-4 py-2.5 text-right', saving === emp.id && 'opacity-50')}>
-                                {isAdmin ? (
-                                  <InlineHourlyWageEditor empId={emp.id} value={emp.hourlyWage} onSaved={handleHourlyWageSaved} />
-                                ) : (
-                                  <span className="font-mono text-sm text-muted-foreground">
-                                    {emp.hourlyWage ? `${fmtCHFDec(emp.hourlyWage)}/h` : '–'}
-                                  </span>
-                                )}
-                              </td>
-                              {varView === 'manual' && <>
-                                <td className="px-3 py-2.5 text-right">
-                                  <InlineWeeklyEditor value={weekly.hours} unit="h" max={60}
-                                    onSave={val => handleVarWeeklyChange(emp.id, 'hours', val)} />
+
+                              {/* ── Modus-Spalte (manual) oder Stundenlohn (plan/ist) ── */}
+                              {varView === 'manual' ? (
+                                <td className="px-3 py-2.5 text-center">
+                                  <button
+                                    onClick={() => handlePricingModeToggle(emp.id)}
+                                    title={mode === 'hourly' ? 'Umschalten auf Tagessatz' : 'Umschalten auf Stundenlohn'}
+                                    className={cn(
+                                      'text-[10px] font-bold px-2 py-1 rounded border transition-colors',
+                                      mode === 'hourly'
+                                        ? 'border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 dark:border-blue-700 dark:text-blue-300 dark:bg-blue-950/40'
+                                        : 'border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 dark:border-emerald-700 dark:text-emerald-300 dark:bg-emerald-950/40'
+                                    )}
+                                  >
+                                    {mode === 'hourly' ? 'SL' : 'TS'}
+                                  </button>
                                 </td>
-                                <td className="px-3 py-2.5 text-right">
-                                  <InlineWeeklyEditor value={weekly.days} unit="T" max={7}
-                                    onSave={val => handleVarWeeklyChange(emp.id, 'days', val)} />
+                              ) : (
+                                <td className={cn('px-4 py-2.5 text-right', saving === emp.id && 'opacity-50')}>
+                                  {isAdmin ? (
+                                    <InlineHourlyWageEditor empId={emp.id} value={emp.hourlyWage} onSaved={handleHourlyWageSaved} />
+                                  ) : (
+                                    <span className="font-mono text-sm text-muted-foreground">
+                                      {emp.hourlyWage ? `${fmtCHFDec(emp.hourlyWage)}/h` : '–'}
+                                    </span>
+                                  )}
                                 </td>
-                              </>}
+                              )}
+
+                              {/* ── Kalkulations-Spalte ── */}
                               <td className="px-4 py-2.5 text-right">
                                 {varView === 'manual' ? (
-                                  <div className="flex flex-col items-end gap-0.5">
-                                    <InlineHoursEditor empId={emp.id} value={hasManualOverride ? (varHours[emp.id] ?? 0) : 0} onChange={handleVarHoursChange} />
-                                    {isAutoCalc && (
-                                      <span className="text-[9px] text-violet-500 dark:text-violet-400">
-                                        ↑ auto {Math.round(hours * 10) / 10} h ({weekly.hours}h/Wo)
+                                  isDaily ? (
+                                    /* ── Tagessatz-Modus ── */
+                                    <div className="flex items-center gap-1.5 justify-end flex-wrap">
+                                      <InlineWeeklyEditor
+                                        value={dr.ratePerDay || undefined}
+                                        unit="CHF/T"
+                                        max={5000}
+                                        onSave={val => handleDayRateChange(emp.id, 'ratePerDay', val)}
+                                      />
+                                      <span className="text-muted-foreground text-xs">·</span>
+                                      <InlineWeeklyEditor
+                                        value={dr.daysPerWeek || undefined}
+                                        unit="T/Wo"
+                                        max={7}
+                                        onSave={val => handleDayRateChange(emp.id, 'daysPerWeek', val ?? 0)}
+                                      />
+                                      <span className="text-muted-foreground text-[10px]">/</span>
+                                      <InlineWeeklyEditor
+                                        value={dr.daysPerMonth || undefined}
+                                        unit="T/Mt"
+                                        max={31}
+                                        onSave={val => handleDayRateChange(emp.id, 'daysPerMonth', val ?? 0)}
+                                      />
+                                      {resolvedDays > 0 && (
+                                        <span className="text-[9px] text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                                          → {resolvedDays}T/Mt{autoMonthlyDays > 0 && dr.daysPerMonth === undefined ? ' (auto)' : ''}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    /* ── Stundenlohn-Modus ── */
+                                    <div className="flex items-center gap-1.5 justify-end flex-wrap">
+                                      <span className={cn(saving === emp.id && 'opacity-50')}>
+                                        {isAdmin
+                                          ? <InlineHourlyWageEditor empId={emp.id} value={emp.hourlyWage} onSaved={handleHourlyWageSaved} />
+                                          : <span className="font-mono text-xs text-muted-foreground">{emp.hourlyWage ? `${fmtCHFDec(emp.hourlyWage)}/h` : '–'}</span>}
                                       </span>
-                                    )}
-                                  </div>
+                                      <span className="text-muted-foreground text-xs">·</span>
+                                      <InlineWeeklyEditor value={weekly.hours} unit="h/Wo" max={60}
+                                        onSave={val => handleVarWeeklyChange(emp.id, 'hours', val)} />
+                                      <span className="text-muted-foreground text-[10px]">/</span>
+                                      <InlineWeeklyEditor value={weekly.days} unit="T/Wo" max={7}
+                                        onSave={val => handleVarWeeklyChange(emp.id, 'days', val)} />
+                                      <span className="text-muted-foreground text-xs">·</span>
+                                      <div className="flex flex-col items-end gap-0">
+                                        <InlineHoursEditor
+                                          empId={emp.id}
+                                          value={hasManualOverride ? (varHours[emp.id] ?? 0) : 0}
+                                          onChange={handleVarHoursChange}
+                                        />
+                                        {isAutoCalcH && (
+                                          <span className="text-[9px] text-violet-500 dark:text-violet-400 whitespace-nowrap">
+                                            ↑ auto {Math.round(hours * 10) / 10}h
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )
                                 ) : (
+                                  /* ── Plan/Ist-Ansicht ── */
                                   <span className={cn('font-mono text-sm', hours > 0 ? '' : 'text-muted-foreground italic text-xs')}>
                                     {hours > 0 ? `${Math.round(hours * 10) / 10} h` : '–'}
                                   </span>
                                 )}
                               </td>
+
                               <td className="px-4 py-2.5 text-right font-semibold font-mono">
                                 {projected > 0
                                   ? <span className="text-orange-700 dark:text-orange-400">{fmtCHF(projected)}</span>
@@ -1011,13 +1143,13 @@ export default function PersonalFixPage() {
                           );
                         })}
                       </tbody>
-                      {deptHours > 0 && (
+                      {deptCost > 0 && (
                         <tfoot>
                           <tr className="bg-orange-50/40 dark:bg-orange-950/20 font-semibold border-t-2 border-orange-200 dark:border-orange-800">
-                            <td className="px-4 py-2.5 text-sm" colSpan={varView === 'manual' ? 5 : 3}>
-                              Total {DEPT_LABEL[dept]} Variabel
+                            <td className="px-4 py-2.5 text-sm" colSpan={3}>Total {DEPT_LABEL[dept]} Variabel</td>
+                            <td className="px-4 py-2.5 text-right font-mono text-sm text-muted-foreground">
+                              {deptHours > 0 ? `${Math.round(deptHours * 10) / 10} h` : '–'}
                             </td>
-                            <td className="px-4 py-2.5 text-right font-mono text-sm">{Math.round(deptHours * 10) / 10} h</td>
                             <td className="px-4 py-2.5 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(deptCost)}</td>
                             <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(deptCost * 12)}</td>
                           </tr>
