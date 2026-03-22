@@ -1732,35 +1732,69 @@ const Dashboard = () => {
                 <SectionTitle icon={<UserX className="h-4 w-4" />}>
                   Absenzen &amp; Ersatzkosten · {monthName}
                 </SectionTitle>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                   <KpiCard
-                    title="Ferientage"
-                    value={String(absenceData.vacationDays)}
-                    subtitle="Ferienabsenzen (FIX)"
+                    title="Ferienersatzkosten"
+                    value={absenceData.vacationCost > 0 ? formatCHF(absenceData.vacationCost) : '–'}
+                    subtitle={`${absenceData.vacationDays} Ferientage`}
                     icon={<Palmtree className="h-5 w-5" />}
-                    color={absenceData.vacationDays > 0 ? 'yellow' : 'default'}
+                    color={absenceData.vacationCost > 0 ? 'yellow' : 'default'}
                   />
                   <KpiCard
-                    title="Kranktage"
-                    value={String(absenceData.sickDays)}
-                    subtitle="Krankheitsabsenzen (FIX)"
+                    title="Krankheitsersatzkosten"
+                    value={absenceData.sickCost > 0 ? formatCHF(absenceData.sickCost) : '–'}
+                    subtitle={`${absenceData.sickDays} Kranktage`}
                     icon={<Stethoscope className="h-5 w-5" />}
-                    color={absenceData.sickDays > 0 ? 'red' : 'default'}
+                    color={absenceData.sickCost > 0 ? 'red' : 'default'}
                   />
                   <KpiCard
-                    title="Ersatzkosten"
+                    title="Total Ersatzkosten"
                     value={absenceData.totalCost > 0 ? formatCHF(absenceData.totalCost) : '–'}
-                    subtitle="Kosten Ersatz-Aushilfen"
+                    subtitle="Zusatzkosten durch Absenzen"
                     icon={<UserX className="h-5 w-5" />}
                     color={absenceData.totalCost > 0 ? 'red' : 'default'}
                   />
                   <KpiCard
                     title="Einsparung"
                     value={absenceData.totalSaving > 0 ? formatCHF(absenceData.totalSaving) : '–'}
-                    subtitle="Nicht ersetzte Absenzen"
+                    subtitle={`${absenceData.unreplacedHrs.toFixed(1)} h nicht ersetzt`}
                     icon={<TrendingDown className="h-5 w-5" />}
                     color={absenceData.totalSaving > 0 ? 'green' : 'default'}
                   />
+                  <KpiCard
+                    title="Top Abteilung"
+                    value={
+                      absenceData.byDept.service.days >= absenceData.byDept.küche.days
+                        ? 'Service'
+                        : 'Küche'
+                    }
+                    subtitle={
+                      absenceData.byDept.service.days >= absenceData.byDept.küche.days
+                        ? `${absenceData.byDept.service.days}d · ${formatCHF(absenceData.byDept.service.cost)}`
+                        : `${absenceData.byDept.küche.days}d · ${formatCHF(absenceData.byDept.küche.cost)}`
+                    }
+                    icon={<Users className="h-5 w-5" />}
+                    color="yellow"
+                  />
+                </div>
+                {/* Dept breakdown strip */}
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { label: 'Service', dept: absenceData.byDept.service, icon: <Utensils className="h-3.5 w-3.5" /> },
+                    { label: 'Küche',   dept: absenceData.byDept.küche,   icon: <ChefHat  className="h-3.5 w-3.5" /> },
+                  ].map(({ label, dept, icon }) => (
+                    <div key={label} className="rounded-lg border border-border bg-muted/30 px-4 py-2.5 flex items-center justify-between gap-4 flex-wrap text-xs">
+                      <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                        {icon}
+                        {label}
+                      </div>
+                      <div className="flex items-center gap-4 text-muted-foreground">
+                        <span><strong className="text-foreground">{dept.days}</strong> Absenztage</span>
+                        {dept.cost > 0 && <span><strong className="text-red-600 dark:text-red-400 font-mono">{formatCHF(dept.cost)}</strong> Ersatz</span>}
+                        {dept.saving > 0 && <span><strong className="text-green-600 dark:text-green-400 font-mono">{formatCHF(dept.saving)}</strong> Einsparung</span>}
+                      </div>
+                    </div>
+                  ))}
                 </div>
                 <div className="text-right">
                   <Link to="/absenzen" className="text-xs text-primary hover:underline">

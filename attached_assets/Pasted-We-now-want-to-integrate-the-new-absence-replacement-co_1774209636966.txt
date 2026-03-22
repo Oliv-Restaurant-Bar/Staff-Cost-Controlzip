@@ -1,0 +1,69 @@
+We now want to integrate the new absence + replacement cost feature into Dashboard and Reporting.
+
+Goal:
+Make absence-related replacement cost and savings visible not only on /absenzen, but also in the management summary and monthly reporting views.
+
+Important:
+Do not break the new /absenzen page.
+Do not break existing Dashboard, Reporting, or FIX/VARIABEL logic.
+Keep fixed salary unchanged and show replacement cost / savings only as separate controlling values.
+
+Implement these requirements:
+
+1. Dashboard integration
+Add a compact management visibility layer for absence impact.
+
+Suggested dashboard KPIs:
+- Ersatzkosten Absenzen (Monat)
+- Einsparung durch nicht ersetzte Absenzen
+- Ferienbedingte Ersatzkosten
+- Krankheitsbedingte Ersatzkosten
+- Top betroffene Abteilung: Service oder Küche
+
+Requirements:
+- keep it compact and management-friendly
+- do not overload the dashboard
+- if helpful, show a small link/button to open /absenzen directly
+
+2. Reporting integration
+Integrate the absence-related values into the monthly reporting / controlling area.
+
+Add a dedicated section or KPI block for:
+- Ferienbedingte Ersatzkosten
+- Krankheitsbedingte Ersatzkosten
+- Total Ersatzkosten durch Absenzen
+- Nicht ersetzte Abwesenheitsstunden
+- Geschätzte Einsparung durch nicht ersetzten Ausfall
+
+Requirements:
+- show values by month
+- if possible, split by Service and Küche
+- if helpful, allow drilldown / quick navigation to /absenzen
+
+3. Department visibility
+Where possible, distinguish clearly between:
+- Service
+- Küche
+- Gesamt
+
+This is especially important in reporting, so operational impact is visible per department.
+
+4. Keep financial logic clean
+Do not double-count fixed salary.
+The UI must clearly distinguish:
+- FIX-Personalkosten
+- Zusatzkosten durch Ersatz
+- Einsparung durch nicht ersetzten Ausfall
+
+5. Navigation / usability
+If useful, add a clean navigation entry or quick link to /absenzen from the relevant admin areas:
+- Dashboard
+- Reporting
+- maybe Personal FIX + Variabel if appropriate
+
+6. Explain in simple German:
+- what now appears in Dashboard
+- what now appears in Reporting
+- how Service/Küche are separated
+- where I can click to inspect details
+- what I should test later

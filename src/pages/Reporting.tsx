@@ -597,45 +597,88 @@ const AbsenzMonatsBlock = ({ year }: { year: number }) => {
             Keine Absenzen in {MONTH_NAMES_DE[selectedMonth]} {year} erkannt — bitte Codes «FE» oder «K» im Dienstplan eintragen.
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <div className="rounded-lg border bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800 p-3 space-y-0.5">
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wide">
-                <Palmtree className="h-3 w-3" />
-                Ferientage
+          <div className="space-y-3">
+            {/* ── 5 KPI tiles ── */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              <div className="rounded-lg border bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800 p-3 space-y-0.5">
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wide">
+                  <Palmtree className="h-3 w-3" />
+                  Ferienersatz
+                </div>
+                <div className="text-xl font-bold tabular-nums font-mono">CHF {summary.vacationCost.toFixed(0)}</div>
+                <div className="text-[10px] text-muted-foreground">{summary.vacationDays} Ferientage</div>
               </div>
-              <div className="text-2xl font-bold tabular-nums">{summary.vacationDays}</div>
-              <div className="text-[10px] text-muted-foreground">CHF {summary.vacationCost.toFixed(0)} Ersatz</div>
+              <div className="rounded-lg border bg-blue-50/60 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 p-3 space-y-0.5">
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">
+                  <Stethoscope className="h-3 w-3" />
+                  Krankheitsersatz
+                </div>
+                <div className="text-xl font-bold tabular-nums font-mono">CHF {summary.sickCost.toFixed(0)}</div>
+                <div className="text-[10px] text-muted-foreground">{summary.sickDays} Kranktage</div>
+              </div>
+              <div className="rounded-lg border bg-red-50/60 dark:bg-red-950/20 border-red-200 dark:border-red-800 p-3 space-y-0.5">
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold text-red-700 dark:text-red-400 uppercase tracking-wide">
+                  <UserX className="h-3 w-3" />
+                  Total Ersatz
+                </div>
+                <div className="text-xl font-bold tabular-nums font-mono">CHF {summary.totalCost.toFixed(0)}</div>
+                <div className="text-[10px] text-muted-foreground">Zusatzkosten Absenzen</div>
+              </div>
+              <div className="rounded-lg border bg-green-50/60 dark:bg-green-950/20 border-green-200 dark:border-green-800 p-3 space-y-0.5">
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold text-green-700 dark:text-green-400 uppercase tracking-wide">
+                  <TrendingUp className="h-3 w-3" />
+                  Einsparung
+                </div>
+                <div className="text-xl font-bold tabular-nums font-mono">CHF {summary.totalSaving.toFixed(0)}</div>
+                <div className="text-[10px] text-muted-foreground">Nicht ersetzte Std.</div>
+              </div>
+              <div className="rounded-lg border bg-muted/40 border-border p-3 space-y-0.5">
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                  Nicht ersetzt
+                </div>
+                <div className="text-xl font-bold tabular-nums">{summary.unreplacedHrs.toFixed(1)} h</div>
+                <div className="text-[10px] text-muted-foreground">Offene Abwesenheitsstunden</div>
+              </div>
             </div>
-            <div className="rounded-lg border bg-blue-50/60 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 p-3 space-y-0.5">
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">
-                <Stethoscope className="h-3 w-3" />
-                Kranktage
-              </div>
-              <div className="text-2xl font-bold tabular-nums">{summary.sickDays}</div>
-              <div className="text-[10px] text-muted-foreground">CHF {summary.sickCost.toFixed(0)} Ersatz</div>
-            </div>
-            <div className="rounded-lg border bg-red-50/60 dark:bg-red-950/20 border-red-200 dark:border-red-800 p-3 space-y-0.5">
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-red-700 dark:text-red-400 uppercase tracking-wide">
-                <UserX className="h-3 w-3" />
-                Ersatzkosten
-              </div>
-              <div className="text-2xl font-bold tabular-nums font-mono">CHF {summary.totalCost.toFixed(0)}</div>
-              <div className="text-[10px] text-muted-foreground">Kosten Aushilfen</div>
-            </div>
-            <div className="rounded-lg border bg-green-50/60 dark:bg-green-950/20 border-green-200 dark:border-green-800 p-3 space-y-0.5">
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-green-700 dark:text-green-400 uppercase tracking-wide">
-                <TrendingUp className="h-3 w-3" />
-                Einsparung
-              </div>
-              <div className="text-2xl font-bold tabular-nums font-mono">CHF {summary.totalSaving.toFixed(0)}</div>
-              <div className="text-[10px] text-muted-foreground">Nicht ersetzte Std.</div>
-            </div>
-            <div className="rounded-lg border bg-muted/40 border-border p-3 space-y-0.5">
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-                Nicht ersetzt
-              </div>
-              <div className="text-2xl font-bold tabular-nums">{summary.unreplacedHrs.toFixed(1)} h</div>
-              <div className="text-[10px] text-muted-foreground">Offene Abwesenheitsstunden</div>
+
+            {/* ── Dept split: Service / Küche ── */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {([
+                { key: 'service' as const, label: 'Service', color: 'indigo' },
+                { key: 'küche'   as const, label: 'Küche',   color: 'orange' },
+              ] as const).map(({ key, label, color }) => {
+                const d = summary.byDept[key];
+                if (d.days === 0) return null;
+                const borderCls = color === 'indigo'
+                  ? 'border-indigo-200 dark:border-indigo-800 bg-indigo-50/40 dark:bg-indigo-950/20'
+                  : 'border-orange-200 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20';
+                const headCls = color === 'indigo'
+                  ? 'text-indigo-700 dark:text-indigo-400'
+                  : 'text-orange-700 dark:text-orange-400';
+                return (
+                  <div key={key} className={`rounded-lg border p-3 space-y-2 ${borderCls}`}>
+                    <div className={`text-xs font-semibold uppercase tracking-wide ${headCls}`}>{label}</div>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Absenztage</div>
+                        <div className="font-bold text-sm">{d.days}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Ersatzkosten</div>
+                        <div className="font-bold text-sm font-mono">
+                          {d.cost > 0 ? `CHF ${d.cost.toFixed(0)}` : '–'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Einsparung</div>
+                        <div className="font-bold text-sm font-mono text-green-600 dark:text-green-400">
+                          {d.saving > 0 ? `CHF ${d.saving.toFixed(0)}` : '–'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
