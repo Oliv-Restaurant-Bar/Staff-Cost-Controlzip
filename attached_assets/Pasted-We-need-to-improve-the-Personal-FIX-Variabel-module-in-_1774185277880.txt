@@ -1,0 +1,65 @@
+We need to improve the "Personal FIX + Variabel" module in a financially correct and operationally useful way.
+
+Goal:
+Handle terminated employees correctly in fixed salary calculations, split variable employees by department, and add clear Plan vs Ist views for variable labor cost estimation.
+
+Important:
+Do not change unrelated modules.
+Keep all existing data intact.
+Use the existing Dienstplanung Plan and Ist hour sources consistently.
+
+Implement these requirements:
+
+1. Pro-rata fixed salary for terminated employees
+If an employee exits during the current month (example: David exits on 2026-03-04), then the FIX salary in that month must be calculated pro rata, not as full monthly salary.
+
+Requirements:
+- In the exit month, calculate fixed salary only up to the Austrittsdatum
+- In later months, the employee should no longer count as active fixed salary
+- Show a clear label such as:
+  - "Pro rata bis 04.03."
+so the reason is visible in the UI
+
+2. Split variable employees by department
+In the "Variable Mitarbeiter — Stunden-Hochrechnung" section, do not show everyone in one mixed list.
+Split clearly into:
+- Service
+- Küche
+
+3. Two view modes for variable employees
+Add a toggle / two-button view:
+- Plan
+- Ist
+
+Behavior:
+- Plan view uses the Dienstplanung planned hours for each variable employee
+- Ist view uses the actual recorded Ist-Stunden from Dienstplanung
+- Variable labor cost = hours × hourly wage
+- This should provide both a forecast and a real actual-cost view
+
+4. Clear source labeling
+In the variable section, visibly indicate which hour source is being used:
+- "Quelle: Dienstplan Plan"
+or
+- "Quelle: Dienstplan Ist"
+
+5. Better summary visibility
+For each department (Service / Küche), show summary totals where useful:
+- FIX
+- VARIABEL
+- TOTAL PERSONAL
+If appropriate, also show an overall total.
+
+6. Preserve current logic
+Do not break:
+- existing fixed salary calculations for normal employees
+- employee cost factors
+- Dienstplanung Plan and Ist data
+- Austrittslogik already used elsewhere
+
+7. Explain in simple German:
+- how pro-rata salary is calculated in the exit month
+- how later months treat exited employees
+- how the Plan/Ist toggle works
+- how variable employees are now split by department
+- what I should test next
