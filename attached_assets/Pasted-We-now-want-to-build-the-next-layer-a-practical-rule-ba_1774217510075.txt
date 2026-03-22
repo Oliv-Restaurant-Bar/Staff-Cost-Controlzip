@@ -1,0 +1,96 @@
+We now want to build the next layer:
+a practical rule-based weekly/day planning assistant for Dienstplanung.
+
+Goal:
+Move from passive planning hints to active scheduling suggestions.
+The system should propose who should be planned, reduced, or protected, based on budget, hour balance, department, and station/position fit.
+
+Important:
+Do not build a fake "AI" assistant.
+Build a practical rule-based planning assistant first.
+Do not break existing planning, FIX/VARIABEL, absences, replacement cost, or hour balance logic.
+Keep all current data intact.
+Respect station/position specificity within departments.
+
+Critical business rule:
+Employees are not interchangeable just because they are in the same department.
+A pizzaiolo cannot simply be replaced by any kitchen employee.
+Suggestions must respect:
+- department
+- station / position
+- uniqueness of role
+- current plus/minus balance
+- available budget
+
+Implement these requirements:
+
+1. Weekly/day planning assistant entry point
+Add a clear assistant action in Dienstplanung, for example:
+- "Planungshilfe"
+or
+- "Vorschläge"
+
+This should open a planning-assistant panel or modal for the currently visible week or selected day.
+
+2. Suggest who should be preferred for planning
+Based on:
+- hour balance (minus hours → prefer planning)
+- budget availability
+- department
+- station / position
+- absences / replacements already known
+- existing schedule density
+
+Generate human-readable suggestions such as:
+- "Mitarbeiter X ist 14h im Minus und kann am Freitag bevorzugt eingeplant werden"
+- "Mitarbeiter Y hat 22h Plusstunden, freier Tag wäre sinnvoll"
+- "Service hat noch Budget für ca. 12h, bevorzugt bei Mitarbeiter Z"
+- "Für Pizzaiolo ist aktuell kein gleichwertiger Ersatz verfügbar"
+
+3. Suggest reductions where needed
+If a day is overplanned:
+- suggest who is the best candidate to reduce
+- prefer candidates that are:
+  - helpers / extra support
+  - high plus-hour employees
+  - not unique in their station
+  - expensive relative to available alternatives
+
+Show suggestions like:
+- "Aushilfe A am Abend reduzieren"
+- "Mitarbeiter B zweite Schicht kürzen"
+- "Mitarbeiter C freigeben, da Plusstunden hoch und Ersatz vorhanden"
+
+4. Respect position/station fit
+Do not generate misleading suggestions when no valid replacement exists.
+If a person is unique in that station, say so clearly.
+If alternatives exist, name them.
+
+5. Show planning suggestions in a practical UI
+The assistant should be easy to use:
+- grouped by day and/or department
+- clearly readable
+- not overloaded
+- with simple actions like:
+  - Übernehmen
+  - Ignorieren
+  - Später prüfen
+
+6. First semi-automatic action support
+Where possible, allow the assistant to:
+- apply an obvious free-day suggestion
+- remove a clearly redundant helper shift
+- mark a recommendation as accepted/ignored
+But do not over-automate yet.
+
+7. Budget-aware suggestions
+Use the new variable budget logic:
+- if budget is tight, suggestions should be stricter
+- if budget still has room, suggestions can favor minus-hour employees more
+
+8. Explain in simple German:
+- how the planning assistant decides who should be planned
+- how it decides who should be reduced
+- how station/position fit is respected
+- where I see the suggestions
+- what I should test later
