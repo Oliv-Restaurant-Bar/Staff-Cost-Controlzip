@@ -953,6 +953,65 @@ export default function PersonalFixPage() {
               </div>
             </div>
 
+            {/* ── Restbudget Schnellinfo ─────────────────────────────────── */}
+            {personnelBudget > 0 && (
+              <div className={cn(
+                'px-4 py-2 border-b flex flex-wrap items-center justify-between gap-3 text-xs',
+                varBudgetOverrun
+                  ? 'border-red-200 dark:border-red-800 bg-red-50/40 dark:bg-red-950/15'
+                  : varBudgetDelta < availableVarBudget * 0.15
+                    ? 'border-yellow-200 dark:border-yellow-800 bg-yellow-50/40 dark:bg-yellow-950/15'
+                    : 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/15'
+              )}>
+                {/* Left: status text */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex gap-1 items-center shrink-0">
+                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', varBudgetOverrun ? 'bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.6)]' : 'bg-red-200 dark:bg-red-900')} />
+                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', !varBudgetOverrun && varBudgetDelta < availableVarBudget * 0.15 ? 'bg-yellow-500 shadow-[0_0_4px_rgba(234,179,8,0.6)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
+                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', !varBudgetOverrun && varBudgetDelta >= availableVarBudget * 0.15 ? 'bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.6)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
+                  </div>
+                  <span className="text-muted-foreground">Restbudget Variabel:</span>
+                  <span className={cn('font-mono font-bold',
+                    varBudgetOverrun ? 'text-red-600 dark:text-red-400'
+                      : varBudgetDelta < availableVarBudget * 0.15 ? 'text-yellow-600 dark:text-yellow-500'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                  )}>
+                    {varBudgetOverrun
+                      ? `⚠ ${fmtCHF(Math.abs(varBudgetDelta))} überschritten`
+                      : `${fmtCHF(varBudgetDelta)} noch verfügbar`}
+                  </span>
+                  {avgHourlyWage > 0 && !varBudgetOverrun && maxVarHours > 0 && (
+                    <span className="text-muted-foreground">
+                      ≈ <strong className="text-foreground font-mono">
+                        {Math.max(0, maxVarHours - Math.round(totalVarHours))} h
+                      </strong> noch planbar
+                    </span>
+                  )}
+                  {varBudgetOverrun && avgHourlyWage > 0 && (
+                    <span className="text-red-600 dark:text-red-400">
+                      → ca. <strong className="font-mono">{Math.ceil(Math.abs(varBudgetDelta) / avgHourlyWage)} h</strong> reduzieren
+                    </span>
+                  )}
+                </div>
+                {/* Right: progress bar */}
+                {availableVarBudget > 0 && (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-muted-foreground tabular-nums">
+                      {Math.min(100, Math.round((totalVarCost / availableVarBudget) * 100))} %
+                    </span>
+                    <div className="w-28 h-2 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={cn('h-full rounded-full transition-all duration-300',
+                          varBudgetOverrun ? 'bg-red-500' : varBudgetDelta < availableVarBudget * 0.15 ? 'bg-yellow-500' : 'bg-emerald-500'
+                        )}
+                        style={{ width: `${Math.min(100, (totalVarCost / availableVarBudget) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Quellenangabe */}
             <div className="px-4 py-2 bg-orange-50/30 dark:bg-orange-950/10 border-b border-orange-100 dark:border-orange-900 text-xs text-orange-700 dark:text-orange-300 flex items-center gap-1.5">
               <BarChart2 className="h-3.5 w-3.5 shrink-0" />
@@ -1237,8 +1296,8 @@ export default function PersonalFixPage() {
               </div>
             </div>
 
-            {/* Planungsempfehlung */}
-            {avgHourlyWage > 0 && totalVarHours > 0 && (
+            {/* ── Planungsempfehlung ────────────────────────────────────── */}
+            {avgHourlyWage > 0 && (
               <div className={cn(
                 'mx-4 mb-4 p-3 rounded-lg border flex flex-wrap items-start gap-3',
                 varBudgetOverrun
@@ -1250,31 +1309,57 @@ export default function PersonalFixPage() {
                 <Lightbulb className={cn('h-4 w-4 mt-0.5 shrink-0',
                   varBudgetOverrun ? 'text-red-600' : varBudgetDelta < availableVarBudget * 0.15 ? 'text-yellow-600' : 'text-emerald-600'
                 )} />
-                <div className="flex-1 min-w-0 text-sm space-y-1">
-                  <p className="font-semibold">
-                    {varBudgetOverrun
-                      ? `Budgetüberschreitung: ${fmtCHF(Math.abs(varBudgetDelta))} zu viel geplant`
-                      : varBudgetDelta < availableVarBudget * 0.15
-                        ? `Budget knapp: noch ${fmtCHF(varBudgetDelta)} Puffer`
-                        : `Budget im grünen Bereich · Puffer ${fmtCHF(varBudgetDelta)}`}
+                <div className="flex-1 min-w-0 space-y-1.5">
+                  {/* Hauptstatus */}
+                  <p className="text-sm font-semibold">
+                    {totalVarHours === 0 && !varBudgetOverrun
+                      ? `Noch kein Variabel geplant — Budget: ${fmtCHF(availableVarBudget)} verfügbar`
+                      : varBudgetOverrun
+                        ? `⚠ Budgetüberschreitung: ${fmtCHF(Math.abs(varBudgetDelta))} zu viel geplant`
+                        : varBudgetDelta < availableVarBudget * 0.15
+                          ? `Achtung: Budget fast ausgeschöpft — noch ${fmtCHF(varBudgetDelta)} Puffer`
+                          : `Budget im grünen Bereich — Puffer ${fmtCHF(varBudgetDelta)}`}
                   </p>
-                  <p className="text-muted-foreground text-xs">
-                    Ø Stundenlohn Variabel: <strong className="font-mono">{fmtCHFDec(avgHourlyWage)}/h</strong>
-                    {maxVarHours > 0 && (
-                      <> · Budget reicht für max. <strong className="font-mono">{maxVarHours} h</strong>
-                      {' '}· Aktuell geplant: <strong className="font-mono">{Math.round(totalVarHours * 10) / 10} h</strong>
-                      {totalVarHours <= maxVarHours
-                        ? <span className="text-emerald-600"> ({maxVarHours - Math.round(totalVarHours)} h Reserve)</span>
-                        : <span className="text-red-600"> ({Math.round(totalVarHours) - maxVarHours} h zu viel)</span>}
-                      </>
+
+                  {/* Stunden-Info */}
+                  <div className="text-xs text-muted-foreground space-y-0.5">
+                    <p>
+                      Ø Stundenlohn Variabel: <strong className="font-mono text-foreground">{fmtCHFDec(avgHourlyWage)}/h</strong>
+                      {maxVarHours > 0 && (
+                        <> · Budget reicht für max. <strong className="font-mono text-foreground">{maxVarHours} h</strong></>
+                      )}
+                    </p>
+                    {totalVarHours > 0 && maxVarHours > 0 && (
+                      <p>
+                        Aktuell geplant: <strong className="font-mono text-foreground">{Math.round(totalVarHours * 10) / 10} h</strong>
+                        {totalVarHours <= maxVarHours
+                          ? <span className="text-emerald-600 dark:text-emerald-400"> · Reserve: {Math.max(0, maxVarHours - Math.round(totalVarHours))} h (≈ {fmtCHF(varBudgetDelta)})</span>
+                          : <span className="text-red-600 dark:text-red-400"> · {Math.round(totalVarHours) - maxVarHours} h zu viel (≈ {fmtCHF(Math.abs(varBudgetDelta))})</span>}
+                      </p>
                     )}
+                  </div>
+
+                  {/* Regelbasierte Handlungsempfehlung */}
+                  <p className={cn('text-xs font-medium mt-0.5',
+                    varBudgetOverrun ? 'text-red-600 dark:text-red-400'
+                      : varBudgetDelta < availableVarBudget * 0.15 ? 'text-yellow-600 dark:text-yellow-500'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                  )}>
+                    {totalVarHours === 0 && !varBudgetOverrun
+                      ? `→ Stunden planen: Noch ca. ${maxVarHours} h verfügbar — trage unten Stunden ein.`
+                      : varBudgetOverrun
+                        ? `→ Reduziere variable Stunden um ca. ${Math.ceil(Math.abs(varBudgetDelta) / avgHourlyWage)} h, um das Budget einzuhalten.`
+                        : varBudgetDelta < availableVarBudget * 0.15
+                          ? `→ Vorsicht: Noch ${Math.max(0, maxVarHours - Math.round(totalVarHours))} h Spielraum — zusätzliche Schichten könnten das Budget sprengen.`
+                          : `→ Kapazität vorhanden: Noch ca. ${Math.max(0, maxVarHours - Math.round(totalVarHours))} h planbar ohne Budgetüberschreitung.`}
                   </p>
                 </div>
+
                 {/* Ampel */}
-                <div className="flex gap-1 items-center shrink-0">
-                  <div className={cn('h-3 w-3 rounded-full', varBudgetOverrun ? 'bg-red-500 ring-2 ring-red-300' : 'bg-red-200 dark:bg-red-900')} />
-                  <div className={cn('h-3 w-3 rounded-full', !varBudgetOverrun && varBudgetDelta < availableVarBudget * 0.15 ? 'bg-yellow-500 ring-2 ring-yellow-300' : 'bg-yellow-200 dark:bg-yellow-900')} />
-                  <div className={cn('h-3 w-3 rounded-full', !varBudgetOverrun && varBudgetDelta >= availableVarBudget * 0.15 ? 'bg-emerald-500 ring-2 ring-emerald-300' : 'bg-emerald-200 dark:bg-emerald-900')} />
+                <div className="flex flex-col gap-1 items-center shrink-0 self-center">
+                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', varBudgetOverrun ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)]' : 'bg-red-200 dark:bg-red-900')} />
+                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', !varBudgetOverrun && varBudgetDelta < availableVarBudget * 0.15 ? 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.7)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
+                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', !varBudgetOverrun && varBudgetDelta >= availableVarBudget * 0.15 ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
                 </div>
               </div>
             )}
