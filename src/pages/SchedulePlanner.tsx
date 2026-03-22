@@ -14,7 +14,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
@@ -45,6 +45,9 @@ import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import PlanningAssistant from '@/components/schedule-planner/PlanningAssistant';
 import { TemplateManagerDialog } from '@/components/schedule-planner/TemplateManagerDialog';
 import { TemplateDept } from '@/lib/schedule-templates';
+import { StaffingTargetDialog } from '@/components/schedule-planner/StaffingTargetDialog';
+import { StaffingStatusBar } from '@/components/schedule-planner/StaffingStatusBar';
+import { StaffingTarget, loadTargets as loadStaffingTargets } from '@/lib/staffing-targets';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
@@ -180,8 +183,10 @@ const SchedulePlanner = () => {
   const [scheduleMode, setScheduleMode] = useState<'plan' | 'ist' | 'compare'>('plan');
   const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string }>>({});
   const [paintTool, setPaintTool] = useState<string | null>(null);
-  const [planningAssistantOpen, setPlanningAssistantOpen] = useState(false);
-  const [templateDialogOpen, setTemplateDialogOpen]       = useState(false);
+  const [planningAssistantOpen, setPlanningAssistantOpen]     = useState(false);
+  const [templateDialogOpen, setTemplateDialogOpen]           = useState(false);
+  const [staffingTargetOpen, setStaffingTargetOpen]           = useState(false);
+  const [staffingTargets, setStaffingTargets]                 = useState<StaffingTarget[]>([]);
 
   // ── Budget-Daten (für PlanningAssistant) ─────────────────────────────────
   const { personnelBudget } = useBudgetMonth(
@@ -410,6 +415,11 @@ const SchedulePlanner = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [calendarView, weeksInMonth.length, daysInMonth.length]);
+
+  // Load staffing targets from localStorage on mount
+  useEffect(() => {
+    setStaffingTargets(loadStaffingTargets());
+  }, []);
 
   // Get displayed days based on view mode
   const displayDays = useMemo(() => {
@@ -1421,6 +1431,18 @@ const SchedulePlanner = () => {
                 <BookOpen className="h-4 w-4" />
                 <span className="hidden sm:inline">Vorlagen</span>
               </Button>
+              {isAdmin && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setStaffingTargetOpen(true)}
+                  className="gap-1.5 border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                  title="Besetzungsziele konfigurieren"
+                >
+                  <Target className="h-4 w-4" />
+                  <span className="hidden sm:inline">Ziele</span>
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -2058,6 +2080,15 @@ const SchedulePlanner = () => {
                           <span className="w-3 h-3 rounded-full bg-blue-500" />
                           <h3 className="font-semibold">Service ({employees.filter(e => e.department === 'service').length} Mitarbeiter)</h3>
                         </div>
+                        {calendarView === 'week' && (
+                          <StaffingStatusBar
+                            targets={staffingTargets}
+                            employees={employees}
+                            scheduleData={scheduleData}
+                            displayDays={displayDays}
+                            department="service"
+                          />
+                        )}
                         <ScheduleGrid
                           employees={employees.filter(e => e.department === 'service')}
                           days={displayDays}
@@ -2087,6 +2118,15 @@ const SchedulePlanner = () => {
                           <span className="w-3 h-3 rounded-full bg-orange-500" />
                           <h3 className="font-semibold">Küche ({employees.filter(e => e.department === 'küche').length} Mitarbeiter)</h3>
                         </div>
+                        {calendarView === 'week' && (
+                          <StaffingStatusBar
+                            targets={staffingTargets}
+                            employees={employees}
+                            scheduleData={scheduleData}
+                            displayDays={displayDays}
+                            department="küche"
+                          />
+                        )}
                         <ScheduleGrid
                           employees={employees.filter(e => e.department === 'küche')}
                           days={displayDays}
@@ -2111,27 +2151,38 @@ const SchedulePlanner = () => {
                       </div>
                     </div>
                   ) : (
-                    <ScheduleGrid
-                      employees={filteredEmployees}
-                      days={displayDays}
-                      scheduleData={scheduleData}
-                      onSlotChange={handleSlotChange}
-                      onRemoveEmployee={handleRemoveEmployee}
-                      onConfigureDaysOff={handleConfigureDaysOff}
-                      onOpen8HoursDialog={handleOpen8HoursDialog}
-                      getEmployeeHours={calculateEmployeeHours}
-                      getTargetHours={getMonthlyTargetHours}
-                      getWeeklyHours={calculateWeeklyHours}
-                      getWeeklyTargetHours={getWeeklyTargetHours}
-                      onDayClick={handleDayClick}
-                      showFooter={showFooter}
-                      showCosts={effectiveShowCosts}
-                      dailyBudgets={dailyBudgets}
-                      laborCostThreshold={gridLaborCostThreshold}
-                      externalActiveTool={paintTool}
-                      onExternalToolChange={setPaintTool}
-                      highlightedEmployeeId={highlightedEmpId}
-                    />
+                    <>
+                      {calendarView === 'week' && activeDepartment !== 'all' && (
+                        <StaffingStatusBar
+                          targets={staffingTargets}
+                          employees={employees}
+                          scheduleData={scheduleData}
+                          displayDays={displayDays}
+                          department={activeDepartment as 'service' | 'küche'}
+                        />
+                      )}
+                      <ScheduleGrid
+                        employees={filteredEmployees}
+                        days={displayDays}
+                        scheduleData={scheduleData}
+                        onSlotChange={handleSlotChange}
+                        onRemoveEmployee={handleRemoveEmployee}
+                        onConfigureDaysOff={handleConfigureDaysOff}
+                        onOpen8HoursDialog={handleOpen8HoursDialog}
+                        getEmployeeHours={calculateEmployeeHours}
+                        getTargetHours={getMonthlyTargetHours}
+                        getWeeklyHours={calculateWeeklyHours}
+                        getWeeklyTargetHours={getWeeklyTargetHours}
+                        onDayClick={handleDayClick}
+                        showFooter={showFooter}
+                        showCosts={effectiveShowCosts}
+                        dailyBudgets={dailyBudgets}
+                        laborCostThreshold={gridLaborCostThreshold}
+                        externalActiveTool={paintTool}
+                        onExternalToolChange={setPaintTool}
+                        highlightedEmployeeId={highlightedEmpId}
+                      />
+                    </>
                   )}
                 </>
               ) : (
@@ -2667,6 +2718,7 @@ const SchedulePlanner = () => {
         allMonthDays={daysInMonth}
         personnelBudget={personnelBudget}
         totalFixCost={paFixCost}
+        staffingTargets={staffingTargets}
         onJumpToDay={handleJumpToDay}
         onRemoveShift={handleRemoveShiftFromAssistant}
       />
@@ -2679,6 +2731,15 @@ const SchedulePlanner = () => {
         displayDays={displayDays}
         activeDepartment={'all' as TemplateDept}
         onApply={handleApplyTemplate}
+      />
+
+      <StaffingTargetDialog
+        open={staffingTargetOpen}
+        onClose={() => {
+          setStaffingTargetOpen(false);
+          // Refresh targets so the status bars update immediately
+          setStaffingTargets(loadStaffingTargets());
+        }}
       />
     </div>
   );

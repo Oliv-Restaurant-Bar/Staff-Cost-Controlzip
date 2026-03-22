@@ -21,6 +21,14 @@ import {
   fmtBalanceHours,
   EmployeeHourBalance,
 } from '@/lib/hour-balance-utils';
+import {
+  StaffingTarget,
+  computeStaffingStatus,
+  SLOT_LABEL,
+  STATUS_CLASSES,
+  STATUS_ICON,
+} from '@/lib/staffing-targets';
+import { Department } from '@/types/personnel';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -34,6 +42,8 @@ interface Props {
   allMonthDays: Date[];
   personnelBudget: number;
   totalFixCost: number;
+  /** Optional staffing targets for alert integration */
+  staffingTargets?: StaffingTarget[];
   /** Jump to a specific day in the schedule and optionally highlight an employee */
   onJumpToDay: (day: Date, empId?: string) => void;
   /** Directly remove a specific shift slot from the schedule */
@@ -555,6 +565,7 @@ export default function PlanningAssistant({
   allMonthDays,
   personnelBudget,
   totalFixCost,
+  staffingTargets = [],
   onJumpToDay,
   onRemoveShift,
 }: Props) {
@@ -600,6 +611,33 @@ export default function PlanningAssistant({
     buildHourBalances(employees, planHoursMap, istHoursMap, empId => planHoursMap[empId] ?? 0),
     [employees, planHoursMap, istHoursMap],
   );
+
+  // ── Besetzungsalarm (Staffing target alerts) ──────────────────────────────
+  const staffingAlerts = useMemo(() => {
+    if (!staffingTargets.length || !displayDays.length) return [];
+    const alerts: Array<{
+      day:    Date;
+      dept:   Department;
+      slot:   'früh' | 'spät';
+      actual: number;
+      min:    number;
+      ideal:  number;
+      status: 'under' | 'over';
+      label:  string;
+    }> = [];
+    for (const day of displayDays) {
+      for (const dept of ['service', 'küche'] as Department[]) {
+        for (const slot of ['früh', 'spät'] as const) {
+          const s = computeStaffingStatus(staffingTargets, employees, scheduleData, day, dept, slot);
+          if (s.status === 'under' || s.status === 'over') {
+            const dStr = format(day, 'EEE d.M.', { locale: de });
+            alerts.push({ day, dept, slot, actual: s.actual, min: s.min, ideal: s.ideal, status: s.status, label: dStr });
+          }
+        }
+      }
+    }
+    return alerts;
+  }, [staffingTargets, employees, scheduleData, displayDays]);
 
   // Remaining var hours
   const avgVarWage = useMemo(() => {
@@ -706,6 +744,45 @@ export default function PlanningAssistant({
             {remainingVarHours > 0 && (
               <span>≈ <strong className="text-foreground font-mono">{Math.round(remainingVarHours)} h</strong> noch planbar</span>
             )}
+          </div>
+        )}
+
+        {/* Besetzungsalarm */}
+        {staffingAlerts.length > 0 && (
+          <div className="rounded-lg border bg-muted/20 divide-y divide-border shrink-0">
+            <div className="flex items-center gap-2 px-3 py-1.5">
+              <ShieldAlert className="h-3.5 w-3.5 text-rose-500" />
+              <span className="text-xs font-semibold">
+                Besetzungsalarm — {staffingAlerts.filter(a => a.status === 'under').length > 0
+                  ? `${staffingAlerts.filter(a => a.status === 'under').length} unter Mindest`
+                  : ''}
+                {staffingAlerts.filter(a => a.status === 'under').length > 0 &&
+                 staffingAlerts.filter(a => a.status === 'over').length > 0 ? ', ' : ''}
+                {staffingAlerts.filter(a => a.status === 'over').length > 0
+                  ? `${staffingAlerts.filter(a => a.status === 'over').length} über Ideal`
+                  : ''}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5 px-3 py-2">
+              {staffingAlerts.map((a, i) => (
+                <button
+                  key={i}
+                  onClick={() => { onJumpToDay(a.day); onClose(); }}
+                  className={cn(
+                    'flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium transition-opacity hover:opacity-80',
+                    a.status === 'under'
+                      ? STATUS_CLASSES['under']
+                      : STATUS_CLASSES['over'],
+                  )}
+                  title={`${a.label} — ${a.dept === 'service' ? 'Service' : 'Küche'} ${SLOT_LABEL[a.slot]}: ${a.actual} ${a.status === 'under' ? `(mind. ${a.min})` : `(ideal ${a.ideal})`}`}
+                >
+                  <span className="text-[9px]">{STATUS_ICON[a.status]}</span>
+                  {a.label}
+                  <span className="opacity-60 text-[9px]">{a.dept === 'service' ? 'SV' : 'KÜ'} {SLOT_LABEL[a.slot]}</span>
+                  <span className="font-bold">{a.actual}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
