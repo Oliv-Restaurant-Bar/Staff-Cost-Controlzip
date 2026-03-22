@@ -15,7 +15,12 @@ import {
   LayoutDashboard, Calendar, BarChart2,
   BookOpen, Target, Upload, ChevronLeft, ChevronRight,
   Pencil, Check, X as XIcon, Scale, Printer, DollarSign,
+  UserX, Palmtree, Stethoscope,
 } from 'lucide-react';
+import {
+  computeAbsenceEvents, resolveAbsenceEvent, summarizeAbsences,
+  loadAbsenceOverrides,
+} from '@/lib/absence-utils';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -513,6 +518,18 @@ const Dashboard = () => {
       .reduce((sum, e) => sum + (e.monthlySalaryWith13th ?? e.monthlySalary ?? 0), 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleEmployees]);
+
+  // ── Absenzen-KPIs (admin only) ────────────────────────────────────────────
+  const absenceData = useMemo(() => {
+    if (!isAdmin || employees.length === 0) return null;
+    const days = eachDayOfInterval({ start: startOfMonth(referenceDate), end: endOfMonth(referenceDate) });
+    const overrides = loadAbsenceOverrides();
+    const events = computeAbsenceEvents(employees, scheduleData, actualData, days);
+    if (events.length === 0) return null;
+    const resolved = events.map(ev => resolveAbsenceEvent(ev, overrides, employees, scheduleData, actualData));
+    return summarizeAbsences(resolved);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employees, scheduleData, actualData, monthKey, isAdmin]);
 
   const plannedHours = useMemo(() => {
     return Object.entries(scheduleData)
@@ -1705,6 +1722,50 @@ const Dashboard = () => {
                       </p>
                     </div>
                   )}
+                </div>
+              </>
+            )}
+
+            {/* ── Absenzen & Ersatzkosten (Admin) ──────────────────────────── */}
+            {isAdmin && absenceData && (
+              <>
+                <SectionTitle icon={<UserX className="h-4 w-4" />}>
+                  Absenzen &amp; Ersatzkosten · {monthName}
+                </SectionTitle>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  <KpiCard
+                    title="Ferientage"
+                    value={String(absenceData.vacationDays)}
+                    subtitle="Ferienabsenzen (FIX)"
+                    icon={<Palmtree className="h-5 w-5" />}
+                    color={absenceData.vacationDays > 0 ? 'yellow' : 'default'}
+                  />
+                  <KpiCard
+                    title="Kranktage"
+                    value={String(absenceData.sickDays)}
+                    subtitle="Krankheitsabsenzen (FIX)"
+                    icon={<Stethoscope className="h-5 w-5" />}
+                    color={absenceData.sickDays > 0 ? 'red' : 'default'}
+                  />
+                  <KpiCard
+                    title="Ersatzkosten"
+                    value={absenceData.totalCost > 0 ? formatCHF(absenceData.totalCost) : '–'}
+                    subtitle="Kosten Ersatz-Aushilfen"
+                    icon={<UserX className="h-5 w-5" />}
+                    color={absenceData.totalCost > 0 ? 'red' : 'default'}
+                  />
+                  <KpiCard
+                    title="Einsparung"
+                    value={absenceData.totalSaving > 0 ? formatCHF(absenceData.totalSaving) : '–'}
+                    subtitle="Nicht ersetzte Absenzen"
+                    icon={<TrendingDown className="h-5 w-5" />}
+                    color={absenceData.totalSaving > 0 ? 'green' : 'default'}
+                  />
+                </div>
+                <div className="text-right">
+                  <Link to="/absenzen" className="text-xs text-primary hover:underline">
+                    Absenzen &amp; Ersatz im Detail →
+                  </Link>
                 </div>
               </>
             )}

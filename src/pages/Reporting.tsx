@@ -20,8 +20,15 @@ import {
   LayoutDashboard, TrendingUp, ChevronRight, Plus,
   Edit3, Upload, CheckCircle2, AlertCircle, Clock,
   Info, Save, X, FileText, BarChart2, RefreshCw, Settings2, AlertTriangle,
-  FileDown, FileSpreadsheet,
+  FileDown, FileSpreadsheet, UserX, Palmtree, Stethoscope,
 } from 'lucide-react';
+import { eachDayOfInterval, startOfMonth, endOfMonth } from 'date-fns';
+import {
+  computeAbsenceEvents, resolveAbsenceEvent, summarizeAbsences,
+  loadAbsenceOverrides,
+} from '@/lib/absence-utils';
+import { Employee } from '@/types/personnel';
+import { DaySchedule } from '@/lib/supabase-db';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip as ReTooltip, Legend, ReferenceLine, ComposedChart,
@@ -520,6 +527,123 @@ const NumberField = ({
   </div>
 );
 
+// ─── Absenzen-Controlling-Block ───────────────────────────────────────────────
+
+const AbsenzMonatsBlock = ({ year }: { year: number }) => {
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [scheduleData, setScheduleData] = useState<Record<string, DaySchedule>>({});
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('schedule-employees');
+      if (raw) setEmployees(JSON.parse(raw));
+    } catch { setEmployees([]); }
+  }, []);
+
+  useEffect(() => {
+    const key = `schedule-v2-${year}-${String(selectedMonth).padStart(2, '0')}`;
+    try {
+      const raw = localStorage.getItem(key);
+      setScheduleData(raw ? JSON.parse(raw) : {});
+    } catch { setScheduleData({}); }
+  }, [year, selectedMonth]);
+
+  const summary = useMemo(() => {
+    if (employees.length === 0) return null;
+    const monthDate = new Date(year, selectedMonth - 1, 1);
+    const days = eachDayOfInterval({ start: startOfMonth(monthDate), end: endOfMonth(monthDate) });
+    const overrides = loadAbsenceOverrides();
+    const events = computeAbsenceEvents(employees, scheduleData, {}, days);
+    if (events.length === 0) return null;
+    const resolved = events.map(ev => resolveAbsenceEvent(ev, overrides, employees, scheduleData, {}));
+    return summarizeAbsences(resolved);
+  }, [employees, scheduleData, year, selectedMonth]);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2 pt-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <UserX className="h-4 w-4 text-muted-foreground" />
+            Absenzen-Controlling · Ersatzkosten
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <Select value={String(selectedMonth)} onValueChange={v => setSelectedMonth(Number(v))}>
+              <SelectTrigger className="h-7 w-32 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MONTH_NAMES_DE.slice(1).map((label, i) => (
+                  <SelectItem key={i + 1} value={String(i + 1)}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Link to="/absenzen">
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
+                <ChevronRight className="h-3.5 w-3.5" />
+                Detail
+              </Button>
+            </Link>
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-0.5">
+          Ferienabsenzen und Krankheitstage fixer Mitarbeiter · automatisch aus Dienstplan {year} berechnet
+        </p>
+      </CardHeader>
+      <CardContent className="pt-2 pb-4">
+        {!summary ? (
+          <div className="h-16 flex items-center justify-center text-xs text-muted-foreground/60 italic">
+            Keine Absenzen in {MONTH_NAMES_DE[selectedMonth]} {year} erkannt — bitte Codes «FE» oder «K» im Dienstplan eintragen.
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="rounded-lg border bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800 p-3 space-y-0.5">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wide">
+                <Palmtree className="h-3 w-3" />
+                Ferientage
+              </div>
+              <div className="text-2xl font-bold tabular-nums">{summary.vacationDays}</div>
+              <div className="text-[10px] text-muted-foreground">CHF {summary.vacationCost.toFixed(0)} Ersatz</div>
+            </div>
+            <div className="rounded-lg border bg-blue-50/60 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 p-3 space-y-0.5">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">
+                <Stethoscope className="h-3 w-3" />
+                Kranktage
+              </div>
+              <div className="text-2xl font-bold tabular-nums">{summary.sickDays}</div>
+              <div className="text-[10px] text-muted-foreground">CHF {summary.sickCost.toFixed(0)} Ersatz</div>
+            </div>
+            <div className="rounded-lg border bg-red-50/60 dark:bg-red-950/20 border-red-200 dark:border-red-800 p-3 space-y-0.5">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-red-700 dark:text-red-400 uppercase tracking-wide">
+                <UserX className="h-3 w-3" />
+                Ersatzkosten
+              </div>
+              <div className="text-2xl font-bold tabular-nums font-mono">CHF {summary.totalCost.toFixed(0)}</div>
+              <div className="text-[10px] text-muted-foreground">Kosten Aushilfen</div>
+            </div>
+            <div className="rounded-lg border bg-green-50/60 dark:bg-green-950/20 border-green-200 dark:border-green-800 p-3 space-y-0.5">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-green-700 dark:text-green-400 uppercase tracking-wide">
+                <TrendingUp className="h-3 w-3" />
+                Einsparung
+              </div>
+              <div className="text-2xl font-bold tabular-nums font-mono">CHF {summary.totalSaving.toFixed(0)}</div>
+              <div className="text-[10px] text-muted-foreground">Nicht ersetzte Std.</div>
+            </div>
+            <div className="rounded-lg border bg-muted/40 border-border p-3 space-y-0.5">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                Nicht ersetzt
+              </div>
+              <div className="text-2xl font-bold tabular-nums">{summary.unreplacedHrs.toFixed(1)} h</div>
+              <div className="text-[10px] text-muted-foreground">Offene Abwesenheitsstunden</div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
 // ─── Haupt-Seite ──────────────────────────────────────────────────────────────
 
 const Reporting = () => {
@@ -856,6 +980,9 @@ const Reporting = () => {
             </CardContent>
           </Card>
         </section>
+
+        {/* ── Absenzen-Controlling ──────────────────────────────────────────── */}
+        <AbsenzMonatsBlock year={year} />
 
         {/* Monatstabelle */}
         <section>

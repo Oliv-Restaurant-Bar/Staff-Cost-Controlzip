@@ -7,10 +7,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Clock, Users, TrendingUp, Pencil, RotateCcw, Check, X, AlertTriangle, Lightbulb } from 'lucide-react';
+import { Clock, Users, TrendingUp, Pencil, RotateCcw, Check, X, AlertTriangle, Lightbulb, Palmtree, Stethoscope } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import {
+  isFixedEmployee, isVariableEmployee, absenceKind, SKIP_CODES, netHoursFromSchedule,
+} from '@/lib/absence-utils';
 
 interface DayDetailDialogProps {
   open: boolean;
@@ -274,6 +277,96 @@ export const DayDetailDialog = ({
               </div>
             )}
           </div>
+
+          {/* ── Abwesenheit & Ersatz ───────────────────────────────────────── */}
+          {(() => {
+            const absences = employees.filter(isFixedEmployee).flatMap(emp => {
+              const ds = scheduleData[`${emp.id}-${dateStr}`];
+              if (!ds) return [];
+              const code = ds.frühAbsence || ds.spätAbsence;
+              if (!code || SKIP_CODES.has(code)) return [];
+              const kind = absenceKind(code);
+              const plannedHrs = emp.weeklyHours ? Math.round(emp.weeklyHours / 5 * 10) / 10 : 8.4;
+
+              const replacements = employees.filter(isVariableEmployee).filter(v =>
+                v.department === emp.department
+              ).flatMap(v => {
+                const vDs = scheduleData[`${v.id}-${dateStr}`];
+                const vActual = actualHoursData?.[`${v.id}-${dateStr}`];
+                let hours = 0;
+                if (vActual?.hours && vActual.hours > 0) hours = vActual.hours;
+                else if (vDs && !vDs.frühAbsence && !vDs.spätAbsence) hours = netHoursFromSchedule(vDs);
+                if (hours <= 0) return [];
+                return [{ name: v.name, hours, cost: hours * (v.hourlyWage ?? 0) }];
+              });
+
+              const replacedHrs  = replacements.reduce((s, r) => s + r.hours, 0);
+              const replacedCost = replacements.reduce((s, r) => s + r.cost, 0);
+              return [{
+                emp, code, kind, plannedHrs, replacements,
+                replacedHrs, replacedCost,
+                unreplacedHrs: Math.max(0, plannedHrs - replacedHrs),
+              }];
+            });
+
+            if (absences.length === 0) return null;
+
+            const totalAbsHrs   = absences.reduce((s, r) => s + r.plannedHrs, 0);
+            const totalRepHrs   = absences.reduce((s, r) => s + r.replacedHrs, 0);
+            const totalRepCost  = absences.reduce((s, r) => s + r.replacedCost, 0);
+            const totalUnrep    = absences.reduce((s, r) => s + r.unreplacedHrs, 0);
+
+            return (
+              <div className="rounded-lg border bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800 p-3 space-y-2.5">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-800 dark:text-amber-300 uppercase tracking-wide">
+                  <Palmtree className="h-3.5 w-3.5" />
+                  Abwesenheit &amp; Ersatz
+                </div>
+                {absences.map(row => (
+                  <div key={row.emp.id} className="space-y-0.5">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium">{row.emp.name}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn(
+                          'text-xs px-1.5 py-0.5 rounded border font-medium',
+                          row.kind === 'vacation'
+                            ? 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/40 dark:text-amber-300'
+                            : 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/40 dark:text-blue-300'
+                        )}>
+                          {row.kind === 'vacation' ? <Palmtree className="h-3 w-3 inline mr-0.5" /> : <Stethoscope className="h-3 w-3 inline mr-0.5" />}
+                          {row.code}
+                        </span>
+                        <span className="text-xs text-muted-foreground">{row.plannedHrs.toFixed(1)} h</span>
+                      </div>
+                    </div>
+                    {row.replacements.length > 0 ? (
+                      <div className="text-xs text-muted-foreground ml-1">
+                        Ersatz: {row.replacements.map(r => `${r.name} (${r.hours.toFixed(1)}h)`).join(', ')}
+                        {row.replacedCost > 0 && (
+                          <span className="ml-1 font-medium text-foreground">· CHF {row.replacedCost.toFixed(0)}</span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground ml-1">Kein Ersatz erkannt</div>
+                    )}
+                    {row.unreplacedHrs > 0 && (
+                      <div className="text-xs text-green-700 dark:text-green-400 ml-1">
+                        Nicht ersetzt: {row.unreplacedHrs.toFixed(1)} h → geschätzte Einsparung
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {absences.length > 1 && (
+                  <div className="border-t border-amber-200 dark:border-amber-700 pt-2 flex flex-wrap gap-x-4 gap-y-0.5 text-xs">
+                    <span className="text-muted-foreground">Abwesend: <strong>{totalAbsHrs.toFixed(1)} h</strong></span>
+                    <span className="text-muted-foreground">Ersetzt: <strong>{totalRepHrs.toFixed(1)} h</strong></span>
+                    {totalRepCost > 0 && <span className="text-muted-foreground">Ersatzkosten: <strong>CHF {totalRepCost.toFixed(0)}</strong></span>}
+                    {totalUnrep > 0 && <span className="text-green-700 dark:text-green-400">Nicht ersetzt: <strong>{totalUnrep.toFixed(1)} h</strong></span>}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* KPI section: planned cost vs target — full width */}
           {hasCostData && (() => {
