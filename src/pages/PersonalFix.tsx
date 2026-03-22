@@ -769,7 +769,7 @@ export default function PersonalFixPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {rows.map(({ emp, cost, label }) => {
+                    {rows.map(({ emp, cost, label, yearlyCost }) => {
                       const isSavingThis = saving === emp.id;
                       const isProRata = label !== null;
                       return (
