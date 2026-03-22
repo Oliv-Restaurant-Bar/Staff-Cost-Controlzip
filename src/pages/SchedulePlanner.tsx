@@ -1094,10 +1094,19 @@ const SchedulePlanner = () => {
     setSelectedEmployeeForEdit(null);
   };
 
+  // Filter out employees who have already left before the start of the displayed month
+  const monthStartDate = startOfMonth(currentMonth);
+  const activeEmployees = employees.filter(e => {
+    if (!e.employmentEndDate) return true;
+    const exitDate = new Date(e.employmentEndDate);
+    // Keep if exit date is >= first day of current month (they were still active this month)
+    return exitDate >= monthStartDate;
+  });
+
   // Filter employees by active department
   const filteredEmployees = activeDepartment === 'all' 
-    ? employees 
-    : employees.filter(e => e.department === activeDepartment);
+    ? activeEmployees 
+    : activeEmployees.filter(e => e.department === activeDepartment);
 
   // Calculate summary stats for all employees
   const employeeSummaries = employees.map(emp => {

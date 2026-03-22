@@ -1,0 +1,66 @@
+Personalstamm now seems stable.
+
+Next we want to improve Dienstplanung in 3 concrete ways:
+
+Goal:
+Move correction suggestions into the actual planning grid, reduce dependency on the popup, and correctly handle employee termination dates in the schedule.
+
+Important:
+Do not change unrelated modules.
+Keep all current planning logic intact.
+Keep Supabase persistence working.
+Do not build full AI auto-planning yet.
+
+Implement these requirements:
+
+1. Correction suggestions directly in the employee rows / schedule grid
+The current popup/dialog is not the ideal place for operational corrections.
+We want the improvement suggestions directly in the planning grid near the affected employees/shifts.
+
+Requirements:
+- if a day is overplanned, visually mark the suggested correction directly in the employee row / cell
+- show what the proposed correction is, for example:
+  - remove this late shift
+  - remove helper shift
+  - shorten second shift
+- give quick actions directly in context:
+  - Übernehmen
+  - Ignorieren
+  - Später
+- make this usable without needing the popup as the primary workflow
+
+2. Improve popup role
+The popup can remain as a summary/info view, but it should not be the main place for operational correction.
+Keep it simpler and more overview-oriented.
+The main actionable suggestions should live in the schedule itself.
+
+3. Termination date logic in Dienstplanung
+Employees must be handled correctly based on Austrittsdatum:
+
+a) If an employee has an exit date in a previous month:
+- they must not appear at all in later months of the schedule
+
+b) If an employee exits during the currently displayed month:
+- all days after the exit date must be blocked visually in black
+- these blocked days must clearly indicate that the employee is no longer available after that date
+- these days must not allow normal planning input
+
+Example:
+If David exits on 2026-03-04:
+- in March, all days after 04.03 should appear black/blocked
+- in April and later, David should not appear in the schedule at all
+
+4. Keep current logic intact
+Do not break:
+- Plan / Ist / Ver.
+- fixed free days
+- custom shifts
+- click-to-apply
+- manager/admin permissions
+- PDF export
+
+5. Explain in simple German:
+- how correction suggestions now appear directly in the grid
+- how I accept/reject/postpone them there
+- how Austrittsdatum affects employees in current and future months
+- what I should test next
