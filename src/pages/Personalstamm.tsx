@@ -364,7 +364,16 @@ const Personalstamm = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Keep a ref so the initial load effect can access isAdmin without re-running
+  // when the value changes (it is stable after auth resolves and the component mounts).
+  const isAdminRef = useRef(isAdmin);
+  isAdminRef.current = isAdmin;
+
   // ── Laden ──────────────────────────────────────────────────────────────────
+  // Empty deps: run only once on mount.
+  // By the time this component mounts, the global auth loading spinner has
+  // already resolved, so isAdminRef.current holds the correct final value.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const load = async () => {
       const emps = await loadEmployees();
@@ -448,7 +457,7 @@ const Personalstamm = () => {
       setLocalData(local);
 
       // Submissions laden (nur für Admin)
-      if (isAdmin) {
+      if (isAdminRef.current) {
         const { data: subs, tableExists, permissionError, anonInsertBlocked: aib, employeeStatusMissing: esm } = await loadOnboardingSubmissions();
         setSubmissions(subs);
         setSubmissionsDbReady(tableExists);
@@ -460,7 +469,7 @@ const Personalstamm = () => {
       setLoading(false);
     };
     load();
-  }, [isAdmin]);
+  }, []); // intentionally empty — see comment above
 
   // ── Gefilterte Mitarbeiter ─────────────────────────────────────────────────
   const pendingEmployees = useMemo(() =>

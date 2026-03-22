@@ -1,4 +1,4 @@
-import { createContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -19,10 +19,14 @@ export interface AuthContextType {
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser]       = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState<UserRole>('admin');
+  const [role, setRole]       = useState<UserRole>('admin');
+
+  // Track whether the initial getSession() boot sequence is complete.
+  // onAuthStateChange will skip INITIAL_SESSION so we don't double-load.
+  const bootDoneRef = useRef(false);
 
   // E-Mail-Fallback (greift nur wenn kein user_profiles-Eintrag existiert)
   const EMAIL_ROLE_MAP: Record<string, UserRole> = {
@@ -40,42 +44,37 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const loadUserRole = async (userId: string, email?: string) => {
     console.log('[AUTH] loadUserRole called', { userId, email });
 
-    // ── Weg 1: SECURITY DEFINER RPC (umgeht RLS vollständig) ──────────────────
-    // get_my_role() läuft als DB-Owner, liest user_profiles nach auth.uid().
-    // Immunität gegen RLS-Konfigurationsprobleme.
+    // ── Weg 1: SECURITY DEFINER RPC ───────────────────────────────────────────
     try {
       const { data: rpcData, error: rpcError } = await supabase.rpc('get_my_role' as any);
       console.log('[AUTH] get_my_role() RPC result', { rpcData, rpcError });
-
       if (!rpcError && rpcData) {
         console.log('[AUTH] ✅ Role via RPC:', rpcData);
         applyRole(rpcData as UserRole);
         syncEmail(userId, email);
         return;
       }
-      console.warn('[AUTH] ⚠️ RPC returned no role – rpcData:', rpcData, 'rpcError:', rpcError);
+      console.warn('[AUTH] ⚠️ RPC returned no role:', rpcData, rpcError);
     } catch (ex) {
       console.error('[AUTH] ❌ RPC exception:', ex);
     }
 
-    // ── Weg 2: Direktabfrage user_profiles (Fallback, falls RPC fehlt) ────────
+    // ── Weg 2: Direktabfrage user_profiles ────────────────────────────────────
     try {
       const resp = await (supabase as any)
         .from('user_profiles')
         .select('role')
         .eq('id', userId)
         .maybeSingle();
-
-      const { data, error, status, statusText } = resp;
-      console.log('[AUTH] Direct query result', { data, error, status, statusText });
-
+      const { data, error, status } = resp;
+      console.log('[AUTH] Direct query result', { data, error, status });
       if (!error && data?.role) {
         console.log('[AUTH] ✅ Role via direct query:', data.role);
         applyRole(data.role as UserRole);
         syncEmail(userId, email);
         return;
       }
-      console.warn('[AUTH] ⚠️ Direct query – no role', { data, error, status, statusText });
+      console.warn('[AUTH] ⚠️ Direct query – no role', { data, error, status });
     } catch (ex) {
       console.error('[AUTH] ❌ Direct query exception:', ex);
     }
@@ -93,12 +92,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
 
     // ── Weg 4: Letzter Ausweg ─────────────────────────────────────────────────
-    console.error('[AUTH] 🔴 All paths failed – defaulting to kueche_manager',
-      { userId, email });
+    console.error('[AUTH] 🔴 All paths failed – defaulting to kueche_manager');
     applyRole('kueche_manager');
   };
 
-  /** E-Mail in user_profiles nachführen (fire-and-forget, nie blockierend) */
+  /** E-Mail in user_profiles nachführen (fire-and-forget) */
   const syncEmail = (userId: string, email?: string) => {
     if (!email) return;
     (supabase as any)
@@ -109,8 +107,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   useEffect(() => {
-    // Initial session check – wait for role before hiding spinner
+    // ── Step 1: Immediate session check from localStorage cache (fast, <5 ms) ──
+    // This is the ONLY place we call loadUserRole on initial boot.
+
+    // Safety net: if getSession never resolves (extreme edge case / network issue),
+    // clear the loading spinner after 8 seconds so the app never hangs forever.
+    const safetyTimer = setTimeout(() => {
+      if (!bootDoneRef.current) {
+        console.warn('[AUTH] ⚠️ Safety timeout — forcing loading=false after 8s');
+        setLoading(false);
+        bootDoneRef.current = true;
+      }
+    }, 8000);
+
     supabase.auth.getSession().then(async ({ data: { session } }) => {
+      clearTimeout(safetyTimer);
       console.log('[AUTH] getSession resolved', {
         hasSession: !!session,
         userId: session?.user?.id,
@@ -119,34 +130,55 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        await loadUserRole(session.user.id, session.user.email);  // ← awaited
+        await loadUserRole(session.user.id, session.user.email);
       }
-      setLoading(false);  // spinner hidden only after role is known
+      setLoading(false);
+      bootDoneRef.current = true;
     });
 
+    // ── Step 2: Listen for real auth transitions ───────────────────────────────
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('[AUTH] onAuthStateChange', {
         event,
         hasSession: !!session,
         userId: session?.user?.id,
-        email: session?.user?.email,
       });
+
+      // INITIAL_SESSION is already handled by getSession() above — skip it.
+      // Firing it again would double-load the role and cause loading to bounce.
+      if (event === 'INITIAL_SESSION') {
+        console.log('[AUTH] INITIAL_SESSION skipped — handled by getSession()');
+        return;
+      }
+
+      // TOKEN_REFRESHED: JWT renewed but user/role unchanged — update session
+      // silently WITHOUT touching loading or re-fetching the role.
+      // This prevents the global spinner from appearing every ~hour.
+      if (event === 'TOKEN_REFRESHED') {
+        console.log('[AUTH] Token refreshed – updating session silently');
+        setSession(session);
+        setUser(session?.user ?? null);
+        return;
+      }
+
+      // SIGNED_IN, SIGNED_OUT, USER_UPDATED — handle normally
       setSession(session);
       setUser(session?.user ?? null);
+
       if (session?.user) {
-        // Keep spinner up while we load the role so the wrong badge never flashes
         setLoading(true);
-        await loadUserRole(session.user.id, session.user.email);  // ← awaited
+        await loadUserRole(session.user.id, session.user.email);
         console.log('[AUTH] onAuthStateChange role load complete');
         setLoading(false);
       } else {
-        console.log('[AUTH] No session → setting kueche_manager');
+        console.log('[AUTH] No session → clearing role');
         setRole('kueche_manager');
         setLoading(false);
       }
     });
 
     return () => subscription.unsubscribe();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const signIn = async (email: string, password: string): Promise<{ error: string | null }> => {
@@ -173,9 +205,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       session,
       loading,
       role,
-      isAdmin: role === 'admin',
+      isAdmin:          role === 'admin',
       isServiceManager: role === 'service_manager',
-      isKuecheManager: role === 'kueche_manager',
+      isKuecheManager:  role === 'kueche_manager',
       signIn,
       signOut,
     }}>

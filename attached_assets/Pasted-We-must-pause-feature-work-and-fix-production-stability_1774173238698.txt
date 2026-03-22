@@ -1,0 +1,62 @@
+We must pause feature work and fix production stability first.
+
+Current critical problems:
+1. The published app sometimes does not open reliably and gets stuck on a loading spinner.
+2. The 404 refresh / direct-route problem is still not fixed.
+3. The Personalstamm page is unstable: it keeps spinning, blinking, or never finishes loading.
+
+This is now a production stability/debug task.
+Do not work on new features.
+Do not change unrelated UI.
+Focus only on root-cause debugging and stabilization.
+
+Tasks:
+
+1. Diagnose published app startup instability
+Investigate why the published app sometimes gets stuck on a loading spinner or fails to open reliably.
+Check:
+- auth/session initialization
+- route guards
+- loading state handling
+- published build/runtime differences
+- any infinite loading or re-render loop
+
+2. Fix the 404 problem properly
+The published app still sometimes returns 404 when:
+- refreshing on a route like /personal
+- reopening after being idle
+- directly opening a client-side route
+Find the exact root cause and fix SPA fallback / routing / publish config correctly.
+
+3. Debug Personalstamm instability
+Inspect why Personalstamm keeps spinning, blinking, or never stabilizes.
+Check specifically for:
+- repeated auth/user-profile fetches
+- repeated redirects
+- state loops
+- effect dependency loops
+- Supabase query retry loops
+- loading state that never resolves
+
+4. Add temporary debug logging where needed
+Log clearly:
+- route entered
+- auth session state
+- role load result
+- user profile / employee load result
+- loading state transitions
+- any repeated render/effect loop
+Make it easy to identify where the app gets stuck.
+
+5. Acceptance criteria
+After the fix:
+- published app opens reliably
+- refreshing /personal does not lead to 404
+- Personalstamm loads once and stays stable
+- no endless spinner / blinking
+- app can recover after idle time
+
+6. Explain in simple German:
+- what exact root causes you found
+- what files / logic you changed
+- how I should test startup, refresh, and Personalstamm stability
