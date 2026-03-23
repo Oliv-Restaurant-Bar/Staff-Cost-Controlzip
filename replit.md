@@ -309,6 +309,35 @@ Vergleicht den Wareneinsatz (WES) aus drei Quellen nebeneinander:
 **FIBU-Konto → Kategorie Mapping:**
 - Food: 4060, 4061 · Beverage: 4020, 4030, 4040, 4050, 4070 · Autres: 4090, 4701
 
+## Artikel-Tracking
+
+Route: `/artikel-tracking` · Nur Admin · Dateien: `src/pages/ArtikelTracking.tsx`, `src/lib/artikel-tracking-store.ts`
+
+Monatliche Einkaufs- und Verbrauchsanalyse für ausgewählte Artikel mit aktivem `trackingAktiv`-Flag.
+
+**Datenmodell (`ArtikelPurchase`):**
+```typescript
+{ id, articleId, articleName, date, year, month, quantity, pricePerUnit, totalCost (NET CHF), supplier, note?, createdAt, updatedAt }
+```
+Gespeichert in `localStorage` mit Key `artikel_purchases_v1`.
+
+**Pro Monat + Artikel berechnet (`ArtikelMonthStats`):**
+- `purchasedQty` — Gesamtmenge (Einheiten)
+- `purchasedCHF` — Gesamtkosten NET CHF
+- `orderCount` — Anzahl Einkaufsbelege
+- `avgDaysBetweenOrders` — Ø Tage zwischen Bestellungen (null wenn < 2 Käufe)
+- `theoreticalConsumption` — aus Rezeptur × Verkaufsanzahl (null wenn keine Rezeptur/Verkaufsdaten)
+- `diffQty` — Einkauf minus theoretischer Verbrauch
+
+**Tracking-Flag auf Artikel:**
+- `trackingAktiv: boolean` (neu) — steuert Sichtbarkeit in dieser Analyse
+- `inventurRelevant: boolean` (bestehend) — steuert Hervorhebung in Inventur + Lieferanten-Panel
+- Migration: `ensureAccountingAccounts()` setzt `trackingAktiv = inventurRelevant` für bestehende Artikel ohne Flag
+
+**Datenquellen (theoretischer Verbrauch):**
+1. `loadRezepturenFromDB()` — Rezepturen mit `ingredients[].articleId`
+2. `loadProdukteData()` — Verkaufsmengen per Monat (`ProductEntry.count`, `month: 'yyyy-MM'`)
+
 ## Deployment
 
 Konfiguriert als **Static Site** (Vite Build → `dist/`).

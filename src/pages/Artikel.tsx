@@ -7,11 +7,12 @@
  */
 
 import { useEffect, useState, useMemo, Fragment } from 'react';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Plus, Pencil, Trash2, Search, X, Package, Wine,
   ChevronDown, ChevronUp, Eye, EyeOff, Info,
-  MapPin, LayoutList, Layers, Star, ClipboardList,
+  MapPin, LayoutList, Layers, Star, ClipboardList, Activity, ExternalLink,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -68,6 +69,7 @@ function emptyForm(): Omit<Artikel, 'id' | 'createdAt' | 'updatedAt'> {
     accountingAccount:  '4090',
     storageLocations:   [],
     inventurRelevant:   false,
+    trackingAktiv:      false,
     active:             true,
   };
 }
@@ -104,6 +106,7 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
           accountingAccount:  initial.accountingAccount ?? '',
           storageLocations:   initial.storageLocations,
           inventurRelevant:   initial.inventurRelevant ?? false,
+          trackingAktiv:      (initial as Record<string, unknown>).trackingAktiv as boolean ?? false,
           active:             initial.active,
         });
         setUnitMode(knownUnit ? 'list' : 'custom');
@@ -403,6 +406,27 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
             </div>
           </div>
 
+          {/* Tracking aktiv */}
+          <div className="flex items-start gap-3 rounded-lg border border-violet-200 bg-violet-50 dark:bg-violet-950/20 dark:border-violet-800 p-3">
+            <Checkbox
+              id="trackingAktiv"
+              checked={form.trackingAktiv}
+              onCheckedChange={v => setForm(f => ({ ...f, trackingAktiv: v === true }))}
+              className="mt-0.5"
+            />
+            <div>
+              <label htmlFor="trackingAktiv" className="text-sm font-medium cursor-pointer flex items-center gap-1.5">
+                <Activity className="h-3.5 w-3.5 text-violet-600" />
+                Tracking aktiv
+                <span className="text-[10px] font-normal text-violet-500 ml-1">Verbrauch & Einkauf analysieren</span>
+              </label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Einkäufe manuell erfassen und monatlich auswerten: Menge, Kosten, Bestellfrequenz und
+                theoretischer Verbrauch aus Rezepturen. Ideal für kritische oder hochpreisige Artikel.
+              </p>
+            </div>
+          </div>
+
           {/* Aktiv */}
           <div className="flex items-center justify-between">
             <div>
@@ -442,6 +466,7 @@ export default function ArtikelPage() {
   const [searchQuery, setSearchQuery]   = useState('');
   const [showInactive, setShowInactive] = useState(false);
   const [inventurFilter, setInventurFilter] = useState(false);
+  const [trackingFilter, setTrackingFilter]  = useState(false);
   const [sortField, setSortField]       = useState<'name' | 'cost' | 'type'>('name');
   const [sortDir, setSortDir]           = useState<'asc' | 'desc'>('asc');
 
@@ -532,6 +557,7 @@ export default function ArtikelPage() {
       search:               searchQuery,
       showInactive,
       onlyInventurRelevant: inventurFilter,
+      onlyTracking:         trackingFilter,
     });
 
     list = [...list].sort((a, b) => {
@@ -542,7 +568,7 @@ export default function ArtikelPage() {
       return sortDir === 'desc' ? -cmp : cmp;
     });
     return list;
-  }, [store.articles, typeFilter, locationFilter, searchQuery, showInactive, inventurFilter, sortField, sortDir]);
+  }, [store.articles, typeFilter, locationFilter, searchQuery, showInactive, inventurFilter, trackingFilter, sortField, sortDir]);
 
   const stats = useMemo(() => getArtikelStats(store.articles), [store.articles]);
 
@@ -673,7 +699,7 @@ export default function ArtikelPage() {
 
           {stats.inventurCount > 0 && (
             <button
-              onClick={() => setInventurFilter(v => !v)}
+              onClick={() => { setInventurFilter(v => !v); setTrackingFilter(false); }}
               className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border transition-colors ${
                 inventurFilter
                   ? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 font-medium'
@@ -686,6 +712,32 @@ export default function ArtikelPage() {
                 {stats.inventurCount}
               </span>
             </button>
+          )}
+
+          {stats.trackingCount > 0 && (
+            <button
+              onClick={() => { setTrackingFilter(v => !v); setInventurFilter(false); }}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border transition-colors ${
+                trackingFilter
+                  ? 'bg-violet-100 text-violet-700 border-violet-300 dark:bg-violet-950/40 dark:text-violet-300 font-medium'
+                  : 'border-border text-muted-foreground hover:bg-accent'
+              }`}
+            >
+              <Activity className={`h-3.5 w-3.5 ${trackingFilter ? 'text-violet-600' : ''}`} />
+              Tracking aktiv
+              <span className="bg-violet-200 dark:bg-violet-800 text-violet-800 dark:text-violet-200 rounded-full px-1.5 py-px text-[10px] font-bold">
+                {stats.trackingCount}
+              </span>
+            </button>
+          )}
+
+          {stats.trackingCount > 0 && (
+            <Link to="/artikel-tracking">
+              <button className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 transition-colors dark:border-violet-700 dark:text-violet-300 dark:bg-violet-950/20">
+                <ExternalLink className="h-3 w-3" />
+                Tracking-Analyse
+              </button>
+            </Link>
           )}
 
           {/* Ansichts-Toggle */}
@@ -845,6 +897,9 @@ export default function ArtikelPage() {
                       <span className="flex items-center gap-1.5">
                         {a.inventurRelevant && (
                           <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-500" title="Inventur-relevant" />
+                        )}
+                        {(a as Record<string, unknown>).trackingAktiv && (
+                          <Activity className="h-3.5 w-3.5 shrink-0 text-violet-500" title="Tracking aktiv" />
                         )}
                         <span
                           className="font-medium cursor-pointer hover:underline"

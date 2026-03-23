@@ -111,6 +111,13 @@ export interface Artikel {
    * Standard: false
    */
   inventurRelevant: boolean;
+  /**
+   * Tracking aktiv: Vollständige Einkaufs- und Verbrauchsanalyse für diesen Artikel.
+   * Manuelle Einkaufsbuchungen + theoretischer Verbrauch aus Rezeptur/Verkauf werden
+   * pro Monat ausgewertet. Sinnvoll für hochpreisige oder kritische Artikel.
+   * Standard: false
+   */
+  trackingAktiv: boolean;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -209,6 +216,7 @@ export function filterArtikel(
     search?: string;
     showInactive?: boolean;
     onlyInventurRelevant?: boolean;
+    onlyTracking?: boolean;
   },
 ): Artikel[] {
   let list = articles;
@@ -232,6 +240,10 @@ export function filterArtikel(
     list = list.filter(a => a.inventurRelevant === true);
   }
 
+  if (opts.onlyTracking) {
+    list = list.filter(a => a.trackingAktiv === true);
+  }
+
   return list.sort((a, b) => a.name.localeCompare(b.name, 'de'));
 }
 
@@ -244,7 +256,8 @@ export function getArtikelStats(articles: Artikel[]) {
   const beverage       = articles.filter(a => a.inventoryType === 'beverage').length;
   const withCost       = articles.filter(a => a.defaultCostPerUnit > 0).length;
   const inventurCount  = articles.filter(a => a.inventurRelevant === true).length;
-  return { total, active, food, beverage, withCost, inventurCount };
+  const trackingCount  = articles.filter(a => a.trackingAktiv === true).length;
+  return { total, active, food, beverage, withCost, inventurCount, trackingCount };
 }
 
 // ── Fibu-Konto: Single Source of Truth ───────────────────────────────────────
@@ -280,9 +293,16 @@ export function resolveIngredientAccount(
 export function ensureAccountingAccounts(articles: Artikel[]): { articles: Artikel[]; patched: number } {
   let patched = 0;
   const fixed = articles.map(a => {
-    if (!a.accountingAccount) {
+    const needsAccount  = !a.accountingAccount;
+    const needsTracking = (a as Record<string, unknown>).trackingAktiv === undefined;
+    if (needsAccount || needsTracking) {
       patched++;
-      return { ...a, accountingAccount: '4090', updatedAt: new Date().toISOString() };
+      return {
+        ...a,
+        accountingAccount: a.accountingAccount || '4090',
+        trackingAktiv:     needsTracking ? (a.inventurRelevant ?? false) : a.trackingAktiv,
+        updatedAt: new Date().toISOString(),
+      };
     }
     return a;
   });

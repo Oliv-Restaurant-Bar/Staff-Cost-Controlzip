@@ -38,6 +38,7 @@ import ProdukteSeite from "./pages/Produkte";
 import AbsenzKostenPage from "./pages/AbsenzKosten";
 import ArtikelPage from "./pages/Artikel";
 import WesAnalysePage from "./pages/WesAnalyse";
+import ArtikelTrackingPage from "./pages/ArtikelTracking";
 import GuestAccess from "./pages/GuestAccess";
 
 const queryClient = new QueryClient();
@@ -129,6 +130,7 @@ const AppContent = () => {
             <Route path="/personal-fix"     element={<PersonalFixPage />} />
             <Route path="/produkte"         element={<ProdukteSeite />} />
             <Route path="/artikel"          element={<ArtikelPage />} />
+            <Route path="/artikel-tracking" element={<ArtikelTrackingPage />} />
             <Route path="/wes-analyse"      element={<WesAnalysePage />} />
             <Route path="/absenzen"         element={<AbsenzKostenPage />} />
 

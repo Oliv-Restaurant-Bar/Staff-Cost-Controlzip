@@ -14,7 +14,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, BarChart2, Users,
   Settings, LogOut, ChefHat, Utensils, ShieldCheck,
-  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye, DollarSign, Package, UserX, Archive, TrendingDown,
+  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye, DollarSign, Package, UserX, Archive, TrendingDown, Activity,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -128,6 +128,13 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Artikelstamm',
     shortLabel: 'Artikel',
     icon: Archive,
+    adminOnly: true,
+  },
+  {
+    path: '/artikel-tracking',
+    label: 'Artikel-Tracking',
+    shortLabel: 'Tracking',
+    icon: Activity,
     adminOnly: true,
   },
   {
