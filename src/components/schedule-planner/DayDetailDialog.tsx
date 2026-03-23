@@ -133,7 +133,15 @@ export const DayDetailDialog = ({
   });
 
   // Calculate planned cost (only employees with hourlyWage and work hours)
+  // Also compute per-slot and per-dept breakdowns
   let totalPlannedCost = 0;
+  let frühPlannedCost  = 0;
+  let spätPlannedCost  = 0;
+  const deptSlotCosts: Record<string, { früh: number; spät: number; frühH: number; spätH: number }> = {
+    service: { früh: 0, spät: 0, frühH: 0, spätH: 0 },
+    küche:   { früh: 0, spät: 0, frühH: 0, spätH: 0 },
+  };
+
   employees.forEach(emp => {
     if (!emp.hourlyWage) return;
     const cellKey = `${emp.id}-${dateStr}`;
@@ -142,10 +150,25 @@ export const DayDetailDialog = ({
     const frühH = calculateSlotHours(ds.früh);
     const spätH = calculateSlotHours(ds.spät);
     const gross = frühH + spätH;
-    const net = Math.max(0, gross - calculateBreakDeduction(gross));
+    if (gross === 0) return;
+    const breakDeduction = calculateBreakDeduction(gross);
+    const net = Math.max(0, gross - breakDeduction);
     totalPlannedCost += net * emp.hourlyWage;
+
+    // Split break deduction proportionally
+    const frühNet = Math.max(0, frühH - breakDeduction * (frühH / gross));
+    const spätNet = Math.max(0, spätH - breakDeduction * (spätH / gross));
+    frühPlannedCost += frühNet * emp.hourlyWage;
+    spätPlannedCost += spätNet * emp.hourlyWage;
+
+    const dept = emp.department === 'küche' ? 'küche' : 'service';
+    deptSlotCosts[dept].früh  += frühNet * emp.hourlyWage;
+    deptSlotCosts[dept].spät  += spätNet * emp.hourlyWage;
+    deptSlotCosts[dept].frühH += frühNet;
+    deptSlotCosts[dept].spätH += spätNet;
   });
 
+  const hasSlotData   = frühPlannedCost > 0 || spätPlannedCost > 0;
   const hasCostData = totalPlannedCost > 0;
   const costTarget = plannedRevenue && plannedRevenue > 0
     ? plannedRevenue * (laborCostThreshold / 100)
@@ -153,20 +176,48 @@ export const DayDetailDialog = ({
   const excessCost = costTarget !== null ? totalPlannedCost - costTarget : null;
   const isOverCostTarget = excessCost !== null && excessCost > 0;
 
+  // Identify the cost driver slot + dept (for smarter recommendations)
+  const slotDriver: { slot: 'Früh' | 'Spät'; dept: string | null } | null = (() => {
+    if (!isOverCostTarget || !hasSlotData) return null;
+    const slot = frühPlannedCost > spätPlannedCost ? 'Früh' : 'Spät';
+    // Which dept within that slot?
+    const frühByDept = { service: deptSlotCosts.service.früh, küche: deptSlotCosts.küche.früh };
+    const spätByDept = { service: deptSlotCosts.service.spät, küche: deptSlotCosts.küche.spät };
+    const relevantByDept = slot === 'Früh' ? frühByDept : spätByDept;
+    const deptEntry = Object.entries(relevantByDept).sort((a, b) => b[1] - a[1])[0];
+    const dept = deptEntry && deptEntry[1] > 0 ? (deptEntry[0] === 'küche' ? 'Küche' : 'Service') : null;
+    return { slot, dept };
+  })();
+
   // Actual hours if available
   const totalActualHours = actualHoursData
     ? employees.reduce((sum, emp) => sum + (actualHoursData[`${emp.id}-${dateStr}`]?.hours ?? 0), 0)
     : null;
   const hasActualHours = totalActualHours !== null && totalActualHours > 0;
 
-  // Recommendation text
+  // Recommendation text — now slot-aware
   const recommendation: { type: 'ok' | 'warning' | 'error'; text: string } | null = (() => {
     if (!costTarget || !hasCostData) return null;
     const excess = totalPlannedCost - costTarget;
     if (excess <= 0) return { type: 'ok', text: 'Tag ist innerhalb des Kostenziels. Gut geplant!' };
-    if (excess > 1000) return { type: 'error', text: `CHF ${excess.toFixed(0)} über Kostenziel. Mehrere Schichten kürzen oder einen Mitarbeitenden freistellen.` };
-    if (excess > 400) return { type: 'warning', text: `CHF ${excess.toFixed(0)} über Kostenziel. Spät- oder Zusatzschicht prüfen und ggf. kürzen.` };
-    return { type: 'warning', text: `CHF ${excess.toFixed(0)} über Kostenziel. Kleine Anpassung (z.B. frühere Abgangszeit) genügt.` };
+
+    // Build driver suffix
+    const driverSuffix = slotDriver
+      ? ` Kostentreiber: ${slotDriver.slot}dienst${slotDriver.dept ? ` ${slotDriver.dept}` : ''}.`
+      : '';
+
+    if (excess > 1000) return {
+      type: 'error',
+      text: `CHF ${excess.toFixed(0)} über Kostenziel. Mehrere Schichten kürzen oder einen Mitarbeitenden freistellen.${driverSuffix}`,
+    };
+    if (excess > 400) return {
+      type: 'warning',
+      text: `CHF ${excess.toFixed(0)} über Kostenziel.${driverSuffix ? driverSuffix : ' Spät- oder Zusatzschicht prüfen und ggf. kürzen.'}`,
+    };
+    return {
+      type: 'warning',
+      text: `CHF ${excess.toFixed(0)} über Kostenziel. Kleine Anpassung genügt.${driverSuffix}`,
+    };
   })();
 
   const renderEmployeeList = (deptEmployees: Employee[], deptName: string, dotColor: string) => {
@@ -376,6 +427,12 @@ export const DayDetailDialog = ({
               : 0;
             const overHours = isOverCostTarget && avgWage > 0 ? excessCost! / avgWage : null;
 
+            // Per-dept slot info for secondary display
+            const deptRows = [
+              { key: 'service', label: 'Service', früh: deptSlotCosts.service.früh, spät: deptSlotCosts.service.spät },
+              { key: 'küche',   label: 'Küche',   früh: deptSlotCosts.küche.früh,   spät: deptSlotCosts.küche.spät   },
+            ].filter(r => r.früh > 0 || r.spät > 0);
+
             return (
               <div className={cn(
                 "rounded-lg border bg-card p-3 space-y-1.5",
@@ -388,6 +445,41 @@ export const DayDetailDialog = ({
                   <span className="text-muted-foreground">Geplant</span>
                   <span className="font-semibold">CHF {totalPlannedCost.toFixed(0)}</span>
                 </div>
+                {/* Früh / Spät split */}
+                {hasSlotData && (frühPlannedCost > 0 || spätPlannedCost > 0) && (
+                  <div className="grid grid-cols-2 gap-2 rounded-md border border-border/50 bg-muted/20 p-2">
+                    <div>
+                      <div className="text-[10px] text-muted-foreground font-medium">☀ Frühdienst</div>
+                      <div className={cn(
+                        "text-xs font-semibold",
+                        slotDriver?.slot === 'Früh' ? "text-red-600 dark:text-red-400" : "text-amber-700 dark:text-amber-400"
+                      )}>
+                        CHF {frühPlannedCost.toFixed(0)}
+                        {slotDriver?.slot === 'Früh' && <span className="ml-1 text-[9px] font-bold uppercase tracking-wide">▲ Treiber</span>}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground font-medium">🌙 Spätdienst</div>
+                      <div className={cn(
+                        "text-xs font-semibold",
+                        slotDriver?.slot === 'Spät' ? "text-red-600 dark:text-red-400" : "text-blue-700 dark:text-blue-400"
+                      )}>
+                        CHF {spätPlannedCost.toFixed(0)}
+                        {slotDriver?.slot === 'Spät' && <span className="ml-1 text-[9px] font-bold uppercase tracking-wide">▲ Treiber</span>}
+                      </div>
+                    </div>
+                    {/* Per-dept sub-rows */}
+                    {deptRows.map(dr => (
+                      <div key={dr.key} className="col-span-2 flex items-center justify-between text-[10px] text-muted-foreground border-t border-border/30 pt-1 mt-0.5">
+                        <span className={cn("font-medium", dr.key === 'service' ? "text-blue-600 dark:text-blue-400" : "text-orange-600 dark:text-orange-400")}>
+                          {dr.label}
+                        </span>
+                        <span className="text-amber-700 dark:text-amber-400">Früh CHF {dr.früh.toFixed(0)}</span>
+                        <span className="text-blue-700 dark:text-blue-400">Spät CHF {dr.spät.toFixed(0)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Geplante Stunden</span>
                   <span className="font-semibold">{totalHours.toFixed(1)} h</span>

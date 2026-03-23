@@ -247,6 +247,12 @@ export const ScheduleGrid = ({
     let totalCosts = 0;
     let employeeCount = 0;
 
+    // Slot-level cost accumulators per dept
+    const slotCosts = {
+      service: { früh: 0, spät: 0, frühHours: 0, spätHours: 0 },
+      küche:   { früh: 0, spät: 0, frühHours: 0, spätHours: 0 },
+    } as Record<string, { früh: number; spät: number; frühHours: number; spätHours: number }>;
+
     const getAbsenceMeta = (abbrev: string | null | undefined) => {
       if (!abbrev) return null;
       const shiftName = Object.keys(shiftMap).find((k) => shiftMap[k]?.abbrev === abbrev);
@@ -283,7 +289,6 @@ export const ScheduleGrid = ({
         if (frühAbs.isPaid) absencePaidHours += frühAbs.hours;
       }
       if (spätAbs?.countsToTarget) {
-        // Avoid double counting if same code in Früh + Spät
         if (daySchedule.spätAbsence !== daySchedule.frühAbsence) {
           absenceCountedHours += spätAbs.hours;
           if (spätAbs.isPaid) absencePaidHours += spätAbs.hours;
@@ -301,6 +306,18 @@ export const ScheduleGrid = ({
       // Calculate costs (work hours + paid absences)
       if (emp.hourlyWage) {
         totalCosts += (netWorkHours + absencePaidHours) * emp.hourlyWage;
+
+        // Slot-level cost split (break deduction distributed proportionally)
+        if (grossWorkHours > 0 && emp.hourlyWage) {
+          const frühNetH  = frühHours  > 0 ? frühHours  - breakDeduction * (frühHours  / grossWorkHours) : 0;
+          const spätNetH  = spätHours  > 0 ? spätHours  - breakDeduction * (spätHours  / grossWorkHours) : 0;
+          const dept = emp.department === 'küche' ? 'küche' : 'service';
+          if (!slotCosts[dept]) slotCosts[dept] = { früh: 0, spät: 0, frühHours: 0, spätHours: 0 };
+          slotCosts[dept].früh      += Math.max(0, frühNetH)  * emp.hourlyWage;
+          slotCosts[dept].spät      += Math.max(0, spätNetH)  * emp.hourlyWage;
+          slotCosts[dept].frühHours += Math.max(0, frühNetH);
+          slotCosts[dept].spätHours += Math.max(0, spätNetH);
+        }
       }
     });
 
@@ -322,6 +339,12 @@ export const ScheduleGrid = ({
       : 30;
     const excessHours = avgHourlyWage > 0 ? excessCosts / avgHourlyWage : 0;
 
+    // Aggregated slot totals (both depts combined)
+    const totalFrühCosts  = (slotCosts.service?.früh  ?? 0) + (slotCosts.küche?.früh  ?? 0);
+    const totalSpätCosts  = (slotCosts.service?.spät  ?? 0) + (slotCosts.küche?.spät  ?? 0);
+    const totalFrühHours  = (slotCosts.service?.frühHours ?? 0) + (slotCosts.küche?.frühHours ?? 0);
+    const totalSpätHours  = (slotCosts.service?.spätHours ?? 0) + (slotCosts.küche?.spätHours ?? 0);
+
     return {
       totalHours,
       totalCosts,
@@ -331,6 +354,12 @@ export const ScheduleGrid = ({
       isOverBudget,
       excessHours: Math.max(0, excessHours),
       excessCosts: Math.max(0, excessCosts),
+      // Slot-level breakdowns
+      slotCosts,
+      totalFrühCosts,
+      totalSpätCosts,
+      totalFrühHours,
+      totalSpätHours,
     };
   };
 
@@ -1267,8 +1296,9 @@ export const ScheduleGrid = ({
               </div>
 
               {/* ── Fixed KPI strip ────────────────────────────────── */}
-              <div style={{ flexShrink: 0, padding: '10px 20px', borderBottom: '1px solid var(--border)', background: 'var(--muted)/0.3' }}
-                className="bg-muted/30">
+              <div style={{ flexShrink: 0, padding: '10px 20px', borderBottom: '1px solid var(--border)' }}
+                className="bg-muted/30 space-y-2">
+                {/* Row 1: overall KPIs */}
                 <div className="grid grid-cols-6 gap-x-4 gap-y-1">
                   {[
                     { label: 'Umsatz budg.', value: `CHF ${stats.plannedRevenue.toFixed(0)}`, red: false },
@@ -1288,6 +1318,66 @@ export const ScheduleGrid = ({
                     </div>
                   ))}
                 </div>
+                {/* Row 2: Früh / Spät slot breakdown */}
+                {(stats.totalFrühCosts > 0 || stats.totalSpätCosts > 0) && (() => {
+                  const sc = stats.slotCosts;
+                  const driverLabel = (() => {
+                    const frühTotal = stats.totalFrühCosts;
+                    const spätTotal = stats.totalSpätCosts;
+                    if (frühTotal === 0 && spätTotal === 0) return null;
+                    const driver = frühTotal > spätTotal ? 'Frühdienst' : 'Spätdienst';
+                    const ratio = Math.max(frühTotal, spätTotal) / stats.totalCosts * 100;
+                    return `${driver} verursacht ${ratio.toFixed(0)} % der Kosten`;
+                  })();
+                  return (
+                    <div className="border-t border-border/40 pt-2">
+                      <div className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
+                        Kosten nach Schicht
+                        {driverLabel && (
+                          <span className="ml-2 normal-case font-normal text-amber-700 dark:text-amber-400">
+                            · {driverLabel}
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-4 gap-x-4 gap-y-0.5">
+                        {/* Total Früh */}
+                        <div className="space-y-0.5">
+                          <div className="text-[9px] text-muted-foreground">☀ Früh gesamt</div>
+                          <div className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                            CHF {stats.totalFrühCosts.toFixed(0)}
+                            <span className="font-normal text-muted-foreground ml-1">({stats.totalFrühHours.toFixed(1)} h)</span>
+                          </div>
+                        </div>
+                        {/* Total Spät */}
+                        <div className="space-y-0.5">
+                          <div className="text-[9px] text-muted-foreground">🌙 Spät gesamt</div>
+                          <div className="text-xs font-semibold text-blue-700 dark:text-blue-400">
+                            CHF {stats.totalSpätCosts.toFixed(0)}
+                            <span className="font-normal text-muted-foreground ml-1">({stats.totalSpätHours.toFixed(1)} h)</span>
+                          </div>
+                        </div>
+                        {/* Service Früh/Spät */}
+                        {(sc.service?.früh > 0 || sc.service?.spät > 0) && (
+                          <div className="space-y-0.5">
+                            <div className="text-[9px] text-muted-foreground">Service F/S</div>
+                            <div className="text-xs font-semibold text-blue-600 dark:text-blue-400">
+                              {sc.service.früh.toFixed(0)} / {sc.service.spät.toFixed(0)}
+                            </div>
+                          </div>
+                        )}
+                        {/* Küche Früh/Spät */}
+                        {(sc.küche?.früh > 0 || sc.küche?.spät > 0) && (
+                          <div className="space-y-0.5">
+                            <div className="text-[9px] text-muted-foreground">Küche F/S</div>
+                            <div className="text-xs font-semibold text-orange-600 dark:text-orange-400">
+                              {sc.küche.früh.toFixed(0)} / {sc.küche.spät.toFixed(0)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* ── Section header: count + savings ────────────────── */}

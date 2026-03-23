@@ -10,7 +10,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   CheckCircle2, XCircle, Clock3, TrendingDown, TrendingUp,
   ShieldAlert, Star, ArrowRight, Users, Lightbulb, ChevronDown, ChevronRight,
-  ArrowUpRight, Trash2,
+  ArrowUpRight, Trash2, Euro,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Employee } from '@/types/personnel';
@@ -659,6 +659,86 @@ export default function PlanningAssistant({
     return Math.max(0, maxH - usedH);
   }, [employees, planHoursMap, availableVarBudget, avgVarWage]);
 
+  // ── Per-day slot cost analysis ────────────────────────────────────────────
+
+  const dayCostAnalysis = useMemo(() => {
+    // Internal helper: hours from a TimeSlot
+    const slotHours = (slot: TimeSlot | null | undefined): number => {
+      if (!slot?.start || !slot?.end) return 0;
+      const [sh, sm] = slot.start.split(':').map(Number);
+      const [eh, em] = slot.end.split(':').map(Number);
+      let h = eh - sh + (em - sm) / 60;
+      if (h < 0) h += 24;
+      return Math.max(0, Math.round(h * 100) / 100);
+    };
+
+    return displayDays.map(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      let frühTotal = 0, spätTotal = 0;
+      const byDept: Record<string, { früh: number; spät: number }> = {
+        service: { früh: 0, spät: 0 },
+        küche:   { früh: 0, spät: 0 },
+      };
+
+      for (const emp of employees) {
+        if (!emp.hourlyWage) continue;
+        const ds = scheduleData[`${emp.id}-${dateStr}`];
+        if (!ds) continue;
+        const fh = slotHours(ds.früh);
+        const sh = slotHours(ds.spät);
+        const gross = fh + sh;
+        if (gross === 0) continue;
+        const br = calculateBreakDeduction(gross);
+        const fNet = Math.max(0, fh - br * (fh / gross));
+        const sNet = Math.max(0, sh - br * (sh / gross));
+        const fCost = fNet * emp.hourlyWage;
+        const sCost = sNet * emp.hourlyWage;
+        frühTotal += fCost;
+        spätTotal += sCost;
+        const dept = emp.department === 'küche' ? 'küche' : 'service';
+        byDept[dept].früh += fCost;
+        byDept[dept].spät += sCost;
+      }
+
+      const total = frühTotal + spätTotal;
+      const driver: 'früh' | 'spät' | null =
+        total === 0 ? null : frühTotal > spätTotal ? 'früh' : 'spät';
+
+      // Per-dept driver
+      const deptDrivers = (['service', 'küche'] as const)
+        .map(dept => {
+          const d = byDept[dept];
+          if (d.früh === 0 && d.spät === 0) return null;
+          return {
+            dept,
+            driver: d.früh > d.spät ? 'früh' : 'spät' as 'früh' | 'spät',
+            frühCost: d.früh,
+            spätCost: d.spät,
+          };
+        })
+        .filter(Boolean) as Array<{ dept: 'service' | 'küche'; driver: 'früh' | 'spät'; frühCost: number; spätCost: number }>;
+
+      return {
+        dateStr,
+        day,
+        dayLabel: format(day, 'EEE d.M.', { locale: de }),
+        frühCost: frühTotal,
+        spätCost: spätTotal,
+        totalCost: total,
+        driver,
+        deptDrivers,
+      };
+    }).filter(d => d.totalCost > 0);
+  }, [displayDays, employees, scheduleData]);
+
+  // Find days where one slot costs ≥ 60% of total (clear driver)
+  const costDriverAlerts = useMemo(() =>
+    dayCostAnalysis.filter(d =>
+      d.totalCost > 0 &&
+      (d.frühCost / d.totalCost > 0.60 || d.spätCost / d.totalCost > 0.60),
+    ),
+  [dayCostAnalysis]);
+
   // ── Perioden-Label ────────────────────────────────────────────────────────
 
   const periodLabel = useMemo(() => {
@@ -788,6 +868,79 @@ export default function PlanningAssistant({
                   <span className="font-bold">{a.actual}</span>
                 </button>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Kostenproblem per Slot */}
+        {dayCostAnalysis.length > 0 && (
+          <div className="rounded-lg border bg-muted/20 divide-y divide-border shrink-0">
+            <div className="flex items-center gap-2 px-3 py-1.5">
+              <Euro className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span className="text-xs font-semibold">Kosten nach Schicht</span>
+              <span className="ml-auto text-[10px] text-muted-foreground">
+                {dayCostAnalysis.length === 1 ? '1 Tag' : `${dayCostAnalysis.length} Tage`} mit Kostendaten
+              </span>
+            </div>
+            <div className="px-3 py-2 space-y-1">
+              {/* Summary chips for the whole period */}
+              <div className="flex flex-wrap gap-1.5">
+                {dayCostAnalysis.map(d => {
+                  const isAlert = costDriverAlerts.includes(d);
+                  const driver = d.driver;
+                  return (
+                    <button
+                      key={d.dateStr}
+                      onClick={() => { onJumpToDay(d.day); onClose(); }}
+                      className={cn(
+                        'flex flex-col items-start gap-0 px-2 py-1 rounded border text-[10px] font-medium transition-opacity hover:opacity-80',
+                        isAlert && driver === 'spät'
+                          ? 'bg-blue-50 dark:bg-blue-950/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300'
+                          : isAlert && driver === 'früh'
+                            ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300'
+                            : 'bg-muted/50 border-border text-muted-foreground',
+                      )}
+                      title={`${d.dayLabel}: Früh CHF ${d.frühCost.toFixed(0)}, Spät CHF ${d.spätCost.toFixed(0)}`}
+                    >
+                      <span className="font-semibold">{d.dayLabel}</span>
+                      <span className="text-[9px] leading-tight opacity-80">
+                        ☀ {d.frühCost.toFixed(0)} · 🌙 {d.spätCost.toFixed(0)}
+                      </span>
+                      {isAlert && (
+                        <span className="text-[8px] font-bold uppercase tracking-wide opacity-90">
+                          {driver === 'früh' ? '▲ Früh' : '▲ Spät'}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Dept-level insight for the period */}
+              {(() => {
+                const svcFrüh = dayCostAnalysis.reduce((s, d) => s + (d.deptDrivers.find(dr => dr.dept === 'service')?.frühCost ?? 0), 0);
+                const svcSpät = dayCostAnalysis.reduce((s, d) => s + (d.deptDrivers.find(dr => dr.dept === 'service')?.spätCost ?? 0), 0);
+                const kchFrüh = dayCostAnalysis.reduce((s, d) => s + (d.deptDrivers.find(dr => dr.dept === 'küche')?.frühCost ?? 0), 0);
+                const kchSpät = dayCostAnalysis.reduce((s, d) => s + (d.deptDrivers.find(dr => dr.dept === 'küche')?.spätCost ?? 0), 0);
+                const lines: string[] = [];
+                if (svcFrüh > 0 || svcSpät > 0) {
+                  const svcDriver = svcFrüh > svcSpät ? 'Früh' : 'Spät';
+                  lines.push(`Service: ${svcDriver}dienst teurer (${svcFrüh.toFixed(0)} / ${svcSpät.toFixed(0)} CHF)`);
+                }
+                if (kchFrüh > 0 || kchSpät > 0) {
+                  const kchDriver = kchFrüh > kchSpät ? 'Früh' : 'Spät';
+                  lines.push(`Küche: ${kchDriver}dienst teurer (${kchFrüh.toFixed(0)} / ${kchSpät.toFixed(0)} CHF)`);
+                }
+                if (!lines.length) return null;
+                return (
+                  <div className="pt-1 space-y-0.5">
+                    {lines.map(l => (
+                      <p key={l} className="text-[10px] text-muted-foreground leading-snug">
+                        {l}
+                      </p>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}
