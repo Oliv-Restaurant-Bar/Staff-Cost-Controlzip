@@ -13,7 +13,14 @@ CREATE TABLE IF NOT EXISTS articles (
   name                   TEXT NOT NULL,
   inventory_type         TEXT NOT NULL CHECK (inventory_type IN ('food', 'beverage')),
   unit                   TEXT NOT NULL DEFAULT 'Stück',
+  -- Standardpreis (= Preis beim Standard-Lieferanten)
   default_cost_per_unit  NUMERIC(12, 4) NOT NULL DEFAULT 0,
+  -- Standard-Lieferant (Freitext Stage 1, später FK zu suppliers-Tabelle)
+  standard_supplier      TEXT NOT NULL DEFAULT '',
+  -- Ausweichlieferant (nur aktiv wenn fallback_enabled = TRUE)
+  fallback_enabled       BOOLEAN NOT NULL DEFAULT FALSE,
+  fallback_supplier      TEXT NOT NULL DEFAULT '',
+  fallback_price         NUMERIC(12, 4) NOT NULL DEFAULT 0,
   storage_locations      TEXT[] NOT NULL DEFAULT '{}',
   active                 BOOLEAN NOT NULL DEFAULT TRUE,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),

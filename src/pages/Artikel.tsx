@@ -58,6 +58,10 @@ function emptyForm(): Omit<Artikel, 'id' | 'createdAt' | 'updatedAt'> {
     inventoryType:        'food',
     unit:                 'kg',
     defaultCostPerUnit:   0,
+    standardSupplier:     '',
+    fallbackEnabled:      false,
+    fallbackSupplier:     '',
+    fallbackPrice:        0,
     storageLocations:     [],
     active:               true,
   };
@@ -88,6 +92,10 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
           inventoryType:      initial.inventoryType,
           unit:               initial.unit,
           defaultCostPerUnit: initial.defaultCostPerUnit,
+          standardSupplier:   initial.standardSupplier   ?? '',
+          fallbackEnabled:    initial.fallbackEnabled    ?? false,
+          fallbackSupplier:   initial.fallbackSupplier   ?? '',
+          fallbackPrice:      initial.fallbackPrice       ?? 0,
           storageLocations:   initial.storageLocations,
           active:             initial.active,
         });
@@ -224,24 +232,81 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
             </div>
           </div>
 
-          {/* Einkaufspreis */}
-          <div className="space-y-1">
-            <Label>Einkaufspreis / Einheit (CHF)</Label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">CHF</span>
+          {/* ── Lieferant ─────────────────────────────────────────────── */}
+          <div className="rounded-lg border border-border p-3 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Standard-Lieferant
+            </p>
+
+            {/* Lieferantenname */}
+            <div className="space-y-1">
+              <Label>Lieferant</Label>
               <Input
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="0.00"
-                value={form.defaultCostPerUnit || ''}
-                onChange={e => setForm(f => ({ ...f, defaultCostPerUnit: parseFloat(e.target.value) || 0 }))}
-                className="pl-12"
+                placeholder="z.B. Pistor, Kneuss, Metro"
+                value={form.standardSupplier}
+                onChange={e => setForm(f => ({ ...f, standardSupplier: e.target.value }))}
               />
             </div>
-            <p className="text-xs text-muted-foreground">
-              Kann pro Lieferant/Bestellung überschrieben werden.
-            </p>
+
+            {/* Standardpreis */}
+            <div className="space-y-1">
+              <Label>Standardpreis / Einheit (CHF)</Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">CHF</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  placeholder="0.00"
+                  value={form.defaultCostPerUnit || ''}
+                  onChange={e => setForm(f => ({ ...f, defaultCostPerUnit: parseFloat(e.target.value) || 0 }))}
+                  className="pl-12"
+                />
+              </div>
+            </div>
+
+            {/* Ausweichlieferant aktiv? */}
+            <label className="flex items-center gap-2 cursor-pointer pt-1">
+              <Checkbox
+                checked={form.fallbackEnabled}
+                onCheckedChange={v => setForm(f => ({ ...f, fallbackEnabled: !!v }))}
+              />
+              <span className="text-sm font-medium">Ausweichlieferant aktiv</span>
+            </label>
+
+            {/* Ausweich-Felder — nur wenn aktiviert */}
+            {form.fallbackEnabled && (
+              <div className="space-y-3 pl-6 border-l-2 border-amber-300 dark:border-amber-700">
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  Wird verwendet wenn der Standard-Lieferant nicht liefern kann.
+                </p>
+
+                <div className="space-y-1">
+                  <Label>Ausweich-Lieferant</Label>
+                  <Input
+                    placeholder="z.B. Aligro, Lekkerland"
+                    value={form.fallbackSupplier}
+                    onChange={e => setForm(f => ({ ...f, fallbackSupplier: e.target.value }))}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label>Ausweich-Preis / Einheit (CHF)</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">CHF</span>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.0001"
+                      placeholder="0.00"
+                      value={form.fallbackPrice || ''}
+                      onChange={e => setForm(f => ({ ...f, fallbackPrice: parseFloat(e.target.value) || 0 }))}
+                      className="pl-12"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Lagerorte */}
@@ -544,11 +609,14 @@ export default function ArtikelPage() {
                   <th className="text-left px-3 py-2.5 font-medium text-muted-foreground hidden md:table-cell">
                     Einheit
                   </th>
+                  <th className="text-left px-3 py-2.5 font-medium text-muted-foreground hidden xl:table-cell">
+                    Lieferant
+                  </th>
                   <th
                     className="text-right px-3 py-2.5 font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground"
                     onClick={() => toggleSort('cost')}
                   >
-                    Kosten/Einheit <SortIcon field="cost" />
+                    Standardpreis <SortIcon field="cost" />
                   </th>
                   <th className="text-left px-3 py-2.5 font-medium text-muted-foreground hidden lg:table-cell">
                     Lagerorte
@@ -593,7 +661,31 @@ export default function ArtikelPage() {
                       {a.unit}
                     </td>
 
-                    {/* Kosten */}
+                    {/* Lieferant */}
+                    <td className="px-3 py-2.5 hidden xl:table-cell">
+                      {a.standardSupplier ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm truncate max-w-[120px]">{a.standardSupplier}</span>
+                          {a.fallbackEnabled && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 cursor-default border border-amber-200 dark:border-amber-700">
+                                  +Ausweich
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                <p className="font-medium">{a.fallbackSupplier || '–'}</p>
+                                <p className="text-xs">{fmtChf(a.fallbackPrice)}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/50">–</span>
+                      )}
+                    </td>
+
+                    {/* Standardpreis */}
                     <td className="px-3 py-2.5 text-right font-mono text-xs">
                       {fmtChf(a.defaultCostPerUnit)}
                     </td>

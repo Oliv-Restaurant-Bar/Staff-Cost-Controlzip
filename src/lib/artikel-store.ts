@@ -36,13 +36,32 @@ export const ALL_UNITS      = [...new Set([...UNITS_FOOD, ...UNITS_BEVERAGE])].s
 
 export type InventoryType = 'food' | 'beverage';
 
+/**
+ * Lieferantenreferenz – heute Freitext, später FK in Lieferantenstamm.
+ * Die Struktur ist so gewählt, dass spätere Erweiterungen (Bestellnummer,
+ * Mindestbestellmenge, Lieferzeit usw.) einfach hinzugefügt werden können.
+ */
+export interface SupplierRef {
+  name:  string;   // Lieferantenname (Freitext → später: id)
+  price: number;   // Preis pro Einheit bei diesem Lieferanten
+}
+
 export interface Artikel {
   id: string;
   name: string;
   inventoryType: InventoryType;
   unit: string;
+  /** Standardpreis (= standardSupplier.price, rückwärtskompatibel) */
   defaultCostPerUnit: number;
-  storageLocations: string[];   // aus ALL_STORAGE_LOCATIONS
+  /** Standard-Lieferant (immer gesetzt, Freitext) */
+  standardSupplier: string;
+  /** Ausweichlieferant aktiv? */
+  fallbackEnabled: boolean;
+  /** Ausweich-Lieferant (nur relevant wenn fallbackEnabled) */
+  fallbackSupplier: string;
+  /** Preis beim Ausweich-Lieferanten (nur relevant wenn fallbackEnabled) */
+  fallbackPrice: number;
+  storageLocations: string[];
   active: boolean;
   createdAt: string;
   updatedAt: string;
