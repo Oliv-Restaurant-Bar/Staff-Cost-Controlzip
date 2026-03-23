@@ -21,10 +21,11 @@ export interface EmployeeHourBalance {
   monthDelta: number;          // effectiveHours − monthlyTarget
   cumulativeBalance: number;   // hoursBalance (Vortrag) + monthDelta
   hasTarget: boolean;          // weeklyHours ist hinterlegt
-  station: string | null;      // positionTitle des Mitarbeiters
-  stationPeers: string[];      // Namen anderer MA in selber Abt. + selber Station
-  isUniqueInStation: boolean;  // kein anderer MA mit gleicher Station
-  hasNoStation: boolean;       // kein positionTitle hinterlegt
+  station: string | null;      // primaryStation (oder positionTitle als Fallback)
+  stationPeers: string[];      // Namen anderer MA in selber Abt. + selber Primary Station
+  secondaryStationPeers: string[]; // Namen von MA, die diese Station als Zweitfunktion haben
+  isUniqueInStation: boolean;  // kein anderer MA mit gleicher Station (primär ODER sekundär)
+  hasNoStation: boolean;       // weder primaryStation noch positionTitle hinterlegt
 }
 
 export type HintType =
@@ -59,12 +60,20 @@ export function getMonthlyTargetHours(emp: Employee): number {
 }
 
 /**
- * Normalisiert den `positionTitle` für Vergleiche:
+ * Normalisiert eine Stations-Bezeichnung für Vergleiche:
  * Leerzeichen trimmen, Kleinschreibung, leere Strings → null.
  */
 export function normalizeStation(raw: string | undefined | null): string | null {
   const s = (raw ?? '').trim().toLowerCase();
   return s.length > 0 ? s : null;
+}
+
+/**
+ * Gibt die effektive Station zurück:
+ * primaryStation (bevorzugt) → positionTitle (Fallback) → null
+ */
+export function effectiveStation(emp: { primaryStation?: string; positionTitle?: string }): string | null {
+  return normalizeStation(emp.primaryStation) ?? normalizeStation(emp.positionTitle);
 }
 
 /**
@@ -88,7 +97,7 @@ export function buildHourBalances(
     const actual     = actualHours[emp.id]  ?? 0;
     const delta      = target > 0 ? Math.round((effective - target) * 10) / 10 : 0;
     const cumulative = Math.round(((emp.hoursBalance ?? 0) + delta) * 10) / 10;
-    const station    = normalizeStation(emp.positionTitle);
+    const station = effectiveStation(emp);
 
     return {
       emp,
@@ -102,23 +111,38 @@ export function buildHourBalances(
       station,
       // filled in next pass
       stationPeers: [],
+      secondaryStationPeers: [],
       isUniqueInStation: false,
       hasNoStation: station === null,
     };
   }).map((row, _, all) => {
-    // Second pass: compute station peers
+    // Second pass: compute station peers (primary + secondary)
     if (row.station !== null) {
-      const peers = all
+      // Primary peers: same dept + same primaryStation/positionTitle
+      const primaryPeers = all
         .filter(r =>
           r.emp.id !== row.emp.id &&
           r.emp.department === row.emp.department &&
           r.station === row.station,
         )
         .map(r => r.emp.name);
+
+      // Secondary peers: employees who have this station in their secondaryStations
+      const secondaryPeers = all
+        .filter(r => {
+          if (r.emp.id === row.emp.id) return false;
+          if (r.emp.department !== row.emp.department) return false;
+          if (primaryPeers.includes(r.emp.name)) return false; // already counted
+          const secs = (r.emp.secondaryStations ?? []).map(s => normalizeStation(s));
+          return secs.includes(row.station);
+        })
+        .map(r => r.emp.name);
+
       return {
         ...row,
-        stationPeers: peers,
-        isUniqueInStation: peers.length === 0,
+        stationPeers: primaryPeers,
+        secondaryStationPeers: secondaryPeers,
+        isUniqueInStation: primaryPeers.length === 0 && secondaryPeers.length === 0,
       };
     }
     return row;

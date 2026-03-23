@@ -37,6 +37,12 @@ export interface Employee {
   // ─── Vertragliche Grundlagen ───────────────────────────────────────────
   contractType?: 'monthly' | 'hourly' | 'irregular';
   positionTitle?: string;
+
+  // ─── Station / Funktion ─────────────────────────────────────────────────
+  /** Hauptstation (z.B. "Grill", "Bar", "Chef de Rang") */
+  primaryStation?: string;
+  /** Zusatzstationen — kann einspringen (z.B. ["Runner", "Event"]) */
+  secondaryStations?: string[];
   contractStart?: string;           // ISO-Datum – Eintrittsdatum
   employmentEndDate?: string;       // ISO-Datum – Austrittsdatum / Beschäftigungsende
   contractEnd?: string;             // ISO-Datum – nur bei befristetem Vertrag

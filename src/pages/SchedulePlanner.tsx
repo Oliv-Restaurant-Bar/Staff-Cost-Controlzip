@@ -14,7 +14,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
@@ -48,6 +48,7 @@ import { TemplateDept } from '@/lib/schedule-templates';
 import { StaffingTargetDialog } from '@/components/schedule-planner/StaffingTargetDialog';
 import { StaffingStatusBar } from '@/components/schedule-planner/StaffingStatusBar';
 import { StaffingTarget, loadTargets as loadStaffingTargets } from '@/lib/staffing-targets';
+import { StationMatrixDialog } from '@/components/schedule-planner/StationMatrixDialog';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
@@ -187,6 +188,7 @@ const SchedulePlanner = () => {
   const [templateDialogOpen, setTemplateDialogOpen]           = useState(false);
   const [staffingTargetOpen, setStaffingTargetOpen]           = useState(false);
   const [staffingTargets, setStaffingTargets]                 = useState<StaffingTarget[]>([]);
+  const [stationMatrixOpen, setStationMatrixOpen]             = useState(false);
 
   // ── Budget-Daten (für PlanningAssistant) ─────────────────────────────────
   const { personnelBudget } = useBudgetMonth(
@@ -1394,6 +1396,11 @@ const SchedulePlanner = () => {
     setTimeout(() => handleSave(), 200);
   }, [handleSave]);
 
+  /** Update a single employee's station data in local state */
+  const handleStationEmployeeUpdated = useCallback((updated: Employee) => {
+    setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -1431,6 +1438,18 @@ const SchedulePlanner = () => {
                 <BookOpen className="h-4 w-4" />
                 <span className="hidden sm:inline">Vorlagen</span>
               </Button>
+              {isAdmin && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setStationMatrixOpen(true)}
+                  className="gap-1.5 border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40"
+                  title="Stationen & Funktionen verwalten"
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                  <span className="hidden sm:inline">Stationen</span>
+                </Button>
+              )}
               {isAdmin && (
                 <Button
                   variant="outline"
@@ -2740,6 +2759,13 @@ const SchedulePlanner = () => {
           // Refresh targets so the status bars update immediately
           setStaffingTargets(loadStaffingTargets());
         }}
+      />
+
+      <StationMatrixDialog
+        open={stationMatrixOpen}
+        onClose={() => setStationMatrixOpen(false)}
+        employees={employees}
+        onEmployeeUpdated={handleStationEmployeeUpdated}
       />
     </div>
   );

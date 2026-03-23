@@ -362,13 +362,19 @@ function EinplanenCard({
       {b.isUniqueInStation && b.station && (
         <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
           <ShieldAlert className="h-3 w-3" />
-          Einzige {b.emp.positionTitle} — bei Abwesenheit kein Ersatz verfügbar
+          Einzige {b.emp.primaryStation ?? b.emp.positionTitle} — bei Abwesenheit kein Ersatz verfügbar
         </p>
       )}
       {b.stationPeers.length > 0 && (
         <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <Users className="h-3 w-3" />
+          Primäre Kolleg/-innen: <strong className="ml-0.5">{b.stationPeers.join(', ')}</strong>
+        </p>
+      )}
+      {b.secondaryStationPeers.length > 0 && (
+        <p className="text-[10px] text-muted-foreground flex items-center gap-1">
           <ArrowRight className="h-3 w-3" />
-          Mögliche Alternativen bei Überschneidung: <strong className="ml-0.5">{b.stationPeers.join(', ')}</strong>
+          Kann einspringen (Zweitfunktion): <strong className="ml-0.5">{b.secondaryStationPeers.join(', ')}</strong>
         </p>
       )}
       {!b.station && (
