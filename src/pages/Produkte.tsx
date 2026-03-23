@@ -31,10 +31,14 @@ import {
   loadIgnoredProductsFromDB,
   mergeProductCosts,
   parseCostExcel,
+  loadProductGroups,
+  loadProductGroupsFromDB,
   type ProdukteData,
   type RankedProduct,
   type ProductCostEntry,
+  type ProductGroup,
 } from '@/lib/produkte-store';
+import GruppenAnalyse from '@/components/produkte/GruppenAnalyse';
 import { format, parse } from 'date-fns';
 import { de } from 'date-fns/locale';
 
@@ -56,7 +60,7 @@ const formatMonthShort = (ym: string) => {
 };
 
 type ChartMode = 'top' | 'flop';
-type ViewTab   = 'monat' | 'jahr';
+type ViewTab   = 'monat' | 'jahr' | 'gruppen';
 
 const TOP_OPTIONS  = [10, 20, 50, 100, 9999];
 const FLOP_OPTIONS = [10, 20, 50, 9999];
@@ -151,7 +155,8 @@ export default function ProdukteSeite() {
     fileName: string;
   } | null>(null);
 
-  const [costs, setCosts] = useState<ProductCostEntry[]>(() => loadProductCosts());
+  const [costs,  setCosts]  = useState<ProductCostEntry[]>(() => loadProductCosts());
+  const [groups, setGroups] = useState<ProductGroup[]>(() => loadProductGroups());
   const [importingCost, setImportingCost] = useState(false);
 
   // Beim Start: alle Daten aus Supabase laden (domain-unabhängig)
@@ -169,6 +174,9 @@ export default function ProdukteSeite() {
     });
     loadProductCostsFromDB().then(dbCosts => {
       if (dbCosts.length > 0) setCosts(dbCosts);
+    });
+    loadProductGroupsFromDB().then(dbGroups => {
+      if (dbGroups.length > 0) setGroups(dbGroups);
     });
   }, []);
   const [editingCost, setEditingCost] = useState<{
@@ -563,6 +571,11 @@ export default function ProdukteSeite() {
                     view === 'jahr' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
                   <LayoutGrid className="h-3 w-3" /> Jahresansicht
                 </button>
+                <button onClick={() => setView('gruppen')}
+                  className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all',
+                    view === 'gruppen' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                  <Award className="h-3 w-3" /> Gruppen & Margen
+                </button>
               </div>
 
               {/* Monats-Dropdown — nur in Monatsansicht */}
@@ -581,47 +594,51 @@ export default function ProdukteSeite() {
                 </div>
               )}
 
-              {/* N-Auswahl */}
-              <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
-                {nOptions.map(n => (
-                  <button key={n}
-                    onClick={() => setN(n)}
-                    className={cn('px-2 py-1 text-xs font-medium rounded-md transition-all',
-                      currentN === n
-                        ? 'bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground')}>
-                    {n === ALL_SENTINEL ? 'Alle' : `${isFlop ? 'Flop' : 'Top'} ${n}`}
-                  </button>
-                ))}
-              </div>
+              {view !== 'gruppen' && (
+                <>
+                  {/* N-Auswahl */}
+                  <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+                    {nOptions.map(n => (
+                      <button key={n}
+                        onClick={() => setN(n)}
+                        className={cn('px-2 py-1 text-xs font-medium rounded-md transition-all',
+                          currentN === n
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground')}>
+                        {n === ALL_SENTINEL ? 'Alle' : `${isFlop ? 'Flop' : 'Top'} ${n}`}
+                      </button>
+                    ))}
+                  </div>
 
-              {/* Top / Flop */}
-              <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
-                <button onClick={() => setMode('top')}
-                  className={cn('flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all',
-                    mode === 'top' ? 'bg-emerald-500 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
-                  <TrendingUp className="h-3 w-3" /> Top
-                </button>
-                <button onClick={() => setMode('flop')}
-                  className={cn('flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all',
-                    mode === 'flop' ? 'bg-red-500 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
-                  <TrendingDown className="h-3 w-3" /> Flop
-                </button>
-              </div>
+                  {/* Top / Flop */}
+                  <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+                    <button onClick={() => setMode('top')}
+                      className={cn('flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all',
+                        mode === 'top' ? 'bg-emerald-500 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                      <TrendingUp className="h-3 w-3" /> Top
+                    </button>
+                    <button onClick={() => setMode('flop')}
+                      className={cn('flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all',
+                        mode === 'flop' ? 'bg-red-500 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                      <TrendingDown className="h-3 w-3" /> Flop
+                    </button>
+                  </div>
 
-              {/* Sortierung */}
-              <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5 ml-auto">
-                <button onClick={() => setSortBy('count')}
-                  className={cn('flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-all',
-                    sortBy === 'count' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
-                  <Hash className="h-3 w-3" /> Nach Anzahl
-                </button>
-                <button onClick={() => setSortBy('revenue')}
-                  className={cn('flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-all',
-                    sortBy === 'revenue' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
-                  <TrendingUp className="h-3 w-3" /> Nach Umsatz
-                </button>
-              </div>
+                  {/* Sortierung */}
+                  <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5 ml-auto">
+                    <button onClick={() => setSortBy('count')}
+                      className={cn('flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-all',
+                        sortBy === 'count' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                      <Hash className="h-3 w-3" /> Nach Anzahl
+                    </button>
+                    <button onClick={() => setSortBy('revenue')}
+                      className={cn('flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-all',
+                        sortBy === 'revenue' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                      <TrendingUp className="h-3 w-3" /> Nach Umsatz
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -906,8 +923,23 @@ export default function ProdukteSeite() {
           </>
         )}
 
+        {/* ══ GRUPPEN & MARGEN ════════════════════════════════════════════════ */}
+        {data && view === 'gruppen' && (
+          <GruppenAnalyse
+            entries={data.entries}
+            costs={costs}
+            groups={groups}
+            onGroupsChange={setGroups}
+            month={activeMonth || 'alle'}
+            category={category}
+            ignoredByUser={ignoredByUser}
+            availableMonths={monthsOnly}
+            onMonthChange={setMonth}
+          />
+        )}
+
         {/* Ignorier-Liste (beide Ansichten) */}
-        {data && (
+        {data && view !== 'gruppen' && (
           <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-2.5">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">

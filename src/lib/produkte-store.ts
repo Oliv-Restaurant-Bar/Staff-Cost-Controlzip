@@ -604,6 +604,248 @@ export function getAvailableMonths(entries: ProductEntry[], category: 'food' | '
   return Array.from(set).filter(m => m !== 'gesamt').sort();
 }
 
+// ── Produktgruppen ────────────────────────────────────────────────────────────
+
+export interface ProductGroup {
+  id: string;
+  name: string;
+  category: 'food' | 'beverage' | 'all';
+  color: string;
+  productNames: string[];   // manually assigned names (lowercase)
+  keywords: string[];        // auto-classification keywords (lowercase)
+}
+
+const GROUP_KEY = 'produkte_groups_v1';
+
+export const DEFAULT_GROUPS_FOOD: Omit<ProductGroup, 'productNames'>[] = [
+  { id: 'pizza',     name: 'Pizza',       category: 'food', color: 'orange',
+    keywords: ['pizza'] },
+  { id: 'pasta',     name: 'Pasta/Risotto', category: 'food', color: 'yellow',
+    keywords: ['pasta', 'penne', 'rigatoni', 'spaghetti', 'tagliatelle', 'linguine', 'fettuccine', 'gnocchi', 'risotto', 'ravioli', 'tortellini'] },
+  { id: 'fleisch',   name: 'Fleisch',     category: 'food', color: 'red',
+    keywords: ['steak', 'schnitzel', 'poulet', 'hähnchen', 'kalb', 'rind', 'lamm', 'schwein', 'burger', 'ossobuco', 'entrecôte', 'entrecote'] },
+  { id: 'fisch',     name: 'Fisch/Meer',  category: 'food', color: 'blue',
+    keywords: ['fisch', 'lachs', 'thon', 'gamberi', 'crevetten', 'garnelen', 'calamari', 'muschel', 'branzino', 'dorade', 'seezunge', 'wolfsbarsch'] },
+  { id: 'salate',    name: 'Salate',      category: 'food', color: 'green',
+    keywords: ['salat', 'caesar', 'insalata'] },
+  { id: 'vorspeise', name: 'Vorspeisen',  category: 'food', color: 'teal',
+    keywords: ['antipasto', 'bruschetta', 'carpaccio', 'suppe', 'cremesuppe', 'minestrone', 'vorspeise', 'starter'] },
+  { id: 'dessert',   name: 'Dessert',     category: 'food', color: 'pink',
+    keywords: ['dessert', 'tiramisu', 'panna cotta', 'sorbet', 'gelato', 'mousse', 'torte', 'kuchen', 'waffel', 'crêpe'] },
+];
+
+export const DEFAULT_GROUPS_BEVERAGE: Omit<ProductGroup, 'productNames'>[] = [
+  { id: 'wein',        name: 'Wein',        category: 'beverage', color: 'purple',
+    keywords: ['wein', 'wine', 'prosecco', 'champagne', 'champagner', 'rosé', 'rouge', 'blanc', 'primitivo', 'barolo', 'chianti', 'pinot', 'sauvignon', 'riesling', 'merlot'] },
+  { id: 'bier',        name: 'Bier',        category: 'beverage', color: 'amber',
+    keywords: ['bier', 'beer', 'lager', 'hefeweizen', 'ipa', 'stout', 'weizen'] },
+  { id: 'spirituosen', name: 'Spirituosen', category: 'beverage', color: 'orange',
+    keywords: ['whisky', 'whiskey', 'gin', 'rum', 'vodka', 'tequila', 'grappa', 'marc', 'schnaps', 'amaro', 'digestif', 'cognac', 'armagnac', 'calvados'] },
+  { id: 'cocktails',   name: 'Cocktails',   category: 'beverage', color: 'pink',
+    keywords: ['cocktail', 'aperol', 'spritz', 'mojito', 'margarita', 'hugo', 'negroni', 'longdrink', 'mocktail'] },
+  { id: 'softdrinks',  name: 'Softdrinks',  category: 'beverage', color: 'cyan',
+    keywords: ['cola', 'fanta', 'sprite', 'limonade', 'ice tea', 'eistee', 'saft', 'mineral', 'wasser', 'perrier', 'pellegrino', 'rivella', 'orangina'] },
+  { id: 'kaffee',      name: 'Kaffee/Tee',  category: 'beverage', color: 'brown',
+    keywords: ['kaffee', 'espresso', 'cappuccino', 'latte', 'americano', 'macchiato', 'tee', 'tea', 'chai'] },
+];
+
+export function initDefaultProductGroups(): ProductGroup[] {
+  return [
+    ...[...DEFAULT_GROUPS_FOOD, ...DEFAULT_GROUPS_BEVERAGE].map(g => ({ ...g, productNames: [] })),
+  ];
+}
+
+export function loadProductGroups(): ProductGroup[] {
+  try {
+    const raw = localStorage.getItem(GROUP_KEY);
+    if (!raw) return initDefaultProductGroups();
+    const stored: ProductGroup[] = JSON.parse(raw);
+    // Ensure all default groups exist (for migration / new defaults)
+    const map = new Map(stored.map(g => [g.id, g]));
+    for (const def of [...DEFAULT_GROUPS_FOOD, ...DEFAULT_GROUPS_BEVERAGE]) {
+      if (!map.has(def.id)) map.set(def.id, { ...def, productNames: [] });
+    }
+    return Array.from(map.values());
+  } catch { return initDefaultProductGroups(); }
+}
+
+export function saveProductGroups(groups: ProductGroup[]): void {
+  localStorage.setItem(GROUP_KEY, JSON.stringify(groups));
+}
+
+export async function loadProductGroupsFromDB(): Promise<ProductGroup[]> {
+  try {
+    const result = await settingsGet<ProductGroup[]>(GROUP_KEY);
+    if (!result.found) return loadProductGroups();
+    const stored = result.value;
+    localStorage.setItem(GROUP_KEY, JSON.stringify(stored));
+    const map = new Map(stored.map(g => [g.id, g]));
+    for (const def of [...DEFAULT_GROUPS_FOOD, ...DEFAULT_GROUPS_BEVERAGE]) {
+      if (!map.has(def.id)) map.set(def.id, { ...def, productNames: [] });
+    }
+    return Array.from(map.values());
+  } catch { return loadProductGroups(); }
+}
+
+export async function saveProductGroupsToDB(groups: ProductGroup[]): Promise<void> {
+  localStorage.setItem(GROUP_KEY, JSON.stringify(groups));
+  try {
+    const err = await settingsSave(GROUP_KEY, groups);
+    if (err) console.error('[Produkte] saveProductGroupsToDB Fehler:', err);
+  } catch { /* localStorage bleibt Fallback */ }
+}
+
+// ── Gruppen-Lookup: Welcher Gruppe gehört ein Produkt an? ─────────────────────
+
+export function resolveProductGroup(
+  name: string,
+  groups: ProductGroup[],
+): ProductGroup | null {
+  const lower = name.toLowerCase();
+  // 1. Manual assignment takes priority
+  for (const g of groups) {
+    if (g.productNames.some(pn => pn.toLowerCase() === lower)) return g;
+  }
+  // 2. Keyword auto-detection
+  for (const g of groups) {
+    if (g.keywords.some(kw => lower.includes(kw))) return g;
+  }
+  return null;
+}
+
+// ── Margen & Performance ──────────────────────────────────────────────────────
+
+export interface ProductPerformanceRow {
+  name: string;
+  category: 'food' | 'beverage';
+  count: number;
+  revenue: number;
+  revenueShare: number;
+  bruttoPrice: number;
+  wes: number;
+  hasCost: boolean;
+  margeCHF: number;        // per unit
+  margePct: number;        // % margin (0-100)
+  totalMargeCHF: number;   // total period margin = margeCHF * count
+  groupId: string | null;
+  groupName: string | null;
+  groupColor: string | null;
+}
+
+export function computeProductPerformance(
+  entries: ProductEntry[],
+  costs: ProductCostEntry[],
+  groups: ProductGroup[],
+  month: string,
+  category: 'food' | 'beverage',
+  ignoredByUser: string[],
+): ProductPerformanceRow[] {
+  const byCat    = entries.filter(e => (e.category ?? 'food') === category);
+  const filtered = month === 'alle' ? byCat : byCat.filter(e => e.month === month);
+
+  const agg = new Map<string, { count: number; revenue: number }>();
+  for (const e of filtered) {
+    if (shouldIgnoreProduct(e.name, ignoredByUser)) continue;
+    const cur = agg.get(e.name) ?? { count: 0, revenue: 0 };
+    cur.count   += e.count;
+    cur.revenue += e.revenue;
+    agg.set(e.name, cur);
+  }
+
+  const totalRevenue = [...agg.values()].reduce((s, v) => s + v.revenue, 0);
+
+  const costMap = new Map<string, ProductCostEntry>();
+  for (const c of costs) {
+    if (c.category === category) costMap.set(c.name.toLowerCase(), c);
+  }
+
+  const rows: ProductPerformanceRow[] = [];
+  for (const [name, vals] of agg) {
+    const cost        = costMap.get(name.toLowerCase());
+    const hasCost     = !!(cost && (cost.bruttoPrice > 0 || cost.wes > 0));
+    const bruttoPrice = cost?.bruttoPrice ?? 0;
+    const wes         = cost?.wes         ?? 0;
+    const margeCHF    = hasCost && bruttoPrice > 0 ? bruttoPrice - wes : 0;
+    const margePct    = hasCost && bruttoPrice > 0 ? (margeCHF / bruttoPrice) * 100 : 0;
+
+    const group = resolveProductGroup(name, groups);
+
+    rows.push({
+      name,
+      category,
+      count:          vals.count,
+      revenue:        vals.revenue,
+      revenueShare:   totalRevenue > 0 ? (vals.revenue / totalRevenue) * 100 : 0,
+      bruttoPrice,
+      wes,
+      hasCost,
+      margeCHF,
+      margePct,
+      totalMargeCHF:  margeCHF * vals.count,
+      groupId:        group?.id   ?? null,
+      groupName:      group?.name ?? null,
+      groupColor:     group?.color ?? null,
+    });
+  }
+
+  return rows.sort((a, b) => b.revenue - a.revenue);
+}
+
+export interface GroupPerformanceRow {
+  groupId: string;
+  groupName: string;
+  category: 'food' | 'beverage' | 'all';
+  color: string;
+  productCount: number;
+  totalCount: number;
+  totalRevenue: number;
+  revenueShare: number;
+  withCostCount: number;
+  avgMargePct: number;
+  totalMargeCHF: number;
+}
+
+export function computeGroupPerformance(
+  rows: ProductPerformanceRow[],
+  groups: ProductGroup[],
+): GroupPerformanceRow[] {
+  const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
+
+  const map = new Map<string, GroupPerformanceRow>();
+  for (const g of groups) {
+    map.set(g.id, {
+      groupId: g.id, groupName: g.name, category: g.category, color: g.color,
+      productCount: 0, totalCount: 0, totalRevenue: 0, revenueShare: 0,
+      withCostCount: 0, avgMargePct: 0, totalMargeCHF: 0,
+    });
+  }
+  map.set('__other__', {
+    groupId: '__other__', groupName: 'Sonstiges', category: 'all', color: 'grey',
+    productCount: 0, totalCount: 0, totalRevenue: 0, revenueShare: 0,
+    withCostCount: 0, avgMargePct: 0, totalMargeCHF: 0,
+  });
+
+  for (const row of rows) {
+    const gId = row.groupId ?? '__other__';
+    const g   = map.get(gId) ?? map.get('__other__')!;
+    g.productCount++;
+    g.totalCount   += row.count;
+    g.totalRevenue += row.revenue;
+    if (row.hasCost) { g.withCostCount++; g.totalMargeCHF += row.totalMargeCHF; }
+  }
+
+  for (const g of map.values()) {
+    g.revenueShare = totalRevenue > 0 ? (g.totalRevenue / totalRevenue) * 100 : 0;
+    if (g.withCostCount > 0 && g.totalRevenue > 0) {
+      g.avgMargePct = (g.totalMargeCHF / g.totalRevenue) * 100;
+    }
+  }
+
+  return [...map.values()]
+    .filter(g => g.productCount > 0)
+    .sort((a, b) => b.totalRevenue - a.totalRevenue);
+}
+
 // ── Supabase-Sync für Produktkosten (via app_settings) ───────────────────────
 const DB_KV_KEY = 'produkte_cost_v1';
 
