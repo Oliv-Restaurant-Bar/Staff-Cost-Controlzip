@@ -14,7 +14,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2 } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
@@ -50,6 +50,7 @@ import { StaffingStatusBar } from '@/components/schedule-planner/StaffingStatusB
 import { StaffingTarget, loadTargets as loadStaffingTargets } from '@/lib/staffing-targets';
 import { StationMatrixDialog } from '@/components/schedule-planner/StationMatrixDialog';
 import { AvailabilityDialog } from '@/components/schedule-planner/AvailabilityDialog';
+import BulkActionsDialog from '@/components/schedule-planner/BulkActionsDialog';
 import { detectPatternWarnings, PatternWarning } from '@/lib/pattern-warnings';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -187,6 +188,7 @@ const SchedulePlanner = () => {
   const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string }>>({});
   const [paintTool, setPaintTool] = useState<string | null>(null);
   const [planningAssistantOpen, setPlanningAssistantOpen]     = useState(false);
+  const [bulkActionsOpen, setBulkActionsOpen]                 = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen]           = useState(false);
   const [staffingTargetOpen, setStaffingTargetOpen]           = useState(false);
   const [staffingTargets, setStaffingTargets]                 = useState<StaffingTarget[]>([]);
@@ -1491,6 +1493,16 @@ const SchedulePlanner = () => {
                 <Lightbulb className="h-4 w-4" />
                 <span className="hidden sm:inline">Planungshilfe</span>
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setBulkActionsOpen(true)}
+                className="gap-1.5 border-yellow-300 dark:border-yellow-700 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-50 dark:hover:bg-yellow-950/40"
+                title="Schnellaktionen: Abwesenheiten, Schichten und Wochen per Bulk einplanen"
+              >
+                <Zap className="h-4 w-4" />
+                <span className="hidden sm:inline">Schnellaktionen</span>
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setPrintDialogOpen(true)}>
                 <Printer className="h-4 w-4 mr-2" />
                 Drucken
@@ -2763,6 +2775,15 @@ const SchedulePlanner = () => {
         onJumpToDay={handleJumpToDay}
         onRemoveShift={handleRemoveShiftFromAssistant}
         patternWarnings={patternWarnings}
+      />
+
+      <BulkActionsDialog
+        open={bulkActionsOpen}
+        onClose={() => setBulkActionsOpen(false)}
+        employees={employees}
+        scheduleData={scheduleData}
+        currentMonth={currentMonth}
+        onApply={handleApplyTemplate}
       />
 
       <TemplateManagerDialog
