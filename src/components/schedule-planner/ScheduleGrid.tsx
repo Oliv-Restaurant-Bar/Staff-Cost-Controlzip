@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useShiftConfig, calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { buildAvailabilityMap } from '@/lib/availability-store';
+import { PatternWarning, PatternType } from '@/lib/pattern-warnings';
 
 export interface TimeSlot {
   start: string;
@@ -63,6 +64,17 @@ interface ScheduleGridProps {
   onExternalToolChange?: (tool: string | null) => void;
   /** Employee ID to visually highlight (from Planungshilfe jump) */
   highlightedEmployeeId?: string | null;
+  /** Pre-computed pattern warnings to show as chips in the employee name column */
+  patternWarnings?: PatternWarning[];
+}
+
+function patternShortLabel(type: PatternType): string {
+  switch (type) {
+    case 'consecutive-days': return 'Tage';
+    case 'consecutive-late': return 'Spät';
+    case 'short-recovery':   return 'Pause';
+    case 'weekly-overload':  return 'Std.';
+  }
 }
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -232,6 +244,7 @@ export const ScheduleGrid = ({
   externalActiveTool,
   onExternalToolChange,
   highlightedEmployeeId,
+  patternWarnings = [],
 }: ScheduleGridProps) => {
   const { shiftMap, absenceShifts } = useShiftConfig();
   
@@ -805,7 +818,8 @@ export const ScheduleGrid = ({
               const isInRange = percentage >= 90 && percentage <= 110;
               const isUnder = percentage < 90;
               const canRemove = employee.id.startsWith('aush_');
-              
+              const empPatternWarnings = patternWarnings.filter(w => w.empId === employee.id);
+
               return (
                 <tr key={employee.id} className={cn(
                   "group hover:bg-muted/30 transition-colors",
@@ -908,6 +922,37 @@ export const ScheduleGrid = ({
                         )}
                       </div>
                     </div>
+                    {/* Pattern warning chips */}
+                    {empPatternWarnings.length > 0 && (
+                      <div className="flex flex-wrap gap-0.5 mt-0.5">
+                        {empPatternWarnings.slice(0, 2).map((w, wi) => (
+                          <TooltipProvider key={wi}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className={cn(
+                                  "inline-flex items-center gap-0.5 px-1 py-0 rounded text-[8px] font-semibold border cursor-default",
+                                  w.severity === 'critical'
+                                    ? "bg-red-100 border-red-300 text-red-700 dark:bg-red-950/40 dark:border-red-700 dark:text-red-300"
+                                    : "bg-amber-100 border-amber-300 text-amber-700 dark:bg-amber-950/40 dark:border-amber-700 dark:text-amber-300"
+                                )}>
+                                  <AlertTriangle className="h-2 w-2 shrink-0" />
+                                  {patternShortLabel(w.type)}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="right" className="max-w-[220px]">
+                                <p className="font-semibold text-xs">{w.message}</p>
+                                <p className="text-muted-foreground text-[10px] mt-0.5 leading-snug">{w.detail}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        ))}
+                        {empPatternWarnings.length > 2 && (
+                          <span className="inline-flex items-center px-1 py-0 rounded text-[8px] font-semibold border bg-muted border-border text-muted-foreground">
+                            +{empPatternWarnings.length - 2}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </td>
                   {/* Hours summary cell - compact */}
                   <td className={cn(

@@ -254,6 +254,24 @@ Admins können zeitbegrenzte, passwortgeschützte Links für Sitzungs-Teilnehmen
 - `src/components/GuestBanner.tsx` — violettes Banner oben mit Timer + "Beenden"-Button
 - `src/App.tsx` — `/gast`-Route öffentlich; AppContent lässt gültige Guest-Sessions durch
 
+## Arbeitsmuster-Warnungen (Dienstplanung)
+
+Datei: `src/lib/pattern-warnings.ts`
+
+Erkennt operativ riskante Planungsmuster für alle Mitarbeiter über den gesamten Monat:
+
+- **consecutive-days**: ≥6 Arbeitstage am Stück → Warnung; ≥7 → Kritisch
+- **consecutive-late**: ≥3 Spätschichten in Folge → Warnung; ≥4 → Kritisch
+- **short-recovery**: <11h Pause zwischen Schicht-Ende und nächstem Schicht-Start → Warnung; <8h → Kritisch
+- **weekly-overload**: >50h in einem rollierenden 7-Tage-Fenster → Warnung; >55h → Kritisch
+
+**Typ `PatternWarning`**: `{ empId, empName, dept, type, severity, message, detail, firstDate }`
+
+**Integration:**
+- **ScheduleGrid** — Kleine farbige Chips in der Mitarbeiternamen-Spalte (amber = Warnung, rot = Kritisch) mit Tooltip-Details
+- **PlanningAssistant** — Kollapsibles Panel "Arbeitsmuster-Warnungen" oberhalb der Tabs; Klick auf Chip springt direkt zur betroffenen Woche und markiert den Mitarbeiter
+- **SchedulePlanner** — `patternWarnings` useMemo berechnet Warnungen über `daysInMonth`, übergibt sie an ScheduleGrid und PlanningAssistant
+
 ## Deployment
 
 Konfiguriert als **Static Site** (Vite Build → `dist/`).

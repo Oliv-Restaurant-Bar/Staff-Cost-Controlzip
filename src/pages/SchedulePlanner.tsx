@@ -50,6 +50,7 @@ import { StaffingStatusBar } from '@/components/schedule-planner/StaffingStatusB
 import { StaffingTarget, loadTargets as loadStaffingTargets } from '@/lib/staffing-targets';
 import { StationMatrixDialog } from '@/components/schedule-planner/StationMatrixDialog';
 import { AvailabilityDialog } from '@/components/schedule-planner/AvailabilityDialog';
+import { detectPatternWarnings, PatternWarning } from '@/lib/pattern-warnings';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
@@ -1192,6 +1193,12 @@ const SchedulePlanner = () => {
     .map(e => ({ emp: e, planned: calculateEmployeeHours(e.id), estimated: varEstimatedHours[e.id] ?? 0 }))
     .filter(r => r.estimated > 0 && r.planned > r.estimated);
 
+  // ── Pattern warnings (consecutive days, late streaks, short recovery, overload) ──
+  const patternWarnings = useMemo<PatternWarning[]>(
+    () => detectPatternWarnings(employees, daysInMonth, scheduleData),
+    [employees, daysInMonth, scheduleData],
+  );
+
   // ── Feature 1: Personalkostenquote ──────────────────────────────────────
   const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 40);
 
@@ -2140,6 +2147,7 @@ const SchedulePlanner = () => {
                           externalActiveTool={paintTool}
                           onExternalToolChange={setPaintTool}
                           highlightedEmployeeId={highlightedEmpId}
+                          patternWarnings={patternWarnings}
                         />
                       </div>
                       
@@ -2178,6 +2186,7 @@ const SchedulePlanner = () => {
                           externalActiveTool={paintTool}
                           onExternalToolChange={setPaintTool}
                           highlightedEmployeeId={highlightedEmpId}
+                          patternWarnings={patternWarnings}
                         />
                       </div>
                     </div>
@@ -2212,6 +2221,7 @@ const SchedulePlanner = () => {
                         externalActiveTool={paintTool}
                         onExternalToolChange={setPaintTool}
                         highlightedEmployeeId={highlightedEmpId}
+                        patternWarnings={patternWarnings}
                       />
                     </>
                   )}
@@ -2752,6 +2762,7 @@ const SchedulePlanner = () => {
         staffingTargets={staffingTargets}
         onJumpToDay={handleJumpToDay}
         onRemoveShift={handleRemoveShiftFromAssistant}
+        patternWarnings={patternWarnings}
       />
 
       <TemplateManagerDialog

@@ -36,6 +36,7 @@ import {
   STATUS_CLASSES,
   STATUS_ICON,
 } from '@/lib/staffing-targets';
+import { PatternWarning } from '@/lib/pattern-warnings';
 import { Department } from '@/types/personnel';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
@@ -56,6 +57,8 @@ interface Props {
   onJumpToDay: (day: Date, empId?: string) => void;
   /** Directly remove a specific shift slot from the schedule */
   onRemoveShift: (empId: string, dateStr: string, slot: 'früh' | 'spät') => void;
+  /** Pre-computed pattern warnings (consecutive days, late streaks, short recovery, overload) */
+  patternWarnings?: PatternWarning[];
 }
 
 type HintStatus = 'pending' | 'accepted' | 'ignored' | 'later';
@@ -582,11 +585,13 @@ export default function PlanningAssistant({
   staffingTargets = [],
   onJumpToDay,
   onRemoveShift,
+  patternWarnings = [],
 }: Props) {
-  const [tab, setTab]           = useState<'einplanen' | 'reduzieren' | 'fairness'>('einplanen');
-  const [statuses, setStatuses] = useState<Record<string, HintStatus>>(loadStatuses);
-  const [showIgnored, setShowIgnored] = useState(false);
+  const [tab, setTab]                   = useState<'einplanen' | 'reduzieren' | 'fairness'>('einplanen');
+  const [statuses, setStatuses]         = useState<Record<string, HintStatus>>(loadStatuses);
+  const [showIgnored, setShowIgnored]   = useState(false);
   const [fairnessFilter, setFairnessFilter] = useState<'all' | 'service' | 'küche'>('all');
+  const [showPatternWarnings, setShowPatternWarnings] = useState(true);
 
   useEffect(() => { if (!open) setTab('einplanen'); }, [open]);
 
@@ -898,6 +903,84 @@ export default function PlanningAssistant({
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Arbeitsmuster-Warnungen */}
+        {patternWarnings.length > 0 && (
+          <div className="rounded-lg border bg-muted/20 divide-y divide-border shrink-0">
+            <button
+              className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted/40 transition-colors text-left"
+              onClick={() => setShowPatternWarnings(v => !v)}
+            >
+              <ShieldAlert className="h-3.5 w-3.5 text-orange-500 shrink-0" />
+              <span className="text-xs font-semibold">Arbeitsmuster-Warnungen</span>
+              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300">
+                {patternWarnings.filter(w => w.severity === 'critical').length > 0
+                  ? `${patternWarnings.filter(w => w.severity === 'critical').length} kritisch`
+                  : `${patternWarnings.length} Hinweis${patternWarnings.length !== 1 ? 'e' : ''}`
+                }
+              </span>
+              <span className="ml-auto text-muted-foreground">
+                {showPatternWarnings
+                  ? <ChevronDown className="h-3 w-3" />
+                  : <ChevronRight className="h-3 w-3" />
+                }
+              </span>
+            </button>
+            {showPatternWarnings && (() => {
+              const critical = patternWarnings.filter(w => w.severity === 'critical');
+              const warning  = patternWarnings.filter(w => w.severity === 'warning');
+              const makeJump = (w: PatternWarning) => {
+                const [y, m, d] = w.firstDate.split('-').map(Number);
+                onJumpToDay(new Date(y, m - 1, d), w.empId);
+                onClose();
+              };
+              return (
+                <div className="px-3 py-2 space-y-2">
+                  {critical.length > 0 && (
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-wide text-red-600 dark:text-red-400 mb-1.5">
+                        Kritisch
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {critical.map((w, i) => (
+                          <button
+                            key={i}
+                            onClick={() => makeJump(w)}
+                            className="flex flex-col items-start px-2 py-1 rounded border text-[10px] bg-red-50 dark:bg-red-950/30 border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 hover:opacity-80 transition-opacity"
+                          >
+                            <span className="font-semibold leading-snug">{w.empName}</span>
+                            <span className="text-[9px] opacity-80 leading-snug">{w.message}</span>
+                            <span className="text-[8px] opacity-60 leading-snug mt-0.5">{w.detail}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {warning.length > 0 && (
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-400 mb-1.5">
+                        Hinweise
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {warning.map((w, i) => (
+                          <button
+                            key={i}
+                            onClick={() => makeJump(w)}
+                            className="flex flex-col items-start px-2 py-1 rounded border text-[10px] bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:opacity-80 transition-opacity"
+                          >
+                            <span className="font-semibold leading-snug">{w.empName}</span>
+                            <span className="text-[9px] opacity-80 leading-snug">{w.message}</span>
+                            <span className="text-[8px] opacity-60 leading-snug mt-0.5">{w.detail}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
