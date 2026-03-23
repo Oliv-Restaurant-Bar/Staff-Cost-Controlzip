@@ -51,6 +51,7 @@ import { StaffingTarget, loadTargets as loadStaffingTargets } from '@/lib/staffi
 import { StationMatrixDialog } from '@/components/schedule-planner/StationMatrixDialog';
 import { AvailabilityDialog } from '@/components/schedule-planner/AvailabilityDialog';
 import BulkActionsDialog from '@/components/schedule-planner/BulkActionsDialog';
+import TimeSlotStaffingDialog from '@/components/schedule-planner/TimeSlotStaffingDialog';
 import { detectPatternWarnings, PatternWarning } from '@/lib/pattern-warnings';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -189,6 +190,7 @@ const SchedulePlanner = () => {
   const [paintTool, setPaintTool] = useState<string | null>(null);
   const [planningAssistantOpen, setPlanningAssistantOpen]     = useState(false);
   const [bulkActionsOpen, setBulkActionsOpen]                 = useState(false);
+  const [timeSlotStaffingOpen, setTimeSlotStaffingOpen]       = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen]           = useState(false);
   const [staffingTargetOpen, setStaffingTargetOpen]           = useState(false);
   const [staffingTargets, setStaffingTargets]                 = useState<StaffingTarget[]>([]);
@@ -1503,6 +1505,16 @@ const SchedulePlanner = () => {
                 <Zap className="h-4 w-4" />
                 <span className="hidden sm:inline">Schnellaktionen</span>
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setTimeSlotStaffingOpen(true)}
+                className="gap-1.5 border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/40"
+                title="Besetzungscheck: Wer war in einem bestimmten Zeitfenster im Einsatz?"
+              >
+                <Clock className="h-4 w-4" />
+                <span className="hidden sm:inline">Besetzungscheck</span>
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setPrintDialogOpen(true)}>
                 <Printer className="h-4 w-4 mr-2" />
                 Drucken
@@ -2784,6 +2796,16 @@ const SchedulePlanner = () => {
         scheduleData={scheduleData}
         currentMonth={currentMonth}
         onApply={handleApplyTemplate}
+      />
+
+      <TimeSlotStaffingDialog
+        open={timeSlotStaffingOpen}
+        onClose={() => setTimeSlotStaffingOpen(false)}
+        employees={employees}
+        actualHoursData={actualHoursData}
+        scheduleData={scheduleData}
+        currentMonth={currentMonth}
+        daysInMonth={daysInMonth}
       />
 
       <TemplateManagerDialog
