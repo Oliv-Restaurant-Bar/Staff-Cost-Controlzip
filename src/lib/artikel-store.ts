@@ -133,16 +133,26 @@ export async function loadArtikelFromDB(): Promise<ArtikelStore> {
   try {
     const remote = await kvGet(STORAGE_KEY) as ArtikelStore | null;
     if (remote && Array.isArray(remote.articles) && remote.articles.length > 0) {
-      localSave(remote);
-      console.log('[Artikel] Aus Supabase geladen:', remote.articles.length, 'Artikel');
-      return remote;
+      // Sicherstellen, dass jeder Artikel ein Fibu-Konto hat (Migration)
+      const { articles: fixed, patched } = ensureAccountingAccounts(remote.articles);
+      const store: ArtikelStore = { ...remote, articles: fixed };
+      localSave(store);
+      if (patched > 0) {
+        await kvSet(STORAGE_KEY, store);
+        console.log('[Artikel] Fibu-Konto Migration:', patched, 'Artikel auf 4090 gesetzt');
+      } else {
+        console.log('[Artikel] Aus Supabase geladen:', fixed.length, 'Artikel');
+      }
+      return store;
     }
     const local = localLoad();
-    if (local.articles.length > 0) {
-      await kvSet(STORAGE_KEY, local);
-      console.log('[Artikel] localStorage → Supabase (Erstmigration):', local.articles.length, 'Artikel');
+    const { articles: fixed, patched } = ensureAccountingAccounts(local.articles);
+    const store: ArtikelStore = { ...local, articles: fixed };
+    if (store.articles.length > 0) {
+      await kvSet(STORAGE_KEY, store);
+      console.log('[Artikel] localStorage → Supabase (Erstmigration):', store.articles.length, 'Artikel');
     }
-    return local;
+    return store;
   } catch (err) {
     console.error('[Artikel] loadArtikelFromDB Fehler:', err);
     return localLoad();
@@ -222,4 +232,46 @@ export function getArtikelStats(articles: Artikel[]) {
   const beverage  = articles.filter(a => a.inventoryType === 'beverage').length;
   const withCost  = articles.filter(a => a.defaultCostPerUnit > 0).length;
   return { total, active, food, beverage, withCost };
+}
+
+// ── Fibu-Konto: Single Source of Truth ───────────────────────────────────────
+
+/**
+ * Gibt das Fibu-Konto eines Rezept-Zutaten-Eintrags zurück.
+ *
+ * Priorität:
+ *  1. Live-Lookup aus Artikelstamm (wenn articleId gesetzt) → SINGLE SOURCE OF TRUTH
+ *  2. Gespeicherter Snapshot auf der Zutat (Fallback für manuelle Zutaten ohne articleId)
+ *  3. '4090' Diverses als letzter Fallback
+ *
+ * So bleibt das Fibu-Konto stets aktuell:
+ * Änderst du das Konto im Artikelstamm, wird es beim nächsten Laden
+ * der Rezeptur sofort korrekt angezeigt – ohne manuelle Anpassung.
+ */
+export function resolveIngredientAccount(
+  ingredient: { articleId?: string; accountingAccount?: string },
+  articles: Artikel[],
+): string {
+  if (ingredient.articleId) {
+    const art = articles.find(a => a.id === ingredient.articleId);
+    if (art?.accountingAccount) return art.accountingAccount;
+  }
+  return ingredient.accountingAccount || '4090';
+}
+
+/**
+ * Stellt sicher, dass jeder Artikel ein Fibu-Konto hat.
+ * Fehlende Konten werden auf '4090' (Diverses) gesetzt.
+ * Wird beim Laden aus der DB aufgerufen – keine UI-Interaktion nötig.
+ */
+export function ensureAccountingAccounts(articles: Artikel[]): { articles: Artikel[]; patched: number } {
+  let patched = 0;
+  const fixed = articles.map(a => {
+    if (!a.accountingAccount) {
+      patched++;
+      return { ...a, accountingAccount: '4090', updatedAt: new Date().toISOString() };
+    }
+    return a;
+  });
+  return { articles: fixed, patched };
 }

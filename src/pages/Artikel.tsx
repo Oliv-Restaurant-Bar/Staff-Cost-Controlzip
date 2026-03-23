@@ -65,7 +65,7 @@ function emptyForm(): Omit<Artikel, 'id' | 'createdAt' | 'updatedAt'> {
     fallbackEnabled:    false,
     fallbackSupplier:   '',
     fallbackPrice:      0,
-    accountingAccount:  '',
+    accountingAccount:  '4090',
     storageLocations:   [],
     active:             true,
   };
@@ -149,7 +149,8 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
     const effectiveUnit = unitMode === 'custom'
       ? customUnit.trim() || 'Stück'
       : form.unit;
-    onSave({ ...form, unit: effectiveUnit });
+    const effectiveAccount = form.accountingAccount || '4090';
+    onSave({ ...form, unit: effectiveUnit, accountingAccount: effectiveAccount });
   }
 
   return (
@@ -342,14 +343,13 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
               </Tooltip>
             </div>
             <Select
-              value={form.accountingAccount}
+              value={form.accountingAccount || '4090'}
               onValueChange={v => setForm(f => ({ ...f, accountingAccount: v }))}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Konto wählen…" />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">– Kein Konto –</SelectItem>
                 {FIBU_ACCOUNTS.map(acc => (
                   <SelectItem key={acc.code} value={acc.code}>
                     {acc.code} {acc.label}
@@ -357,6 +357,9 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
                 ))}
               </SelectContent>
             </Select>
+            <p className="text-[11px] text-muted-foreground">
+              Pflichtfeld · Wird als Quelle für WES-Analyse und Rezepturkosten verwendet.
+            </p>
           </div>
 
           {/* Lagerorte */}

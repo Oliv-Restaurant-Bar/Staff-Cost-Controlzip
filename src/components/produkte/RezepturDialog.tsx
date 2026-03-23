@@ -24,7 +24,7 @@ import {
   type CostMode, type ProductRecipe, type RecipeIngredient,
   emptyRecipe, emptyIngredient, computeRecipeCosts,
 } from '@/lib/rezeptur-store';
-import { getFibuLabel, loadArtikelFromDB, type Artikel } from '@/lib/artikel-store';
+import { getFibuLabel, resolveIngredientAccount, loadArtikelFromDB, type Artikel } from '@/lib/artikel-store';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -122,19 +122,21 @@ function IngredientRow({
             onChange={e => onChange({ articleName: e.target.value })}
           />
         )}
-        {/* Lieferant-Info wenn Artikel gewählt */}
-        {ing.articleId && (ing.supplier || ing.accountingAccount) && (
+        {/* Lieferant-Info + Fibu-Konto wenn Artikel gewählt */}
+        {ing.articleId && (
           <div className="flex gap-1 mt-0.5 flex-wrap">
             {ing.supplier && (
               <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded">
                 {ing.supplier}
               </span>
             )}
-            {ing.accountingAccount && (
-              <span className="text-[10px] text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/30 px-1 rounded border border-violet-200 dark:border-violet-800">
-                {getFibuLabel(ing.accountingAccount)}
-              </span>
-            )}
+            {/* Fibu-Konto: immer live aus Artikelstamm – Single Source of Truth */}
+            <span
+              className="text-[10px] text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/30 px-1 rounded border border-violet-200 dark:border-violet-800"
+              title="Fibu-Konto aus Artikelstamm – ändert sich automatisch wenn du das Konto im Artikelstamm anpasst"
+            >
+              {getFibuLabel(resolveIngredientAccount(ing, articles))}
+            </span>
           </div>
         )}
       </div>
