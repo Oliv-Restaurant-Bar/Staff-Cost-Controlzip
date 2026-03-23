@@ -13,7 +13,7 @@
  *   offiziellen Buchhaltungswerte aus dem PDF/CSV-Import.
  */
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -49,6 +49,7 @@ import {
 import {
   loadAllMappings,
 } from '@/lib/account-mapping-store';
+import { loadArtikelFromDB, getFibuLabel, type Artikel } from '@/lib/artikel-store';
 import {
   SupplierDocument, SupplierMaster, DocumentType, DocumentCategory,
   DOCUMENT_TYPE_LABELS, CATEGORY_LABELS, CATEGORY_COLORS,
@@ -898,6 +899,16 @@ export default function SupplierDocumentsPage() {
 
   const years = availableYears();
 
+  // Inventur-relevante Artikel (aus Artikelstamm, einmalig geladen)
+  const [kontrollartikel, setKontrollartikel] = useState<Artikel[]>([]);
+  const [showKontrollartikel, setShowKontrollartikel] = useState(false);
+  useEffect(() => {
+    loadArtikelFromDB().then(store => {
+      const relevant = store.articles.filter(a => a.inventurRelevant && a.active);
+      setKontrollartikel(relevant.sort((a, b) => a.name.localeCompare(b.name, 'de')));
+    }).catch(() => {});
+  }, []);
+
   // Kontenplan (für Kontozuordnung im Formular)
   const accounts = useMemo(() => loadAllMappings(), []);
 
@@ -1059,6 +1070,60 @@ export default function SupplierDocumentsPage() {
           Buchhaltungsabschluss (PDF/CSV-Import) am Monatsende und hat immer Vorrang.
         </AlertDescription>
       </Alert>
+
+      {/* Inventur-Kontrollartikel Panel */}
+      {kontrollartikel.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 overflow-hidden">
+          <button
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-amber-100/60 transition-colors"
+            onClick={() => setShowKontrollartikel(v => !v)}
+          >
+            <span className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-300">
+              <Star className="h-4 w-4 fill-amber-400 text-amber-500" />
+              Inventur-Kontrollartikel ({kontrollartikel.length})
+              <span className="font-normal text-amber-700 dark:text-amber-400">
+                — Artikel mit besonderer Aufmerksamkeit bei Lieferungen
+              </span>
+            </span>
+            <ChevronDown className={`h-4 w-4 text-amber-600 transition-transform ${showKontrollartikel ? 'rotate-180' : ''}`} />
+          </button>
+          {showKontrollartikel && (
+            <div className="border-t border-amber-200 dark:border-amber-800 px-4 py-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {kontrollartikel.map(a => (
+                  <div
+                    key={a.id}
+                    className="flex items-start gap-2 rounded-md bg-white dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2"
+                  >
+                    <Star className="h-3 w-3 mt-0.5 shrink-0 fill-amber-400 text-amber-500" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{a.name}</p>
+                      <div className="flex gap-1 mt-0.5 flex-wrap">
+                        <span className={`text-[10px] px-1.5 py-px rounded font-medium ${
+                          a.inventoryType === 'food'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {a.inventoryType === 'food' ? 'Food' : 'Beverage'}
+                        </span>
+                        <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-px rounded">{a.unit}</span>
+                        {a.accountingAccount && (
+                          <span className="text-[10px] bg-violet-100 text-violet-700 border border-violet-200 px-1.5 py-px rounded font-mono">
+                            {getFibuLabel(a.accountingAccount)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-3">
+                Diese Artikel sind im Artikelstamm als «Inventur-relevant» markiert. Stelle sicher, dass Lieferungen für diese Artikel vollständig erfasst werden.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Monat-Selektor */}
       <Card>

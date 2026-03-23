@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import {
   Plus, Pencil, Trash2, Search, X, Package, Wine,
   ChevronDown, ChevronUp, Eye, EyeOff, Info,
-  MapPin, LayoutList, Layers,
+  MapPin, LayoutList, Layers, Star, ClipboardList,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -67,6 +67,7 @@ function emptyForm(): Omit<Artikel, 'id' | 'createdAt' | 'updatedAt'> {
     fallbackPrice:      0,
     accountingAccount:  '4090',
     storageLocations:   [],
+    inventurRelevant:   false,
     active:             true,
   };
 }
@@ -102,6 +103,7 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
           fallbackPrice:      initial.fallbackPrice      ?? 0,
           accountingAccount:  initial.accountingAccount ?? '',
           storageLocations:   initial.storageLocations,
+          inventurRelevant:   initial.inventurRelevant ?? false,
           active:             initial.active,
         });
         setUnitMode(knownUnit ? 'list' : 'custom');
@@ -381,6 +383,26 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
             </p>
           </div>
 
+          {/* Inventur-relevant */}
+          <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-3">
+            <Checkbox
+              id="inventurRelevant"
+              checked={form.inventurRelevant}
+              onCheckedChange={v => setForm(f => ({ ...f, inventurRelevant: v === true }))}
+              className="mt-0.5"
+            />
+            <div>
+              <label htmlFor="inventurRelevant" className="text-sm font-medium cursor-pointer flex items-center gap-1.5">
+                <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-400" />
+                Inventur-relevant
+              </label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Artikel wird bei der Inventur und im Lieferanten-Modul speziell hervorgehoben.
+                Geeignet für teure Artikel, Grundzutaten (Öl, Rahm, Butter) oder Artikel ohne vollständige Rezepterfassung.
+              </p>
+            </div>
+          </div>
+
           {/* Aktiv */}
           <div className="flex items-center justify-between">
             <div>
@@ -419,6 +441,7 @@ export default function ArtikelPage() {
   const [locationFilter, setLocationFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery]   = useState('');
   const [showInactive, setShowInactive] = useState(false);
+  const [inventurFilter, setInventurFilter] = useState(false);
   const [sortField, setSortField]       = useState<'name' | 'cost' | 'type'>('name');
   const [sortDir, setSortDir]           = useState<'asc' | 'desc'>('asc');
 
@@ -504,10 +527,11 @@ export default function ArtikelPage() {
   // Gefilterte Liste
   const filtered = useMemo(() => {
     let list = filterArtikel(store.articles, {
-      inventoryType:   typeFilter,
-      storageLocation: locationFilter,
-      search:          searchQuery,
+      inventoryType:        typeFilter,
+      storageLocation:      locationFilter,
+      search:               searchQuery,
       showInactive,
+      onlyInventurRelevant: inventurFilter,
     });
 
     list = [...list].sort((a, b) => {
@@ -518,7 +542,7 @@ export default function ArtikelPage() {
       return sortDir === 'desc' ? -cmp : cmp;
     });
     return list;
-  }, [store.articles, typeFilter, locationFilter, searchQuery, showInactive, sortField, sortDir]);
+  }, [store.articles, typeFilter, locationFilter, searchQuery, showInactive, inventurFilter, sortField, sortDir]);
 
   const stats = useMemo(() => getArtikelStats(store.articles), [store.articles]);
 
@@ -647,6 +671,23 @@ export default function ArtikelPage() {
             Inaktive
           </button>
 
+          {stats.inventurCount > 0 && (
+            <button
+              onClick={() => setInventurFilter(v => !v)}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border transition-colors ${
+                inventurFilter
+                  ? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 font-medium'
+                  : 'border-border text-muted-foreground hover:bg-accent'
+              }`}
+            >
+              <Star className={`h-3.5 w-3.5 ${inventurFilter ? 'fill-amber-500 text-amber-500' : ''}`} />
+              Inventur-relevante
+              <span className="bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 rounded-full px-1.5 py-px text-[10px] font-bold">
+                {stats.inventurCount}
+              </span>
+            </button>
+          )}
+
           {/* Ansichts-Toggle */}
           <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5 ml-auto">
             <button
@@ -692,6 +733,62 @@ export default function ArtikelPage() {
                 <Plus className="h-4 w-4 mr-1" /> Ersten Artikel erstellen
               </Button>
             )}
+          </div>
+        ) : inventurFilter ? (
+          /* ── Inventur Schnellansicht ──────────────────────────────────── */
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
+              <ClipboardList className="h-4 w-4" />
+              Inventur-relevante Artikel ({filtered.length})
+              <span className="text-muted-foreground font-normal">— Alle markierten Kontrollartikel auf einen Blick</span>
+            </div>
+            {['food', 'beverage'].map(t => {
+              const group = filtered.filter(a => a.inventoryType === t);
+              if (group.length === 0) return null;
+              return (
+                <div key={t}>
+                  <h3 className={`text-xs font-semibold uppercase tracking-wide mb-2 ${t === 'food' ? 'text-emerald-700' : 'text-blue-700'}`}>
+                    {t === 'food' ? '🥬 Food' : '🍷 Beverage'} ({group.length})
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {group.map(a => (
+                      <div
+                        key={a.id}
+                        className={`rounded-lg border p-3 flex items-start gap-2 cursor-pointer hover:shadow-sm transition-shadow ${
+                          t === 'food'
+                            ? 'border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/10 dark:border-emerald-900'
+                            : 'border-blue-200 bg-blue-50/50 dark:bg-blue-950/10 dark:border-blue-900'
+                        }`}
+                        onClick={() => openEdit(a)}
+                      >
+                        <Star className="h-3.5 w-3.5 mt-0.5 shrink-0 fill-amber-400 text-amber-500" />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm truncate">{a.name}</p>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-px rounded">{a.unit}</span>
+                            {a.accountingAccount && (
+                              <span className="text-[10px] bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 border border-violet-200 px-1.5 py-px rounded font-mono">
+                                {getFibuLabel(a.accountingAccount)}
+                              </span>
+                            )}
+                            {a.storageLocations.map(loc => (
+                              <span key={loc} className="text-[10px] bg-muted text-muted-foreground px-1.5 py-px rounded">
+                                {loc}
+                              </span>
+                            ))}
+                          </div>
+                          {a.defaultCostPerUnit > 0 && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              NET CHF {a.defaultCostPerUnit.toFixed(4)} / {a.unit}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : inventoryView === 'artikel' ? (
           <div className="rounded-lg border overflow-hidden">
@@ -745,11 +842,16 @@ export default function ArtikelPage() {
                   >
                     {/* Name */}
                     <td className="px-4 py-2.5">
-                      <span
-                        className="font-medium cursor-pointer hover:underline"
-                        onClick={() => openEdit(a)}
-                      >
-                        {a.name}
+                      <span className="flex items-center gap-1.5">
+                        {a.inventurRelevant && (
+                          <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-500" title="Inventur-relevant" />
+                        )}
+                        <span
+                          className="font-medium cursor-pointer hover:underline"
+                          onClick={() => openEdit(a)}
+                        >
+                          {a.name}
+                        </span>
                       </span>
                     </td>
 

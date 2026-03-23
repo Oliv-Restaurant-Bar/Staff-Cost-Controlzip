@@ -104,6 +104,13 @@ export interface Artikel {
    */
   accountingAccount: string;
   storageLocations: string[];
+  /**
+   * Inventur-relevant: Artikel soll bei der Inventur besonders beachtet werden.
+   * Typisch: teure Artikel, vielseitig verwendete Grundzutaten (Öl, Rahm, Butter),
+   * Artikel die nicht vollständig über Rezepte erfasst sind.
+   * Standard: false
+   */
+  inventurRelevant: boolean;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -201,6 +208,7 @@ export function filterArtikel(
     storageLocation?: string | null;
     search?: string;
     showInactive?: boolean;
+    onlyInventurRelevant?: boolean;
   },
 ): Artikel[] {
   let list = articles;
@@ -220,18 +228,23 @@ export function filterArtikel(
     list = list.filter(a => a.name.toLowerCase().includes(q));
   }
 
+  if (opts.onlyInventurRelevant) {
+    list = list.filter(a => a.inventurRelevant === true);
+  }
+
   return list.sort((a, b) => a.name.localeCompare(b.name, 'de'));
 }
 
 // ── Statistiken ───────────────────────────────────────────────────────────────
 
 export function getArtikelStats(articles: Artikel[]) {
-  const total     = articles.length;
-  const active    = articles.filter(a => a.active).length;
-  const food      = articles.filter(a => a.inventoryType === 'food').length;
-  const beverage  = articles.filter(a => a.inventoryType === 'beverage').length;
-  const withCost  = articles.filter(a => a.defaultCostPerUnit > 0).length;
-  return { total, active, food, beverage, withCost };
+  const total          = articles.length;
+  const active         = articles.filter(a => a.active).length;
+  const food           = articles.filter(a => a.inventoryType === 'food').length;
+  const beverage       = articles.filter(a => a.inventoryType === 'beverage').length;
+  const withCost       = articles.filter(a => a.defaultCostPerUnit > 0).length;
+  const inventurCount  = articles.filter(a => a.inventurRelevant === true).length;
+  return { total, active, food, beverage, withCost, inventurCount };
 }
 
 // ── Fibu-Konto: Single Source of Truth ───────────────────────────────────────
