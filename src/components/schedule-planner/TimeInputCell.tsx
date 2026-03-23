@@ -20,6 +20,8 @@ interface TimeInputCellProps {
   slotType: 'früh' | 'spät';
   isWeekend?: boolean;
   isDayOff?: boolean;
+  isRequestedFree?: boolean;  // Wunschfrei — amber warning, kann eingetragen werden
+  isBlocked?: boolean;        // Gesperrt   — rote Warnung, Bestätigung nötig
   department?: 'service' | 'küche' | 'all';
   activeTool?: string | null;
 }
@@ -47,9 +49,13 @@ export const TimeInputCell = ({
   slotType,
   isWeekend,
   isDayOff,
+  isRequestedFree,
+  isBlocked,
   department,
   activeTool
 }: TimeInputCellProps) => {
+  // For blocked days: require explicit override before showing inputs
+  const [blockedOverride, setBlockedOverride] = useState(false);
   const { shiftMap, absenceShifts, workShifts } = useShiftConfig();
   
   // Filter absence shifts by department if specified
@@ -149,11 +155,19 @@ export const TimeInputCell = ({
   if (activeTool) {
     const isShiftMode = activeTool.startsWith('shift:');
 
-    // Helper: base classes for an "empty" cell in paint mode (respects isDayOff)
-    const emptyPaintClass = isDayOff && !value?.start && !absenceType
-      ? "bg-slate-300 dark:bg-slate-600 border-slate-400 dark:border-slate-500 text-slate-600 dark:text-slate-300 font-bold"
-      : "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground hover:bg-primary/10 hover:border-primary/40";
-    const emptyPaintLabel = isDayOff && !value?.start && !absenceType ? 'F' : '—';
+    // Helper: base classes for an "empty" cell in paint mode (respects isDayOff + availability)
+    const emptyPaintClass =
+      isBlocked && !value?.start && !absenceType
+        ? "bg-red-100 dark:bg-red-900/30 border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 font-semibold"
+        : isRequestedFree && !value?.start && !absenceType
+          ? "bg-amber-100 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 font-semibold"
+          : isDayOff && !value?.start && !absenceType
+            ? "bg-slate-300 dark:bg-slate-600 border-slate-400 dark:border-slate-500 text-slate-600 dark:text-slate-300 font-bold"
+            : "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground hover:bg-primary/10 hover:border-primary/40";
+    const emptyPaintLabel =
+      isBlocked && !value?.start && !absenceType ? '⛔' :
+      isRequestedFree && !value?.start && !absenceType ? 'WF' :
+      isDayOff && !value?.start && !absenceType ? 'F' : '—';
 
     if (isShiftMode) {
       // Work-shift paint mode
@@ -214,33 +228,84 @@ export const TimeInputCell = ({
 
   // A configured day-off with no manually entered content
   const isEmptyDayOff = isDayOff && !value?.start && !absenceType;
+  // Availability overlay states
+  const isEmptyRequestedFree = isRequestedFree && !value?.start && !absenceType && !isDayOff;
+  const isEmptyBlocked       = isBlocked && !value?.start && !absenceType && !isDayOff;
+
+  // Reset blocked override when popover closes
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) setBlockedOverride(false);
+    setOpen(nextOpen);
+  };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
           className={cn(
             "w-full h-8 px-1 text-[10px] font-medium border rounded transition-all",
             "hover:ring-1 hover:ring-ring focus:outline-none focus:ring-1 focus:ring-ring",
             // Base state: empty cell
-            !absenceType && !value?.start && !isDayOff && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground",
+            !absenceType && !value?.start && !isDayOff && !isRequestedFree && !isBlocked && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground",
             // Weekend without a day-off override
-            isWeekend && !isDayOff && "bg-primary/5",
+            isWeekend && !isDayOff && !isRequestedFree && !isBlocked && "bg-primary/5",
             // Configured free day (empty) — clearly distinct from normal empty cells
             isEmptyDayOff && "bg-slate-300 dark:bg-slate-600 border-slate-400 dark:border-slate-500 text-slate-600 dark:text-slate-300 font-bold",
-            // Configured free day with manually entered content — keep content styling but tint the bg
+            // Configured free day with manually entered content
             isDayOff && !isEmptyDayOff && "ring-1 ring-slate-400/40 dark:ring-slate-500/40",
+            // Wunschfrei (empty)
+            isEmptyRequestedFree && "bg-amber-100 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 font-semibold",
+            // Wunschfrei (with content) — amber ring
+            isRequestedFree && !isEmptyRequestedFree && "ring-1 ring-amber-400/60 dark:ring-amber-600/60",
+            // Blocked (empty)
+            isEmptyBlocked && "bg-red-100 dark:bg-red-900/30 border-red-300 dark:border-red-700 text-red-800 dark:text-red-300 font-semibold",
+            // Blocked (with content) — red ring
+            isBlocked && !isEmptyBlocked && "ring-1 ring-red-400/60 dark:ring-red-600/60",
             // Absence colors take priority
             absenceType && absenceConfig?.color,
             // Shift time colors
-            !absenceType && value?.start && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
+            !absenceType && value?.start && !isRequestedFree && !isBlocked && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
           )}
         >
-          {displayValue || (isEmptyDayOff ? 'F' : '—')}
+          {displayValue || (isEmptyDayOff ? 'F' : isEmptyRequestedFree ? 'WF' : isEmptyBlocked ? '⛔' : '—')}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-56 p-2 z-50" align="center">
+      <PopoverContent className="w-60 p-2 z-50" align="center">
         <div className="space-y-2">
+          {/* Wunschfrei warning */}
+          {isRequestedFree && (
+            <div className="flex items-start gap-1.5 rounded bg-amber-50 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 px-2 py-1.5 -mx-0.5">
+              <span className="text-amber-600 font-bold text-[11px] leading-tight shrink-0 mt-0.5">WF</span>
+              <span className="text-[10px] text-amber-800 dark:text-amber-300 leading-tight">
+                Wunschfrei beantragt. Einplanung möglich, aber bitte begründen.
+              </span>
+            </div>
+          )}
+          {/* Blocked warning — requires override */}
+          {isBlocked && !blockedOverride && (
+            <div className="space-y-2 -mx-0.5">
+              <div className="flex items-start gap-1.5 rounded bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-700 px-2 py-1.5">
+                <span className="text-red-600 font-bold text-[11px] leading-tight shrink-0 mt-0.5">⛔</span>
+                <span className="text-[10px] text-red-800 dark:text-red-300 leading-tight">
+                  Dieser Tag ist als gesperrt markiert.
+                </span>
+              </div>
+              <button
+                onClick={() => setBlockedOverride(true)}
+                className="w-full text-xs font-medium text-red-700 dark:text-red-400 border border-red-300 dark:border-red-700 rounded py-1 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
+              >
+                Trotzdem eintragen ↓
+              </button>
+            </div>
+          )}
+          {isBlocked && blockedOverride && (
+            <div className="flex items-center gap-1.5 rounded bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-700 px-2 py-1 -mx-0.5">
+              <span className="text-[9px] text-red-700 dark:text-red-300 font-semibold uppercase tracking-wide">Override aktiv</span>
+            </div>
+          )}
+
+          {/* Only show inputs when not blocked OR when override is granted */}
+          {(!isBlocked || blockedOverride) && (<>
           <div className="text-xs font-medium text-muted-foreground mb-1">
             {slotType === 'früh' ? 'Frühschicht' : 'Spätschicht'}
           </div>
@@ -341,6 +406,7 @@ export const TimeInputCell = ({
           >
             Löschen
           </button>
+          </>)}
         </div>
       </PopoverContent>
     </Popover>

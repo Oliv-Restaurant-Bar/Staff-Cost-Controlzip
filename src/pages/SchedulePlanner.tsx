@@ -14,7 +14,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2 } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
@@ -49,6 +49,7 @@ import { StaffingTargetDialog } from '@/components/schedule-planner/StaffingTarg
 import { StaffingStatusBar } from '@/components/schedule-planner/StaffingStatusBar';
 import { StaffingTarget, loadTargets as loadStaffingTargets } from '@/lib/staffing-targets';
 import { StationMatrixDialog } from '@/components/schedule-planner/StationMatrixDialog';
+import { AvailabilityDialog } from '@/components/schedule-planner/AvailabilityDialog';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
@@ -189,6 +190,7 @@ const SchedulePlanner = () => {
   const [staffingTargetOpen, setStaffingTargetOpen]           = useState(false);
   const [staffingTargets, setStaffingTargets]                 = useState<StaffingTarget[]>([]);
   const [stationMatrixOpen, setStationMatrixOpen]             = useState(false);
+  const [availabilityOpen, setAvailabilityOpen]               = useState(false);
 
   // ── Budget-Daten (für PlanningAssistant) ─────────────────────────────────
   const { personnelBudget } = useBudgetMonth(
@@ -1450,6 +1452,16 @@ const SchedulePlanner = () => {
                   <span className="hidden sm:inline">Stationen</span>
                 </Button>
               )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setAvailabilityOpen(true)}
+                className="gap-1.5 border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/40"
+                title="Verfügbarkeit & Wunschfrei verwalten"
+              >
+                <CalendarX2 className="h-4 w-4" />
+                <span className="hidden sm:inline">Verfügbarkeit</span>
+              </Button>
               {isAdmin && (
                 <Button
                   variant="outline"
@@ -2766,6 +2778,13 @@ const SchedulePlanner = () => {
         onClose={() => setStationMatrixOpen(false)}
         employees={employees}
         onEmployeeUpdated={handleStationEmployeeUpdated}
+      />
+
+      <AvailabilityDialog
+        open={availabilityOpen}
+        onClose={() => setAvailabilityOpen(false)}
+        employees={employees}
+        initialMonth={currentMonth}
       />
     </div>
   );

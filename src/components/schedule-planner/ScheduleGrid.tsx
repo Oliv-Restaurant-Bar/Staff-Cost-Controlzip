@@ -26,6 +26,7 @@ import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useShiftConfig, calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { buildAvailabilityMap } from '@/lib/availability-store';
 
 export interface TimeSlot {
   start: string;
@@ -239,6 +240,13 @@ export const ScheduleGrid = ({
   const DEFAULT_LABOR_COST_THRESHOLD = 40;
   const laborCostThreshold = laborCostThresholdProp ?? parseFloat(localStorage.getItem(LABOR_COST_THRESHOLD_KEY) || String(DEFAULT_LABOR_COST_THRESHOLD));
   const sundayIndices = getSundayIndices(days);
+
+  // Build availability map for all displayed employees × days (loaded once per render cycle)
+  const availabilityMap = useMemo(() => {
+    const empIds  = employees.map(e => e.id);
+    const dateStrs = days.map(d => format(d, 'yyyy-MM-dd'));
+    return buildAvailabilityMap(empIds, dateStrs);
+  }, [employees, days]);
 
   // Calculate daily totals including costs and budget comparison
   const getDailyStats = (day: Date) => {
@@ -959,6 +967,11 @@ export const ScheduleGrid = ({
                     const spätSuggestion = gridSuggestionMap.get(`${employee.id}-${dateStr}-spät`);
                     const isSuggestedFrüh = !!frühSuggestion;
                     const isSuggestedSpät = !!spätSuggestion;
+
+                    // Availability overlay
+                    const availStatus = availabilityMap[`${employee.id}-${dateStr}`] ?? 'normal';
+                    const cellIsRequestedFree = availStatus === 'requested-free';
+                    const cellIsBlocked       = availStatus === 'blocked';
                     const frühInlineKey = `${employee.id}-${dateStr}-früh`;
                     const spätInlineKey = `${employee.id}-${dateStr}-spät`;
 
@@ -1002,6 +1015,8 @@ export const ScheduleGrid = ({
                                   slotType="früh"
                                   isWeekend={isWeekendDay}
                                   isDayOff={isConfiguredDayOff}
+                                  isRequestedFree={cellIsRequestedFree}
+                                  isBlocked={cellIsBlocked}
                                   activeTool={resolvedActiveTool}
                                 />
                               </div>
@@ -1060,6 +1075,8 @@ export const ScheduleGrid = ({
                                   slotType="spät"
                                   isWeekend={isWeekendDay}
                                   isDayOff={isConfiguredDayOff}
+                                  isRequestedFree={cellIsRequestedFree}
+                                  isBlocked={cellIsBlocked}
                                   activeTool={resolvedActiveTool}
                                 />
                               </div>
