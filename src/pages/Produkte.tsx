@@ -5,6 +5,7 @@ import {
   Upload, Trash2, Package, TrendingUp, TrendingDown,
   Hash, RotateCcw, ChevronDown, X, Award, CalendarDays, LayoutGrid,
   AlertTriangle, CheckSquare, Utensils, Wine, Search, Settings2, Receipt, Pencil,
+  Calculator, ChevronUp,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -39,6 +40,15 @@ import {
   type ProductGroup,
 } from '@/lib/produkte-store';
 import GruppenAnalyse from '@/components/produkte/GruppenAnalyse';
+import RezepturDialog from '@/components/produkte/RezepturDialog';
+import {
+  type RezepturenMap,
+  type ProductRecipe,
+  loadRezepturenFromDB,
+  saveRezepturenToDB,
+  makeRecipeId,
+  computeRecipeCosts,
+} from '@/lib/rezeptur-store';
 import { format, parse } from 'date-fns';
 import { de } from 'date-fns/locale';
 
@@ -60,7 +70,7 @@ const formatMonthShort = (ym: string) => {
 };
 
 type ChartMode = 'top' | 'flop';
-type ViewTab   = 'monat' | 'jahr' | 'gruppen';
+type ViewTab   = 'monat' | 'jahr' | 'gruppen' | 'kalkulation';
 
 const TOP_OPTIONS  = [10, 20, 50, 100, 9999];
 const FLOP_OPTIONS = [10, 20, 50, 9999];
@@ -157,6 +167,10 @@ export default function ProdukteSeite() {
 
   const [costs,  setCosts]  = useState<ProductCostEntry[]>(() => loadProductCosts());
   const [groups, setGroups] = useState<ProductGroup[]>(() => loadProductGroups());
+  const [recipes, setRecipes] = useState<RezepturenMap>({});
+  const [recipeSortKey, setRecipeSortKey] = useState<'name' | 'wes' | 'marge'>('name');
+  const [recipeSortAsc, setRecipeSortAsc] = useState(true);
+  const [editRecipeCost, setEditRecipeCost] = useState<ProductCostEntry | null>(null);
   const [importingCost, setImportingCost] = useState(false);
 
   // Beim Start: alle Daten aus Supabase laden (domain-unabhängig)
@@ -177,6 +191,9 @@ export default function ProdukteSeite() {
     });
     loadProductGroupsFromDB().then(dbGroups => {
       if (dbGroups.length > 0) setGroups(dbGroups);
+    });
+    loadRezepturenFromDB().then(dbRecipes => {
+      setRecipes(dbRecipes);
     });
   }, []);
   const [editingCost, setEditingCost] = useState<{
@@ -289,6 +306,55 @@ export default function ProdukteSeite() {
     setCosts(updated);
     setEditingCost(null);
   };
+
+  // ── Rezeptur speichern ───────────────────────────────────────────────────────
+  const handleSaveRecipe = (recipe: ProductRecipe) => {
+    const newMap = { ...recipes, [recipe.id]: recipe };
+    setRecipes(newMap);
+    saveRezepturenToDB(newMap);
+
+    // WES im ProductCostEntry automatisch aktualisieren
+    const cost = costs.find(
+      c => c.name.toLowerCase() === recipe.productName.toLowerCase() && c.category === recipe.category,
+    );
+    if (cost) {
+      const kpis = computeRecipeCosts(recipe, cost.nettoPrice, cost.bruttoPrice);
+      const updated = costs.map(c =>
+        c.name.toLowerCase() === recipe.productName.toLowerCase() && c.category === recipe.category
+          ? { ...c, wes: kpis.totalCost, wesQ: kpis.wesQ }
+          : c,
+      );
+      setCosts(updated);
+      saveProductCostsToDB(updated);
+    }
+
+    toast.success(`Kalkulation «${recipe.productName}» gespeichert`);
+    setEditRecipeCost(null);
+  };
+
+  // ── Kalkulations-Tab: sortierte Kostenliste ──────────────────────────────────
+  const kalkulationRows = useMemo(() => {
+    const rows = costs.filter(c => c.category === category).map(c => {
+      const id = makeRecipeId(c.name, c.category);
+      const recipe = recipes[id] ?? null;
+      const kpis = recipe ? computeRecipeCosts(recipe, c.nettoPrice, c.bruttoPrice) : null;
+      return { cost: c, recipe, kpis };
+    });
+
+    rows.sort((a, b) => {
+      let cmp = 0;
+      if (recipeSortKey === 'name')  cmp = a.cost.name.localeCompare(b.cost.name, 'de');
+      if (recipeSortKey === 'wes')   cmp = (a.kpis?.wesQ ?? 9999) - (b.kpis?.wesQ ?? 9999);
+      if (recipeSortKey === 'marge') cmp = (b.kpis?.margePct ?? -9999) - (a.kpis?.margePct ?? -9999);
+      return recipeSortAsc ? cmp : -cmp;
+    });
+    return rows;
+  }, [costs, category, recipes, recipeSortKey, recipeSortAsc]);
+
+  function toggleRecipeSort(key: 'name' | 'wes' | 'marge') {
+    if (recipeSortKey === key) setRecipeSortAsc(a => !a);
+    else { setRecipeSortKey(key); setRecipeSortAsc(true); }
+  }
 
   const monthsOnly = useMemo(() => getAvailableMonths(data?.entries ?? [], category), [data, category]);
 
@@ -575,6 +641,11 @@ export default function ProdukteSeite() {
                   className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all',
                     view === 'gruppen' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
                   <Award className="h-3 w-3" /> Gruppen & Margen
+                </button>
+                <button onClick={() => setView('kalkulation')}
+                  className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all',
+                    view === 'kalkulation' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                  <Calculator className="h-3 w-3" /> Kalkulation
                 </button>
               </div>
 
@@ -938,8 +1009,132 @@ export default function ProdukteSeite() {
           />
         )}
 
+        {/* ══ KALKULATION ═════════════════════════════════════════════════════ */}
+        {view === 'kalkulation' && (
+          <div className="space-y-3">
+
+            {/* Info-Header */}
+            <div className="rounded-lg border border-border bg-card px-4 py-3 flex items-start gap-3">
+              <Calculator className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-semibold">Produktkalkulation</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Konfiguriere für jedes Produkt den Kalkulationsmodus (Pauschal / Rezeptur / Gemischt).
+                  Gespeicherte Kalkulationen aktualisieren den WES-Wert in der Produktdatenbank automatisch.
+                </p>
+              </div>
+            </div>
+
+            {costs.filter(c => c.category === category).length === 0 ? (
+              <div className="text-center py-12 text-sm text-muted-foreground border border-dashed rounded-lg">
+                Noch keine {category === 'food' ? 'Food' : 'Beverage'}-Produkte in der Produktdatenbank.
+                <br />Importiere zuerst WES-Preislisten über «Produktdatenbank».
+              </div>
+            ) : (
+              <div className="rounded-xl border border-border bg-card overflow-hidden">
+
+                {/* Tabellen-Header */}
+                <div className="grid grid-cols-[1fr_90px_72px_72px_72px_96px_36px] gap-2 px-3 py-2 border-b bg-muted/40 text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                  <button className="text-left flex items-center gap-1 hover:text-foreground transition-colors" onClick={() => toggleRecipeSort('name')}>
+                    Produkt
+                    {recipeSortKey === 'name' && (recipeSortAsc ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                  </button>
+                  <span>Modus</span>
+                  <button className="text-right flex items-center justify-end gap-1 hover:text-foreground transition-colors" onClick={() => toggleRecipeSort('wes')}>
+                    WES%
+                    {recipeSortKey === 'wes' && (recipeSortAsc ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                  </button>
+                  <button className="text-right flex items-center justify-end gap-1 hover:text-foreground transition-colors" onClick={() => toggleRecipeSort('marge')}>
+                    Marge%
+                    {recipeSortKey === 'marge' && (recipeSortAsc ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                  </button>
+                  <span className="text-right">DB</span>
+                  <span className="text-right">Kosten</span>
+                  <span />
+                </div>
+
+                {/* Zeilen */}
+                <div className="divide-y divide-border/40">
+                  {kalkulationRows.map(({ cost, recipe, kpis }) => {
+                    const configured = !!recipe;
+                    const modeBadge = !recipe ? null : recipe.costMode === 'pauschal'
+                      ? { label: 'Pauschal', cls: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700' }
+                      : recipe.costMode === 'rezeptur'
+                      ? { label: 'Rezeptur', cls: 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800' }
+                      : { label: 'Gemischt', cls: 'bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800' };
+
+                    return (
+                      <div key={cost.name}
+                        className="grid grid-cols-[1fr_90px_72px_72px_72px_96px_36px] gap-2 px-3 py-2.5 items-center hover:bg-muted/30 transition-colors">
+
+                        {/* Name */}
+                        <span className="text-xs font-medium truncate">{cost.name}</span>
+
+                        {/* Modus */}
+                        <div>
+                          {modeBadge
+                            ? <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${modeBadge.cls}`}>{modeBadge.label}</span>
+                            : <span className="text-[10px] text-muted-foreground/40">–</span>
+                          }
+                        </div>
+
+                        {/* WES% */}
+                        <span className={`text-xs text-right font-mono ${kpis ? (kpis.wesQ < 25 ? 'text-emerald-600 dark:text-emerald-400' : kpis.wesQ < 35 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400') : 'text-muted-foreground/30'}`}>
+                          {kpis ? `${kpis.wesQ.toFixed(1)}%` : '–'}
+                        </span>
+
+                        {/* Marge% */}
+                        <span className={`text-xs text-right font-mono ${kpis ? (kpis.margePct >= 65 ? 'text-emerald-600 dark:text-emerald-400' : kpis.margePct >= 50 ? 'text-green-600 dark:text-green-400' : kpis.margePct >= 30 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400') : 'text-muted-foreground/30'}`}>
+                          {kpis ? `${kpis.margePct.toFixed(1)}%` : '–'}
+                        </span>
+
+                        {/* DB */}
+                        <span className={`text-xs text-right font-mono ${kpis && kpis.deckungsbeitrag >= 0 ? 'text-foreground' : 'text-red-600'}`}>
+                          {kpis ? formatCHF(kpis.deckungsbeitrag) : '–'}
+                        </span>
+
+                        {/* Kosten */}
+                        <span className="text-xs text-right font-mono text-muted-foreground">
+                          {kpis ? formatCHF(kpis.totalCost) : '–'}
+                        </span>
+
+                        {/* Bearbeiten */}
+                        <button
+                          onClick={() => setEditRecipeCost(cost)}
+                          className={`p-1 rounded transition-colors ${configured ? 'text-muted-foreground hover:text-foreground' : 'text-primary hover:text-primary/70'}`}
+                          title={configured ? 'Kalkulation bearbeiten' : 'Kalkulation konfigurieren'}
+                        >
+                          {configured ? <Pencil className="h-3.5 w-3.5" /> : <Calculator className="h-3.5 w-3.5" />}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Summen-Footer */}
+                {kalkulationRows.some(r => r.kpis) && (() => {
+                  const configured = kalkulationRows.filter(r => r.kpis);
+                  const avgWes  = configured.reduce((s, r) => s + r.kpis!.wesQ,    0) / configured.length;
+                  const avgMarge = configured.reduce((s, r) => s + r.kpis!.margePct, 0) / configured.length;
+                  return (
+                    <div className="grid grid-cols-[1fr_90px_72px_72px_72px_96px_36px] gap-2 px-3 py-2 border-t bg-muted/30 text-[10px] text-muted-foreground font-medium">
+                      <span>{configured.length} von {kalkulationRows.length} konfiguriert</span>
+                      <span />
+                      <span className="text-right font-mono">Ø {avgWes.toFixed(1)}%</span>
+                      <span className="text-right font-mono">Ø {avgMarge.toFixed(1)}%</span>
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Ignorier-Liste (beide Ansichten) */}
-        {data && view !== 'gruppen' && (
+        {data && view !== 'gruppen' && view !== 'kalkulation' && (
           <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-2.5">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
@@ -1282,6 +1477,17 @@ export default function ProdukteSeite() {
           </div>
         </div>
       )}
+
+      {/* ── Rezeptur / Kalkulations-Dialog ───────────────────────────────────── */}
+      <RezepturDialog
+        open={!!editRecipeCost}
+        cost={editRecipeCost}
+        existingRecipe={editRecipeCost
+          ? (recipes[makeRecipeId(editRecipeCost.name, editRecipeCost.category)] ?? null)
+          : null}
+        onSave={handleSaveRecipe}
+        onClose={() => setEditRecipeCost(null)}
+      />
     </div>
   );
 }
