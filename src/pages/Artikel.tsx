@@ -6,11 +6,12 @@
  * Inventur und theoretischen Warenbestand.
  */
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, Fragment } from 'react';
 import { toast } from 'sonner';
 import {
   Plus, Pencil, Trash2, Search, X, Package, Wine,
   ChevronDown, ChevronUp, Eye, EyeOff, Info,
+  MapPin, LayoutList, Layers,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -478,6 +479,18 @@ export default function ArtikelPage() {
     }
   }
 
+  // ── Inventar-Ansicht ────────────────────────────────────────────────────────
+  const [inventoryView, setInventoryView] = useState<'artikel' | 'lagerort'>('artikel');
+  const [expandedRows,  setExpandedRows]  = useState<Set<string>>(new Set());
+
+  function toggleRow(id: string) {
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
   // Sichtbare Lagerorte basierend auf Typ-Filter
   const visibleLocations = useMemo(() => {
     if (typeFilter === 'food')     return [...STORAGE_LOCATIONS_FOOD];
@@ -505,6 +518,25 @@ export default function ArtikelPage() {
   }, [store.articles, typeFilter, locationFilter, searchQuery, showInactive, sortField, sortDir]);
 
   const stats = useMemo(() => getArtikelStats(store.articles), [store.articles]);
+
+  // Gruppiert nach Lagerort — für "Nach Lagerort"-Ansicht
+  const byLocation = useMemo(() => {
+    const map = new Map<string, Artikel[]>();
+    const orderedLocs = typeFilter === 'food'
+      ? [...STORAGE_LOCATIONS_FOOD]
+      : typeFilter === 'beverage'
+      ? [...STORAGE_LOCATIONS_BEVERAGE]
+      : [...ALL_STORAGE_LOCATIONS];
+
+    for (const loc of orderedLocs) {
+      const arts = filtered.filter(a => a.storageLocations.includes(loc));
+      if (arts.length > 0) map.set(loc, arts);
+    }
+    // Artikel ohne Lagerort
+    const withoutLoc = filtered.filter(a => a.storageLocations.length === 0);
+    if (withoutLoc.length > 0) map.set('(kein Lagerort)', withoutLoc);
+    return map;
+  }, [filtered, typeFilter]);
 
   function SortIcon({ field }: { field: typeof sortField }) {
     if (sortField !== field) return <span className="text-muted-foreground/30 ml-1">↕</span>;
@@ -611,6 +643,26 @@ export default function ArtikelPage() {
             {showInactive ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
             Inaktive
           </button>
+
+          {/* Ansichts-Toggle */}
+          <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5 ml-auto">
+            <button
+              onClick={() => setInventoryView('artikel')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+                inventoryView === 'artikel' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <LayoutList className="h-3 w-3" /> Nach Artikel
+            </button>
+            <button
+              onClick={() => setInventoryView('lagerort')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+                inventoryView === 'lagerort' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Layers className="h-3 w-3" /> Nach Lagerort
+            </button>
+          </div>
         </div>
       </div>
 
@@ -638,7 +690,7 @@ export default function ArtikelPage() {
               </Button>
             )}
           </div>
-        ) : (
+        ) : inventoryView === 'artikel' ? (
           <div className="rounded-lg border overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
@@ -680,9 +732,12 @@ export default function ArtikelPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {filtered.map(a => (
+                {filtered.map(a => {
+                  const isExpanded = expandedRows.has(a.id);
+                  const hasLocs    = a.storageLocations.length > 0;
+                  return (
+                  <Fragment key={a.id}>
                   <tr
-                    key={a.id}
                     className={`group hover:bg-muted/30 transition-colors ${!a.active ? 'opacity-50' : ''}`}
                   >
                     {/* Name */}
@@ -753,17 +808,26 @@ export default function ArtikelPage() {
                       )}
                     </td>
 
-                    {/* Lagerorte */}
+                    {/* Lagerorte – mit Expand-Toggle */}
                     <td className="px-3 py-2.5 hidden lg:table-cell">
-                      <div className="flex gap-1 flex-wrap">
-                        {a.storageLocations.length > 0
-                          ? a.storageLocations.map(l => (
-                              <span key={l} className="text-xs bg-muted px-1.5 py-0.5 rounded">
-                                {l}
-                              </span>
-                            ))
-                          : <span className="text-xs text-muted-foreground/50">–</span>}
-                      </div>
+                      {hasLocs ? (
+                        <button
+                          onClick={() => toggleRow(a.id)}
+                          className="flex items-center gap-1.5 text-xs hover:text-foreground text-muted-foreground transition-colors group/loc"
+                        >
+                          <MapPin className="h-3 w-3 shrink-0" />
+                          <span className="font-medium">
+                            {a.storageLocations.length === 1
+                              ? a.storageLocations[0]
+                              : `${a.storageLocations.length} Lagerorte`}
+                          </span>
+                          {isExpanded
+                            ? <ChevronUp className="h-3 w-3" />
+                            : <ChevronDown className="h-3 w-3 opacity-40 group-hover/loc:opacity-100" />}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/50">–</span>
+                      )}
                     </td>
 
                     {/* Aktiv Toggle */}
@@ -797,9 +861,130 @@ export default function ArtikelPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+
+                  {/* Expanded sub-rows: eine Zeile pro Lagerort */}
+                  {isExpanded && hasLocs && a.storageLocations.map(loc => {
+                    const isFoodLoc = STORAGE_LOCATIONS_FOOD.includes(loc as typeof STORAGE_LOCATIONS_FOOD[number]);
+                    return (
+                      <tr key={`${a.id}|${loc}`} className="bg-muted/20 border-t-0">
+                        <td colSpan={9} className="py-1.5 pr-3 pl-10">
+                          <div className="flex items-center gap-2">
+                            <MapPin className={`h-3 w-3 shrink-0 ${isFoodLoc ? 'text-emerald-500' : 'text-blue-500'}`} />
+                            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                              isFoodLoc
+                                ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300'
+                                : 'bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300'
+                            }`}>
+                              {loc}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {isFoodLoc ? 'Food-Lager' : 'Getränke-Lager'}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
+          </div>
+        ) : (
+
+          /* ══ NACH LAGERORT ══════════════════════════════════════════════════ */
+          <div className="space-y-4">
+            {byLocation.size === 0 ? (
+              <div className="text-center py-12 text-sm text-muted-foreground">
+                Keine Artikel gefunden. Filter anpassen.
+              </div>
+            ) : (
+              [...byLocation.entries()].map(([loc, arts]) => {
+                const isFoodLoc = STORAGE_LOCATIONS_FOOD.includes(loc as typeof STORAGE_LOCATIONS_FOOD[number]);
+                const isBevLoc  = STORAGE_LOCATIONS_BEVERAGE.includes(loc as typeof STORAGE_LOCATIONS_BEVERAGE[number]);
+                return (
+                  <div key={loc} className="rounded-xl border overflow-hidden">
+
+                    {/* Lagerort-Header */}
+                    <div className={`px-4 py-2.5 border-b flex items-center gap-2 ${
+                      isFoodLoc
+                        ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800'
+                        : isBevLoc
+                        ? 'bg-blue-50/60 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800'
+                        : 'bg-muted/40'
+                    }`}>
+                      <MapPin className={`h-4 w-4 ${
+                        isFoodLoc ? 'text-emerald-600' : isBevLoc ? 'text-blue-600' : 'text-muted-foreground'
+                      }`} />
+                      <span className="font-semibold text-sm">{loc}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ml-1 ${
+                        isFoodLoc
+                          ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300'
+                          : isBevLoc
+                          ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+                          : 'bg-muted text-muted-foreground'
+                      }`}>
+                        {arts.length} Artikel
+                      </span>
+                      <span className="text-xs text-muted-foreground ml-auto">
+                        {isFoodLoc ? 'Food-Lager' : isBevLoc ? 'Getränke-Lager' : ''}
+                      </span>
+                    </div>
+
+                    {/* Artikel-Liste */}
+                    <div className="divide-y divide-border/50">
+                      {arts.map(a => (
+                        <div key={a.id} className={`flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors ${!a.active ? 'opacity-50' : ''}`}>
+                          {/* Typ-Indikator */}
+                          <span className={`shrink-0 w-1.5 h-6 rounded-full ${
+                            a.inventoryType === 'food'
+                              ? 'bg-emerald-400 dark:bg-emerald-600'
+                              : 'bg-blue-400 dark:bg-blue-600'
+                          }`} />
+
+                          {/* Name */}
+                          <span
+                            className="text-sm font-medium flex-1 min-w-0 truncate cursor-pointer hover:underline"
+                            onClick={() => openEdit(a)}
+                          >
+                            {a.name}
+                          </span>
+
+                          {/* Einheit */}
+                          <span className="text-xs text-muted-foreground hidden sm:block shrink-0">{a.unit}</span>
+
+                          {/* Alle Lagerorte dieses Artikels */}
+                          <div className="hidden md:flex gap-1 flex-wrap shrink-0">
+                            {a.storageLocations.map(l => (
+                              <span key={l} className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                                l === loc
+                                  ? isFoodLoc
+                                    ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700 font-medium'
+                                    : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700 font-medium'
+                                  : 'bg-muted text-muted-foreground border-border/50'
+                              }`}>
+                                {l}
+                              </span>
+                            ))}
+                          </div>
+
+                          {/* Preis */}
+                          <span className="text-xs font-mono text-muted-foreground shrink-0">
+                            {a.defaultCostPerUnit > 0 ? `CHF ${a.defaultCostPerUnit.toFixed(4)}` : '–'}
+                          </span>
+
+                          {/* Bearbeiten */}
+                          <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 shrink-0" onClick={() => openEdit(a)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         )}
 
@@ -807,6 +992,9 @@ export default function ArtikelPage() {
         {!loading && filtered.length > 0 && (
           <p className="text-xs text-muted-foreground mt-2 text-right">
             {filtered.length} Artikel angezeigt
+            {inventoryView === 'lagerort' && (
+              <span> · in {byLocation.size} Lagerorten</span>
+            )}
             {!showInactive && store.articles.filter(a => !a.active).length > 0 && (
               <span> · {store.articles.filter(a => !a.active).length} inaktive ausgeblendet</span>
             )}
