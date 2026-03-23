@@ -272,6 +272,26 @@ Erkennt operativ riskante Planungsmuster für alle Mitarbeiter über den gesamte
 - **PlanningAssistant** — Kollapsibles Panel "Arbeitsmuster-Warnungen" oberhalb der Tabs; Klick auf Chip springt direkt zur betroffenen Woche und markiert den Mitarbeiter
 - **SchedulePlanner** — `patternWarnings` useMemo berechnet Warnungen über `daysInMonth`, übergibt sie an ScheduleGrid und PlanningAssistant
 
+## Artikelstamm (Stage 1)
+
+Route: `/artikel` · Nur Admin · Dateien: `src/pages/Artikel.tsx`, `src/lib/artikel-store.ts`
+
+Zentrale Datenbank für alle Food- und Beverage-Artikel. Grundlage für spätere Module:
+Rezeptkosten, Lieferantenrechnungen, Inventur, theoretischen Warenbestand.
+
+**Datenmodell (`Artikel`):**
+```typescript
+{ id, name, inventoryType: 'food'|'beverage', unit, defaultCostPerUnit, storageLocations: string[], active, createdAt, updatedAt }
+```
+
+**Lagerorte:**
+- Food: TK, Frigo, Gemüselager, Trockenlager
+- Beverage: Keller, EG Buffet, UG Buffet
+
+**Speicherung (Stage 1):** Supabase `app_settings` mit Key `artikel_master_v1` (via `kvGet`/`kvSet` aus `supabase-kv.ts`)
+
+**Stage 2 Migration:** `supabase/migrations/20260323_artikel_master.sql` — erstellt dedizierte `articles`-Tabelle mit RLS, Index, update-Trigger und Migrationsskript aus `app_settings`.
+
 ## Deployment
 
 Konfiguriert als **Static Site** (Vite Build → `dist/`).

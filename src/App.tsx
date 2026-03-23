@@ -36,6 +36,7 @@ import ImportHub from "./pages/ImportHub";
 import PersonalFixPage from "./pages/PersonalFix";
 import ProdukteSeite from "./pages/Produkte";
 import AbsenzKostenPage from "./pages/AbsenzKosten";
+import ArtikelPage from "./pages/Artikel";
 import GuestAccess from "./pages/GuestAccess";
 
 const queryClient = new QueryClient();
@@ -126,6 +127,7 @@ const AppContent = () => {
             <Route path="/budget"           element={<BudgetPage />} />
             <Route path="/personal-fix"     element={<PersonalFixPage />} />
             <Route path="/produkte"         element={<ProdukteSeite />} />
+            <Route path="/artikel"          element={<ArtikelPage />} />
             <Route path="/absenzen"         element={<AbsenzKostenPage />} />
 
             {/* Abteilungs-Dienstpläne */}
