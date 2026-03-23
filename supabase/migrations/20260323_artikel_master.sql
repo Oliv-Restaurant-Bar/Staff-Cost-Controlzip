@@ -20,7 +20,13 @@ CREATE TABLE IF NOT EXISTS articles (
   -- Ausweichlieferant (nur aktiv wenn fallback_enabled = TRUE)
   fallback_enabled       BOOLEAN NOT NULL DEFAULT FALSE,
   fallback_supplier      TEXT NOT NULL DEFAULT '',
+  -- WICHTIG: Alle Preise (standard + fallback) sind NETTO (exkl. MwSt.)
+  -- Nur Nettopreise ermöglichen einen korrekten WES-Vergleich:
+  --   Rezept-WES vs. Lieferanten-WES vs. Buchhaltungs-WES
   fallback_price         NUMERIC(12, 4) NOT NULL DEFAULT 0,
+  -- Fibu-Konto für WES-Mapping (z.B. '4020' Wein, '4060' Küche/Food)
+  -- Ermöglicht Vergleich auf Kontenebene mit der Buchhaltung
+  accounting_account     TEXT NOT NULL DEFAULT '',
   storage_locations      TEXT[] NOT NULL DEFAULT '{}',
   active                 BOOLEAN NOT NULL DEFAULT TRUE,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),

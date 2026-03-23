@@ -32,6 +32,35 @@ export const UNITS_FOOD     = ['kg', 'g', 'Stück', 'Portion', 'Bund', 'Packung'
 export const UNITS_BEVERAGE = ['Flasche', 'Liter', 'dl', 'cl', 'Dose', 'Keg', 'Karton', 'Stück'];
 export const ALL_UNITS      = [...new Set([...UNITS_FOOD, ...UNITS_BEVERAGE])].sort();
 
+// ── Fibu-Konten ───────────────────────────────────────────────────────────────
+//
+// Wareneinsatz-Konten gemäss Kontenplan Oliv Gastro AG.
+// Werden für den Vergleich:
+//   Rezept-WES  vs.  Lieferanten-WES  vs.  Buchhaltungs-WES
+// verwendet. Alle Preise sind NETTO (exkl. MwSt.).
+
+export interface FibuAccount {
+  code:  string;   // z.B. '4020'
+  label: string;   // z.B. 'Wein'
+}
+
+export const FIBU_ACCOUNTS: FibuAccount[] = [
+  { code: '4020', label: 'Wein'              },
+  { code: '4030', label: 'Bier'              },
+  { code: '4040', label: 'Spirituosen'       },
+  { code: '4050', label: 'Mineral'           },
+  { code: '4060', label: 'Küche / Food'      },
+  { code: '4061', label: 'Rest Food'         },
+  { code: '4070', label: 'Kaffee & Tee'      },
+  { code: '4090', label: 'Diverses'          },
+  { code: '4701', label: 'Betriebsmaterial'  },
+];
+
+export function getFibuLabel(code: string): string {
+  const acc = FIBU_ACCOUNTS.find(a => a.code === code);
+  return acc ? `${acc.code} ${acc.label}` : code;
+}
+
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
 export type InventoryType = 'food' | 'beverage';
@@ -51,7 +80,11 @@ export interface Artikel {
   name: string;
   inventoryType: InventoryType;
   unit: string;
-  /** Standardpreis (= standardSupplier.price, rückwärtskompatibel) */
+  /**
+   * Standardpreis NETTO (exkl. MwSt.) beim Standard-Lieferanten.
+   * Alle WES-Vergleiche (Rezept / Lieferant / Buchhaltung) nutzen ausschliesslich
+   * Nettopreise, damit die MwSt. die Wareneinsatzquote nicht verzerrt.
+   */
   defaultCostPerUnit: number;
   /** Standard-Lieferant (immer gesetzt, Freitext) */
   standardSupplier: string;
@@ -59,8 +92,17 @@ export interface Artikel {
   fallbackEnabled: boolean;
   /** Ausweich-Lieferant (nur relevant wenn fallbackEnabled) */
   fallbackSupplier: string;
-  /** Preis beim Ausweich-Lieferanten (nur relevant wenn fallbackEnabled) */
+  /**
+   * Ausweich-Preis NETTO (exkl. MwSt.).
+   * Gleiche Netto-Regel wie defaultCostPerUnit.
+   */
   fallbackPrice: number;
+  /**
+   * Fibu-Konto für WES-Mapping (z.B. '4020', '4060').
+   * Erlaubt Vergleich: Rezept-WES vs. Lieferanten-WES vs. Buchhaltungs-WES
+   * auf Kontenebene.
+   */
+  accountingAccount: string;
   storageLocations: string[];
   active: boolean;
   createdAt: string;

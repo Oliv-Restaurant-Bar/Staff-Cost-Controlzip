@@ -36,6 +36,8 @@ import {
   STORAGE_LOCATIONS_BEVERAGE,
   UNITS_FOOD,
   UNITS_BEVERAGE,
+  FIBU_ACCOUNTS,
+  getFibuLabel,
   createArtikel,
   updateArtikel,
   filterArtikel,
@@ -54,16 +56,17 @@ function fmtChf(n: number) {
 
 function emptyForm(): Omit<Artikel, 'id' | 'createdAt' | 'updatedAt'> {
   return {
-    name:                 '',
-    inventoryType:        'food',
-    unit:                 'kg',
-    defaultCostPerUnit:   0,
-    standardSupplier:     '',
-    fallbackEnabled:      false,
-    fallbackSupplier:     '',
-    fallbackPrice:        0,
-    storageLocations:     [],
-    active:               true,
+    name:               '',
+    inventoryType:      'food',
+    unit:               'kg',
+    defaultCostPerUnit: 0,
+    standardSupplier:   '',
+    fallbackEnabled:    false,
+    fallbackSupplier:   '',
+    fallbackPrice:      0,
+    accountingAccount:  '',
+    storageLocations:   [],
+    active:             true,
   };
 }
 
@@ -92,10 +95,11 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
           inventoryType:      initial.inventoryType,
           unit:               initial.unit,
           defaultCostPerUnit: initial.defaultCostPerUnit,
-          standardSupplier:   initial.standardSupplier   ?? '',
-          fallbackEnabled:    initial.fallbackEnabled    ?? false,
-          fallbackSupplier:   initial.fallbackSupplier   ?? '',
-          fallbackPrice:      initial.fallbackPrice       ?? 0,
+          standardSupplier:   initial.standardSupplier  ?? '',
+          fallbackEnabled:    initial.fallbackEnabled   ?? false,
+          fallbackSupplier:   initial.fallbackSupplier  ?? '',
+          fallbackPrice:      initial.fallbackPrice      ?? 0,
+          accountingAccount:  initial.accountingAccount ?? '',
           storageLocations:   initial.storageLocations,
           active:             initial.active,
         });
@@ -248,16 +252,21 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
               />
             </div>
 
-            {/* Standardpreis */}
+            {/* Standardpreis – immer NETTO */}
             <div className="space-y-1">
-              <Label>Standardpreis / Einheit (CHF)</Label>
+              <div className="flex items-center justify-between">
+                <Label>Standardpreis / Einheit</Label>
+                <span className="text-xs font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800">
+                  NETTO exkl. MwSt.
+                </span>
+              </div>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">CHF</span>
                 <Input
                   type="number"
                   min="0"
                   step="0.0001"
-                  placeholder="0.00"
+                  placeholder="0.0000"
                   value={form.defaultCostPerUnit || ''}
                   onChange={e => setForm(f => ({ ...f, defaultCostPerUnit: parseFloat(e.target.value) || 0 }))}
                   className="pl-12"
@@ -291,14 +300,19 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
                 </div>
 
                 <div className="space-y-1">
-                  <Label>Ausweich-Preis / Einheit (CHF)</Label>
+                  <div className="flex items-center justify-between">
+                    <Label>Ausweich-Preis / Einheit</Label>
+                    <span className="text-xs font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800">
+                      NETTO exkl. MwSt.
+                    </span>
+                  </div>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">CHF</span>
                     <Input
                       type="number"
                       min="0"
                       step="0.0001"
-                      placeholder="0.00"
+                      placeholder="0.0000"
                       value={form.fallbackPrice || ''}
                       onChange={e => setForm(f => ({ ...f, fallbackPrice: parseFloat(e.target.value) || 0 }))}
                       className="pl-12"
@@ -307,6 +321,41 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* ── Fibu-Konto ────────────────────────────────────────────── */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label>Fibu-Konto (WES-Zuordnung)</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs text-left">
+                  <p className="font-semibold mb-1">Wozu dient das Konto?</p>
+                  <p className="text-xs">
+                    Ermöglicht den Vergleich zwischen Rezept-WES, Lieferanten-WES und
+                    dem Buchhaltungs-WES auf Kontenebene. Alle Werte werden netto verglichen.
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            <Select
+              value={form.accountingAccount}
+              onValueChange={v => setForm(f => ({ ...f, accountingAccount: v }))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Konto wählen…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">– Kein Konto –</SelectItem>
+                {FIBU_ACCOUNTS.map(acc => (
+                  <SelectItem key={acc.code} value={acc.code}>
+                    {acc.code} {acc.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Lagerorte */}
@@ -616,7 +665,10 @@ export default function ArtikelPage() {
                     className="text-right px-3 py-2.5 font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground"
                     onClick={() => toggleSort('cost')}
                   >
-                    Standardpreis <SortIcon field="cost" />
+                    Netto-Preis <SortIcon field="cost" />
+                  </th>
+                  <th className="text-left px-3 py-2.5 font-medium text-muted-foreground hidden xl:table-cell">
+                    Fibu-Konto
                   </th>
                   <th className="text-left px-3 py-2.5 font-medium text-muted-foreground hidden lg:table-cell">
                     Lagerorte
@@ -685,9 +737,20 @@ export default function ArtikelPage() {
                       )}
                     </td>
 
-                    {/* Standardpreis */}
+                    {/* Netto-Preis */}
                     <td className="px-3 py-2.5 text-right font-mono text-xs">
                       {fmtChf(a.defaultCostPerUnit)}
+                    </td>
+
+                    {/* Fibu-Konto */}
+                    <td className="px-3 py-2.5 hidden xl:table-cell">
+                      {a.accountingAccount ? (
+                        <span className="text-xs bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 px-1.5 py-0.5 rounded font-mono">
+                          {getFibuLabel(a.accountingAccount)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/40">–</span>
+                      )}
                     </td>
 
                     {/* Lagerorte */}
