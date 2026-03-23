@@ -10,7 +10,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   CheckCircle2, XCircle, Clock3, TrendingDown, TrendingUp,
   ShieldAlert, Star, ArrowRight, Users, Lightbulb, ChevronDown, ChevronRight,
-  ArrowUpRight, Trash2, Euro,
+  ArrowUpRight, Trash2, Euro, Scale, Sunrise, Moon, CalendarDays,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Employee } from '@/types/personnel';
@@ -21,6 +21,14 @@ import {
   fmtBalanceHours,
   EmployeeHourBalance,
 } from '@/lib/hour-balance-utils';
+import {
+  computeShiftFairness,
+  buildFairnessAlerts,
+  deviationColorClass,
+  deviationSign,
+  FairnessAlert,
+  EmployeeShiftFairness,
+} from '@/lib/fairness-utils';
 import {
   StaffingTarget,
   computeStaffingStatus,
@@ -575,9 +583,10 @@ export default function PlanningAssistant({
   onJumpToDay,
   onRemoveShift,
 }: Props) {
-  const [tab, setTab]           = useState<'einplanen' | 'reduzieren'>('einplanen');
+  const [tab, setTab]           = useState<'einplanen' | 'reduzieren' | 'fairness'>('einplanen');
   const [statuses, setStatuses] = useState<Record<string, HintStatus>>(loadStatuses);
   const [showIgnored, setShowIgnored] = useState(false);
+  const [fairnessFilter, setFairnessFilter] = useState<'all' | 'service' | 'küche'>('all');
 
   useEffect(() => { if (!open) setTab('einplanen'); }, [open]);
 
@@ -738,6 +747,26 @@ export default function PlanningAssistant({
       (d.frühCost / d.totalCost > 0.60 || d.spätCost / d.totalCost > 0.60),
     ),
   [dayCostAnalysis]);
+
+  // ── Fairness-Daten ────────────────────────────────────────────────────────
+
+  const fairnessData = useMemo<EmployeeShiftFairness[]>(() =>
+    computeShiftFairness(employees, scheduleData, displayDays, actualHoursData),
+    [employees, scheduleData, displayDays, actualHoursData],
+  );
+
+  const balanceMap = useMemo<Record<string, number>>(() => {
+    const m: Record<string, number> = {};
+    for (const b of balances) m[b.emp.id] = b.cumulativeBalance;
+    return m;
+  }, [balances]);
+
+  const fairnessAlerts = useMemo<FairnessAlert[]>(() =>
+    buildFairnessAlerts(fairnessData, balanceMap),
+    [fairnessData, balanceMap],
+  );
+
+  const fairnessPending = fairnessAlerts.filter(a => a.severity === 'high' || a.severity === 'medium').length;
 
   // ── Perioden-Label ────────────────────────────────────────────────────────
 
@@ -948,14 +977,15 @@ export default function PlanningAssistant({
         {/* Tabs */}
         <div className="flex gap-1 bg-muted/60 rounded-lg p-0.5 shrink-0">
           {([
-            { id: 'einplanen'  as const, label: 'Einplanen',  count: einplanenPending,  icon: <TrendingDown className="h-3.5 w-3.5" /> },
-            { id: 'reduzieren' as const, label: 'Reduzieren', count: reduzierenPending, icon: <TrendingUp    className="h-3.5 w-3.5" /> },
+            { id: 'einplanen'  as const, label: 'Einplanen',  count: einplanenPending,  icon: <TrendingDown className="h-3.5 w-3.5" />, activeCount: 'bg-orange-100 text-orange-700' },
+            { id: 'reduzieren' as const, label: 'Reduzieren', count: reduzierenPending, icon: <TrendingUp    className="h-3.5 w-3.5" />, activeCount: 'bg-violet-100 text-violet-700' },
+            { id: 'fairness'   as const, label: 'Fairness',   count: fairnessPending,   icon: <Scale        className="h-3.5 w-3.5" />, activeCount: 'bg-teal-100 text-teal-700' },
           ]).map(t => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
               className={cn(
-                'flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors',
+                'flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-semibold rounded-md transition-colors',
                 tab === t.id
                   ? 'bg-white dark:bg-slate-800 shadow-sm text-foreground'
                   : 'text-muted-foreground hover:text-foreground',
@@ -966,9 +996,7 @@ export default function PlanningAssistant({
               {t.count > 0 && (
                 <span className={cn(
                   'px-1.5 py-0.5 rounded-full text-[10px] font-bold',
-                  tab === t.id
-                    ? t.id === 'einplanen' ? 'bg-orange-100 text-orange-700' : 'bg-violet-100 text-violet-700'
-                    : 'bg-muted text-muted-foreground',
+                  tab === t.id ? t.activeCount : 'bg-muted text-muted-foreground',
                 )}>{t.count}</span>
               )}
             </button>
@@ -1060,7 +1088,198 @@ export default function PlanningAssistant({
             </>
           )}
 
-          {/* Ignorierte umschalten */}
+          {/* ── Fairness ──────────────────────────────────────────────── */}
+          {tab === 'fairness' && (() => {
+            const filtered = fairnessData.filter(f =>
+              fairnessFilter === 'all' || f.dept === fairnessFilter,
+            );
+            const filteredAlerts = fairnessAlerts.filter(a =>
+              fairnessFilter === 'all' || a.dept === fairnessFilter,
+            );
+
+            const alertIcon = (type: FairnessAlert['type']) =>
+              type === 'weekend-overload' ? <CalendarDays className="h-3.5 w-3.5 shrink-0 mt-0.5" /> :
+              type === 'evening-overload' ? <Moon className="h-3.5 w-3.5 shrink-0 mt-0.5" /> :
+              <Scale className="h-3.5 w-3.5 shrink-0 mt-0.5" />;
+
+            const alertColors: Record<FairnessAlert['type'], string> = {
+              'weekend-overload': 'border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300',
+              'evening-overload': 'border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-300',
+              'can-take-free':    'border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300',
+            };
+
+            return (
+              <>
+                <div className="flex items-center gap-1.5 px-0.5">
+                  <p className="text-xs text-muted-foreground flex-1">
+                    Wöchentliche Stunden und Fairness-Belastung — Vergleich innerhalb der Abteilung.
+                  </p>
+                  {/* Dept filter */}
+                  <div className="flex gap-1">
+                    {(['all', 'service', 'küche'] as const).map(d => (
+                      <button
+                        key={d}
+                        onClick={() => setFairnessFilter(d)}
+                        className={cn(
+                          'px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors',
+                          fairnessFilter === d
+                            ? 'bg-teal-600 text-white border-teal-600'
+                            : 'bg-muted/50 text-muted-foreground border-border hover:bg-muted',
+                        )}
+                      >
+                        {d === 'all' ? 'Alle' : d === 'service' ? 'Serv.' : 'Küche'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Fairness-Alerts */}
+                {filteredAlerts.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-0.5">
+                      Hinweise
+                    </p>
+                    {filteredAlerts.map((alert, i) => (
+                      <div
+                        key={`${alert.empId}-${alert.type}-${i}`}
+                        className={cn(
+                          'flex items-start gap-2 rounded-lg border px-2.5 py-2 text-xs',
+                          alertColors[alert.type],
+                        )}
+                      >
+                        {alertIcon(alert.type)}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold leading-tight">{alert.message}</p>
+                          {alert.detail && (
+                            <p className="text-[10px] opacity-80 leading-tight mt-0.5">{alert.detail}</p>
+                          )}
+                        </div>
+                        {alert.severity === 'high' && (
+                          <Badge className="text-[9px] shrink-0 self-center bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400 border-0">
+                            Hoch
+                          </Badge>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {filteredAlerts.length === 0 && filtered.length > 0 && (
+                  <div className="flex items-center gap-2 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/10 px-3 py-2">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                    <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                      Keine auffälligen Fairness-Ungleichgewichte in dieser Periode.
+                    </p>
+                  </div>
+                )}
+
+                {/* Weekly breakdown per employee */}
+                {filtered.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-0.5">
+                      Wöchentliche Stunden (Soll / Plan{Object.keys(actualHoursData).length > 0 ? ' / Ist' : ''})
+                    </p>
+                    {filtered
+                      .filter(f => f.weeklyBreakdown.some(w => w.targetHours > 0))
+                      .map(f => {
+                        const emp = employees.find(e => e.id === f.empId);
+                        if (!emp) return null;
+                        const hasActual = f.weeklyBreakdown.some(w => w.actualHours !== null);
+                        return (
+                          <div key={f.empId} className="rounded-lg border bg-card p-2.5 space-y-1.5">
+                            {/* Employee header */}
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-semibold">{f.empName}</span>
+                              <Badge variant="outline" className="text-[9px]">
+                                {f.dept === 'service' ? 'Service' : 'Küche'}
+                              </Badge>
+                              {/* Fairness indicators */}
+                              {f.totalShiftsWorked > 0 && (
+                                <div className="ml-auto flex items-center gap-2 text-[9px] text-muted-foreground">
+                                  <span title="Wochenend-Schichten-Anteil">
+                                    <CalendarDays className="h-2.5 w-2.5 inline mr-0.5" />
+                                    {Math.round(f.weekendRatio * 100)}%
+                                  </span>
+                                  <span title="Spätschichten-Anteil">
+                                    <Moon className="h-2.5 w-2.5 inline mr-0.5" />
+                                    {Math.round(f.eveningRatio * 100)}%
+                                  </span>
+                                  <span title="Früh- und Spätschichten gesamt">
+                                    <Sunrise className="h-2.5 w-2.5 inline mr-0.5" />
+                                    {f.totalShiftsWorked}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            {/* Week rows */}
+                            <div className="space-y-0.5">
+                              {/* Header row */}
+                              <div className="grid text-[9px] text-muted-foreground font-medium px-1"
+                                style={{ gridTemplateColumns: hasActual ? '1fr 2.5rem 2.5rem 2.5rem 3rem' : '1fr 2.5rem 2.5rem 3rem' }}
+                              >
+                                <span>Woche</span>
+                                <span className="text-right">Soll</span>
+                                <span className="text-right">Plan</span>
+                                {hasActual && <span className="text-right">Ist</span>}
+                                <span className="text-right">Abw.</span>
+                              </div>
+                              {f.weeklyBreakdown.map(w => {
+                                const devClass = deviationColorClass(w.plannedDeviation);
+                                const actDevClass = w.actualDeviation !== null ? deviationColorClass(w.actualDeviation) : '';
+                                return (
+                                  <div
+                                    key={w.weekStart}
+                                    className="grid items-center px-1 py-0.5 rounded text-[10px] hover:bg-muted/40 transition-colors"
+                                    style={{ gridTemplateColumns: hasActual ? '1fr 2.5rem 2.5rem 2.5rem 3rem' : '1fr 2.5rem 2.5rem 3rem' }}
+                                  >
+                                    <span className="text-muted-foreground truncate pr-1" title={w.weekLabel}>
+                                      {w.weekLabel}
+                                      {w.isPartialWeek && <span className="opacity-60"> *</span>}
+                                    </span>
+                                    <span className="text-right text-muted-foreground">{w.targetHours}h</span>
+                                    <span className={cn('text-right font-medium', devClass)}>
+                                      {w.plannedHours.toFixed(1)}h
+                                    </span>
+                                    {hasActual && (
+                                      <span className={cn('text-right font-medium', w.actualHours !== null ? actDevClass : 'text-muted-foreground')}>
+                                        {w.actualHours !== null ? `${w.actualHours.toFixed(1)}h` : '—'}
+                                      </span>
+                                    )}
+                                    <span className={cn('text-right font-semibold', devClass)}>
+                                      {deviationSign(w.plannedDeviation)}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                              {/* Partial week note */}
+                              {f.weeklyBreakdown.some(w => w.isPartialWeek) && (
+                                <p className="text-[8px] text-muted-foreground px-1 pt-0.5">
+                                  * Randwoche — weniger als 7 Tage in dieser Periode
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    {filtered.every(f => !f.weeklyBreakdown.some(w => w.targetHours > 0)) && (
+                      <p className="text-xs text-muted-foreground text-center py-4">
+                        Keine Wochenstunden-Ziele hinterlegt. Bitte Wochenstunden im Personalstamm eintragen.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {filtered.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    Keine Mitarbeitenden für diese Abteilung gefunden.
+                  </p>
+                )}
+              </>
+            );
+          })()}
+
+          {/* Ignorierte umschalten — only for non-fairness tabs */}
+          {tab !== 'fairness' && (
           <button
             onClick={() => setShowIgnored(v => !v)}
             className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
@@ -1068,6 +1287,7 @@ export default function PlanningAssistant({
             {showIgnored ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
             {showIgnored ? 'Ignorierte ausblenden' : 'Ignorierte anzeigen'}
           </button>
+          )}
         </div>
 
         {/* Footer */}

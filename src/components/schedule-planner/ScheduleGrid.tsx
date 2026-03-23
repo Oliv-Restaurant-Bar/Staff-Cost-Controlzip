@@ -1100,34 +1100,41 @@ export const ScheduleGrid = ({
                             </div>
                           )}
                         </td>
-                        {/* Weekly sum cell after Sunday - with color coding */}
+                        {/* Weekly sum cell after Sunday - planned vs target with colour coding */}
                         {showWeekSum && (
-                          <td className="px-0.5 py-0.5 border-b border-r-4 border-r-primary/30 bg-primary/5 text-center">
+                          <td className="px-0.5 py-0.5 border-b border-r-4 border-r-primary/30 bg-primary/5 text-center min-w-[42px]">
                             {(() => {
-                              const weekHours = getWeeklyHours(employee.id, day);
+                              const weekHours = getWeeklyHours!(employee.id, day);
                               const weekTarget = getWeeklyTargetHours ? getWeeklyTargetHours(employee) : (employee.weeklyHours || 42);
                               const diff = weekHours - weekTarget;
                               const isOver = diff > 2;
                               const isUnder = diff < -2;
                               const isOnTarget = !isOver && !isUnder;
-                              
+                              const diffStr = diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
+
                               return (
-                                <div className="space-y-0">
+                                <div className="flex flex-col items-center gap-0">
+                                  {/* Planned hours */}
                                   <span className={cn(
-                                    "text-[10px] font-semibold block",
-                                    isOnTarget && "text-success",
-                                    isUnder && "text-warning",
-                                    isOver && "text-destructive"
+                                    'text-[10px] font-bold block leading-tight',
+                                    isOnTarget && 'text-emerald-600 dark:text-emerald-400',
+                                    isUnder    && 'text-amber-600 dark:text-amber-400',
+                                    isOver     && 'text-red-600 dark:text-red-500',
                                   )}>
                                     {weekHours.toFixed(1)}h
                                   </span>
+                                  {/* Target */}
+                                  <span className="text-[8px] text-muted-foreground leading-tight">
+                                    / {weekTarget}h
+                                  </span>
+                                  {/* Deviation badge */}
                                   <span className={cn(
-                                    "text-[8px] block",
-                                    isOnTarget && "text-success",
-                                    isUnder && "text-warning",
-                                    isOver && "text-destructive"
+                                    'text-[8px] font-semibold leading-tight',
+                                    isOnTarget && 'text-emerald-600 dark:text-emerald-400',
+                                    isUnder    && 'text-amber-600 dark:text-amber-400',
+                                    isOver     && 'text-red-600 dark:text-red-500',
                                   )}>
-                                    {diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)}
+                                    {diffStr}
                                   </span>
                                 </div>
                               );
