@@ -292,6 +292,23 @@ Rezeptkosten, Lieferantenrechnungen, Inventur, theoretischen Warenbestand.
 
 **Stage 2 Migration:** `supabase/migrations/20260323_artikel_master.sql` — erstellt dedizierte `articles`-Tabelle mit RLS, Index, update-Trigger und Migrationsskript aus `app_settings`.
 
+## WES-Analyse
+
+Route: `/wes-analyse` · Nur Admin · Datei: `src/pages/WesAnalyse.tsx`
+
+Vergleicht den Wareneinsatz (WES) aus drei Quellen nebeneinander:
+1. **Rezeptur** — theoretischer WES aus `ProductCostEntry.wes × ProductEntry.count` (Kalkulation × Kassensystem-Verkäufe)
+2. **Lieferanten** — operativer WES aus erfassten Lieferscheinen/Rechnungen (`getMonthSummary`)
+3. **Buchhaltung** — gebuchter WES aus `expenseCategories` Konten 4020–4090 (Sage-Import)
+
+**Tabs:**
+- **Übersicht** — 12-Monats-Tabelle + Jahressumme, CHF + %, Differenz Lieferanten/Buchhaltung farblich markiert, Food/Beverage Split-Cards
+- **Nach Konto** — Aufschlüsselung nach FIBU-Konto (4020 Wein, 4030 Bier, 4040 Spirituosen, 4050 Mineral, 4060 Küche, 4070 Kaffee & Tee) mit % Umsatz, gruppiert nach Food / Beverage / Diverses
+- **Erklärung** — erklärt auf Deutsch alle 3 Quellen, was zu prüfen ist, und wie Differenzen interpretiert werden
+
+**FIBU-Konto → Kategorie Mapping:**
+- Food: 4060, 4061 · Beverage: 4020, 4030, 4040, 4050, 4070 · Autres: 4090, 4701
+
 ## Deployment
 
 Konfiguriert als **Static Site** (Vite Build → `dist/`).
