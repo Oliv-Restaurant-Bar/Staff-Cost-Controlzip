@@ -1,0 +1,99 @@
+We now want to add a practical cost-allocation layer for Lunch / Mittagsmenu so that we can compare planned menu cost versus actual purchased cost.
+
+Goal:
+Keep the existing menu-pauschal logic for sales pricing,
+but additionally allow supplier delivery notes and supplier invoices to assign purchased items to lunch/menu cost pools.
+This should let us compare:
+- menu revenue
+- planned WES based on pauschale
+- actual WES based on purchased goods assigned to lunch
+
+Important:
+Keep this practical and simple.
+Do not force full recipe tracking for daily lunch menus.
+
+Implement these requirements:
+
+1. Add cost pool / allocation concept
+Add a new allocation field for supplier document line items.
+
+Possible allocation targets:
+- Lunch Basic
+- Lunch Premium
+- A la carte
+- Pizza
+- Dessert
+- Kinder
+- Allgemeine Küche
+- Beverage
+- Nicht zugeordnet
+
+2. Allow per-line allocation on supplier delivery notes and supplier invoices
+Each imported or manually entered line item must be assignable to one allocation target.
+
+Also support optional percentage split:
+Example:
+- 60% Lunch Basic
+- 40% A la carte
+
+If no split is entered, allow a single allocation.
+
+3. Lunch pauschale remains as planned cost model
+Keep the current menu products such as:
+- Tagesmenu 1
+- Tagesmenu 2
+- Business Lunch
+with their pauschal cost logic.
+
+This is the planned or target WES.
+
+4. Monthly lunch cost comparison
+Build monthly comparison for lunch/menu showing:
+
+- Lunch revenue
+- Number of lunch products sold
+- Planned lunch WES in CHF
+  = sold lunch quantity × pauschal cost
+- Actual lunch WES in CHF
+  = sum of purchased items allocated to lunch
+- Difference in CHF
+- Difference in %
+- Effective actual WES %
+  = actual lunch WES / lunch revenue
+
+5. Separate Lunch Basic and Lunch Premium if possible
+If sales products support it, compare separately:
+- Lunch Basic
+- Lunch Premium
+Otherwise allow grouped lunch view.
+
+6. Practical alerts
+If actual lunch WES is significantly above planned pauschale, show a simple warning such as:
+- "Mittagsmenu-Einkauf liegt über Kalkulation"
+- "Menu Pauschale vermutlich zu tief"
+- "Portionen / Einkauf prüfen"
+
+7. Keep supplier logic clean
+This allocation is for analysis only.
+It must not break:
+- product master
+- recipe logic
+- duplicate detection between delivery note and invoice
+
+8. UI requirements
+Add a simple analysis view for Lunch / Mittagsmenu:
+- Umsatz
+- Soll WES
+- Ist WES
+- Abweichung
+- WES %
+
+And in supplier document entry:
+- easy dropdown for allocation target
+- optional percentage split
+
+9. Explain in simple German:
+- how to assign purchased products to lunch
+- how Soll vs Ist WES is calculated
+- how to see if lunch pauschale is too low
+- what I should test later

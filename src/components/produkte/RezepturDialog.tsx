@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Plus, Trash2, ChevronRight, Package, Wine, Layers } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Package, Wine, Layers, Utensils } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/select';
 import type { ProductCostEntry } from '@/lib/produkte-store';
 import {
-  type CostMode, type ProductRecipe, type RecipeIngredient,
+  type CostMode, type ProductRecipe, type RecipeIngredient, type LunchPool,
   emptyRecipe, emptyIngredient, computeRecipeCosts,
 } from '@/lib/rezeptur-store';
 import { getFibuLabel, resolveIngredientAccount, loadArtikelFromDB, type Artikel } from '@/lib/artikel-store';
@@ -288,6 +288,11 @@ export default function RezepturDialog({
 
   function setManualNote(v: string) {
     setRecipe(r => r ? { ...r, manualCostNote: v } : r);
+  }
+
+  function setLunchPool(v: string) {
+    const pool = v === '__none__' ? undefined : v as LunchPool;
+    setRecipe(r => r ? { ...r, lunchPool: pool } : r);
   }
 
   function addIngredient() {
@@ -557,6 +562,32 @@ export default function RezepturDialog({
               </div>
             </div>
           )}
+
+          {/* ── Lunch-Pool-Zuordnung ───────────────────────────────────── */}
+          <div className="rounded-lg border border-dashed border-orange-200 dark:border-orange-800 bg-orange-50/30 dark:bg-orange-950/10 p-3 space-y-2">
+            <div className="flex items-center gap-1.5">
+              <Utensils className="h-3.5 w-3.5 text-orange-600" />
+              <p className="text-xs font-medium text-orange-700 dark:text-orange-400 uppercase tracking-wide">
+                Lunch-Pool (für WES-Analyse)
+              </p>
+            </div>
+            <Select value={recipe.lunchPool ?? '__none__'} onValueChange={setLunchPool}>
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue placeholder="Kein Lunch-Produkt" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__" className="text-xs">
+                  <span className="text-muted-foreground italic">Kein Lunch-Produkt</span>
+                </SelectItem>
+                <SelectItem value="lunch_basic" className="text-xs">Lunch Basic (Tagesmenu 1)</SelectItem>
+                <SelectItem value="lunch_premium" className="text-xs">Lunch Premium (Tagesmenu 2)</SelectItem>
+                <SelectItem value="lunch_allgemein" className="text-xs">Lunch Allgemein (ohne Unterscheidung)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[10px] text-muted-foreground">
+              Wenn gesetzt, erscheint dieses Produkt in der Lunch-WES-Analyse als Soll-Benchmark.
+            </p>
+          </div>
 
           {/* ── KPI-Bar ────────────────────────────────────────────────── */}
           <KpiBar recipe={recipe} cost={cost} />

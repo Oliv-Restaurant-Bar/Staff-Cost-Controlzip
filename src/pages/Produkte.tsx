@@ -1118,7 +1118,14 @@ export default function ProdukteSeite() {
                         className="grid grid-cols-[1fr_90px_72px_72px_72px_96px_36px] gap-2 px-3 py-2.5 items-center hover:bg-muted/30 transition-colors">
 
                         {/* Name */}
-                        <span className="text-xs font-medium truncate">{cost.name}</span>
+                        <span className="text-xs font-medium truncate flex items-center gap-1.5">
+                          {cost.name}
+                          {recipe?.lunchPool && (
+                            <span className="shrink-0 text-[9px] font-semibold px-1 py-0.5 rounded bg-orange-100 dark:bg-orange-950/30 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800">
+                              {recipe.lunchPool === 'lunch_basic' ? 'Menu 1' : recipe.lunchPool === 'lunch_premium' ? 'Menu 2' : 'Lunch'}
+                            </span>
+                          )}
+                        </span>
 
                         {/* Modus */}
                         <div>

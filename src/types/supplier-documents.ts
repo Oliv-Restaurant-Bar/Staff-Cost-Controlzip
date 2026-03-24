@@ -20,6 +20,56 @@
  *   später in einer Vergleichs-UI dargestellt.
  */
 
+// ─── Kostenzuordnung (Allocation) ─────────────────────────────────────────────
+
+/**
+ * Kostenpool-Zuordnung: Welchem Bereich gehört ein Einkauf?
+ *
+ * Wird am Lieferantendokument gesetzt und dient der Lunch-WES-Analyse:
+ * Ist-WES = Summe aller Einkäufe mit Zuordnung zu einem Lunch-Pool.
+ *
+ * Wichtig: Nur für Analysen – ändert NICHT die Monatssummen (food/beverage/other).
+ */
+export type CostAllocationTarget =
+  | 'lunch_basic'       // Tagesmenu Basic / Tagesmenu 1
+  | 'lunch_premium'     // Tagesmenu Premium / Tagesmenu 2
+  | 'a_la_carte'        // A-la-carte Küche
+  | 'pizza'             // Pizza
+  | 'dessert'           // Dessert / Patisserie
+  | 'kinder'            // Kindermenu
+  | 'kueche_allgemein'  // Allgemeine Küche (Mise en place, Grundstock)
+  | 'beverage'          // Getränke
+  | 'unassigned';       // Nicht zugeordnet (Standard)
+
+/** Anzeigenamen für die UI */
+export const ALLOCATION_TARGET_LABELS: Record<CostAllocationTarget, string> = {
+  lunch_basic:      'Lunch Basic (Menu 1)',
+  lunch_premium:    'Lunch Premium (Menu 2)',
+  a_la_carte:       'À la carte',
+  pizza:            'Pizza',
+  dessert:          'Dessert',
+  kinder:           'Kindermenu',
+  kueche_allgemein: 'Allg. Küche / Mise en place',
+  beverage:         'Getränke',
+  unassigned:       'Nicht zugeordnet',
+};
+
+/** Alle Lunch-bezogenen Allocation-Targets (für Filterung in der Analyse) */
+export const LUNCH_ALLOCATION_TARGETS: CostAllocationTarget[] = [
+  'lunch_basic',
+  'lunch_premium',
+];
+
+/**
+ * Optionaler prozentualer Aufteilungseintrag.
+ * Erlaubt z.B. 60% Lunch Basic, 40% À la carte für einen Einkauf.
+ */
+export interface AllocationSplit {
+  target: CostAllocationTarget;
+  /** Anteil in % (0–100). Alle Splits zusammen müssen 100 ergeben. */
+  pct: number;
+}
+
 // ─── Basisdokument ────────────────────────────────────────────────────────────
 
 /**
@@ -174,6 +224,22 @@ export interface SupplierDocument {
    * Kann beim Matching als zusätzliches Signal verwendet werden.
    */
   referenceNumber?: string;
+
+  // ── Kostenzuordnung (Allocation) – nur für Analyse, kein Einfluss auf Summen ──
+  /**
+   * Haupt-Kostenpool für diesen Beleg.
+   * Wenn `allocationSplits` gesetzt, wird dieses Feld ignoriert.
+   * Default: 'unassigned' (kein Pool zugeordnet).
+   */
+  allocationTarget?: CostAllocationTarget;
+  /**
+   * Prozentuale Aufteilung auf mehrere Kostenpools (optional).
+   * Wenn gesetzt: übersteuert `allocationTarget`.
+   * Alle Einträge müssen zusammen 100% ergeben.
+   *
+   * Beispiel: 60% Lunch Basic, 40% À la carte
+   */
+  allocationSplits?: AllocationSplit[];
 
   /** Erstellt am (ISO-String) */
   createdAt: string;

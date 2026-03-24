@@ -43,6 +43,15 @@ export interface RecipeIngredient {
   baseRecipeId?: string;
 }
 
+/**
+ * Zuordnung eines Produkts zum Lunch-WES-Analyse-Pool.
+ * 'lunch_basic'   → Tagesmenu 1, Business Lunch Basic
+ * 'lunch_premium' → Tagesmenu 2, Business Lunch Premium
+ * 'lunch_allgemein' → Lunch ohne Unterscheidung
+ * undefined       → kein Lunch-Produkt
+ */
+export type LunchPool = 'lunch_basic' | 'lunch_premium' | 'lunch_allgemein';
+
 export interface ProductRecipe {
   id: string;               // `${productName}|${category}` – unique key
   productName: string;
@@ -52,6 +61,12 @@ export interface ProductRecipe {
   manualCost: number;
   manualCostNote: string;   // z.B. "Verpackung", "Energie", "Overhead"
   ingredients: RecipeIngredient[];
+  /**
+   * Lunch-Pool-Zuordnung für WES-Analyse.
+   * Wenn gesetzt: Dieses Produkt zählt zum angegebenen Lunch-Pool.
+   * Soll-WES = Anzahl Portionen × manualCost (Pauschal) resp. berechnete Kosten.
+   */
+  lunchPool?: LunchPool;
   updatedAt: string;
 }
 

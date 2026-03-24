@@ -24,6 +24,8 @@ import {
   SupplierCostSummary,
   SupplierCostComparison,
   AccountToSupplierMapping,
+  CostAllocationTarget,
+  AllocationSplit,
 } from '@/types/supplier-documents';
 import { loadMonth } from '@/lib/reporting-store';
 
@@ -84,7 +86,9 @@ export function addDocument(input: {
   amount: number;
   accountNumber?: string;
   note?: string;
-  referenceNumber?: string; // Lieferschein-Nr., Rechnungs-Nr., Bestellnummer
+  referenceNumber?: string;
+  allocationTarget?: CostAllocationTarget;
+  allocationSplits?: AllocationSplit[];
 }): SupplierDocument {
   const all  = loadAll();
   const now  = new Date().toISOString();
@@ -103,6 +107,8 @@ export function addDocument(input: {
     accountNumber:   input.accountNumber?.trim() || undefined,
     note:            input.note?.trim() || undefined,
     referenceNumber: input.referenceNumber?.trim() || undefined,
+    allocationTarget: input.allocationTarget,
+    allocationSplits: input.allocationSplits,
     createdAt:       now,
     updatedAt:       now,
   };
@@ -121,6 +127,7 @@ export function updateDocument(
     | 'supplier' | 'documentType' | 'date' | 'deliveryDate' | 'category'
     | 'amount' | 'accountNumber' | 'note' | 'referenceNumber'
     | 'linkedDocumentId' | 'matchStatus'
+    | 'allocationTarget' | 'allocationSplits'
   >>,
 ): SupplierDocument | null {
   const all = loadAll();
@@ -658,4 +665,67 @@ export function getAccountingAccountsForMonth(year: number, month: number): stri
       .map(c => c.categoryId ?? '')
       .filter(id => /^\d{3,5}$/.test(id))
   )].sort();
+}
+
+// ─── Lunch-WES Analyse ────────────────────────────────────────────────────────
+
+/**
+ * Effektiver Anteil eines Dokuments für einen gegebenen Kostenpool.
+ *
+ * Wenn `allocationSplits` gesetzt → prozentualer Anteil des Pools.
+ * Wenn `allocationTarget` gesetzt → 100% wenn Target stimmt, sonst 0.
+ * Wenn nichts gesetzt → 0.
+ */
+export function getDocumentAllocationAmount(
+  doc: SupplierDocument,
+  target: CostAllocationTarget,
+): number {
+  if (doc.allocationSplits && doc.allocationSplits.length > 0) {
+    const split = doc.allocationSplits.find(s => s.target === target);
+    return split ? (doc.amount * split.pct) / 100 : 0;
+  }
+  if (doc.allocationTarget === target) return doc.amount;
+  return 0;
+}
+
+/**
+ * Gibt die monatliche Ist-WES-Summe pro Kostenpool zurück.
+ * Schliesst verknüpfte Lieferscheine aus (nur Rechnungen zählen wenn linked).
+ */
+export interface AllocationTotals {
+  lunch_basic: number;
+  lunch_premium: number;
+  lunch_total: number;
+  a_la_carte: number;
+  pizza: number;
+  dessert: number;
+  kinder: number;
+  kueche_allgemein: number;
+  beverage: number;
+  unassigned: number;
+}
+
+export function getAllocationTotals(year: number, month: number): AllocationTotals {
+  const docs = loadDocumentsForMonth(year, month).filter(
+    d => !(d.matchStatus === 'linked' && d.documentType === 'delivery_note'),
+  );
+
+  const totals: AllocationTotals = {
+    lunch_basic: 0, lunch_premium: 0, lunch_total: 0,
+    a_la_carte: 0, pizza: 0, dessert: 0, kinder: 0,
+    kueche_allgemein: 0, beverage: 0, unassigned: 0,
+  };
+
+  for (const doc of docs) {
+    const targets: CostAllocationTarget[] = [
+      'lunch_basic', 'lunch_premium', 'a_la_carte', 'pizza',
+      'dessert', 'kinder', 'kueche_allgemein', 'beverage', 'unassigned',
+    ];
+    for (const t of targets) {
+      (totals as Record<string, number>)[t] += getDocumentAllocationAmount(doc, t);
+    }
+  }
+
+  totals.lunch_total = totals.lunch_basic + totals.lunch_premium;
+  return totals;
 }

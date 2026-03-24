@@ -37,7 +37,7 @@ import { Switch } from '@/components/ui/switch';
 import {
   Truck, Plus, Trash2, Edit3, Info, AlertTriangle, ChevronDown,
   ShoppingCart, Package, Wine, ArrowUpDown, CheckCircle2, Scale,
-  BookOpen, ChevronRight, Building2, Hash, Star, Link2, Link2Off, Sparkles,
+  BookOpen, ChevronRight, Building2, Hash, Star, Link2, Link2Off, Sparkles, Tag,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -56,6 +56,7 @@ import {
   SupplierDocument, SupplierMaster, DocumentType, DocumentCategory,
   DOCUMENT_TYPE_LABELS, CATEGORY_LABELS, CATEGORY_COLORS,
   CostComparisonRecord,
+  CostAllocationTarget, AllocationSplit, ALLOCATION_TARGET_LABELS,
 } from '@/types/supplier-documents';
 import { AccountMapping } from '@/types/account-mapping';
 import { toast } from 'sonner';
@@ -100,24 +101,30 @@ interface FormState {
   supplier: string;
   documentType: DocumentType;
   date: string;
-  deliveryDate: string;    // '' = nicht gesetzt, Fallback auf date
+  deliveryDate: string;       // '' = nicht gesetzt, Fallback auf date
   category: DocumentCategory;
   amount: string;
   accountNumber: string;
   note: string;
-  referenceNumber: string; // Lieferschein-Nr. / Rechnungs-Nr. / Bestellnummer
+  referenceNumber: string;    // Lieferschein-Nr. / Rechnungs-Nr. / Bestellnummer
+  allocationTarget: CostAllocationTarget;
+  allocationSplits: AllocationSplit[];  // leer = kein Split, Haupt-Target wird verwendet
+  useSplit: boolean;           // UI-Schalter: Prozentuale Aufteilung aktiv?
 }
 
 const emptyForm = (): FormState => ({
-  supplier:        '',
-  documentType:    'delivery_note',
-  date:            new Date().toISOString().split('T')[0],
-  deliveryDate:    '',
-  category:        'food',
-  amount:          '',
-  accountNumber:   '',
-  note:            '',
-  referenceNumber: '',
+  supplier:         '',
+  documentType:     'delivery_note',
+  date:             new Date().toISOString().split('T')[0],
+  deliveryDate:     '',
+  category:         'food',
+  amount:           '',
+  accountNumber:    '',
+  note:             '',
+  referenceNumber:  '',
+  allocationTarget: 'unassigned',
+  allocationSplits: [],
+  useSplit:         false,
 });
 
 // ─── Kategorie-Badge ──────────────────────────────────────────────────────────
@@ -397,9 +404,38 @@ function DocumentDialog({
 }: DocumentDialogProps) {
   const [showNewSupplier, setShowNewSupplier] = useState(false);
 
-  function set(field: keyof FormState, value: string) {
+  function set(field: keyof FormState, value: string | boolean | AllocationSplit[]) {
     onFormChange({ ...form, [field]: value });
   }
+
+  const allocationTargetOptions: CostAllocationTarget[] = [
+    'lunch_basic', 'lunch_premium', 'a_la_carte', 'pizza',
+    'dessert', 'kinder', 'kueche_allgemein', 'beverage', 'unassigned',
+  ];
+
+  function setSplitTarget(idx: number, target: CostAllocationTarget) {
+    const splits = [...form.allocationSplits];
+    splits[idx] = { ...splits[idx], target };
+    set('allocationSplits', splits);
+  }
+
+  function setSplitPct(idx: number, pct: string) {
+    const splits = [...form.allocationSplits];
+    splits[idx] = { ...splits[idx], pct: Number(pct) || 0 };
+    set('allocationSplits', splits);
+  }
+
+  function addSplitRow() {
+    const splits = [...form.allocationSplits, { target: 'unassigned' as CostAllocationTarget, pct: 0 }];
+    set('allocationSplits', splits);
+  }
+
+  function removeSplitRow(idx: number) {
+    const splits = form.allocationSplits.filter((_, i) => i !== idx);
+    set('allocationSplits', splits);
+  }
+
+  const splitTotal = form.allocationSplits.reduce((s, r) => s + r.pct, 0);
 
   const expenseAccounts = useMemo(
     () => accounts.filter(a => a.sign === 'expense').sort((a, b) =>
@@ -656,6 +692,99 @@ function DocumentDialog({
                 onChange={e => set('note', e.target.value)}
               />
             </div>
+          </div>
+
+          {/* ── Kostenzuordnung ────────────────────────────────────────────── */}
+          <div className="space-y-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 p-3">
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                <Tag className="h-3.5 w-3.5" />
+                Kostenzuordnung
+                <span className="font-normal normal-case text-[10px]">(für Lunch-Analyse)</span>
+              </Label>
+              <button
+                type="button"
+                className="text-[10px] text-violet-600 hover:text-violet-800 underline"
+                onClick={() => set('useSplit', !form.useSplit)}
+              >
+                {form.useSplit ? '← Einfach-Zuordnung' : '% Aufteilung auf mehrere Pools'}
+              </button>
+            </div>
+
+            {!form.useSplit ? (
+              <Select
+                value={form.allocationTarget}
+                onValueChange={v => set('allocationTarget', v as CostAllocationTarget)}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {allocationTargetOptions.map(t => (
+                    <SelectItem key={t} value={t} className="text-xs">
+                      {ALLOCATION_TARGET_LABELS[t]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="space-y-1.5">
+                {form.allocationSplits.map((split, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <Select
+                      value={split.target}
+                      onValueChange={v => setSplitTarget(idx, v as CostAllocationTarget)}
+                    >
+                      <SelectTrigger className="h-7 text-xs flex-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {allocationTargetOptions.map(t => (
+                          <SelectItem key={t} value={t} className="text-xs">
+                            {ALLOCATION_TARGET_LABELS[t]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      className="h-7 w-16 text-xs text-right"
+                      value={split.pct}
+                      onChange={e => setSplitPct(idx, e.target.value)}
+                    />
+                    <span className="text-xs text-muted-foreground">%</span>
+                    <button
+                      type="button"
+                      className="text-red-400 hover:text-red-600"
+                      onClick={() => removeSplitRow(idx)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between mt-1">
+                  <button
+                    type="button"
+                    className="text-[10px] text-violet-600 hover:text-violet-800 underline"
+                    onClick={addSplitRow}
+                  >
+                    + Zeile hinzufügen
+                  </button>
+                  <span className={cn(
+                    'text-[10px] font-mono font-semibold',
+                    splitTotal === 100 ? 'text-green-600' : 'text-amber-600',
+                  )}>
+                    Total: {splitTotal}% {splitTotal !== 100 && '(muss 100% sein)'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <p className="text-[10px] text-muted-foreground">
+              Zuordnung für die Lunch-WES-Analyse. Hat keinen Einfluss auf Monatssummen oder Buchhaltungsvergleich.
+            </p>
           </div>
 
           {error && (
@@ -1034,16 +1163,21 @@ export default function SupplierDocumentsPage() {
     const amt = parseFloat(addForm.amount.replace(',', '.'));
     if (isNaN(amt) || amt <= 0) { setAddError('Betrag muss eine positive Zahl sein (CHF)'); return; }
 
+    const addSplits = addForm.useSplit && addForm.allocationSplits.length > 0
+      ? addForm.allocationSplits : undefined;
+
     const saved = addDocument({
-      supplier:        addForm.supplier,
-      documentType:    addForm.documentType,
-      date:            addForm.date,
-      deliveryDate:    addForm.deliveryDate || undefined,
-      category:        addForm.category,
-      amount:          amt,
-      accountNumber:   addForm.accountNumber || undefined,
-      note:            addForm.note || undefined,
-      referenceNumber: addForm.referenceNumber || undefined,
+      supplier:         addForm.supplier,
+      documentType:     addForm.documentType,
+      date:             addForm.date,
+      deliveryDate:     addForm.deliveryDate || undefined,
+      category:         addForm.category,
+      amount:           amt,
+      accountNumber:    addForm.accountNumber || undefined,
+      note:             addForm.note || undefined,
+      referenceNumber:  addForm.referenceNumber || undefined,
+      allocationTarget: addSplits ? undefined : (addForm.allocationTarget === 'unassigned' ? undefined : addForm.allocationTarget),
+      allocationSplits: addSplits,
     });
 
     // Monatszuordnung anhand des effektiven Datums (Lieferdatum hat Vorrang)
@@ -1067,16 +1201,20 @@ export default function SupplierDocumentsPage() {
   const [editError, setEditError] = useState('');
 
   function openEdit(doc: SupplierDocument) {
+    const hasSplits = (doc.allocationSplits ?? []).length > 0;
     setEditForm({
-      supplier:        doc.supplier,
-      documentType:    doc.documentType,
-      date:            doc.date,
-      deliveryDate:    doc.deliveryDate ?? '',
-      category:        doc.category,
-      amount:          doc.amount.toFixed(2),
-      accountNumber:   doc.accountNumber ?? '',
-      note:            doc.note ?? '',
-      referenceNumber: doc.referenceNumber ?? '',
+      supplier:         doc.supplier,
+      documentType:     doc.documentType,
+      date:             doc.date,
+      deliveryDate:     doc.deliveryDate ?? '',
+      category:         doc.category,
+      amount:           doc.amount.toFixed(2),
+      accountNumber:    doc.accountNumber ?? '',
+      note:             doc.note ?? '',
+      referenceNumber:  doc.referenceNumber ?? '',
+      allocationTarget: doc.allocationTarget ?? 'unassigned',
+      allocationSplits: doc.allocationSplits ?? [],
+      useSplit:         hasSplits,
     });
     setEditError('');
     setEditDoc(doc);
@@ -1088,16 +1226,21 @@ export default function SupplierDocumentsPage() {
     const amt = parseFloat(editForm.amount.replace(',', '.'));
     if (isNaN(amt) || amt <= 0) { setEditError('Betrag muss eine positive Zahl sein'); return; }
 
+    const splits = editForm.useSplit && editForm.allocationSplits.length > 0
+      ? editForm.allocationSplits : undefined;
+
     updateDocument(editDoc.id, {
-      supplier:        editForm.supplier,
-      documentType:    editForm.documentType,
-      date:            editForm.date,
-      deliveryDate:    editForm.deliveryDate || undefined,
-      category:        editForm.category,
-      amount:          amt,
-      accountNumber:   editForm.accountNumber || undefined,
-      note:            editForm.note || undefined,
-      referenceNumber: editForm.referenceNumber || undefined,
+      supplier:         editForm.supplier,
+      documentType:     editForm.documentType,
+      date:             editForm.date,
+      deliveryDate:     editForm.deliveryDate || undefined,
+      category:         editForm.category,
+      amount:           amt,
+      accountNumber:    editForm.accountNumber || undefined,
+      note:             editForm.note || undefined,
+      referenceNumber:  editForm.referenceNumber || undefined,
+      allocationTarget: splits ? undefined : (editForm.allocationTarget === 'unassigned' ? undefined : editForm.allocationTarget),
+      allocationSplits: splits,
     });
     reload(year, month);
     setEditDoc(null);
@@ -1431,11 +1574,24 @@ export default function SupplierDocumentsPage() {
                       )}>
                         {chf(doc.amount)}
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground max-w-[140px]">
+                      <TableCell className="text-xs text-muted-foreground max-w-[160px]">
                         {doc.referenceNumber && (
                           <span className="block font-mono text-[10px] text-foreground/70">#{doc.referenceNumber}</span>
                         )}
                         <span className="truncate block">{doc.note ?? '—'}</span>
+                        {doc.allocationSplits && doc.allocationSplits.length > 0 ? (
+                          <span className="flex flex-wrap gap-0.5 mt-0.5">
+                            {doc.allocationSplits.map((s, i) => (
+                              <span key={i} className="inline-flex items-center gap-0.5 text-[9px] font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400 border border-violet-200 dark:border-violet-700 px-1 py-0.5 rounded">
+                                <Tag className="h-2 w-2" />{s.pct}% {ALLOCATION_TARGET_LABELS[s.target]}
+                              </span>
+                            ))}
+                          </span>
+                        ) : doc.allocationTarget && doc.allocationTarget !== 'unassigned' ? (
+                          <span className="inline-flex items-center gap-0.5 mt-0.5 text-[9px] font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400 border border-violet-200 dark:border-violet-700 px-1 py-0.5 rounded">
+                            <Tag className="h-2 w-2" />{ALLOCATION_TARGET_LABELS[doc.allocationTarget]}
+                          </span>
+                        ) : null}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">

@@ -145,6 +145,13 @@ const NAV_ITEMS: NavItem[] = [
     adminOnly: true,
   },
   {
+    path: '/lunch-analyse',
+    label: 'Lunch-Analyse',
+    shortLabel: 'Lunch',
+    icon: Utensils,
+    adminOnly: true,
+  },
+  {
     path: '/absenzen',
     label: 'Absenzen & Ersatz',
     shortLabel: 'Absenzen',
