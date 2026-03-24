@@ -23,16 +23,24 @@ export type CostMode = 'pauschal' | 'rezeptur' | 'gemischt';
  * Eine Zutat in einer Rezeptur.
  * Lieferanten-Infos werden denormalisiert gespeichert, damit die Rezeptur
  * auch ohne aktiven Internet-Zugriff auf den Artikelstamm lesbar bleibt.
+ *
+ * Erweiterung: Wenn `baseRecipeId` gesetzt ist, ist diese Zutat eine
+ * Basiskomponente (z.B. "Pasta Basis"). costPerUnit enthält dann den
+ * Portionspreis der Basiskomponente – so funktionieren alle Kalkulationen
+ * ohne Änderung. Bei Änderung der Basiskomponente wird costPerUnit
+ * via propagateBaseComponentChange() automatisch aktualisiert.
  */
 export interface RecipeIngredient {
   id: string;
-  articleId: string;          // UUID aus Artikelstamm (oder '' für manuelle Zutat)
-  articleName: string;        // Anzeigename (denormalisiert)
-  quantity: number;           // Menge
-  unit: string;               // Einheit
-  costPerUnit: number;        // NETTO-Preis/Einheit aus Artikelstamm
-  supplier: string;           // Standard-Lieferant (denormalisiert)
-  accountingAccount: string;  // Fibu-Konto (denormalisiert)
+  articleId: string;           // UUID aus Artikelstamm (oder '' für manuelle Zutat / Basis)
+  articleName: string;         // Anzeigename (denormalisiert)
+  quantity: number;            // Menge (bei Basis: Anzahl Portionen)
+  unit: string;                // Einheit
+  costPerUnit: number;         // NETTO-Preis/Einheit – bei Basis: Portionspreis
+  supplier: string;            // Standard-Lieferant (denormalisiert)
+  accountingAccount: string;   // Fibu-Konto (denormalisiert)
+  /** UUID einer Basiskomponente (aus basiskomponenten-store). Wenn gesetzt: ist eine Basis-Referenz. */
+  baseRecipeId?: string;
 }
 
 export interface ProductRecipe {

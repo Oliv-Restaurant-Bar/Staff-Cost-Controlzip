@@ -355,6 +355,23 @@ Regel-basierte Analyse: Einkauf (Artikel-Tracking) vs. theoretischer Verbrauch (
 - Erfordert `trackingAktiv`-Artikel mit erfassten Einkäufen
 - Zeigt Monatsdetails per aufklappbarer Zeile
 
+### BasiskomponentenManager (`src/components/produkte/BasiskomponentenManager.tsx`)
+Wiederverwendbare Basis-Rezepturen (z.B. „Pasta Basis", „Risotto Basis") für das Verwalten gemeinsamer Zutatengruppen:
+- Erstellen/Bearbeiten/Löschen von Basiskomponenten mit eigenem Zutaten-Editor
+- Verlinkung: Zeigt welche Produktrezepturen eine Basis verwenden
+- **Propagation**: Wenn eine Basiskomponente geändert wird, werden alle verlinkten Rezepturen mit Vorschau aktualisiert (costPerUnit der Basis-Zutat wird synchronisiert)
+- Manueller Trigger: „Verlinkungen neu berechnen"-Button pro Basiskomponente
+- Speicherung: Supabase KV `basis_komponenten_v1` + localStorage-Fallback
+
+**RezepturDialog Integration:**
+- Beim Öffnen werden `BaseComponentMap` und Artikel parallel geladen
+- Basiskomponenten-Zutaten werden mit violettem „Basis"-Badge angezeigt (read-only Name/Kosten, nur Menge editierbar)
+- Button „Basiskomponente hinzufügen" erscheint wenn mindestens eine Basis existiert → öffnet Inline-Select zum Einfügen
+
+**Datenmodell:**
+- `RecipeIngredient.baseRecipeId?: string` — markiert eine Zutat als Basis-Referenz
+- `costPerUnit` der Basis-Zutat = aktueller Portionspreis der Basiskomponente (damit alle WES-Berechnungen unverändert funktionieren)
+
 ## Deployment
 
 Konfiguriert als **Static Site** (Vite Build → `dist/`).

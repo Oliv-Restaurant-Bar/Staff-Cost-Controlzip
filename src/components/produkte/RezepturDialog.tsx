@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Plus, Trash2, ChevronRight, Package, Wine } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Package, Wine, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,6 +25,10 @@ import {
   emptyRecipe, emptyIngredient, computeRecipeCosts,
 } from '@/lib/rezeptur-store';
 import { getFibuLabel, resolveIngredientAccount, loadArtikelFromDB, type Artikel } from '@/lib/artikel-store';
+import {
+  type BaseComponentMap,
+  loadBasiskomponentenFromDB, makeBaseComponentIngredient, computeBaseComponentCost,
+} from '@/lib/basiskomponenten-store';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -241,7 +245,10 @@ export default function RezepturDialog({
 }: RezepturDialogProps) {
   const [recipe, setRecipe] = useState<ProductRecipe | null>(null);
   const [articles, setArticles] = useState<Artikel[]>([]);
+  const [baseComponents, setBaseComponents] = useState<BaseComponentMap>({});
   const [loadingArts, setLoadingArts] = useState(false);
+  const [showBaseSelect, setShowBaseSelect] = useState(false);
+  const [selectedBaseId, setSelectedBaseId] = useState('');
 
   // Formular initialisieren wenn Dialog öffnet
   useEffect(() => {
@@ -250,16 +257,22 @@ export default function RezepturDialog({
         ? { ...existingRecipe }
         : emptyRecipe(cost.name, cost.category),
       );
+      setShowBaseSelect(false);
+      setSelectedBaseId('');
     }
   }, [open, cost, existingRecipe]);
 
-  // Artikel laden (einmalig pro Dialog-Öffnung)
+  // Artikel + Basiskomponenten laden (einmalig pro Dialog-Öffnung)
   useEffect(() => {
     if (open && articles.length === 0) {
       setLoadingArts(true);
-      loadArtikelFromDB()
-        .then(store => setArticles(store.articles.filter(a => a.active)))
-        .finally(() => setLoadingArts(false));
+      Promise.all([
+        loadArtikelFromDB().then(store => store.articles.filter(a => a.active)),
+        loadBasiskomponentenFromDB(),
+      ]).then(([arts, bases]) => {
+        setArticles(arts);
+        setBaseComponents(bases);
+      }).finally(() => setLoadingArts(false));
     }
   }, [open]);
 
@@ -279,6 +292,16 @@ export default function RezepturDialog({
 
   function addIngredient() {
     setRecipe(r => r ? { ...r, ingredients: [...r.ingredients, emptyIngredient()] } : r);
+  }
+
+  function addBaseComponent() {
+    if (!selectedBaseId) return;
+    const bc = baseComponents[selectedBaseId];
+    if (!bc) return;
+    const ing = makeBaseComponentIngredient(bc, 1);
+    setRecipe(r => r ? { ...r, ingredients: [...r.ingredients, ing] } : r);
+    setShowBaseSelect(false);
+    setSelectedBaseId('');
   }
 
   function updateIngredient(id: string, patch: Partial<RecipeIngredient>) {
@@ -374,15 +397,57 @@ export default function RezepturDialog({
                     <span />
                   </div>
                   <div className="px-3 divide-y divide-border/30">
-                    {recipe.ingredients.map(ing => (
-                      <IngredientRow
-                        key={ing.id}
-                        ing={ing}
-                        articles={articles}
-                        onChange={patch => updateIngredient(ing.id, patch)}
-                        onRemove={() => removeIngredient(ing.id)}
-                      />
-                    ))}
+                    {recipe.ingredients.map(ing => {
+                      // Basiskomponente-Zutat: anders darstellen
+                      if (ing.baseRecipeId) {
+                        const bc = baseComponents[ing.baseRecipeId];
+                        const currentPortionCost = bc ? computeBaseComponentCost(bc) : ing.costPerUnit;
+                        return (
+                          <div key={ing.id}
+                            className="grid grid-cols-[1fr_80px_80px_90px_32px] gap-1.5 items-center py-2 border-b border-border/50 last:border-0">
+                            <div className="min-w-0 space-y-0.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-800 px-1.5 py-0.5 rounded">
+                                  <Layers className="h-2.5 w-2.5" /> Basis
+                                </span>
+                                <span className="text-xs font-medium truncate">{ing.articleName}</span>
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {fmtChf(currentPortionCost)} / {ing.unit}
+                                {bc && Math.abs(currentPortionCost - ing.costPerUnit) > 0.0001 && (
+                                  <span className="ml-1 text-amber-600 dark:text-amber-400">(veraltet – neu berechnen)</span>
+                                )}
+                              </div>
+                            </div>
+                            <Input
+                              type="number" min="0" step="0.001"
+                              className="h-7 text-xs text-right"
+                              value={ing.quantity || ''}
+                              onChange={e => updateIngredient(ing.id, { quantity: parseFloat(e.target.value) || 0 })}
+                              title="Anzahl Portionen"
+                            />
+                            <div className="text-xs text-muted-foreground px-1">{ing.unit}</div>
+                            <div className="text-right text-xs font-mono font-medium">
+                              = {fmtChf(ing.quantity * ing.costPerUnit)}
+                            </div>
+                            <button onClick={() => removeIngredient(ing.id)}
+                              className="text-muted-foreground hover:text-destructive transition-colors self-start mt-1">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        );
+                      }
+                      // Normale Zutat
+                      return (
+                        <IngredientRow
+                          key={ing.id}
+                          ing={ing}
+                          articles={articles}
+                          onChange={patch => updateIngredient(ing.id, patch)}
+                          onRemove={() => removeIngredient(ing.id)}
+                        />
+                      );
+                    })}
                   </div>
                   {/* Summe */}
                   <div className="px-3 py-2 border-t bg-muted/30 flex justify-end">
@@ -395,14 +460,56 @@ export default function RezepturDialog({
                 </div>
               )}
 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={addIngredient}
-                className="mt-2 w-full text-xs h-7"
-              >
-                <Plus className="h-3.5 w-3.5 mr-1" /> Zutat hinzufügen
-              </Button>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={addIngredient}
+                  className="flex-1 text-xs h-7"
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Zutat hinzufügen
+                </Button>
+                {Object.keys(baseComponents).length > 0 && !showBaseSelect && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowBaseSelect(true)}
+                    className="flex-1 text-xs h-7 border-violet-200 text-violet-700 hover:bg-violet-50 dark:border-violet-800 dark:text-violet-400 dark:hover:bg-violet-950/30"
+                  >
+                    <Layers className="h-3.5 w-3.5 mr-1" /> Basiskomponente hinzufügen
+                  </Button>
+                )}
+              </div>
+
+              {/* Basiskomponente-Auswahl */}
+              {showBaseSelect && (
+                <div className="mt-2 flex gap-2 items-center rounded-lg border border-violet-200 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-950/20 px-3 py-2">
+                  <Layers className="h-3.5 w-3.5 text-violet-600 shrink-0" />
+                  <Select value={selectedBaseId} onValueChange={setSelectedBaseId}>
+                    <SelectTrigger className="h-7 text-xs flex-1 border-violet-200 dark:border-violet-800">
+                      <SelectValue placeholder="Basiskomponente wählen…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.values(baseComponents).sort((a, b) => a.name.localeCompare(b.name, 'de')).map(bc => (
+                        <SelectItem key={bc.id} value={bc.id}>
+                          <span className="flex items-center gap-2">
+                            {bc.name}
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                              CHF {(bc.ingredients.reduce((s, i) => s + i.quantity * i.costPerUnit, 0)).toFixed(2)} / {bc.unit}
+                            </span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" className="h-7 text-xs" onClick={addBaseComponent} disabled={!selectedBaseId}>
+                    Hinzufügen
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setShowBaseSelect(false); setSelectedBaseId(''); }}>
+                    ×
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 

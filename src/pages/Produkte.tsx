@@ -39,10 +39,11 @@ import {
   type ProductCostEntry,
   type ProductGroup,
 } from '@/lib/produkte-store';
-import GruppenAnalyse        from '@/components/produkte/GruppenAnalyse';
-import RezepturDialog        from '@/components/produkte/RezepturDialog';
-import BulkRezepturUpdate    from '@/components/produkte/BulkRezepturUpdate';
-import RezepturRealityCheck  from '@/components/produkte/RezepturRealityCheck';
+import GruppenAnalyse          from '@/components/produkte/GruppenAnalyse';
+import RezepturDialog          from '@/components/produkte/RezepturDialog';
+import BulkRezepturUpdate      from '@/components/produkte/BulkRezepturUpdate';
+import RezepturRealityCheck    from '@/components/produkte/RezepturRealityCheck';
+import BasiskomponentenManager from '@/components/produkte/BasiskomponentenManager';
 import {
   type RezepturenMap,
   type ProductRecipe,
@@ -51,6 +52,10 @@ import {
   makeRecipeId,
   computeRecipeCosts,
 } from '@/lib/rezeptur-store';
+import {
+  type BaseComponentMap,
+  loadBasiskomponentenFromDB,
+} from '@/lib/basiskomponenten-store';
 import { format, parse } from 'date-fns';
 import { de } from 'date-fns/locale';
 
@@ -170,6 +175,7 @@ export default function ProdukteSeite() {
   const [costs,  setCosts]  = useState<ProductCostEntry[]>(() => loadProductCosts());
   const [groups, setGroups] = useState<ProductGroup[]>(() => loadProductGroups());
   const [recipes, setRecipes] = useState<RezepturenMap>({});
+  const [baseComponents, setBaseComponents] = useState<BaseComponentMap>({});
   const [recipeSortKey, setRecipeSortKey] = useState<'name' | 'wes' | 'marge'>('name');
   const [recipeSortAsc, setRecipeSortAsc] = useState(true);
   const [editRecipeCost, setEditRecipeCost] = useState<ProductCostEntry | null>(null);
@@ -196,6 +202,9 @@ export default function ProdukteSeite() {
     });
     loadRezepturenFromDB().then(dbRecipes => {
       setRecipes(dbRecipes);
+    });
+    loadBasiskomponentenFromDB().then(dbBases => {
+      setBaseComponents(dbBases);
     });
   }, []);
   const [editingCost, setEditingCost] = useState<{
@@ -1048,6 +1057,22 @@ export default function ProdukteSeite() {
             <RezepturRealityCheck
               recipes={recipes}
               products={data?.entries ?? []}
+            />
+            <BasiskomponentenManager
+              baseComponents={baseComponents}
+              recipes={recipes}
+              costs={costs.filter(c => c.category === category)}
+              onBaseComponentsChange={newMap => setBaseComponents(newMap)}
+              onRecipesChange={(newRecipes, updatedCosts) => {
+                setRecipes(newRecipes);
+                // Merge updated cost entries back (only the ones in updatedCosts)
+                const mergedCosts = costs.map(c => {
+                  const updated = updatedCosts.find(u => u.name === c.name && u.category === c.category);
+                  return updated ?? c;
+                });
+                setCosts(mergedCosts);
+                saveProductCostsToDB(mergedCosts);
+              }}
             />
 
             {costs.filter(c => c.category === category).length === 0 ? (
