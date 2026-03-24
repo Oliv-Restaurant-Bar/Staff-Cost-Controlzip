@@ -90,6 +90,15 @@ export interface SupplierMaster {
 // ─── Hauptdatensatz ───────────────────────────────────────────────────────────
 
 /**
+ * Verknüpfungs-Status: Lieferschein ↔ Rechnung
+ *
+ * 'linked'    – Dokument ist mit einem anderen Beleg verknüpft (kein Doppelzählung)
+ * 'suggested' – Mögliche Übereinstimmung gefunden (manuell zu bestätigen)
+ * undefined   – Kein Matching, wird normal gezählt
+ */
+export type DocumentMatchStatus = 'linked' | 'suggested';
+
+/**
  * Ein einzelner Lieferantenbeleg (Lieferschein oder Rechnung).
  */
 export interface SupplierDocument {
@@ -144,6 +153,28 @@ export interface SupplierDocument {
   accountNumber?: string;
   /** Optionale Notiz, z.B. Bestellnummer, Kommentar */
   note?: string;
+
+  // ── Duplikat-Prävention: Lieferschein ↔ Rechnung Matching ──────────────
+  /**
+   * ID des verknüpften Gegenstücks (Lieferschein ↔ Rechnung).
+   *
+   * Wenn gesetzt: Dieses Dokument ist mit dem Gegenstück verknüpft.
+   * Regel: Verknüpfte Lieferscheine werden aus der Monatssumme ausgeschlossen
+   * (die Rechnung zählt), um Doppelzählung zu vermeiden.
+   */
+  linkedDocumentId?: string;
+  /**
+   * Matching-Status für die UI.
+   * 'linked'    – Manuell bestätigt verknüpft → Lieferschein aus Summe ausgeschlossen
+   * 'suggested' – Automatisch gefundene mögliche Übereinstimmung → manuell bestätigen
+   */
+  matchStatus?: DocumentMatchStatus;
+  /**
+   * Referenznummer des Dokuments (Lieferschein-Nr., Rechnungs-Nr., Bestellnummer).
+   * Kann beim Matching als zusätzliches Signal verwendet werden.
+   */
+  referenceNumber?: string;
+
   /** Erstellt am (ISO-String) */
   createdAt: string;
   /** Zuletzt geändert (ISO-String) */

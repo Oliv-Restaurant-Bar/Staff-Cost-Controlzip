@@ -37,7 +37,7 @@ import { Switch } from '@/components/ui/switch';
 import {
   Truck, Plus, Trash2, Edit3, Info, AlertTriangle, ChevronDown,
   ShoppingCart, Package, Wine, ArrowUpDown, CheckCircle2, Scale,
-  BookOpen, ChevronRight, Building2, Hash, Star,
+  BookOpen, ChevronRight, Building2, Hash, Star, Link2, Link2Off, Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -45,6 +45,8 @@ import {
   loadDocumentsForMonth, getMonthSummary, buildCostComparison,
   availableYears,
   loadSupplierMasters, upsertSupplierMaster, deleteSupplierMaster,
+  findMatchCandidates, linkDocuments, unlinkDocuments,
+  type MatchCandidate,
 } from '@/lib/supplier-documents-store';
 import {
   loadAllMappings,
@@ -98,22 +100,24 @@ interface FormState {
   supplier: string;
   documentType: DocumentType;
   date: string;
-  deliveryDate: string;   // '' = nicht gesetzt, Fallback auf date
+  deliveryDate: string;    // '' = nicht gesetzt, Fallback auf date
   category: DocumentCategory;
   amount: string;
   accountNumber: string;
   note: string;
+  referenceNumber: string; // Lieferschein-Nr. / Rechnungs-Nr. / Bestellnummer
 }
 
 const emptyForm = (): FormState => ({
-  supplier:      '',
-  documentType:  'delivery_note',
-  date:          new Date().toISOString().split('T')[0],
-  deliveryDate:  '',
-  category:      'food',
-  amount:        '',
-  accountNumber: '',
-  note:          '',
+  supplier:        '',
+  documentType:    'delivery_note',
+  date:            new Date().toISOString().split('T')[0],
+  deliveryDate:    '',
+  category:        'food',
+  amount:          '',
+  accountNumber:   '',
+  note:            '',
+  referenceNumber: '',
 });
 
 // ─── Kategorie-Badge ──────────────────────────────────────────────────────────
@@ -627,15 +631,31 @@ function DocumentDialog({
             )}
           </div>
 
-          {/* ── Notiz ─────────────────────────────────────────────────────── */}
-          <div className="space-y-1.5">
-            <Label>Notiz (optional)</Label>
-            <Textarea
-              placeholder="Bestellnummer, Kommentar…"
-              rows={2}
-              value={form.note}
-              onChange={e => set('note', e.target.value)}
-            />
+          {/* ── Referenznummer + Notiz ─────────────────────────────────────── */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5">
+                Referenznummer
+                <span className="text-[10px] text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <Input
+                placeholder="z.B. LS-2025-001, RG-0815…"
+                value={form.referenceNumber}
+                onChange={e => set('referenceNumber', e.target.value)}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Lieferschein-Nr. oder Rechnungs-Nr. – hilft beim Duplikat-Matching
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Notiz (optional)</Label>
+              <Textarea
+                placeholder="Kommentar…"
+                rows={2}
+                value={form.note}
+                onChange={e => set('note', e.target.value)}
+              />
+            </div>
           </div>
 
           {error && (
@@ -974,6 +994,26 @@ export default function SupplierDocumentsPage() {
     reload(y, m);
   }
 
+  // ── Match-Vorschläge nach dem Speichern ─────────────────────────────────────
+
+  const [matchSuggestions, setMatchSuggestions] = useState<{
+    forDoc: SupplierDocument;
+    candidates: MatchCandidate[];
+  } | null>(null);
+
+  function handleLinkDoc(docId: string, candidateId: string) {
+    linkDocuments(docId, candidateId);
+    reload(year, month);
+    setMatchSuggestions(null);
+    toast.success('Lieferschein und Rechnung verknüpft – Lieferschein wird nicht mehr doppelt gezählt');
+  }
+
+  function handleUnlinkDoc(docId: string) {
+    unlinkDocuments(docId);
+    reload(year, month);
+    toast.success('Verknüpfung aufgehoben');
+  }
+
   // ── Add-Dialog ──────────────────────────────────────────────────────────────
 
   const [showAdd, setShowAdd]   = useState(false);
@@ -994,15 +1034,16 @@ export default function SupplierDocumentsPage() {
     const amt = parseFloat(addForm.amount.replace(',', '.'));
     if (isNaN(amt) || amt <= 0) { setAddError('Betrag muss eine positive Zahl sein (CHF)'); return; }
 
-    addDocument({
-      supplier:      addForm.supplier,
-      documentType:  addForm.documentType,
-      date:          addForm.date,
-      deliveryDate:  addForm.deliveryDate || undefined,
-      category:      addForm.category,
-      amount:        amt,
-      accountNumber: addForm.accountNumber || undefined,
-      note:          addForm.note || undefined,
+    const saved = addDocument({
+      supplier:        addForm.supplier,
+      documentType:    addForm.documentType,
+      date:            addForm.date,
+      deliveryDate:    addForm.deliveryDate || undefined,
+      category:        addForm.category,
+      amount:          amt,
+      accountNumber:   addForm.accountNumber || undefined,
+      note:            addForm.note || undefined,
+      referenceNumber: addForm.referenceNumber || undefined,
     });
 
     // Monatszuordnung anhand des effektiven Datums (Lieferdatum hat Vorrang)
@@ -1011,6 +1052,12 @@ export default function SupplierDocumentsPage() {
     reload(d.getFullYear(), d.getMonth() + 1);
     setShowAdd(false);
     toast.success(`Beleg von «${addForm.supplier}» wurde gespeichert`);
+
+    // Duplikat-Prüfung: Gibt es ein passendes Gegenstück?
+    const candidates = findMatchCandidates(saved);
+    if (candidates.length > 0) {
+      setMatchSuggestions({ forDoc: saved, candidates });
+    }
   }
 
   // ── Edit-Dialog ─────────────────────────────────────────────────────────────
@@ -1021,14 +1068,15 @@ export default function SupplierDocumentsPage() {
 
   function openEdit(doc: SupplierDocument) {
     setEditForm({
-      supplier:      doc.supplier,
-      documentType:  doc.documentType,
-      date:          doc.date,
-      deliveryDate:  doc.deliveryDate ?? '',
-      category:      doc.category,
-      amount:        doc.amount.toFixed(2),
-      accountNumber: doc.accountNumber ?? '',
-      note:          doc.note ?? '',
+      supplier:        doc.supplier,
+      documentType:    doc.documentType,
+      date:            doc.date,
+      deliveryDate:    doc.deliveryDate ?? '',
+      category:        doc.category,
+      amount:          doc.amount.toFixed(2),
+      accountNumber:   doc.accountNumber ?? '',
+      note:            doc.note ?? '',
+      referenceNumber: doc.referenceNumber ?? '',
     });
     setEditError('');
     setEditDoc(doc);
@@ -1041,14 +1089,15 @@ export default function SupplierDocumentsPage() {
     if (isNaN(amt) || amt <= 0) { setEditError('Betrag muss eine positive Zahl sein'); return; }
 
     updateDocument(editDoc.id, {
-      supplier:      editForm.supplier,
-      documentType:  editForm.documentType,
-      date:          editForm.date,
-      deliveryDate:  editForm.deliveryDate || undefined,
-      category:      editForm.category,
-      amount:        amt,
-      accountNumber: editForm.accountNumber || undefined,
-      note:          editForm.note || undefined,
+      supplier:        editForm.supplier,
+      documentType:    editForm.documentType,
+      date:            editForm.date,
+      deliveryDate:    editForm.deliveryDate || undefined,
+      category:        editForm.category,
+      amount:          amt,
+      accountNumber:   editForm.accountNumber || undefined,
+      note:            editForm.note || undefined,
+      referenceNumber: editForm.referenceNumber || undefined,
     });
     reload(year, month);
     setEditDoc(null);
@@ -1200,6 +1249,89 @@ export default function SupplierDocumentsPage() {
         docCount={summary.documentCount}
       />
 
+      {/* ── Match-Vorschläge Panel ─────────────────────────────────────────── */}
+      {matchSuggestions && (
+        <div className="rounded-xl border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-violet-200 dark:border-violet-700 bg-violet-100/60 dark:bg-violet-900/20">
+            <Sparkles className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+            <span className="text-sm font-semibold text-violet-800 dark:text-violet-300">
+              Mögliche Übereinstimmung gefunden
+            </span>
+            <span className="text-xs text-violet-600 dark:text-violet-400 ml-1">
+              — Gehört dieser neue Beleg zu einem bereits erfassten Gegenstück?
+            </span>
+            <button
+              className="ml-auto text-violet-500 hover:text-violet-800 dark:hover:text-violet-200 transition-colors"
+              onClick={() => setMatchSuggestions(null)}
+            >
+              ×
+            </button>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="rounded-lg border border-violet-200 dark:border-violet-700 bg-white dark:bg-violet-950/20 px-3 py-2 text-xs text-violet-700 dark:text-violet-400 flex items-start gap-2">
+              <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>
+                <strong>Neuer Beleg:</strong> {DOCUMENT_TYPE_LABELS[matchSuggestions.forDoc.documentType]} von «{matchSuggestions.forDoc.supplier}»
+                {' '}· {chf(matchSuggestions.forDoc.amount)} · {new Date(matchSuggestions.forDoc.date).toLocaleDateString('de-CH')}
+                <br />
+                Wenn du unten «Verknüpfen» klickst, wird der <strong>Lieferschein</strong> aus der Monatssumme ausgeschlossen
+                (die Rechnung zählt), um Doppelzählung zu vermeiden.
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              {matchSuggestions.candidates.map(c => {
+                const isLinkedDoc  = matchSuggestions.forDoc.documentType === 'invoice';
+                const deliveryNote = isLinkedDoc ? c.document : matchSuggestions.forDoc;
+                const invoice      = isLinkedDoc ? matchSuggestions.forDoc : c.document;
+                return (
+                  <div key={c.document.id}
+                    className="flex items-center gap-3 rounded-lg border border-violet-200 dark:border-violet-700 bg-white dark:bg-violet-950/10 px-3 py-2.5">
+                    <div className="flex-1 min-w-0 space-y-0.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge variant="outline" className="text-[10px] border-violet-300 text-violet-700 dark:text-violet-400">
+                          {DOCUMENT_TYPE_LABELS[c.document.documentType]}
+                        </Badge>
+                        <span className="text-sm font-medium">{c.document.supplier}</span>
+                        <span className="text-xs font-mono font-semibold">{chf(c.document.amount)}</span>
+                        <span className="text-xs text-muted-foreground font-mono">
+                          {new Date(c.document.date).toLocaleDateString('de-CH')}
+                        </span>
+                        {c.amountDiff > 0 && (
+                          <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                            Δ {chf(c.amountDiff)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {c.reasons.map(r => (
+                          <span key={r} className="text-[10px] bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-700 px-1.5 py-0.5 rounded">
+                            {r}
+                          </span>
+                        ))}
+                        <span className="text-[10px] text-muted-foreground">Score: {c.score}</span>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="text-xs h-8 gap-1.5 bg-violet-600 hover:bg-violet-700 text-white shrink-0"
+                      onClick={() => handleLinkDoc(deliveryNote.id, invoice.id)}
+                    >
+                      <Link2 className="h-3.5 w-3.5" />
+                      Verknüpfen
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground h-7" onClick={() => setMatchSuggestions(null)}>
+              Nein, kein Duplikat – schliessen
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Dokumententabelle */}
       <Card>
         <CardHeader className="pb-2 flex flex-row items-center justify-between">
@@ -1222,17 +1354,23 @@ export default function SupplierDocumentsPage() {
                   <TableRow>
                     <TableHead title="Grün = Lieferdatum (massgeblich). Grau = Belegdatum.">Datum</TableHead>
                     <TableHead>Lieferant</TableHead>
-                    <TableHead>Typ</TableHead>
+                    <TableHead>Typ / Status</TableHead>
                     <TableHead>Kategorie</TableHead>
                     <TableHead>Konto</TableHead>
                     <TableHead className="text-right">Betrag CHF</TableHead>
-                    <TableHead>Notiz</TableHead>
-                    <TableHead className="w-20" />
+                    <TableHead>Notiz / Ref.</TableHead>
+                    <TableHead className="w-24" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {docs.map(doc => (
-                    <TableRow key={doc.id}>
+                  {docs.map(doc => {
+                    const isLinked    = doc.matchStatus === 'linked';
+                    const isSuggested = doc.matchStatus === 'suggested';
+                    const isExcluded  = isLinked && doc.documentType === 'delivery_note';
+                    const linkedDoc   = doc.linkedDocumentId ? docs.find(d => d.id === doc.linkedDocumentId) : null;
+
+                    return (
+                    <TableRow key={doc.id} className={cn(isExcluded && 'opacity-60 bg-muted/20')}>
                       <TableCell className="text-sm font-mono">
                         {doc.deliveryDate ? (
                           <span className="flex flex-col gap-0.5">
@@ -1249,9 +1387,33 @@ export default function SupplierDocumentsPage() {
                       </TableCell>
                       <TableCell className="text-sm font-medium">{doc.supplier}</TableCell>
                       <TableCell>
-                        <Badge variant="outline" className="text-[10px] font-normal">
-                          {DOCUMENT_TYPE_LABELS[doc.documentType]}
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant="outline" className="text-[10px] font-normal w-fit">
+                            {DOCUMENT_TYPE_LABELS[doc.documentType]}
+                          </Badge>
+                          {isLinked && (
+                            <span className={cn(
+                              'inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border w-fit',
+                              isExcluded
+                                ? 'bg-gray-100 text-gray-500 border-gray-300 dark:bg-gray-800 dark:text-gray-400'
+                                : 'bg-green-100 text-green-700 border-green-300 dark:bg-green-900/30 dark:text-green-400',
+                            )}>
+                              <Link2 className="h-2.5 w-2.5" />
+                              {isExcluded ? 'Fakturiert (ausgeschlossen)' : 'Fakturiert'}
+                            </span>
+                          )}
+                          {isSuggested && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border bg-violet-100 text-violet-700 border-violet-300 dark:bg-violet-900/30 dark:text-violet-400 w-fit">
+                              <Sparkles className="h-2.5 w-2.5" />
+                              Vorgeschlagen
+                            </span>
+                          )}
+                          {linkedDoc && (
+                            <span className="text-[10px] text-muted-foreground">
+                              ↔ {DOCUMENT_TYPE_LABELS[linkedDoc.documentType]} {new Date(linkedDoc.date).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' })}
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell><CatBadge cat={doc.category} /></TableCell>
                       <TableCell>
@@ -1263,14 +1425,30 @@ export default function SupplierDocumentsPage() {
                           <span className="text-[10px] text-muted-foreground italic">—</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm font-medium">
+                      <TableCell className={cn(
+                        'text-right font-mono text-sm font-medium',
+                        isExcluded && 'line-through text-muted-foreground',
+                      )}>
                         {chf(doc.amount)}
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground max-w-[140px] truncate">
-                        {doc.note ?? '—'}
+                      <TableCell className="text-xs text-muted-foreground max-w-[140px]">
+                        {doc.referenceNumber && (
+                          <span className="block font-mono text-[10px] text-foreground/70">#{doc.referenceNumber}</span>
+                        )}
+                        <span className="truncate block">{doc.note ?? '—'}</span>
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
+                          {isLinked && (
+                            <Button
+                              variant="ghost" size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-amber-600"
+                              title="Verknüpfung aufheben"
+                              onClick={() => handleUnlinkDoc(doc.id)}
+                            >
+                              <Link2Off className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(doc)}>
                             <Edit3 className="h-3.5 w-3.5" />
                           </Button>
@@ -1284,7 +1462,8 @@ export default function SupplierDocumentsPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                  );
+                  })}
                 </TableBody>
               </Table>
             </div>

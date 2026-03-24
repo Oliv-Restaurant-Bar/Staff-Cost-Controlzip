@@ -1,0 +1,77 @@
+We want to simplify the base-component approach for prep items like Pizza Sauce and also add duplicate prevention between delivery notes and supplier invoices.
+
+Goal:
+Keep prep recipes practical and avoid overcomplicated inventory logic.
+Also ensure that delivery notes and later invoices are not counted twice.
+
+Implement these requirements:
+
+1. Simple prep recipe logic for Pizza Sauce and similar prep components
+Prep components such as:
+- Pizza Sauce
+- later possibly Tomatensauce, Pesto, etc.
+
+should be handled as simple recipe/calculation components.
+
+Important:
+They should calculate cost automatically from their linked ingredient recipe,
+but they should NOT explode into raw inventory deduction on every sale yet.
+
+2. Cost assistant behavior
+For a prep recipe like Pizza Sauce:
+- allow linked ingredient inputs (tomatoes, oil, spices, etc.)
+- calculate total batch cost
+- calculate cost per portion / per pizza usage
+- use this cost in final product WES calculations
+
+3. Keep inventory simple
+Do NOT automatically reduce raw tomato/oil stock on every pizza sale for now.
+Purchased articles remain stored as normal products/articles.
+Prep recipe is mainly used for costing, not deep stock explosion.
+
+4. Recipe usage
+Finished products like Pizza Funghi, Margherita, etc. can use:
+- Pizza Dough
+- Pizza Sauce
+- Mozzarella
+as recipe components for cost calculation
+
+5. AI-style assistance
+Add practical assistant logic in prep recipe setup:
+- help estimate portion cost from batch ingredients
+- show total cost, unit cost, and per-portion cost clearly
+- keep workflow simple and user-friendly
+
+6. Delivery note / supplier invoice duplicate prevention
+Add matching logic so that if:
+- a delivery note is entered first
+- and the supplier invoice is entered later
+
+the system tries to detect that they belong together and does NOT count them twice.
+
+7. Matching rules
+Use signals like:
+- supplier
+- delivery date / invoice date / document date
+- reference number if available
+- similar net total
+- similar line items / quantities
+
+8. Matching outcome
+If a likely match is found:
+- link invoice to existing delivery note
+- mark status like "fakturiert"
+- avoid double counting in purchasing / WES / tracking
+
+If not certain:
+- show possible match suggestion for manual confirmation
+
+9. Keep booking logic clean
+Delivery note and invoice should be separate document types,
+but purchasing cost analysis must avoid duplicate counting once they are linked.
+
+10. Explain in simple German:
+- how Pizza Sauce now works as a simple prep recipe
+- why raw tomatoes are not automatically reduced per sale yet
+- how delivery note vs invoice matching works
+- what I should test later

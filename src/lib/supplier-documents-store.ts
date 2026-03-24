@@ -18,6 +18,7 @@ import {
   SupplierMaster,
   DocumentType,
   DocumentCategory,
+  DocumentMatchStatus,
   SupplierMonthSummary,
   CostComparisonRecord,
   SupplierCostSummary,
@@ -77,31 +78,33 @@ export function getEffectiveDate(doc: Pick<SupplierDocument, 'date' | 'deliveryD
 export function addDocument(input: {
   supplier: string;
   documentType: DocumentType;
-  date: string;           // YYYY-MM-DD  (Belegdatum, Pflicht)
-  deliveryDate?: string;  // YYYY-MM-DD  (Lieferdatum, optional)
+  date: string;             // YYYY-MM-DD  (Belegdatum, Pflicht)
+  deliveryDate?: string;    // YYYY-MM-DD  (Lieferdatum, optional)
   category: DocumentCategory;
   amount: number;
   accountNumber?: string;
   note?: string;
+  referenceNumber?: string; // Lieferschein-Nr., Rechnungs-Nr., Bestellnummer
 }): SupplierDocument {
   const all  = loadAll();
   const now  = new Date().toISOString();
   const eff  = input.deliveryDate || input.date;
   const d    = new Date(eff);
   const doc: SupplierDocument = {
-    id:            uuidv4(),
-    supplier:      input.supplier.trim(),
-    documentType:  input.documentType,
-    date:          input.date,
-    deliveryDate:  input.deliveryDate?.trim() || undefined,
-    year:          d.getFullYear(),
-    month:         d.getMonth() + 1,
-    category:      input.category,
-    amount:        input.amount,
-    accountNumber: input.accountNumber?.trim() || undefined,
-    note:          input.note?.trim() || undefined,
-    createdAt:     now,
-    updatedAt:     now,
+    id:              uuidv4(),
+    supplier:        input.supplier.trim(),
+    documentType:    input.documentType,
+    date:            input.date,
+    deliveryDate:    input.deliveryDate?.trim() || undefined,
+    year:            d.getFullYear(),
+    month:           d.getMonth() + 1,
+    category:        input.category,
+    amount:          input.amount,
+    accountNumber:   input.accountNumber?.trim() || undefined,
+    note:            input.note?.trim() || undefined,
+    referenceNumber: input.referenceNumber?.trim() || undefined,
+    createdAt:       now,
+    updatedAt:       now,
   };
   all[doc.id] = doc;
   saveAll(all);
@@ -115,7 +118,9 @@ export function addDocument(input: {
 export function updateDocument(
   id: string,
   changes: Partial<Pick<SupplierDocument,
-    'supplier' | 'documentType' | 'date' | 'deliveryDate' | 'category' | 'amount' | 'accountNumber' | 'note'
+    | 'supplier' | 'documentType' | 'date' | 'deliveryDate' | 'category'
+    | 'amount' | 'accountNumber' | 'note' | 'referenceNumber'
+    | 'linkedDocumentId' | 'matchStatus'
   >>,
 ): SupplierDocument | null {
   const all = loadAll();
@@ -133,15 +138,18 @@ export function updateDocument(
   const updated: SupplierDocument = {
     ...doc,
     ...changes,
-    deliveryDate:  newDeliveryDate,
-    year:          d.getFullYear(),
-    month:         d.getMonth() + 1,
-    accountNumber: changes.accountNumber !== undefined
-                   ? (changes.accountNumber.trim() || undefined)
-                   : doc.accountNumber,
-    note:          changes.note !== undefined
-                   ? (changes.note.trim() || undefined)
-                   : doc.note,
+    deliveryDate:    newDeliveryDate,
+    year:            d.getFullYear(),
+    month:           d.getMonth() + 1,
+    accountNumber:   changes.accountNumber !== undefined
+                     ? (changes.accountNumber.trim() || undefined)
+                     : doc.accountNumber,
+    note:            changes.note !== undefined
+                     ? (changes.note.trim() || undefined)
+                     : doc.note,
+    referenceNumber: changes.referenceNumber !== undefined
+                     ? (changes.referenceNumber.trim() || undefined)
+                     : doc.referenceNumber,
     updatedAt: now,
   };
   all[id] = updated;
@@ -199,13 +207,25 @@ export function availableYears(): number[] {
 /**
  * Monatliche Zusammenfassung aller Lieferantendokumente.
  * Berechnet operative Warenkostenschätzungen nach Kategorie.
+ *
+ * Duplikat-Prävention:
+ *   Lieferscheine mit matchStatus === 'linked' (= verknüpft mit einer Rechnung)
+ *   werden aus der Kostensumme AUSGESCHLOSSEN.
+ *   Die zugehörige Rechnung zählt stattdessen – so entsteht keine Doppelzählung.
+ *
+ * documents[] enthält ALLE Dokumente (inkl. ausgeschlossener) für die UI-Darstellung.
  */
 export function getMonthSummary(year: number, month: number): SupplierMonthSummary {
   const docs = loadDocumentsForMonth(year, month);
 
-  const foodCost     = docs.filter(d => d.category === 'food')    .reduce((s, d) => s + d.amount, 0);
-  const beverageCost = docs.filter(d => d.category === 'beverage').reduce((s, d) => s + d.amount, 0);
-  const otherCost    = docs.filter(d => d.category === 'other')   .reduce((s, d) => s + d.amount, 0);
+  // Ausschluss: Lieferscheine die bereits mit einer Rechnung verknüpft sind
+  const countable = docs.filter(d =>
+    !(d.documentType === 'delivery_note' && d.matchStatus === 'linked'),
+  );
+
+  const foodCost     = countable.filter(d => d.category === 'food')    .reduce((s, d) => s + d.amount, 0);
+  const beverageCost = countable.filter(d => d.category === 'beverage').reduce((s, d) => s + d.amount, 0);
+  const otherCost    = countable.filter(d => d.category === 'other')   .reduce((s, d) => s + d.amount, 0);
 
   return {
     year,
@@ -217,6 +237,153 @@ export function getMonthSummary(year: number, month: number): SupplierMonthSumma
     documentCount: docs.length,
     documents:     docs,
   };
+}
+
+// ─── Duplikat-Prävention: Matching-Logik ─────────────────────────────────────
+
+/**
+ * Ein möglicher Match-Kandidat für ein Dokument.
+ */
+export interface MatchCandidate {
+  /** Das potenzielle Gegenstück */
+  document: SupplierDocument;
+  /** Matching-Score 0–100 (höher = besser) */
+  score: number;
+  /** Konkrete Gründe für den Score */
+  reasons: string[];
+  /** Betragsdifferenz in CHF */
+  amountDiff: number;
+  /** Anzahl Tage zwischen den Dokumentdaten */
+  daysDiff: number;
+}
+
+/**
+ * Findet potenzielle Gegenstücke für ein Dokument (Lieferschein → Rechnung oder umgekehrt).
+ *
+ * Matching-Signale (Gewichtung):
+ *   40 Pkt  – Gleicher Lieferant (zwingend, ohne Lieferant kein Match)
+ *   30 Pkt  – Gleiches Datum oder ±1 Tag
+ *   20 Pkt  – Datum ±2–7 Tage
+ *   10 Pkt  – Datum ±8–30 Tage
+ *   25 Pkt  – Identischer Betrag (< 0.01 CHF Differenz)
+ *   15 Pkt  – Betrag ±2% Toleranz
+ *    8 Pkt  – Betrag ±5% Toleranz
+ *   10 Pkt  – Gleiche Kategorie
+ *    5 Pkt  – Gleiche Referenznummer (wenn beide gesetzt)
+ *
+ * Schwellwert: Score ≥ 50 (= gleicher Lieferant + ähnliche Summe oder Datum)
+ */
+export function findMatchCandidates(
+  doc: SupplierDocument,
+  allDocs?: SupplierDocument[],
+): MatchCandidate[] {
+  const store = allDocs ?? loadDocuments();
+
+  // Nur das Gegenstück-Typ suchen: invoice ↔ delivery_note
+  const targetType = doc.documentType === 'invoice' ? 'delivery_note' : 'invoice';
+
+  return store
+    .filter(d =>
+      d.id !== doc.id &&
+      d.documentType === targetType &&
+      d.matchStatus !== 'linked',   // bereits verknüpfte Dokumente ignorieren
+    )
+    .map(candidate => {
+      let score = 0;
+      const reasons: string[] = [];
+
+      // Lieferant (Pflichtbedingung)
+      const sameSupplier = candidate.supplier.toLowerCase() === doc.supplier.toLowerCase();
+      if (!sameSupplier) return null; // kein Match ohne gleichen Lieferanten
+      score += 40;
+      reasons.push('Gleicher Lieferant');
+
+      // Datumsnähe (Belegdatum des Kandidaten vs. effektives Datum des aktuellen Dokuments)
+      const docDate       = new Date(doc.date).getTime();
+      const candidateDate = new Date(candidate.date).getTime();
+      const daysDiff      = Math.abs(docDate - candidateDate) / 86_400_000;
+      const amountDiff    = Math.abs(candidate.amount - doc.amount);
+      const amountPct     = doc.amount > 0 ? amountDiff / doc.amount : 1;
+
+      if (daysDiff <= 1)       { score += 30; reasons.push('Datum identisch / ±1 Tag'); }
+      else if (daysDiff <= 7)  { score += 20; reasons.push(`Datum ${Math.round(daysDiff)} Tage Abstand`); }
+      else if (daysDiff <= 30) { score += 10; reasons.push(`Datum ${Math.round(daysDiff)} Tage Abstand`); }
+      else                     { score -= 10; } // zu weit auseinander
+
+      // Betragsähnlichkeit
+      if (amountDiff < 0.01)       { score += 25; reasons.push('Betrag identisch'); }
+      else if (amountPct <= 0.02)  { score += 15; reasons.push(`Betrag sehr ähnlich (±${amountDiff.toFixed(2)} CHF)`); }
+      else if (amountPct <= 0.05)  { score +=  8; reasons.push(`Betrag ähnlich (±${amountDiff.toFixed(2)} CHF)`); }
+
+      // Kategorie
+      if (candidate.category === doc.category) { score += 10; reasons.push('Gleiche Kategorie'); }
+
+      // Referenznummer (Bonus)
+      if (
+        candidate.referenceNumber && doc.referenceNumber &&
+        candidate.referenceNumber.trim().toLowerCase() === doc.referenceNumber.trim().toLowerCase()
+      ) {
+        score += 5;
+        reasons.push(`Referenz «${candidate.referenceNumber}» übereinstimmend`);
+      }
+
+      return { document: candidate, score, reasons, amountDiff, daysDiff } satisfies MatchCandidate;
+    })
+    .filter((c): c is MatchCandidate => c !== null && c.score >= 50)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5); // Top 5 Kandidaten
+}
+
+/**
+ * Verknüpft zwei Dokumente (Lieferschein + Rechnung) miteinander.
+ *
+ * Regel:
+ *   - Beide Dokumente erhalten matchStatus = 'linked' und je linkedDocumentId des anderen.
+ *   - Der Lieferschein wird aus den Monatssummen ausgeschlossen (nur Rechnung zählt).
+ */
+export function linkDocuments(idA: string, idB: string): void {
+  const all  = loadAll();
+  const docA = all[idA];
+  const docB = all[idB];
+  if (!docA || !docB) return;
+
+  const now = new Date().toISOString();
+  all[idA] = { ...docA, linkedDocumentId: idB, matchStatus: 'linked', updatedAt: now };
+  all[idB] = { ...docB, linkedDocumentId: idA, matchStatus: 'linked', updatedAt: now };
+  saveAll(all);
+}
+
+/**
+ * Hebt die Verknüpfung zwischen zwei Dokumenten wieder auf.
+ * Beide Dokumente werden auf matchStatus = undefined und linkedDocumentId = undefined gesetzt.
+ */
+export function unlinkDocuments(idA: string): void {
+  const all  = loadAll();
+  const docA = all[idA];
+  if (!docA) return;
+
+  const now = new Date().toISOString();
+  const idB = docA.linkedDocumentId;
+
+  all[idA] = { ...docA, linkedDocumentId: undefined, matchStatus: undefined, updatedAt: now };
+  if (idB && all[idB]) {
+    all[idB] = { ...all[idB], linkedDocumentId: undefined, matchStatus: undefined, updatedAt: now };
+  }
+  saveAll(all);
+}
+
+/**
+ * Markiert ein Dokument als "vorgeschlagener Match" (suggested) – noch nicht bestätigt.
+ * Kann automatisch beim Speichern einer neuen Rechnung gesetzt werden,
+ * wenn ein Kandidat gefunden wird.
+ */
+export function markSuggested(docId: string, candidateId: string): void {
+  const all = loadAll();
+  const doc = all[docId];
+  if (!doc || doc.matchStatus === 'linked') return;
+  const now = new Date().toISOString();
+  all[docId] = { ...doc, linkedDocumentId: candidateId, matchStatus: 'suggested', updatedAt: now };
+  saveAll(all);
 }
 
 // ─── Buchhaltungsvergleich ────────────────────────────────────────────────────
