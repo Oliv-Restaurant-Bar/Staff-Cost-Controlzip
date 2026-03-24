@@ -39,8 +39,10 @@ import {
   type ProductCostEntry,
   type ProductGroup,
 } from '@/lib/produkte-store';
-import GruppenAnalyse from '@/components/produkte/GruppenAnalyse';
-import RezepturDialog from '@/components/produkte/RezepturDialog';
+import GruppenAnalyse        from '@/components/produkte/GruppenAnalyse';
+import RezepturDialog        from '@/components/produkte/RezepturDialog';
+import BulkRezepturUpdate    from '@/components/produkte/BulkRezepturUpdate';
+import RezepturRealityCheck  from '@/components/produkte/RezepturRealityCheck';
 import {
   type RezepturenMap,
   type ProductRecipe,
@@ -1024,6 +1026,29 @@ export default function ProdukteSeite() {
                 </p>
               </div>
             </div>
+
+            {/* Massen-Update + Rezepturprüfung */}
+            <BulkRezepturUpdate
+              recipes={recipes}
+              onSave={newMap => {
+                setRecipes(newMap);
+                saveRezepturenToDB(newMap);
+                // WES-Werte in ProductCostEntry neu berechnen
+                const updated = costs.map(c => {
+                  const id = makeRecipeId(c.name, c.category);
+                  const r  = newMap[id];
+                  if (!r) return c;
+                  const kpis = computeRecipeCosts(r, c.nettoPrice, c.bruttoPrice);
+                  return { ...c, wes: kpis.totalCost, wesQ: kpis.wesQ };
+                });
+                setCosts(updated);
+                saveProductCostsToDB(updated);
+              }}
+            />
+            <RezepturRealityCheck
+              recipes={recipes}
+              products={data?.entries ?? []}
+            />
 
             {costs.filter(c => c.category === category).length === 0 ? (
               <div className="text-center py-12 text-sm text-muted-foreground border border-dashed rounded-lg">

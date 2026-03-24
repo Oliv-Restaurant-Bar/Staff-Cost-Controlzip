@@ -338,6 +338,23 @@ Gespeichert in `localStorage` mit Key `artikel_purchases_v1`.
 1. `loadRezepturenFromDB()` — Rezepturen mit `ingredients[].articleId`
 2. `loadProdukteData()` — Verkaufsmengen per Monat (`ProductEntry.count`, `month: 'yyyy-MM'`)
 
+## Rezeptur-Wartungs-Tools (Kalkulations-Tab, Produkte)
+
+### BulkRezepturUpdate (`src/components/produkte/BulkRezepturUpdate.tsx`)
+Massen-Update für eine einzelne Rezeptur-Zutat über mehrere Produkte:
+1. Zutat auswählen (Dropdown aller bekannten Zutaten aus allen Rezepturen)
+2. Produkte auswählen (alle oder manuell per Checkbox)
+3. Neue Menge eingeben
+4. Vorschau bestätigen → alle Rezepturen + WES-Werte werden auf einmal aktualisiert
+- Speichert via `saveRezepturenToDB` und berechnet `ProductCostEntry.wes/wesQ` neu
+
+### RezepturRealityCheck (`src/components/produkte/RezepturRealityCheck.tsx`)
+Regel-basierte Analyse: Einkauf (Artikel-Tracking) vs. theoretischer Verbrauch (Rezeptur × Verkauf) über die letzten 3 Monate.
+- **>130%** → Rezeptur wahrscheinlich zu tief angesetzt
+- **<60%**  → Rezeptur könnte zu hoch angesetzt sein
+- Erfordert `trackingAktiv`-Artikel mit erfassten Einkäufen
+- Zeigt Monatsdetails per aufklappbarer Zeile
+
 ## Deployment
 
 Konfiguriert als **Static Site** (Vite Build → `dist/`).

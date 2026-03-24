@@ -1,0 +1,68 @@
+We now want to add two advanced recipe-maintenance features:
+1. bulk recipe component updates across multiple products
+2. recipe reality-check suggestions based on consumption/purchasing differences
+
+Goal:
+Make recipe maintenance much faster and allow the system to warn when actual usage suggests that recipes are outdated or too low.
+
+Important:
+Do not break existing product, recipe, article, supplier, WES, or inventory logic.
+Keep the workflow practical and easy to use.
+
+Implement these requirements:
+
+1. Bulk recipe component update
+Allow the user to update one recipe component across multiple products at once.
+
+Example:
+- category: Pasta
+- ingredient/component: Pasta Basis
+- current amount: 100 g
+- new amount: 200 g
+
+System should:
+- find all matching products
+- show preview of affected products
+- allow confirmation before applying
+- update all selected recipes in one action
+
+2. Category-based and selection-based update
+Support:
+- update all products in one category
+- update manually selected products only
+
+3. Safe confirmation UI
+Before saving, show:
+- which products are affected
+- old amount
+- new amount
+- ingredient/component name
+
+4. Recipe reality-check logic
+Add an analysis that compares:
+- theoretical consumption from recipes/sales
+vs.
+- purchased / tracked usage
+and later actual inventory differences if available
+
+5. Warning / suggestion generation
+If the system detects significant repeated differences, show practical suggestions such as:
+- "Olivenöl-Verbrauch liegt deutlich über Rezepturannahme"
+- "Pasta Basis scheint zu tief angesetzt"
+- "Bitte Rezeptur für Kategorie Pasta prüfen"
+
+6. Keep it intelligent but simple
+Do not pretend perfect AI.
+Use clear rule-based thresholds and practical hints.
+
+7. Where to show it
+Show recipe adjustment hints in a useful place such as:
+- product/recipe maintenance area
+- WES / article analysis area
+- admin recipe tools
+
+8. Explain in simple German:
+- how bulk recipe updates work
+- how I can change one component across many products
+- how the system detects that a recipe may be outdated
+- what I should test later
