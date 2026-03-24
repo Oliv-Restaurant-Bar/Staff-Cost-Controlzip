@@ -49,15 +49,36 @@ function saveAll(store: Store): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
 }
 
+// ─── Datumslogik ──────────────────────────────────────────────────────────────
+
+/**
+ * Gibt das massgebliche Datum für Monatszuordnung, WES und Tracking zurück.
+ *
+ * Priorität:
+ *   1. deliveryDate – Lieferdatum (wenn gesetzt)
+ *   2. date         – Belegdatum (Rechnungs-/Lieferscheindatum)
+ *
+ * Warum wichtig:
+ *   Eine Rechnung kann erst Wochen nach der Lieferung eintreffen.
+ *   Beispiel: Lieferung 30. März, Rechnung 5. April.
+ *   Ohne Lieferdatum würde der WES April statt März zugeordnet.
+ *   Mit gesetztem deliveryDate wird der Beleg korrekt dem März zugeordnet.
+ */
+export function getEffectiveDate(doc: Pick<SupplierDocument, 'date' | 'deliveryDate'>): string {
+  return doc.deliveryDate || doc.date;
+}
+
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 /**
  * Neues Lieferantendokument hinzufügen.
+ * year/month werden aus getEffectiveDate(deliveryDate ?? date) abgeleitet.
  */
 export function addDocument(input: {
   supplier: string;
   documentType: DocumentType;
-  date: string;          // YYYY-MM-DD
+  date: string;           // YYYY-MM-DD  (Belegdatum, Pflicht)
+  deliveryDate?: string;  // YYYY-MM-DD  (Lieferdatum, optional)
   category: DocumentCategory;
   amount: number;
   accountNumber?: string;
@@ -65,12 +86,14 @@ export function addDocument(input: {
 }): SupplierDocument {
   const all  = loadAll();
   const now  = new Date().toISOString();
-  const d    = new Date(input.date);
+  const eff  = input.deliveryDate || input.date;
+  const d    = new Date(eff);
   const doc: SupplierDocument = {
     id:            uuidv4(),
     supplier:      input.supplier.trim(),
     documentType:  input.documentType,
     date:          input.date,
+    deliveryDate:  input.deliveryDate?.trim() || undefined,
     year:          d.getFullYear(),
     month:         d.getMonth() + 1,
     category:      input.category,
@@ -87,11 +110,12 @@ export function addDocument(input: {
 
 /**
  * Vorhandenes Dokument bearbeiten.
+ * year/month werden aus getEffectiveDate(deliveryDate ?? date) neu berechnet.
  */
 export function updateDocument(
   id: string,
   changes: Partial<Pick<SupplierDocument,
-    'supplier' | 'documentType' | 'date' | 'category' | 'amount' | 'accountNumber' | 'note'
+    'supplier' | 'documentType' | 'date' | 'deliveryDate' | 'category' | 'amount' | 'accountNumber' | 'note'
   >>,
 ): SupplierDocument | null {
   const all = loadAll();
@@ -99,12 +123,17 @@ export function updateDocument(
   if (!doc) return null;
 
   const now = new Date().toISOString();
-  const newDate = changes.date ?? doc.date;
-  const d = new Date(newDate);
+  const newDate         = changes.date         ?? doc.date;
+  const newDeliveryDate = 'deliveryDate' in changes
+    ? (changes.deliveryDate?.trim() || undefined)
+    : doc.deliveryDate;
+  const eff = newDeliveryDate || newDate;
+  const d   = new Date(eff);
 
   const updated: SupplierDocument = {
     ...doc,
     ...changes,
+    deliveryDate:  newDeliveryDate,
     year:          d.getFullYear(),
     month:         d.getMonth() + 1,
     accountNumber: changes.accountNumber !== undefined

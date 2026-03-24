@@ -99,11 +99,32 @@ export interface SupplierDocument {
   supplier: string;
   /** Dokumenttyp */
   documentType: DocumentType;
-  /** Belegdatum (ISO-String: YYYY-MM-DD) */
+  /**
+   * Belegdatum (ISO-String: YYYY-MM-DD).
+   * Pflichtfeld – Datum der Rechnung oder des Lieferscheins.
+   */
   date: string;
-  /** Kalender-Jahr (aus date extrahiert, für schnelle Abfragen) */
+  /**
+   * Lieferdatum (ISO-String: YYYY-MM-DD, optional).
+   *
+   * Fallback-Logik für alle Berechnungen (Monatszuordnung, WES, Tracking):
+   *   1. deliveryDate (wenn gesetzt) – Datum der tatsächlichen Warenlieferung
+   *   2. date           – Belegdatum (Rechnungs- oder Lieferscheindatum)
+   *
+   * Wann nötig: Bei Rechnungen, die erst Wochen nach der Lieferung eintreffen.
+   * Beispiel: Lieferung 30. März, Rechnung 5. April → deliveryDate = 30. März,
+   *           damit der WES dem richtigen Monat (März) zugeordnet wird.
+   */
+  deliveryDate?: string;
+  /**
+   * Kalender-Jahr (aus effectiveDate extrahiert, für schnelle Abfragen).
+   * effectiveDate = deliveryDate ?? date
+   */
   year: number;
-  /** Kalender-Monat 1–12 (aus date extrahiert) */
+  /**
+   * Kalender-Monat 1–12 (aus effectiveDate extrahiert).
+   * effectiveDate = deliveryDate ?? date
+   */
   month: number;
   /** Warenkategorie */
   category: DocumentCategory;

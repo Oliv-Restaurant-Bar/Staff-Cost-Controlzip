@@ -98,6 +98,7 @@ interface FormState {
   supplier: string;
   documentType: DocumentType;
   date: string;
+  deliveryDate: string;   // '' = nicht gesetzt, Fallback auf date
   category: DocumentCategory;
   amount: string;
   accountNumber: string;
@@ -108,6 +109,7 @@ const emptyForm = (): FormState => ({
   supplier:      '',
   documentType:  'delivery_note',
   date:          new Date().toISOString().split('T')[0],
+  deliveryDate:  '',
   category:      'food',
   amount:        '',
   accountNumber: '',
@@ -504,7 +506,7 @@ function DocumentDialog({
             )}
           </div>
 
-          {/* ── Typ + Datum ────────────────────────────────────────────────── */}
+          {/* ── Typ + Belegdatum ───────────────────────────────────────────── */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Dokumenttyp</Label>
@@ -517,7 +519,7 @@ function DocumentDialog({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Datum *</Label>
+              <Label>Belegdatum *</Label>
               <Input
                 type="date"
                 value={form.date}
@@ -525,6 +527,39 @@ function DocumentDialog({
               />
             </div>
           </div>
+
+          {/* ── Lieferdatum (optional) ─────────────────────────────────────── */}
+          {(form.documentType === 'delivery_note' || form.documentType === 'invoice') && (
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5">
+                Lieferdatum
+                <span className="text-[10px] text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <Input
+                type="date"
+                value={form.deliveryDate}
+                onChange={e => set('deliveryDate', e.target.value)}
+              />
+              <p className="text-[10px] text-muted-foreground leading-tight">
+                {form.deliveryDate
+                  ? <>
+                      <span className="font-medium text-emerald-700">Lieferdatum aktiv</span>
+                      {' – Dieser Beleg wird dem Monat «'}
+                      {new Date(form.deliveryDate).toLocaleDateString('de-CH', { month: 'long', year: 'numeric' })}
+                      {'» zugeordnet (nicht dem Belegdatum).'}
+                    </>
+                  : <>
+                      <span className="font-medium">Kein Lieferdatum gesetzt</span>
+                      {' – Es wird das Belegdatum verwendet ('}
+                      {form.date
+                        ? new Date(form.date).toLocaleDateString('de-CH', { month: 'long', year: 'numeric' })
+                        : '–'}
+                      {').'}
+                    </>
+                }
+              </p>
+            </div>
+          )}
 
           {/* ── Kategorie + Betrag ─────────────────────────────────────────── */}
           <div className="grid grid-cols-2 gap-3">
@@ -963,13 +998,16 @@ export default function SupplierDocumentsPage() {
       supplier:      addForm.supplier,
       documentType:  addForm.documentType,
       date:          addForm.date,
+      deliveryDate:  addForm.deliveryDate || undefined,
       category:      addForm.category,
       amount:        amt,
       accountNumber: addForm.accountNumber || undefined,
       note:          addForm.note || undefined,
     });
 
-    const d = new Date(addForm.date);
+    // Monatszuordnung anhand des effektiven Datums (Lieferdatum hat Vorrang)
+    const eff = addForm.deliveryDate || addForm.date;
+    const d = new Date(eff);
     reload(d.getFullYear(), d.getMonth() + 1);
     setShowAdd(false);
     toast.success(`Beleg von «${addForm.supplier}» wurde gespeichert`);
@@ -986,6 +1024,7 @@ export default function SupplierDocumentsPage() {
       supplier:      doc.supplier,
       documentType:  doc.documentType,
       date:          doc.date,
+      deliveryDate:  doc.deliveryDate ?? '',
       category:      doc.category,
       amount:        doc.amount.toFixed(2),
       accountNumber: doc.accountNumber ?? '',
@@ -1005,6 +1044,7 @@ export default function SupplierDocumentsPage() {
       supplier:      editForm.supplier,
       documentType:  editForm.documentType,
       date:          editForm.date,
+      deliveryDate:  editForm.deliveryDate || undefined,
       category:      editForm.category,
       amount:        amt,
       accountNumber: editForm.accountNumber || undefined,
@@ -1180,7 +1220,7 @@ export default function SupplierDocumentsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Datum</TableHead>
+                    <TableHead title="Grün = Lieferdatum (massgeblich). Grau = Belegdatum.">Datum</TableHead>
                     <TableHead>Lieferant</TableHead>
                     <TableHead>Typ</TableHead>
                     <TableHead>Kategorie</TableHead>
@@ -1194,7 +1234,18 @@ export default function SupplierDocumentsPage() {
                   {docs.map(doc => (
                     <TableRow key={doc.id}>
                       <TableCell className="text-sm font-mono">
-                        {new Date(doc.date).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' })}
+                        {doc.deliveryDate ? (
+                          <span className="flex flex-col gap-0.5">
+                            <span className="text-emerald-700 font-semibold" title={`Lieferdatum: ${doc.deliveryDate} (massgeblich)`}>
+                              {new Date(doc.deliveryDate).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' })}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground leading-none" title={`Belegdatum: ${doc.date}`}>
+                              Beleg: {new Date(doc.date).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' })}
+                            </span>
+                          </span>
+                        ) : (
+                          new Date(doc.date).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' })
+                        )}
                       </TableCell>
                       <TableCell className="text-sm font-medium">{doc.supplier}</TableCell>
                       <TableCell>
