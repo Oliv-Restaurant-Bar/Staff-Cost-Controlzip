@@ -14,7 +14,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, BarChart2, Users,
   Settings, LogOut, ChefHat, Utensils, ShieldCheck,
-  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye, DollarSign, Package, UserX, Archive, TrendingDown, Activity,
+  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye, DollarSign, Package, UserX, Archive, TrendingDown, Activity, ShoppingBag,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -149,6 +149,13 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Lunch-Analyse',
     shortLabel: 'Lunch',
     icon: Utensils,
+    adminOnly: true,
+  },
+  {
+    path: '/takeaway-analyse',
+    label: 'Take-Away-Analyse',
+    shortLabel: 'Take Away',
+    icon: ShoppingBag,
     adminOnly: true,
   },
   {

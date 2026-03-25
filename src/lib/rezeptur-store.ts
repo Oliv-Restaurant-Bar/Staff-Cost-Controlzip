@@ -52,6 +52,15 @@ export interface RecipeIngredient {
  */
 export type LunchPool = 'lunch_basic' | 'lunch_premium' | 'lunch_allgemein';
 
+/**
+ * Vertriebskanal eines Produkts.
+ * 'restaurant' → À-la-carte, Standard-Restaurantbetrieb
+ * 'lunch'      → Mittagsmenu (wird im Lunch-Pool weiter differenziert)
+ * 'takeaway'   → Take Away (eigener Kostenpool, eigene Analyse)
+ * undefined    → nicht zugeordnet / Standard (=restaurant)
+ */
+export type SalesChannel = 'restaurant' | 'lunch' | 'takeaway';
+
 export interface ProductRecipe {
   id: string;               // `${productName}|${category}` – unique key
   productName: string;
@@ -67,6 +76,13 @@ export interface ProductRecipe {
    * Soll-WES = Anzahl Portionen × manualCost (Pauschal) resp. berechnete Kosten.
    */
   lunchPool?: LunchPool;
+  /**
+   * Vertriebskanal des Produkts.
+   * 'takeaway' → Produkt erscheint in der Take-Away-Analyse.
+   * 'lunch'    → in Kombination mit lunchPool in der Lunch-Analyse.
+   * 'restaurant' / undefined → Standard-Restaurantbetrieb.
+   */
+  salesChannel?: SalesChannel;
   updatedAt: string;
 }
 

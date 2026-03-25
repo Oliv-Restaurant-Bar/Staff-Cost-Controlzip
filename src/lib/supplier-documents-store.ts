@@ -704,6 +704,22 @@ export function getSuggestedAllocation(supplier: string): CostAllocationTarget |
 }
 
 /**
+ * Gibt Belege eines Monats zurück, die dem Take-Away-Pool zugeordnet sind.
+ * Schliesst verknüpfte Lieferscheine aus (analog zu getAllocationTotals).
+ * Wird für die Kostenträger-Analyse in der TakeAway-Analyse verwendet.
+ */
+export function getTakeAwayDocumentsForMonth(year: number, month: number): SupplierDocument[] {
+  return loadDocumentsForMonth(year, month)
+    .filter(d => !(d.matchStatus === 'linked' && d.documentType === 'delivery_note'))
+    .filter(d => {
+      if (d.allocationSplits && d.allocationSplits.length > 0) {
+        return d.allocationSplits.some(s => s.target === 'takeaway');
+      }
+      return d.allocationTarget === 'takeaway';
+    });
+}
+
+/**
  * Gibt Belege eines Monats zurück, die einem Lunch-Pool zugeordnet sind.
  * Schliesst verknüpfte Lieferscheine aus (analog zu getAllocationTotals).
  * Wird für die Kostenträger-Analyse in der Lunch-Analyse verwendet.
@@ -755,6 +771,7 @@ export interface AllocationTotals {
   kinder: number;
   kueche_allgemein: number;
   beverage: number;
+  takeaway: number;
   unassigned: number;
 }
 
@@ -766,13 +783,13 @@ export function getAllocationTotals(year: number, month: number): AllocationTota
   const totals: AllocationTotals = {
     lunch_basic: 0, lunch_premium: 0, lunch_total: 0,
     a_la_carte: 0, pizza: 0, dessert: 0, kinder: 0,
-    kueche_allgemein: 0, beverage: 0, unassigned: 0,
+    kueche_allgemein: 0, beverage: 0, takeaway: 0, unassigned: 0,
   };
 
   for (const doc of docs) {
     const targets: CostAllocationTarget[] = [
       'lunch_basic', 'lunch_premium', 'a_la_carte', 'pizza',
-      'dessert', 'kinder', 'kueche_allgemein', 'beverage', 'unassigned',
+      'dessert', 'kinder', 'kueche_allgemein', 'beverage', 'takeaway', 'unassigned',
     ];
     for (const t of targets) {
       (totals as Record<string, number>)[t] += getDocumentAllocationAmount(doc, t);

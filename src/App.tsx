@@ -39,6 +39,7 @@ import AbsenzKostenPage from "./pages/AbsenzKosten";
 import ArtikelPage from "./pages/Artikel";
 import WesAnalysePage from "./pages/WesAnalyse";
 import LunchAnalysePage from "./pages/LunchAnalyse";
+import TakeAwayAnalysePage from "./pages/TakeAwayAnalyse";
 import ArtikelTrackingPage from "./pages/ArtikelTracking";
 import GuestAccess from "./pages/GuestAccess";
 
@@ -134,6 +135,7 @@ const AppContent = () => {
             <Route path="/artikel-tracking" element={<ArtikelTrackingPage />} />
             <Route path="/wes-analyse"      element={<WesAnalysePage />} />
             <Route path="/lunch-analyse"    element={<LunchAnalysePage />} />
+            <Route path="/takeaway-analyse" element={<TakeAwayAnalysePage />} />
             <Route path="/absenzen"         element={<AbsenzKostenPage />} />
 
             {/* Abteilungs-Dienstpläne */}

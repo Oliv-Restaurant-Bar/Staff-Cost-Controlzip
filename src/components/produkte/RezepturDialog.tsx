@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Plus, Trash2, ChevronRight, Package, Wine, Layers, Utensils } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Package, Wine, Layers, Utensils, ShoppingBag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/select';
 import type { ProductCostEntry } from '@/lib/produkte-store';
 import {
-  type CostMode, type ProductRecipe, type RecipeIngredient, type LunchPool,
+  type CostMode, type ProductRecipe, type RecipeIngredient, type LunchPool, type SalesChannel,
   emptyRecipe, emptyIngredient, computeRecipeCosts,
 } from '@/lib/rezeptur-store';
 import { getFibuLabel, resolveIngredientAccount, loadArtikelFromDB, type Artikel } from '@/lib/artikel-store';
@@ -295,6 +295,24 @@ export default function RezepturDialog({
     setRecipe(r => r ? { ...r, lunchPool: pool } : r);
   }
 
+  function setSalesChannel(v: string) {
+    const ch = v === '__none__' ? undefined : v as SalesChannel;
+    setRecipe(r => {
+      if (!r) return r;
+      // Wenn kein Lunch-Kanal gewählt → lunchPool löschen
+      const lunchPool = ch === 'lunch' ? r.lunchPool : undefined;
+      return { ...r, salesChannel: ch, lunchPool };
+    });
+  }
+
+  /** Effektiver Kanal: explizit gesetzt oder aus lunchPool abgeleitet */
+  function effectiveChannel(): SalesChannel | undefined {
+    if (!recipe) return undefined;
+    if (recipe.salesChannel) return recipe.salesChannel;
+    if (recipe.lunchPool) return 'lunch';
+    return undefined;
+  }
+
   function addIngredient() {
     setRecipe(r => r ? { ...r, ingredients: [...r.ingredients, emptyIngredient()] } : r);
   }
@@ -563,30 +581,80 @@ export default function RezepturDialog({
             </div>
           )}
 
-          {/* ── Lunch-Pool-Zuordnung ───────────────────────────────────── */}
-          <div className="rounded-lg border border-dashed border-orange-200 dark:border-orange-800 bg-orange-50/30 dark:bg-orange-950/10 p-3 space-y-2">
+          {/* ── Vertriebskanal + Pool-Zuordnung ───────────────────────── */}
+          <div className="rounded-lg border border-dashed border-orange-200 dark:border-orange-800 bg-orange-50/30 dark:bg-orange-950/10 p-3 space-y-3">
+            {/* Kanal-Header */}
             <div className="flex items-center gap-1.5">
-              <Utensils className="h-3.5 w-3.5 text-orange-600" />
+              <ShoppingBag className="h-3.5 w-3.5 text-orange-600" />
               <p className="text-xs font-medium text-orange-700 dark:text-orange-400 uppercase tracking-wide">
-                Lunch-Pool (für WES-Analyse)
+                Vertriebskanal &amp; Pool (für WES-Analyse)
               </p>
             </div>
-            <Select value={recipe.lunchPool ?? '__none__'} onValueChange={setLunchPool}>
-              <SelectTrigger className="h-8 text-xs">
-                <SelectValue placeholder="Kein Lunch-Produkt" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__" className="text-xs">
-                  <span className="text-muted-foreground italic">Kein Lunch-Produkt</span>
-                </SelectItem>
-                <SelectItem value="lunch_basic" className="text-xs">Lunch Basic (Tagesmenu 1)</SelectItem>
-                <SelectItem value="lunch_premium" className="text-xs">Lunch Premium (Tagesmenu 2)</SelectItem>
-                <SelectItem value="lunch_allgemein" className="text-xs">Lunch Allgemein (ohne Unterscheidung)</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-[10px] text-muted-foreground">
-              Wenn gesetzt, erscheint dieses Produkt in der Lunch-WES-Analyse als Soll-Benchmark.
-            </p>
+
+            {/* Kanal-Selector */}
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground font-medium">Vertriebskanal</p>
+              <Select value={effectiveChannel() ?? '__none__'} onValueChange={setSalesChannel}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Restaurant (Standard)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__" className="text-xs">
+                    <span className="text-muted-foreground italic">Restaurant / À la carte (Standard)</span>
+                  </SelectItem>
+                  <SelectItem value="lunch" className="text-xs">
+                    <span className="flex items-center gap-1.5">
+                      <Utensils className="h-3 w-3 text-orange-500" />
+                      Mittagsmenu / Lunch
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="takeaway" className="text-xs">
+                    <span className="flex items-center gap-1.5">
+                      <ShoppingBag className="h-3 w-3 text-teal-500" />
+                      Take Away
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">
+                Restaurant = Standard (keine Sonderanalyse). Lunch = erscheint in Lunch-WES-Analyse.
+                Take Away = erscheint in Take-Away-Analyse.
+              </p>
+            </div>
+
+            {/* Lunch-Pool-Picker – nur sichtbar wenn Kanal = Lunch */}
+            {effectiveChannel() === 'lunch' && (
+              <div className="space-y-1 pt-1 border-t border-orange-200/60 dark:border-orange-700/40">
+                <p className="text-[10px] text-muted-foreground font-medium">Lunch-Pool</p>
+                <Select value={recipe.lunchPool ?? '__none__'} onValueChange={setLunchPool}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Lunch Allgemein" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__" className="text-xs">
+                      <span className="text-muted-foreground italic">Ohne Unterscheidung (Allgemein)</span>
+                    </SelectItem>
+                    <SelectItem value="lunch_basic" className="text-xs">Lunch Basic (Tagesmenu 1)</SelectItem>
+                    <SelectItem value="lunch_premium" className="text-xs">Lunch Premium (Tagesmenu 2)</SelectItem>
+                    <SelectItem value="lunch_allgemein" className="text-xs">Lunch Allgemein</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-muted-foreground">
+                  Differenziert den Lunch-Pool für Menu 1 / Menu 2.
+                </p>
+              </div>
+            )}
+
+            {/* Take Away Hinweis */}
+            {effectiveChannel() === 'takeaway' && (
+              <div className="rounded-md bg-teal-50 dark:bg-teal-950/20 border border-teal-200 dark:border-teal-700 px-2.5 py-2 text-[10px] text-teal-700 dark:text-teal-400 flex items-start gap-1.5">
+                <ShoppingBag className="h-3 w-3 mt-0.5 shrink-0" />
+                <span>
+                  Dieses Produkt erscheint in der <strong>Take-Away-Analyse</strong> als Soll-Benchmark.
+                  Einkäufe mit Kostenzuordnung «Take Away» werden als Ist-WES gewertet.
+                </span>
+              </div>
+            )}
           </div>
 
           {/* ── KPI-Bar ────────────────────────────────────────────────── */}

@@ -39,6 +39,7 @@ export type CostAllocationTarget =
   | 'kinder'            // Kindermenu
   | 'kueche_allgemein'  // Allgemeine Küche (Mise en place, Grundstock)
   | 'beverage'          // Getränke
+  | 'takeaway'          // Take Away (eigener Kanal, getrennt von Restaurant & Lunch)
   | 'unassigned';       // Nicht zugeordnet (Standard)
 
 /** Anzeigenamen für die UI */
@@ -51,6 +52,7 @@ export const ALLOCATION_TARGET_LABELS: Record<CostAllocationTarget, string> = {
   kinder:           'Kindermenu',
   kueche_allgemein: 'Allg. Küche / Mise en place',
   beverage:         'Getränke',
+  takeaway:         'Take Away',
   unassigned:       'Nicht zugeordnet',
 };
 
@@ -58,6 +60,11 @@ export const ALLOCATION_TARGET_LABELS: Record<CostAllocationTarget, string> = {
 export const LUNCH_ALLOCATION_TARGETS: CostAllocationTarget[] = [
   'lunch_basic',
   'lunch_premium',
+];
+
+/** Take-Away Allocation-Target (für Filterung in der Take-Away-Analyse) */
+export const TAKEAWAY_ALLOCATION_TARGETS: CostAllocationTarget[] = [
+  'takeaway',
 ];
 
 /**

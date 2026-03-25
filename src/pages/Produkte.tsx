@@ -1125,6 +1125,11 @@ export default function ProdukteSeite() {
                               {recipe.lunchPool === 'lunch_basic' ? 'Menu 1' : recipe.lunchPool === 'lunch_premium' ? 'Menu 2' : 'Lunch'}
                             </span>
                           )}
+                          {recipe?.salesChannel === 'takeaway' && (
+                            <span className="shrink-0 text-[9px] font-semibold px-1 py-0.5 rounded bg-teal-100 dark:bg-teal-950/30 text-teal-700 dark:text-teal-400 border border-teal-200 dark:border-teal-800">
+                              Take Away
+                            </span>
+                          )}
                         </span>
 
                         {/* Modus */}
