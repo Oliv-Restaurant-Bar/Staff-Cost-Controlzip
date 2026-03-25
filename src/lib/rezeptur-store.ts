@@ -59,7 +59,7 @@ export type LunchPool = 'lunch_basic' | 'lunch_premium' | 'lunch_allgemein';
  * 'takeaway'   → Take Away (eigener Kostenpool, eigene Analyse)
  * undefined    → nicht zugeordnet / Standard (=restaurant)
  */
-export type SalesChannel = 'restaurant' | 'lunch' | 'takeaway';
+export type SalesChannel = 'restaurant' | 'lunch' | 'takeaway' | 'breakfast';
 
 export interface ProductRecipe {
   id: string;               // `${productName}|${category}` – unique key

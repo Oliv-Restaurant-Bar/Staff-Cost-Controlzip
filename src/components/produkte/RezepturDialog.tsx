@@ -651,11 +651,17 @@ export default function RezepturDialog({
                       Take Away
                     </span>
                   </SelectItem>
+                  <SelectItem value="breakfast" className="text-xs">
+                    <span className="flex items-center gap-1.5">
+                      <Utensils className="h-3 w-3 text-amber-500" />
+                      Frühstück / Breakfast
+                    </span>
+                  </SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-[10px] text-muted-foreground">
-                Restaurant = Standard (keine Sonderanalyse). Lunch = erscheint in Lunch-WES-Analyse.
-                Take Away = erscheint in Take-Away-Analyse.
+                Restaurant = Standard. Lunch = Lunch-WES-Analyse. Take Away = Take-Away-Analyse.
+                Frühstück = separater Kanal (eigene Analyse geplant).
               </p>
             </div>
 

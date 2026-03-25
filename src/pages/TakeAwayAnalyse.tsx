@@ -1,16 +1,18 @@
 /**
- * Take-Away-WES-Analyse
- * ======================
+ * Take-Away-WES-Analyse (erweitert)
+ * ===================================
  * Vergleicht geplante vs. tatsächliche Warenkosten für den Take-Away-Kanal.
  *
- * Soll-WES  = Verkaufte Portionen × Plankosten pro Portion (aus Produktkalkulation)
- * Ist-WES   = Summe der Lieferantenbelege mit Kostenzuordnung «Take Away»
+ * Soll-WES  = Verkaufte Portionen × Plankosten (aus Produktkalkulation)
+ * Ist-WES   = Summe aller Belege mit Kostenzuordnung «Take Away», «TA-Speisen» oder «TA-Getränke»
  *
- * Produkte werden über den Vertriebskanal «Take Away» in der Rezeptur zugeordnet.
- * Einkäufe werden über die Kostenzuordnung «Take Away» im Lieferantenbeleg erfasst.
+ * Kostenpools:
+ *   takeaway          → allgemein / gemischt (Legacy)
+ *   takeaway_food     → nur Speisen / Food
+ *   takeaway_beverages→ nur Getränke / Beverages
  *
- * WICHTIG: Take Away ist vom Restaurant- und Lunch-Betrieb strikt getrennt.
- * Keine Überschneidungen mit Lunch oder À la carte.
+ * Produkte: Vertriebskanal «Take Away» in der Rezeptur.
+ * Farb-Ampel: grün ≤28%, amber 28–35%, rot >35% (WES-Systemschwellen).
  */
 
 import { useState, useEffect, useMemo } from 'react';
@@ -26,7 +28,7 @@ import {
 import {
   ShoppingBag, TrendingUp, TrendingDown, AlertTriangle, Info,
   ChevronRight, Package, Tag, HelpCircle, BookOpen,
-  BarChart2, ArrowRight, Sparkles, ShieldCheck,
+  BarChart2, ArrowRight, Sparkles, ShieldCheck, Utensils, Coffee,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -46,10 +48,14 @@ import {
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
-/** WES%-Warnschwelle für Take Away. Über 30% → Marge zu tief. */
-const TAKEAWAY_WES_WARN_THRESHOLD = 30;
+/** WES%-Ampelschwellen (systemweit einheitlich) */
+const WES_GREEN  = 28;
+const WES_RED    = 35;
 
-/** Amber-Markierung für Warengruppen über diesem Anteil */
+/** Ist > Soll-Alarm-Schwelle (10%) */
+const IST_SOLL_ALARM_PCT = 10;
+
+/** Amber-Markierung Warengruppen */
 const HIGH_COST_THRESHOLD = 15;
 
 const FIBU_WARENGRUPPEN: Record<string, string> = {
@@ -61,7 +67,7 @@ const FIBU_WARENGRUPPEN: Record<string, string> = {
   '4061': 'Rest Food',
   '4070': 'Kaffee & Tee',
   '4090': 'Diverses',
-  '4701': 'Betriebsmaterial',
+  '4701': 'Betriebsmaterial / Verpackung',
 };
 
 const CATEGORY_LABELS_LOCAL: Record<string, string> = {
@@ -81,10 +87,12 @@ interface TakeAwayProductRow {
   productName: string;
   count: number;
   revenue: number;
-  wes: number;       // Plankosten pro Portion (aus Rezeptur/Kalkulation)
-  sollWes: number;   // count × wes
+  wes: number;         // Plankosten pro Portion (CHF)
+  sollWes: number;     // count × wes
+  actualShare: number; // proportionaler Ist-WES-Anteil (CHF)
   nettoPrice: number;
-  wesQ: number;      // wes / nettoPrice × 100
+  wesQ: number;        // wes / nettoPrice × 100 (Soll-WES%)
+  wesStatus: 'green' | 'amber' | 'red' | 'unknown';
 }
 
 interface TrendMonth {
@@ -122,6 +130,19 @@ function pct(n: number): string {
   return `${n.toFixed(1)} %`;
 }
 
+function wesStatus(q: number): 'green' | 'amber' | 'red' {
+  if (q <= WES_GREEN) return 'green';
+  if (q <= WES_RED)   return 'amber';
+  return 'red';
+}
+
+function wesStatusColor(s: 'green' | 'amber' | 'red' | 'unknown'): string {
+  if (s === 'green') return 'text-emerald-600 dark:text-emerald-400';
+  if (s === 'amber') return 'text-amber-600 dark:text-amber-400';
+  if (s === 'red')   return 'text-red-600 dark:text-red-400';
+  return 'text-muted-foreground';
+}
+
 function getDiffLabel(diff: number): string {
   if (diff > 0) return `+ CHF ${chf(diff)} über Plan`;
   if (diff < 0) return `− CHF ${chf(Math.abs(diff))} unter Plan`;
@@ -140,24 +161,38 @@ function prevMonths(year: number, month: number, n: number): { year: number; mon
   return result;
 }
 
+/** Summe über alle TA-Pools für ein Dokument */
+function getTaAmount(doc: SupplierDocument): number {
+  return (
+    getDocumentAllocationAmount(doc, 'takeaway') +
+    getDocumentAllocationAmount(doc, 'takeaway_food') +
+    getDocumentAllocationAmount(doc, 'takeaway_beverages')
+  );
+}
+
 // ─── Kleine Komponenten ───────────────────────────────────────────────────────
 
 function KpiCard({
-  label, value, sub, accent = false, warning = false, teal = false,
-}: { label: string; value: string; sub?: string; accent?: boolean; warning?: boolean; teal?: boolean }) {
+  label, value, sub, accent = false, warning = false, teal = false, green = false,
+}: {
+  label: string; value: string; sub?: string;
+  accent?: boolean; warning?: boolean; teal?: boolean; green?: boolean;
+}) {
   return (
     <div className={cn(
       'rounded-xl border p-4 space-y-1',
-      warning ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30'
+      warning ? 'border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-950/20'
       : teal   ? 'border-teal-300 bg-teal-50 dark:border-teal-700 dark:bg-teal-950/30'
+      : green  ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950/20'
       : accent ? 'border-violet-300 bg-violet-50 dark:border-violet-700 dark:bg-violet-950/30'
       : 'border-border bg-card',
     )}>
       <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{label}</p>
       <p className={cn(
         'text-2xl font-bold tracking-tight',
-        warning ? 'text-amber-700 dark:text-amber-400'
+        warning ? 'text-red-700 dark:text-red-400'
         : teal   ? 'text-teal-700 dark:text-teal-400'
+        : green  ? 'text-emerald-700 dark:text-emerald-400'
         : accent ? 'text-violet-700 dark:text-violet-400'
         : '',
       )}>
@@ -165,6 +200,18 @@ function KpiCard({
       </p>
       {sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}
     </div>
+  );
+}
+
+function WesAmpelDot({ status }: { status: 'green' | 'amber' | 'red' | 'unknown' }) {
+  return (
+    <span className={cn(
+      'inline-block w-2 h-2 rounded-full flex-shrink-0',
+      status === 'green' ? 'bg-emerald-500'
+      : status === 'amber' ? 'bg-amber-400'
+      : status === 'red'   ? 'bg-red-500'
+      : 'bg-muted-foreground/40',
+    )} />
   );
 }
 
@@ -187,104 +234,84 @@ function HelpSection() {
         <div className="px-4 pb-4 border-t border-dashed border-muted-foreground/20">
           <div className="pt-4 grid gap-4 md:grid-cols-2">
 
-            {/* Grundprinzip */}
             <div className="space-y-1.5">
               <h4 className="font-semibold text-sm flex items-center gap-1.5">
                 <ShoppingBag className="h-3.5 w-3.5 text-teal-600" />
-                1. Produkte als Take-Away-Produkt markieren
+                1. Produkte als Take-Away markieren
               </h4>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Gehe zu <strong>Produkte → Kalkulation</strong> und öffne z.B. «Sandwich To Go» oder «Salat Box».
-                Im Bereich <em>Vertriebskanal</em> wähle <strong>«Take Away»</strong> → das Produkt erscheint
-                in dieser Analyse als Soll-Benchmark.
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                <strong>Soll-WES</strong> = Verkaufte Portionen × Plankosten (aus Kalkulation).
-                Je mehr Einheiten verkauft wurden, desto höher der erlaubte Einkauf.
+                Unter <strong>Produkte → Kalkulation</strong> im Bereich <em>Vertriebskanal</em>
+                {' '}<strong>«Take Away»</strong> wählen. Das Produkt erscheint dann hier als Soll-Benchmark.
+                <strong> Soll-WES</strong> = verkaufte Portionen × Plankosten.
               </p>
             </div>
 
-            {/* Einkäufe zuordnen */}
             <div className="space-y-1.5">
               <h4 className="font-semibold text-sm flex items-center gap-1.5">
                 <Tag className="h-3.5 w-3.5 text-violet-600" />
-                2. Einkäufe dem Take-Away zuordnen
+                2. Kostenpools – drei Pools für Take Away
               </h4>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Bei jedem Lieferantenbeleg (Lieferschein oder Rechnung) gibt es das Feld
-                <em> Kostenzuordnung</em>. Wähle <strong>«Take Away»</strong> für Verpackungen,
-                Zutaten und Rohwaren, die ausschliesslich für den Take-Away-Betrieb eingekauft werden.
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Für gemischte Lieferungen (z.B. Fleisch für Restaurant <em>und</em> Take Away):
-                klicke «% Aufteilung» und verteile den Betrag prozentual.
+                Bei Lieferantenbelegen stehen drei Take-Away-Pools zur Verfügung:
+                <br />
+                <strong>«Take Away – Speisen»</strong> = Food-Zutaten, Verpackung.
+                <br />
+                <strong>«Take Away – Getränke»</strong> = Getränke zum Mitnehmen.
+                <br />
+                <strong>«Take Away (allgemein)»</strong> = Legacy / gemischte Belege.
+                <br />
+                Alle drei fliessen in den Ist-WES dieser Analyse ein.
               </p>
             </div>
 
-            {/* Take Away vs. Lunch */}
             <div className="space-y-1.5">
               <h4 className="font-semibold text-sm flex items-center gap-1.5">
                 <ArrowRight className="h-3.5 w-3.5 text-teal-600" />
                 3. Take Away vs. Lunch – was ist der Unterschied?
               </h4>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                <strong>Lunch</strong> sind Mittagsmenus, die im Restaurant konsumiert werden (Menu 1, Menu 2).
-                Der Gast sitzt am Tisch, der Deckungsbeitrag beinhaltet Servierpersonal und Infrastruktur.
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                <strong>Take Away</strong> sind Produkte zum Mitnehmen: Sandwiches, Salate, Boxen, Kaffee-to-go.
-                Niedrigere Personalkosten, aber oft höhere Verpackungskosten.
-                Die Analysen sind daher strikt getrennt – kein Durchmischen.
+                <strong>Lunch</strong> = Mittagsmenus, die im Restaurant konsumiert werden.
+                <br />
+                <strong>Take Away</strong> = Produkte zum Mitnehmen: Sandwiches, Salate, Boxen, Coffee-to-go.
+                Niedrigere Personalkosten, aber oft höhere Verpackungskosten. Analysen strikt getrennt.
               </p>
             </div>
 
-            {/* WES-Zielwerte Take Away */}
             <div className="space-y-1.5">
               <h4 className="font-semibold text-sm flex items-center gap-1.5">
                 <BarChart2 className="h-3.5 w-3.5 text-teal-600" />
-                4. Gute WES-Werte für Take Away
+                4. WES-Ampel – Zielwerte
               </h4>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                <strong>Ziel-WES für Take Away: 25–30%</strong> des Umsatzes.
-                Da weniger Personalaufwand entsteht, können die Warenkosten etwas höher liegen als
-                im Restaurant (WES-Ziel dort typisch 28–35%).
-                Über <strong>30%</strong> → Warnung: Marge zu tief, Preise oder Einkauf prüfen.
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Typische Hebel: Verpackungskosten reduzieren (Grossbestellung),
-                Rezeptur optimieren (günstigere Zutaten ohne Qualitätsverlust),
-                Verkaufspreis leicht erhöhen (Take Away-Kunden sind weniger preissensibel als erwartet).
+                <span className="text-emerald-600 font-semibold">● Grün ≤ {WES_GREEN}%</span>
+                {' '}– Marge gut.{'  '}
+                <span className="text-amber-600 font-semibold">● Amber {WES_GREEN}–{WES_RED}%</span>
+                {' '}– prüfen.{'  '}
+                <span className="text-red-600 font-semibold">● Rot &gt; {WES_RED}%</span>
+                {' '}– Handlungsbedarf: Preis, Rezeptur oder Einkauf überprüfen.
               </p>
             </div>
 
-            {/* Kostenanalyse Lieferant vs. Warengruppe */}
             <div className="space-y-1.5">
               <h4 className="font-semibold text-sm flex items-center gap-1.5">
                 <BarChart2 className="h-3.5 w-3.5 text-blue-600" />
-                5. Kostenanalyse: Lieferant vs. Warengruppe
+                5. Ist &gt; Soll-Alarm
               </h4>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                <strong>Lieferanten-Ansicht:</strong> Zeigt, <em>wer</em> die Ware liefert.
-                Gut für Preisvergleiche und Lieferantenkonditionen.
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                <strong>Warengruppen-Ansicht:</strong> Zeigt, <em>was</em> eingekauft wird
-                (z.B. Küche/Food = 4060, Verpackungsmaterial = 4701).
-                Einträge über {HIGH_COST_THRESHOLD}% sind amber markiert.
-                Tipp: Verpackungsmaterial (4701) ist bei Take Away oft ein wichtiger Kostentreiber.
+                Wenn der tatsächliche Einkauf (Ist-WES) den geplanten Bedarf (Soll-WES) um mehr als
+                {' '}{IST_SOLL_ALARM_PCT}% übersteigt, erscheint ein roter Alarm.
+                Mögliche Ursachen: Überbestellung, Schwund, falsche Kostenzuordnung, nicht erfasste Portionen.
               </p>
             </div>
 
-            {/* Automatische Vorschläge */}
             <div className="space-y-1.5">
               <h4 className="font-semibold text-sm flex items-center gap-1.5">
                 <Sparkles className="h-3.5 w-3.5 text-violet-500" />
                 6. Automatische Zuordnungs-Vorschläge
               </h4>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Das System merkt sich, welchem Pool du einen Lieferanten am häufigsten zugeordnet hast.
-                Nach mindestens 2 gleichen Zuordnungen wird die Kostenzuordnung bei neuen Belegen
-                desselben Lieferanten automatisch vorbelegt.
+                Das System merkt sich, welchem Pool ein Lieferant am häufigsten zugeordnet wurde.
+                Ab 2 gleichen Zuordnungen wird der Pool bei neuen Belegen automatisch vorgeschlagen.
               </p>
             </div>
 
@@ -299,24 +326,21 @@ function HelpSection() {
 
 export default function TakeAwayAnalysePage() {
   const { isAdmin } = usePermissions();
+  void isAdmin;
 
-  // ── Datumswahl ──
-  const now        = new Date();
-  const thisYear   = now.getFullYear();
-  const thisMonth  = now.getMonth() + 1;
-  const years      = availableYears();
+  const now       = new Date();
+  const thisYear  = now.getFullYear();
+  const thisMonth = now.getMonth() + 1;
+  const years     = availableYears();
 
   const [year,  setYear]  = useState(thisYear);
   const [month, setMonth] = useState(thisMonth);
-
-  // ── Gruppierung Warengruppen-Ansicht ──
   const [productGroupMode, setProductGroupMode] = useState<'account' | 'category'>('account');
 
-  // ── Daten ──
-  const [rezepturen,    setRezepturen]    = useState<RezepturenMap>({});
-  const [produkteData,  setProdukteData]  = useState<ProdukteData>({});
-  const [productCosts,  setProductCosts]  = useState<ProductCostEntry[]>([]);
-  const [loading,       setLoading]       = useState(true);
+  const [rezepturen,   setRezepturen]   = useState<RezepturenMap>({});
+  const [produkteData, setProdukteData] = useState<ProdukteData>({});
+  const [productCosts, setProductCosts] = useState<ProductCostEntry[]>([]);
+  const [loading,      setLoading]      = useState(true);
 
   useEffect(() => {
     setLoading(true);
@@ -332,24 +356,26 @@ export default function TakeAwayAnalysePage() {
     });
   }, []);
 
-  // ── Take-Away-Produkte filtern ──
-  const takeAwayRecipes = useMemo(() => {
-    return Object.values(rezepturen).filter(r => r.salesChannel === 'takeaway');
-  }, [rezepturen]);
-
+  // ── Take-Away-Produkte ──
+  const takeAwayRecipes = useMemo(() =>
+    Object.values(rezepturen).filter(r => r.salesChannel === 'takeaway'),
+    [rezepturen],
+  );
   const hasTakeAwayProducts = takeAwayRecipes.length > 0;
 
-  // ── Allokations-Totals (Ist-WES) ──
+  // ── Allokations-Totals ──
   const allocationTotals = useMemo(() => getAllocationTotals(year, month), [year, month]);
-  const istWesTotal = allocationTotals.takeaway;
+  const istWesTotal      = allocationTotals.takeaway_total;
+  const istWesFood       = allocationTotals.takeaway_food;
+  const istWesBeverages  = allocationTotals.takeaway_beverages;
+  const istWesGeneral    = allocationTotals.takeaway;
 
-  // ── Produkt-Rows für den gewählten Monat ──
+  // ── Produkt-Rows ──
   const productRows = useMemo((): TakeAwayProductRow[] => {
     const monthStr  = String(month).padStart(2, '0');
     const yearMonth = `${year}-${monthStr}`;
 
     return takeAwayRecipes.map(recipe => {
-      // Produktdaten aus produksteData
       const prodEntry: ProductEntry | undefined = produkteData[recipe.productName];
       const costEntry = productCosts.find(
         c => c.productName === recipe.productName && c.yearMonth === yearMonth,
@@ -358,44 +384,50 @@ export default function TakeAwayAnalysePage() {
       const count    = costEntry?.portionsSold ?? 0;
       const revenue  = costEntry?.revenue      ?? 0;
 
-      // Plankosten pro Portion aus Rezeptur
       const wes = recipe.costMode === 'pauschal'
         ? recipe.manualCost
         : recipe.costMode === 'gemischt'
           ? recipe.ingredients.reduce((s, i) => s + i.quantity * i.costPerUnit, 0) + recipe.manualCost
           : recipe.ingredients.reduce((s, i) => s + i.quantity * i.costPerUnit, 0);
 
-      const sollWes   = count * wes;
+      const sollWes    = count * wes;
       const nettoPrice = prodEntry?.nettoPrice ?? 0;
-      const wesQ      = nettoPrice > 0 ? (wes / nettoPrice) * 100 : 0;
+      const wesQ       = nettoPrice > 0 ? (wes / nettoPrice) * 100 : 0;
+      const status     = nettoPrice > 0 ? wesStatus(wesQ) : 'unknown';
 
-      return {
-        productName: recipe.productName,
-        count,
-        revenue,
-        wes,
-        sollWes,
-        nettoPrice,
-        wesQ,
-      };
+      return { productName: recipe.productName, count, revenue, wes, sollWes, actualShare: 0, nettoPrice, wesQ, wesStatus: status };
     });
   }, [takeAwayRecipes, produkteData, productCosts, year, month]);
 
-  // ── Summen ──
+  // ── Summen + Ist-Anteil pro Produkt ──
   const totalRevenue = useMemo(() => productRows.reduce((s, r) => s + r.revenue, 0), [productRows]);
-  const totalCount   = useMemo(() => productRows.reduce((s, r) => s + r.count, 0),   [productRows]);
+  const totalCount   = useMemo(() => productRows.reduce((s, r) => s + r.count,   0), [productRows]);
   const sollWesTotal = useMemo(() => productRows.reduce((s, r) => s + r.sollWes, 0), [productRows]);
 
-  const diff      = istWesTotal - sollWesTotal;
-  const wesPct    = totalRevenue > 0 ? (istWesTotal / totalRevenue) * 100 : 0;
-  const isOverWarn = wesPct > TAKEAWAY_WES_WARN_THRESHOLD && istWesTotal > 0;
+  // Proportionaler Ist-WES-Anteil je Produkt (basierend auf Soll-WES-Gewicht)
+  const productRowsWithActual = useMemo((): TakeAwayProductRow[] => {
+    return productRows.map(r => ({
+      ...r,
+      actualShare: sollWesTotal > 0 ? (r.sollWes / sollWesTotal) * istWesTotal : 0,
+    }));
+  }, [productRows, sollWesTotal, istWesTotal]);
+
+  const diff       = istWesTotal - sollWesTotal;
+  const wesPct     = totalRevenue > 0 ? (istWesTotal / totalRevenue) * 100 : 0;
+  const isOverWarn = wesPct > WES_RED && istWesTotal > 0;
+
+  // Ist > Soll Alarm (10%)
+  const isIstOverSoll = useMemo(() => {
+    if (sollWesTotal <= 0 || istWesTotal <= 0) return false;
+    return ((istWesTotal - sollWesTotal) / sollWesTotal) * 100 > IST_SOLL_ALARM_PCT;
+  }, [istWesTotal, sollWesTotal]);
 
   // ── 3-Monats-Trend ──
   const trend = useMemo((): TrendMonth[] => {
     const months3 = prevMonths(year, month, 3);
     return months3.map(({ year: y, month: m }) => {
       const ta  = getAllocationTotals(y, m);
-      const ist = ta.takeaway;
+      const ist = ta.takeaway_total;
 
       const monthStr  = String(m).padStart(2, '0');
       const yearMonth = `${y}-${monthStr}`;
@@ -422,7 +454,7 @@ export default function TakeAwayAnalysePage() {
   const costDriverRows = useMemo((): CostDriverRow[] => {
     const bySupplier: Record<string, { amount: number; count: number }> = {};
     for (const doc of taDocs) {
-      const amt = getDocumentAllocationAmount(doc, 'takeaway');
+      const amt = getTaAmount(doc);
       if (amt <= 0) continue;
       const s = doc.supplierName || 'Unbekannt';
       if (!bySupplier[s]) bySupplier[s] = { amount: 0, count: 0 };
@@ -445,7 +477,7 @@ export default function TakeAwayAnalysePage() {
     const byKey: Record<string, { label: string; amount: number; count: number }> = {};
 
     for (const doc of taDocs) {
-      const amt = getDocumentAllocationAmount(doc, 'takeaway');
+      const amt = getTaAmount(doc);
       if (amt <= 0) continue;
 
       let key: string;
@@ -485,7 +517,7 @@ export default function TakeAwayAnalysePage() {
     return unassignedTotal / (istWesTotal + unassignedTotal) > 0.2;
   }, [hasTakeAwayProducts, istWesTotal, allocationTotals]);
 
-  // ── Guards ──
+  // ── Guard ──
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -511,11 +543,10 @@ export default function TakeAwayAnalysePage() {
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             Warenkosten-Vergleich (Soll / Ist) für den Take-Away-Kanal.
-            Strikt getrennt von Restaurant und Lunch.
+            Drei Kostenpools: Speisen, Getränke, Allgemein.
           </p>
         </div>
 
-        {/* Monat/Jahr-Picker */}
         <div className="flex items-center gap-2 shrink-0">
           <Select value={String(month)} onValueChange={v => setMonth(Number(v))}>
             <SelectTrigger className="w-[130px] h-8 text-xs">
@@ -543,14 +574,27 @@ export default function TakeAwayAnalysePage() {
       {/* Hilfe */}
       <HelpSection />
 
-      {/* WES-Warnung > 30% */}
+      {/* Ist > Soll Alarm */}
+      {isIstOverSoll && (
+        <Alert className="border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-950/20">
+          <AlertTriangle className="h-4 w-4 text-red-600" />
+          <AlertDescription className="text-red-700 dark:text-red-400 font-medium">
+            Take Away Einkauf zu hoch im Vergleich zur Kalkulation
+            <span className="ml-2 text-sm font-normal opacity-80">
+              (Ist-WES überschreitet Soll-WES um mehr als {IST_SOLL_ALARM_PCT}%)
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* WES > 35% Alarm */}
       {isOverWarn && (
         <Alert className="border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-950/20">
           <AlertTriangle className="h-4 w-4 text-red-600" />
           <AlertDescription className="text-red-700 dark:text-red-400 font-medium">
-            Take Away Marge zu tief – Preise oder Einkauf prüfen
+            WES-Quote kritisch – Marge zu tief
             <span className="ml-2 text-sm font-normal opacity-80">
-              (WES {pct(wesPct)} &gt; {TAKEAWAY_WES_WARN_THRESHOLD}% Schwelle)
+              (WES {pct(wesPct)} &gt; {WES_RED}% Rot-Schwelle)
             </span>
           </AlertDescription>
         </Alert>
@@ -571,45 +615,119 @@ export default function TakeAwayAnalysePage() {
       {hasTakeAwayProducts && (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <KpiCard
-            label="Umsatz (netto)"
+            label="Umsatz Take Away (netto)"
             value={totalRevenue > 0 ? `CHF ${chf(totalRevenue)}` : '–'}
-            sub="Take Away Produkte"
+            sub={`${takeAwayRecipes.length} Produkte · ${totalCount > 0 ? totalCount.toLocaleString('de-CH') : '–'} Einheiten`}
             teal
-          />
-          <KpiCard
-            label="Verkaufte Einheiten"
-            value={totalCount > 0 ? totalCount.toLocaleString('de-CH') : '–'}
-            sub={`${takeAwayRecipes.length} Produkte konfiguriert`}
           />
           <KpiCard
             label="Soll-WES (Plan)"
             value={sollWesTotal > 0 ? `CHF ${chf(sollWesTotal)}` : '–'}
-            sub="Portionen × Plankosten"
+            sub="Portionen × Plankosten (aus Kalkulation)"
           />
           <KpiCard
             label="Ist-WES (Einkauf)"
             value={istWesTotal > 0 ? `CHF ${chf(istWesTotal)}` : '–'}
-            sub="Belege Take-Away-Pool"
-            warning={isOverWarn}
+            sub="Alle TA-Kostenpools (Speisen + Getränke + Allg.)"
+            warning={isOverWarn || isIstOverSoll}
           />
           <KpiCard
             label="WES %"
             value={wesPct > 0 ? pct(wesPct) : '–'}
-            sub={`Ziel: < ${TAKEAWAY_WES_WARN_THRESHOLD}%`}
+            sub={`Ziel: ≤ ${WES_GREEN}%  |  Alarm: > ${WES_RED}%`}
             warning={isOverWarn}
-            accent={!isOverWarn && wesPct > 0}
+            green={!isOverWarn && wesPct > 0 && wesPct <= WES_GREEN}
+            accent={!isOverWarn && wesPct > WES_GREEN && wesPct <= WES_RED}
           />
           <KpiCard
             label="Differenz (Ist − Soll)"
             value={istWesTotal > 0 || sollWesTotal > 0 ? getDiffLabel(diff) : '–'}
-            sub={diff > 0 ? 'Über Plan' : diff < 0 ? 'Unter Plan' : ''}
-            warning={diff > 0 && Math.abs(diff) > 50}
+            sub={isIstOverSoll ? `+${(((istWesTotal - sollWesTotal) / sollWesTotal) * 100).toFixed(1)}% über Plan` : diff > 0 ? 'Über Plan' : diff < 0 ? 'Unter Plan' : ''}
+            warning={isIstOverSoll}
+          />
+          <KpiCard
+            label="Ist-WES Speisen"
+            value={istWesFood + istWesGeneral > 0 ? `CHF ${chf(istWesFood + istWesGeneral)}` : '–'}
+            sub={istWesBeverages > 0 ? `Getränke: CHF ${chf(istWesBeverages)}` : 'Getränke: –'}
           />
         </div>
       )}
 
-      {/* Produktliste */}
-      {hasTakeAwayProducts && productRows.length > 0 && (
+      {/* Pool-Split – Speisen vs. Getränke */}
+      {hasTakeAwayProducts && (istWesFood > 0 || istWesBeverages > 0 || istWesGeneral > 0) && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <BarChart2 className="h-4 w-4 text-muted-foreground" />
+              Kostenpool-Aufteilung — {MONTHS[month - 1]} {year}
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Aufschlüsselung des Ist-WES nach den drei Take-Away-Kostenpools.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Food */}
+              <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Utensils className="h-3.5 w-3.5 text-teal-600" />
+                  <p className="text-xs font-semibold">Speisen (TA-Food)</p>
+                </div>
+                <p className="text-lg font-bold font-mono">
+                  {istWesFood > 0 ? `CHF ${chf(istWesFood)}` : '–'}
+                </p>
+                {istWesTotal > 0 && (
+                  <p className="text-[10px] text-muted-foreground">
+                    {pct((istWesFood / istWesTotal) * 100)} des Ist-WES
+                  </p>
+                )}
+              </div>
+              {/* Beverages */}
+              <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Coffee className="h-3.5 w-3.5 text-teal-600" />
+                  <p className="text-xs font-semibold">Getränke (TA-Beverages)</p>
+                </div>
+                <p className="text-lg font-bold font-mono">
+                  {istWesBeverages > 0 ? `CHF ${chf(istWesBeverages)}` : '–'}
+                </p>
+                {istWesTotal > 0 && (
+                  <p className="text-[10px] text-muted-foreground">
+                    {pct((istWesBeverages / istWesTotal) * 100)} des Ist-WES
+                  </p>
+                )}
+              </div>
+              {/* General */}
+              <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <ShoppingBag className="h-3.5 w-3.5 text-muted-foreground" />
+                  <p className="text-xs font-semibold">Allgemein / Legacy</p>
+                </div>
+                <p className="text-lg font-bold font-mono">
+                  {istWesGeneral > 0 ? `CHF ${chf(istWesGeneral)}` : '–'}
+                </p>
+                {istWesTotal > 0 && (
+                  <p className="text-[10px] text-muted-foreground">
+                    {pct((istWesGeneral / istWesTotal) * 100)} des Ist-WES
+                  </p>
+                )}
+              </div>
+            </div>
+            {istWesGeneral > 0 && (
+              <div className="mt-3 rounded-md border border-dashed border-amber-200 dark:border-amber-800 bg-amber-50/30 dark:bg-amber-950/10 px-3 py-2 text-xs text-muted-foreground flex items-start gap-2">
+                <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-600" />
+                <span>
+                  <strong>Tipp:</strong> Der Pool «Allgemein» enthält ältere oder gemischte Belege.
+                  Für bessere Auswertung bitte neue Belege auf «TA-Speisen» oder «TA-Getränke» aufteilen.
+                </span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Produktliste mit Ist-Anteil + Ampel */}
+      {hasTakeAwayProducts && productRowsWithActual.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -617,7 +735,10 @@ export default function TakeAwayAnalysePage() {
               Take-Away-Produkte — {MONTHS[month - 1]} {year}
             </CardTitle>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Alle Produkte mit Vertriebskanal «Take Away» und deren geplante Warenkosten.
+              Ampel nach Soll-WES%: <span className="text-emerald-600 font-medium">grün ≤{WES_GREEN}%</span>,
+              {' '}<span className="text-amber-600 font-medium">amber {WES_GREEN}–{WES_RED}%</span>,
+              {' '}<span className="text-red-600 font-medium">rot &gt;{WES_RED}%</span>.
+              Ist-Anteil CHF = proportionale Zuteilung des Ist-WES anhand des Soll-WES-Anteils.
             </p>
           </CardHeader>
           <CardContent>
@@ -627,15 +748,30 @@ export default function TakeAwayAnalysePage() {
                   <TableHead className="text-xs">Produkt</TableHead>
                   <TableHead className="text-xs text-right">Einheiten</TableHead>
                   <TableHead className="text-xs text-right">Umsatz CHF</TableHead>
-                  <TableHead className="text-xs text-right">Plan CHF/Stk.</TableHead>
+                  <TableHead className="text-xs text-right">Plankosten CHF/Stk.</TableHead>
                   <TableHead className="text-xs text-right">Soll-WES CHF</TableHead>
+                  <TableHead className="text-xs text-right">Ist-Anteil CHF</TableHead>
                   <TableHead className="text-xs text-right">WES %</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {productRows.map(r => (
-                  <TableRow key={r.productName}>
-                    <TableCell className="text-sm font-medium">{r.productName}</TableCell>
+                {productRowsWithActual
+                  .sort((a, b) => b.wesQ - a.wesQ)
+                  .map(r => (
+                  <TableRow
+                    key={r.productName}
+                    className={
+                      r.wesStatus === 'red'   ? 'bg-red-50/30 dark:bg-red-950/10'
+                      : r.wesStatus === 'amber' ? 'bg-amber-50/20 dark:bg-amber-950/5'
+                      : ''
+                    }
+                  >
+                    <TableCell className="text-sm font-medium">
+                      <div className="flex items-center gap-1.5">
+                        <WesAmpelDot status={r.wesStatus} />
+                        {r.productName}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-right font-mono text-sm text-muted-foreground">
                       {r.count > 0 ? r.count : '–'}
                     </TableCell>
@@ -648,9 +784,12 @@ export default function TakeAwayAnalysePage() {
                     <TableCell className="text-right font-mono text-sm font-semibold">
                       {r.sollWes > 0 ? chf(r.sollWes) : '–'}
                     </TableCell>
+                    <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                      {r.actualShare > 0 ? chf(r.actualShare) : '–'}
+                    </TableCell>
                     <TableCell className={cn(
-                      'text-right font-mono text-sm',
-                      r.wesQ > TAKEAWAY_WES_WARN_THRESHOLD ? 'text-amber-600 font-semibold' : 'text-muted-foreground',
+                      'text-right font-mono text-sm font-semibold',
+                      wesStatusColor(r.wesStatus),
                     )}>
                       {r.nettoPrice > 0 ? pct(r.wesQ) : '–'}
                     </TableCell>
@@ -671,8 +810,7 @@ export default function TakeAwayAnalysePage() {
               WES-Trend letzte 3 Monate
             </CardTitle>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Vergleich Soll-WES vs. Ist-WES der letzten 3 Monate vor dem gewählten Monat.
-              Amber = über 10% über Plan.
+              Vergleich Soll-WES vs. Ist-WES der letzten 3 Monate. Amber = Ist &gt; Soll um mehr als 10%.
             </p>
           </CardHeader>
           <CardContent>
@@ -700,7 +838,7 @@ export default function TakeAwayAnalysePage() {
                       </TableCell>
                       <TableCell className={cn(
                         'text-right font-mono text-sm font-medium',
-                        t.diff > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400',
+                        t.diff > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400',
                       )}>
                         {t.soll > 0 || t.ist > 0 ? (t.diff >= 0 ? `+${chf(t.diff)}` : `−${chf(Math.abs(t.diff))}`) : '–'}
                       </TableCell>
@@ -709,7 +847,7 @@ export default function TakeAwayAnalysePage() {
                           <TrendingUp className="h-4 w-4 inline text-amber-500" />
                         )}
                         {t.ist > 0 && t.diff <= 0 && (
-                          <TrendingDown className="h-4 w-4 inline text-green-500" />
+                          <TrendingDown className="h-4 w-4 inline text-emerald-500" />
                         )}
                       </TableCell>
                     </TableRow>
@@ -730,8 +868,7 @@ export default function TakeAwayAnalysePage() {
               Top-Lieferanten – Take Away — {MONTHS[month - 1]} {year}
             </CardTitle>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Welche Lieferanten haben den grössten Anteil am Take-Away-Ist-WES?
-              Grundlage: alle Belege mit Kostenzuordnung «Take Away».
+              Alle Belege aus den drei Take-Away-Pools (Speisen, Getränke, Allgemein).
               Duplikatschutz: verknüpfte Lieferscheine werden ausgeschlossen.
             </p>
           </CardHeader>
@@ -775,7 +912,7 @@ export default function TakeAwayAnalysePage() {
               </TableBody>
             </Table>
             <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/10 px-3 py-2 flex items-start gap-2 text-xs text-muted-foreground">
-              <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0 text-green-600" />
+              <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0 text-emerald-600" />
               <span>
                 <strong>Duplikatschutz aktiv:</strong> Wenn ein Lieferschein mit einer Rechnung verknüpft ist,
                 zählt nur die Rechnung. Kein Einkauf wird doppelt gezählt.
@@ -831,9 +968,9 @@ export default function TakeAwayAnalysePage() {
             <div className="rounded-lg border border-dashed border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/10 px-3 py-2 text-xs text-muted-foreground flex items-start gap-2">
               <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-600" />
               <span>
-                <strong>Lieferant vs. Warengruppe:</strong> Lieferanten = <em>wer</em> liefert.
+                <strong>Lieferant vs. Warengruppe:</strong> Lieferant = <em>wer</em> liefert.
                 Warengruppe = <em>was</em> eingekauft wird.
-                Beim Take Away ist Konto 4701 (Betriebsmaterial / Verpackung) oft ein wichtiger Kostenblock.
+                Beim Take Away ist Konto 4701 (Verpackungsmaterial) oft ein wichtiger Kostentreiber.
               </span>
             </div>
 
@@ -926,7 +1063,7 @@ export default function TakeAwayAnalysePage() {
         </Card>
       )}
 
-      {/* Keine Daten, aber Produkte konfiguriert */}
+      {/* Keine Daten */}
       {hasTakeAwayProducts && istWesTotal === 0 && sollWesTotal === 0 && (
         <Card className="border-dashed">
           <CardContent className="py-10 text-center">
@@ -935,8 +1072,8 @@ export default function TakeAwayAnalysePage() {
               Keine Daten für {MONTHS[month - 1]} {year}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              Noch keine Belege mit Kostenzuordnung «Take Away» erfasst oder keine Portionen
-              im Tagesabschluss für diesen Monat vorhanden.
+              Keine Belege mit Take-Away-Kostenzuordnung oder keine Portionen im Tagesabschluss vorhanden.
+              Weise Lieferantenbelege den Pools «Take Away – Speisen» oder «Take Away – Getränke» zu.
             </p>
           </CardContent>
         </Card>

@@ -1130,6 +1130,11 @@ export default function ProdukteSeite() {
                               Take Away
                             </span>
                           )}
+                          {recipe?.salesChannel === 'breakfast' && (
+                            <span className="shrink-0 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                              Frühstück
+                            </span>
+                          )}
                         </span>
 
                         {/* Modus */}

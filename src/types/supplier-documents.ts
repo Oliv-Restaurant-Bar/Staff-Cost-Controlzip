@@ -31,29 +31,33 @@
  * Wichtig: Nur für Analysen – ändert NICHT die Monatssummen (food/beverage/other).
  */
 export type CostAllocationTarget =
-  | 'lunch_basic'       // Tagesmenu Basic / Tagesmenu 1
-  | 'lunch_premium'     // Tagesmenu Premium / Tagesmenu 2
-  | 'a_la_carte'        // A-la-carte Küche
-  | 'pizza'             // Pizza
-  | 'dessert'           // Dessert / Patisserie
-  | 'kinder'            // Kindermenu
-  | 'kueche_allgemein'  // Allgemeine Küche (Mise en place, Grundstock)
-  | 'beverage'          // Getränke
-  | 'takeaway'          // Take Away (eigener Kanal, getrennt von Restaurant & Lunch)
-  | 'unassigned';       // Nicht zugeordnet (Standard)
+  | 'lunch_basic'        // Tagesmenu Basic / Tagesmenu 1
+  | 'lunch_premium'      // Tagesmenu Premium / Tagesmenu 2
+  | 'a_la_carte'         // A-la-carte Küche
+  | 'pizza'              // Pizza
+  | 'dessert'            // Dessert / Patisserie
+  | 'kinder'             // Kindermenu
+  | 'kueche_allgemein'   // Allgemeine Küche (Mise en place, Grundstock)
+  | 'beverage'           // Getränke
+  | 'takeaway'           // Take Away – allgemein (Legacy / gemischt)
+  | 'takeaway_food'      // Take Away – Speisen / Food
+  | 'takeaway_beverages' // Take Away – Getränke / Beverages
+  | 'unassigned';        // Nicht zugeordnet (Standard)
 
 /** Anzeigenamen für die UI */
 export const ALLOCATION_TARGET_LABELS: Record<CostAllocationTarget, string> = {
-  lunch_basic:      'Lunch Basic (Menu 1)',
-  lunch_premium:    'Lunch Premium (Menu 2)',
-  a_la_carte:       'À la carte',
-  pizza:            'Pizza',
-  dessert:          'Dessert',
-  kinder:           'Kindermenu',
-  kueche_allgemein: 'Allg. Küche / Mise en place',
-  beverage:         'Getränke',
-  takeaway:         'Take Away',
-  unassigned:       'Nicht zugeordnet',
+  lunch_basic:        'Lunch Basic (Menu 1)',
+  lunch_premium:      'Lunch Premium (Menu 2)',
+  a_la_carte:         'À la carte',
+  pizza:              'Pizza',
+  dessert:            'Dessert',
+  kinder:             'Kindermenu',
+  kueche_allgemein:   'Allg. Küche / Mise en place',
+  beverage:           'Getränke',
+  takeaway:           'Take Away (allgemein)',
+  takeaway_food:      'Take Away – Speisen',
+  takeaway_beverages: 'Take Away – Getränke',
+  unassigned:         'Nicht zugeordnet',
 };
 
 /** Alle Lunch-bezogenen Allocation-Targets (für Filterung in der Analyse) */
@@ -62,9 +66,11 @@ export const LUNCH_ALLOCATION_TARGETS: CostAllocationTarget[] = [
   'lunch_premium',
 ];
 
-/** Take-Away Allocation-Target (für Filterung in der Take-Away-Analyse) */
+/** Alle Take-Away Allocation-Targets (allgemein + Food + Beverages) */
 export const TAKEAWAY_ALLOCATION_TARGETS: CostAllocationTarget[] = [
   'takeaway',
+  'takeaway_food',
+  'takeaway_beverages',
 ];
 
 /**

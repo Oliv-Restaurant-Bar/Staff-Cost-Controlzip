@@ -708,14 +708,16 @@ export function getSuggestedAllocation(supplier: string): CostAllocationTarget |
  * Schliesst verknüpfte Lieferscheine aus (analog zu getAllocationTotals).
  * Wird für die Kostenträger-Analyse in der TakeAway-Analyse verwendet.
  */
+const TAKEAWAY_TARGETS_ALL: CostAllocationTarget[] = ['takeaway', 'takeaway_food', 'takeaway_beverages'];
+
 export function getTakeAwayDocumentsForMonth(year: number, month: number): SupplierDocument[] {
   return loadDocumentsForMonth(year, month)
     .filter(d => !(d.matchStatus === 'linked' && d.documentType === 'delivery_note'))
     .filter(d => {
       if (d.allocationSplits && d.allocationSplits.length > 0) {
-        return d.allocationSplits.some(s => s.target === 'takeaway');
+        return d.allocationSplits.some(s => TAKEAWAY_TARGETS_ALL.includes(s.target));
       }
-      return d.allocationTarget === 'takeaway';
+      return d.allocationTarget != null && TAKEAWAY_TARGETS_ALL.includes(d.allocationTarget);
     });
 }
 
@@ -772,6 +774,9 @@ export interface AllocationTotals {
   kueche_allgemein: number;
   beverage: number;
   takeaway: number;
+  takeaway_food: number;
+  takeaway_beverages: number;
+  takeaway_total: number;
   unassigned: number;
 }
 
@@ -783,19 +788,23 @@ export function getAllocationTotals(year: number, month: number): AllocationTota
   const totals: AllocationTotals = {
     lunch_basic: 0, lunch_premium: 0, lunch_total: 0,
     a_la_carte: 0, pizza: 0, dessert: 0, kinder: 0,
-    kueche_allgemein: 0, beverage: 0, takeaway: 0, unassigned: 0,
+    kueche_allgemein: 0, beverage: 0,
+    takeaway: 0, takeaway_food: 0, takeaway_beverages: 0, takeaway_total: 0,
+    unassigned: 0,
   };
 
   for (const doc of docs) {
     const targets: CostAllocationTarget[] = [
       'lunch_basic', 'lunch_premium', 'a_la_carte', 'pizza',
-      'dessert', 'kinder', 'kueche_allgemein', 'beverage', 'takeaway', 'unassigned',
+      'dessert', 'kinder', 'kueche_allgemein', 'beverage',
+      'takeaway', 'takeaway_food', 'takeaway_beverages', 'unassigned',
     ];
     for (const t of targets) {
       (totals as Record<string, number>)[t] += getDocumentAllocationAmount(doc, t);
     }
   }
 
-  totals.lunch_total = totals.lunch_basic + totals.lunch_premium;
+  totals.lunch_total    = totals.lunch_basic + totals.lunch_premium;
+  totals.takeaway_total = totals.takeaway + totals.takeaway_food + totals.takeaway_beverages;
   return totals;
 }

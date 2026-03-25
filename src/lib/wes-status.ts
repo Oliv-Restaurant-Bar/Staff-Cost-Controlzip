@@ -79,16 +79,17 @@ export function getWesStatusFullLabel(status: WesStatus): string {
 
 // ─── Vertriebskanal-Klassifikation ───────────────────────────────────────────
 
-export type ProductSalesCategory = 'Lunch' | 'Take Away' | 'Getränke' | 'Restaurant';
+export type ProductSalesCategory = 'Lunch' | 'Take Away' | 'Frühstück' | 'Getränke' | 'Restaurant';
 
 export const ALL_SALES_CATEGORIES: ProductSalesCategory[] = [
-  'Restaurant', 'Lunch', 'Take Away', 'Getränke',
+  'Restaurant', 'Lunch', 'Take Away', 'Frühstück', 'Getränke',
 ];
 
 export function getProductSalesCategory(
   recipe: Pick<ProductRecipe, 'salesChannel' | 'lunchPool' | 'category'>,
 ): ProductSalesCategory {
-  if (recipe.salesChannel === 'takeaway') return 'Take Away';
+  if (recipe.salesChannel === 'takeaway')  return 'Take Away';
+  if (recipe.salesChannel === 'breakfast') return 'Frühstück';
   if (recipe.salesChannel === 'lunch' || recipe.lunchPool)  return 'Lunch';
   if (recipe.category === 'beverage') return 'Getränke';
   return 'Restaurant';
