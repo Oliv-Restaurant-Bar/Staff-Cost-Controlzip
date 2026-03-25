@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Plus, Trash2, ChevronRight, Package, Wine, Layers, Utensils, ShoppingBag, CircleAlert } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Package, Wine, Layers, Utensils, ShoppingBag, CircleAlert, Gift, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/select';
 import type { ProductCostEntry } from '@/lib/produkte-store';
 import {
-  type CostMode, type ProductRecipe, type RecipeIngredient, type LunchPool, type SalesChannel,
+  type CostMode, type ProductType, type ProductRecipe, type RecipeIngredient, type LunchPool, type SalesChannel,
   emptyRecipe, emptyIngredient, computeRecipeCosts,
 } from '@/lib/rezeptur-store';
 import { getFibuLabel, resolveIngredientAccount, loadArtikelFromDB, type Artikel } from '@/lib/artikel-store';
@@ -245,6 +245,28 @@ function KpiBar({ recipe, cost }: { recipe: ProductRecipe; cost: ProductCostEntr
         </div>
       </div>
 
+      {/* Bundle-Info-Notiz */}
+      {recipe.productType === 'bundle' && (
+        <div className="rounded-md border border-violet-200 dark:border-violet-800 bg-violet-50/40 dark:bg-violet-950/10 px-3 py-2 flex items-start gap-2">
+          <Gift className="h-3.5 w-3.5 text-violet-500 mt-0.5 shrink-0" />
+          <div className="space-y-0.5 min-w-0">
+            <p className="text-[10px] font-semibold text-violet-700 dark:text-violet-400 uppercase tracking-wide">
+              Bundle / Pauschal – Kosten basieren auf Durchschnitt (Bundle), nicht auf Einzelzutaten
+            </p>
+            {recipe.bundleDescription && (
+              <p className="text-[10px] text-violet-600 dark:text-violet-500 truncate">
+                Enthält: {recipe.bundleDescription}
+              </p>
+            )}
+            {recipe.bundleCostMin != null && recipe.bundleCostMax != null && (
+              <p className="text-[10px] text-muted-foreground">
+                Kostenspanne: CHF {recipe.bundleCostMin.toFixed(2)} – CHF {recipe.bundleCostMax.toFixed(2)}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Verbesserungsvorschläge – nur wenn WES kritisch (rot) */}
       {suggestions.length > 0 && (
         <div className="rounded-md bg-red-100 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-3 py-2 flex items-start gap-2">
@@ -336,10 +358,33 @@ export default function RezepturDialog({
     const ch = v === '__none__' ? undefined : v as SalesChannel;
     setRecipe(r => {
       if (!r) return r;
-      // Wenn kein Lunch-Kanal gewählt → lunchPool löschen
       const lunchPool = ch === 'lunch' ? r.lunchPool : undefined;
       return { ...r, salesChannel: ch, lunchPool };
     });
+  }
+
+  function setProductType(pt: ProductType) {
+    setRecipe(r => {
+      if (!r) return r;
+      return {
+        ...r,
+        productType: pt,
+        // Bundle erzwingt immer Pauschal-Modus (manualCost = Fixbetrag)
+        costMode: pt === 'bundle' ? 'pauschal' : r.costMode,
+      };
+    });
+  }
+
+  function setBundleDescription(v: string) {
+    setRecipe(r => r ? { ...r, bundleDescription: v } : r);
+  }
+
+  function setBundleCostMin(v: number | undefined) {
+    setRecipe(r => r ? { ...r, bundleCostMin: v } : r);
+  }
+
+  function setBundleCostMax(v: number | undefined) {
+    setRecipe(r => r ? { ...r, bundleCostMax: v } : r);
   }
 
   /** Effektiver Kanal: explizit gesetzt oder aus lunchPool abgeleitet */
@@ -388,8 +433,9 @@ export default function RezepturDialog({
     onSave({ ...recipe, updatedAt: new Date().toISOString() });
   }
 
-  const hasIngredients = recipe.costMode === 'rezeptur' || recipe.costMode === 'gemischt';
-  const hasManual      = recipe.costMode === 'pauschal' || recipe.costMode === 'gemischt';
+  const isBundle       = recipe.productType === 'bundle';
+  const hasIngredients = !isBundle && (recipe.costMode === 'rezeptur' || recipe.costMode === 'gemischt');
+  const hasManual      = !isBundle && (recipe.costMode === 'pauschal' || recipe.costMode === 'gemischt');
   const refPrice       = cost.nettoPrice > 0 ? cost.nettoPrice : cost.bruttoPrice;
 
   return (
@@ -409,7 +455,146 @@ export default function RezepturDialog({
 
         <div className="flex-1 overflow-y-auto space-y-4 pr-1">
 
-          {/* ── Modus-Wahl ─────────────────────────────────────────────── */}
+          {/* ── Produkttyp ─────────────────────────────────────────────── */}
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1.5 block">Produkttyp</Label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setProductType('standard')}
+                className={`flex-1 rounded-lg border p-3 text-left transition-all ${
+                  !isBundle
+                    ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                    : 'border-border hover:bg-accent hover:border-accent-foreground/20'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm font-semibold flex items-center gap-1.5 ${!isBundle ? 'text-primary' : ''}`}>
+                    <Package className="h-3.5 w-3.5" />
+                    Standard
+                  </span>
+                  {!isBundle && <ChevronRight className="h-3.5 w-3.5 text-primary" />}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5 leading-tight">
+                  Einzelprodukt – Pauschal, Rezeptur oder Gemischt
+                </p>
+              </button>
+              <button
+                onClick={() => setProductType('bundle')}
+                className={`flex-1 rounded-lg border p-3 text-left transition-all ${
+                  isBundle
+                    ? 'border-violet-400 bg-violet-50/60 ring-1 ring-violet-400 dark:border-violet-600 dark:bg-violet-950/20'
+                    : 'border-border hover:bg-accent hover:border-accent-foreground/20'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm font-semibold flex items-center gap-1.5 ${isBundle ? 'text-violet-700 dark:text-violet-400' : ''}`}>
+                    <Gift className="h-3.5 w-3.5" />
+                    Bundle / Pauschal
+                  </span>
+                  {isBundle && <ChevronRight className="h-3.5 w-3.5 text-violet-500" />}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5 leading-tight">
+                  Kombi-Produkt – Fixbetrag (Frühstück Turm, Sharing Platter, …)
+                </p>
+              </button>
+            </div>
+          </div>
+
+          {/* ── Bundle-Formular ─────────────────────────────────────────── */}
+          {isBundle && (
+            <div className="rounded-lg border border-violet-200 dark:border-violet-800 bg-violet-50/40 dark:bg-violet-950/10 p-4 space-y-4">
+              {/* Info-Box */}
+              <div className="flex items-start gap-2 rounded-md border border-violet-200/60 dark:border-violet-700/60 bg-violet-100/40 dark:bg-violet-900/20 px-3 py-2">
+                <Info className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400 mt-0.5 shrink-0" />
+                <p className="text-xs text-violet-700 dark:text-violet-400 leading-relaxed">
+                  <strong>Bundle-Kalkulation:</strong> Kosten basieren auf einem Durchschnittsbetrag
+                  (Bundle), nicht auf Einzelzutaten. WES-Berechnung erfolgt normal anhand des Fixbetrags
+                  vs. Verkaufspreis.
+                </p>
+              </div>
+
+              {/* Fixkosten */}
+              <div className="space-y-1">
+                <Label className="text-xs">
+                  Fixkosten (Ø Bundle-Wareneinsatz)
+                  <span className="ml-1 text-[10px] text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-1 rounded border border-blue-200 dark:border-blue-800">NETTO</span>
+                </Label>
+                <div className="relative">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">CHF</span>
+                  <Input
+                    type="number" min="0" step="0.01" placeholder="0.00"
+                    value={recipe.manualCost || ''}
+                    onChange={e => setManualCost(parseFloat(e.target.value) || 0)}
+                    className="pl-10 h-8 text-sm"
+                  />
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Durchschnittlicher Einkaufspreis pro Bundle (alle Komponenten zusammen).
+                </p>
+              </div>
+
+              {/* Beschreibung enthaltener Bestandteile */}
+              <div className="space-y-1">
+                <Label className="text-xs">Enthaltene Bestandteile (optional)</Label>
+                <Input
+                  placeholder="z.B. Frühstückskorb + Kaffee + Orangensaft + 2 Croissants"
+                  value={recipe.bundleDescription ?? ''}
+                  onChange={e => setBundleDescription(e.target.value)}
+                  className="h-8 text-sm"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Freitext zur Dokumentation – erscheint als Hinweis in der Kalkulation.
+                </p>
+              </div>
+
+              {/* Kostenspanne Min / Max */}
+              <div className="space-y-1">
+                <Label className="text-xs">Kostenspanne (optional) – für Bandbreiten-Kontrolle</Label>
+                <div className="flex gap-2 items-center">
+                  <div className="flex-1 relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-[10px]">Min CHF</span>
+                    <Input
+                      type="number" min="0" step="0.01" placeholder="–"
+                      value={recipe.bundleCostMin ?? ''}
+                      onChange={e => setBundleCostMin(e.target.value ? parseFloat(e.target.value) : undefined)}
+                      className="pl-16 h-8 text-sm"
+                    />
+                  </div>
+                  <span className="text-muted-foreground text-xs shrink-0">bis</span>
+                  <div className="flex-1 relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-[10px]">Max CHF</span>
+                    <Input
+                      type="number" min="0" step="0.01" placeholder="–"
+                      value={recipe.bundleCostMax ?? ''}
+                      onChange={e => setBundleCostMax(e.target.value ? parseFloat(e.target.value) : undefined)}
+                      className="pl-16 h-8 text-sm"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Saisonale oder variierende Bundles können eine Kostenspanne hinterlegen (z.B. 18–22 CHF).
+                  Dient der internen Kontrolle – hat keinen Einfluss auf die WES-Berechnung.
+                </p>
+              </div>
+
+              {/* Spanne-Warnung wenn manualCost ausserhalb Bereich */}
+              {recipe.bundleCostMin != null && recipe.bundleCostMax != null && (
+                recipe.manualCost < recipe.bundleCostMin || recipe.manualCost > recipe.bundleCostMax
+              ) && (
+                <div className="flex items-start gap-2 rounded-md border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/20 px-3 py-2">
+                  <CircleAlert className="h-3.5 w-3.5 text-amber-600 mt-0.5 shrink-0" />
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    Fixkosten CHF {recipe.manualCost.toFixed(2)} liegt ausserhalb der Spanne
+                    {' '}CHF {recipe.bundleCostMin.toFixed(2)}–{recipe.bundleCostMax.toFixed(2)}.
+                    Bitte Betrag oder Spanne anpassen.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Modus-Wahl (nur Standard-Produkte) ─────────────────────── */}
+          {!isBundle && (
           <div>
             <Label className="text-xs text-muted-foreground mb-1.5 block">Kalkulationsmodus</Label>
             <div className="flex gap-2">
@@ -430,6 +615,7 @@ export default function RezepturDialog({
               />
             </div>
           </div>
+          )}
 
           {/* ── Zutaten-Liste (Rezeptur / Gemischt) ───────────────────── */}
           {hasIngredients && (

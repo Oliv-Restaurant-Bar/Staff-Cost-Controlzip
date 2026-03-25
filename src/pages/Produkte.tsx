@@ -1107,7 +1107,10 @@ export default function ProdukteSeite() {
                 <div className="divide-y divide-border/40">
                   {kalkulationRows.map(({ cost, recipe, kpis }) => {
                     const configured = !!recipe;
-                    const modeBadge = !recipe ? null : recipe.costMode === 'pauschal'
+                    const modeBadge = !recipe ? null
+                      : recipe.productType === 'bundle'
+                      ? { label: 'Bundle / Pauschal', cls: 'bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800' }
+                      : recipe.costMode === 'pauschal'
                       ? { label: 'Pauschal', cls: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700' }
                       : recipe.costMode === 'rezeptur'
                       ? { label: 'Rezeptur', cls: 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800' }

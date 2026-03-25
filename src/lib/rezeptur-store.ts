@@ -6,6 +6,11 @@
  *   Rezeptur  → Zutaten aus Artikelstamm, automatische Berechnung
  *   Gemischt  → Rezeptur + manuelle Zusatzkosten
  *
+ * Zwei Produkttypen:
+ *   Standard → normale Kalkulation (Pauschal / Rezeptur / Gemischt)
+ *   Bundle   → Kombi-/Sharing-Produkt mit Fixkosten (Frühstück Turm, Sharing Platter, …)
+ *              costMode wird für Bundles automatisch auf 'pauschal' gesetzt.
+ *
  * Alle Preise NETTO (exkl. MwSt.) – gleiche Basis wie Artikelstamm.
  * Speicherung: Supabase app_settings (via kvGet/kvSet) + localStorage Fallback.
  */
@@ -18,6 +23,15 @@ const RECIPE_KEY = 'produkte_rezeptur_v1';
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
 export type CostMode = 'pauschal' | 'rezeptur' | 'gemischt';
+
+/**
+ * Produkttyp.
+ * 'standard' → normale Kalkulation (Pauschal / Rezeptur / Gemischt)
+ * 'bundle'   → Kombi-/Sharing-Produkt. Kosten werden als Fixbetrag erfasst.
+ *              Zutatenliste entfällt. WES-Berechnung erfolgt normal vs. VKP.
+ *              Verwendung: Frühstück Turm, Sharing Platter, Event-Menus, …
+ */
+export type ProductType = 'standard' | 'bundle';
 
 /**
  * Eine Zutat in einer Rezeptur.
@@ -66,7 +80,7 @@ export interface ProductRecipe {
   productName: string;
   category: 'food' | 'beverage';
   costMode: CostMode;
-  /** Pauschal: Gesamtkosten. Gemischt: Zusatzkosten (zu Rezeptur addiert). */
+  /** Pauschal/Bundle: Gesamtkosten. Gemischt: Zusatzkosten (zu Rezeptur addiert). */
   manualCost: number;
   manualCostNote: string;   // z.B. "Verpackung", "Energie", "Overhead"
   ingredients: RecipeIngredient[];
@@ -83,6 +97,18 @@ export interface ProductRecipe {
    * 'restaurant' / undefined → Standard-Restaurantbetrieb.
    */
   salesChannel?: SalesChannel;
+  /**
+   * Produkttyp. 'bundle' = Kombi-/Sharing-Produkt mit Fixkosten.
+   * Bei Bundles wird costMode automatisch auf 'pauschal' gesetzt.
+   * undefined / 'standard' → normales Produkt.
+   */
+  productType?: ProductType;
+  /** Bundle: Textbeschreibung der enthaltenen Bestandteile (z.B. "Frühstückskorb + Kaffee + Saft"). */
+  bundleDescription?: string;
+  /** Bundle: geschätzter Mindestkostenbetrag in CHF (für Kosten-Spanne). */
+  bundleCostMin?: number;
+  /** Bundle: geschätzter Höchstkostenbetrag in CHF (für Kosten-Spanne). */
+  bundleCostMax?: number;
   updatedAt: string;
 }
 
