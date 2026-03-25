@@ -52,6 +52,36 @@ interface CostDriverRow {
   docCount: number;
 }
 
+interface ProductGroupRow {
+  key: string;
+  label: string;
+  amount: number;
+  pctOfTotal: number;
+  docCount: number;
+  isHighCost: boolean;   // > HIGH_COST_THRESHOLD % of total
+}
+
+const HIGH_COST_THRESHOLD = 15; // %
+
+// FIBU Warengruppe labels — maps account number → friendly label
+const FIBU_WARENGRUPPEN: Record<string, string> = {
+  '4020': 'Wein',
+  '4030': 'Bier',
+  '4040': 'Spirituosen',
+  '4050': 'Mineral / Softdrinks',
+  '4060': 'Küche / Food',
+  '4061': 'Rest Food',
+  '4070': 'Kaffee & Tee',
+  '4090': 'Diverses',
+  '4701': 'Betriebsmaterial',
+};
+
+const CATEGORY_LABELS_LOCAL: Record<string, string> = {
+  food:     'Speisen (Food)',
+  beverage: 'Getränke',
+  other:    'Sonstiges',
+};
+
 interface TrendMonth {
   year: number;
   month: number;
@@ -233,17 +263,21 @@ function HelpSection() {
             <div className="space-y-1.5">
               <h4 className="font-semibold text-sm flex items-center gap-1.5">
                 <BarChart2 className="h-3.5 w-3.5 text-blue-600" />
-                5. Abweichungen und Trend lesen
+                5. Kostenanalyse: Lieferant vs. Warengruppe
               </h4>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                In der Tabelle <em>«Top-Kostenträger»</em> siehst du, welche Lieferanten
-                die höchsten Lunch-Einkaufskosten verursachen und welchen prozentualen
-                Anteil sie am Gesamt-Ist-WES haben.
-                Wenn ein Lieferant plötzlich sehr viel ausmacht, lohnt sich ein Preisvergleich.
+                <strong>Lieferanten-Analyse</strong> (1. Tabelle): Zeigt, <em>wer</em> die Ware liefert.
+                Gut für Preisvergleiche: «Pistor AG macht 60% meiner Lunch-Einkäufe aus – gibt es günstigere Alternativen?»
               </p>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Der <em>Trend der letzten 3 Monate</em> zeigt ob Soll und Ist sich angleichen
-                oder ob die Abweichung zunimmt. Grün = unter Plan, Amber = über 10% Überschreitung.
+                <strong>Warengruppen-Analyse</strong> (2. Tabelle): Zeigt, <em>was</em> eingekauft wird –
+                nach FIBU-Konto (z.B. 4060 = Küche/Food, 4020 = Wein) oder nach Kategorie (Speisen/Getränke).
+                Gut für Kostentreiber: «Fleisch / Küche-Food macht 45% aus – dort ansetzen!»
+                Einträge über {HIGH_COST_THRESHOLD}% sind amber markiert als «Hoher Kostenanteil – prüfen».
+              </p>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Der <em>Trend der letzten 3 Monate</em> zeigt, ob Soll und Ist sich angleichen
+                oder ob die Abweichung wächst. Grün = unter Plan, Amber = über 10% Überschreitung.
               </p>
             </div>
 
@@ -427,6 +461,52 @@ export default function LunchAnalysePage() {
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 10);
   }, [lunchDocs]);
+
+  // ── Produkt-Gruppen (nach Warengruppe / Kategorie) ───────────────────────
+  const [productGroupMode, setProductGroupMode] = useState<'account' | 'category'>('account');
+
+  const productGroupRows: ProductGroupRow[] = useMemo(() => {
+    if (lunchDocs.length === 0) return [];
+
+    const byKey: Record<string, { label: string; amount: number; count: number }> = {};
+
+    for (const doc of lunchDocs) {
+      const lunchAmt = (
+        getDocumentAllocationAmount(doc, 'lunch_basic') +
+        getDocumentAllocationAmount(doc, 'lunch_premium')
+      );
+      if (lunchAmt === 0) continue;
+
+      let key: string;
+      let label: string;
+
+      if (productGroupMode === 'account') {
+        key   = doc.accountNumber ?? '__none__';
+        label = doc.accountNumber
+          ? (FIBU_WARENGRUPPEN[doc.accountNumber] ?? `Konto ${doc.accountNumber}`)
+          : 'Kein Konto zugewiesen';
+      } else {
+        key   = doc.category;
+        label = CATEGORY_LABELS_LOCAL[doc.category] ?? doc.category;
+      }
+
+      if (!byKey[key]) byKey[key] = { label, amount: 0, count: 0 };
+      byKey[key].amount += lunchAmt;
+      byKey[key].count  += 1;
+    }
+
+    const total = Object.values(byKey).reduce((s, v) => s + v.amount, 0);
+    return Object.entries(byKey)
+      .map(([key, { label, amount, count }]) => ({
+        key,
+        label,
+        amount,
+        pctOfTotal: total > 0 ? (amount / total) * 100 : 0,
+        docCount: count,
+        isHighCost: total > 0 ? (amount / total) * 100 > HIGH_COST_THRESHOLD : false,
+      }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [lunchDocs, productGroupMode]);
 
   // ── 3-Monats-Trend ────────────────────────────────────────────────────────
   const trend3: TrendMonth[] = useMemo(() => {
@@ -866,6 +946,137 @@ export default function LunchAnalysePage() {
                 zählt nur die Rechnung. Kein Einkauf wird doppelt gezählt.
               </span>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Top-Kostenträger – Warengruppen (Produkt-Ebene) */}
+      {productGroupRows.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-start justify-between flex-wrap gap-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Package className="h-4 w-4 text-muted-foreground" />
+                Top-Kostenträger – Warengruppen — {MONTHS[month - 1]} {year}
+              </CardTitle>
+              {/* Gruppierung umschalten */}
+              <div className="flex rounded-lg border border-border overflow-hidden text-xs shrink-0">
+                <button
+                  onClick={() => setProductGroupMode('account')}
+                  className={cn(
+                    'px-3 py-1.5 font-medium transition-colors',
+                    productGroupMode === 'account'
+                      ? 'bg-foreground text-background'
+                      : 'bg-background text-muted-foreground hover:bg-muted',
+                  )}
+                >
+                  FIBU-Warengruppe
+                </button>
+                <button
+                  onClick={() => setProductGroupMode('category')}
+                  className={cn(
+                    'px-3 py-1.5 font-medium transition-colors border-l border-border',
+                    productGroupMode === 'category'
+                      ? 'bg-foreground text-background'
+                      : 'bg-background text-muted-foreground hover:bg-muted',
+                  )}
+                >
+                  Kategorie
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {productGroupMode === 'account'
+                ? 'Gruppierung nach FIBU-Konto (Warengruppe). Belege ohne Kontovergabe erscheinen unter «Kein Konto zugewiesen».'
+                : 'Gruppierung nach Belegkategorie (Speisen / Getränke / Sonstiges).'
+              }
+              {' '}Einträge über {HIGH_COST_THRESHOLD}% Anteil sind amber markiert – hier lohnt es sich nachzuschauen.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+
+            {/* Erklärung Unterschied Lieferant vs. Warengruppe */}
+            <div className="rounded-lg border border-dashed border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/10 px-3 py-2 text-xs text-muted-foreground flex items-start gap-2">
+              <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-600" />
+              <span>
+                <strong>Lieferant vs. Warengruppe:</strong> Die Lieferanten-Ansicht zeigt,
+                <em> wer</em> die Ware liefert. Diese Ansicht zeigt,{' '}
+                <em>was</em> eingekauft wird (z.B. Küche/Food = 4060).
+                Wenn ein einzelner Lieferant viele verschiedene Produkte liefert,
+                siehst du hier trotzdem die Warengruppe getrennt.
+              </span>
+            </div>
+
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/30">
+                  <TableHead className="text-xs">#</TableHead>
+                  <TableHead className="text-xs">
+                    {productGroupMode === 'account' ? 'Warengruppe (FIBU-Konto)' : 'Kategorie'}
+                  </TableHead>
+                  <TableHead className="text-xs text-right">Belege</TableHead>
+                  <TableHead className="text-xs text-right">Lunch-Anteil CHF</TableHead>
+                  <TableHead className="text-xs text-right">Anteil %</TableHead>
+                  <TableHead className="text-xs" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {productGroupRows.map((row, idx) => (
+                  <TableRow
+                    key={row.key}
+                    className={row.isHighCost ? 'bg-amber-50/40 dark:bg-amber-950/10' : ''}
+                  >
+                    <TableCell className="text-xs text-muted-foreground w-8">{idx + 1}</TableCell>
+                    <TableCell className="text-sm font-medium">
+                      {row.label}
+                      {productGroupMode === 'account' && row.key !== '__none__' && (
+                        <span className="ml-1.5 text-[10px] font-mono text-muted-foreground">({row.key})</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-mono text-muted-foreground">
+                      {row.docCount}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm font-semibold">
+                      {chf(row.amount)}
+                    </TableCell>
+                    <TableCell className="text-right text-sm">
+                      <div className="flex items-center justify-end gap-2">
+                        <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className={cn(
+                              'h-full rounded-full',
+                              row.isHighCost ? 'bg-amber-500' : 'bg-orange-400 dark:bg-orange-500',
+                            )}
+                            style={{ width: `${Math.min(row.pctOfTotal, 100)}%` }}
+                          />
+                        </div>
+                        <span className={cn(
+                          'font-mono w-12 text-right',
+                          row.isHighCost ? 'text-amber-700 dark:text-amber-400 font-semibold' : 'text-muted-foreground',
+                        )}>
+                          {pct(row.pctOfTotal)}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="w-36 text-right">
+                      {row.isHighCost && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border border-amber-200 dark:border-amber-700">
+                          <AlertTriangle className="h-2.5 w-2.5" />
+                          Hoher Kostenanteil – prüfen
+                        </span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+
+            <p className="text-[10px] text-muted-foreground px-1">
+              Amber-Markierung bei mehr als {HIGH_COST_THRESHOLD}% Anteil.
+              {' '}Um eine detailliertere Produktuntergliederung zu erhalten (z.B. Fleisch, Gemüse, Fisch),
+              trage im Feld <em>Notiz</em> eines Lieferantenbelegs den Produktnamen ein und
+              weise dem Beleg das spezifische FIBU-Konto zu.
+            </p>
           </CardContent>
         </Card>
       )}
