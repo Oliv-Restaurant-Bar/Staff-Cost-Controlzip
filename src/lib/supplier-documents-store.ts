@@ -667,6 +667,59 @@ export function getAccountingAccountsForMonth(year: number, month: number): stri
   )].sort();
 }
 
+// ─── Smart Suggestion ─────────────────────────────────────────────────────────
+
+/**
+ * Gibt allen gespeicherten Dokumente zurück (alle Monate).
+ */
+function getAllDocuments(): SupplierDocument[] {
+  return Object.values(loadAll());
+}
+
+/**
+ * Schlägt die wahrscheinlichste Kostenzuordnung für einen Lieferanten vor,
+ * basierend auf bisherigen Belegen. Gibt nur dann etwas zurück wenn der
+ * Lieferant mindestens 2x mit derselben Zuordnung erfasst wurde.
+ */
+export function getSuggestedAllocation(supplier: string): CostAllocationTarget | undefined {
+  const docs = getAllDocuments().filter(
+    d => d.supplier === supplier
+      && d.allocationTarget
+      && d.allocationTarget !== 'unassigned',
+  );
+  if (docs.length === 0) return undefined;
+
+  const counts: Partial<Record<CostAllocationTarget, number>> = {};
+  for (const doc of docs) {
+    const t = doc.allocationTarget!;
+    counts[t] = (counts[t] ?? 0) + 1;
+  }
+
+  let best: CostAllocationTarget | undefined;
+  let bestCount = 0;
+  for (const [t, c] of Object.entries(counts) as [CostAllocationTarget, number][]) {
+    if (c > bestCount) { best = t as CostAllocationTarget; bestCount = c; }
+  }
+  return bestCount >= 2 ? best : undefined;
+}
+
+/**
+ * Gibt Belege eines Monats zurück, die einem Lunch-Pool zugeordnet sind.
+ * Schliesst verknüpfte Lieferscheine aus (analog zu getAllocationTotals).
+ * Wird für die Kostenträger-Analyse in der Lunch-Analyse verwendet.
+ */
+export function getLunchDocumentsForMonth(year: number, month: number): SupplierDocument[] {
+  const LUNCH_TARGETS: CostAllocationTarget[] = ['lunch_basic', 'lunch_premium'];
+  return loadDocumentsForMonth(year, month)
+    .filter(d => !(d.matchStatus === 'linked' && d.documentType === 'delivery_note'))
+    .filter(d => {
+      if (d.allocationSplits && d.allocationSplits.length > 0) {
+        return d.allocationSplits.some(s => LUNCH_TARGETS.includes(s.target));
+      }
+      return d.allocationTarget != null && LUNCH_TARGETS.includes(d.allocationTarget);
+    });
+}
+
 // ─── Lunch-WES Analyse ────────────────────────────────────────────────────────
 
 /**

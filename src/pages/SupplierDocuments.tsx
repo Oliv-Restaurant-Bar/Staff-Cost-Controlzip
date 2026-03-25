@@ -46,6 +46,7 @@ import {
   availableYears,
   loadSupplierMasters, upsertSupplierMaster, deleteSupplierMaster,
   findMatchCandidates, linkDocuments, unlinkDocuments,
+  getSuggestedAllocation,
   type MatchCandidate,
 } from '@/lib/supplier-documents-store';
 import {
@@ -110,21 +111,23 @@ interface FormState {
   allocationTarget: CostAllocationTarget;
   allocationSplits: AllocationSplit[];  // leer = kein Split, Haupt-Target wird verwendet
   useSplit: boolean;           // UI-Schalter: Prozentuale Aufteilung aktiv?
+  allocationSuggested?: CostAllocationTarget; // auto-Vorschlag (für Hinweis-Badge)
 }
 
 const emptyForm = (): FormState => ({
-  supplier:         '',
-  documentType:     'delivery_note',
-  date:             new Date().toISOString().split('T')[0],
-  deliveryDate:     '',
-  category:         'food',
-  amount:           '',
-  accountNumber:    '',
-  note:             '',
-  referenceNumber:  '',
-  allocationTarget: 'unassigned',
-  allocationSplits: [],
-  useSplit:         false,
+  supplier:            '',
+  documentType:        'delivery_note',
+  date:                new Date().toISOString().split('T')[0],
+  deliveryDate:        '',
+  category:            'food',
+  amount:              '',
+  accountNumber:       '',
+  note:                '',
+  referenceNumber:     '',
+  allocationTarget:    'unassigned',
+  allocationSplits:    [],
+  useSplit:            false,
+  allocationSuggested: undefined,
 });
 
 // ─── Kategorie-Badge ──────────────────────────────────────────────────────────
@@ -455,8 +458,20 @@ function DocumentDialog({
     }
     const master = activeSuppliers.find(s => s.name === name);
     const newForm = { ...form, supplier: name };
-    if (master?.defaultCategory) newForm.category = master.defaultCategory;
+    if (master?.defaultCategory)      newForm.category      = master.defaultCategory;
     if (master?.defaultAccountNumber) newForm.accountNumber = master.defaultAccountNumber;
+
+    // Automatischer Vorschlag: häufigste bisherige Kostenzuordnung für diesen Lieferanten
+    if (!form.useSplit) {
+      const suggestion = getSuggestedAllocation(name);
+      if (suggestion) {
+        newForm.allocationTarget    = suggestion;
+        newForm.allocationSuggested = suggestion;
+      } else {
+        newForm.allocationSuggested = undefined;
+      }
+    }
+
     onFormChange(newForm);
     setShowNewSupplier(false);
   }
@@ -464,7 +479,7 @@ function DocumentDialog({
   function handleNewSupplierCreated(master: SupplierMaster) {
     onSupplierMasterCreated(master);
     const newForm = { ...form, supplier: master.name };
-    if (master.defaultCategory)      newForm.category = master.defaultCategory;
+    if (master.defaultCategory)      newForm.category      = master.defaultCategory;
     if (master.defaultAccountNumber) newForm.accountNumber = master.defaultAccountNumber;
     onFormChange(newForm);
     setShowNewSupplier(false);
@@ -712,21 +727,29 @@ function DocumentDialog({
             </div>
 
             {!form.useSplit ? (
-              <Select
-                value={form.allocationTarget}
-                onValueChange={v => set('allocationTarget', v as CostAllocationTarget)}
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {allocationTargetOptions.map(t => (
-                    <SelectItem key={t} value={t} className="text-xs">
-                      {ALLOCATION_TARGET_LABELS[t]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="space-y-1.5">
+                <Select
+                  value={form.allocationTarget}
+                  onValueChange={v => set('allocationTarget', v as CostAllocationTarget)}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allocationTargetOptions.map(t => (
+                      <SelectItem key={t} value={t} className="text-xs">
+                        {ALLOCATION_TARGET_LABELS[t]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {form.allocationSuggested && form.allocationSuggested === form.allocationTarget && (
+                  <p className="text-[10px] text-violet-600 dark:text-violet-400 flex items-center gap-1">
+                    <Sparkles className="h-2.5 w-2.5" />
+                    Vorschlag basierend auf früheren Belegen dieses Lieferanten. Jederzeit änderbar.
+                  </p>
+                )}
+              </div>
             ) : (
               <div className="space-y-1.5">
                 {form.allocationSplits.map((split, idx) => (
@@ -1580,17 +1603,24 @@ export default function SupplierDocumentsPage() {
                         )}
                         <span className="truncate block">{doc.note ?? '—'}</span>
                         {doc.allocationSplits && doc.allocationSplits.length > 0 ? (
-                          <span className="flex flex-wrap gap-0.5 mt-0.5">
-                            {doc.allocationSplits.map((s, i) => (
-                              <span key={i} className="inline-flex items-center gap-0.5 text-[9px] font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400 border border-violet-200 dark:border-violet-700 px-1 py-0.5 rounded">
-                                <Tag className="h-2 w-2" />{s.pct}% {ALLOCATION_TARGET_LABELS[s.target]}
-                              </span>
-                            ))}
-                          </span>
+                          <div className="mt-1 space-y-0.5">
+                            <span className="text-[9px] text-muted-foreground font-medium uppercase tracking-wide">Zuordnung (Split):</span>
+                            <div className="flex flex-wrap gap-0.5">
+                              {doc.allocationSplits.map((s, i) => (
+                                <span key={i} className="inline-flex items-center gap-0.5 text-[9px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400 border border-violet-300 dark:border-violet-700 px-1.5 py-0.5 rounded">
+                                  <Tag className="h-2 w-2" />
+                                  <span className="font-bold">{s.pct}%</span>
+                                  {' '}{ALLOCATION_TARGET_LABELS[s.target]}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
                         ) : doc.allocationTarget && doc.allocationTarget !== 'unassigned' ? (
-                          <span className="inline-flex items-center gap-0.5 mt-0.5 text-[9px] font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400 border border-violet-200 dark:border-violet-700 px-1 py-0.5 rounded">
-                            <Tag className="h-2 w-2" />{ALLOCATION_TARGET_LABELS[doc.allocationTarget]}
-                          </span>
+                          <div className="mt-1">
+                            <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400 border border-violet-300 dark:border-violet-700 px-1.5 py-0.5 rounded">
+                              <Tag className="h-2 w-2" />{ALLOCATION_TARGET_LABELS[doc.allocationTarget]}
+                            </span>
+                          </div>
                         ) : null}
                       </TableCell>
                       <TableCell>

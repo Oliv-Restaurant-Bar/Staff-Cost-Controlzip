@@ -1,0 +1,72 @@
+We want to refine and improve the Lunch / Mittagsmenu cost allocation system to make it more practical, accurate, and intelligent.
+
+Goal:
+Improve usability, avoid duplicate cost counting, and add better insights into cost deviations.
+
+Do NOT break existing functionality.
+
+Implement the following improvements:
+
+1. Smart allocation suggestions
+When creating or editing supplier delivery notes or invoices:
+- If a product or supplier has been repeatedly assigned to a specific cost pool (e.g. Lunch Basic),
+  automatically pre-select this pool as a suggestion.
+- Allow user to override at any time.
+
+Example:
+If "Gemüse Mix" was assigned 10 times to Lunch Basic,
+next time default = Lunch Basic.
+
+2. Product-level deviation analysis (within Lunch Analysis)
+Extend the Lunch-Analyse page:
+
+Add a breakdown showing:
+- Top cost drivers within Lunch (e.g. Fleisch, Fisch, Gemüse)
+- Show per product:
+  - total allocated cost
+  - % of total lunch cost
+  - deviation vs expected pattern (simple heuristic)
+
+This helps identify which items cause higher WES.
+
+3. Duplicate protection (delivery note vs invoice)
+Ensure that:
+- If a supplier invoice is matched to an existing delivery note,
+- only ONE of them is counted in Lunch Ist-WES.
+
+Implementation:
+- introduce a flag or link: delivery_note_id on invoice
+- in Lunch calculation:
+  → ignore duplicate entries if linked
+
+4. Allocation consistency check
+If large amounts are:
+- assigned to "Nicht zugeordnet"
+or
+- assigned inconsistently across similar products
+
+Show a warning:
+- "Viele Einkäufe sind nicht korrekt zugeordnet"
+- "Lunch-Auswertung könnte verfälscht sein"
+
+5. Monthly trend insight
+In Lunch-Analyse:
+Add simple trend:
+- last 3 months:
+  - Soll-WES
+  - Ist-WES
+  - Differenz
+
+No complex charts needed, just simple comparison.
+
+6. Better UI clarity
+In supplier document table:
+- show allocation badge clearly
+- if split allocation is used:
+  show percentage breakdown (e.g. 60% Lunch, 40% A la carte)
+
+7. Explain in simple German:
+- how automatic suggestions work
+- how duplicate protection works
+- how to read product-level deviations
+- what I should test later
