@@ -39,6 +39,7 @@ import {
 import { Employee } from '@/types/personnel';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
+import { WesMarginWidget } from '@/components/WesMarginWidget';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -1803,6 +1804,9 @@ const Dashboard = () => {
                 </div>
               </>
             )}
+
+            {/* ── Margenkontrolle – WES-Ampel ──────────────────────────────── */}
+            {isAdmin && <WesMarginWidget />}
 
             {/* ── Schnellzugriff ───────────────────────────────────────────── */}
             <SectionTitle>Schnellzugriff</SectionTitle>

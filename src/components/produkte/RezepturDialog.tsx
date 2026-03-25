@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Plus, Trash2, ChevronRight, Package, Wine, Layers, Utensils, ShoppingBag } from 'lucide-react';
+import { Plus, Trash2, ChevronRight, Package, Wine, Layers, Utensils, ShoppingBag, CircleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,6 +25,9 @@ import {
   emptyRecipe, emptyIngredient, computeRecipeCosts,
 } from '@/lib/rezeptur-store';
 import { getFibuLabel, resolveIngredientAccount, loadArtikelFromDB, type Artikel } from '@/lib/artikel-store';
+import {
+  getWesStatus, getWesBadgeClasses, getWesStatusFullLabel, getSmartSuggestions,
+} from '@/lib/wes-status';
 import {
   type BaseComponentMap,
   loadBasiskomponentenFromDB, makeBaseComponentIngredient, computeBaseComponentCost,
@@ -193,11 +196,19 @@ function IngredientRow({
 // ── KPI Bar ───────────────────────────────────────────────────────────────────
 
 function KpiBar({ recipe, cost }: { recipe: ProductRecipe; cost: ProductCostEntry }) {
-  const kpis = computeRecipeCosts(recipe, cost.nettoPrice, cost.bruttoPrice);
-  const refPrice = cost.nettoPrice > 0 ? cost.nettoPrice : cost.bruttoPrice;
+  const kpis      = computeRecipeCosts(recipe, cost.nettoPrice, cost.bruttoPrice);
+  const refPrice  = cost.nettoPrice > 0 ? cost.nettoPrice : cost.bruttoPrice;
+  const wesStatus = refPrice > 0 ? getWesStatus(kpis.wesQ) : 'unknown';
+  const suggestions = getSmartSuggestions(kpis.wesQ);
 
   return (
-    <div className="rounded-lg bg-muted/60 border border-border px-4 py-3">
+    <div className={`rounded-lg border px-4 py-3 space-y-3 ${
+      wesStatus === 'red'
+        ? 'border-red-200 bg-red-50/30 dark:border-red-800 dark:bg-red-950/10'
+        : wesStatus === 'amber'
+          ? 'border-amber-200/60 bg-amber-50/20 dark:border-amber-800/60 dark:bg-amber-950/5'
+          : 'bg-muted/60 border-border'
+    }`}>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div>
           <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Kosten netto</p>
@@ -208,9 +219,16 @@ function KpiBar({ recipe, cost }: { recipe: ProductRecipe; cost: ProductCostEntr
         </div>
         <div>
           <p className="text-[10px] text-muted-foreground uppercase tracking-wide">WES-Quote</p>
-          <p className={`text-base font-bold ${wesColor(kpis.wesQ)}`}>
-            {refPrice > 0 ? fmtPct(kpis.wesQ) : '–'}
-          </p>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <p className={`text-base font-bold ${wesColor(kpis.wesQ)}`}>
+              {refPrice > 0 ? fmtPct(kpis.wesQ) : '–'}
+            </p>
+            {refPrice > 0 && (
+              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${getWesBadgeClasses(wesStatus)}`}>
+                {getWesStatusFullLabel(wesStatus)}
+              </span>
+            )}
+          </div>
           <p className="text-[10px] text-muted-foreground">VKP netto: {fmtChf(refPrice)}</p>
         </div>
         <div>
@@ -226,6 +244,25 @@ function KpiBar({ recipe, cost }: { recipe: ProductRecipe; cost: ProductCostEntr
           </p>
         </div>
       </div>
+
+      {/* Verbesserungsvorschläge – nur wenn WES kritisch (rot) */}
+      {suggestions.length > 0 && (
+        <div className="rounded-md bg-red-100 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-3 py-2 flex items-start gap-2">
+          <CircleAlert className="h-3.5 w-3.5 text-red-600 dark:text-red-400 mt-0.5 shrink-0" />
+          <div className="space-y-0.5">
+            <p className="text-[10px] font-semibold text-red-700 dark:text-red-400 uppercase tracking-wide">
+              WES zu hoch – Handlungsempfehlungen
+            </p>
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {suggestions.map(s => (
+                <span key={s} className="text-[10px] px-2 py-0.5 rounded-full bg-red-200/70 dark:bg-red-900/40 text-red-700 dark:text-red-400 font-medium border border-red-300 dark:border-red-700">
+                  {s}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

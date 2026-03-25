@@ -1141,7 +1141,10 @@ export default function ProdukteSeite() {
                         </div>
 
                         {/* WES% */}
-                        <span className={`text-xs text-right font-mono ${kpis ? (kpis.wesQ < 25 ? 'text-emerald-600 dark:text-emerald-400' : kpis.wesQ < 35 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400') : 'text-muted-foreground/30'}`}>
+                        <span className={`text-xs text-right font-mono flex items-center justify-end gap-1 ${kpis ? (kpis.wesQ <= 28 ? 'text-emerald-600 dark:text-emerald-400' : kpis.wesQ <= 35 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400') : 'text-muted-foreground/30'}`}>
+                          {kpis && (
+                            <span className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${kpis.wesQ <= 28 ? 'bg-green-500' : kpis.wesQ <= 35 ? 'bg-amber-500' : 'bg-red-500'}`} />
+                          )}
                           {kpis ? `${kpis.wesQ.toFixed(1)}%` : '–'}
                         </span>
 
