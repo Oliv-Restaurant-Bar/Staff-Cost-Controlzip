@@ -1,0 +1,76 @@
+Der Fix reicht noch nicht. Im Inkognito-Fenster laden die Dienstplan-Daten nach normalem Refresh weiterhin nicht nach.
+
+Das bedeutet:
+Der Bug ist noch nicht vollständig gelöst. Bitte gehe tiefer und prüfe nicht nur user?.id, sondern den kompletten Query-Kontext.
+
+Wichtige Beobachtung:
+Im Inkognito-Modus verschwinden die Einträge nach Refresh weiterhin.
+Das spricht gegen einen reinen LocalStorage-Fallback und dafür, dass der DB-Fetch nach Reload immer noch mit unvollständigem Kontext oder falschem Timing läuft.
+
+Bitte prüfe und behebe gezielt:
+
+1. Vollständige Fetch-Voraussetzungen
+Der Dienstplan-Fetch darf erst starten, wenn ALLE benötigten Werte vorhanden sind, nicht nur user?.id.
+Bitte identifizieren und prüfen:
+- user?.id
+- authLoading === false
+- ggf. profile geladen
+- ggf. restaurant_id geladen
+- ggf. department/team/station Kontext geladen
+- currentMonth / monthKey vorhanden
+- evtl. permissions / role bereit
+
+2. Verhindere Überschreiben mit leerem Ergebnis
+Falls Supabase ein leeres Objekt oder leeres Array liefert, darf das den bestehenden State nicht sofort überschreiben, solange nicht sicher ist, dass:
+- Auth fertig ist
+- Profil/Kontext fertig ist
+- Query wirklich final und gültig ausgeführt wurde
+
+Bitte kein {} oder [] blind in scheduleState setzen.
+
+3. Logging erweitern
+Bitte zusätzlich loggen:
+- authLoading
+- user?.id
+- profile id / restaurant_id falls vorhanden
+- currentMonth / monthKey
+- alle Filter / station / team / department
+- query params vor dem DB Call
+- raw Supabase response
+- ob State überschrieben wird
+- ob Fallback verwendet wird
+
+4. Session / Auth Listener prüfen
+Bitte prüfen, ob bei Page Reload im Inkognito-Modus:
+- getSession
+- onAuthStateChange
+- SIGNED_IN
+- TOKEN_REFRESHED
+in der richtigen Reihenfolge verarbeitet werden
+
+Es soll erst nach stabiler Session + Kontext geladen werden.
+
+5. Hydration-Sperre einbauen
+Bitte eine explizite isReadyToFetch Logik bauen, z. B.:
+- !authLoading
+- !!user?.id
+- !!restaurantId oder vergleichbarer Kontext
+- !!currentMonth
+Erst wenn alles true ist, darf loadMonthData laufen.
+
+6. Kein stiller Leerzustand
+Wenn Kontext noch nicht bereit ist:
+- Spinner oder "Daten werden geladen"
+Wenn Query wirklich 0 Daten liefert:
+- klarer leerer Zustand
+Aber niemals direkt leeres Grid wegen Timingfehler.
+
+7. Inkognito-sicher testen
+Bitte den Fix so machen, dass er auch ohne funktionierenden LocalStorage-Fallback stabil ist.
+Die Seite muss nach Refresh allein durch Supabase + korrekten Kontext wieder laden.
+
+Bitte mir danach zurückmelden:
+- was die tatsächliche Root Cause war
+- welche zusätzliche Abhängigkeit gefehlt hat
+- welche Datei(en) geändert wurden
+- wie ich den Inkognito-Refresh-Test erneut prüfen soll

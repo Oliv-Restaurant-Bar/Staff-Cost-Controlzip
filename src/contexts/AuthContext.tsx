@@ -12,6 +12,17 @@ export interface AuthContextType {
   isAdmin: boolean;
   isServiceManager: boolean;
   isKuecheManager: boolean;
+  /**
+   * Increments on every successful auth event:
+   *   - getSession() completed (boot)
+   *   - TOKEN_REFRESHED (background JWT renewal)
+   *   - SIGNED_IN (new user or post-boot)
+   *
+   * Pages that fetch Supabase data should depend on this value so they
+   * automatically re-fetch after a token renewal, even when user?.id
+   * hasn't changed.
+   */
+  sessionVersion: number;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
@@ -19,19 +30,20 @@ export interface AuthContextType {
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser]       = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [role, setRole]       = useState<UserRole>('admin');
+  const [user, setUser]             = useState<User | null>(null);
+  const [session, setSession]       = useState<Session | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const [role, setRole]             = useState<UserRole>('admin');
+  // Incremented on every confirmed auth event — lets consumers re-fetch data
+  // after a background token renewal without requiring a user ID change.
+  const [sessionVersion, setSessionVersion] = useState(0);
 
   // Track whether the initial getSession() boot sequence is complete.
-  // onAuthStateChange will skip INITIAL_SESSION so we don't double-load.
   const bootDoneRef = useRef(false);
 
   // Track the user ID established by getSession() so we can detect whether a
   // subsequent SIGNED_IN event is a real new sign-in (different user) or just
-  // a background token refresh that Supabase reports as SIGNED_IN on some
-  // client versions.  Silent if same user post-boot; full reload if new user.
+  // a background token refresh.
   const currentUserIdRef = useRef<string | null>(null);
 
   // E-Mail-Fallback (greift nur wenn kein user_profiles-Eintrag existiert)
@@ -113,9 +125,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   useEffect(() => {
-    // ── Step 1: Immediate session check from localStorage cache (fast, <5 ms) ──
-    // This is the ONLY place we call loadUserRole on initial boot.
-
     // Safety net: if getSession never resolves (extreme edge case / network issue),
     // clear the loading spinner after 8 seconds so the app never hangs forever.
     const safetyTimer = setTimeout(() => {
@@ -132,6 +141,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         hasSession: !!session,
         userId: session?.user?.id,
         email: session?.user?.email,
+        tokenExpiry: session?.expires_at ? new Date(session.expires_at * 1000).toISOString() : null,
       });
       setSession(session);
       setUser(session?.user ?? null);
@@ -141,6 +151,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
       setLoading(false);
       bootDoneRef.current = true;
+      // Increment sessionVersion — tells all consumers the session is now ready
+      setSessionVersion(v => v + 1);
+      console.log('[AUTH] sessionVersion → 1 (boot complete)');
     });
 
     // ── Step 2: Listen for real auth transitions ───────────────────────────────
@@ -151,6 +164,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         userId: session?.user?.id,
         bootDone: bootDoneRef.current,
         sameUser: session?.user?.id === currentUserIdRef.current,
+        tokenExpiry: session?.expires_at ? new Date(session.expires_at * 1000).toISOString() : null,
       });
 
       // ── INITIAL_SESSION: handled by getSession() above — always skip ──────────
@@ -159,12 +173,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
-      // ── TOKEN_REFRESHED: JWT renewed, same user, no role change ───────────────
-      // Update session silently. No spinner, no role reload.
+      // ── TOKEN_REFRESHED: JWT renewed, same user ────────────────────────────────
+      // Update session AND increment sessionVersion so pages re-fetch with the
+      // fresh token.  This is the key fix for the Incognito refresh bug: the
+      // initial queries may have run with a stale token; incrementing
+      // sessionVersion triggers a re-fetch with the now-valid JWT.
       if (event === 'TOKEN_REFRESHED') {
-        console.log('[AUTH] TOKEN_REFRESHED – silent session update');
+        console.log('[AUTH] TOKEN_REFRESHED – updating session + incrementing sessionVersion');
         setSession(session);
         setUser(session?.user ?? null);
+        setSessionVersion(v => {
+          console.log('[AUTH] sessionVersion →', v + 1, '(TOKEN_REFRESHED)');
+          return v + 1;
+        });
         return;
       }
 
@@ -177,20 +198,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
 
       // ── SIGNED_IN (post-boot, same user) ──────────────────────────────────────
-      // Supabase can fire SIGNED_IN after getSession() completes when it
-      // refreshes an expired JWT in the background. This is NOT a new login —
-      // just a token refresh reported as SIGNED_IN on some client versions.
-      // Treat it silently to avoid unmounting pages with the global spinner.
+      // Supabase can fire SIGNED_IN after getSession() when it refreshes an expired
+      // JWT in the background.  Also increment sessionVersion here so a re-fetch
+      // is triggered if the initial load had stale data.
       if (event === 'SIGNED_IN' && bootDoneRef.current &&
           session?.user?.id === currentUserIdRef.current) {
-        console.log('[AUTH] SIGNED_IN (same user, post-boot) – silent session update');
+        console.log('[AUTH] SIGNED_IN (same user, post-boot) – silent update + sessionVersion bump');
         setSession(session);
         setUser(session?.user ?? null);
+        setSessionVersion(v => {
+          console.log('[AUTH] sessionVersion →', v + 1, '(SIGNED_IN same user)');
+          return v + 1;
+        });
         return;
       }
 
       // ── SIGNED_IN (new user after sign-out) or pre-boot ───────────────────────
-      // This is a real login event: update user ID tracking and reload role.
       if (event === 'SIGNED_IN') {
         console.log('[AUTH] SIGNED_IN (new/different user or pre-boot) – full role reload');
         setSession(session);
@@ -201,6 +224,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           await loadUserRole(session.user.id, session.user.email);
           console.log('[AUTH] SIGNED_IN role load complete');
           setLoading(false);
+          setSessionVersion(v => {
+            console.log('[AUTH] sessionVersion →', v + 1, '(SIGNED_IN new user)');
+            return v + 1;
+          });
         }
         return;
       }
@@ -214,6 +241,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setLoading(false);
         bootDoneRef.current = false;
         currentUserIdRef.current = null;
+        // Do NOT increment sessionVersion on sign-out — consumers should stop fetching
       }
     });
 
@@ -245,6 +273,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       session,
       loading,
       role,
+      sessionVersion,
       isAdmin:          role === 'admin',
       isServiceManager: role === 'service_manager',
       isKuecheManager:  role === 'kueche_manager',
