@@ -147,14 +147,18 @@ export async function loadProductSalesRows(): Promise<ProductSalesRow[]> {
   const PAGE_SIZE = 1000;
   const allRows: ProductSalesRow[] = [];
   let from = 0;
+  let page = 0;
 
   while (true) {
-    const { data, error } = await (supabase as any)
+    const to = from + PAGE_SIZE - 1;
+    console.log(`[DASHBOARD] fetching page ${page}: rows ${from}–${to}`);
+
+    const { data, error, count } = await (supabase as any)
       .from('product_sales')
-      .select('product_name, quantity, revenue, sale_date, source, import_batch')
+      .select('product_name, quantity, revenue, sale_date, source, import_batch', { count: 'exact' })
       .not('source', 'is', null)
       .not('import_batch', 'is', null)
-      .range(from, from + PAGE_SIZE - 1);
+      .range(from, to);
 
     if (error) {
       console.error('[VERKAUF] loadProductSalesRows ERROR:', {
@@ -166,10 +170,13 @@ export async function loadProductSalesRows(): Promise<ProductSalesRow[]> {
       throw new Error(`product_sales SELECT fehlgeschlagen: ${error.message} (Code ${error.code})`);
     }
 
+    console.log(`[DASHBOARD] page ${page}: got ${data?.length ?? 0} rows (DB total count: ${count})`);
+
     if (!data || data.length === 0) break;
     allRows.push(...data);
     if (data.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
+    page++;
   }
 
   console.log('[DASHBOARD] total rows loaded:', allRows.length);
