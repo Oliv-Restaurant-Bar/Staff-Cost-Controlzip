@@ -172,7 +172,7 @@ function ImportHistory({ batches, loading }: { batches: ImportBatch[]; loading: 
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-border">
-            {['Batch', 'Quelle', 'Datei(en)', 'Datum', 'Datensätze', 'Absatz', 'Umsatz CHF'].map(h => (
+            {['Batch-ID', 'Quelle', 'Importiert am', 'Frühstes Datum', 'Datensätze', 'Absatz', 'Umsatz CHF'].map(h => (
               <th key={h} className="px-3 py-2 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
                 {h}
               </th>
@@ -182,12 +182,10 @@ function ImportHistory({ batches, loading }: { batches: ImportBatch[]; loading: 
         <tbody className="divide-y divide-border/40">
           {batches.map((b, i) => (
             <tr key={`${b.import_batch}-${i}`} className="hover:bg-muted/30 transition-colors">
-              <td className="px-3 py-2 font-medium">{b.import_batch || '–'}</td>
+              <td className="px-3 py-2 font-mono text-[10px]">{b.import_batch || '–'}</td>
               <td className="px-3 py-2 text-muted-foreground">{b.source || '–'}</td>
-              <td className="px-3 py-2 text-muted-foreground max-w-[180px] truncate" title={b.file_name}>
-                {b.file_name || '–'}
-              </td>
-              <td className="px-3 py-2 text-muted-foreground">{fmtDate(b.sales_date)}</td>
+              <td className="px-3 py-2 text-muted-foreground">{fmtDate(b.imported_at) || '–'}</td>
+              <td className="px-3 py-2 text-muted-foreground">{fmtDate(b.sales_date) || '–'}</td>
               <td className="px-3 py-2 tabular-nums">{fmtNum(b.rows_imported)}</td>
               <td className="px-3 py-2 tabular-nums">{fmtNum(b.total_qty, 1)}</td>
               <td className="px-3 py-2 tabular-nums font-semibold">{fmtChf(b.total_revenue)}</td>

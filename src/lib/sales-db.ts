@@ -51,15 +51,13 @@ export interface ProblemProduct {
 }
 
 export interface ImportBatch {
-  import_batch:    string;
-  source:          string;
-  file_name:       string;
-  sales_date:      string;
-  rows_imported:   number;
-  total_qty:       number;
-  total_revenue:   number;
-  first_imported_at: string;
-  last_imported_at:  string;
+  import_batch:      string;
+  source:            string;
+  sales_date:        string;   // frühestes Datum im Batch
+  rows_imported:     number;
+  total_qty:         number;
+  total_revenue:     number;
+  imported_at:       string;   // aus Batch-ID geparst (YYYY-MM-DDTHH:MM:00)
 }
 
 export interface ProductMatrixRow {
@@ -155,17 +153,63 @@ export async function fetchProblemProducts(): Promise<ProblemProduct[]> {
   }
 }
 
-/** Import-Historie aus sales_import_batches */
+/** Parst Datum+Zeit aus der Batch-ID, z.B. "food-20260326-2226" → "2026-03-26T22:26:00"
+ *  Wird als Sortierschlüssel und Anzeige-Timestamp verwendet.
+ */
+function parseBatchTimestamp(batchId: string): string {
+  const m = batchId.match(/(\d{8})-(\d{4})$/);
+  if (!m) return '';
+  const d = m[1]; // "20260326"
+  const t = m[2]; // "2226"
+  return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T${t.slice(0, 2)}:${t.slice(2, 4)}:00`;
+}
+
+/** Import-Historie – aggregiert direkt aus product_sales.
+ *  Kein separates sales_import_batches-View nötig.
+ */
 export async function fetchImportBatches(): Promise<ImportBatch[]> {
   try {
+    // Nur die Felder holen, die wir für die Aggregation brauchen.
     const { data, error } = await (supabase as any)
-      .from('sales_import_batches')
-      .select('*')
-      .order('last_imported_at', { ascending: false });
-    if (error) throw error;
-    return (data ?? []) as ImportBatch[];
+      .from('product_sales')
+      .select('import_batch, source, sale_date, quantity, revenue');
+
+    if (error) {
+      console.error('[sales-db] fetchImportBatches (product_sales):', error);
+      return [];
+    }
+
+    // In-JS groupBy import_batch
+    const map = new Map<string, ImportBatch>();
+    for (const row of data ?? []) {
+      const key: string = row.import_batch ?? '(unbekannt)';
+      if (!map.has(key)) {
+        map.set(key, {
+          import_batch:  key,
+          source:        row.source ?? '',
+          sales_date:    row.sale_date ?? '',
+          rows_imported: 0,
+          total_qty:     0,
+          total_revenue: 0,
+          imported_at:   parseBatchTimestamp(key),
+        });
+      }
+      const b = map.get(key)!;
+      b.rows_imported += 1;
+      b.total_qty     += Number(row.quantity ?? 0);
+      b.total_revenue += Number(row.revenue  ?? 0);
+      // Frühestes Datum im Batch
+      if (row.sale_date && row.sale_date < b.sales_date) {
+        b.sales_date = row.sale_date;
+      }
+    }
+
+    // Neueste zuerst (nach import_batch-Timestamp sortiert)
+    return Array.from(map.values()).sort((a, b) =>
+      b.imported_at.localeCompare(a.imported_at),
+    );
   } catch (err) {
-    console.error('[sales-db] fetchImportBatches:', err);
+    console.error('[sales-db] fetchImportBatches exception:', err);
     return [];
   }
 }
