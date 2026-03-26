@@ -148,6 +148,14 @@ const SchedulePlanner = () => {
   // sessionVersion increments on every auth event (boot, TOKEN_REFRESHED, SIGNED_IN)
   // so pages re-fetch automatically after a background token renewal.
   const { user, loading: authLoading, sessionVersion } = useAuth();
+
+  // ── Fetch generation counter ──────────────────────────────────────────────
+  // Prevents race conditions when loadMonthData() is called concurrently
+  // (e.g. mount + TOKEN_REFRESHED firing at the same time).
+  // Each call increments the counter; before writing state it checks whether a
+  // newer call has already started.  If so, the older call's results are
+  // discarded — avoiding stale-empty overwrites of good data.
+  const fetchGenRef = useRef(0);
   const {
     isAdmin,
     isServiceManager,
@@ -257,119 +265,118 @@ const SchedulePlanner = () => {
   //     automatically re-triggers the data load with the fresh session.
   //
   const loadMonthData = useCallback(async () => {
+    // ── Fetch-generation counter ─────────────────────────────────────────────
+    // Increment FIRST.  Every setState call in this function is guarded by
+    // `if (fetchGenRef.current !== gen) return` so that a newer concurrent
+    // fetch can supersede this one.  This prevents the classic race:
+    //   Gen-1 (stale JWT → RLS → 0 rows) lands after Gen-2 (fresh data)
+    //   and wipes scheduleData with {}.
+    const gen = ++fetchGenRef.current;
     const monthKey = format(currentMonth, 'yyyy-MM');
 
-    console.error('🔴 [DIENSTPLAN LIVE] loadMonthData() invoked', { monthKey });
+    console.log('[ROUTE] loadMonthData gen=' + gen, { monthKey, sessionVersion });
 
-    // Always call getSession() first — it returns the CURRENTLY VALID token,
-    // automatically refreshing it if expired.  This is the defensive guarantee
-    // that all subsequent Supabase queries run with a fresh JWT, regardless of
-    // when or why this callback was triggered.
+    // ── Defensive getSession() ───────────────────────────────────────────────
+    // Always call this first.  It awaits initializePromise + acquires the lock,
+    // auto-refreshes an expired JWT if needed, and returns the current session.
     const { data: { session: freshSession }, error: sessionError } =
       await supabase.auth.getSession();
 
-    const freshUserId   = freshSession?.user?.id ?? null;
-    const freshEmail    = freshSession?.user?.email ?? null;
-    const tokenExpiry   = freshSession?.expires_at
+    const freshUserId = freshSession?.user?.id ?? null;
+    const tokenExpiry = freshSession?.expires_at
       ? new Date(freshSession.expires_at * 1000).toISOString() : null;
 
-    console.log('[DIENSTPLAN] loadMonthData', {
-      monthKey,
-      freshUserId,
-      freshEmail,
-      tokenExpiry,
-      sessionError: sessionError?.message ?? null,
-    });
+    console.log('[ROUTE] getSession result', { gen, freshUserId, tokenExpiry, sessionError: sessionError?.message ?? null });
 
     if (sessionError || !freshUserId) {
-      console.warn('[DIENSTPLAN] skipped – no valid session', {
-        sessionError: sessionError?.message,
-        freshUserId,
-      });
+      console.warn('[ROUTE] loadMonthData gen=' + gen + ' skipped – no valid session');
+      return;
+    }
+
+    // Stale check — a newer fetch may have been started while getSession() was awaiting.
+    if (fetchGenRef.current !== gen) {
+      console.log('[ROUTE] gen=' + gen + ' superseded after getSession (current=' + fetchGenRef.current + ') – aborting');
       return;
     }
 
     setDataLoading(true);
 
     try {
-      // ── Mitarbeiter laden ────────────────────────────────────────────────────
-      console.log('[DIENSTPLAN] fetching employees…');
+      // ── Mitarbeiter ──────────────────────────────────────────────────────────
       const supabaseEmployees = await loadEmployees();
-      console.log('[DIENSTPLAN] employees result', { count: supabaseEmployees?.length ?? 'null (error)' });
+      if (fetchGenRef.current !== gen) { console.log('[ROUTE] gen=' + gen + ' superseded after employees – aborting'); return; }
       if (supabaseEmployees && supabaseEmployees.length > 0) {
         setEmployees(supabaseEmployees);
-      } else {
-        // supabaseEmployees is null → Supabase error (not 0 rows) → localStorage fallback
-        if (supabaseEmployees === null) {
-          console.warn('[DIENSTPLAN] employees: Supabase error – using localStorage fallback');
-          const savedEmployees = localStorage.getItem('schedule-employees');
-          if (savedEmployees) {
-            try { setEmployees(JSON.parse(savedEmployees)); } catch { /* ignore */ }
-          }
-        } else {
-          console.log('[DIENSTPLAN] employees: 0 rows from Supabase (no employees configured)');
-        }
+      } else if (supabaseEmployees === null) {
+        const saved = localStorage.getItem('schedule-employees');
+        if (saved) { try { setEmployees(JSON.parse(saved)); } catch { /* ignore */ } }
       }
 
-      // ── Dienstplan laden ─────────────────────────────────────────────────────
-      console.log('[DIENSTPLAN] fetching schedule for', monthKey);
+      // ── PLAN-Daten (schedule_entries) ────────────────────────────────────────
+      console.log('[PLAN] fetch start', { gen, monthKey });
       const supabaseSchedule = await loadScheduleForMonth(currentMonth);
-      const scheduleKeyCount = supabaseSchedule !== null
-        ? Object.keys(supabaseSchedule).length
-        : 'null (Supabase error)';
-      console.error('🔴 [DIENSTPLAN LIVE] schedule query result', {
-        keys: scheduleKeyCount,
-        usedSupabase: supabaseSchedule !== null,
-        freshUserId,
-      });
-      console.log('[DIENSTPLAN] schedule result', {
-        keys: scheduleKeyCount,
-        usedSupabase: supabaseSchedule !== null,
-      });
+      const planKeys = supabaseSchedule !== null ? Object.keys(supabaseSchedule).length : 'error';
+      console.log('[PLAN] fetch result', { gen, planKeys, isStale: fetchGenRef.current !== gen });
+
+      if (fetchGenRef.current !== gen) {
+        console.warn('[PLAN] gen=' + gen + ' superseded (current=' + fetchGenRef.current + ') – discarding plan result');
+        return;
+      }
 
       if (supabaseSchedule !== null) {
-        // Could be {} (valid: no entries this month) or populated — always trust it
-        // because the query ran with a verified fresh session token.
-        setScheduleData(supabaseSchedule);
-        if (Object.keys(supabaseSchedule).length === 0) {
-          console.log('[DIENSTPLAN] schedule: 0 entries this month (no shifts scheduled)');
-        }
+        // Safety: don't silently erase an existing plan with an empty result.
+        // An empty result here means either "genuinely no entries" or "RLS returned
+        // 0 rows due to a timing issue".  We only skip the overwrite if this gen
+        // is not the very first fetch for this mount (gen > 1 means a re-fetch).
+        setScheduleData(prev => {
+          const prevKeys = Object.keys(prev).length;
+          const newKeys  = Object.keys(supabaseSchedule).length;
+          if (prevKeys > 0 && newKeys === 0 && gen > 1) {
+            console.warn('[PLAN] state set: skipping overwrite – prev had', prevKeys, 'entries, new result empty (gen=' + gen + ')');
+            return prev;
+          }
+          console.log('[PLAN] state set', { gen, newKeys, prevKeys });
+          return supabaseSchedule;
+        });
       } else {
-        // Supabase returned an error (not 0 rows) → localStorage fallback
-        console.warn('[DIENSTPLAN] schedule: Supabase error – using localStorage fallback');
-        const savedSchedule = localStorage.getItem(`schedule-v2-${monthKey}`);
-        setScheduleData(savedSchedule ? JSON.parse(savedSchedule) : {});
+        console.warn('[PLAN] Supabase error – using localStorage fallback');
+        const saved = localStorage.getItem(`schedule-v2-${monthKey}`);
+        setScheduleData(saved ? JSON.parse(saved) : {});
       }
 
-      // ── Ist-Stunden laden ────────────────────────────────────────────────────
-      console.log('[DIENSTPLAN] fetching actual hours for', monthKey);
+      // ── IST-Daten (actual_hours) ─────────────────────────────────────────────
+      console.log('[IST] fetch start', { gen, monthKey });
       const supabaseActual = await loadActualHoursForMonth(currentMonth);
-      console.log('[DIENSTPLAN] actual hours result', {
-        keys: supabaseActual !== null ? Object.keys(supabaseActual).length : 'null (error)',
-        usedSupabase: supabaseActual !== null,
-      });
+      const istKeys = supabaseActual !== null ? Object.keys(supabaseActual).length : 'error';
+      console.log('[IST] fetch result', { gen, istKeys, isStale: fetchGenRef.current !== gen });
+
+      if (fetchGenRef.current !== gen) {
+        console.warn('[IST] gen=' + gen + ' superseded (current=' + fetchGenRef.current + ') – discarding ist result');
+        return;
+      }
+
       if (supabaseActual !== null) {
+        console.log('[IST] state set', { gen, istKeys });
         setActualHoursData(supabaseActual);
       } else {
-        console.warn('[DIENSTPLAN] actual hours: Supabase error – using localStorage fallback');
-        const savedActualHours = localStorage.getItem(`actual-hours-${monthKey}`);
-        setActualHoursData(savedActualHours ? JSON.parse(savedActualHours) : {});
+        console.warn('[IST] Supabase error – using localStorage fallback');
+        const saved = localStorage.getItem(`actual-hours-${monthKey}`);
+        setActualHoursData(saved ? JSON.parse(saved) : {});
       }
 
-      // ── Tagesbudgets: aus Monatsbudget berechnen (Wochentag-Gewichtung) ──────
-      const year        = currentMonth.getFullYear();
-      const monthIdx    = currentMonth.getMonth();
+      // ── Tagesbudgets ─────────────────────────────────────────────────────────
+      const year           = currentMonth.getFullYear();
+      const monthIdx       = currentMonth.getMonth();
       const monthlyRevenue = getMonthlyBudgetRevenue(year, monthIdx);
-      const allDays     = eachDayOfInterval({
-        start: startOfMonth(currentMonth),
-        end:   endOfMonth(currentMonth),
-      });
+      const allDays        = eachDayOfInterval({ start: startOfMonth(currentMonth), end: endOfMonth(currentMonth) });
 
-      const savedBudgets = localStorage.getItem('dailyBudgets');
+      const savedBudgets    = localStorage.getItem('dailyBudgets');
       const manualBudgets: Record<string, { plannedRevenue?: number; actualRevenue?: number }> =
         savedBudgets ? JSON.parse(savedBudgets) : {};
       const revenueOverrides: Record<string, number> =
         JSON.parse(localStorage.getItem('dailyRevenueOverrides') || '{}');
+
+      if (fetchGenRef.current !== gen) return;
 
       if (monthlyRevenue > 0) {
         const autoBudgets = distributeBudgetByWeekday(monthlyRevenue, allDays);
@@ -377,31 +384,34 @@ const SchedulePlanner = () => {
         Object.entries(manualBudgets).forEach(([k, v]) => {
           if (v.actualRevenue !== undefined) merged[k] = { ...merged[k], actualRevenue: v.actualRevenue };
         });
-        Object.entries(revenueOverrides).forEach(([k, v]) => {
-          merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true };
-        });
+        Object.entries(revenueOverrides).forEach(([k, v]) => { merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true }; });
         setDailyBudgets(merged);
       } else {
         const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }> = { ...manualBudgets };
-        Object.entries(revenueOverrides).forEach(([k, v]) => {
-          merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true };
-        });
+        Object.entries(revenueOverrides).forEach(([k, v]) => { merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true }; });
         setDailyBudgets(merged);
       }
 
-      console.log('[DIENSTPLAN] loadMonthData complete', { monthKey, freshUserId });
+      console.log('[ROUTE] loadMonthData gen=' + gen + ' complete', { monthKey, planKeys, istKeys });
     } catch (err) {
-      console.error('[DIENSTPLAN] loadMonthData error', err);
+      console.error('[ROUTE] loadMonthData gen=' + gen + ' error', err);
     } finally {
-      setDataLoading(false);
+      if (fetchGenRef.current === gen) setDataLoading(false);
     }
   // Only depends on currentMonth — sessionVersion controls re-runs via the
   // effect below, and the internal getSession() call guarantees a fresh token.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMonth]);
 
+  // ── Route enter / leave logging ──────────────────────────────────────────
+  useEffect(() => {
+    console.log('[ROUTE] entered dienstplanung', { sessionVersion });
+    return () => { console.log('[ROUTE] left dienstplanung'); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Trigger load when session is ready OR when the token is refreshed ───────
-  // sessionVersion is 0 until INITIAL_SESSION fires (boot complete).
+  // sessionVersion is 0 until boot is complete.
   // It increments on TOKEN_REFRESHED and SIGNED_IN, so a background token
   // renewal automatically re-fetches data even when user?.id stays the same.
   // currentMonth in deps ensures re-fetch when the user navigates to another month.
@@ -411,6 +421,27 @@ const SchedulePlanner = () => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionVersion, currentMonth]);
+
+  // ── Re-fetch on page-visibility regain ───────────────────────────────────
+  // When the user switches browser tabs away and back (or the OS suspends the
+  // page), a fresh fetch is triggered.  This also covers SPA route changes if
+  // the router unmounts/remounts the component (the mount effect above fires).
+  useEffect(() => {
+    const sessionVersionRef = { current: sessionVersion };
+    sessionVersionRef.current = sessionVersion;
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && sessionVersionRef.current > 0) {
+        console.log('[ROUTE] page became visible – re-fetching plan+ist data');
+        loadMonthData();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  // loadMonthData is recreated when currentMonth changes (its only dep), which
+  // means this effect also re-registers when the month changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadMonthData]);
 
   // Re-read actual hours from localStorage when an external import fires `schedule-updated`
   useEffect(() => {

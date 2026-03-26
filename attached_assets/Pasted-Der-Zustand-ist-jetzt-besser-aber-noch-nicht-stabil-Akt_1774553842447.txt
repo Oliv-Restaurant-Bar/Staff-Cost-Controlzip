@@ -1,0 +1,76 @@
+Der Zustand ist jetzt besser, aber noch nicht stabil.
+
+Aktuelle Beobachtung:
+1. Nach Refresh kommen die Plan-Daten meistens korrekt zurück
+2. Logout und erneuter Login funktionieren besser
+3. ABER:
+   - wenn ich von Dienstplanung auf Dashboard gehe und wieder zurück, fehlen manchmal die Plan-Daten
+   - nach Logout und erneutem Login sind die Ist-Daten da, aber die Plan-Daten fehlen
+   - nach einem manuellen Refresh sind die Plan-Daten wieder da
+
+Das bedeutet:
+Auth ist nicht mehr das Hauptproblem.
+Jetzt gibt es sehr wahrscheinlich noch ein Problem beim Re-Mount / Route-Wechsel / Re-Fetch der Plan-Daten.
+
+Bitte jetzt gezielt diese Punkte prüfen und fixen:
+
+1. Plan-Daten und Ist-Daten getrennt debuggen
+- Bitte klar loggen:
+  - wann Plan-Daten geladen werden
+  - wann Ist-Daten geladen werden
+  - welche Query-Parameter jeweils verwendet werden
+- Ich will sehen, warum Ist-Daten da sind, aber Plan-Daten fehlen
+
+2. Re-Fetch bei Route-Wechsel
+- Wenn ich von Dashboard zurück auf Dienstplanung gehe, müssen die Plan-Daten zuverlässig neu geladen oder aus einem gültigen Cache wiederhergestellt werden
+- Bitte prüfen, ob die Dienstplan-Komponente beim Route-Wechsel wirklich remounted oder ob ein stale State erhalten bleibt
+
+3. useEffect / Query Dependencies für Plan-Daten prüfen
+Bitte prüfen, ob der Fetch für Plan-Daten wirklich von allen nötigen Abhängigkeiten abhängt:
+- sessionVersion
+- currentMonth
+- selectedDepartment / Service / Küche / Alle
+- selectedView Plan / Ist / Ver
+- aktueller User / Rolle / Restaurant Kontext
+Wenn eine davon fehlt, kann es sein, dass der Fetch nach Navigation oder Login nicht neu startet
+
+4. Plan-State nicht mit leerem Ergebnis überschreiben
+Falls der Plan-Fetch temporär leer zurückkommt:
+- nicht sofort den sichtbaren State löschen
+- erst überschreiben, wenn klar ist, dass der Fetch erfolgreich und final ist
+
+5. Route Focus / Visibility Handling
+Bitte prüfen, ob beim Zurückwechseln auf die Dienstplanung ein Refetch ausgelöst werden sollte
+Optional:
+- refetch on route enter
+- refetch on window focus
+- refetch on page visibility regain
+
+6. Nach Login explizit vollständigen Dienstplan-Reload auslösen
+Wenn Login erfolgreich war:
+- nicht nur Auth-Ready setzen
+- sondern explizit den kompletten Dienstplan neu laden
+- Plan und Ist separat, aber synchron kontrolliert
+
+7. Logging erweitern
+Bitte loggen:
+- [PLAN] fetch start
+- [PLAN] fetch result keys
+- [PLAN] state set
+- [IST] fetch start
+- [IST] fetch result keys
+- [IST] state set
+- [ROUTE] entered dienstplanung
+- [ROUTE] left dienstplanung
+
+8. Ziel
+Nach diesen 3 Situationen müssen die Plan-Daten zuverlässig sichtbar sein:
+- normaler Refresh
+- Wechsel von Dashboard zurück zur Dienstplanung
+- Logout und erneuter Login
+
+Bitte mir danach zurückmelden:
+- warum Plan-Daten im Gegensatz zu Ist-Daten manchmal fehlen
+- welche Datei(en) geändert wurden
+- welche fehlende Dependency oder welcher stale State die Ursache war
+- wie ich den Fix genau testen soll
