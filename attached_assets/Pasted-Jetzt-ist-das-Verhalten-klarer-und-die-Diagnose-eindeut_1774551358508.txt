@@ -1,0 +1,59 @@
+Jetzt ist das Verhalten klarer und die Diagnose eindeutig:
+
+Fortschritt:
+- Logout funktioniert jetzt
+- der neue Auth-Code ist live
+- ich sehe die neuen 🔴 [AUTH LIVE] Logs
+
+Aktuelles Problem:
+- Nach Logout + erneutem Login oder nach Reload bleibt die App im Spinner hängen
+- die Daten kommen nicht
+- in der Console sehe ich:
+  - 🔴 [AUTH LIVE] AuthProvider mounted – NEW CODE ACTIVE
+  - 🔴 [AUTH LIVE] client instance id ...
+  - [AUTH] onAuthStateChange
+  - 🔴 [AUTH LIVE] SIGNED_IN (new user / first login)
+  - [AUTH] loadUserRole
+- Aber ich sehe KEIN:
+  - boot complete via getSession
+  - boot complete via INITIAL_SESSION
+
+Das bedeutet:
+Der Auth-Boot wird jetzt nicht mehr zu früh abgeschlossen, sondern offenbar gar nicht mehr abgeschlossen.
+loading bleibt hängen oder der Ready-State wird nie erreicht.
+
+Bitte jetzt gezielt fixen:
+
+1. completeBoot zuverlässig auslösen
+- Der Auth-Boot muss garantiert abgeschlossen werden bei einem gültigen eingeloggten Zustand
+- Wenn SIGNED_IN kommt und eine gültige Session/User vorhanden ist, muss completeBoot ebenfalls möglich sein
+- Nicht nur INITIAL_SESSION als einziges erlaubtes Boot-Signal verwenden
+
+2. Logging erweitern
+Bitte loggen:
+- wenn completeBoot aufgerufen wird
+- warum completeBoot ggf. NICHT aufgerufen wird
+- Wert von bootDoneRef vor/nach dem Event
+- loading state before/after
+- session vorhanden ja/nein
+- user vorhanden ja/nein
+
+3. loadUserRole darf Boot nicht blockieren
+- Falls loadUserRole hängt oder verzögert, darf die gesamte App nicht endlos im Spinner bleiben
+- Auth-Boot und Rollenladen sauber trennen
+- App kann notfalls mit Defaultrolle oder separatem Rollen-Loading weiterlaufen
+
+4. Fallback für Boot Completion
+- Wenn SIGNED_IN mit gültiger Session kommt, aber INITIAL_SESSION nicht folgt, bitte Boot trotzdem sauber abschliessen
+- Ziel: kein endloser Spinner
+
+5. Nach erfolgreichem Boot:
+- loading = false
+- App rendert
+- Dienstplan/Datenqueries dürfen starten
+
+6. Bitte danach zurückmelden:
+- warum completeBoot nicht ausgelöst wurde
+- welche Bedingung zu streng war
+- welche Datei(en) geändert wurden
+- wie ich den Test erneut machen soll
