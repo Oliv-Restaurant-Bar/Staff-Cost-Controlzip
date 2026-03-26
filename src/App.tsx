@@ -42,6 +42,10 @@ import LunchAnalysePage from "./pages/LunchAnalyse";
 import TakeAwayAnalysePage from "./pages/TakeAwayAnalyse";
 import ArtikelTrackingPage from "./pages/ArtikelTracking";
 import GuestAccess from "./pages/GuestAccess";
+import VerkaufsDashboard from "./pages/VerkaufsDashboard";
+import SalesUpload from "./pages/SalesUpload";
+import ProduktAnalyse from "./pages/ProduktAnalyse";
+import KategorienAnalyse from "./pages/KategorienAnalyse";
 
 const queryClient = new QueryClient();
 
@@ -137,6 +141,12 @@ const AppContent = () => {
             <Route path="/lunch-analyse"    element={<LunchAnalysePage />} />
             <Route path="/takeaway-analyse" element={<TakeAwayAnalysePage />} />
             <Route path="/absenzen"         element={<AbsenzKostenPage />} />
+
+            {/* Verkaufsdaten & Produktanalyse */}
+            <Route path="/verkauf-dashboard" element={<VerkaufsDashboard />} />
+            <Route path="/sales-upload"      element={<SalesUpload />} />
+            <Route path="/produkt-analyse"   element={<ProduktAnalyse />} />
+            <Route path="/kategorien"        element={<KategorienAnalyse />} />
 
             {/* Abteilungs-Dienstpläne */}
             <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />

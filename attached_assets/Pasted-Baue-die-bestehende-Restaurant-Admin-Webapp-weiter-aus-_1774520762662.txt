@@ -1,0 +1,245 @@
+Baue die bestehende Restaurant Admin Webapp weiter aus und verbinde sie mit Supabase.
+
+Ziel:
+Ich möchte ein Management Dashboard für mein Restaurant, einen Upload Flow für Verkaufsdaten und Analyse-Seiten für Produkte und Kategorien.
+
+Technischer Rahmen:
+Frontend in der bestehenden App weiterverwenden
+Supabase ist bereits angebunden
+Bestehende Tabellen und Views in Supabase sollen genutzt werden
+Keine Mockdaten mehr verwenden, sondern echte Supabase Daten laden
+Saubere, produktionsnahe UI
+Deutschsprachige UI
+
+Wichtige Supabase Views und Tabellen:
+Tabellen:
+1. products
+2. product_sales
+
+Views:
+1. management_dashboard
+2. dashboard_category_kpis
+3. dashboard_top_products
+4. dashboard_problem_products
+5. sales_import_batches
+6. daily_sales_summary
+7. product_matrix
+
+Wichtige Felder:
+products enthält unter anderem:
+name
+category
+selling_price
+wes_fixed
+wes_percent_fixed
+is_active
+is_test
+
+product_sales enthält unter anderem:
+product_name
+quantity
+revenue
+sale_date
+source
+import_batch
+file_name
+uploaded_at
+notes
+
+Bitte baue folgende Seiten:
+
+1. Dashboard Seite
+Route zum Beispiel /dashboard
+
+Inhalt:
+Oben KPI Karten aus management_dashboard:
+total_products
+avg_wes_percent
+total_revenue
+total_qty
+stars
+cash_cows
+puzzles
+dogs
+
+Darunter Bereich Umsatz nach Kategorie aus dashboard_category_kpis
+Zeige pro Kategorie:
+category
+total_products
+avg_wes_percent
+total_qty
+total_revenue
+
+Zusätzlich ein Diagramm für Umsatz nach Kategorie
+Zusätzlich ein Diagramm für Absatz nach Kategorie
+
+Darunter zwei Tabellen:
+Top Produkte aus dashboard_top_products
+Problemprodukte aus dashboard_problem_products
+
+Top Produkte Tabelle:
+category
+product_name
+total_qty
+total_revenue
+
+Problemprodukte Tabelle:
+name
+category
+total_qty
+total_revenue
+wes_percent_fixed
+matrix_category
+
+UI Anforderungen:
+KPI Cards modern und klar
+Responsive Layout
+Tabellen filterbar
+Währungsdarstellung in CHF
+Zahlen sauber formatieren
+Diagramme übersichtlich und professionell
+
+2. Sales Upload Seite
+Route zum Beispiel /sales-upload
+
+Funktionen:
+CSV Datei hochladen
+Datei lokal parsen
+Vorschau anzeigen
+Spaltenzuordnung ermöglichen
+
+Mindestfelder für Import:
+product_name
+quantity
+revenue
+sale_date
+
+Zusätzliche Eingabefelder im Formular:
+source
+import_batch
+notes
+
+Beim Import:
+Datensätze in product_sales schreiben
+file_name automatisch speichern
+uploaded_at automatisch übernehmen oder von DB nutzen
+
+Baue folgenden Flow:
+Datei auswählen
+CSV parsen
+Vorschau Tabelle anzeigen
+Spaltenmapping prüfen
+Validierung anzeigen
+Import starten
+Erfolgsmeldung anzeigen
+Nach Import Dashboard Daten neu ladbar machen
+
+Validierungen:
+quantity muss numerisch sein
+revenue muss numerisch sein
+sale_date muss Datum sein
+product_name darf nicht leer sein
+
+Zusätzlich:
+Import Historie auf derselben Seite anzeigen aus sales_import_batches
+Spalten:
+import_batch
+source
+file_name
+sales_date
+rows_imported
+total_qty
+total_revenue
+first_imported_at
+last_imported_at
+
+3. Produktanalyse Seite
+Route zum Beispiel /product-analysis
+
+Datenquelle:
+product_matrix
+
+Funktionen:
+Filter nach Kategorie
+Filter nach matrix_category
+Suchfeld nach Produktname
+
+Tabelle anzeigen mit:
+name
+category
+total_qty
+total_revenue
+wes_percent_fixed
+matrix_category
+
+Matrix Kategorien visuell markieren:
+Star grün
+Cash Cow gelb oder orange
+Puzzle blau
+Dog rot
+
+Zusätzlich oben Kennzahlen:
+Anzahl gefilterte Produkte
+Gesamtumsatz der gefilterten Produkte
+Gesamtmenge der gefilterten Produkte
+
+4. Kategorien Seite
+Route zum Beispiel /categories
+
+Datenquelle:
+dashboard_category_kpis
+
+Je Kategorie anzeigen:
+category
+total_products
+avg_wes_percent
+total_qty
+total_revenue
+
+Zusätzlich pro Kategorie eine Card oder Zeile mit Statusbewertung:
+Wenn avg_wes_percent unter oder gleich 25 dann grün
+Wenn avg_wes_percent zwischen 25 und 30 dann gelb
+Wenn avg_wes_percent über 30 dann rot
+
+5. Navigation
+Erweitere die Sidebar oder Hauptnavigation um:
+Dashboard
+Sales Upload
+Produktanalyse
+Kategorien
+
+Wichtige Umsetzungsdetails:
+Nutze echte Supabase Queries
+Baue wiederverwendbare Komponenten
+Fehlerzustände sauber behandeln
+Loading States anzeigen
+Leere Zustände schön darstellen
+Tabellen performant halten
+Keine kaputten Placeholder
+Sauberes Typing falls TypeScript vorhanden ist
+
+Bitte strukturiere den Code sauber:
+components/dashboard
+components/upload
+components/analysis
+lib/supabase
+pages oder app routes passend zur bestehenden Projektstruktur
+
+Falls in der bestehenden App bereits Supabase Client Utilities vorhanden sind, nutze diese und erzeuge keinen zweiten parallelen Client.
+
+Für CSV Upload:
+Nutze eine solide CSV Parsing Lösung
+Vorschau vor dem Insert ist Pflicht
+Import Button erst aktivieren, wenn Validierung erfolgreich ist
+
+Wichtig:
+Kein kompletter Neuaufbau der App
+Bestehendes Designsystem und Layout weiterverwenden
+Neue Seiten in die vorhandene Struktur integrieren
+Wenn nötig fehlende Utility Funktionen ergänzen
+
+Nach der Umsetzung:
+1. Zeige mir die neu erstellten Dateien
+2. Erkläre kurz die Datenflüsse
+3. Nenne mir, welche Seite ich zuerst testen soll
+4. Weise mich auf mögliche Supabase RLS oder Rechteprobleme hin, falls relevant

@@ -14,7 +14,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, BarChart2, Users,
   Settings, LogOut, ChefHat, Utensils, ShieldCheck,
-  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye, DollarSign, Package, UserX, Archive, TrendingDown, Activity, ShoppingBag,
+  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye, DollarSign, Package, UserX, Archive, TrendingDown, Activity, ShoppingBag, Layers, PieChart,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -163,6 +163,34 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Absenzen & Ersatz',
     shortLabel: 'Absenzen',
     icon: UserX,
+    adminOnly: true,
+  },
+  {
+    path: '/verkauf-dashboard',
+    label: 'Verkaufs-Dashboard',
+    shortLabel: 'Verkauf',
+    icon: PieChart,
+    adminOnly: true,
+  },
+  {
+    path: '/sales-upload',
+    label: 'Verkaufsdaten Upload',
+    shortLabel: 'Upload',
+    icon: Upload,
+    adminOnly: true,
+  },
+  {
+    path: '/produkt-analyse',
+    label: 'Produktanalyse',
+    shortLabel: 'Produkte',
+    icon: Layers,
+    adminOnly: true,
+  },
+  {
+    path: '/kategorien',
+    label: 'Kategorien',
+    shortLabel: 'Kategorien',
+    icon: BarChart2,
     adminOnly: true,
   },
 ];
