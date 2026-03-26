@@ -131,7 +131,7 @@ export function WesMarginWidget() {
 
       // Kategorie-Zusammenfassung
       const byCategory: Record<ProductSalesCategory, ProductWesRow[]> = {
-        Restaurant: [], Lunch: [], 'Take Away': [], Getränke: [],
+        Restaurant: [], Lunch: [], 'Take Away': [], Getränke: [], 'Frühstück': [],
       };
       for (const row of rows) byCategory[row.category].push(row);
 

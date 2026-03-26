@@ -109,7 +109,8 @@ export async function loadProductSalesRows(): Promise<ProductSalesRow[]> {
   console.log('[VERKAUF] loadProductSalesRows: querying product_sales…');
   const { data, error } = await (supabase as any)
     .from('product_sales')
-    .select('product_name, quantity, revenue, sale_date, source, import_batch');
+    .select('product_name, quantity, revenue, sale_date, source, import_batch')
+    .limit(50000);  // PostgREST default cap is 1000 — explizit erhöhen
 
   if (error) {
     console.error('[VERKAUF] loadProductSalesRows ERROR:', {
