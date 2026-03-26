@@ -81,7 +81,6 @@ const PRODUCT_SALES_COLUMNS = [
   'sale_date',
   'source',
   'import_batch',
-  'category',
 ] as const;
 
 type ProductSalesColumn = typeof PRODUCT_SALES_COLUMNS[number];
@@ -93,7 +92,6 @@ export interface ProductSaleInsert {
   sale_date:     string;       // YYYY-MM-DD
   source?:       string;
   import_batch?: string;
-  category?:     string | null;
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -224,8 +222,6 @@ function validateRow(row: Record<string, unknown>, idx: number): string | null {
     errors.push(`row[${idx}].source ist kein string (${JSON.stringify(row.source)})`);
   if (row.import_batch !== undefined && row.import_batch !== null && typeof row.import_batch !== 'string')
     errors.push(`row[${idx}].import_batch ist kein string (${JSON.stringify(row.import_batch)})`);
-  if (row.category !== undefined && row.category !== null && typeof row.category !== 'string')
-    errors.push(`row[${idx}].category ist kein string (${JSON.stringify(row.category)})`);
   return errors.length > 0 ? errors.join('; ') : null;
 }
 
