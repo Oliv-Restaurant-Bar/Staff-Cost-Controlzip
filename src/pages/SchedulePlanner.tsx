@@ -256,31 +256,28 @@ const SchedulePlanner = () => {
   const loadMonthData = useCallback(async () => {
     const monthKey = format(currentMonth, 'yyyy-MM');
 
-    // ── Step 1: Always call getSession() to obtain the freshest possible token ──
-    // Even if AuthContext already restored a session, the access_token could have
-    // been expired at that point.  getSession() auto-refreshes if needed and waits
-    // for the network call to complete, so queries below will always run with a
-    // valid JWT regardless of when this function fires.
+    // Always call getSession() first — it returns the CURRENTLY VALID token,
+    // automatically refreshing it if expired.  This is the defensive guarantee
+    // that all subsequent Supabase queries run with a fresh JWT, regardless of
+    // when or why this callback was triggered.
     const { data: { session: freshSession }, error: sessionError } =
       await supabase.auth.getSession();
 
-    const freshUserId = freshSession?.user?.id ?? null;
-    const tokenExpiry = freshSession?.expires_at
-      ? new Date(freshSession.expires_at * 1000).toISOString()
-      : null;
+    const freshUserId   = freshSession?.user?.id ?? null;
+    const freshEmail    = freshSession?.user?.email ?? null;
+    const tokenExpiry   = freshSession?.expires_at
+      ? new Date(freshSession.expires_at * 1000).toISOString() : null;
 
-    console.log('[DIENSTPLAN] loadMonthData start', {
+    console.log('[DIENSTPLAN] loadMonthData', {
       monthKey,
       freshUserId,
+      freshEmail,
       tokenExpiry,
       sessionError: sessionError?.message ?? null,
-      authLoading,
-      sessionVersion,
     });
 
-    // Guard: never fetch without a confirmed, fresh session
     if (sessionError || !freshUserId) {
-      console.warn('[DIENSTPLAN] loadMonthData skipped – no valid session', {
+      console.warn('[DIENSTPLAN] skipped – no valid session', {
         sessionError: sessionError?.message,
         freshUserId,
       });
@@ -388,21 +385,22 @@ const SchedulePlanner = () => {
     } finally {
       setDataLoading(false);
     }
-  // currentMonth: re-fetch when month changes
-  // sessionVersion: re-fetch when AuthContext reports any auth event (TOKEN_REFRESHED, SIGNED_IN, boot)
+  // Only depends on currentMonth — sessionVersion controls re-runs via the
+  // effect below, and the internal getSession() call guarantees a fresh token.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentMonth, sessionVersion]);
+  }, [currentMonth]);
 
-  // ── Trigger load when session is ready or refreshed ──────────────────────────
-  // sessionVersion > 0 means boot has completed (getSession() resolved).
-  // Every subsequent TOKEN_REFRESHED / SIGNED_IN bump sessionVersion so the
-  // data is automatically reloaded with the fresh JWT.
+  // ── Trigger load when session is ready OR when the token is refreshed ───────
+  // sessionVersion is 0 until INITIAL_SESSION fires (boot complete).
+  // It increments on TOKEN_REFRESHED and SIGNED_IN, so a background token
+  // renewal automatically re-fetches data even when user?.id stays the same.
+  // currentMonth in deps ensures re-fetch when the user navigates to another month.
   useEffect(() => {
-    if (!authLoading && sessionVersion > 0) {
+    if (sessionVersion > 0) {
       loadMonthData();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionVersion, authLoading, currentMonth]);
+  }, [sessionVersion, currentMonth]);
 
   // Re-read actual hours from localStorage when an external import fires `schedule-updated`
   useEffect(() => {

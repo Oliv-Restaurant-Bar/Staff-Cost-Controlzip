@@ -1,0 +1,79 @@
+Wir haben jetzt ein zusammenhängendes Auth Problem in der App.
+
+Symptome:
+1. In der Dienstplanung laden die Daten nach normalem Refresh im Inkognito-Fenster weiterhin nicht zuverlässig.
+2. Ich kann mich nicht sauber ausloggen.
+3. Teilweise muss ich die Seite komplett schliessen und neu öffnen, damit Daten wieder korrekt erscheinen.
+
+Das spricht nicht nur für ein Dienstplan-Fetch-Problem, sondern für ein grundlegendes Auth-, Session- oder Client-State-Problem.
+
+Bitte debugge und behebe das systematisch.
+
+Zu prüfen und zu fixen:
+
+1. Logout Flow
+- Prüfe den kompletten signOut Flow
+- Stelle sicher, dass Supabase signOut wirklich awaited wird
+- Stelle sicher, dass nach signOut alle relevanten lokalen States zurückgesetzt werden
+- Stelle sicher, dass nach Logout die App auf die Login-Seite oder einen sauberen Public State navigiert
+- Prüfe, ob localStorage / sessionStorage Reste alte Sessiondaten behalten
+- Prüfe, ob der Logout Button überhaupt den korrekten Handler feuert
+
+2. Auth Context
+- Prüfe den gesamten AuthContext
+- getSession, onAuthStateChange, initial loading, SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED
+- Stelle sicher, dass loading erst false wird, wenn Session UND benötigter User-Kontext wirklich bereit sind
+- Prüfe, ob bei SIGNED_OUT alle abhängigen States auf null gesetzt werden
+
+3. Supabase Client
+- Prüfe, ob in der App nur EIN Supabase Client existiert
+- Kein mehrfaches Initialisieren in verschiedenen Dateien
+- Kein zweiter paralleler Client für einzelne Seiten
+- Auth Listener darf nicht mehrfach registriert werden
+
+4. Route Guards / Protected Pages
+- Geschützte Seiten dürfen erst rendern, wenn Auth wirklich aufgelöst ist
+- Kein früher Render mit leerem User
+- Kein Redirect-Rennen zwischen Login und App
+- Beim Logout muss Protected State sauber verlassen werden
+
+5. Dienstplanung
+- Der Dienstplan-Fetch darf erst laufen, wenn Auth und gesamter Kontext stabil da sind
+- Nicht nur user.id prüfen, sondern auch weitere Abhängigkeiten wie Profil, Restaurant-Kontext, Monat, Bereich
+- Leere Query-Ergebnisse dürfen den State nicht blind überschreiben
+
+6. Logout Testfall explizit fixen
+Bitte sicherstellen:
+- Klick auf Logout
+- Session wird beendet
+- UI springt sauber in ausgeloggten Zustand
+- Danach erneuter Login funktioniert sofort
+- Danach normaler Refresh funktioniert ebenfalls
+- Auch im Inkognito-Fenster
+
+7. Debug Logging temporär erweitern
+Bitte loggen:
+- getSession Ergebnis
+- onAuthStateChange Events
+- aktueller User
+- aktueller Session Status
+- Logout Start
+- Logout Erfolg / Fehler
+- Redirect nach Logout
+- Dienstplan Fetch Start mit allen Abhängigkeiten
+- Dienstplan Fetch Result
+
+8. Ziel
+Die App muss sich stabil verhalten bei:
+- normalem Refresh
+- hartem Refresh
+- Inkognito
+- Logout
+- erneutem Login
+
+Bitte mir danach zurückgeben:
+- Root Cause
+- welche Datei(en) geändert wurden
+- was genau beim Logout kaputt war
+- was genau beim Refresh kaputt war
+- wie ich den Fix testen soll

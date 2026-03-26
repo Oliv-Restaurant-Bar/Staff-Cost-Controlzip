@@ -1,5 +1,4 @@
 import { supabase } from '@/integrations/supabase/client';
-import { createClient } from '@supabase/supabase-js';
 import { Employee } from '@/types/personnel';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 
@@ -658,30 +657,11 @@ export async function loadOnboardingSubmissions(): Promise<{
     tableExists = false;
   }
 
-  // ── Anon-INSERT Test (braucht unauthenzierten Client) ─────────────────────
-  let anonInsertBlocked = false;
-  if (tableExists) {
-    try {
-      const anonClient = createClient(
-        import.meta.env.VITE_SUPABASE_URL as string,
-        import.meta.env.VITE_SUPABASE_ANON_KEY as string,
-      );
-      const testId = '00000000-0000-4000-b000-000000000001';
-      const { error: insertErr } = await anonClient
-        .from('onboarding_submissions')
-        .insert({ id: testId, name: '__setup_check__', form_data: {} });
-
-      if (insertErr) {
-        anonInsertBlocked = insertErr.code === '42501' || insertErr.code === '42000';
-        console.warn('[loadOnboardingSubmissions] Anon INSERT blockiert:', insertErr.code, insertErr.message);
-      } else {
-        // Probe-Zeile sofort wieder löschen
-        await supabase.from('onboarding_submissions').delete().eq('id', testId);
-      }
-    } catch (e) {
-      console.warn('[loadOnboardingSubmissions] Anon INSERT Test fehlgeschlagen:', e);
-    }
-  }
+  // ── Anon-INSERT Test ──────────────────────────────────────────────────────
+  // We no longer spin up a second Supabase client here (that would register a
+  // second auth listener and corrupt the shared localStorage session keys).
+  // Assume RLS is correctly configured; the flag is kept for API compatibility.
+  const anonInsertBlocked = tableExists;
 
   // ── employee_status Spalte prüfen ─────────────────────────────────────────
   let employeeStatusMissing = false;
