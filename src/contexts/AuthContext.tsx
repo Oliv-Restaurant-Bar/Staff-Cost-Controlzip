@@ -110,6 +110,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     console.error('🔴 [AUTH LIVE] AuthProvider mounted – NEW CODE ACTIVE');
 
+    // ── Verify single-client guarantee ────────────────────────────────────────
+    // storageKey is derived from the Supabase project URL — it is identical for
+    // every reference to the same `supabase` singleton.  If you ever see two
+    // different values here across browser tabs, a second client was created.
+    const clientStorageKey = (supabase.auth as any).storageKey ?? 'unknown';
+    console.error('🔴 [AUTH LIVE] client instance id (storageKey):', clientStorageKey);
+
     // ── Strategy: dual boot signals ───────────────────────────────────────────
     //
     // WHY dual signals?
@@ -244,29 +251,35 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
-    console.error('🔴 [AUTH LIVE] signOut() called');
+    console.error('🔴 [AUTH LIVE] signOut start');
 
-    // ── CRITICAL: clear local state IMMEDIATELY ───────────────────────────────
-    // Do NOT wait for the SIGNED_OUT event.  The Supabase signOut() HTTP call
-    // (POST /auth/v1/logout) can fail or be slow, and if it returns any error
-    // that is not 404/401/403, _removeSession() is skipped and SIGNED_OUT never
-    // fires via onAuthStateChange.  We must not rely on that event for the UI.
+    // ── Step 1: clear local state IMMEDIATELY ────────────────────────────────
+    // This is the ONLY reliable way to guarantee the UI shows LoginPage right
+    // away.  Supabase's SIGNED_OUT event depends on the server-side HTTP call
+    // POST /auth/v1/logout succeeding.  If that call returns any error that is
+    // NOT 404 / 401 / 403, Supabase's internal _removeSession() is skipped and
+    // SIGNED_OUT is never emitted via onAuthStateChange.
+    //
+    // By clearing state first we are immune to server errors.  The onAuthStateChange
+    // SIGNED_OUT handler is a no-op duplicate at worst.
     _clearLocalAuth();
     console.error('🔴 [AUTH LIVE] local state cleared – LoginPage should appear now');
 
-    // Fire the Supabase server signOut in the background.
-    // SIGNED_OUT event may or may not arrive; we don't care — state is already cleared.
-    supabase.auth.signOut()
-      .then(({ error }) => {
-        if (error) {
-          console.warn('[AUTH] background signOut had an error (OK – local state already cleared):', error.message);
-        } else {
-          console.log('[AUTH] background signOut completed cleanly');
-        }
-      })
-      .catch(err => {
-        console.warn('[AUTH] background signOut threw (OK – local state already cleared):', err);
-      });
+    // ── Step 2: await the Supabase server signOut ────────────────────────────
+    // Yielding here (await) lets React flush the state updates from Step 1 so
+    // the user sees the LoginPage while the HTTP round-trip completes.
+    // Errors are NOT silently swallowed — they are logged at error level.
+    try {
+      console.error('🔴 [AUTH LIVE] calling supabase.auth.signOut() …');
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('🔴 [AUTH LIVE] signOut error:', error.message, '| status:', (error as any).status);
+      } else {
+        console.error('🔴 [AUTH LIVE] signOut result: success (server confirmed)');
+      }
+    } catch (err) {
+      console.error('🔴 [AUTH LIVE] signOut threw unexpectedly:', err);
+    }
   };
 
   return (
