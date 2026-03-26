@@ -89,16 +89,54 @@ export interface ProductSaleInsert {
   import_batch?: string;
 }
 
-// ─── Hilfsfunktion ────────────────────────────────────────────────────────────
+// ─── Hilfsfunktionen & zentrale Label-Mappings ────────────────────────────────
 
 export type ProductSalesRow = {
   product_name: string;
   quantity:     number;
   revenue:      number;
   sale_date:    string;
-  source:       string;
-  import_batch: string;
+  source:       string | null;
+  import_batch: string | null;
 };
+
+/**
+ * Zentrale Quelle-Label-Zuordnung.
+ * Alle Komponenten importieren diese Map — kein doppeltes Mapping.
+ */
+export const SOURCE_LABELS: Record<string, string> = {
+  food_csv_export:     'Food',
+  beverage_csv_export: 'Beverage',
+  manual_test:         'Manual',
+};
+
+/**
+ * Lesbarer Label für einen source-Wert.
+ * null / undefined / unbekannte Keys → 'Altbestand / ohne Quelle'
+ */
+export function sourceLabel(src: string | null | undefined): string {
+  if (!src) return 'Altbestand / ohne Quelle';
+  return SOURCE_LABELS[src] ?? src;
+}
+
+/**
+ * Normalisiert einen Produktnamen für späteres Mapping zu products.name.
+ * Lowercase, Umlaute ersetzen, überflüssige Zeichen entfernen.
+ * Noch kein harter Join — dient als Vorbereitung für künftiges Produkt-Mapping.
+ */
+export function normalizeProductName(name: string | null | undefined): string {
+  if (!name) return '';
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss')
+    .replace(/\s+/g, ' ')      // mehrfache Spaces → ein Space
+    .replace(/[^\w\s-]/g, '')  // Sonderzeichen entfernen, Bindestriche behalten
+    .trim();
+}
 
 /**
  * Lädt ALLE product_sales-Zeilen (nur die nötigen Felder).
@@ -134,6 +172,25 @@ export async function loadProductSalesRows(): Promise<ProductSalesRow[]> {
     console.warn('[VERKAUF] Keine Zeilen mit source+import_batch – alle Daten haben null-Werte?');
   }
   return rows;
+}
+
+/**
+ * Gibt die Anzahl der Altbestand-Zeilen zurück (source IS NULL oder import_batch IS NULL).
+ * Diese Zeilen werden vom Haupt-Fetch ausgeschlossen, hier aber separat gezählt
+ * um einen informativen KPI im Dashboard anzuzeigen.
+ * Schlägt still fehl (gibt 0 zurück) — kein kritischer Pfad.
+ */
+export async function loadAltbestandCount(): Promise<number> {
+  const { count, error } = await (supabase as any)
+    .from('product_sales')
+    .select('*', { count: 'exact', head: true })
+    .or('source.is.null,import_batch.is.null');
+
+  if (error) {
+    console.warn('[VERKAUF] loadAltbestandCount error:', error.message);
+    return 0;
+  }
+  return count ?? 0;
 }
 
 // ─── Pure Aggregationsfunktionen (kein DB-Aufruf, nehmen Rows entgegen) ───────

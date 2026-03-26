@@ -1,8 +1,10 @@
 /**
  * VerkaufsDashboard – Produktumsatz & KPI Übersicht
  * ===================================================
- * Lädt alle Daten in einem einzigen DB-Aufruf aus product_sales.
- * Filter (Quelle, Batch) laufen rein in JavaScript — kein extra DB-Aufruf.
+ * Ein einziger DB-Aufruf (loadProductSalesRows) lädt saubere Zeilen
+ * (source + import_batch gesetzt). Altbestand (null-Zeilen) wird separat
+ * gezählt und als Info-KPI angezeigt.
+ * Alle Filter (Quelle, Batch) laufen rein in JavaScript.
  */
 
 import { useState, useEffect, useMemo } from 'react';
@@ -11,8 +13,9 @@ import {
   Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
 import {
-  Package, TrendingUp, TrendingDown, Star,
-  DollarSign, ShoppingCart, AlertTriangle, RefreshCw, Filter,
+  Package, TrendingUp, TrendingDown,
+  Star, DollarSign, ShoppingCart,
+  AlertTriangle, RefreshCw, Filter, Archive, Info,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -27,22 +30,12 @@ import {
 } from '@/components/ui/select';
 import {
   loadProductSalesRows,
+  loadAltbestandCount,
+  sourceLabel,
   type ProductSalesRow,
 } from '@/lib/sales-db';
 
-// ─── Konstanten & Hilfsfunktionen ────────────────────────────────────────────
-
-/** Lesbarer Label pro source-Wert */
-const SOURCE_LABEL: Record<string, string> = {
-  food_csv_export:     'Food',
-  beverage_csv_export: 'Beverage',
-  manual_test:         'Manual',
-};
-
-function sourceLabel(src: string | null | undefined): string {
-  if (!src || src === '__null__') return 'Unbekannt';
-  return SOURCE_LABEL[src] ?? 'Unbekannt';
-}
+// ─── Formatierung ─────────────────────────────────────────────────────────────
 
 function fmtChf(v: number | null | undefined): string {
   if (v == null) return '–';
@@ -54,11 +47,6 @@ function fmtChf(v: number | null | undefined): string {
 function fmtNum(v: number | null | undefined): string {
   if (v == null) return '–';
   return new Intl.NumberFormat('de-CH').format(Math.round(v));
-}
-
-function fmtPct(v: number | null | undefined): string {
-  if (v == null) return '–';
-  return `${Number(v).toFixed(1)} %`;
 }
 
 const CATEGORY_COLORS = [
@@ -75,7 +63,7 @@ function KpiCard({
   value: string;
   icon: React.FC<{ className?: string }>;
   sub?: string;
-  color?: 'default' | 'green' | 'amber' | 'red' | 'violet';
+  color?: 'default' | 'green' | 'amber' | 'red' | 'violet' | 'muted';
 }) {
   const colorMap = {
     default: 'text-primary',
@@ -83,6 +71,7 @@ function KpiCard({
     amber:   'text-amber-600 dark:text-amber-400',
     red:     'text-red-600 dark:text-red-400',
     violet:  'text-violet-600 dark:text-violet-400',
+    muted:   'text-muted-foreground',
   };
   return (
     <Card>
@@ -102,7 +91,7 @@ function KpiCard({
   );
 }
 
-// ─── Aggregation (pure JS, kein DB-Aufruf) ────────────────────────────────────
+// ─── Aggregation (rein JS, kein DB-Aufruf) ───────────────────────────────────
 
 type DashKpis = {
   total_products: number;
@@ -112,7 +101,7 @@ type DashKpis = {
 
 type DashCategory = {
   category:       string;   // lesbarer Label (Food / Beverage / …)
-  sourceKey:      string;   // Rohwert für Filtervergleich
+  sourceKey:      string;   // Rohwert aus DB für Filtervergleich
   total_products: number;
   total_qty:      number;
   total_revenue:  number;
@@ -126,15 +115,15 @@ type DashProduct = {
 };
 
 function aggregateAll(rows: ProductSalesRow[], topLimit: number) {
-  const products  = new Set<string>();
+  const products    = new Set<string>();
+  const catMap      = new Map<string, DashCategory>();
+  const prodMap     = new Map<string, DashProduct>();
+  const prodPerCat  = new Map<string, Set<string>>();
   let totalQty = 0, totalRevenue = 0;
 
-  const catMap  = new Map<string, DashCategory>();
-  const prodMap = new Map<string, DashProduct>();
-
   for (const r of rows) {
-    const qty = Number(r.quantity ?? 0);
-    const rev = Number(r.revenue  ?? 0);
+    const qty    = Number(r.quantity ?? 0);
+    const rev    = Number(r.revenue  ?? 0);
     const srcKey = r.source ?? '__null__';
     const label  = sourceLabel(r.source);
 
@@ -142,15 +131,18 @@ function aggregateAll(rows: ProductSalesRow[], topLimit: number) {
     totalQty     += qty;
     totalRevenue += rev;
 
-    // Kategorie-Aggregation (nach Quelle)
+    // Kategorie-Aggregation (gruppiert nach Quelle)
     if (!catMap.has(srcKey)) {
       catMap.set(srcKey, { category: label, sourceKey: srcKey, total_products: 0, total_qty: 0, total_revenue: 0 });
     }
     const cat = catMap.get(srcKey)!;
     cat.total_qty     += qty;
     cat.total_revenue += rev;
+
+    // Distinct-Produkte pro Kategorie tracken
     if (r.product_name) {
-      // distinct products per source — track via set per key
+      if (!prodPerCat.has(srcKey)) prodPerCat.set(srcKey, new Set());
+      prodPerCat.get(srcKey)!.add(r.product_name);
     }
 
     // Produkt-Aggregation
@@ -163,24 +155,13 @@ function aggregateAll(rows: ProductSalesRow[], topLimit: number) {
     p.total_revenue += rev;
   }
 
-  // distinct products per category
-  const prodPerCat = new Map<string, Set<string>>();
-  for (const r of rows) {
-    const srcKey = r.source ?? '';
-    if (!prodPerCat.has(srcKey)) prodPerCat.set(srcKey, new Set());
-    if (r.product_name) prodPerCat.get(srcKey)!.add(r.product_name);
-  }
+  // Distinct-Produktanzahl pro Kategorie eintragen
   for (const [key, cat] of catMap) {
     cat.total_products = prodPerCat.get(key)?.size ?? 0;
   }
 
-  const categories = Array.from(catMap.values())
-    .sort((a, b) => b.total_revenue - a.total_revenue);
-
-  const topProducts = Array.from(prodMap.values())
-    .sort((a, b) => b.total_revenue - a.total_revenue)
-    .slice(0, topLimit);
-
+  const categories  = Array.from(catMap.values()).sort((a, b) => b.total_revenue - a.total_revenue);
+  const topProducts = Array.from(prodMap.values()).sort((a, b) => b.total_revenue - a.total_revenue).slice(0, topLimit);
   const kpis: DashKpis = { total_products: products.size, total_revenue: totalRevenue, total_qty: totalQty };
 
   return { kpis, categories, topProducts };
@@ -189,19 +170,25 @@ function aggregateAll(rows: ProductSalesRow[], topLimit: number) {
 // ─── Hauptseite ───────────────────────────────────────────────────────────────
 
 export default function VerkaufsDashboard() {
-  const [loading,    setLoading]    = useState(true);
-  const [dbError,    setDbError]    = useState<string | null>(null);
-  const [rawRows,    setRawRows]    = useState<ProductSalesRow[]>([]);
-  const [srcFilter,  setSrcFilter]  = useState<string>('all');
-  const [batchFilter, setBatchFilter] = useState<string>('all');
-  const [topSearch,  setTopSearch]  = useState('');
+  const [loading,         setLoading]         = useState(true);
+  const [dbError,         setDbError]         = useState<string | null>(null);
+  const [rawRows,         setRawRows]         = useState<ProductSalesRow[]>([]);
+  const [altbestandCount, setAltbestandCount] = useState<number>(0);
+  const [srcFilter,       setSrcFilter]       = useState<string>('all');
+  const [batchFilter,     setBatchFilter]     = useState<string>('all');
+  const [topSearch,       setTopSearch]       = useState('');
 
   const load = async () => {
     setLoading(true);
     setDbError(null);
     try {
-      const rows = await loadProductSalesRows();
+      // Beide Abfragen parallel — loadAltbestandCount schlägt still fehl
+      const [rows, altCount] = await Promise.all([
+        loadProductSalesRows(),
+        loadAltbestandCount(),
+      ]);
       setRawRows(rows);
+      setAltbestandCount(altCount);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[VerkaufsDashboard] load error:', msg);
@@ -224,7 +211,7 @@ export default function VerkaufsDashboard() {
   const availableBatches = useMemo(() => {
     const set = new Set<string>();
     for (const r of rawRows) if (r.import_batch) set.add(r.import_batch);
-    // Neueste zuerst (Batch-ID enthält Timestamp: food-YYYYMMDD-HHMM)
+    // Neueste zuerst — Batch-IDs enthalten Timestamp (food-YYYYMMDD-HHMM)
     return Array.from(set).sort((a, b) => b.localeCompare(a));
   }, [rawRows]);
 
@@ -267,8 +254,8 @@ export default function VerkaufsDashboard() {
           <div className="h-8 w-8 rounded-lg bg-muted animate-pulse" />
           <div className="h-7 w-48 rounded bg-muted animate-pulse" />
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-          {Array.from({ length: 3 }).map((_, i) => (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="h-24 rounded-lg bg-muted animate-pulse" />
           ))}
         </div>
@@ -295,7 +282,7 @@ export default function VerkaufsDashboard() {
               Produktumsatz &amp; Absatz
               {rawRows.length > 0 && (
                 <span className="ml-2 text-xs text-muted-foreground/70">
-                  ({fmtNum(rawRows.length)} Datensätze total)
+                  ({fmtNum(rawRows.length)} saubere Datensätze)
                 </span>
               )}
             </p>
@@ -306,6 +293,103 @@ export default function VerkaufsDashboard() {
           Aktualisieren
         </Button>
       </div>
+
+      {/* ── DB-Fehler ────────────────────────────────────────────────────────── */}
+      {dbError && (
+        <Card className="border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30">
+          <CardContent className="py-6">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
+              <div className="space-y-1 min-w-0">
+                <p className="font-semibold text-red-700 dark:text-red-400">Datenbankfehler beim Laden</p>
+                <p className="text-sm text-red-600 dark:text-red-300 font-mono break-all">{dbError}</p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Falls Code <code>42501</code>: SELECT-Policy fehlt für <code>product_sales</code>.
+                </p>
+                <pre className="text-xs bg-muted p-2 rounded mt-1 overflow-x-auto">
+{`CREATE POLICY "authenticated_can_select"
+  ON public.product_sales FOR SELECT
+  TO authenticated USING (true);`}
+                </pre>
+                <Button size="sm" variant="outline" onClick={load} className="mt-2">
+                  Nochmals versuchen
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Keine Daten ──────────────────────────────────────────────────────── */}
+      {noData && (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <Package className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+            <p className="font-medium">
+              {rawRows.length > 0 ? 'Keine Daten für die gewählten Filter' : 'Noch keine Verkaufsdaten vorhanden'}
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {rawRows.length > 0
+                ? 'Wähle andere Filter oder setze sie zurück.'
+                : 'Importiere Verkaufsdaten über «Verkaufsdaten Upload».'}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── KPI-Karten ───────────────────────────────────────────────────────── */}
+      {filteredRows.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 md:gap-4">
+          <KpiCard
+            label="Produkte"
+            value={fmtNum(kpis.total_products)}
+            icon={Package}
+          />
+          <KpiCard
+            label="Gesamtumsatz"
+            value={fmtChf(kpis.total_revenue)}
+            icon={DollarSign}
+            color="green"
+          />
+          <KpiCard
+            label="Gesamtabsatz"
+            value={fmtNum(kpis.total_qty)}
+            icon={ShoppingCart}
+          />
+          <KpiCard
+            label="Ø WES-Quote"
+            value="–"
+            icon={TrendingDown}
+            color="muted"
+            sub="Kein WES-Feld vorhanden"
+          />
+        </div>
+      )}
+
+      {/* ── Altbestand-Info (wenn vorhanden) ─────────────────────────────────── */}
+      {altbestandCount > 0 && (
+        <Card className="border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/10">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-3">
+              <Archive className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                  Altbestand:
+                </span>
+                <span className="text-sm text-amber-700 dark:text-amber-400 ml-1.5">
+                  {fmtNum(altbestandCount)} Datensätze ohne Quellangabe — werden nicht in der Analyse berücksichtigt.
+                </span>
+              </div>
+              <Badge
+                variant="outline"
+                className="shrink-0 text-xs border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400"
+              >
+                {fmtNum(rawRows.length)} sauber / {fmtNum(rawRows.length + altbestandCount)} total
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Filter-Leiste ────────────────────────────────────────────────────── */}
       {rawRows.length > 0 && (
@@ -323,7 +407,7 @@ export default function VerkaufsDashboard() {
                   <SelectItem value="all">Alle Quellen</SelectItem>
                   {availableSources.map(s => (
                     <SelectItem key={s} value={s}>
-                      {sourceLabel(s)}
+                      {sourceLabel(s === '__null__' ? null : s)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -361,71 +445,6 @@ export default function VerkaufsDashboard() {
         </Card>
       )}
 
-      {/* ── DB-Fehler ────────────────────────────────────────────────────────── */}
-      {dbError && (
-        <Card className="border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30">
-          <CardContent className="py-6">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
-              <div className="space-y-1 min-w-0">
-                <p className="font-semibold text-red-700 dark:text-red-400">Datenbankfehler beim Laden</p>
-                <p className="text-sm text-red-600 dark:text-red-300 font-mono break-all">{dbError}</p>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Falls der Code <code>42501</code> erscheint, fehlt die SELECT-Policy. Führe im Supabase SQL-Editor aus:
-                </p>
-                <pre className="text-xs bg-muted p-2 rounded mt-1 overflow-x-auto">
-{`CREATE POLICY "authenticated_can_select"
-  ON public.product_sales FOR SELECT
-  TO authenticated USING (true);`}
-                </pre>
-                <Button size="sm" variant="outline" onClick={load} className="mt-2">
-                  Nochmals versuchen
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── Keine Daten ──────────────────────────────────────────────────────── */}
-      {noData && (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <Package className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-            <p className="font-medium">
-              {rawRows.length > 0 ? 'Keine Daten für die gewählten Filter' : 'Noch keine Verkaufsdaten vorhanden'}
-            </p>
-            <p className="text-sm text-muted-foreground mt-1">
-              {rawRows.length > 0
-                ? 'Wähle andere Filter oder setze den Filter zurück.'
-                : 'Importiere Verkaufsdaten über «Verkaufsdaten Upload», um hier Auswertungen zu sehen.'}
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── KPI-Karten ───────────────────────────────────────────────────────── */}
-      {filteredRows.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4">
-          <KpiCard
-            label="Produkte"
-            value={fmtNum(kpis.total_products)}
-            icon={Package}
-          />
-          <KpiCard
-            label="Gesamtumsatz"
-            value={fmtChf(kpis.total_revenue)}
-            icon={DollarSign}
-            color="green"
-          />
-          <KpiCard
-            label="Gesamtabsatz"
-            value={fmtNum(kpis.total_qty)}
-            icon={ShoppingCart}
-          />
-        </div>
-      )}
-
       {/* ── Umsatz nach Quelle ───────────────────────────────────────────────── */}
       {categories.length > 0 && (
         <Card>
@@ -449,7 +468,7 @@ export default function VerkaufsDashboard() {
                     <tr key={c.sourceKey} className="hover:bg-muted/30 transition-colors">
                       <td className="px-4 py-2.5 font-medium">{c.category}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{c.total_products}</td>
-                      <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">–</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">–</td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{fmtNum(c.total_qty)}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{fmtChf(c.total_revenue)}</td>
                     </tr>
@@ -547,7 +566,7 @@ export default function VerkaufsDashboard() {
                         <td className="px-4 py-2 font-medium">{p.product_name}</td>
                         <td className="px-4 py-2">
                           <Badge variant="outline" className="text-[10px] font-normal">
-                            {sourceLabel(p.sourceKey)}
+                            {sourceLabel(p.sourceKey === '__null__' ? null : p.sourceKey)}
                           </Badge>
                         </td>
                         <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{fmtNum(p.total_qty)}</td>
@@ -563,22 +582,17 @@ export default function VerkaufsDashboard() {
         </Card>
       )}
 
-      {/* ── WES-Analyse (Platzhalter) ─────────────────────────────────────────── */}
-      <Card className="border-dashed">
-        <CardContent className="py-6">
-          <div className="flex items-start gap-3">
-            <TrendingDown className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+      {/* ── WES-Analyse Platzhalter ───────────────────────────────────────────── */}
+      <Card className="border-border/50">
+        <CardContent className="py-4 px-4">
+          <div className="flex items-center gap-3 text-muted-foreground">
+            <Info className="h-4 w-4 shrink-0" />
             <div>
-              <p className="font-medium text-sm">WES-Analyse & Produktmatrix</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Noch keine WES-Daten vorhanden. Die WES-Quote wird automatisch berechnet,
-                sobald Produkte aus dem <strong>Artikelstamm</strong> mit den Verkaufsdaten
-                verknüpft sind (Produkt-Mapping via <code>product_name</code>).
-              </p>
-              <p className="text-xs text-muted-foreground mt-2">
-                Nächster Schritt: <strong>Produkte</strong> anlegen und mit Einkaufspreisen versehen →
-                dann erscheinen hier Stars, Cash Cows, Puzzles und Dogs.
-              </p>
+              <span className="text-sm font-medium text-foreground">WES-Analyse & Produktmatrix</span>
+              <span className="text-sm text-muted-foreground ml-2">
+                Wird verfügbar sobald Produkte im Artikelstamm mit Einkaufspreisen erfasst und
+                via <code className="text-xs">product_name</code> mit Verkaufsdaten verknüpft sind.
+              </span>
             </div>
           </div>
         </CardContent>
