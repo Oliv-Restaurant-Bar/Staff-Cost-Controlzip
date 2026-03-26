@@ -1,0 +1,66 @@
+Bitte debugge das Problem in der Dienstplanung:
+
+Problem:
+Wenn ich die Seite aktualisiere, verschwinden die Dienstplan-Einträge in der UI.
+Die Daten sind aber nicht wirklich weg, denn nach komplettem Schliessen der Seite, neuem Öffnen und erneutem Login erscheinen sie wieder.
+Teilweise muss ich mich sogar komplett neu einloggen, damit die Daten wieder sichtbar werden.
+
+Wichtige Vermutung:
+Das ist sehr wahrscheinlich kein Datenverlust in Supabase, sondern ein Frontend Problem mit Auth Session Rehydration, zu frühem Datenfetch, lokalem State Reset oder falschem Refetch-Verhalten nach Page Reload.
+
+Bitte prüfe und behebe systematisch:
+
+1. Supabase Auth Session Hydration
+- Stelle sicher, dass geschützte Seiten und Datenqueries erst starten, wenn die Session vollständig geladen ist
+- Baue einen klaren auth loading state ein
+- Verhindere Queries mit undefined user, undefined team, undefined restaurant_id oder undefined date range
+
+2. Dienstplan Datenfetch
+- Prüfe, ob die Dienstplanseite nach Reload wirklich einen frischen Fetch gegen Supabase macht
+- Falls Daten nur im lokalen Zustand stehen, ersetze das durch echten Refetch aus der DB
+- Verhindere, dass initial leere Daten in den State geschrieben und dort hängen bleiben
+
+3. React Query / Cache / State Management
+- Prüfe, ob Query Keys stabil sind
+- Prüfe, ob beim Reload versehentlich ein leerer Zustand gecacht wird
+- Prüfe, ob invalidate/refetch korrekt funktioniert
+- Wenn React Query verwendet wird, sollen Dienstplan-Queries erst enabled sein, wenn alle Abhängigkeiten bereit sind
+
+4. Filter- und Monatszustand
+- Prüfe, ob Monat, Team, Bereich, Ansicht und Stationsfilter nach Reload korrekt wiederhergestellt werden
+- Falls diese Werte aus lokalem State kommen, sichere sie entweder in URL params oder lade Defaultwerte kontrolliert
+- Verhindere Queries mit unvollständigen Filtern direkt nach Reload
+
+5. Supabase Client
+- Prüfe, ob nur ein einziger Supabase Client verwendet wird
+- Kein mehrfacher paralleler Client
+- Prüfe, ob Session Listener korrekt eingebunden ist
+
+6. UI Fehlerbehandlung
+- Statt leerer Tabelle bitte klar anzeigen:
+  - Auth lädt
+  - Daten werden geladen
+  - Kein Zugriff
+  - Keine Daten vorhanden
+- Keine stillen Fehlerzustände
+
+7. Debug Logging
+Bitte temporär Logging einbauen für:
+- Session Status beim Laden
+- aktuelle User ID
+- aktuelle Restaurant ID / Team ID
+- aktueller Monat / Zeitraum
+- Query Start / Query Result
+- Query Error
+
+8. Ziel
+Nach normalem Browser Refresh sollen die Dienstplan-Daten sofort wieder sichtbar sein, ohne dass ich:
+- die Seite komplett schliessen muss
+- mich neu einloggen muss
+- mehrfach reloaden muss
+
+Bitte nenne mir danach:
+- die Ursache
+- welche Dateien geändert wurden
+- was genau gefixt wurde
+- wie ich den Refresh-Test sauber prüfen soll

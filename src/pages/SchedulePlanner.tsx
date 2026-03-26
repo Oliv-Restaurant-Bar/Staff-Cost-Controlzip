@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useAuth } from '@/hooks/useAuth';
 import {
   loadEmployees,
   upsertEmployee,
@@ -139,6 +140,8 @@ type CalendarView = 'month' | 'week' | 'day';
 
 const SchedulePlanner = () => {
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
+  // Auth: user + loading needed to gate data fetches correctly
+  const { user, loading: authLoading } = useAuth();
   const {
     isAdmin,
     isServiceManager,
@@ -196,6 +199,7 @@ const SchedulePlanner = () => {
   const [staffingTargets, setStaffingTargets]                 = useState<StaffingTarget[]>([]);
   const [stationMatrixOpen, setStationMatrixOpen]             = useState(false);
   const [availabilityOpen, setAvailabilityOpen]               = useState(false);
+  const [dataLoading, setDataLoading]                         = useState(false);
 
   // ── Budget-Daten (für PlanningAssistant) ─────────────────────────────────
   const { personnelBudget } = useBudgetMonth(
@@ -228,83 +232,123 @@ const SchedulePlanner = () => {
   const DEFAULT_ADMIN_PASSWORD = 'admin123';
   
   // Load schedule data from Supabase (with localStorage fallback)
+  // IMPORTANT: Only runs when a valid user session is confirmed.
+  // This prevents the race condition where an expired/refreshing JWT causes
+  // RLS to silently return 0 rows, which would overwrite real data with an
+  // empty {} (which is truthy, so the localStorage fallback never fires).
   const loadMonthData = useCallback(async () => {
     const monthKey = format(currentMonth, 'yyyy-MM');
+    const userId = user?.id ?? null;
 
-    // --- Mitarbeiter laden ---
-    const supabaseEmployees = await loadEmployees();
-    if (supabaseEmployees && supabaseEmployees.length > 0) {
-      setEmployees(supabaseEmployees);
-    } else {
-      const savedEmployees = localStorage.getItem('schedule-employees');
-      if (savedEmployees) {
-        const parsed: Employee[] = JSON.parse(savedEmployees);
-        setEmployees(parsed);
-      }
-    }
-
-    // --- Dienstplan laden ---
-    const supabaseSchedule = await loadScheduleForMonth(currentMonth);
-    if (supabaseSchedule !== null) {
-      setScheduleData(supabaseSchedule);
-    } else {
-      const savedSchedule = localStorage.getItem(`schedule-v2-${monthKey}`);
-      setScheduleData(savedSchedule ? JSON.parse(savedSchedule) : {});
-    }
-
-    // --- Ist-Stunden laden ---
-    const supabaseActual = await loadActualHoursForMonth(currentMonth);
-    if (supabaseActual !== null) {
-      setActualHoursData(supabaseActual);
-    } else {
-      const savedActualHours = localStorage.getItem(`actual-hours-${monthKey}`);
-      setActualHoursData(savedActualHours ? JSON.parse(savedActualHours) : {});
-    }
-
-    // --- Tagesbudgets: aus Monatsbudget berechnen (Wochentag-Gewichtung) ---
-    const year        = currentMonth.getFullYear();
-    const monthIdx    = currentMonth.getMonth();
-    const monthlyRevenue = getMonthlyBudgetRevenue(year, monthIdx);
-    const allDays     = eachDayOfInterval({
-      start: startOfMonth(currentMonth),
-      end:   endOfMonth(currentMonth),
+    console.log('[DIENSTPLAN] loadMonthData start', {
+      monthKey,
+      userId,
+      authLoading,
     });
 
-    const savedBudgets = localStorage.getItem('dailyBudgets');
-    const manualBudgets: Record<string, { plannedRevenue?: number; actualRevenue?: number }> =
-      savedBudgets ? JSON.parse(savedBudgets) : {};
-
-    // Manuelle Tages-Umsatz-Übersteurungen (z.B. für Events)
-    const revenueOverrides: Record<string, number> =
-      JSON.parse(localStorage.getItem('dailyRevenueOverrides') || '{}');
-
-    if (monthlyRevenue > 0) {
-      const autoBudgets = distributeBudgetByWeekday(monthlyRevenue, allDays);
-      // Ist-Umsatz (actualRevenue) + manuelle Overrides erhalten
-      const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }> = { ...autoBudgets };
-      Object.entries(manualBudgets).forEach(([k, v]) => {
-        if (v.actualRevenue !== undefined) {
-          merged[k] = { ...merged[k], actualRevenue: v.actualRevenue };
-        }
-      });
-      // Manuelle Umsatz-Overrides überschreiben die auto-berechneten Werte
-      Object.entries(revenueOverrides).forEach(([k, v]) => {
-        merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true };
-      });
-      setDailyBudgets(merged);
-    } else {
-      // Kein Monatsbudget: manuelle Overrides direkt verwenden
-      const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }> = { ...manualBudgets };
-      Object.entries(revenueOverrides).forEach(([k, v]) => {
-        merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true };
-      });
-      setDailyBudgets(merged);
+    // Guard: never fetch without a confirmed user
+    if (!userId) {
+      console.warn('[DIENSTPLAN] loadMonthData skipped – no user yet');
+      return;
     }
-  }, [currentMonth]);
 
+    setDataLoading(true);
+
+    try {
+      // --- Mitarbeiter laden ---
+      console.log('[DIENSTPLAN] fetching employees…');
+      const supabaseEmployees = await loadEmployees();
+      console.log('[DIENSTPLAN] employees result', { count: supabaseEmployees?.length ?? 'null' });
+      if (supabaseEmployees && supabaseEmployees.length > 0) {
+        setEmployees(supabaseEmployees);
+      } else {
+        const savedEmployees = localStorage.getItem('schedule-employees');
+        if (savedEmployees) {
+          const parsed: Employee[] = JSON.parse(savedEmployees);
+          setEmployees(parsed);
+        }
+      }
+
+      // --- Dienstplan laden ---
+      console.log('[DIENSTPLAN] fetching schedule for', monthKey);
+      const supabaseSchedule = await loadScheduleForMonth(currentMonth);
+      const scheduleKeys = supabaseSchedule ? Object.keys(supabaseSchedule).length : 'null';
+      console.log('[DIENSTPLAN] schedule result', { keys: scheduleKeys });
+      if (supabaseSchedule !== null) {
+        setScheduleData(supabaseSchedule);
+      } else {
+        const savedSchedule = localStorage.getItem(`schedule-v2-${monthKey}`);
+        setScheduleData(savedSchedule ? JSON.parse(savedSchedule) : {});
+      }
+
+      // --- Ist-Stunden laden ---
+      console.log('[DIENSTPLAN] fetching actual hours for', monthKey);
+      const supabaseActual = await loadActualHoursForMonth(currentMonth);
+      console.log('[DIENSTPLAN] actual hours result', { keys: supabaseActual ? Object.keys(supabaseActual).length : 'null' });
+      if (supabaseActual !== null) {
+        setActualHoursData(supabaseActual);
+      } else {
+        const savedActualHours = localStorage.getItem(`actual-hours-${monthKey}`);
+        setActualHoursData(savedActualHours ? JSON.parse(savedActualHours) : {});
+      }
+
+      // --- Tagesbudgets: aus Monatsbudget berechnen (Wochentag-Gewichtung) ---
+      const year        = currentMonth.getFullYear();
+      const monthIdx    = currentMonth.getMonth();
+      const monthlyRevenue = getMonthlyBudgetRevenue(year, monthIdx);
+      const allDays     = eachDayOfInterval({
+        start: startOfMonth(currentMonth),
+        end:   endOfMonth(currentMonth),
+      });
+
+      const savedBudgets = localStorage.getItem('dailyBudgets');
+      const manualBudgets: Record<string, { plannedRevenue?: number; actualRevenue?: number }> =
+        savedBudgets ? JSON.parse(savedBudgets) : {};
+
+      // Manuelle Tages-Umsatz-Übersteurungen (z.B. für Events)
+      const revenueOverrides: Record<string, number> =
+        JSON.parse(localStorage.getItem('dailyRevenueOverrides') || '{}');
+
+      if (monthlyRevenue > 0) {
+        const autoBudgets = distributeBudgetByWeekday(monthlyRevenue, allDays);
+        // Ist-Umsatz (actualRevenue) + manuelle Overrides erhalten
+        const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }> = { ...autoBudgets };
+        Object.entries(manualBudgets).forEach(([k, v]) => {
+          if (v.actualRevenue !== undefined) {
+            merged[k] = { ...merged[k], actualRevenue: v.actualRevenue };
+          }
+        });
+        // Manuelle Umsatz-Overrides überschreiben die auto-berechneten Werte
+        Object.entries(revenueOverrides).forEach(([k, v]) => {
+          merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true };
+        });
+        setDailyBudgets(merged);
+      } else {
+        // Kein Monatsbudget: manuelle Overrides direkt verwenden
+        const merged: Record<string, { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }> = { ...manualBudgets };
+        Object.entries(revenueOverrides).forEach(([k, v]) => {
+          merged[k] = { ...merged[k], plannedRevenue: v, isOverride: true };
+        });
+        setDailyBudgets(merged);
+      }
+
+      console.log('[DIENSTPLAN] loadMonthData complete', { monthKey, userId });
+    } catch (err) {
+      console.error('[DIENSTPLAN] loadMonthData error', err);
+    } finally {
+      setDataLoading(false);
+    }
+  // user?.id is a dep so a post-refresh token renewal re-triggers the fetch
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMonth, user?.id]);
+
+  // Re-trigger data load when user becomes available (covers post-refresh token renewal)
   useEffect(() => {
-    loadMonthData();
-  }, [loadMonthData]);
+    if (!authLoading && user?.id) {
+      loadMonthData();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, authLoading]);
 
   // Re-read actual hours from localStorage when an external import fires `schedule-updated`
   useEffect(() => {
@@ -1413,6 +1457,27 @@ const SchedulePlanner = () => {
   const handleStationEmployeeUpdated = useCallback((updated: Employee) => {
     setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
   }, []);
+
+  // Show a clear loading state while auth is resolving or first data fetch is running.
+  // This prevents an empty grid from showing before Supabase queries complete.
+  if (authLoading || (!user && !dataLoading)) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <div className="h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-sm">Session wird geladen…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-sm text-muted-foreground">Kein Zugriff – bitte einloggen.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
