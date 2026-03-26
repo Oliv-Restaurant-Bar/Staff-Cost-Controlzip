@@ -175,16 +175,55 @@ export async function fetchProductMatrix(): Promise<ProductMatrixRow[]> {
 
 /** Verkaufsdaten in product_sales einfügen */
 export async function insertProductSales(rows: ProductSaleInsert[]): Promise<{ count: number; error: string | null }> {
+  // ── Pre-insert diagnostics ────────────────────────────────────────────────
+  console.log('[sales-db] insertProductSales: row count =', rows.length);
+  if (rows.length > 0) {
+    console.log('[sales-db] insertProductSales: first row =', JSON.stringify(rows[0], null, 2));
+    console.log('[sales-db] insertProductSales: fields being sent =', Object.keys(rows[0]));
+  }
+
   try {
     const { data, error } = await (supabase as any)
       .from('product_sales')
       .insert(rows)
       .select('id');
-    if (error) throw error;
+
+    if (error) {
+      // Supabase PostgREST errors are plain objects – NOT Error instances.
+      // Log all fields so the real cause is visible in the console.
+      console.error('[sales-db] insertProductSales Supabase error:', {
+        message: error.message,
+        details: error.details,
+        hint:    error.hint,
+        code:    error.code,
+        raw:     error,
+      });
+
+      // Build a human-readable string that surfaces every available field.
+      const parts: string[] = [];
+      if (error.message) parts.push(`message: ${error.message}`);
+      if (error.details) parts.push(`details: ${error.details}`);
+      if (error.hint)    parts.push(`hint: ${error.hint}`);
+      if (error.code)    parts.push(`code: ${error.code}`);
+      return { count: 0, error: parts.length > 0 ? parts.join('\n') : JSON.stringify(error) };
+    }
+
     return { count: (data ?? []).length, error: null };
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[sales-db] insertProductSales:', err);
-    return { count: 0, error: msg };
+    // Unexpected JS exception (network error, etc.)
+    const sbErr = err as { message?: string; details?: string; hint?: string; code?: string } | null;
+    console.error('[sales-db] insertProductSales exception:', {
+      message: sbErr?.message,
+      details: sbErr?.details,
+      hint:    sbErr?.hint,
+      code:    sbErr?.code,
+      raw:     err,
+    });
+    const parts: string[] = [];
+    if (sbErr?.message) parts.push(`message: ${sbErr.message}`);
+    if (sbErr?.details) parts.push(`details: ${sbErr.details}`);
+    if (sbErr?.hint)    parts.push(`hint: ${sbErr.hint}`);
+    if (sbErr?.code)    parts.push(`code: ${sbErr.code}`);
+    return { count: 0, error: parts.length > 0 ? parts.join('\n') : String(err) };
   }
 }

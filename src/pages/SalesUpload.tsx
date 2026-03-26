@@ -499,7 +499,7 @@ export default function SalesUpload() {
           <CircleAlert className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5 shrink-0" />
           <div className="flex-1">
             <p className="font-semibold text-red-700 dark:text-red-400 mb-1">Fehler</p>
-            <p className="text-sm text-red-600 dark:text-red-500">{parseError}</p>
+            <pre className="text-sm text-red-600 dark:text-red-500 whitespace-pre-wrap font-mono">{parseError}</pre>
           </div>
           <Button variant="outline" size="sm" onClick={() => setStep('idle')}>Zurück</Button>
         </div>
