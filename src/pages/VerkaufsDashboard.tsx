@@ -204,10 +204,11 @@ export default function VerkaufsDashboard() {
           />
           <KpiCard
             label="Ø WES-Quote"
-            value={fmtPct(kpis.avg_wes_percent)}
+            value={kpis.avg_wes_percent > 0 ? fmtPct(kpis.avg_wes_percent) : '–'}
             icon={TrendingDown}
             color={
-              kpis.avg_wes_percent <= 25 ? 'green'
+              kpis.avg_wes_percent === 0 ? undefined
+              : kpis.avg_wes_percent <= 25 ? 'green'
               : kpis.avg_wes_percent <= 30 ? 'amber'
               : 'red'
             }
@@ -223,34 +224,37 @@ export default function VerkaufsDashboard() {
             value={fmtNum(kpis.total_qty)}
             icon={ShoppingCart}
           />
-          <KpiCard
-            label="Stars ⭐"
-            value={String(kpis.stars ?? 0)}
-            icon={Star}
-            color="green"
-            sub="Hoher Umsatz + WES ok"
-          />
-          <KpiCard
-            label="Cash Cows 🐄"
-            value={String(kpis.cash_cows ?? 0)}
-            icon={DollarSign}
-            color="amber"
-            sub="Stabiler Umsatz"
-          />
-          <KpiCard
-            label="Puzzles ❓"
-            value={String(kpis.puzzles ?? 0)}
-            icon={AlertTriangle}
-            color="violet"
-            sub="Hohes Potenzial, tiefer Absatz"
-          />
-          <KpiCard
-            label="Dogs 🐕"
-            value={String(kpis.dogs ?? 0)}
-            icon={TrendingDown}
-            color="red"
-            sub="Tiefer Umsatz + WES hoch"
-          />
+          {/* Matrix-Karten nur wenn WES-Daten vorhanden */}
+          {kpis.avg_wes_percent > 0 && (<>
+            <KpiCard
+              label="Stars ⭐"
+              value={String(kpis.stars ?? 0)}
+              icon={Star}
+              color="green"
+              sub="Hoher Umsatz + WES ok"
+            />
+            <KpiCard
+              label="Cash Cows 🐄"
+              value={String(kpis.cash_cows ?? 0)}
+              icon={DollarSign}
+              color="amber"
+              sub="Stabiler Umsatz"
+            />
+            <KpiCard
+              label="Puzzles ❓"
+              value={String(kpis.puzzles ?? 0)}
+              icon={AlertTriangle}
+              color="violet"
+              sub="Hohes Potenzial, tiefer Absatz"
+            />
+            <KpiCard
+              label="Dogs 🐕"
+              value={String(kpis.dogs ?? 0)}
+              icon={TrendingDown}
+              color="red"
+              sub="Tiefer Umsatz + WES hoch"
+            />
+          </>)}
         </div>
       )}
 
@@ -278,14 +282,17 @@ export default function VerkaufsDashboard() {
                       <td className="px-4 py-2.5 font-medium">{c.category || '–'}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{c.total_products ?? 0}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums">
-                        <span className={
-                          !c.avg_wes_percent ? 'text-muted-foreground'
-                          : c.avg_wes_percent <= 25 ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
-                          : c.avg_wes_percent <= 30 ? 'text-amber-600 dark:text-amber-400 font-semibold'
-                          : 'text-red-600 dark:text-red-400 font-semibold'
-                        }>
-                          {fmtPct(c.avg_wes_percent)}
-                        </span>
+                        {c.avg_wes_percent > 0 ? (
+                          <span className={
+                            c.avg_wes_percent <= 25 ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                            : c.avg_wes_percent <= 30 ? 'text-amber-600 dark:text-amber-400 font-semibold'
+                            : 'text-red-600 dark:text-red-400 font-semibold'
+                          }>
+                            {fmtPct(c.avg_wes_percent)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">–</span>
+                        )}
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{fmtNum(c.total_qty)}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{fmtChf(c.total_revenue)}</td>

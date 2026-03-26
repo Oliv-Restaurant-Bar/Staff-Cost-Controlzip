@@ -97,12 +97,14 @@ export function WesMarginWidget() {
 
       const costMap = new Map<string, ProductCostEntry>();
       for (const c of costs) {
-        costMap.set(c.productName.toLowerCase(), c);
+        if (c.productName) costMap.set(c.productName.toLowerCase(), c);
       }
 
       // Alle Produkte mit WES berechnen
       const rows: ProductWesRow[] = [];
       for (const recipe of Object.values(rez)) {
+        if (!recipe.productName) continue;
+        if (!Array.isArray(recipe.ingredients)) continue;
         const costEntry = costMap.get(recipe.productName.toLowerCase());
         if (!costEntry) continue;
 

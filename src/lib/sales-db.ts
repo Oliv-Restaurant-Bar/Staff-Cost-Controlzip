@@ -1,14 +1,11 @@
 /**
  * sales-db.ts – Supabase Queries für Verkaufsdaten & Produktanalyse
  * ==================================================================
- * Lädt Daten aus den folgenden Supabase Views und Tabellen:
- *   Views:  management_dashboard, dashboard_category_kpis,
- *           dashboard_top_products, dashboard_problem_products,
- *           sales_import_batches, product_matrix
- *   Tabellen: products, product_sales
+ * Alle Aggregationen laufen direkt gegen die Tabelle product_sales
+ * (kein Abhängigkeit von Views, die eventuell nicht accessible sind).
  *
- * Verwendet (supabase as any) für Views/Tabellen, die noch nicht
- * im generierten TypeScript-Typ erfasst sind.
+ * Felder in product_sales: product_name, quantity, revenue,
+ *                           sale_date, source, import_batch
  */
 
 import { supabase } from '@/integrations/supabase/client';
@@ -92,65 +89,122 @@ export interface ProductSaleInsert {
   import_batch?: string;
 }
 
+// ─── Hilfsfunktion ────────────────────────────────────────────────────────────
+
+/** Lädt ALLE product_sales-Zeilen (nur die nötigen Felder). */
+async function loadAllProductSales() {
+  const { data, error } = await (supabase as any)
+    .from('product_sales')
+    .select('product_name, quantity, revenue, sale_date, source, import_batch');
+  if (error) {
+    console.error('[sales-db] loadAllProductSales:', error);
+    return [];
+  }
+  console.log('[sales-db] loadAllProductSales: rows loaded:', (data ?? []).length);
+  return data ?? [];
+}
+
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
-/** KPI-Zusammenfassung aus management_dashboard View */
+/** KPI-Zusammenfassung – aggregiert direkt aus product_sales */
 export async function fetchManagementDashboard(): Promise<ManagementDashboard | null> {
   try {
-    const { data, error } = await (supabase as any)
-      .from('management_dashboard')
-      .select('*')
-      .maybeSingle();
-    if (error) throw error;
-    return data as ManagementDashboard | null;
+    const rows = await loadAllProductSales();
+    if (rows.length === 0) return null;
+
+    const products = new Set<string>();
+    let totalQty = 0;
+    let totalRevenue = 0;
+    for (const r of rows) {
+      if (r.product_name) products.add(r.product_name);
+      totalQty     += Number(r.quantity ?? 0);
+      totalRevenue += Number(r.revenue  ?? 0);
+    }
+    return {
+      total_products:  products.size,
+      avg_wes_percent: 0,   // kein WES-Feld in product_sales
+      total_revenue:   totalRevenue,
+      total_qty:       totalQty,
+      stars:           0,
+      cash_cows:       0,
+      puzzles:         0,
+      dogs:            0,
+    };
   } catch (err) {
     console.error('[sales-db] fetchManagementDashboard:', err);
     return null;
   }
 }
 
-/** Umsatz/WES pro Kategorie aus dashboard_category_kpis */
+/** Umsatz pro Quelle (source) als Kategorie-Ersatz – aggregiert aus product_sales */
 export async function fetchCategoryKpis(): Promise<CategoryKpi[]> {
   try {
-    const { data, error } = await (supabase as any)
-      .from('dashboard_category_kpis')
-      .select('*')
-      .order('total_revenue', { ascending: false });
-    if (error) throw error;
-    return (data ?? []) as CategoryKpi[];
+    const rows = await loadAllProductSales();
+    const map = new Map<string, CategoryKpi>();
+    for (const r of rows) {
+      const key = r.source ?? '(unbekannt)';
+      if (!map.has(key)) {
+        map.set(key, {
+          category:        key,
+          total_products:  0,
+          avg_wes_percent: 0,
+          total_qty:       0,
+          total_revenue:   0,
+        });
+      }
+      const c = map.get(key)!;
+      c.total_qty     += Number(r.quantity ?? 0);
+      c.total_revenue += Number(r.revenue  ?? 0);
+    }
+    // Produkte pro Quelle zählen (distinct product_name)
+    const prodPerSource = new Map<string, Set<string>>();
+    for (const r of rows) {
+      const key = r.source ?? '(unbekannt)';
+      if (!prodPerSource.has(key)) prodPerSource.set(key, new Set());
+      if (r.product_name) prodPerSource.get(key)!.add(r.product_name);
+    }
+    for (const [key, c] of map) {
+      c.total_products = prodPerSource.get(key)?.size ?? 0;
+    }
+    return Array.from(map.values()).sort((a, b) => b.total_revenue - a.total_revenue);
   } catch (err) {
     console.error('[sales-db] fetchCategoryKpis:', err);
     return [];
   }
 }
 
-/** Top-Produkte aus dashboard_top_products */
+/** Top-Produkte nach Umsatz – aggregiert aus product_sales */
 export async function fetchTopProducts(limit = 10): Promise<TopProduct[]> {
   try {
-    const { data, error } = await (supabase as any)
-      .from('dashboard_top_products')
-      .select('*')
-      .limit(limit);
-    if (error) throw error;
-    return (data ?? []) as TopProduct[];
+    const rows = await loadAllProductSales();
+    const map = new Map<string, TopProduct>();
+    for (const r of rows) {
+      const key = r.product_name ?? '(unbekannt)';
+      if (!map.has(key)) {
+        map.set(key, {
+          category:      r.source ?? '',
+          product_name:  key,
+          total_qty:     0,
+          total_revenue: 0,
+        });
+      }
+      const p = map.get(key)!;
+      p.total_qty     += Number(r.quantity ?? 0);
+      p.total_revenue += Number(r.revenue  ?? 0);
+    }
+    return Array.from(map.values())
+      .sort((a, b) => b.total_revenue - a.total_revenue)
+      .slice(0, limit);
   } catch (err) {
     console.error('[sales-db] fetchTopProducts:', err);
     return [];
   }
 }
 
-/** Problemprodukte aus dashboard_problem_products */
+/** Problemprodukte – kein WES-Feld verfügbar, gibt [] zurück */
 export async function fetchProblemProducts(): Promise<ProblemProduct[]> {
-  try {
-    const { data, error } = await (supabase as any)
-      .from('dashboard_problem_products')
-      .select('*');
-    if (error) throw error;
-    return (data ?? []) as ProblemProduct[];
-  } catch (err) {
-    console.error('[sales-db] fetchProblemProducts:', err);
-    return [];
-  }
+  // product_sales hat kein wes_percent → keine echte Problem-Matrix möglich
+  return [];
 }
 
 /** Parst Datum+Zeit aus der Batch-ID, z.B. "food-20260326-2226" → "2026-03-26T22:26:00"
