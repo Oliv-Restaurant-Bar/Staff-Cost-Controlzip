@@ -1,0 +1,76 @@
+Die Console-Logs zeigen die echte Ursache jetzt sehr klar:
+
+Beobachtungen aus dem Live-Test:
+1. Beim Logout sehe ich "[AUTH] signOut called"
+2. Aber ich sehe KEIN "[AUTH] SIGNED_OUT" Event
+3. Zusätzlich erscheint "[AUTH] safety timeout – forcing loading=false after 8s"
+
+Das bedeutet:
+- Der Logout-Handler wird zwar aufgerufen
+- Aber der Auth-State wechselt nicht sauber in den ausgeloggten Zustand
+- Gleichzeitig wird loading nach 8 Sekunden künstlich auf false gesetzt, obwohl Auth offenbar nicht sauber abgeschlossen ist
+- Dadurch landet die App in einem inkonsistenten Zustand, was auch das Refresh-/Dienstplan-Problem erklären kann
+
+Bitte jetzt gezielt genau diese Punkte fixen:
+
+1. Safety Timeout entfernen oder hart absichern
+- Der künstliche "forcing loading=false after 8s" Mechanismus ist gefährlich
+- Bitte nicht mehr blind loading=false setzen
+- Auth darf nur dann als fertig gelten, wenn INITIAL_SESSION, SIGNED_IN oder SIGNED_OUT sauber verarbeitet wurde
+- Kein künstliches Überspringen des Auth-Boot-Prozesses
+
+2. signOut End-to-End debuggen
+Bitte direkt im signOut Flow loggen:
+- vor supabase.auth.signOut()
+- Ergebnis von supabase.auth.signOut()
+- eventuelle error.message
+- Session vor Logout
+- Session nach Logout
+- user vor Logout
+- user nach Logout
+
+3. Nach signOut lokalen Zustand hart zurücksetzen
+Auch wenn das SIGNED_OUT Event ausbleibt, soll lokal sauber zurückgesetzt werden:
+- session = null
+- user = null
+- role = null
+- user_role aus localStorage entfernen
+- ggf. weitere auth-bezogene States zurücksetzen
+- danach sofort sauber auf Login/Public Route navigieren
+
+4. Prüfen, warum SIGNED_OUT nicht kommt
+Mögliche Ursachen prüfen:
+- falscher Supabase Client im Logout-Flow
+- signOut Promise wird nicht korrekt awaited
+- Fehler wird geschluckt
+- Navigation / Render Race direkt nach signOut
+- onAuthStateChange Listener hängt nicht am aktiven Client
+
+5. Live Logs erweitern
+Bitte sichtbar loggen:
+- "[AUTH LIVE] signOut start"
+- "[AUTH LIVE] signOut result"
+- "[AUTH LIVE] signOut error"
+- "[AUTH LIVE] local state cleared"
+- "[AUTH LIVE] redirecting after logout"
+- "[AUTH LIVE] SIGNED_OUT"
+
+6. Dienstplan-Fetch nur starten, wenn Auth wirklich fertig ist
+Wenn der Safety Timeout weg ist, bitte sicherstellen:
+- keine Queries solange Auth nicht wirklich resolved ist
+- kein Fallback auf loading=false nur wegen Timeout
+
+7. Zielzustand
+Nach Klick auf Logout will ich:
+- sofort sichtbaren Logout
+- kein Hängenbleiben in der App
+- Redirect zum Login/Public Screen
+- danach erneuter Login funktioniert
+- Refresh auf Dienstplanung lädt Daten sauber
+
+Bitte mir danach zurückgeben:
+- warum SIGNED_OUT bisher nicht kam
+- wo der Safety Timeout eingebaut war
+- welche Datei(en) geändert wurden
+- was genau beim Logout final gefixt wurde
+- wie ich den Test erneut machen soll

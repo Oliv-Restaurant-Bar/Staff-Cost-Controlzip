@@ -1,4 +1,4 @@
-import { createContext, useEffect, useRef, useState, ReactNode } from 'react';
+import { createContext, useEffect, useRef, useState, useCallback, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -13,14 +13,9 @@ export interface AuthContextType {
   isServiceManager: boolean;
   isKuecheManager: boolean;
   /**
-   * Monotonically increasing counter — increments on every confirmed auth event:
-   *   0 = initial (auth not yet settled)
-   *   1 = boot complete (INITIAL_SESSION processed)
-   *   2+ = subsequent TOKEN_REFRESHED or SIGNED_IN events
-   *
-   * Pages that fetch Supabase data MUST depend on this value so they
-   * re-fetch automatically after a background token renewal even when
-   * user?.id has not changed.
+   * Increments on every confirmed auth event (boot, TOKEN_REFRESHED, SIGNED_IN).
+   * Data-fetching pages must depend on this so they re-fetch after a background
+   * token renewal even when user?.id hasn't changed.
    */
   sessionVersion: number;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
@@ -30,17 +25,14 @@ export interface AuthContextType {
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser]       = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [role, setRole]       = useState<UserRole>('admin');
+  const [user, setUser]             = useState<User | null>(null);
+  const [session, setSession]       = useState<Session | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const [role, setRole]             = useState<UserRole>('admin');
   const [sessionVersion, setSessionVersion] = useState(0);
 
-  // Whether INITIAL_SESSION has been processed (boot is done).
-  const bootDoneRef = useRef(false);
-
-  // User ID at last boot — used to distinguish "same user token refresh"
-  // from "different user after sign-out + sign-in".
+  // Prevents double-boot when both getSession() and INITIAL_SESSION fire.
+  const bootDoneRef     = useRef(false);
   const currentUserIdRef = useRef<string | null>(null);
 
   const EMAIL_ROLE_MAP: Record<string, UserRole> = {
@@ -50,269 +42,231 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const applyRole = (r: UserRole) => {
-    console.log('[AUTH] applyRole →', r);
     setRole(r);
     localStorage.setItem('user_role', r);
   };
 
-  const loadUserRole = async (userId: string, email?: string) => {
+  const loadUserRole = useCallback(async (userId: string, email?: string) => {
     console.log('[AUTH] loadUserRole', { userId, email });
 
-    // ── Weg 1: SECURITY DEFINER RPC ───────────────────────────────────────────
     try {
-      const { data: rpcData, error: rpcError } = await supabase.rpc('get_my_role' as any);
-      console.log('[AUTH] get_my_role RPC', { rpcData, rpcError });
-      if (!rpcError && rpcData) {
-        applyRole(rpcData as UserRole);
-        syncEmail(userId, email);
-        return;
-      }
-    } catch (ex) {
-      console.error('[AUTH] RPC exception:', ex);
-    }
+      const { data, error } = await supabase.rpc('get_my_role' as any);
+      if (!error && data) { applyRole(data as UserRole); syncEmail(userId, email); return; }
+    } catch { /* fall through */ }
 
-    // ── Weg 2: Direktabfrage user_profiles ────────────────────────────────────
     try {
       const { data, error } = await (supabase as any)
-        .from('user_profiles')
-        .select('role')
-        .eq('id', userId)
-        .maybeSingle();
-      console.log('[AUTH] user_profiles direct', { data, error });
-      if (!error && data?.role) {
-        applyRole(data.role as UserRole);
-        syncEmail(userId, email);
-        return;
-      }
-    } catch (ex) {
-      console.error('[AUTH] user_profiles exception:', ex);
-    }
+        .from('user_profiles').select('role').eq('id', userId).maybeSingle();
+      if (!error && data?.role) { applyRole(data.role as UserRole); syncEmail(userId, email); return; }
+    } catch { /* fall through */ }
 
-    // ── Weg 3: E-Mail-Mapping ──────────────────────────────────────────────────
     if (email && EMAIL_ROLE_MAP[email.toLowerCase()]) {
       const r = EMAIL_ROLE_MAP[email.toLowerCase()];
       applyRole(r);
-      (supabase as any)
-        .from('user_profiles')
-        .upsert({ id: userId, role: r }, { onConflict: 'id' })
+      (supabase as any).from('user_profiles').upsert({ id: userId, role: r }, { onConflict: 'id' })
         .then(() => {}).catch(() => {});
       return;
     }
 
-    // ── Weg 4: Letzter Ausweg ─────────────────────────────────────────────────
     console.error('[AUTH] all role paths failed – defaulting to kueche_manager');
     applyRole('kueche_manager');
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const syncEmail = (userId: string, email?: string) => {
     if (!email) return;
-    (supabase as any)
-      .from('user_profiles')
-      .update({ email: email.toLowerCase() })
-      .eq('id', userId)
-      .then(() => {}).catch(() => {});
+    (supabase as any).from('user_profiles').update({ email: email.toLowerCase() })
+      .eq('id', userId).then(() => {}).catch(() => {});
   };
 
+  // ── Shared boot handler (called from EITHER getSession OR INITIAL_SESSION) ───
+  // Protected by bootDoneRef so it runs exactly once per session.
+  const completeBoot = useCallback(async (sess: Session | null, source: string) => {
+    if (bootDoneRef.current) {
+      console.log('[AUTH] boot already done, ignoring duplicate from', source);
+      return;
+    }
+    bootDoneRef.current = true;
+
+    console.error(`🔴 [AUTH LIVE] boot complete via ${source}`, {
+      hasSession: !!sess,
+      userId: sess?.user?.id,
+      tokenExpiry: sess?.expires_at ? new Date(sess.expires_at * 1000).toISOString() : null,
+    });
+
+    setSession(sess);
+    setUser(sess?.user ?? null);
+    currentUserIdRef.current = sess?.user?.id ?? null;
+
+    if (sess?.user) {
+      await loadUserRole(sess.user.id, sess.user.email);
+    }
+
+    setLoading(false);
+    setSessionVersion(v => v + 1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadUserRole]);
+
   useEffect(() => {
-    // ────────────────────────────────────────────────────────────────────────
-    // WHY WE NO LONGER CALL getSession() HERE:
-    //
-    // In Supabase JS v2, getSession() reads the session from storage and MAY
-    // return an expired access_token if the background refresh hasn't finished
-    // yet.  Any Supabase queries made with that stale token get silently
-    // rejected by RLS (0 rows, no error), causing the Incognito refresh bug.
-    //
-    // The CORRECT pattern (per Supabase v2 docs) is to rely on INITIAL_SESSION
-    // from onAuthStateChange.  Supabase fires INITIAL_SESSION only AFTER
-    // _recoverAndRefresh() has completed — meaning the token in storage is
-    // guaranteed to be valid (or null) by the time we act on it.
-    //
-    // Sequence on page load:
-    //   1. Supabase client initialises, reads localStorage
-    //   2. If token expired → makes refresh network call (await)
-    //   3. Fires INITIAL_SESSION with the fresh (or null) session
-    //   4. We set loading=false and sessionVersion=1
-    //   5. Protected pages mount and fetch data — always with a valid token
-    // ────────────────────────────────────────────────────────────────────────
+    console.error('🔴 [AUTH LIVE] AuthProvider mounted – NEW CODE ACTIVE');
 
-    // Safety timer: INITIAL_SESSION should arrive within a few seconds even on
-    // slow connections.  8 s is generous enough to cover mobile 3G.
-    // ── LIVE PROOF: this log proves the new AuthContext code is running ─────────
-    console.error('🔴 [AUTH LIVE] AuthProvider useEffect mounted – NEW CODE ACTIVE');
+    // ── Strategy: dual boot signals ───────────────────────────────────────────
+    //
+    // WHY dual signals?
+    //
+    // a) getSession()    – awaits initializePromise then acquires the lock and
+    //                      reads/refreshes the session.  Usually fast (~0–100ms
+    //                      for non-expired tokens).  Reliable first-signal.
+    //
+    // b) INITIAL_SESSION – fired by Supabase inside onAuthStateChange AFTER
+    //                      initializePromise resolves and the lock is acquired.
+    //                      Acts as a backup in case getSession() resolves while
+    //                      the lock is still held (lock is queued, not blocking).
+    //
+    // completeBoot() is guarded by bootDoneRef so it runs EXACTLY ONCE.
+    // Whichever signal arrives first wins; the other is ignored.
+    //
+    // NO SAFETY TIMEOUT – a timeout causes an inconsistent half-booted state
+    // which is worse than a spinner.  If getSession() hangs (e.g. expired token
+    // + slow network), INITIAL_SESSION will eventually arrive after the refresh.
+    // ──────────────────────────────────────────────────────────────────────────
 
-    const safetyTimer = setTimeout(() => {
-      if (!bootDoneRef.current) {
-        console.warn('[AUTH] ⚠️ safety timeout – forcing loading=false after 8 s');
-        bootDoneRef.current = true;
-        setLoading(false);
-        setSessionVersion(v => v + 1);
-      }
-    }, 8000);
+    // Signal A: getSession()
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => completeBoot(session, 'getSession'))
+      .catch(err => {
+        console.error('[AUTH] getSession() threw unexpectedly:', err);
+        completeBoot(null, 'getSession-error');
+      });
 
+    // Signal B: onAuthStateChange
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      async (event, sess) => {
         console.log('[AUTH] onAuthStateChange', {
           event,
-          hasSession:  !!session,
-          userId:      session?.user?.id,
-          email:       session?.user?.email,
-          tokenExpiry: session?.expires_at
-            ? new Date(session.expires_at * 1000).toISOString()
-            : null,
-          bootDone:    bootDoneRef.current,
-          sameUser:    session?.user?.id === currentUserIdRef.current,
+          hasSession: !!sess,
+          userId: sess?.user?.id,
+          bootDone: bootDoneRef.current,
+          tokenExpiry: sess?.expires_at ? new Date(sess.expires_at * 1000).toISOString() : null,
         });
 
-        // ── INITIAL_SESSION ────────────────────────────────────────────────────
-        // Primary boot signal — fired AFTER any pending token refresh.
-        // This is the only event where loading is set from true → false.
+        // ── INITIAL_SESSION ─────────────────────────────────────────────────
+        // Backup boot signal; completeBoot() is a no-op if getSession() already won.
         if (event === 'INITIAL_SESSION') {
-          console.error('🔴 [AUTH LIVE] INITIAL_SESSION received', {
-            hasSession: !!session,
-            userId: session?.user?.id,
-            tokenExpiry: session?.expires_at ? new Date(session.expires_at * 1000).toISOString() : null,
-          });
-          clearTimeout(safetyTimer);
-          setSession(session);
-          setUser(session?.user ?? null);
-          currentUserIdRef.current = session?.user?.id ?? null;
-          if (session?.user) {
-            await loadUserRole(session.user.id, session.user.email);
-          }
-          bootDoneRef.current = true;
-          setLoading(false);
-          setSessionVersion(v => {
-            console.log('[AUTH] sessionVersion →', v + 1, '(INITIAL_SESSION – boot complete)');
-            return v + 1;
-          });
+          console.error('🔴 [AUTH LIVE] INITIAL_SESSION received', { hasSession: !!sess, userId: sess?.user?.id });
+          await completeBoot(sess, 'INITIAL_SESSION');
           return;
         }
 
-        // ── TOKEN_REFRESHED ────────────────────────────────────────────────────
-        // JWT renewed silently.  Bump sessionVersion so data pages re-fetch
+        // ── TOKEN_REFRESHED ─────────────────────────────────────────────────
+        // JWT renewed silently — bump sessionVersion so data pages re-fetch
         // with the fresh token even though user?.id hasn't changed.
         if (event === 'TOKEN_REFRESHED') {
-          console.log('[AUTH] TOKEN_REFRESHED – fresh token, bumping sessionVersion');
-          setSession(session);
-          setUser(session?.user ?? null);
-          setSessionVersion(v => {
-            console.log('[AUTH] sessionVersion →', v + 1, '(TOKEN_REFRESHED)');
-            return v + 1;
-          });
+          console.error('🔴 [AUTH LIVE] TOKEN_REFRESHED – bumping sessionVersion');
+          setSession(sess);
+          setUser(sess?.user ?? null);
+          setSessionVersion(v => { console.log('[AUTH] sessionVersion →', v + 1, '(TOKEN_REFRESHED)'); return v + 1; });
           return;
         }
 
-        // ── USER_UPDATED ───────────────────────────────────────────────────────
+        // ── USER_UPDATED ────────────────────────────────────────────────────
         if (event === 'USER_UPDATED') {
-          setSession(session);
-          setUser(session?.user ?? null);
+          setSession(sess);
+          setUser(sess?.user ?? null);
           return;
         }
 
-        // ── SIGNED_IN (same user, post-boot) ──────────────────────────────────
-        // Supabase occasionally fires SIGNED_IN in addition to TOKEN_REFRESHED.
-        // Treat it silently — just update session + bump version.
-        if (event === 'SIGNED_IN' &&
-            bootDoneRef.current &&
-            session?.user?.id === currentUserIdRef.current) {
-          console.log('[AUTH] SIGNED_IN (same user post-boot) – bumping sessionVersion');
-          setSession(session);
-          setUser(session?.user ?? null);
-          setSessionVersion(v => {
-            console.log('[AUTH] sessionVersion →', v + 1, '(SIGNED_IN same user)');
-            return v + 1;
-          });
+        // ── SIGNED_IN (same user, post-boot) ────────────────────────────────
+        // Supabase sometimes fires SIGNED_IN for background token renewals.
+        // Bump sessionVersion so data pages re-fetch.
+        if (event === 'SIGNED_IN' && bootDoneRef.current &&
+            sess?.user?.id === currentUserIdRef.current) {
+          console.error('🔴 [AUTH LIVE] SIGNED_IN (same user, post-boot) – bumping sessionVersion');
+          setSession(sess);
+          setUser(sess?.user ?? null);
+          setSessionVersion(v => { console.log('[AUTH] sessionVersion →', v + 1, '(SIGNED_IN same)'); return v + 1; });
           return;
         }
 
-        // ── SIGNED_IN (new user or first login) ───────────────────────────────
+        // ── SIGNED_IN (new user) ─────────────────────────────────────────────
         if (event === 'SIGNED_IN') {
-          console.log('[AUTH] SIGNED_IN (new user / first login) – full role reload');
+          console.error('🔴 [AUTH LIVE] SIGNED_IN (new user / first login)');
           setLoading(true);
-          setSession(session);
-          setUser(session?.user ?? null);
-          if (session?.user) {
-            currentUserIdRef.current = session.user.id;
-            await loadUserRole(session.user.id, session.user.email);
+          setSession(sess);
+          setUser(sess?.user ?? null);
+          if (sess?.user) {
+            currentUserIdRef.current = sess.user.id;
+            await loadUserRole(sess.user.id, sess.user.email);
           }
           setLoading(false);
-          setSessionVersion(v => {
-            console.log('[AUTH] sessionVersion →', v + 1, '(SIGNED_IN new user)');
-            return v + 1;
-          });
+          setSessionVersion(v => { console.log('[AUTH] sessionVersion →', v + 1, '(SIGNED_IN new)'); return v + 1; });
           return;
         }
 
-        // ── SIGNED_OUT ─────────────────────────────────────────────────────────
+        // ── SIGNED_OUT ──────────────────────────────────────────────────────
+        // This event may NOT fire if the Supabase server-side signOut HTTP call
+        // returns an unexpected error.  The _clearLocalAuth() call in signOut()
+        // below ensures the UI updates immediately regardless.
         if (event === 'SIGNED_OUT') {
-          console.error('🔴 [AUTH LIVE] SIGNED_OUT – clearing all state');
-          setSession(null);
-          setUser(null);
-          setRole('kueche_manager');
-          setLoading(false);
-          // Clear persisted role so no stale data leaks to the next session
-          localStorage.removeItem('user_role');
-          bootDoneRef.current = false;
-          currentUserIdRef.current = null;
-          // Reset sessionVersion to 0 — next login will set it to 1
-          setSessionVersion(0);
+          console.error('🔴 [AUTH LIVE] SIGNED_OUT event received');
+          _clearLocalAuth();
           return;
         }
       }
     );
 
-    return () => {
-      clearTimeout(safetyTimer);
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [completeBoot]);
+
+  // ── Local state reset (shared between signOut() and SIGNED_OUT handler) ─────
+  const _clearLocalAuth = () => {
+    console.error('🔴 [AUTH LIVE] local auth state cleared');
+    setSession(null);
+    setUser(null);
+    setRole('kueche_manager');
+    setLoading(false);
+    localStorage.removeItem('user_role');
+    bootDoneRef.current = false;
+    currentUserIdRef.current = null;
+    setSessionVersion(0);
+  };
 
   const signIn = async (email: string, password: string): Promise<{ error: string | null }> => {
-    console.log('[AUTH] signIn attempt', { email });
+    console.log('[AUTH] signIn', email);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      console.error('[AUTH] signIn error', error.message);
-      if (error.message.includes('Invalid login credentials')) {
-        return { error: 'E-Mail-Adresse oder Passwort ist falsch.' };
-      }
-      if (error.message.includes('Email not confirmed')) {
-        return { error: 'Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse.' };
-      }
+      if (error.message.includes('Invalid login credentials')) return { error: 'E-Mail-Adresse oder Passwort ist falsch.' };
+      if (error.message.includes('Email not confirmed')) return { error: 'Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse.' };
       return { error: 'Anmeldung fehlgeschlagen: ' + error.message };
     }
-    console.log('[AUTH] signIn success');
     return { error: null };
   };
 
   const signOut = async () => {
     console.error('🔴 [AUTH LIVE] signOut() called');
-    try {
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.error('[AUTH] signOut error', error.message);
-        // Force local state clear even if server call failed
-        setSession(null);
-        setUser(null);
-        setRole('kueche_manager');
-        localStorage.removeItem('user_role');
-        bootDoneRef.current = false;
-        currentUserIdRef.current = null;
-        setSessionVersion(0);
-      } else {
-        console.log('[AUTH] signOut success – SIGNED_OUT event will follow');
-      }
-    } catch (ex) {
-      console.error('[AUTH] signOut exception', ex);
-      // Force local clear on any exception
-      setSession(null);
-      setUser(null);
-      setRole('kueche_manager');
-      localStorage.removeItem('user_role');
-      bootDoneRef.current = false;
-      currentUserIdRef.current = null;
-      setSessionVersion(0);
-    }
+
+    // ── CRITICAL: clear local state IMMEDIATELY ───────────────────────────────
+    // Do NOT wait for the SIGNED_OUT event.  The Supabase signOut() HTTP call
+    // (POST /auth/v1/logout) can fail or be slow, and if it returns any error
+    // that is not 404/401/403, _removeSession() is skipped and SIGNED_OUT never
+    // fires via onAuthStateChange.  We must not rely on that event for the UI.
+    _clearLocalAuth();
+    console.error('🔴 [AUTH LIVE] local state cleared – LoginPage should appear now');
+
+    // Fire the Supabase server signOut in the background.
+    // SIGNED_OUT event may or may not arrive; we don't care — state is already cleared.
+    supabase.auth.signOut()
+      .then(({ error }) => {
+        if (error) {
+          console.warn('[AUTH] background signOut had an error (OK – local state already cleared):', error.message);
+        } else {
+          console.log('[AUTH] background signOut completed cleanly');
+        }
+      })
+      .catch(err => {
+        console.warn('[AUTH] background signOut threw (OK – local state already cleared):', err);
+      });
   };
 
   return (
