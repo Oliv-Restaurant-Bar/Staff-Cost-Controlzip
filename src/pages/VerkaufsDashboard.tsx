@@ -36,11 +36,12 @@ import {
 const SOURCE_LABEL: Record<string, string> = {
   food_csv_export:     'Food',
   beverage_csv_export: 'Beverage',
+  manual_test:         'Manual',
 };
 
 function sourceLabel(src: string | null | undefined): string {
-  if (!src || src === '__null__') return '(unbekannt)';
-  return SOURCE_LABEL[src] ?? src;
+  if (!src || src === '__null__') return 'Unbekannt';
+  return SOURCE_LABEL[src] ?? 'Unbekannt';
 }
 
 function fmtChf(v: number | null | undefined): string {

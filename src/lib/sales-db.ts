@@ -110,7 +110,11 @@ export async function loadProductSalesRows(): Promise<ProductSalesRow[]> {
   const { data, error } = await (supabase as any)
     .from('product_sales')
     .select('product_name, quantity, revenue, sale_date, source, import_batch')
-    .limit(50000);  // PostgREST default cap is 1000 — explizit erhöhen
+    // Nur Zeilen mit gesetzter Quelle und Batch-ID (alte Null-Imports ignorieren)
+    .not('source', 'is', null)
+    .not('import_batch', 'is', null)
+    // range() statt limit() — lädt bis zu 5001 Zeilen sicher durch PostgREST
+    .range(0, 5000);
 
   if (error) {
     console.error('[VERKAUF] loadProductSalesRows ERROR:', {
@@ -123,11 +127,11 @@ export async function loadProductSalesRows(): Promise<ProductSalesRow[]> {
   }
 
   const rows: ProductSalesRow[] = data ?? [];
-  console.log('[VERKAUF] loadProductSalesRows: OK –', rows.length, 'Zeilen geladen');
+  console.log('[DASHBOARD] rows loaded:', rows.length);
   if (rows.length > 0) {
     console.log('[VERKAUF] erste Zeile (sample):', JSON.stringify(rows[0]));
   } else {
-    console.warn('[VERKAUF] product_sales ist LEER – keine Daten vorhanden');
+    console.warn('[VERKAUF] Keine Zeilen mit source+import_batch – alle Daten haben null-Werte?');
   }
   return rows;
 }
