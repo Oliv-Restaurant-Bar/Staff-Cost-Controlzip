@@ -91,119 +91,118 @@ export interface ProductSaleInsert {
 
 // ─── Hilfsfunktion ────────────────────────────────────────────────────────────
 
-/** Lädt ALLE product_sales-Zeilen (nur die nötigen Felder). */
-async function loadAllProductSales() {
+export type ProductSalesRow = {
+  product_name: string;
+  quantity:     number;
+  revenue:      number;
+  sale_date:    string;
+  source:       string;
+  import_batch: string;
+};
+
+/**
+ * Lädt ALLE product_sales-Zeilen (nur die nötigen Felder).
+ * Wirft einen Error wenn die Tabelle nicht gelesen werden kann
+ * (z.B. fehlende SELECT-Policy → Code 42501).
+ */
+export async function loadProductSalesRows(): Promise<ProductSalesRow[]> {
+  console.log('[VERKAUF] loadProductSalesRows: querying product_sales…');
   const { data, error } = await (supabase as any)
     .from('product_sales')
     .select('product_name, quantity, revenue, sale_date, source, import_batch');
+
   if (error) {
-    console.error('[sales-db] loadAllProductSales:', error);
-    return [];
+    console.error('[VERKAUF] loadProductSalesRows ERROR:', {
+      code:    error.code,
+      message: error.message,
+      details: error.details,
+      hint:    error.hint,
+    });
+    throw new Error(`product_sales SELECT fehlgeschlagen: ${error.message} (Code ${error.code})`);
   }
-  console.log('[sales-db] loadAllProductSales: rows loaded:', (data ?? []).length);
-  return data ?? [];
+
+  const rows: ProductSalesRow[] = data ?? [];
+  console.log('[VERKAUF] loadProductSalesRows: OK –', rows.length, 'Zeilen geladen');
+  if (rows.length > 0) {
+    console.log('[VERKAUF] erste Zeile (sample):', JSON.stringify(rows[0]));
+  } else {
+    console.warn('[VERKAUF] product_sales ist LEER – keine Daten vorhanden');
+  }
+  return rows;
 }
 
-// ─── Queries ──────────────────────────────────────────────────────────────────
+// ─── Pure Aggregationsfunktionen (kein DB-Aufruf, nehmen Rows entgegen) ───────
 
-/** KPI-Zusammenfassung – aggregiert direkt aus product_sales */
+function aggregateManagementDashboard(rows: ProductSalesRow[]): ManagementDashboard | null {
+  if (rows.length === 0) return null;
+  const products = new Set<string>();
+  let totalQty = 0, totalRevenue = 0;
+  for (const r of rows) {
+    if (r.product_name) products.add(r.product_name);
+    totalQty     += Number(r.quantity ?? 0);
+    totalRevenue += Number(r.revenue  ?? 0);
+  }
+  return {
+    total_products:  products.size,
+    avg_wes_percent: 0,
+    total_revenue:   totalRevenue,
+    total_qty:       totalQty,
+    stars: 0, cash_cows: 0, puzzles: 0, dogs: 0,
+  };
+}
+
+function aggregateCategoryKpis(rows: ProductSalesRow[]): CategoryKpi[] {
+  const map = new Map<string, CategoryKpi>();
+  const prodPerSource = new Map<string, Set<string>>();
+  for (const r of rows) {
+    const key = r.source || '(unbekannt)';
+    if (!map.has(key)) {
+      map.set(key, { category: key, total_products: 0, avg_wes_percent: 0, total_qty: 0, total_revenue: 0 });
+      prodPerSource.set(key, new Set());
+    }
+    const c = map.get(key)!;
+    c.total_qty     += Number(r.quantity ?? 0);
+    c.total_revenue += Number(r.revenue  ?? 0);
+    if (r.product_name) prodPerSource.get(key)!.add(r.product_name);
+  }
+  for (const [key, c] of map) c.total_products = prodPerSource.get(key)?.size ?? 0;
+  return Array.from(map.values()).sort((a, b) => b.total_revenue - a.total_revenue);
+}
+
+function aggregateTopProducts(rows: ProductSalesRow[], limit: number): TopProduct[] {
+  const map = new Map<string, TopProduct>();
+  for (const r of rows) {
+    const key = r.product_name || '(unbekannt)';
+    if (!map.has(key)) {
+      map.set(key, { category: r.source ?? '', product_name: key, total_qty: 0, total_revenue: 0 });
+    }
+    const p = map.get(key)!;
+    p.total_qty     += Number(r.quantity ?? 0);
+    p.total_revenue += Number(r.revenue  ?? 0);
+  }
+  return Array.from(map.values())
+    .sort((a, b) => b.total_revenue - a.total_revenue)
+    .slice(0, limit);
+}
+
+// ─── Öffentliche Wrapper (Rückwärtskompatibilität) ─────────────────────────────
+
 export async function fetchManagementDashboard(): Promise<ManagementDashboard | null> {
-  try {
-    const rows = await loadAllProductSales();
-    if (rows.length === 0) return null;
-
-    const products = new Set<string>();
-    let totalQty = 0;
-    let totalRevenue = 0;
-    for (const r of rows) {
-      if (r.product_name) products.add(r.product_name);
-      totalQty     += Number(r.quantity ?? 0);
-      totalRevenue += Number(r.revenue  ?? 0);
-    }
-    return {
-      total_products:  products.size,
-      avg_wes_percent: 0,   // kein WES-Feld in product_sales
-      total_revenue:   totalRevenue,
-      total_qty:       totalQty,
-      stars:           0,
-      cash_cows:       0,
-      puzzles:         0,
-      dogs:            0,
-    };
-  } catch (err) {
-    console.error('[sales-db] fetchManagementDashboard:', err);
-    return null;
-  }
+  const rows = await loadProductSalesRows();
+  return aggregateManagementDashboard(rows);
 }
 
-/** Umsatz pro Quelle (source) als Kategorie-Ersatz – aggregiert aus product_sales */
 export async function fetchCategoryKpis(): Promise<CategoryKpi[]> {
-  try {
-    const rows = await loadAllProductSales();
-    const map = new Map<string, CategoryKpi>();
-    for (const r of rows) {
-      const key = r.source ?? '(unbekannt)';
-      if (!map.has(key)) {
-        map.set(key, {
-          category:        key,
-          total_products:  0,
-          avg_wes_percent: 0,
-          total_qty:       0,
-          total_revenue:   0,
-        });
-      }
-      const c = map.get(key)!;
-      c.total_qty     += Number(r.quantity ?? 0);
-      c.total_revenue += Number(r.revenue  ?? 0);
-    }
-    // Produkte pro Quelle zählen (distinct product_name)
-    const prodPerSource = new Map<string, Set<string>>();
-    for (const r of rows) {
-      const key = r.source ?? '(unbekannt)';
-      if (!prodPerSource.has(key)) prodPerSource.set(key, new Set());
-      if (r.product_name) prodPerSource.get(key)!.add(r.product_name);
-    }
-    for (const [key, c] of map) {
-      c.total_products = prodPerSource.get(key)?.size ?? 0;
-    }
-    return Array.from(map.values()).sort((a, b) => b.total_revenue - a.total_revenue);
-  } catch (err) {
-    console.error('[sales-db] fetchCategoryKpis:', err);
-    return [];
-  }
+  const rows = await loadProductSalesRows();
+  return aggregateCategoryKpis(rows);
 }
 
-/** Top-Produkte nach Umsatz – aggregiert aus product_sales */
 export async function fetchTopProducts(limit = 10): Promise<TopProduct[]> {
-  try {
-    const rows = await loadAllProductSales();
-    const map = new Map<string, TopProduct>();
-    for (const r of rows) {
-      const key = r.product_name ?? '(unbekannt)';
-      if (!map.has(key)) {
-        map.set(key, {
-          category:      r.source ?? '',
-          product_name:  key,
-          total_qty:     0,
-          total_revenue: 0,
-        });
-      }
-      const p = map.get(key)!;
-      p.total_qty     += Number(r.quantity ?? 0);
-      p.total_revenue += Number(r.revenue  ?? 0);
-    }
-    return Array.from(map.values())
-      .sort((a, b) => b.total_revenue - a.total_revenue)
-      .slice(0, limit);
-  } catch (err) {
-    console.error('[sales-db] fetchTopProducts:', err);
-    return [];
-  }
+  const rows = await loadProductSalesRows();
+  return aggregateTopProducts(rows, limit);
 }
 
-/** Problemprodukte – kein WES-Feld verfügbar, gibt [] zurück */
 export async function fetchProblemProducts(): Promise<ProblemProduct[]> {
-  // product_sales hat kein wes_percent → keine echte Problem-Matrix möglich
   return [];
 }
 

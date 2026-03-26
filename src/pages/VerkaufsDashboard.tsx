@@ -1,11 +1,8 @@
 /**
  * VerkaufsDashboard – Produktumsatz & KPI Übersicht
  * ===================================================
- * Lädt Daten aus:
- *   - management_dashboard    (KPI-Karten)
- *   - dashboard_category_kpis (Kategorie-Tabelle + Diagramme)
- *   - dashboard_top_products  (Top-Produkte)
- *   - dashboard_problem_products (Problemprodukte)
+ * Lädt Daten direkt aus product_sales (ein einziger DB-Aufruf).
+ * Kein Abhängigkeit auf Supabase-Views.
  */
 
 import { useState, useEffect, useMemo } from 'react';
@@ -25,7 +22,6 @@ import {
   fetchManagementDashboard,
   fetchCategoryKpis,
   fetchTopProducts,
-  fetchProblemProducts,
   type ManagementDashboard,
   type CategoryKpi,
   type TopProduct,
@@ -103,6 +99,7 @@ function KpiCard({
 
 export default function VerkaufsDashboard() {
   const [loading, setLoading]             = useState(true);
+  const [dbError, setDbError]             = useState<string | null>(null);
   const [kpis, setKpis]                   = useState<ManagementDashboard | null>(null);
   const [categories, setCategories]       = useState<CategoryKpi[]>([]);
   const [topProducts, setTopProducts]     = useState<TopProduct[]>([]);
@@ -112,17 +109,24 @@ export default function VerkaufsDashboard() {
 
   const load = async () => {
     setLoading(true);
-    const [k, c, t, p] = await Promise.all([
-      fetchManagementDashboard(),
-      fetchCategoryKpis(),
-      fetchTopProducts(20),
-      fetchProblemProducts(),
-    ]);
-    setKpis(k);
-    setCategories(c);
-    setTopProducts(t);
-    setProblems(p);
-    setLoading(false);
+    setDbError(null);
+    try {
+      const [k, c, t] = await Promise.all([
+        fetchManagementDashboard(),   // throws on DB error (z.B. 42501)
+        fetchCategoryKpis(),
+        fetchTopProducts(20),
+      ]);
+      setKpis(k);
+      setCategories(c);
+      setTopProducts(t);
+      setProblems([]);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[VerkaufsDashboard] load error:', msg);
+      setDbError(msg);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -181,8 +185,35 @@ export default function VerkaufsDashboard() {
         </Button>
       </div>
 
+      {/* DB-Fehler (z.B. fehlende SELECT-Policy) */}
+      {dbError && (
+        <Card className="border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30">
+          <CardContent className="py-6">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                <p className="font-semibold text-red-700 dark:text-red-400">Datenbankfehler beim Laden</p>
+                <p className="text-sm text-red-600 dark:text-red-300 font-mono break-all">{dbError}</p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Falls der Fehler «permission denied» oder «42501» enthält, fehlt in Supabase
+                  eine SELECT-Policy für <code>product_sales</code>. Führe im SQL-Editor aus:
+                </p>
+                <pre className="text-xs bg-muted p-2 rounded mt-1 overflow-x-auto">
+{`CREATE POLICY "authenticated_can_select"
+  ON public.product_sales FOR SELECT
+  TO authenticated USING (true);`}
+                </pre>
+                <Button size="sm" variant="outline" onClick={load} className="mt-2">
+                  Nochmals versuchen
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Keine Daten */}
-      {!kpis && categories.length === 0 && (
+      {!dbError && !kpis && categories.length === 0 && (
         <Card>
           <CardContent className="py-12 text-center">
             <Package className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
