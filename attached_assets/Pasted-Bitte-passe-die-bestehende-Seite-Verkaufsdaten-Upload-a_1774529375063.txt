@@ -1,0 +1,167 @@
+Bitte passe die bestehende Seite "Verkaufsdaten Upload" auf meinen echten Produktions-Import an.
+
+WICHTIG:
+Der primäre Upload-Flow soll ab jetzt CSV-basiert sein, nicht Excel-basiert.
+
+Meine echten Dateien kommen immer als PAARE:
+1. Anzahl Food xx.xx.-xx.xx.2026.csv
+2. Umsatz Food xx.xx.-xx.xx.2026.csv
+
+optional zusätzlich:
+3. Anzahl Beverage xx.xx.-xx.xx.2026.csv
+4. Umsatz Beverage xx.xx.-xx.xx.2026.csv
+
+Ziel:
+Die Webapp soll diese Exportdateien robust einlesen, normalisieren, Vorschau anzeigen und dann in Supabase in product_sales importieren.
+
+Dateistruktur:
+- Dateiendung .csv
+- Inhalt ist tab-getrennt, nicht komma-getrennt
+- Werte können in doppelte Anführungszeichen gesetzt sein
+- Kopfzeile in Zeile 1
+- Spalte A = Bezeichnung
+- Spalte B = Zeitraum
+- Spalten C und weiter = Tageswerte wie 01.03., 02.03., 03.03. usw.
+
+Bedeutung:
+- Datei "Anzahl ..." enthält Mengen pro Produkt und pro Tag
+- Datei "Umsatz ..." enthält Umsatz pro Produkt und pro Tag
+- Produktname steht in Spalte A
+- Zeitraum total steht in Spalte B
+- Tageswerte stehen ab Spalte C
+
+Bitte baue die Upload-Seite neu bzw. erweitere sie mit folgendem Verhalten:
+
+1. Upload UI
+- Vier Upload-Felder vorbereiten:
+  - Anzahl Food CSV
+  - Umsatz Food CSV
+  - Anzahl Beverage CSV optional
+  - Umsatz Beverage CSV optional
+- Für den ersten produktiven Test müssen mindestens Anzahl Food und Umsatz Food vorhanden sein
+- Beverage Upload soll optional sein, aber bereits unterstützt werden
+- Nur CSV-Dateien akzeptieren
+- Klar beschriftete Upload-Bereiche
+- Pflichtfeld "Jahr" im Formular, z. B. 2026
+- Optionales Feld "Quelle"
+- Optionales Feld "Notizen"
+
+2. Parsing
+- CSV robust als tab-getrennte Datei parsen
+- UTF-8 und UTF-8 BOM unterstützen
+- Doppelte Anführungszeichen sauber behandeln
+- Header aus Zeile 1 lesen
+- Datums-Spalten ab Spalte C erkennen
+- Für jede Produktzeile und jeden Tag einen Datensatz erzeugen
+
+3. Matching Logik
+- Anzahl- und Umsatzdatei eines Bereichs über Spalte A "Bezeichnung" matchen
+- Zusätzlich Datums-Spalten matchen
+- Für jeden Tag genau einen Datensatz erzeugen:
+  - product_name
+  - quantity
+  - revenue
+  - sale_date
+  - source
+  - import_batch
+  - file_name
+  - notes
+
+4. Bereichserkennung
+- Food Dateien sollen als source oder Untertyp "food_csv_export" markiert werden
+- Beverage Dateien sollen als source oder Untertyp "beverage_csv_export" markiert werden
+- Optional kann zusätzlich category beim Import gesetzt werden:
+  - Food = 'food'
+  - Beverage = 'beverage'
+- Aber wichtig: vorhandene spätere Kategorie-Logik in products nicht kaputt machen
+
+5. Datenbereinigung
+Bitte NICHT importieren:
+- Summenzeilen wie "Gesamt - Food (Speisen)" oder "Gesamt - Beverage (Getränke)"
+- offensichtliche Strukturzeilen wie "Pizza und Küche", "Menu", "Food", "Beverage" oder ähnliche Sammelzeilen, sofern sie keine echten Verkaufsartikel sind
+- komplett leere Zeilen
+- Zeilen, bei denen quantity und revenue für alle Tage leer oder 0 sind
+
+6. Wert-Konvertierung
+- Mengen numerisch parsen
+- Umsatzwerte robust parsen
+- Falls Werte mit CHF, Apostrophen, Leerzeichen oder Komma vorliegen, in saubere numerische Werte umwandeln
+- Nullwerte und leere Felder sauber behandeln
+
+7. Datumserzeugung
+- Spaltenheader enthalten nur Tag und Monat wie 01.03.
+- Das Jahr kommt aus dem Pflichtfeld im Formular
+- sale_date als echtes Datum speichern, z. B. 2026-03-01
+
+8. Vorschau vor Import
+Vor dem finalen Import eine Vorschau anzeigen mit:
+- product_name
+- sale_date
+- quantity
+- revenue
+- erkannter Bereich Food oder Beverage
+Zusätzlich anzeigen:
+- Anzahl erkannter Datensätze
+- Anzahl ignorierter Summen- oder Strukturzeilen
+- Anzahl Zeilen mit Warnungen
+
+9. Speicherung in Supabase
+In product_sales speichern:
+- product_name
+- quantity
+- revenue
+- sale_date
+- source
+- import_batch
+- file_name
+- notes
+- uploaded_at falls nicht automatisch von der DB gesetzt
+
+10. Import Batch Logik
+- Import Batch automatisch erzeugen, z. B. mit Zeitstempel
+- Wenn Food und Beverage gleichzeitig importiert werden, soll klar nachvollziehbar sein, welche Dateien zusammengehören
+- file_name darf die Originaldateinamen enthalten
+
+11. Import Historie
+Die bestehende Historie soll beibehalten werden
+Datenquelle weiter sales_import_batches
+Neue CSV Uploads sollen korrekt darin erscheinen
+
+12. Fehlerbehandlung
+Verständliche Fehlermeldungen anzeigen wenn:
+- Anzahl-Datei fehlt
+- Umsatz-Datei fehlt
+- Headerstruktur nicht erkannt wird
+- Datums-Spalten nicht übereinstimmen
+- Produktnamen zwischen Anzahl- und Umsatzdatei eines Bereichs nicht matchen
+- Supabase Insert fehlschlägt
+
+13. UX
+- Bestehendes Designsystem und Layout weiterverwenden
+- Keine komplette Neuentwicklung
+- Die Seite "Verkaufsdaten Upload" produktionsnah und robust machen
+- Leere Zustände, Ladezustände und Erfolgszustände sauber anzeigen
+
+14. Technischer Rahmen
+- Bestehende Supabase Utilities wiederverwenden
+- Keinen zweiten parallelen Supabase Client bauen
+- Wiederverwendbare Parser-Utilities erstellen, damit Food und Beverage denselben Importpfad nutzen
+- Parser und Transformationslogik möglichst in eigene Utility-Dateien auslagern
+- Validierung vor dem Insert durchführen
+
+15. Wichtige Zielsetzung
+Nach dem Upload sollen diese bestehenden Views mit den neuen Daten sofort nutzbar sein:
+- management_dashboard
+- dashboard_category_kpis
+- dashboard_top_products
+- dashboard_problem_products
+- daily_sales_summary
+- sales_import_batches
+- product_matrix
+
+16. Nach Umsetzung bitte:
+- die geänderten oder neuen Dateien auflisten
+- kurz erklären, wie Anzahl und Umsatz zu Tagesdatensätzen normalisiert werden
+- sagen, wie ich zuerst Food testen soll
+- sagen, wie ich danach Beverage testen soll
+- auf mögliche RLS oder Insert-Rechteprobleme bei product_sales hinweisen
