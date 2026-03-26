@@ -242,6 +242,33 @@ export async function insertProductSales(
   // what the TypeScript type says (callers may pass a superset interface).
   const rawRows = rows as Array<Record<string, unknown>>;
 
+  // ── 0. Auth diagnostics ───────────────────────────────────────────────────
+  // Run BEFORE the insert to see if the client is authenticated or anon.
+  const { data: { session: diagSession } } = await supabase.auth.getSession();
+  const diagUserId   = diagSession?.user?.id ?? null;
+  const diagRole     = diagSession?.user?.role ?? diagSession?.user?.app_metadata?.role ?? 'unknown';
+  const diagHasToken = !!diagSession?.access_token;
+  const diagExpiry   = diagSession?.expires_at
+    ? new Date(diagSession.expires_at * 1000).toISOString() : 'none';
+  const supabaseUrl  = (supabase as any).supabaseUrl ?? (supabase as any).rest?.url ?? '(unknown)';
+
+  // Visible in browser console with eye-catching prefix
+  console.error('🔴 [UPLOAD AUTH]', {
+    hasSession:   diagHasToken,
+    userId:       diagUserId,
+    role:         diagRole,
+    tokenExpiry:  diagExpiry,
+    supabaseUrl,
+    table:        'product_sales',
+    verdict:      diagHasToken ? '✅ authenticated' : '❌ ANON – RLS will block insert',
+  });
+
+  if (!diagHasToken) {
+    const msg = 'Kein aktiver Login – Upload läuft als anonymer Benutzer. Bitte neu einloggen.';
+    console.error('[sales-db]', msg);
+    return { count: 0, error: msg };
+  }
+
   // ── 1. Pre-insert diagnostics ─────────────────────────────────────────────
   console.log('[sales-db] insertProductSales ─── START ───────────────────────');
   console.log('[sales-db] row count:', rawRows.length);
