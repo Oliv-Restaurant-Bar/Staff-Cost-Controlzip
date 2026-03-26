@@ -144,34 +144,36 @@ export function normalizeProductName(name: string | null | undefined): string {
  * (z.B. fehlende SELECT-Policy → Code 42501).
  */
 export async function loadProductSalesRows(): Promise<ProductSalesRow[]> {
-  console.log('[VERKAUF] loadProductSalesRows: querying product_sales…');
-  const { data, error } = await (supabase as any)
-    .from('product_sales')
-    .select('product_name, quantity, revenue, sale_date, source, import_batch')
-    // Nur Zeilen mit gesetzter Quelle und Batch-ID (alte Null-Imports ignorieren)
-    .not('source', 'is', null)
-    .not('import_batch', 'is', null)
-    // range() statt limit() — lädt bis zu 5001 Zeilen sicher durch PostgREST
-    .range(0, 5000);
+  const PAGE_SIZE = 1000;
+  const allRows: ProductSalesRow[] = [];
+  let from = 0;
 
-  if (error) {
-    console.error('[VERKAUF] loadProductSalesRows ERROR:', {
-      code:    error.code,
-      message: error.message,
-      details: error.details,
-      hint:    error.hint,
-    });
-    throw new Error(`product_sales SELECT fehlgeschlagen: ${error.message} (Code ${error.code})`);
+  while (true) {
+    const { data, error } = await (supabase as any)
+      .from('product_sales')
+      .select('product_name, quantity, revenue, sale_date, source, import_batch')
+      .not('source', 'is', null)
+      .not('import_batch', 'is', null)
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error('[VERKAUF] loadProductSalesRows ERROR:', {
+        code:    error.code,
+        message: error.message,
+        details: error.details,
+        hint:    error.hint,
+      });
+      throw new Error(`product_sales SELECT fehlgeschlagen: ${error.message} (Code ${error.code})`);
+    }
+
+    if (!data || data.length === 0) break;
+    allRows.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
   }
 
-  const rows: ProductSalesRow[] = data ?? [];
-  console.log('[DASHBOARD] rows loaded:', rows.length);
-  if (rows.length > 0) {
-    console.log('[VERKAUF] erste Zeile (sample):', JSON.stringify(rows[0]));
-  } else {
-    console.warn('[VERKAUF] Keine Zeilen mit source+import_batch – alle Daten haben null-Werte?');
-  }
-  return rows;
+  console.log('[DASHBOARD] total rows loaded:', allRows.length);
+  return allRows;
 }
 
 /**
