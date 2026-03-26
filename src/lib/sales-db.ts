@@ -198,13 +198,20 @@ function formatSupabaseError(err: unknown): string {
   return parts.length > 0 ? parts.join('\n') : JSON.stringify(err);
 }
 
-/** Gibt nur die Felder zurück, die auch in product_sales existieren. */
-function sanitizeRow(row: Record<string, unknown>): Record<ProductSalesColumn, unknown> {
-  const out: Partial<Record<ProductSalesColumn, unknown>> = {};
-  for (const col of PRODUCT_SALES_COLUMNS) {
-    if (col in row) out[col] = row[col];
-  }
-  return out as Record<ProductSalesColumn, unknown>;
+/** Baut einen Insert-Row mit EXAKT den erlaubten Feldern – kein generischer Loop.
+ *  Verhindert, dass unbekannte Felder (z.B. category, file_name, notes) mitgesendet werden. */
+function sanitizeRow(row: Record<string, unknown>): Record<string, unknown> {
+  // Explizit nur die Felder, die in product_sales existieren.
+  // KEIN category, KEIN file_name, KEIN notes.
+  const out: Record<string, unknown> = {
+    product_name:  row.product_name,
+    quantity:      row.quantity,
+    revenue:       row.revenue,
+    sale_date:     row.sale_date,
+  };
+  if (row.source      !== undefined) out.source      = row.source;
+  if (row.import_batch !== undefined) out.import_batch = row.import_batch;
+  return out;
 }
 
 /** Validiert Typen und gibt Warnungen aus. Gibt null zurück wenn ok, sonst Fehlermeldung. */
@@ -263,8 +270,12 @@ export async function insertProductSales(
   // ── 2. Sanitize: strip unknown columns ────────────────────────────────────
   const sanitized = rawRows.map(r => sanitizeRow(r));
 
-  console.log('[sales-db] first row (nach Sanitizing):', JSON.stringify(sanitized[0], null, 2));
-  console.log('[sales-db] Felder die tatsächlich gesendet werden:', sanitized.length > 0 ? Object.keys(sanitized[0]) : []);
+  console.log('[sales-db] first row (nach Sanitizing, kein category/file_name/notes):', JSON.stringify(sanitized[0], null, 2));
+  console.log('[sales-db] Felder die tatsächlich gesendet werden (fix list):', ['product_name','quantity','revenue','sale_date','source','import_batch']);
+  // Double-check: make sure category is NOT in the sanitized row
+  if (sanitized.length > 0 && 'category' in sanitized[0]) {
+    console.error('[sales-db] BUG: category ist immer noch im sanitizierten Row!', sanitized[0]);
+  }
 
   // ── 3. Type validation ────────────────────────────────────────────────────
   const typeErrors: string[] = [];
