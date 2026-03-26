@@ -71,15 +71,29 @@ export interface ProductMatrixRow {
   matrix_category:  string;
 }
 
+// Columns that actually exist in the product_sales table.
+// Any field NOT listed here is stripped before the insert to prevent
+// "column X does not exist" errors from PostgREST.
+const PRODUCT_SALES_COLUMNS = [
+  'product_name',
+  'quantity',
+  'revenue',
+  'sale_date',
+  'source',
+  'import_batch',
+  'category',
+] as const;
+
+type ProductSalesColumn = typeof PRODUCT_SALES_COLUMNS[number];
+
 export interface ProductSaleInsert {
-  product_name: string;
-  quantity:     number;
-  revenue:      number;
-  sale_date:    string;
-  source?:      string;
+  product_name:  string;
+  quantity:      number;
+  revenue:       number;
+  sale_date:     string;       // YYYY-MM-DD
+  source?:       string;
   import_batch?: string;
-  file_name?:   string;
-  notes?:       string;
+  category?:     string | null;
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -173,57 +187,130 @@ export async function fetchProductMatrix(): Promise<ProductMatrixRow[]> {
   }
 }
 
+// ─── Hilfsfunktionen ──────────────────────────────────────────────────────────
+
+/** Formatiert ein Supabase PostgREST-Fehlerobjekt als lesbaren String für die UI. */
+function formatSupabaseError(err: unknown): string {
+  const e = err as { message?: string; details?: string; hint?: string; code?: string } | null;
+  const parts: string[] = [];
+  if (e?.code)    parts.push(`code: ${e.code}`);
+  if (e?.message) parts.push(`message: ${e.message}`);
+  if (e?.details) parts.push(`details: ${e.details}`);
+  if (e?.hint)    parts.push(`hint: ${e.hint}`);
+  return parts.length > 0 ? parts.join('\n') : JSON.stringify(err);
+}
+
+/** Gibt nur die Felder zurück, die auch in product_sales existieren. */
+function sanitizeRow(row: Record<string, unknown>): Record<ProductSalesColumn, unknown> {
+  const out: Partial<Record<ProductSalesColumn, unknown>> = {};
+  for (const col of PRODUCT_SALES_COLUMNS) {
+    if (col in row) out[col] = row[col];
+  }
+  return out as Record<ProductSalesColumn, unknown>;
+}
+
+/** Validiert Typen und gibt Warnungen aus. Gibt null zurück wenn ok, sonst Fehlermeldung. */
+function validateRow(row: Record<string, unknown>, idx: number): string | null {
+  const errors: string[] = [];
+  if (typeof row.product_name !== 'string' || !row.product_name)
+    errors.push(`row[${idx}].product_name ist kein non-empty string (${JSON.stringify(row.product_name)})`);
+  if (typeof row.quantity !== 'number' || isNaN(row.quantity as number))
+    errors.push(`row[${idx}].quantity ist keine Zahl (${JSON.stringify(row.quantity)})`);
+  if (typeof row.revenue !== 'number' || isNaN(row.revenue as number))
+    errors.push(`row[${idx}].revenue ist keine Zahl (${JSON.stringify(row.revenue)})`);
+  if (typeof row.sale_date !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(row.sale_date as string))
+    errors.push(`row[${idx}].sale_date ist kein YYYY-MM-DD Datum (${JSON.stringify(row.sale_date)})`);
+  if (row.source !== undefined && row.source !== null && typeof row.source !== 'string')
+    errors.push(`row[${idx}].source ist kein string (${JSON.stringify(row.source)})`);
+  if (row.import_batch !== undefined && row.import_batch !== null && typeof row.import_batch !== 'string')
+    errors.push(`row[${idx}].import_batch ist kein string (${JSON.stringify(row.import_batch)})`);
+  if (row.category !== undefined && row.category !== null && typeof row.category !== 'string')
+    errors.push(`row[${idx}].category ist kein string (${JSON.stringify(row.category)})`);
+  return errors.length > 0 ? errors.join('; ') : null;
+}
+
+// ─── Insert ───────────────────────────────────────────────────────────────────
+
 /** Verkaufsdaten in product_sales einfügen */
-export async function insertProductSales(rows: ProductSaleInsert[]): Promise<{ count: number; error: string | null }> {
-  // ── Pre-insert diagnostics ────────────────────────────────────────────────
-  console.log('[sales-db] insertProductSales: row count =', rows.length);
-  if (rows.length > 0) {
-    console.log('[sales-db] insertProductSales: first row =', JSON.stringify(rows[0], null, 2));
-    console.log('[sales-db] insertProductSales: fields being sent =', Object.keys(rows[0]));
+export async function insertProductSales(
+  rows: ProductSaleInsert[],
+): Promise<{ count: number; error: string | null }> {
+  // Cast to generic map so we can inspect/strip fields at runtime regardless of
+  // what the TypeScript type says (callers may pass a superset interface).
+  const rawRows = rows as Array<Record<string, unknown>>;
+
+  // ── 1. Pre-insert diagnostics ─────────────────────────────────────────────
+  console.log('[sales-db] insertProductSales ─── START ───────────────────────');
+  console.log('[sales-db] row count:', rawRows.length);
+  if (rawRows.length > 0) {
+    console.log('[sales-db] first row (raw):', JSON.stringify(rawRows[0], null, 2));
+    console.log('[sales-db] fields on first row:', Object.keys(rawRows[0]));
+
+    // Check structural consistency across all rows
+    const firstKeys = JSON.stringify(Object.keys(rawRows[0]).sort());
+    const inconsistent = rawRows.findIndex(r => JSON.stringify(Object.keys(r).sort()) !== firstKeys);
+    if (inconsistent >= 0) {
+      console.warn('[sales-db] WARNUNG: Zeile', inconsistent, 'hat andere Felder als Zeile 0');
+      console.warn('[sales-db] Zeile 0 Felder:', Object.keys(rawRows[0]));
+      console.warn('[sales-db] Zeile', inconsistent, 'Felder:', Object.keys(rawRows[inconsistent]));
+    } else {
+      console.log('[sales-db] alle Zeilen haben dieselbe Struktur ✓');
+    }
+
+    // Identify fields that are unknown to the DB and will be stripped
+    const extra = Object.keys(rawRows[0]).filter(k => !(PRODUCT_SALES_COLUMNS as readonly string[]).includes(k));
+    if (extra.length > 0) {
+      console.warn('[sales-db] folgende Felder existieren NICHT in product_sales und werden entfernt:', extra);
+    }
   }
 
+  // ── 2. Sanitize: strip unknown columns ────────────────────────────────────
+  const sanitized = rawRows.map(r => sanitizeRow(r));
+
+  console.log('[sales-db] first row (nach Sanitizing):', JSON.stringify(sanitized[0], null, 2));
+  console.log('[sales-db] Felder die tatsächlich gesendet werden:', sanitized.length > 0 ? Object.keys(sanitized[0]) : []);
+
+  // ── 3. Type validation ────────────────────────────────────────────────────
+  const typeErrors: string[] = [];
+  for (let i = 0; i < Math.min(sanitized.length, 5); i++) {
+    const err = validateRow(sanitized[i] as Record<string, unknown>, i);
+    if (err) typeErrors.push(err);
+  }
+  if (typeErrors.length > 0) {
+    const msg = 'Typfehler in Insert-Payload:\n' + typeErrors.join('\n');
+    console.error('[sales-db] TYPFEHLER:', msg);
+    return { count: 0, error: msg };
+  }
+
+  // ── 4. Insert ─────────────────────────────────────────────────────────────
   try {
     const { data, error } = await (supabase as any)
       .from('product_sales')
-      .insert(rows)
+      .insert(sanitized)
       .select('id');
 
     if (error) {
-      // Supabase PostgREST errors are plain objects – NOT Error instances.
-      // Log all fields so the real cause is visible in the console.
-      console.error('[sales-db] insertProductSales Supabase error:', {
+      console.error('[sales-db] insertProductSales Supabase Fehler:', {
         message: error.message,
         details: error.details,
         hint:    error.hint,
         code:    error.code,
         raw:     error,
       });
-
-      // Build a human-readable string that surfaces every available field.
-      const parts: string[] = [];
-      if (error.message) parts.push(`message: ${error.message}`);
-      if (error.details) parts.push(`details: ${error.details}`);
-      if (error.hint)    parts.push(`hint: ${error.hint}`);
-      if (error.code)    parts.push(`code: ${error.code}`);
-      return { count: 0, error: parts.length > 0 ? parts.join('\n') : JSON.stringify(error) };
+      return { count: 0, error: formatSupabaseError(error) };
     }
 
+    console.log('[sales-db] insertProductSales ─── OK: inserted', (data ?? []).length, 'rows');
     return { count: (data ?? []).length, error: null };
+
   } catch (err: unknown) {
-    // Unexpected JS exception (network error, etc.)
-    const sbErr = err as { message?: string; details?: string; hint?: string; code?: string } | null;
-    console.error('[sales-db] insertProductSales exception:', {
-      message: sbErr?.message,
-      details: sbErr?.details,
-      hint:    sbErr?.hint,
-      code:    sbErr?.code,
+    console.error('[sales-db] insertProductSales JS-Exception:', {
+      message: (err as any)?.message,
+      details: (err as any)?.details,
+      hint:    (err as any)?.hint,
+      code:    (err as any)?.code,
       raw:     err,
     });
-    const parts: string[] = [];
-    if (sbErr?.message) parts.push(`message: ${sbErr.message}`);
-    if (sbErr?.details) parts.push(`details: ${sbErr.details}`);
-    if (sbErr?.hint)    parts.push(`hint: ${sbErr.hint}`);
-    if (sbErr?.code)    parts.push(`code: ${sbErr.code}`);
-    return { count: 0, error: parts.length > 0 ? parts.join('\n') : String(err) };
+    return { count: 0, error: formatSupabaseError(err) };
   }
 }
