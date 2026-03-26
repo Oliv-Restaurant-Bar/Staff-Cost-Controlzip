@@ -411,7 +411,18 @@ export const AppSidebar = () => {
         <Button
           variant="outline"
           size="sm"
-          onClick={isGuest ? () => { clearGuestSession(); window.location.href = '/gast'; } : signOut}
+          onClick={isGuest
+            ? () => { clearGuestSession(); window.location.href = '/gast'; }
+            : () => {
+                console.error('🔴 [LOGOUT BUTTON] clicked – calling AuthContext signOut()');
+                console.error('🔴 [LOGOUT BUTTON] isGuest:', isGuest, '  user:', user?.email);
+                signOut().then(() => {
+                  console.error('🔴 [LOGOUT BUTTON] signOut() promise resolved');
+                }).catch(err => {
+                  console.error('🔴 [LOGOUT BUTTON] signOut() promise rejected', err);
+                });
+              }
+          }
           className="w-full h-8 text-xs text-destructive border-destructive/30 hover:bg-destructive/10 justify-start gap-2"
         >
           <LogOut className="h-3.5 w-3.5" />

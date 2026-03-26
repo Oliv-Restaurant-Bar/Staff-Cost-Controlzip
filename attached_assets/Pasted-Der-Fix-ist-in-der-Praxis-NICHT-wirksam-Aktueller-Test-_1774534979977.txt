@@ -1,0 +1,80 @@
+Der Fix ist in der Praxis NICHT wirksam.
+
+Aktueller Test:
+- Nach Refresh kommen in der Dienstplanung weiterhin keine Daten
+- Logout funktioniert weiterhin nicht
+
+Das bedeutet:
+Entweder läuft der neue Auth-Code nicht wirklich im aktiven App-Pfad, oder die tatsächliche Ursache wurde noch nicht getroffen.
+
+Bitte jetzt KEINE theoretische Erklärung mehr, sondern einen harten End-to-End Debug der laufenden App.
+
+Bitte systematisch prüfen:
+
+1. Sicherstellen, dass der tatsächlich gerenderte AuthContext der geänderte AuthContext ist
+- Bitte im aktiven AuthContext sichtbare Debug-Logs einbauen:
+  - "[AUTH LIVE] provider mounted"
+  - "[AUTH LIVE] INITIAL_SESSION"
+  - "[AUTH LIVE] SIGNED_IN"
+  - "[AUTH LIVE] SIGNED_OUT"
+  - "[AUTH LIVE] signOut called"
+- Ich will damit verifizieren, dass genau dieser Context in der laufenden App verwendet wird
+
+2. Logout Button End-to-End prüfen
+- Bitte identifizieren, welche Komponente den Logout Button rendert
+- Bitte dort direkt loggen:
+  - "[LOGOUT BUTTON] clicked"
+  - "[LOGOUT BUTTON] calling signOut"
+- Verifizieren, dass der Button wirklich den AuthContext signOut() aufruft
+- Verifizieren, dass nach signOut wirklich navigiert oder State zurückgesetzt wird
+
+3. Aktive Route / Komponente der Dienstplanung prüfen
+- Bitte verifizieren, dass die Seite, die ich sehe, wirklich SchedulePlanner.tsx verwendet
+- Direkt in der gerenderten Komponente loggen:
+  - "[DIENSTPLAN LIVE] mounted"
+  - "[DIENSTPLAN LIVE] loadMonthData invoked"
+- Falls ein Wrapper oder eine andere Komponente verwendet wird, dort debuggen
+
+4. Supabase Session live sichtbar machen
+- Bitte loggen:
+  - aktueller access token vorhanden ja/nein
+  - aktueller user id
+  - token expiry
+  - event name
+- Direkt VOR der Query loggen:
+  - "[DIENSTPLAN LIVE] query starting with user/session"
+- Direkt NACH der Query loggen:
+  - Ergebnisanzahl
+  - ob Fehler kam
+  - ob RLS leer zurückgibt
+
+5. Harte Verifikation des signOut Flows
+- Bitte direkt nach signOut prüfen/loggen:
+  - Session null?
+  - user null?
+  - localStorage session keys entfernt?
+  - user_role entfernt?
+- Bitte sicherstellen, dass auch bei Fehlern im Server-Logout lokal sauber ausgeloggt wird
+
+6. Ausschliessen, dass alte Builds laufen
+- Bitte Dev Server sauber neu starten
+- Falls relevant Cache / HMR / stale bundle Problem prüfen
+- Sicherstellen, dass die geänderten Dateien wirklich in der laufenden App aktiv sind
+
+7. Ergebnisorientiertes Ziel
+Ich will nach dem Fix in der Browser-Konsole eindeutig sehen:
+- Logout Button clicked
+- signOut called
+- SIGNED_OUT event
+- Dienstplan mounted
+- loadMonthData invoked
+- query starting
+- query result keys > 0
+
+8. Bitte danach zurückmelden:
+- welche konkrete Datei den Logout Button rendert
+- ob der AuthContext wirklich live verwendet wurde
+- ob SchedulePlanner wirklich die gerenderte Seite ist
+- was die exakte Root Cause war
+- welche Dateien final geändert wurden
+- wie ich exakt testen soll

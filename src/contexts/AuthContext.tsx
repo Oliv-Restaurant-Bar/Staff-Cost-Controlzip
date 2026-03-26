@@ -137,6 +137,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     // Safety timer: INITIAL_SESSION should arrive within a few seconds even on
     // slow connections.  8 s is generous enough to cover mobile 3G.
+    // ── LIVE PROOF: this log proves the new AuthContext code is running ─────────
+    console.error('🔴 [AUTH LIVE] AuthProvider useEffect mounted – NEW CODE ACTIVE');
+
     const safetyTimer = setTimeout(() => {
       if (!bootDoneRef.current) {
         console.warn('[AUTH] ⚠️ safety timeout – forcing loading=false after 8 s');
@@ -164,6 +167,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         // Primary boot signal — fired AFTER any pending token refresh.
         // This is the only event where loading is set from true → false.
         if (event === 'INITIAL_SESSION') {
+          console.error('🔴 [AUTH LIVE] INITIAL_SESSION received', {
+            hasSession: !!session,
+            userId: session?.user?.id,
+            tokenExpiry: session?.expires_at ? new Date(session.expires_at * 1000).toISOString() : null,
+          });
           clearTimeout(safetyTimer);
           setSession(session);
           setUser(session?.user ?? null);
@@ -237,7 +245,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         // ── SIGNED_OUT ─────────────────────────────────────────────────────────
         if (event === 'SIGNED_OUT') {
-          console.log('[AUTH] SIGNED_OUT – clearing all state');
+          console.error('🔴 [AUTH LIVE] SIGNED_OUT – clearing all state');
           setSession(null);
           setUser(null);
           setRole('kueche_manager');
@@ -278,7 +286,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
-    console.log('[AUTH] signOut called');
+    console.error('🔴 [AUTH LIVE] signOut() called');
     try {
       const { error } = await supabase.auth.signOut();
       if (error) {

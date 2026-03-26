@@ -141,6 +141,9 @@ type CalendarView = 'month' | 'week' | 'day';
 
 const SchedulePlanner = () => {
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
+  // ── LIVE PROOF: fired on every render of SchedulePlanner ──────────────────
+  console.error('🔴 [DIENSTPLAN LIVE] SchedulePlanner rendered');
+
   // Auth: user + loading + sessionVersion needed to gate data fetches correctly.
   // sessionVersion increments on every auth event (boot, TOKEN_REFRESHED, SIGNED_IN)
   // so pages re-fetch automatically after a background token renewal.
@@ -256,6 +259,8 @@ const SchedulePlanner = () => {
   const loadMonthData = useCallback(async () => {
     const monthKey = format(currentMonth, 'yyyy-MM');
 
+    console.error('🔴 [DIENSTPLAN LIVE] loadMonthData() invoked', { monthKey });
+
     // Always call getSession() first — it returns the CURRENTLY VALID token,
     // automatically refreshing it if expired.  This is the defensive guarantee
     // that all subsequent Supabase queries run with a fresh JWT, regardless of
@@ -312,6 +317,11 @@ const SchedulePlanner = () => {
       const scheduleKeyCount = supabaseSchedule !== null
         ? Object.keys(supabaseSchedule).length
         : 'null (Supabase error)';
+      console.error('🔴 [DIENSTPLAN LIVE] schedule query result', {
+        keys: scheduleKeyCount,
+        usedSupabase: supabaseSchedule !== null,
+        freshUserId,
+      });
       console.log('[DIENSTPLAN] schedule result', {
         keys: scheduleKeyCount,
         usedSupabase: supabaseSchedule !== null,
