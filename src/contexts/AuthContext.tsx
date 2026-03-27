@@ -103,10 +103,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   //   - Role update re-renders the nav but doesn't re-fetch data.
   const completeBoot = useCallback((sess: Session | null, source: string) => {
     const wasBootDone = bootDoneRef.current;
-    console.error(
-      `🔴 [AUTH LIVE] completeBoot called from ${source}`,
-      { wasBootDone, hasSession: !!sess, hasUser: !!sess?.user, userId: sess?.user?.id },
-    );
+    console.log('[AUTH] completeBoot from', source, { wasBootDone, hasSession: !!sess });
 
     if (wasBootDone) {
       console.log('[AUTH] completeBoot: boot already done — ignored (source:', source, ')');
@@ -122,10 +119,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // loading=false and sessionVersion++ are set BEFORE loadUserRole.
     // This ensures the UI is never blocked by a slow/hanging role query.
     setLoading(false);
-    setSessionVersion(v => {
-      console.error(`🔴 [AUTH LIVE] sessionVersion → ${v + 1} (boot via ${source})`);
-      return v + 1;
-    });
+    setSessionVersion(v => v + 1);
 
     // Load role in background — does NOT block boot.
     if (sess?.user) {
@@ -136,12 +130,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [loadUserRole]);
 
   useEffect(() => {
-    console.error('🔴 [AUTH LIVE] AuthProvider mounted – NEW CODE ACTIVE');
-
-    // Verify single-client guarantee: this value is derived from the Supabase
-    // project URL.  All files import the same singleton so this must never differ.
-    const clientStorageKey = (supabase.auth as any).storageKey ?? 'unknown';
-    console.error('🔴 [AUTH LIVE] client instance id (storageKey):', clientStorageKey);
 
     // ── Boot strategy: THREE signals, whichever fires first wins ─────────────
     //
@@ -189,7 +177,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         // ── B: INITIAL_SESSION ───────────────────────────────────────────────
         if (event === 'INITIAL_SESSION') {
-          console.error('🔴 [AUTH LIVE] INITIAL_SESSION received', { hasSession: !!sess, bootDone: bootDoneRef.current });
           completeBoot(sess, 'INITIAL_SESSION');
           return;
         }
@@ -198,7 +185,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         // If boot hasn't completed yet (getSession + INITIAL_SESSION were too
         // slow or returned null), use SIGNED_IN to complete it.
         if (event === 'SIGNED_IN' && !bootDoneRef.current) {
-          console.error('🔴 [AUTH LIVE] SIGNED_IN used as boot signal (A+B too slow/null)');
           completeBoot(sess, 'SIGNED_IN-boot');
           return;
         }
@@ -207,7 +193,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         // Supabase sometimes fires SIGNED_IN for background token renewals.
         // Just bump sessionVersion so data pages re-fetch.
         if (event === 'SIGNED_IN' && sess?.user?.id === currentUserIdRef.current) {
-          console.error('🔴 [AUTH LIVE] SIGNED_IN (same user, post-boot) – bumping sessionVersion');
           setSession(sess);
           setUser(sess?.user ?? null);
           setSessionVersion(v => {
@@ -220,7 +205,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         // ── SIGNED_IN post-boot (different user — e.g. logout then re-login) ─
         // Reset bootDone so completeBoot can run for the new user.
         if (event === 'SIGNED_IN') {
-          console.error('🔴 [AUTH LIVE] SIGNED_IN (different user post-boot) – re-booting');
           bootDoneRef.current = false;
           completeBoot(sess, 'SIGNED_IN-reboot');
           return;
@@ -228,7 +212,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         // ── TOKEN_REFRESHED ──────────────────────────────────────────────────
         if (event === 'TOKEN_REFRESHED') {
-          console.error('🔴 [AUTH LIVE] TOKEN_REFRESHED – bumping sessionVersion');
           setSession(sess);
           setUser(sess?.user ?? null);
           setSessionVersion(v => {
@@ -249,7 +232,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         // signOut() already called _clearLocalAuth() so this is a no-op in most
         // cases, but we run it again to be safe.
         if (event === 'SIGNED_OUT') {
-          console.error('🔴 [AUTH LIVE] SIGNED_OUT event received');
           _clearLocalAuth();
           return;
         }
@@ -264,7 +246,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // Resets all auth state.  Called by signOut() immediately AND by SIGNED_OUT
   // handler as a belt-and-suspenders fallback.
   const _clearLocalAuth = () => {
-    console.error('🔴 [AUTH LIVE] _clearLocalAuth() – resetting all auth state');
     setSession(null);
     setUser(null);
     setRole('kueche_manager');
@@ -289,28 +270,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
-    console.error('🔴 [AUTH LIVE] signOut start');
+    console.log('[AUTH] signOut start');
 
     // Step 1: clear local state IMMEDIATELY so the UI shows LoginPage right away.
     // Do NOT wait for Supabase's SIGNED_OUT event — it depends on the HTTP call
     // POST /auth/v1/logout succeeding.  If that call returns a non-404/401/403
     // error, Supabase skips _removeSession() and SIGNED_OUT is never fired.
     _clearLocalAuth();
-    console.error('🔴 [AUTH LIVE] local state cleared – LoginPage should appear now');
 
     // Step 2: await the Supabase server-side signOut.
     // Yielding here lets React flush the Step 1 state updates (LoginPage appears)
     // while we wait for the HTTP round-trip.  Errors are NOT silently swallowed.
     try {
-      console.error('🔴 [AUTH LIVE] calling supabase.auth.signOut() …');
       const { error } = await supabase.auth.signOut();
       if (error) {
-        console.error('🔴 [AUTH LIVE] signOut error:', error.message, '| status:', (error as any).status);
+        console.error('[AUTH] signOut error:', error.message, '| status:', (error as any).status);
       } else {
-        console.error('🔴 [AUTH LIVE] signOut result: success (server confirmed)');
+        console.log('[AUTH] signOut: success');
       }
     } catch (err) {
-      console.error('🔴 [AUTH LIVE] signOut threw unexpectedly:', err);
+      console.error('[AUTH] signOut threw unexpectedly:', err);
     }
   };
 

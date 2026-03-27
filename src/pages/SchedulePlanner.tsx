@@ -141,8 +141,6 @@ type CalendarView = 'month' | 'week' | 'day';
 
 const SchedulePlanner = () => {
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
-  // ── LIVE PROOF: fired on every render of SchedulePlanner ──────────────────
-  console.error('🔴 [DIENSTPLAN LIVE] SchedulePlanner rendered');
 
   // Auth: user + loading + sessionVersion needed to gate data fetches correctly.
   // sessionVersion increments on every auth event (boot, TOKEN_REFRESHED, SIGNED_IN)

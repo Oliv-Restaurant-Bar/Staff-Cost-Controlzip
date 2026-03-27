@@ -9,6 +9,7 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
+import { loadProductCostsFromDB } from '@/lib/produkte-store';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -200,6 +201,55 @@ export async function loadAltbestandCount(): Promise<number> {
     return 0;
   }
   return count ?? 0;
+}
+
+/**
+ * Lädt eine Map { normalisierter_produktname → kategorie } für das Produkt-Mapping.
+ * Strategie:
+ *   1. Supabase-Tabelle "products" (name, category) — falls vorhanden
+ *   2. Fallback: loadProductCostsFromDB() aus app_settings (name, category: 'food'|'beverage')
+ *
+ * Schlüssel = normalizeProductName(name), damit kleinere Schreibunterschiede
+ * zwischen product_sales.product_name und products.name toleriert werden.
+ */
+export async function loadProductCategoryMap(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+
+  // 1. Versuche echte Supabase products-Tabelle
+  try {
+    const { data, error } = await (supabase as any)
+      .from('products')
+      .select('name, category');
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      console.log('[DASHBOARD] products table: geladen', data.length, 'Einträge');
+      for (const p of data) {
+        if (p.name && p.category) {
+          map.set(normalizeProductName(p.name), String(p.category));
+        }
+      }
+      return map;
+    }
+    if (error) console.warn('[DASHBOARD] products table nicht verfügbar:', error.message, '→ Fallback');
+  } catch (e) {
+    console.warn('[DASHBOARD] products table Fehler:', e, '→ Fallback');
+  }
+
+  // 2. Fallback: ProductCostEntry aus app_settings (category: 'food'|'beverage')
+  try {
+    const costs = await loadProductCostsFromDB();
+    console.log('[DASHBOARD] Fallback productCosts aus app_settings:', costs.length, 'Einträge');
+    for (const c of costs) {
+      if (c.name && c.category) {
+        const label = c.category === 'food' ? 'Food' : c.category === 'beverage' ? 'Beverage' : c.category;
+        map.set(normalizeProductName(c.name), label);
+      }
+    }
+  } catch (e) {
+    console.warn('[DASHBOARD] Fallback productCosts Fehler:', e);
+  }
+
+  return map;
 }
 
 // ─── Pure Aggregationsfunktionen (kein DB-Aufruf, nehmen Rows entgegen) ───────
@@ -420,15 +470,14 @@ export async function insertProductSales(
     ? new Date(diagSession.expires_at * 1000).toISOString() : 'none';
   const supabaseUrl  = (supabase as any).supabaseUrl ?? (supabase as any).rest?.url ?? '(unknown)';
 
-  // Visible in browser console with eye-catching prefix
-  console.error('🔴 [UPLOAD AUTH]', {
+  console.log('[UPLOAD AUTH]', {
     hasSession:   diagHasToken,
     userId:       diagUserId,
     role:         diagRole,
     tokenExpiry:  diagExpiry,
     supabaseUrl,
     table:        'product_sales',
-    verdict:      diagHasToken ? '✅ authenticated' : '❌ ANON – RLS will block insert',
+    verdict:      diagHasToken ? 'authenticated' : 'ANON – RLS will block insert',
   });
 
   if (!diagHasToken) {
