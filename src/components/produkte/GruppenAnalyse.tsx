@@ -57,8 +57,7 @@ interface Props {
   month: string;
   category: 'food' | 'beverage';
   ignoredByUser: string[];
-  availableMonths: string[];
-  onMonthChange: (m: string) => void;
+  periodLabel?: string;
 }
 
 // ── Group badge ───────────────────────────────────────────────────────────────
@@ -304,7 +303,7 @@ function GroupManagerModal({ groups, category, onSave, onClose }: GroupManagerPr
 
 export default function GruppenAnalyse({
   entries, costs, groups, onGroupsChange,
-  month, category, ignoredByUser, availableMonths, onMonthChange,
+  month, category, ignoredByUser, periodLabel,
 }: Props) {
   const [sortMode, setSortMode]         = useState<SortMode>('revenue');
   const [showProductList, setShowProd]  = useState(true);
@@ -398,20 +397,13 @@ export default function GruppenAnalyse({
   return (
     <div className="space-y-5">
 
-      {/* ── Monat-Wahl + Info ───────────────────────────────────────────────── */}
+      {/* ── Zeitraum-Info ───────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-muted-foreground">Zeitraum:</span>
-          <select
-            value={month}
-            onChange={e => onMonthChange(e.target.value)}
-            className="h-8 rounded-md border border-border bg-background px-2 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-primary"
-          >
-            <option value="alle">Alle Monate</option>
-            {[...availableMonths].reverse().map(m => (
-              <option key={m} value={m}>{formatMonthLong(m)}</option>
-            ))}
-          </select>
+          <span className="text-xs font-medium text-foreground bg-muted px-2.5 py-1 rounded-md">
+            {periodLabel ?? 'Alle Monate'}
+          </span>
         </div>
         {!hasWesData && (
           <div className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-700 rounded-lg px-2.5 py-1">

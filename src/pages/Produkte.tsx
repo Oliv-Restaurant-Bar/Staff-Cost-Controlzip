@@ -1,12 +1,13 @@
-import { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
   Upload, Trash2, Package, TrendingUp, TrendingDown,
   Hash, RotateCcw, ChevronDown, X, Award, CalendarDays, LayoutGrid,
   AlertTriangle, CheckSquare, Utensils, Wine, Search, Settings2, Receipt, Pencil,
-  Calculator, ChevronUp, FileDown,
+  Calculator, ChevronUp, FileDown, Filter, Check,
 } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -165,7 +166,7 @@ export default function ProdukteSeite() {
   const [view, setView]               = useState<ViewTab>('monat');
   const [topN, setTopN]               = useState(20);
   const [flopN, setFlopN]             = useState(10);
-  const [selectedMonth, setMonth]     = useState<string>('');
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [importing, setImporting]     = useState<'anzahl' | 'umsatz' | null>(null);
   const [showIgnored, setShowIgnored] = useState(false);
   const [category, setCategory]       = useState<'food' | 'beverage'>('food');
@@ -383,8 +384,61 @@ export default function ProdukteSeite() {
 
   const monthsOnly = useMemo(() => getAvailableMonths(data?.entries ?? [], category), [data, category]);
 
-  // Setze letzten Monat als Standard wenn noch keiner gewählt oder nicht in dieser Kategorie vorhanden
-  const activeMonth = (monthsOnly.includes(selectedMonth) ? selectedMonth : '') || monthsOnly[monthsOnly.length - 1] || '';
+  // ── Multi-month helpers ────────────────────────────────────────────────────
+  const monthsByYear = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const m of monthsOnly) {
+      const y = m.substring(0, 4);
+      if (!map[y]) map[y] = [];
+      map[y].push(m);
+    }
+    return map;
+  }, [monthsOnly]);
+
+  const toggleMonth = useCallback((m: string) => {
+    setSelectedMonths(prev =>
+      prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m],
+    );
+  }, []);
+
+  const toggleYear = useCallback((year: string, months: string[]) => {
+    setSelectedMonths(prev => {
+      const allSelected = months.every(m => prev.includes(m));
+      return allSelected
+        ? prev.filter(m => !months.includes(m))
+        : [...prev.filter(m => !months.includes(m)), ...months];
+    });
+  }, []);
+
+  // Entries filtered to selectedMonths (empty = all)
+  const filteredEntries = useMemo(() => {
+    const all = data?.entries ?? [];
+    if (selectedMonths.length === 0) return all;
+    const set = new Set(selectedMonths);
+    return all.filter(e => set.has(e.month));
+  }, [data, selectedMonths]);
+
+  // Months visible after filtering
+  const filteredMonthsOnly = useMemo(() => {
+    if (selectedMonths.length === 0) return monthsOnly;
+    return monthsOnly.filter(m => selectedMonths.includes(m));
+  }, [monthsOnly, selectedMonths]);
+
+  const activePeriodLabel = useMemo(() => {
+    if (selectedMonths.length === 0) return 'Alle Monate';
+    if (selectedMonths.length === 1) return formatMonthLong(selectedMonths[0]);
+    const years = [...new Set(selectedMonths.map(m => m.substring(0, 4)))];
+    for (const y of years) {
+      const all = monthsByYear[y] ?? [];
+      if (all.length > 0 && all.every(m => selectedMonths.includes(m)) && selectedMonths.length === all.length) {
+        return `Jahr ${y}`;
+      }
+    }
+    if (years.length === 1) return `${selectedMonths.length} Monate ${years[0]}`;
+    return `${selectedMonths.length} Monate`;
+  }, [selectedMonths, monthsByYear]);
+
+  const isFiltered = selectedMonths.length > 0;
 
   const isFlop   = mode === 'flop';
   const limit    = isFlop ? flopN : topN;
@@ -393,20 +447,18 @@ export default function ProdukteSeite() {
   const setN     = isFlop ? setFlopN : setTopN;
 
   const ranked: RankedProduct[] = useMemo(() => {
-    if (view !== 'monat' || !activeMonth) return [];
-    const entries = data?.entries ?? [];
+    if (view !== 'monat') return [];
     return isFlop
-      ? getFlopProducts(entries, activeMonth, sortBy, limit, ignoredByUser, category)
-      : getTopProducts(entries, activeMonth, sortBy, limit, ignoredByUser, category);
-  }, [data, activeMonth, sortBy, mode, limit, ignoredByUser, view, category]);
+      ? getFlopProducts(filteredEntries, 'alle', sortBy, limit, ignoredByUser, category)
+      : getTopProducts(filteredEntries, 'alle', sortBy, limit, ignoredByUser, category);
+  }, [filteredEntries, sortBy, mode, limit, ignoredByUser, view, category]);
 
   const totalRanked: RankedProduct[] = useMemo(() => {
     if (view !== 'jahr') return [];
-    const entries = data?.entries ?? [];
     return isFlop
-      ? getFlopProducts(entries, 'alle', sortBy, limit, ignoredByUser, category)
-      : getTopProducts(entries, 'alle', sortBy, limit, ignoredByUser, category);
-  }, [data, sortBy, mode, limit, ignoredByUser, view, category]);
+      ? getFlopProducts(filteredEntries, 'alle', sortBy, limit, ignoredByUser, category)
+      : getTopProducts(filteredEntries, 'alle', sortBy, limit, ignoredByUser, category);
+  }, [filteredEntries, sortBy, mode, limit, ignoredByUser, view, category]);
 
   const maxVal = ranked.length > 0
     ? Math.max(...ranked.map(r => sortBy === 'count' ? r.count : r.revenue)) : 1;
@@ -751,20 +803,85 @@ export default function ProdukteSeite() {
                 </button>
               </div>
 
-              {/* Monats-Dropdown — nur in Monatsansicht */}
-              {view === 'monat' && monthsOnly.length > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted-foreground font-medium">Monat:</span>
-                  <select
-                    value={activeMonth}
-                    onChange={e => setMonth(e.target.value)}
-                    className="h-8 rounded-md border border-border bg-background px-2 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
-                  >
-                    {[...monthsOnly].reverse().map(m => (
-                      <option key={m} value={m}>{formatMonthLong(m)}</option>
-                    ))}
-                  </select>
-                </div>
+              {/* Zeitraum-Picker */}
+              {view !== 'kalkulation' && monthsOnly.length > 0 && (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button className={cn(
+                      'flex items-center gap-1.5 h-8 px-3 rounded-md border text-xs font-medium transition-all',
+                      isFiltered
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-background text-foreground hover:border-primary/60',
+                    )}>
+                      <Filter className="h-3 w-3" />
+                      {activePeriodLabel}
+                      {isFiltered && (
+                        <span
+                          role="button"
+                          onClick={e => { e.stopPropagation(); setSelectedMonths([]); }}
+                          className="ml-0.5 rounded-full hover:bg-primary/20 p-0.5"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </span>
+                      )}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="p-0 w-72">
+                    <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+                      <span className="text-xs font-semibold">Zeitraum auswählen</span>
+                      <button
+                        onClick={() => setSelectedMonths([])}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        Alle Monate
+                      </button>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto p-2 space-y-3">
+                      {Object.entries(monthsByYear).sort((a, b) => b[0].localeCompare(a[0])).map(([year, months]) => {
+                        const allYearSelected = months.every(m => selectedMonths.includes(m));
+                        const someYearSelected = months.some(m => selectedMonths.includes(m));
+                        return (
+                          <div key={year}>
+                            <button
+                              onClick={() => toggleYear(year, months)}
+                              className={cn(
+                                'w-full flex items-center justify-between px-2 py-1.5 rounded-md text-xs font-semibold transition-colors',
+                                allYearSelected
+                                  ? 'bg-primary text-primary-foreground'
+                                  : someYearSelected
+                                    ? 'bg-primary/15 text-primary'
+                                    : 'bg-muted text-foreground hover:bg-muted/80',
+                              )}
+                            >
+                              <span>Jahr {year}</span>
+                              {allYearSelected && <Check className="h-3 w-3" />}
+                            </button>
+                            <div className="mt-1 grid grid-cols-3 gap-1 pl-1">
+                              {[...months].sort().reverse().map(m => {
+                                const sel = selectedMonths.includes(m);
+                                return (
+                                  <button
+                                    key={m}
+                                    onClick={() => toggleMonth(m)}
+                                    className={cn(
+                                      'flex items-center justify-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium transition-colors',
+                                      sel
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'bg-background border border-border hover:border-primary/60 text-foreground',
+                                    )}
+                                  >
+                                    {sel && <Check className="h-2.5 w-2.5 shrink-0" />}
+                                    {formatMonthShort(m)}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               )}
 
               {view !== 'gruppen' && (
@@ -857,7 +974,7 @@ export default function ProdukteSeite() {
                   Ausgewählter Zeitraum
                 </p>
                 <p className={cn('text-2xl font-bold', isFlop ? 'text-red-600 dark:text-red-400' : 'text-primary')}>
-                  {formatMonthLong(activeMonth)}
+                  {activePeriodLabel}
                 </p>
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -872,7 +989,7 @@ export default function ProdukteSeite() {
 
             {ranked.length === 0 && (
               <div className="flex items-center justify-center py-12">
-                <p className="text-sm text-muted-foreground">Keine Daten für diesen Monat.</p>
+                <p className="text-sm text-muted-foreground">Keine Daten für den gewählten Zeitraum.</p>
               </div>
             )}
 
@@ -1068,10 +1185,10 @@ export default function ProdukteSeite() {
                 {currentN === ALL_SENTINEL ? 'Alle' : `${isFlop ? 'Flop' : 'Top'} ${currentN}`} pro Monat
               </span>
               <span className="text-xs text-muted-foreground">
-                · {sortBy === 'count' ? 'Nach Anzahl' : 'Nach Umsatz'} · {monthsOnly.length} Monate
+                · {sortBy === 'count' ? 'Nach Anzahl' : 'Nach Umsatz'} · {filteredMonthsOnly.length} Monate · {activePeriodLabel}
               </span>
             </div>
-            {monthsOnly.length === 0 ? (
+            {filteredMonthsOnly.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-12">Keine Monatsdaten vorhanden.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1124,7 +1241,7 @@ export default function ProdukteSeite() {
                 </div>
 
                 {/* Monatskarten (neueste zuerst) */}
-                {[...monthsOnly].reverse().map(m => (
+                {[...filteredMonthsOnly].reverse().map(m => (
                   <MonthCard
                     key={m}
                     month={m}
@@ -1144,15 +1261,14 @@ export default function ProdukteSeite() {
         {/* ══ GRUPPEN & MARGEN ════════════════════════════════════════════════ */}
         {data && view === 'gruppen' && (
           <GruppenAnalyse
-            entries={data.entries}
+            entries={filteredEntries}
             costs={costs}
             groups={groups}
             onGroupsChange={setGroups}
-            month={activeMonth || 'alle'}
+            month="alle"
             category={category}
             ignoredByUser={ignoredByUser}
-            availableMonths={monthsOnly}
-            onMonthChange={setMonth}
+            periodLabel={activePeriodLabel}
           />
         )}
 
