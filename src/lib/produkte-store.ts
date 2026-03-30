@@ -1091,13 +1091,33 @@ const WES_SEED: Omit<ProductCostEntry, 'bruttoPrice' | 'nettoPrice'>[] = [
   { name: 'Limonen Minze Ricotta Ravioli',category: 'food',     wes: 4.79,  wesQ: 17.86 },
   { name: 'Sushi/Sashimi Teller',         category: 'food',     wes: 3.375, wesQ: 0     },
   { name: 'Glace 1 Kugel',               category: 'food',     wes: 2.55,  wesQ: 55.13 },
-  // Beverage
+  // Beverage – Aperitif
   { name: 'Aperol Spritz',               category: 'beverage', wes: 3.20,  wesQ: 22.0  },
   { name: 'Hugo',                         category: 'beverage', wes: 2.80,  wesQ: 20.0  },
+  { name: 'Campari Spritz',              category: 'beverage', wes: 3.40,  wesQ: 23.0  },
+  { name: 'Lillet Wild Berry',           category: 'beverage', wes: 3.10,  wesQ: 22.0  },
+  // Beverage – Bier
   { name: 'Heineken 0.33',               category: 'beverage', wes: 1.50,  wesQ: 25.0  },
+  { name: 'Heineken 0.5',                category: 'beverage', wes: 2.20,  wesQ: 28.0  },
+  { name: 'Ittinger',                    category: 'beverage', wes: 1.80,  wesQ: 27.0  },
+  // Beverage – Kaffee / Tee
   { name: 'Espresso',                     category: 'beverage', wes: 0.35,  wesQ: 12.0  },
   { name: 'Cappuccino',                   category: 'beverage', wes: 0.60,  wesQ: 18.0  },
+  { name: 'Americano',                   category: 'beverage', wes: 0.40,  wesQ: 14.0  },
+  { name: 'Latte Macchiato',             category: 'beverage', wes: 0.65,  wesQ: 18.5  },
+  { name: 'Flat White',                  category: 'beverage', wes: 0.60,  wesQ: 17.5  },
+  { name: 'Tee',                         category: 'beverage', wes: 0.30,  wesQ: 12.0  },
+  // Beverage – Mineral / Softdrinks
   { name: 'Coca Cola 0.33',              category: 'beverage', wes: 0.90,  wesQ: 20.0  },
+  { name: 'Coca Cola 0.5',               category: 'beverage', wes: 1.20,  wesQ: 22.0  },
+  { name: 'Coca Cola Zero',              category: 'beverage', wes: 0.90,  wesQ: 20.0  },
+  { name: 'Sprite',                      category: 'beverage', wes: 0.90,  wesQ: 20.0  },
+  { name: 'Fanta',                       category: 'beverage', wes: 0.90,  wesQ: 20.0  },
+  { name: 'Mineral mit Kohlensäure',    category: 'beverage', wes: 0.70,  wesQ: 18.0  },
+  { name: 'Mineral ohne Kohlensäure',   category: 'beverage', wes: 0.70,  wesQ: 18.0  },
+  // Beverage – Cocktails
+  { name: 'Mojito',                      category: 'beverage', wes: 3.80,  wesQ: 24.0  },
+  { name: 'Moscow Mule',                 category: 'beverage', wes: 3.50,  wesQ: 23.0  },
 ];
 
 /**
