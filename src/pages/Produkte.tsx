@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
   parseProdukteExcel,
+  parseProdukteCSV,
   loadProdukteData,
   saveProdukteData,
   loadIgnoredProducts,
@@ -214,6 +215,7 @@ export default function ProdukteSeite() {
 
   const anzahlRef = useRef<HTMLInputElement>(null);
   const umsatzRef = useRef<HTMLInputElement>(null);
+  const csvRef    = useRef<HTMLInputElement>(null);
   const costRef   = useRef<HTMLInputElement>(null);
   const costEditRef = useRef<HTMLInputElement>(null);
 
@@ -438,6 +440,49 @@ export default function ProdukteSeite() {
     }
   };
 
+  // ── CSV Auto-Import: erkennt Typ + Kategorie aus dem Dateinamen ──────────────
+  const handleCsvImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Typ aus Dateiname für Spinner-State
+    const guessedType: 'anzahl' | 'umsatz' = file.name.toLowerCase().includes('umsatz') ? 'umsatz' : 'anzahl';
+    setImporting(guessedType);
+    try {
+      const { entries: parsed, type, category: detectedCategory } = await parseProdukteCSV(file);
+
+      if (parsed.length === 0) {
+        toast.error('Keine Produktdaten in der CSV gefunden', {
+          description: 'Bitte prüfe, ob die Datei ein Gastronovi-Export ist (Anzahl_Food_... oder Umsatz_Beverage_...)',
+        });
+        return;
+      }
+
+      const existingMonths = new Set(
+        (data?.entries ?? [])
+          .filter(e => {
+            if ((e.category ?? 'food') !== detectedCategory) return false;
+            return type === 'anzahl' ? e.count > 0 : e.revenue > 0;
+          })
+          .map(e => e.month),
+      );
+      const newMonths = [...new Set(parsed.map(e => e.month))];
+      const overlappingMonths = newMonths.filter(m => existingMonths.has(m));
+
+      if (overlappingMonths.length > 0) {
+        setPendingImport({ type, category: detectedCategory, parsed, overlappingMonths, fileName: file.name });
+        return;
+      }
+
+      applyImport(parsed, type, file.name);
+    } catch (err) {
+      toast.error('CSV-Import fehlgeschlagen', { description: String(err) });
+    } finally {
+      setImporting(null);
+      e.target.value = '';
+    }
+  };
+
   const applyImport = (
     parsed: import('@/lib/produkte-store').ProductEntry[],
     type: 'anzahl' | 'umsatz',
@@ -620,9 +665,20 @@ export default function ProdukteSeite() {
             </div>
 
             <div className="flex items-center gap-2">
+              <input ref={csvRef}    type="file" accept=".csv" className="hidden" onChange={handleCsvImport} />
               <input ref={anzahlRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => handleImport(e, 'anzahl')} />
               <input ref={umsatzRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => handleImport(e, 'umsatz')} />
               <input ref={costRef}   type="file" accept=".xlsx,.xls" className="hidden" onChange={handleCostImport} />
+              <Button
+                variant="outline" size="sm"
+                className="h-8 border-emerald-400 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                onClick={() => csvRef.current?.click()}
+                disabled={importing !== null}
+                title="Gastronovi CSV-Export hochladen (Anzahl_Food, Anzahl_Beverage, Umsatz_Food, Umsatz_Beverage) — Typ und Kategorie werden automatisch erkannt"
+              >
+                {importing !== null ? <span className="h-3 w-3 mr-1 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" /> : <Upload className="h-3 w-3 mr-1" />}
+                CSV
+              </Button>
               <Button variant="outline" size="sm" className="h-8" onClick={() => anzahlRef.current?.click()} disabled={importing !== null}>
                 {importing === 'anzahl' ? <span className="h-3 w-3 mr-1 animate-spin border-2 border-current border-t-transparent rounded-full inline-block" /> : <Upload className="h-3 w-3 mr-1" />}
                 <Hash className="h-3 w-3 mr-1" /> Anzahl
@@ -750,9 +806,16 @@ export default function ProdukteSeite() {
                 Importiere die Gastronovi-Exporte «Anzahl Rezepte» und «Umsatz Rezepte» oben rechts.
               </p>
             </div>
-            <div className="flex gap-3 mt-2">
-              <Button onClick={() => anzahlRef.current?.click()} variant="outline"><Hash className="h-4 w-4 mr-2" /> Anzahl Rezepte</Button>
-              <Button onClick={() => umsatzRef.current?.click()} variant="outline"><TrendingUp className="h-4 w-4 mr-2" /> Umsatz Rezepte</Button>
+            <div className="flex gap-3 mt-2 flex-wrap justify-center">
+              <Button
+                onClick={() => csvRef.current?.click()}
+                variant="outline"
+                className="border-emerald-400 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+              >
+                <Upload className="h-4 w-4 mr-2" /> Gastronovi CSV
+              </Button>
+              <Button onClick={() => anzahlRef.current?.click()} variant="outline"><Hash className="h-4 w-4 mr-2" /> Anzahl (.xlsx)</Button>
+              <Button onClick={() => umsatzRef.current?.click()} variant="outline"><TrendingUp className="h-4 w-4 mr-2" /> Umsatz (.xlsx)</Button>
             </div>
           </div>
         )}

@@ -300,6 +300,99 @@ export async function saveIgnoredProductsToDB(list: string[]): Promise<void> {
   } catch { /* localStorage bleibt Fallback */ }
 }
 
+// ── Gastronovi CSV-Parser (Auto-Erkennung aus Dateiname) ──────────────────────
+/**
+ * Parst Gastronovi TSV-CSV Exporte (tab-getrennt, Felder in Anführungszeichen).
+ *
+ * Der Typ (Anzahl/Umsatz) und die Kategorie (Food/Beverage) werden automatisch
+ * aus dem Dateinamen ermittelt:
+ *   "Anzahl_Food_..."     → type=anzahl, category=food
+ *   "Anzahl_Beverage_..."  → type=anzahl, category=beverage
+ *   "Umsatz_Food_..."     → type=umsatz, category=food
+ *   "Umsatz_Beverage_..." → type=umsatz, category=beverage
+ *
+ * Das Jahr wird ebenfalls aus dem Dateinamen gelesen (z.B. "...29.03.2026").
+ */
+export async function parseProdukteCSV(file: File): Promise<{
+  entries: ProductEntry[];
+  type: 'anzahl' | 'umsatz';
+  category: 'food' | 'beverage';
+}> {
+  const nameLower = file.name.toLowerCase();
+
+  // Auto-Erkennung aus Dateiname
+  const type: 'anzahl' | 'umsatz'      = nameLower.includes('umsatz') ? 'umsatz' : 'anzahl';
+  const category: 'food' | 'beverage'  =
+    nameLower.includes('beverage') || nameLower.includes('getränk') ? 'beverage' : 'food';
+
+  // Jahr aus Dateiname (z.B. "2026")
+  const yearMatch = file.name.match(/(\d{4})/);
+  const year = yearMatch ? yearMatch[1] : String(new Date().getFullYear());
+
+  // Datei als Text lesen
+  const text = await file.text();
+  const lines = text.split(/\r?\n/);
+
+  // TSV-Zeilen parsen: Tab-getrennt, Anführungszeichen entfernen
+  const rows: string[][] = lines
+    .filter(l => l.trim().length > 0)
+    .map(line => line.split('\t').map(cell => cell.replace(/^"|"$/g, '').trim()));
+
+  if (rows.length < 2) return { entries: [], type, category };
+
+  // Header-Zeile finden: Spalten im Format "DD.MM."
+  const DAY_COL_RE = /^(\d{1,2})\.(\d{2})\.?$/;
+  let headerRowIdx = -1;
+  const colMonthMap = new Map<number, string>();
+
+  for (let r = 0; r < Math.min(rows.length, 5); r++) {
+    const row = rows[r];
+    let dayColCount = 0;
+    const tempMap = new Map<number, string>();
+
+    for (let c = 0; c < row.length; c++) {
+      const cell = row[c];
+      const dayMatch = cell.match(DAY_COL_RE);
+      if (dayMatch) {
+        const mm = dayMatch[2].padStart(2, '0');
+        tempMap.set(c, `${year}-${mm}`);
+        dayColCount++;
+      }
+    }
+
+    if (dayColCount >= 3) {
+      headerRowIdx = r;
+      tempMap.forEach((v, k) => colMonthMap.set(k, v));
+      break;
+    }
+  }
+
+  const entries: ProductEntry[] = [];
+
+  if (colMonthMap.size > 0 && headerRowIdx >= 0) {
+    for (let r = headerRowIdx + 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || row.length < 2) continue;
+
+      const nameRaw = row[0];
+      if (!nameRaw || nameRaw.length < 2) continue;
+
+      // Gesamt-Zeilen überspringen
+      const nl = nameRaw.toLowerCase();
+      if (nl.startsWith('gesamt') || nl.startsWith('total') ||
+          nl.startsWith('summe') || nl === 'alle') continue;
+
+      for (const [colIdx, month] of colMonthMap) {
+        const val = parseGastronomyNumber(row[colIdx]);
+        if (val <= 0) continue;
+        upsertEntry(entries, nameRaw, month, type, val, category);
+      }
+    }
+  }
+
+  return { entries, type, category };
+}
+
 // ── Gastronovi Excel-Parser ────────────────────────────────────────────────────
 /**
  * Gastronovi "Anzahl Rezepte" / "Umsatz Rezepte" Export.
