@@ -5,8 +5,11 @@ import {
   Upload, Trash2, Package, TrendingUp, TrendingDown,
   Hash, RotateCcw, ChevronDown, X, Award, CalendarDays, LayoutGrid,
   AlertTriangle, CheckSquare, Utensils, Wine, Search, Settings2, Receipt, Pencil,
-  Calculator, ChevronUp,
+  Calculator, ChevronUp, FileDown,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -404,6 +407,17 @@ export default function ProdukteSeite() {
 
   const maxVal = ranked.length > 0
     ? Math.max(...ranked.map(r => sortBy === 'count' ? r.count : r.revenue)) : 1;
+
+  const rankedTotals = useMemo(() => {
+    const totalCount   = ranked.reduce((s, r) => s + r.count,   0);
+    const totalRevenue = ranked.reduce((s, r) => s + r.revenue, 0);
+    const totalWaren   = ranked.reduce((s, r) => {
+      const c = costMap.get(r.name.toLowerCase());
+      return s + (c && r.count > 0 ? c.wes * r.count : 0);
+    }, 0);
+    const totalWesQ = totalRevenue > 0 && totalWaren > 0 ? (totalWaren / totalRevenue) * 100 : 0;
+    return { totalCount, totalRevenue, totalWaren, totalWesQ };
+  }, [ranked, costMap]);
 
   // ── Import Handler ───────────────────────────────────────────────────────────
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>, type: 'anzahl' | 'umsatz') => {
@@ -879,6 +893,44 @@ export default function ProdukteSeite() {
                     </tr>
                   </thead>
                   <tbody>
+                    {/* ── Totalzeile ── */}
+                    {ranked.length > 0 && (
+                      <tr className={cn(
+                        'border-b-2 font-semibold',
+                        isFlop
+                          ? 'bg-red-50/80 dark:bg-red-950/30 border-red-200 dark:border-red-800'
+                          : 'bg-indigo-50/70 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800'
+                      )}>
+                        <td className={cn('px-3 py-2.5 text-center text-xs font-bold',
+                          isFlop ? 'text-red-600 dark:text-red-400' : 'text-indigo-600 dark:text-indigo-400')}>∑</td>
+                        <td className={cn('px-3 py-2.5 text-xs',
+                          isFlop ? 'text-red-700 dark:text-red-300' : 'text-indigo-700 dark:text-indigo-300')}>
+                          {ranked.length} Produkte
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-xs">
+                          {rankedTotals.totalCount.toLocaleString('de-CH')}×
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-xs">
+                          {formatCHF(rankedTotals.totalRevenue)}
+                        </td>
+                        {costs.length > 0 && <>
+                          <td className="px-3 py-2.5 text-right tabular-nums text-xs text-muted-foreground">–</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums text-xs">
+                            {rankedTotals.totalWaren > 0 ? formatCHF(rankedTotals.totalWaren) : '–'}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tabular-nums text-xs">
+                            {rankedTotals.totalWesQ > 0
+                              ? <span className={cn(
+                                  rankedTotals.totalWesQ > 35 ? 'text-red-600 dark:text-red-400'
+                                  : rankedTotals.totalWesQ > 25 ? 'text-amber-600 dark:text-amber-400'
+                                  : 'text-emerald-600 dark:text-emerald-400'
+                                )}>{rankedTotals.totalWesQ.toFixed(1)}%</span>
+                              : '–'}
+                          </td>
+                        </>}
+                        <td className="px-2 py-2.5" />
+                      </tr>
+                    )}
                     {ranked.map(r => {
                       const val      = sortBy === 'count' ? r.count : r.revenue;
                       const barWidth = maxVal > 0 ? (val / maxVal) * 100 : 0;
@@ -1326,10 +1378,86 @@ export default function ProdukteSeite() {
                   Zentrale WES-Werte — Änderungen gelten für alle Monate und Auswertungen
                 </p>
               </div>
-              <button onClick={() => { setShowProductManager(false); setEditingCost(null); }}
-                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground">
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+                  onClick={() => {
+                    const q = productSearch.toLowerCase();
+                    const rows = allProductNames.filter(p => {
+                      if (productFilterCat !== 'all' && p.category !== productFilterCat) return false;
+                      if (q && !p.name.toLowerCase().includes(q)) return false;
+                      if (productFilterWes === 'missing') {
+                        const c = costs.find(cc => cc.name.toLowerCase() === p.name.toLowerCase() && cc.category === p.category);
+                        if (c && c.wes > 0) return false;
+                      }
+                      return true;
+                    }).map(({ name, category: pCat }) => {
+                      const c = costs.find(cc => cc.name.toLowerCase() === name.toLowerCase() && cc.category === pCat);
+                      return {
+                        Produkt: name,
+                        Kategorie: pCat === 'food' ? 'Food' : 'Beverage',
+                        'Brutto (CHF)': c?.bruttoPrice ?? '',
+                        'Netto (CHF)': c?.nettoPrice ?? '',
+                        'WES/Stk. (CHF)': c?.wes ?? '',
+                        'WES-Q (%)': c?.wesQ ?? '',
+                      };
+                    });
+                    const ws = XLSX.utils.json_to_sheet(rows);
+                    ws['!cols'] = [{ wch: 36 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 10 }];
+                    const wb = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(wb, ws, 'Produktdatenbank');
+                    XLSX.writeFile(wb, `Produktdatenbank_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                    toast.success('Excel exportiert');
+                  }}>
+                  <FileDown className="h-3.5 w-3.5" />
+                  Excel
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+                  onClick={() => {
+                    const q = productSearch.toLowerCase();
+                    const rows = allProductNames.filter(p => {
+                      if (productFilterCat !== 'all' && p.category !== productFilterCat) return false;
+                      if (q && !p.name.toLowerCase().includes(q)) return false;
+                      if (productFilterWes === 'missing') {
+                        const c = costs.find(cc => cc.name.toLowerCase() === p.name.toLowerCase() && cc.category === p.category);
+                        if (c && c.wes > 0) return false;
+                      }
+                      return true;
+                    }).map(({ name, category: pCat }) => {
+                      const c = costs.find(cc => cc.name.toLowerCase() === name.toLowerCase() && cc.category === pCat);
+                      return [
+                        name,
+                        pCat === 'food' ? 'Food' : 'Beverage',
+                        c?.bruttoPrice ? formatCHF(c.bruttoPrice) : '–',
+                        c?.nettoPrice  ? formatCHF(c.nettoPrice)  : '–',
+                        c?.wes         ? formatCHF(c.wes)         : '–',
+                        c?.wesQ        ? `${c.wesQ.toFixed(1)} %` : '–',
+                      ];
+                    });
+                    const doc = new jsPDF({ orientation: 'landscape' });
+                    doc.setFontSize(13);
+                    doc.text('Produktdatenbank', 14, 14);
+                    doc.setFontSize(8);
+                    doc.setTextColor(120);
+                    doc.text(`Export: ${new Date().toLocaleDateString('de-CH')}`, 14, 20);
+                    autoTable(doc, {
+                      startY: 25,
+                      head: [['Produkt', 'Kat.', 'Brutto CHF', 'Netto CHF', 'WES/Stk. CHF', 'WES-Q %']],
+                      body: rows,
+                      styles: { fontSize: 8 },
+                      headStyles: { fillColor: [99, 102, 241] },
+                      columnStyles: { 0: { cellWidth: 70 } },
+                    });
+                    doc.save(`Produktdatenbank_${new Date().toISOString().slice(0, 10)}.pdf`);
+                    toast.success('PDF exportiert');
+                  }}>
+                  <FileDown className="h-3.5 w-3.5" />
+                  PDF
+                </Button>
+                <button onClick={() => { setShowProductManager(false); setEditingCost(null); }}
+                  className="p-1.5 rounded-md hover:bg-muted text-muted-foreground">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
             {/* Suche + Filter */}
@@ -1398,6 +1526,59 @@ export default function ProdukteSeite() {
                       </tr>
                     </thead>
                     <tbody>
+                      {/* ── Totalzeile Produktdatenbank ── */}
+                      {(() => {
+                        const withWes = filtered.filter(({ name, category: pCat }) => {
+                          const c = costs.find(cc => cc.name.toLowerCase() === name.toLowerCase() && cc.category === pCat);
+                          return c && c.wes > 0;
+                        });
+                        const sumBrutto = filtered.reduce((s, { name, category: pCat }) => {
+                          const c = costs.find(cc => cc.name.toLowerCase() === name.toLowerCase() && cc.category === pCat);
+                          return s + (c?.bruttoPrice ?? 0);
+                        }, 0);
+                        const sumNetto = filtered.reduce((s, { name, category: pCat }) => {
+                          const c = costs.find(cc => cc.name.toLowerCase() === name.toLowerCase() && cc.category === pCat);
+                          return s + (c?.nettoPrice ?? 0);
+                        }, 0);
+                        const sumWes = filtered.reduce((s, { name, category: pCat }) => {
+                          const c = costs.find(cc => cc.name.toLowerCase() === name.toLowerCase() && cc.category === pCat);
+                          return s + (c?.wes ?? 0);
+                        }, 0);
+                        const avgWesQ = withWes.length > 0
+                          ? withWes.reduce((s, { name, category: pCat }) => {
+                              const c = costs.find(cc => cc.name.toLowerCase() === name.toLowerCase() && cc.category === pCat);
+                              return s + (c?.wesQ ?? 0);
+                            }, 0) / withWes.length
+                          : 0;
+                        return (
+                          <tr className="bg-indigo-50/70 dark:bg-indigo-950/30 border-b-2 border-indigo-200 dark:border-indigo-800 font-semibold sticky top-0 z-[5]">
+                            <td className="px-4 py-2.5 text-xs text-indigo-600 dark:text-indigo-400 font-bold text-center">∑</td>
+                            <td className="px-3 py-2.5 text-xs text-indigo-700 dark:text-indigo-300">
+                              {filtered.length} Produkte · {withWes.length} mit WES
+                            </td>
+                            <td className="px-3 py-2.5 text-center text-xs text-muted-foreground">–</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-xs text-purple-700 dark:text-purple-300">
+                              {sumBrutto > 0 ? formatCHF(sumBrutto) : '–'}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-xs text-purple-700 dark:text-purple-300">
+                              {sumNetto > 0 ? formatCHF(sumNetto) : '–'}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-xs text-purple-700 dark:text-purple-300">
+                              {sumWes > 0 ? formatCHF(sumWes) : '–'}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-xs">
+                              {avgWesQ > 0
+                                ? <span className={cn(
+                                    avgWesQ > 35 ? 'text-red-600 dark:text-red-400'
+                                    : avgWesQ > 25 ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-emerald-600 dark:text-emerald-400'
+                                  )}>{avgWesQ.toFixed(1)} %⌀</span>
+                                : '–'}
+                            </td>
+                            <td className="px-3 py-2.5" />
+                          </tr>
+                        );
+                      })()}
                       {filtered.map(({ name, category: pCat }) => {
                         const isAutoIgnored = DEFAULT_IGNORE_TERMS.some(t => name.toLowerCase().includes(t));
                         const isManualIgnored = ignoredByUser.includes(name);
