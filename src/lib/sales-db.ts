@@ -108,7 +108,7 @@ export type ProductSalesRow = {
 export const SOURCE_LABELS: Record<string, string> = {
   food_csv_export:     'Food',
   beverage_csv_export: 'Beverage',
-  manual_test:         'Manual',
+  manual_test:         'Testdaten',
 };
 
 /**

@@ -27,7 +27,7 @@ import {
   parseWideFile, matchAnzahlUmsatz, generateImportBatch,
   type NormalizedSaleRow, type MatchResult, type ParseResult,
 } from '@/lib/gastronovi-csv-parser';
-import { insertProductSales, fetchImportBatches, type ImportBatch } from '@/lib/sales-db';
+import { insertProductSales, fetchImportBatches, sourceLabel, type ImportBatch } from '@/lib/sales-db';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -172,23 +172,24 @@ function ImportHistory({ batches, loading }: { batches: ImportBatch[]; loading: 
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-border">
-            {['Batch-ID', 'Quelle', 'Importiert am', 'Frühstes Datum', 'Datensätze', 'Absatz', 'Umsatz CHF'].map(h => (
-              <th key={h} className="px-3 py-2 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
-                {h}
-              </th>
+            {(['Batch-ID', 'Quelle', 'Importiert am', 'Frühstes Datum'] as const).map(h => (
+              <th key={h} className="px-3 py-2 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+            ))}
+            {(['Datensätze', 'Absatz', 'Umsatz CHF'] as const).map(h => (
+              <th key={h} className="px-3 py-2 text-right text-[10px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
             ))}
           </tr>
         </thead>
         <tbody className="divide-y divide-border/40">
           {batches.map((b, i) => (
             <tr key={`${b.import_batch}-${i}`} className="hover:bg-muted/30 transition-colors">
-              <td className="px-3 py-2 font-mono text-[10px]">{b.import_batch || '–'}</td>
-              <td className="px-3 py-2 text-muted-foreground">{b.source || '–'}</td>
-              <td className="px-3 py-2 text-muted-foreground">{fmtDate(b.imported_at) || '–'}</td>
-              <td className="px-3 py-2 text-muted-foreground">{fmtDate(b.sales_date) || '–'}</td>
-              <td className="px-3 py-2 tabular-nums">{fmtNum(b.rows_imported)}</td>
-              <td className="px-3 py-2 tabular-nums">{fmtNum(b.total_qty, 1)}</td>
-              <td className="px-3 py-2 tabular-nums font-semibold">{fmtChf(b.total_revenue)}</td>
+              <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">{b.import_batch || '–'}</td>
+              <td className="px-3 py-2 font-medium">{sourceLabel(b.source)}</td>
+              <td className="px-3 py-2 text-muted-foreground">{fmtDate(b.imported_at)}</td>
+              <td className="px-3 py-2 text-muted-foreground">{fmtDate(b.sales_date)}</td>
+              <td className="px-3 py-2 tabular-nums text-right">{fmtNum(b.rows_imported)}</td>
+              <td className="px-3 py-2 tabular-nums text-right">{fmtNum(b.total_qty, 0)}</td>
+              <td className="px-3 py-2 tabular-nums text-right font-semibold">{fmtChf(b.total_revenue)}</td>
             </tr>
           ))}
         </tbody>
