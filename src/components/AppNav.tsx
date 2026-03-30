@@ -193,6 +193,13 @@ const NAV_ITEMS: NavItem[] = [
     icon: BarChart2,
     adminOnly: true,
   },
+  {
+    path: '/produkt-stamm',
+    label: 'Produkt-Stammdaten',
+    shortLabel: 'Stammdaten',
+    icon: Package,
+    adminOnly: true,
+  },
 ];
 
 // ─── Rollen-Konfiguration ─────────────────────────────────────────────────────

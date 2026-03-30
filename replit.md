@@ -292,6 +292,24 @@ Rezeptkosten, Lieferantenrechnungen, Inventur, theoretischen Warenbestand.
 
 **Stage 2 Migration:** `supabase/migrations/20260323_artikel_master.sql` — erstellt dedizierte `articles`-Tabelle mit RLS, Index, update-Trigger und Migrationsskript aus `app_settings`.
 
+## Produkt-Stammdaten (WES pro Stück)
+
+Route: `/produkt-stamm` · Nur Admin · Dateien: `src/pages/ProduktStamm.tsx`, `src/lib/produkt-stamm-db.ts`
+
+Einfache CRUD-Seite zum Pflegen der WES-Kosten pro Produkt.
+
+**Datenbank:** Supabase-Tabelle `produkte_kosten` (Felder: `name`, `category` food|beverage, `wes` = CHF pro Stück)
+
+**Funktionen:**
+- Inline-Bearbeitung (Name, Kategorie, WES pro Stück)
+- Neues Produkt erfassen
+- Aus Verkaufsdaten befüllen — importiert distinct product_names aus `product_sales`, die noch nicht im Stamm sind (WES = 0, dann manuell nachtragen)
+- Suche + Kategorie-Filter
+- Statistik-Cards: Total / Mit WES / Ohne WES
+
+**Anbindung VerkaufsDashboard:**
+`loadProductWesMap()` in `sales-db.ts` liest primär aus `produkte_kosten.wes`, Fallback auf `app_settings` (produkte_cost_v1). Matching über lowercase Produktname.
+
 ## WES-Analyse
 
 Route: `/wes-analyse` · Nur Admin · Datei: `src/pages/WesAnalyse.tsx`

@@ -46,6 +46,7 @@ import VerkaufsDashboard from "./pages/VerkaufsDashboard";
 import SalesUpload from "./pages/SalesUpload";
 import ProduktAnalyse from "./pages/ProduktAnalyse";
 import KategorienAnalyse from "./pages/KategorienAnalyse";
+import ProduktStamm from "./pages/ProduktStamm";
 
 const queryClient = new QueryClient();
 
@@ -147,6 +148,7 @@ const AppContent = () => {
             <Route path="/sales-upload"      element={<SalesUpload />} />
             <Route path="/produkt-analyse"   element={<ProduktAnalyse />} />
             <Route path="/kategorien"        element={<KategorienAnalyse />} />
+            <Route path="/produkt-stamm"     element={<ProduktStamm />} />
 
             {/* Abteilungs-Dienstpläne */}
             <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />

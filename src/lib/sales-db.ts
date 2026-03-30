@@ -204,24 +204,47 @@ export async function loadAltbestandCount(): Promise<number> {
 }
 
 /**
- * Lädt WES-Kosten pro Produkt aus app_settings (produkte_cost_v1).
+ * Lädt WES-Kosten pro Produkt.
+ * Primär: Supabase-Tabelle produkte_kosten (name, wes = wes_per_unit).
+ * Fallback: app_settings / localStorage (produkte_cost_v1).
  * Rückgabe: Map<lowercase_name → wes_per_unit>
- * Bei fehlendem Eintrag oder wes=0 → 0 (kein Match).
  */
 export async function loadProductWesMap(): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+
+  // 1. Primär: produkte_kosten Tabelle
+  try {
+    const { data, error } = await (supabase as any)
+      .from('produkte_kosten')
+      .select('name, wes');
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      for (const r of data) {
+        if (r.name && r.wes != null) {
+          map.set(String(r.name).trim().toLowerCase(), Number(r.wes));
+        }
+      }
+      console.log(`[sales-db] WES-Map: ${map.size} Einträge aus produkte_kosten`);
+      return map;
+    }
+    if (error) console.warn('[sales-db] produkte_kosten nicht verfügbar:', error.message, '→ Fallback');
+  } catch (e) {
+    console.warn('[sales-db] produkte_kosten Fehler:', e, '→ Fallback');
+  }
+
+  // 2. Fallback: app_settings (produkte_cost_v1)
   try {
     const costs = await loadProductCostsFromDB();
-    const map = new Map<string, number>();
     for (const c of costs) {
       if (c.name && c.wes != null) {
         map.set(c.name.trim().toLowerCase(), c.wes);
       }
     }
-    return map;
+    console.log(`[sales-db] WES-Map (Fallback app_settings): ${map.size} Einträge`);
   } catch (err) {
-    console.warn('[sales-db] loadProductWesMap Fehler:', err);
-    return new Map();
+    console.warn('[sales-db] loadProductWesMap Fallback Fehler:', err);
   }
+  return map;
 }
 
 /**
