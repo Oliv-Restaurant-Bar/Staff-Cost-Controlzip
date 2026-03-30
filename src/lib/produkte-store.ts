@@ -750,6 +750,8 @@ export const DEFAULT_GROUPS_FOOD: Omit<ProductGroup, 'productNames'>[] = [
     keywords: ['fisch', 'lachs', 'thon', 'gamberi', 'crevetten', 'garnelen', 'calamari', 'muschel', 'branzino', 'dorade', 'seezunge', 'wolfsbarsch'] },
   { id: 'vorspeise', name: 'Vorspeisen',  category: 'food', color: 'teal',
     keywords: ['antipasto', 'bruschetta', 'carpaccio', 'suppe', 'cremesuppe', 'minestrone', 'vorspeise', 'starter', 'salat', 'caesar', 'insalata'] },
+  { id: 'menu',      name: 'Menu',        category: 'food', color: 'grey',
+    keywords: ['menu', 'menü', 'tagesmenü', 'tagesmenu', 'lunch menu', 'business lunch'] },
   { id: 'dessert',   name: 'Dessert',     category: 'food', color: 'pink',
     keywords: ['dessert', 'tiramisu', 'panna cotta', 'sorbet', 'gelato', 'mousse', 'torte', 'kuchen', 'waffel', 'crêpe'] },
 ];
