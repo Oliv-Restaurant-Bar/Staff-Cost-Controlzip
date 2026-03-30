@@ -30,6 +30,7 @@ import {
   saveProductCosts,
   saveProductCostsToDB,
   loadProductCostsFromDB,
+  applyWesSeed,
   saveProdukteDataToDB,
   loadProdukteDataFromDB,
   saveIgnoredProductsToDB,
@@ -198,8 +199,10 @@ export default function ProdukteSeite() {
     loadIgnoredProductsFromDB().then(dbIgnored => {
       if (dbIgnored.length > 0) setIgnored(dbIgnored);
     });
-    loadProductCostsFromDB().then(dbCosts => {
-      if (dbCosts.length > 0) setCosts(dbCosts);
+    loadProductCostsFromDB().then(async dbCosts => {
+      const base = dbCosts.length > 0 ? dbCosts : [];
+      const { costs: seeded } = await applyWesSeed(base);
+      setCosts(seeded);
     });
     loadProductGroupsFromDB().then(dbGroups => {
       if (dbGroups.length > 0) setGroups(dbGroups);

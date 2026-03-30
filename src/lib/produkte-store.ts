@@ -1053,3 +1053,52 @@ export async function syncWesToProduktKosten(costs: ProductCostEntry[]): Promise
   if (error) console.warn('[Produkte] syncWesToProduktKosten Fehler:', error.message, error.code);
   else console.log(`[Produkte] syncWesToProduktKosten: ${records.length} Einträge synchronisiert`);
 }
+
+// ── WES-Seed: vordefinierte Einzelwerte ───────────────────────────────────────
+
+const WES_SEED: Omit<ProductCostEntry, 'bruttoPrice' | 'nettoPrice'>[] = [
+  { name: 'Bao Buns Poulet',              category: 'food', wes: 3.572, wesQ: 25.74 },
+  { name: 'Blattsalat TA',                category: 'food', wes: 1.50,  wesQ: 16.22 },
+  { name: 'Burrata',                      category: 'food', wes: 4.28,  wesQ: 25.70 },
+  { name: 'Der Grieche TA',               category: 'food', wes: 3.411, wesQ: 24.58 },
+  { name: 'Gemüse im Tempurateig',        category: 'food', wes: 4.017, wesQ: 43.42 },
+  { name: 'Limone Minze Ravioli',         category: 'food', wes: 4.79,  wesQ: 17.86 },
+  { name: 'Limonen Minze Ricotta Ravioli',category: 'food', wes: 4.79,  wesQ: 17.86 },
+  { name: 'Sushi/Sashimi Teller',         category: 'food', wes: 3.375, wesQ: 0     },
+  { name: 'Glace 1 Kugel',               category: 'food', wes: 2.55,  wesQ: 55.13 },
+];
+
+/**
+ * Merges WES_SEED entries into the cost store — only overwrites entries where
+ * wes === 0 (not yet set). Saves to DB if any changes were made.
+ */
+export async function applyWesSeed(
+  existing: ProductCostEntry[],
+): Promise<{ costs: ProductCostEntry[]; applied: string[]; skipped: string[] }> {
+  let costs = [...existing];
+  const applied: string[] = [];
+  const skipped: string[] = [];
+
+  for (const seed of WES_SEED) {
+    const idx = costs.findIndex(
+      c => c.name.toLowerCase() === seed.name.toLowerCase() && c.category === seed.category,
+    );
+    if (idx >= 0 && costs[idx].wes > 0) {
+      skipped.push(seed.name);
+      continue;
+    }
+    if (idx >= 0) {
+      costs[idx] = { ...costs[idx], wes: seed.wes, wesQ: seed.wesQ };
+    } else {
+      costs = [...costs, { bruttoPrice: 0, nettoPrice: 0, ...seed }];
+    }
+    applied.push(seed.name);
+  }
+
+  if (applied.length > 0) {
+    await saveProductCostsToDB(costs);
+    console.log('[Produkte] WES-Seed angewendet:', applied);
+  }
+
+  return { costs, applied, skipped };
+}
