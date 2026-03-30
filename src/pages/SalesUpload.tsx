@@ -433,6 +433,7 @@ export default function SalesUpload() {
       setImportCount(count);
       setStep('done');
       await loadBatches();
+      window.dispatchEvent(new CustomEvent('product_sales_updated'));
     }
   }
 

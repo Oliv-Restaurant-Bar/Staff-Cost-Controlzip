@@ -6,7 +6,7 @@
  * Altbestand (source IS NULL) wird ignoriert.
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell,
@@ -113,13 +113,6 @@ function aggregate(rows: ProductSalesRow[], topLimit: number) {
   }
 
   // Distinct Produkte pro Source
-  for (const r of rows) {
-    if (!r.product_name) continue;
-    const key = r.source ?? '__null__';
-    const s   = srcMap.get(key);
-    if (s) s.products = (s.products || 0);
-  }
-  // Recalculate distinct products per source properly
   const srcProducts = new Map<string, Set<string>>();
   for (const r of rows) {
     if (!r.product_name) continue;
@@ -185,12 +178,12 @@ export default function VerkaufsDashboard() {
   const [batchFilter,     setBatchFilter]     = useState<string>('all');
   const [topSearch,       setTopSearch]       = useState('');
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setDbError(null);
     try {
       const [rows, altCount] = await Promise.all([
-        loadProductSalesRows(),   // paginiert, filtert source/import_batch IS NOT NULL
+        loadProductSalesRows(),
         loadAltbestandCount(),
       ]);
       setRawRows(rows);
@@ -202,9 +195,14 @@ export default function VerkaufsDashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  // Erstladen + Reaktion auf neuen Import aus SalesUpload
+  useEffect(() => {
+    load();
+    window.addEventListener('product_sales_updated', load);
+    return () => window.removeEventListener('product_sales_updated', load);
+  }, [load]);
 
   // ── Filter-Optionen ────────────────────────────────────────────────────────
 

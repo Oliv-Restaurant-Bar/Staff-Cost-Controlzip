@@ -343,19 +343,30 @@ function parseBatchTimestamp(batchId: string): string {
  */
 export async function fetchImportBatches(): Promise<ImportBatch[]> {
   try {
-    // Nur die Felder holen, die wir für die Aggregation brauchen.
-    const { data, error } = await (supabase as any)
-      .from('product_sales')
-      .select('import_batch, source, sale_date, quantity, revenue');
+    // Paginiert laden — Supabase gibt max. 1000 Zeilen pro Request zurück.
+    const PAGE_SIZE = 1000;
+    const allRows: Array<{ import_batch: string | null; source: string | null; sale_date: string | null; quantity: number | null; revenue: number | null }> = [];
+    let from = 0;
 
-    if (error) {
-      console.error('[sales-db] fetchImportBatches (product_sales):', error);
-      return [];
+    while (true) {
+      const { data, error } = await (supabase as any)
+        .from('product_sales')
+        .select('import_batch, source, sale_date, quantity, revenue')
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) {
+        console.error('[sales-db] fetchImportBatches (product_sales):', error);
+        return [];
+      }
+      if (!data || data.length === 0) break;
+      allRows.push(...data);
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
     }
 
     // In-JS groupBy import_batch
     const map = new Map<string, ImportBatch>();
-    for (const row of data ?? []) {
+    for (const row of allRows) {
       const key: string = row.import_batch ?? '(unbekannt)';
       if (!map.has(key)) {
         map.set(key, {
@@ -372,7 +383,6 @@ export async function fetchImportBatches(): Promise<ImportBatch[]> {
       b.rows_imported += 1;
       b.total_qty     += Number(row.quantity ?? 0);
       b.total_revenue += Number(row.revenue  ?? 0);
-      // Frühestes Datum im Batch
       if (row.sale_date && row.sale_date < b.sales_date) {
         b.sales_date = row.sale_date;
       }
