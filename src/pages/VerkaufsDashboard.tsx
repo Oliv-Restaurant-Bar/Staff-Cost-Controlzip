@@ -14,7 +14,11 @@ import {
 import {
   Package, TrendingUp, DollarSign, ShoppingCart,
   AlertTriangle, RefreshCw, Filter, Archive, Star,
+  FileDown, FileText,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -269,6 +273,104 @@ export default function VerkaufsDashboard() {
     topProducts.filter(p =>
       p.product_name.toLowerCase().includes(topSearch.toLowerCase())
     ), [topProducts, topSearch]);
+
+  // ── Totals für Top-Produkte-Tabelle ────────────────────────────────────────
+
+  const topTotals = useMemo(() => {
+    const qty     = filteredTop.reduce((s, p) => s + p.qty, 0);
+    const revenue = filteredTop.reduce((s, p) => s + p.revenue, 0);
+    const wes     = filteredTop.reduce((s, p) => s + p.wes, 0);
+    const wesP    = revenue > 0 ? (wes / revenue) * 100 : 0;
+    return { qty, revenue, wes, wesP };
+  }, [filteredTop]);
+
+  // ── Export-Funktionen ──────────────────────────────────────────────────────
+
+  function buildExportRows() {
+    const header = ['#', 'Produkt', 'Quelle', 'Absatz', 'Umsatz CHF', ...(hasWes ? ['WES CHF', 'WES %'] : [])];
+    const data = filteredTop.map((p, i) => {
+      const wesP = p.revenue > 0 ? (p.wes / p.revenue) * 100 : 0;
+      return [
+        i + 1,
+        p.product_name,
+        sourceLabel(p.source),
+        p.qty,
+        p.revenue,
+        ...(hasWes ? [p.wes, wesP] : []),
+      ];
+    });
+    const total = [
+      'Total',
+      `${filteredTop.length} Produkte`,
+      '–',
+      topTotals.qty,
+      topTotals.revenue,
+      ...(hasWes ? [topTotals.wes, topTotals.wesP] : []),
+    ];
+    return { header, data, total };
+  }
+
+  function exportToExcel() {
+    const { header, data, total } = buildExportRows();
+    const ws = XLSX.utils.aoa_to_sheet([header, total, ...data]);
+
+    // Spaltenbreiten
+    ws['!cols'] = [
+      { wch: 5 }, { wch: 40 }, { wch: 14 }, { wch: 12 },
+      { wch: 16 }, ...(hasWes ? [{ wch: 16 }, { wch: 10 }] : []),
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Top Produkte');
+    XLSX.writeFile(wb, `VerkaufsDashboard_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  function exportToPdf() {
+    const { header, data, total } = buildExportRows();
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+    doc.setFontSize(14);
+    doc.text('Verkaufs-Dashboard – Top Produkte', 14, 16);
+    doc.setFontSize(9);
+    doc.text(`Exportiert am ${new Date().toLocaleDateString('de-CH')}`, 14, 22);
+
+    // Zahlen-Columns formatieren
+    const numCols = hasWes ? [3, 4, 5, 6] : [3, 4];
+    const fmtCell = (val: unknown, colIdx: number) => {
+      if (!numCols.includes(colIdx) || typeof val !== 'number') return String(val);
+      if (colIdx === 3) return val.toLocaleString('de-CH');
+      if (header[colIdx]?.includes('%')) return `${val.toFixed(1)} %`;
+      return new Intl.NumberFormat('de-CH', {
+        style: 'currency', currency: 'CHF', maximumFractionDigits: 0,
+      }).format(val);
+    };
+
+    const fmtRow = (row: unknown[]) => row.map((v, i) => fmtCell(v, i));
+
+    autoTable(doc, {
+      head: [header],
+      body: [fmtRow(total), ...data.map(fmtRow)],
+      startY: 27,
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold' },
+      bodyStyles: { textColor: 40 },
+      didParseCell(hookData) {
+        // Total-Zeile fett
+        if (hookData.row.index === 0) {
+          hookData.cell.styles.fontStyle = 'bold';
+          hookData.cell.styles.fillColor = [237, 233, 254];
+        }
+      },
+      columnStyles: {
+        0: { halign: 'right' },
+        3: { halign: 'right' },
+        4: { halign: 'right' },
+        ...(hasWes ? { 5: { halign: 'right' }, 6: { halign: 'right' } } : {}),
+      },
+    });
+
+    doc.save(`VerkaufsDashboard_${new Date().toISOString().slice(0, 10)}.pdf`);
+  }
 
   // ── Skeleton ───────────────────────────────────────────────────────────────
 
@@ -590,12 +692,34 @@ export default function VerkaufsDashboard() {
                 <Star className="h-4 w-4 text-amber-500" />
                 Top Produkte nach Umsatz
               </CardTitle>
-              <Input
-                placeholder="Produkt suchen…"
-                value={topSearch}
-                onChange={e => setTopSearch(e.target.value)}
-                className="h-8 w-44 text-sm"
-              />
+              <div className="flex items-center gap-2 flex-wrap">
+                <Input
+                  placeholder="Produkt suchen…"
+                  value={topSearch}
+                  onChange={e => setTopSearch(e.target.value)}
+                  className="h-8 w-44 text-sm"
+                />
+                <Button
+                  size="sm" variant="outline"
+                  className="h-8 text-xs gap-1.5"
+                  onClick={exportToExcel}
+                  disabled={filteredTop.length === 0}
+                  title="Als Excel exportieren"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  Excel
+                </Button>
+                <Button
+                  size="sm" variant="outline"
+                  className="h-8 text-xs gap-1.5"
+                  onClick={exportToPdf}
+                  disabled={filteredTop.length === 0}
+                  title="Als PDF exportieren"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  PDF
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="p-0">
@@ -618,6 +742,28 @@ export default function VerkaufsDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40">
+                    {/* ── Totalzeile ── */}
+                    {filteredTop.length > 0 && (
+                      <tr className="bg-indigo-50/70 dark:bg-indigo-950/30 border-b-2 border-indigo-200 dark:border-indigo-800 font-semibold">
+                        <td className="px-4 py-2.5 text-xs text-indigo-600 dark:text-indigo-400 font-bold">∑</td>
+                        <td className="px-4 py-2.5 text-indigo-700 dark:text-indigo-300">
+                          {filteredTop.length} Produkte
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground text-xs">–</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{fmtNum(topTotals.qty)}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{fmtChf(topTotals.revenue)}</td>
+                        {hasWes && (
+                          <td className="px-4 py-2.5 text-right tabular-nums">
+                            {topTotals.wes > 0 ? fmtChf(topTotals.wes) : '–'}
+                          </td>
+                        )}
+                        {hasWes && (
+                          <td className="px-4 py-2.5 text-right tabular-nums text-xs">
+                            {topTotals.wes > 0 ? `${topTotals.wesP.toFixed(1)} %` : '–'}
+                          </td>
+                        )}
+                      </tr>
+                    )}
                     {filteredTop.map((p, i) => {
                       const pWesP = p.revenue > 0 ? (p.wes / p.revenue) * 100 : 0;
                       return (
