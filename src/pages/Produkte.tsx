@@ -273,6 +273,9 @@ export default function ProdukteSeite() {
 
     saveProductCostsToDB(updated);
     setCosts(updated);
+    if (editingCost.field === 'wes' && val > 0) {
+      toast.success(`WES pro Stück für «${editingCost.name}» auf ${formatCHF(val)} gesetzt`);
+    }
     setEditingCost(null);
   };
 
@@ -317,6 +320,9 @@ export default function ProdukteSeite() {
     }
     saveProductCostsToDB(updated);
     setCosts(updated);
+    if (editingCost.field === 'wes' && val > 0) {
+      toast.success(`WES pro Stück für «${name}» auf ${formatCHF(val)} gesetzt`);
+    }
     setEditingCost(null);
   };
 
@@ -865,7 +871,7 @@ export default function ProdukteSeite() {
                       <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground w-24">Anzahl</th>
                       <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground w-28">Umsatz</th>
                       {costs.length > 0 && <>
-                        <th className="px-3 py-2.5 text-right text-xs font-semibold text-purple-600 dark:text-purple-400 w-24">WES/Stk.</th>
+                        <th className="px-3 py-2.5 text-right text-xs font-semibold text-purple-600 dark:text-purple-400 w-32">WES pro Stück (CHF)</th>
                         <th className="px-3 py-2.5 text-right text-xs font-semibold text-purple-600 dark:text-purple-400 w-28">Warenaufw.</th>
                         <th className="px-3 py-2.5 text-right text-xs font-semibold text-purple-600 dark:text-purple-400 w-20">WES-Q %</th>
                       </>}

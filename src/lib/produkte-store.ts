@@ -993,4 +993,32 @@ export async function saveProductCostsToDB(costs: ProductCostEntry[]): Promise<v
     const err = await settingsSave(DB_KV_KEY, costs);
     if (err) console.error('[Produkte] WES Speicherfehler:', err);
   } catch { /* localStorage bleibt Fallback */ }
+  // Gleichzeitig in produkte_kosten synchronisieren (für VerkaufsDashboard)
+  syncWesToProduktKosten(costs).catch(e =>
+    console.warn('[Produkte] Sync zu produkte_kosten fehlgeschlagen:', e),
+  );
+}
+
+/**
+ * Synchronisiert WES-Werte aus ProductCostEntry in die Tabelle produkte_kosten.
+ * Wird nach jedem saveProductCostsToDB aufgerufen (fire-and-forget).
+ * Nur Einträge mit wes > 0 werden synchronisiert.
+ */
+export async function syncWesToProduktKosten(costs: ProductCostEntry[]): Promise<void> {
+  const records = costs
+    .filter(e => e.wes > 0)
+    .map(e => ({
+      name:     e.name.trim(),
+      category: e.category,
+      wes:      e.wes,
+      wes_q:    e.wesQ ?? 0,
+    }));
+  if (records.length === 0) return;
+
+  const { error } = await (supabase as any)
+    .from('produkte_kosten')
+    .upsert(records, { onConflict: 'name,category' });
+
+  if (error) console.warn('[Produkte] syncWesToProduktKosten Fehler:', error.message, error.code);
+  else console.log(`[Produkte] syncWesToProduktKosten: ${records.length} Einträge synchronisiert`);
 }

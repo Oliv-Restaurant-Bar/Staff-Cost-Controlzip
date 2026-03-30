@@ -261,8 +261,9 @@ export default function VerkaufsDashboard() {
     [filteredRows, wesMap],
   );
 
-  const wesPercent = totalRevenue > 0 ? (totalWes / totalRevenue) * 100 : 0;
-  const hasWes     = totalWes > 0;
+  const wesPercent       = totalRevenue > 0 ? (totalWes / totalRevenue) * 100 : 0;
+  const deckungsbeitrag  = totalRevenue - totalWes;
+  const hasWes           = totalWes > 0;
 
   const filteredTop = useMemo(() =>
     topProducts.filter(p =>
@@ -373,7 +374,7 @@ export default function VerkaufsDashboard() {
 
       {/* ── KPI-Karten ───────────────────────────────────────────────────────── */}
       {filteredRows.length > 0 && (
-        <div className={`grid gap-3 md:gap-4 ${hasWes ? 'grid-cols-2 md:grid-cols-5' : 'grid-cols-3'}`}>
+        <div className={`grid gap-3 md:gap-4 ${hasWes ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-3'}`}>
           <KpiCard
             label="Gesamtumsatz"
             value={fmtChf(totalRevenue)}
@@ -405,6 +406,13 @@ export default function VerkaufsDashboard() {
                 icon={TrendingUp}
                 sub={`von ${fmtChf(totalRevenue)} Umsatz`}
                 color={wesPercent > 35 ? 'muted' : 'default'}
+              />
+              <KpiCard
+                label="Deckungsbeitrag CHF"
+                value={fmtChf(deckungsbeitrag)}
+                icon={TrendingUp}
+                sub={totalRevenue > 0 ? `${((deckungsbeitrag / totalRevenue) * 100).toFixed(1)} % Marge` : undefined}
+                color={deckungsbeitrag >= 0 ? 'green' : 'muted'}
               />
             </>
           )}
