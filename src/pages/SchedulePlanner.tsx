@@ -1574,144 +1574,166 @@ const SchedulePlanner = () => {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
-        <div className="max-w-[1800px] mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+        <div className="max-w-[1800px] mx-auto px-4">
+
+          {/* ── Zeile 1: Titel + Primäraktionen ──────────────────────────────── */}
+          <div className="flex items-center justify-between gap-3 py-2.5 border-b border-border/50">
+            <div className="flex items-center gap-2 min-w-0">
               <Link to="/">
-                <Button variant="ghost" size="sm">
-                  <Home className="h-4 w-4 mr-2" />
-                  Übersicht
+                <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" title="Zur Übersicht">
+                  <Home className="h-4 w-4" />
                 </Button>
               </Link>
-              <div>
-                <h1 className="text-2xl font-bold text-foreground">Personal</h1>
-                <p className="text-sm text-muted-foreground">Dienstplan, Mitarbeiter und Kostenübersicht</p>
+              <div className="min-w-0">
+                <h1 className="text-base font-bold text-foreground leading-tight">Personal</h1>
+                <p className="text-[11px] text-muted-foreground leading-tight hidden sm:block">
+                  Dienstplan, Mitarbeiter und Kostenübersicht
+                </p>
               </div>
             </div>
-            
-            <div className="flex items-center gap-2">
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleImportFile}
-                accept=".xlsx,.xls"
-                className="hidden"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setTemplateDialogOpen(true)}
-                className="gap-1.5 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
-                title="Wochenvorlagen verwalten"
-              >
-                <BookOpen className="h-4 w-4" />
-                <span className="hidden sm:inline">Vorlagen</span>
-              </Button>
-              {isAdmin && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setStationMatrixOpen(true)}
-                  className="gap-1.5 border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40"
-                  title="Stationen & Funktionen verwalten"
-                >
-                  <LayoutGrid className="h-4 w-4" />
-                  <span className="hidden sm:inline">Stationen</span>
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setAvailabilityOpen(true)}
-                className="gap-1.5 border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/40"
-                title="Verfügbarkeit & Wunschfrei verwalten"
-              >
-                <CalendarX2 className="h-4 w-4" />
-                <span className="hidden sm:inline">Verfügbarkeit</span>
-              </Button>
-              {isAdmin && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setStaffingTargetOpen(true)}
-                  className="gap-1.5 border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40"
-                  title="Besetzungsziele konfigurieren"
-                >
-                  <Target className="h-4 w-4" />
-                  <span className="hidden sm:inline">Ziele</span>
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPlanningAssistantOpen(true)}
-                className="gap-1.5 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
-                title="Planungshilfe öffnen"
-              >
-                <Lightbulb className="h-4 w-4" />
-                <span className="hidden sm:inline">Planungshilfe</span>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setBulkActionsOpen(true)}
-                className="gap-1.5 border-yellow-300 dark:border-yellow-700 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-50 dark:hover:bg-yellow-950/40"
-                title="Schnellaktionen: Abwesenheiten, Schichten und Wochen per Bulk einplanen"
-              >
-                <Zap className="h-4 w-4" />
-                <span className="hidden sm:inline">Schnellaktionen</span>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setTimeSlotStaffingOpen(true)}
-                className="gap-1.5 border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/40"
-                title="Besetzungscheck: Wer war in einem bestimmten Zeitfenster im Einsatz?"
-              >
-                <Clock className="h-4 w-4" />
-                <span className="hidden sm:inline">Besetzungscheck</span>
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setPrintDialogOpen(true)}>
-                <Printer className="h-4 w-4 mr-2" />
-                Drucken
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => setCopyWeekDialogOpen(true)} className="border border-border font-medium">
-                <Copy className="h-4 w-4 mr-2" />
-                Woche kopieren
-              </Button>
-              <Button variant="outline" size="sm" onClick={handleImportClick}>
-                <Upload className="h-4 w-4 mr-2" />
-                Importieren
-              </Button>
-<DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <Download className="h-4 w-4 mr-2" />
-                    Exportieren
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={handleExportTemplate}>
-                    <FileSpreadsheet className="h-4 w-4 mr-2" />
-                    Excel (.xlsx) – mit Formeln (Früh/Spät)
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleExportPDF}>
-                    <FileText className="h-4 w-4 mr-2" />
-                    PDF
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button onClick={handleSave}>
-                <Save className="h-4 w-4 mr-2" />
-                Speichern
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button onClick={handleSave} size="sm" className="gap-1.5 h-8">
+                <Save className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Speichern</span>
               </Button>
               <Link to="/settings">
-                <Button variant="ghost" size="icon" title="Einstellungen">
-                  <Settings className="h-5 w-5" />
+                <Button variant="ghost" size="icon" className="h-8 w-8" title="Einstellungen">
+                  <Settings className="h-4 w-4" />
                 </Button>
               </Link>
             </div>
           </div>
+
+          {/* ── Zeile 2: Werkzeug-Toolbar ─────────────────────────────────────── */}
+          <div className="flex items-center gap-1 py-1.5 overflow-x-auto scrollbar-none">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleImportFile}
+              accept=".xlsx,.xls"
+              className="hidden"
+            />
+
+            {/* Konfiguration */}
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => setTemplateDialogOpen(true)}
+              className="h-7 gap-1 px-2 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 shrink-0"
+              title="Wochenvorlagen verwalten"
+            >
+              <BookOpen className="h-3.5 w-3.5" />
+              <span className="hidden md:inline text-xs">Vorlagen</span>
+            </Button>
+
+            {isAdmin && (
+              <Button
+                variant="ghost" size="sm"
+                onClick={() => setStationMatrixOpen(true)}
+                className="h-7 gap-1 px-2 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/40 shrink-0"
+                title="Stationen & Funktionen verwalten"
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+                <span className="hidden md:inline text-xs">Stationen</span>
+              </Button>
+            )}
+
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => setAvailabilityOpen(true)}
+              className="h-7 gap-1 px-2 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 shrink-0"
+              title="Verfügbarkeit & Wunschfrei verwalten"
+            >
+              <CalendarX2 className="h-3.5 w-3.5" />
+              <span className="hidden md:inline text-xs">Verfügbarkeit</span>
+            </Button>
+
+            {isAdmin && (
+              <Button
+                variant="ghost" size="sm"
+                onClick={() => setStaffingTargetOpen(true)}
+                className="h-7 gap-1 px-2 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 shrink-0"
+                title="Besetzungsziele konfigurieren"
+              >
+                <Target className="h-3.5 w-3.5" />
+                <span className="hidden md:inline text-xs">Ziele</span>
+              </Button>
+            )}
+
+            {/* Separator */}
+            <div className="w-px h-4 bg-border mx-0.5 shrink-0" />
+
+            {/* Planung */}
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => setPlanningAssistantOpen(true)}
+              className="h-7 gap-1 px-2 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 shrink-0"
+              title="Planungshilfe öffnen"
+            >
+              <Lightbulb className="h-3.5 w-3.5" />
+              <span className="hidden md:inline text-xs">Planungshilfe</span>
+            </Button>
+
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => setBulkActionsOpen(true)}
+              className="h-7 gap-1 px-2 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-950/40 shrink-0"
+              title="Schnellaktionen: Abwesenheiten, Schichten und Wochen per Bulk einplanen"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              <span className="hidden md:inline text-xs">Schnellaktionen</span>
+            </Button>
+
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => setTimeSlotStaffingOpen(true)}
+              className="h-7 gap-1 px-2 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 shrink-0"
+              title="Besetzungscheck: Wer war in einem bestimmten Zeitfenster im Einsatz?"
+            >
+              <Clock className="h-3.5 w-3.5" />
+              <span className="hidden md:inline text-xs">Besetzungscheck</span>
+            </Button>
+
+            {/* Separator */}
+            <div className="w-px h-4 bg-border mx-0.5 shrink-0" />
+
+            {/* Datenaktionen — als Dropdown gebündelt */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost" size="sm"
+                  className="h-7 gap-1 px-2 shrink-0"
+                  title="Weitere Aktionen"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  <span className="hidden md:inline text-xs">Aktionen</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem onClick={() => setCopyWeekDialogOpen(true)}>
+                  <Copy className="h-4 w-4 mr-2" />
+                  Woche kopieren
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleImportClick}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Importieren
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportTemplate}>
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Export Excel (.xlsx)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportPDF}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  Export PDF
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setPrintDialogOpen(true)}>
+                  <Printer className="h-4 w-4 mr-2" />
+                  Drucken
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
         </div>
       </header>
 
