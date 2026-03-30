@@ -760,6 +760,8 @@ export const DEFAULT_GROUPS_FOOD: Omit<ProductGroup, 'productNames'>[] = [
     keywords: ['kinder', 'kids', 'junior', 'kindermenu', 'kindermenü', 'kindermenü', 'bambini'] },
   { id: 'takeaway',    name: 'Take Away',   category: 'food', color: 'orange',
     keywords: ['take away', 'takeaway', 'take-away', 'to go', 'mitnahme', 'mitnehmen', 'delivery', 'box'] },
+  { id: 'beilage',     name: 'Beilage / Extra', category: 'food', color: 'green',
+    keywords: ['beilage', 'extra', 'beilagen', 'supplement', 'zusatz', 'pommes', 'reis', 'gemüse', 'rösti', 'kartoffel', 'salat beilage', 'bread', 'brot'] },
   { id: 'dessert',   name: 'Dessert',     category: 'food', color: 'pink',
     keywords: ['dessert', 'tiramisu', 'panna cotta', 'sorbet', 'gelato', 'mousse', 'torte', 'kuchen', 'waffel', 'crêpe'] },
 ];
