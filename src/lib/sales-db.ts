@@ -204,6 +204,27 @@ export async function loadAltbestandCount(): Promise<number> {
 }
 
 /**
+ * Lädt WES-Kosten pro Produkt aus app_settings (produkte_cost_v1).
+ * Rückgabe: Map<lowercase_name → wes_per_unit>
+ * Bei fehlendem Eintrag oder wes=0 → 0 (kein Match).
+ */
+export async function loadProductWesMap(): Promise<Map<string, number>> {
+  try {
+    const costs = await loadProductCostsFromDB();
+    const map = new Map<string, number>();
+    for (const c of costs) {
+      if (c.name && c.wes != null) {
+        map.set(c.name.trim().toLowerCase(), c.wes);
+      }
+    }
+    return map;
+  } catch (err) {
+    console.warn('[sales-db] loadProductWesMap Fehler:', err);
+    return new Map();
+  }
+}
+
+/**
  * Lädt eine Map { normalisierter_produktname → kategorie } für das Produkt-Mapping.
  * Strategie:
  *   1. Supabase-Tabelle "products" (name, category) — falls vorhanden

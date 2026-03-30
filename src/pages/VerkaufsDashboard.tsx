@@ -29,6 +29,7 @@ import {
 import {
   loadProductSalesRows,
   loadAltbestandCount,
+  loadProductWesMap,
   sourceLabel,
   type ProductSalesRow,
 } from '@/lib/sales-db';
@@ -60,11 +61,12 @@ function srcColor(source: string | null): string {
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
 type SourceRow = {
-  source:    string | null;
-  label:     string;
-  qty:       number;
-  revenue:   number;
-  products:  number;
+  source:   string | null;
+  label:    string;
+  qty:      number;
+  revenue:  number;
+  wes:      number;
+  products: number;
 };
 
 type TopProduct = {
@@ -72,44 +74,56 @@ type TopProduct = {
   source:       string | null;
   qty:          number;
   revenue:      number;
+  wes:          number;
 };
 
 // ─── Aggregation ──────────────────────────────────────────────────────────────
 
-function aggregate(rows: ProductSalesRow[], topLimit: number) {
-  let totalQty = 0;
+function aggregate(
+  rows: ProductSalesRow[],
+  topLimit: number,
+  wesMap: Map<string, number>,
+) {
+  let totalQty     = 0;
   let totalRevenue = 0;
+  let totalWes     = 0;
   const allProducts = new Set<string>();
 
-  const srcMap   = new Map<string, SourceRow>();
-  const prodMap  = new Map<string, TopProduct>();
+  const srcMap  = new Map<string, SourceRow>();
+  const prodMap = new Map<string, TopProduct>();
 
   for (const r of rows) {
-    const qty = Number(r.quantity ?? 0);
-    const rev = Number(r.revenue  ?? 0);
-    const src = r.source ?? null;
-    const key = src ?? '__null__';
+    const qty      = Number(r.quantity ?? 0);
+    const rev      = Number(r.revenue  ?? 0);
+    const src      = r.source ?? null;
+    const key      = src ?? '__null__';
+    const nameKey  = (r.product_name ?? '').trim().toLowerCase();
+    const wesUnit  = wesMap.get(nameKey) ?? 0;
+    const wesRow   = qty * wesUnit;
 
     totalQty     += qty;
     totalRevenue += rev;
+    totalWes     += wesRow;
     if (r.product_name) allProducts.add(r.product_name);
 
-    // Aggregation nach Source
+    // Nach Source aggregieren
     if (!srcMap.has(key)) {
-      srcMap.set(key, { source: src, label: sourceLabel(src), qty: 0, revenue: 0, products: 0 });
+      srcMap.set(key, { source: src, label: sourceLabel(src), qty: 0, revenue: 0, wes: 0, products: 0 });
     }
     const s = srcMap.get(key)!;
     s.qty     += qty;
     s.revenue += rev;
+    s.wes     += wesRow;
 
-    // Produkt-Aggregation
+    // Pro Produkt aggregieren
     const pKey = r.product_name ?? '(unbekannt)';
     if (!prodMap.has(pKey)) {
-      prodMap.set(pKey, { product_name: pKey, source: src, qty: 0, revenue: 0 });
+      prodMap.set(pKey, { product_name: pKey, source: src, qty: 0, revenue: 0, wes: 0 });
     }
     const p = prodMap.get(pKey)!;
     p.qty     += qty;
     p.revenue += rev;
+    p.wes     += wesRow;
   }
 
   // Distinct Produkte pro Source
@@ -124,12 +138,12 @@ function aggregate(rows: ProductSalesRow[], topLimit: number) {
     s.products = srcProducts.get(key)?.size ?? 0;
   }
 
-  const bySource  = Array.from(srcMap.values()).sort((a, b) => b.revenue - a.revenue);
+  const bySource = Array.from(srcMap.values()).sort((a, b) => b.revenue - a.revenue);
   const topProducts = Array.from(prodMap.values())
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, topLimit);
 
-  return { totalQty, totalRevenue, totalProducts: allProducts.size, bySource, topProducts };
+  return { totalQty, totalRevenue, totalWes, totalProducts: allProducts.size, bySource, topProducts };
 }
 
 // ─── KPI-Karte ────────────────────────────────────────────────────────────────
@@ -174,6 +188,7 @@ export default function VerkaufsDashboard() {
   const [dbError,         setDbError]         = useState<string | null>(null);
   const [rawRows,         setRawRows]         = useState<ProductSalesRow[]>([]);
   const [altbestandCount, setAltbestandCount] = useState<number>(0);
+  const [wesMap,          setWesMap]          = useState<Map<string, number>>(new Map());
   const [srcFilter,       setSrcFilter]       = useState<string>('all');
   const [batchFilter,     setBatchFilter]     = useState<string>('all');
   const [topSearch,       setTopSearch]       = useState('');
@@ -182,12 +197,19 @@ export default function VerkaufsDashboard() {
     setLoading(true);
     setDbError(null);
     try {
-      const [rows, altCount] = await Promise.all([
+      const [rows, altCount, wMap] = await Promise.all([
         loadProductSalesRows(),
         loadAltbestandCount(),
+        loadProductWesMap(),
       ]);
       setRawRows(rows);
       setAltbestandCount(altCount);
+      setWesMap(wMap);
+
+      // Mapping-Statistik
+      const distinctNames = new Set(rows.map(r => (r.product_name ?? '').trim().toLowerCase()));
+      const matched = [...distinctNames].filter(n => wMap.has(n) && (wMap.get(n) ?? 0) > 0);
+      console.log(`[VerkaufsDashboard] WES-Mapping: ${matched.length} / ${distinctNames.size} Produkte gemappt (${wMap.size} in WES-DB)`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[VerkaufsDashboard] load error:', msg);
@@ -234,10 +256,13 @@ export default function VerkaufsDashboard() {
 
   // ── Aggregation ─────────────────────────────────────────────────────────────
 
-  const { totalQty, totalRevenue, totalProducts, bySource, topProducts } = useMemo(
-    () => aggregate(filteredRows, 50),
-    [filteredRows],
+  const { totalQty, totalRevenue, totalWes, totalProducts, bySource, topProducts } = useMemo(
+    () => aggregate(filteredRows, 50, wesMap),
+    [filteredRows, wesMap],
   );
+
+  const wesPercent = totalRevenue > 0 ? (totalWes / totalRevenue) * 100 : 0;
+  const hasWes     = totalWes > 0;
 
   const filteredTop = useMemo(() =>
     topProducts.filter(p =>
@@ -348,7 +373,7 @@ export default function VerkaufsDashboard() {
 
       {/* ── KPI-Karten ───────────────────────────────────────────────────────── */}
       {filteredRows.length > 0 && (
-        <div className="grid grid-cols-3 gap-3 md:gap-4">
+        <div className={`grid gap-3 md:gap-4 ${hasWes ? 'grid-cols-2 md:grid-cols-5' : 'grid-cols-3'}`}>
           <KpiCard
             label="Gesamtumsatz"
             value={fmtChf(totalRevenue)}
@@ -366,6 +391,23 @@ export default function VerkaufsDashboard() {
             icon={Package}
             color="violet"
           />
+          {hasWes && (
+            <>
+              <KpiCard
+                label="Gesamt WES CHF"
+                value={fmtChf(totalWes)}
+                icon={DollarSign}
+                color="muted"
+              />
+              <KpiCard
+                label="WES %"
+                value={`${wesPercent.toFixed(1)} %`}
+                icon={TrendingUp}
+                sub={`von ${fmtChf(totalRevenue)} Umsatz`}
+                color={wesPercent > 35 ? 'muted' : 'default'}
+              />
+            </>
+          )}
         </div>
       )}
 
@@ -490,14 +532,15 @@ export default function VerkaufsDashboard() {
                   <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Produkte</th>
                   <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Absatz</th>
                   <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Umsatz CHF</th>
+                  {hasWes && <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">WES CHF</th>}
+                  {hasWes && <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">WES %</th>}
                   <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Anteil</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40">
                 {bySource.map(s => {
-                  const share = totalRevenue > 0
-                    ? (s.revenue / totalRevenue) * 100
-                    : 0;
+                  const share    = totalRevenue > 0 ? (s.revenue / totalRevenue) * 100 : 0;
+                  const srcWesP  = s.revenue > 0 ? (s.wes / s.revenue) * 100 : 0;
                   return (
                     <tr key={s.label} className="hover:bg-muted/30 transition-colors">
                       <td className="px-4 py-2.5">
@@ -512,6 +555,12 @@ export default function VerkaufsDashboard() {
                       <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{s.products}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{fmtNum(s.qty)}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{fmtChf(s.revenue)}</td>
+                      {hasWes && <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{s.wes > 0 ? fmtChf(s.wes) : '–'}</td>}
+                      {hasWes && (
+                        <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
+                          {s.wes > 0 ? `${srcWesP.toFixed(1)} %` : '–'}
+                        </td>
+                      )}
                       <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
                         {share.toFixed(1)} %
                       </td>
@@ -556,22 +605,33 @@ export default function VerkaufsDashboard() {
                       <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Quelle</th>
                       <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Absatz</th>
                       <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Umsatz CHF</th>
+                      {hasWes && <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">WES CHF</th>}
+                      {hasWes && <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">WES %</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40">
-                    {filteredTop.map((p, i) => (
-                      <tr key={`${p.product_name}-${i}`} className="hover:bg-muted/30 transition-colors">
-                        <td className="px-4 py-2 text-muted-foreground tabular-nums text-xs">{i + 1}</td>
-                        <td className="px-4 py-2 font-medium max-w-[220px] truncate">{p.product_name}</td>
-                        <td className="px-4 py-2">
-                          <Badge variant="outline" className="text-[10px] font-normal">
-                            {sourceLabel(p.source)}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{fmtNum(p.qty)}</td>
-                        <td className="px-4 py-2 text-right tabular-nums font-semibold">{fmtChf(p.revenue)}</td>
-                      </tr>
-                    ))}
+                    {filteredTop.map((p, i) => {
+                      const pWesP = p.revenue > 0 ? (p.wes / p.revenue) * 100 : 0;
+                      return (
+                        <tr key={`${p.product_name}-${i}`} className="hover:bg-muted/30 transition-colors">
+                          <td className="px-4 py-2 text-muted-foreground tabular-nums text-xs">{i + 1}</td>
+                          <td className="px-4 py-2 font-medium max-w-[220px] truncate">{p.product_name}</td>
+                          <td className="px-4 py-2">
+                            <Badge variant="outline" className="text-[10px] font-normal">
+                              {sourceLabel(p.source)}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{fmtNum(p.qty)}</td>
+                          <td className="px-4 py-2 text-right tabular-nums font-semibold">{fmtChf(p.revenue)}</td>
+                          {hasWes && <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{p.wes > 0 ? fmtChf(p.wes) : '–'}</td>}
+                          {hasWes && (
+                            <td className="px-4 py-2 text-right tabular-nums text-muted-foreground text-xs">
+                              {p.wes > 0 ? `${pWesP.toFixed(1)} %` : '–'}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
