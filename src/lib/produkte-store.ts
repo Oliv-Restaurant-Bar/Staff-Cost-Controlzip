@@ -651,6 +651,23 @@ function filterByCategory(entries: ProductEntry[], category: 'food' | 'beverage'
   return entries.filter(e => (e.category ?? 'food') === category);
 }
 
+/** Lowercase key for case-insensitive grouping. */
+function normalizeName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/**
+ * Given multiple variants of the same product name (differing only in
+ * capitalisation), returns the "best" one: the variant with the most
+ * uppercase letters wins (e.g. "Fleisch Menu" beats "fleisch menu").
+ */
+function canonicalName(variants: string[]): string {
+  return variants.reduce((best, cur) => {
+    const score = (s: string) => [...s].filter(c => c >= 'A' && c <= 'Z').length;
+    return score(cur) >= score(best) ? cur : best;
+  });
+}
+
 export function getTopProducts(
   entries: ProductEntry[],
   month: string,
@@ -660,22 +677,24 @@ export function getTopProducts(
   category: 'food' | 'beverage' = 'food',
 ): RankedProduct[] {
   const byCat = filterByCategory(entries, category);
-  const agg: Record<string, { count: number; revenue: number }> = {};
+  const agg: Record<string, { count: number; revenue: number; variants: string[] }> = {};
   const filtered = month === 'alle' ? byCat : byCat.filter(e => e.month === month);
 
   for (const e of filtered) {
     if (shouldIgnoreProduct(e.name, ignoredByUser)) continue;
-    if (!agg[e.name]) agg[e.name] = { count: 0, revenue: 0 };
-    agg[e.name].count   += e.count;
-    agg[e.name].revenue += e.revenue;
+    const key = normalizeName(e.name);
+    if (!agg[key]) agg[key] = { count: 0, revenue: 0, variants: [] };
+    agg[key].count   += e.count;
+    agg[key].revenue += e.revenue;
+    if (!agg[key].variants.includes(e.name)) agg[key].variants.push(e.name);
   }
 
   return Object.entries(agg)
     .sort((a, b) => b[1][sortBy] - a[1][sortBy])
     .slice(0, limit)
-    .map(([name, vals], i) => ({
+    .map(([, vals], i) => ({
       rank: i + 1,
-      name,
+      name: canonicalName(vals.variants),
       count: vals.count,
       revenue: vals.revenue,
     }));
@@ -691,15 +710,17 @@ export function getFlopProducts(
   category: 'food' | 'beverage' = 'food',
 ): RankedProduct[] {
   const byCat = filterByCategory(entries, category);
-  const agg: Record<string, { count: number; revenue: number }> = {};
+  const agg: Record<string, { count: number; revenue: number; variants: string[] }> = {};
   const filtered = month === 'alle' ? byCat : byCat.filter(e => e.month === month);
 
   for (const e of filtered) {
     if (shouldIgnoreProduct(e.name, ignoredByUser)) continue;
     if (type_hasValue(e, sortBy)) {
-      if (!agg[e.name]) agg[e.name] = { count: 0, revenue: 0 };
-      agg[e.name].count   += e.count;
-      agg[e.name].revenue += e.revenue;
+      const key = normalizeName(e.name);
+      if (!agg[key]) agg[key] = { count: 0, revenue: 0, variants: [] };
+      agg[key].count   += e.count;
+      agg[key].revenue += e.revenue;
+      if (!agg[key].variants.includes(e.name)) agg[key].variants.push(e.name);
     }
   }
 
@@ -707,9 +728,9 @@ export function getFlopProducts(
     .filter(([, v]) => v[sortBy] > 0)
     .sort((a, b) => a[1][sortBy] - b[1][sortBy])
     .slice(0, limit)
-    .map(([name, vals], i) => ({
+    .map(([, vals], i) => ({
       rank: i + 1,
-      name,
+      name: canonicalName(vals.variants),
       count: vals.count,
       revenue: vals.revenue,
     }));
@@ -896,13 +917,15 @@ export function computeProductPerformance(
   const byCat    = entries.filter(e => (e.category ?? 'food') === category);
   const filtered = month === 'alle' ? byCat : byCat.filter(e => e.month === month);
 
-  const agg = new Map<string, { count: number; revenue: number }>();
+  const agg = new Map<string, { count: number; revenue: number; variants: string[] }>();
   for (const e of filtered) {
     if (shouldIgnoreProduct(e.name, ignoredByUser)) continue;
-    const cur = agg.get(e.name) ?? { count: 0, revenue: 0 };
+    const key = normalizeName(e.name);
+    const cur = agg.get(key) ?? { count: 0, revenue: 0, variants: [] };
     cur.count   += e.count;
     cur.revenue += e.revenue;
-    agg.set(e.name, cur);
+    if (!cur.variants.includes(e.name)) cur.variants.push(e.name);
+    agg.set(key, cur);
   }
 
   const totalRevenue = [...agg.values()].reduce((s, v) => s + v.revenue, 0);
@@ -913,7 +936,8 @@ export function computeProductPerformance(
   }
 
   const rows: ProductPerformanceRow[] = [];
-  for (const [name, vals] of agg) {
+  for (const [, vals] of agg) {
+    const name        = canonicalName(vals.variants);
     const cost        = costMap.get(name.toLowerCase());
     const hasCost     = !!(cost && (cost.bruttoPrice > 0 || cost.wes > 0));
     const bruttoPrice = cost?.bruttoPrice ?? 0;
