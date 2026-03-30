@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef } from 'react';
 import { format, parse } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import {
   TrendingUp, TrendingDown, BarChart3, ChevronDown, Tag,
-  Info, AlertCircle, ArrowUpDown,
+  Info, AlertCircle, ArrowUpDown, Settings2, Plus, Trash2, X, Check, Pencil,
 } from 'lucide-react';
 import {
   ProductGroup, ProductEntry, ProductCostEntry,
@@ -119,6 +119,187 @@ function KpiCard({
   );
 }
 
+// ── Color palette ─────────────────────────────────────────────────────────────
+
+const COLORS = ['orange','yellow','red','blue','green','teal','pink','purple','amber','cyan','brown','grey'] as const;
+type GColor = typeof COLORS[number];
+
+// ── Group Manager Modal ────────────────────────────────────────────────────────
+
+interface GroupManagerProps {
+  groups: ProductGroup[];
+  category: 'food' | 'beverage';
+  onSave: (groups: ProductGroup[]) => void;
+  onClose: () => void;
+}
+
+function GroupManagerModal({ groups, category, onSave, onClose }: GroupManagerProps) {
+  const catGroups = groups.filter(g => g.category === category || g.category === 'all');
+  const otherGroups = groups.filter(g => g.category !== category && g.category !== 'all');
+
+  const [draft, setDraft] = useState<ProductGroup[]>(catGroups);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editKw, setEditKw] = useState('');
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  const startEdit = (g: ProductGroup) => {
+    setEditingId(g.id);
+    setEditName(g.name);
+    setEditKw(g.keywords.join(', '));
+    setTimeout(() => nameRef.current?.focus(), 50);
+  };
+
+  const commitEdit = () => {
+    if (!editingId) return;
+    setDraft(d => d.map(g => g.id === editingId
+      ? { ...g, name: editName.trim() || g.name, keywords: editKw.split(',').map(k => k.trim().toLowerCase()).filter(Boolean) }
+      : g
+    ));
+    setEditingId(null);
+  };
+
+  const setColor = (id: string, color: GColor) =>
+    setDraft(d => d.map(g => g.id === id ? { ...g, color } : g));
+
+  const deleteGroup = (id: string) => setDraft(d => d.filter(g => g.id !== id));
+
+  const addGroup = () => {
+    const id = `custom_${Date.now()}`;
+    const newGroup: ProductGroup = {
+      id, name: 'Neue Gruppe', category, color: 'grey', productNames: [], keywords: [],
+    };
+    setDraft(d => [...d, newGroup]);
+    setTimeout(() => startEdit(newGroup), 10);
+  };
+
+  const handleSave = () => {
+    onSave([...otherGroups, ...draft]);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-xl flex flex-col" style={{ maxHeight: '85vh' }}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+          <div>
+            <h2 className="text-sm font-bold flex items-center gap-2">
+              <Settings2 className="h-4 w-4 text-primary" />
+              Gruppen verwalten — {category === 'food' ? 'Food' : 'Beverage'}
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Klicke auf eine Gruppe zum Bearbeiten. Keywords steuern die automatische Erkennung.
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-md hover:bg-muted text-muted-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* List */}
+        <div className="overflow-y-auto flex-1 p-4 space-y-2">
+          {draft.map(g => {
+            const c = gc(g.color);
+            const isEditing = editingId === g.id;
+            return (
+              <div key={g.id}
+                className={cn('rounded-lg border transition-colors', isEditing ? 'border-primary bg-primary/5' : 'border-border bg-card')}>
+                <div className="flex items-center gap-3 px-3 py-2">
+                  {/* Color dot (clickable) */}
+                  <div className="relative group/clr shrink-0">
+                    <span className={cn('w-4 h-4 rounded-full block cursor-pointer ring-2 ring-offset-1 ring-transparent group-hover/clr:ring-border', c.dot)} />
+                    <div className="absolute left-0 top-6 z-10 hidden group-hover/clr:flex flex-wrap gap-1 bg-popover border border-border rounded-lg p-2 shadow-xl w-[152px]">
+                      {COLORS.map(col => (
+                        <button key={col} onClick={() => setColor(g.id, col)}
+                          className={cn('w-5 h-5 rounded-full transition-transform hover:scale-110',
+                            gc(col).dot,
+                            g.color === col && 'ring-2 ring-offset-1 ring-primary')} />
+                      ))}
+                    </div>
+                  </div>
+
+                  {isEditing ? (
+                    <div className="flex-1 space-y-1.5">
+                      <input ref={nameRef} value={editName}
+                        onChange={e => setEditName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditingId(null); }}
+                        className="w-full h-7 text-xs rounded border border-border bg-background px-2 focus:outline-none focus:ring-1 focus:ring-primary font-semibold" />
+                      <input value={editKw}
+                        onChange={e => setEditKw(e.target.value)}
+                        placeholder="Keywords, kommagetrennt…"
+                        className="w-full h-6 text-[10px] rounded border border-border bg-background px-2 focus:outline-none focus:ring-1 focus:ring-primary text-muted-foreground" />
+                    </div>
+                  ) : (
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold truncate">{g.name}</p>
+                      {g.keywords.length > 0 && (
+                        <p className="text-[10px] text-muted-foreground truncate">
+                          {g.keywords.slice(0, 5).join(', ')}{g.keywords.length > 5 ? ` +${g.keywords.length - 5}` : ''}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {isEditing ? (
+                      <>
+                        <button onClick={commitEdit}
+                          className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-950/40 text-emerald-600 transition-colors">
+                          <Check className="h-3.5 w-3.5" />
+                        </button>
+                        <button onClick={() => setEditingId(null)}
+                          className="p-1 rounded hover:bg-muted text-muted-foreground transition-colors">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => startEdit(g)}
+                          className="p-1 rounded hover:bg-muted text-muted-foreground transition-colors">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button onClick={() => deleteGroup(g.id)}
+                          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          <button onClick={addGroup}
+            className="w-full flex items-center justify-center gap-2 h-9 rounded-lg border border-dashed border-border hover:border-primary hover:bg-primary/5 text-xs text-muted-foreground hover:text-primary transition-colors">
+            <Plus className="h-3.5 w-3.5" />
+            Neue Gruppe erstellen
+          </button>
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-border shrink-0 flex items-center justify-between gap-3">
+          <p className="text-[10px] text-muted-foreground">
+            Hover über den Farbpunkt zum Ändern · Keywords steuern die automatische Zuweisung
+          </p>
+          <div className="flex gap-2">
+            <button onClick={onClose}
+              className="px-3 py-1.5 text-xs rounded-md border border-border hover:bg-muted transition-colors">
+              Abbrechen
+            </button>
+            <button onClick={handleSave}
+              className="px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-semibold">
+              Speichern
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function GruppenAnalyse({
@@ -129,6 +310,7 @@ export default function GruppenAnalyse({
   const [showProductList, setShowProd]  = useState(true);
   const [filterGroupId, setFilterGroup] = useState<string | null>(null);
   const [productSortAsc, setProdAsc]    = useState(false);
+  const [showManager, setShowManager]   = useState(false);
 
   // ── Data computation ─────────────────────────────────────────────────────
   const perf = useMemo(() =>
@@ -266,6 +448,20 @@ export default function GruppenAnalyse({
         />
       </div>
 
+      {/* ── Gruppen-Manager Modal ────────────────────────────────────────────── */}
+      {showManager && (
+        <GroupManagerModal
+          groups={groups}
+          category={category}
+          onSave={updated => {
+            onGroupsChange(updated);
+            saveProductGroupsToDB(updated);
+            setShowManager(false);
+          }}
+          onClose={() => setShowManager(false)}
+        />
+      )}
+
       {/* ── Kategorien-Tabelle ───────────────────────────────────────────────── */}
       <div className="rounded-xl border border-border overflow-hidden">
         <div className="bg-muted/40 px-4 py-2.5 border-b border-border flex items-center justify-between">
@@ -274,12 +470,20 @@ export default function GruppenAnalyse({
             <span className="text-sm font-semibold">Gruppen-Performance</span>
             <span className="text-xs text-muted-foreground">· {groupPerf.length} aktive Gruppen</span>
           </div>
-          {filterGroupId && (
-            <button onClick={() => setFilterGroup(null)}
-              className="text-[10px] text-primary underline-offset-2 hover:underline">
-              Filter zurücksetzen
+          <div className="flex items-center gap-2">
+            {filterGroupId && (
+              <button onClick={() => setFilterGroup(null)}
+                className="text-[10px] text-primary underline-offset-2 hover:underline">
+                Filter zurücksetzen
+              </button>
+            )}
+            <button
+              onClick={() => setShowManager(true)}
+              className="flex items-center gap-1 h-7 px-2.5 rounded-md text-xs border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
+              <Settings2 className="h-3.5 w-3.5" />
+              Gruppen
             </button>
-          )}
+          </div>
         </div>
 
         {/* Group rows */}

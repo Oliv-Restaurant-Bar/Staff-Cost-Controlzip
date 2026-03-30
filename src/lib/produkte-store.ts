@@ -746,12 +746,10 @@ export const DEFAULT_GROUPS_FOOD: Omit<ProductGroup, 'productNames'>[] = [
     keywords: ['pasta', 'penne', 'rigatoni', 'spaghetti', 'tagliatelle', 'linguine', 'fettuccine', 'gnocchi', 'risotto', 'ravioli', 'tortellini'] },
   { id: 'fleisch',   name: 'Fleisch',     category: 'food', color: 'red',
     keywords: ['steak', 'schnitzel', 'poulet', 'hähnchen', 'kalb', 'rind', 'lamm', 'schwein', 'burger', 'ossobuco', 'entrecôte', 'entrecote'] },
-  { id: 'fisch',     name: 'Fisch/Meer',  category: 'food', color: 'blue',
+  { id: 'fisch',     name: 'Fisch',       category: 'food', color: 'blue',
     keywords: ['fisch', 'lachs', 'thon', 'gamberi', 'crevetten', 'garnelen', 'calamari', 'muschel', 'branzino', 'dorade', 'seezunge', 'wolfsbarsch'] },
-  { id: 'salate',    name: 'Salate',      category: 'food', color: 'green',
-    keywords: ['salat', 'caesar', 'insalata'] },
   { id: 'vorspeise', name: 'Vorspeisen',  category: 'food', color: 'teal',
-    keywords: ['antipasto', 'bruschetta', 'carpaccio', 'suppe', 'cremesuppe', 'minestrone', 'vorspeise', 'starter'] },
+    keywords: ['antipasto', 'bruschetta', 'carpaccio', 'suppe', 'cremesuppe', 'minestrone', 'vorspeise', 'starter', 'salat', 'caesar', 'insalata'] },
   { id: 'dessert',   name: 'Dessert',     category: 'food', color: 'pink',
     keywords: ['dessert', 'tiramisu', 'panna cotta', 'sorbet', 'gelato', 'mousse', 'torte', 'kuchen', 'waffel', 'crêpe'] },
 ];
@@ -777,17 +775,41 @@ export function initDefaultProductGroups(): ProductGroup[] {
   ];
 }
 
+function migrateLegacyGroups(stored: ProductGroup[]): ProductGroup[] {
+  const map = new Map(stored.map(g => [g.id, g]));
+  // Migrate: merge old 'salate' group into 'vorspeise'
+  if (map.has('salate')) {
+    const salate = map.get('salate')!;
+    const vorspeise = map.get('vorspeise');
+    if (vorspeise) {
+      const merged = Array.from(new Set([...vorspeise.productNames, ...salate.productNames]));
+      map.set('vorspeise', { ...vorspeise, productNames: merged });
+    }
+    map.delete('salate');
+  }
+  // Rename 'Fisch/Meer' → 'Fisch'
+  if (map.has('fisch')) {
+    const f = map.get('fisch')!;
+    if (f.name === 'Fisch/Meer') map.set('fisch', { ...f, name: 'Fisch' });
+  }
+  // Ensure all current defaults exist
+  for (const def of [...DEFAULT_GROUPS_FOOD, ...DEFAULT_GROUPS_BEVERAGE]) {
+    if (!map.has(def.id)) map.set(def.id, { ...def, productNames: [] });
+    else {
+      // Sync keywords from defaults (user can still override name/color)
+      const existing = map.get(def.id)!;
+      map.set(def.id, { ...existing, keywords: def.keywords });
+    }
+  }
+  return Array.from(map.values());
+}
+
 export function loadProductGroups(): ProductGroup[] {
   try {
     const raw = localStorage.getItem(GROUP_KEY);
     if (!raw) return initDefaultProductGroups();
     const stored: ProductGroup[] = JSON.parse(raw);
-    // Ensure all default groups exist (for migration / new defaults)
-    const map = new Map(stored.map(g => [g.id, g]));
-    for (const def of [...DEFAULT_GROUPS_FOOD, ...DEFAULT_GROUPS_BEVERAGE]) {
-      if (!map.has(def.id)) map.set(def.id, { ...def, productNames: [] });
-    }
-    return Array.from(map.values());
+    return migrateLegacyGroups(stored);
   } catch { return initDefaultProductGroups(); }
 }
 
@@ -800,12 +822,9 @@ export async function loadProductGroupsFromDB(): Promise<ProductGroup[]> {
     const result = await settingsGet<ProductGroup[]>(GROUP_KEY);
     if (!result.found) return loadProductGroups();
     const stored = result.value;
-    localStorage.setItem(GROUP_KEY, JSON.stringify(stored));
-    const map = new Map(stored.map(g => [g.id, g]));
-    for (const def of [...DEFAULT_GROUPS_FOOD, ...DEFAULT_GROUPS_BEVERAGE]) {
-      if (!map.has(def.id)) map.set(def.id, { ...def, productNames: [] });
-    }
-    return Array.from(map.values());
+    const migrated = migrateLegacyGroups(stored);
+    localStorage.setItem(GROUP_KEY, JSON.stringify(migrated));
+    return migrated;
   } catch { return loadProductGroups(); }
 }
 
