@@ -500,21 +500,50 @@ export function mergeProdukteData(
   existing: ProductEntry[],
   incoming: ProductEntry[],
   type: 'anzahl' | 'umsatz',
+  overwriteMonths: string[] = [],
 ): ProductEntry[] {
-  const merged = [...existing];
+  // Monate die überschrieben werden sollen: alle vorhandenen Einträge für
+  // diese Monat+Kategorie-Kombination werden zuerst vollständig gelöscht.
+  // So bleiben keine veralteten Produkte übrig, wenn sich die Auswahl ändert.
+  const overwriteSet = new Set(overwriteMonths);
+  const incomingCategories = new Set(incoming.map(e => e.category ?? 'food'));
+
+  let base: ProductEntry[];
+  if (overwriteSet.size > 0) {
+    base = existing.filter(e => {
+      const cat = e.category ?? 'food';
+      // Behalte den Eintrag nur, wenn er NICHT in einem zu überschreibenden
+      // Monat + einer der eingehenden Kategorien liegt.
+      if (overwriteSet.has(e.month) && incomingCategories.has(cat)) return false;
+      return true;
+    });
+  } else {
+    base = [...existing];
+  }
+
+  // Eingehende Einträge einfügen.
+  // Für Monate ohne Überschreiben: nur den spezifischen Feld-Wert (count/revenue)
+  // name-basiert aktualisieren (ursprüngliches Verhalten für neue Monate).
   for (const inc of incoming) {
-    const idx = merged.findIndex(
-      e => e.name === inc.name && e.month === inc.month && (e.category ?? 'food') === (inc.category ?? 'food'),
-    );
-    if (idx >= 0) {
-      if (type === 'anzahl') merged[idx].count   = inc.count;
-      else                    merged[idx].revenue = inc.revenue;
-      merged[idx].category = inc.category ?? 'food';
+    const incCat = inc.category ?? 'food';
+    if (overwriteSet.has(inc.month) && incomingCategories.has(incCat)) {
+      // Monat wurde vollständig geleert → direkt einfügen
+      base.push({ ...inc, category: incCat });
     } else {
-      merged.push({ ...inc, category: inc.category ?? 'food' });
+      // Normaler name-basierter Merge für Monate ohne Überschreiben
+      const idx = base.findIndex(
+        e => e.name === inc.name && e.month === inc.month && (e.category ?? 'food') === incCat,
+      );
+      if (idx >= 0) {
+        if (type === 'anzahl') base[idx].count   = inc.count;
+        else                    base[idx].revenue = inc.revenue;
+        base[idx].category = incCat;
+      } else {
+        base.push({ ...inc, category: incCat });
+      }
     }
   }
-  return merged;
+  return base;
 }
 
 // ── Ranking-Berechnung ─────────────────────────────────────────────────────────

@@ -442,19 +442,31 @@ export default function ProdukteSeite() {
     parsed: import('@/lib/produkte-store').ProductEntry[],
     type: 'anzahl' | 'umsatz',
     fileName: string,
+    overwriteMonths: string[] = [],
   ) => {
-    const merged = mergeProdukteData(data?.entries ?? [], parsed, type);
+    // Wenn overwriteMonths übergeben wird: betroffene Monate werden zuerst
+    // vollständig geleert, dann neu befüllt → keine veralteten Einträge bleiben.
+    const merged = mergeProdukteData(data?.entries ?? [], parsed, type, overwriteMonths);
     const newData: ProdukteData = { entries: merged, importedAt: new Date().toISOString(), source: 'combined' };
     saveProdukteDataToDB(newData);
     setData(newData);
+    const overwriteInfo = overwriteMonths.length > 0
+      ? ` (${overwriteMonths.length} Monat${overwriteMonths.length > 1 ? 'e' : ''} überschrieben)`
+      : '';
     toast.success(`${type === 'anzahl' ? 'Anzahl' : 'Umsatz'}-Daten importiert`, {
-      description: `${parsed.length} Einträge aus ${fileName}`,
+      description: `${parsed.length} Einträge aus ${fileName}${overwriteInfo}`,
     });
   };
 
   const confirmImport = () => {
     if (!pendingImport) return;
-    applyImport(pendingImport.parsed, pendingImport.type, pendingImport.fileName);
+    // Überlappende Monate vollständig ersetzen (nicht nur name-basiert mergen)
+    applyImport(
+      pendingImport.parsed,
+      pendingImport.type,
+      pendingImport.fileName,
+      pendingImport.overlappingMonths,
+    );
     setPendingImport(null);
   };
 
@@ -1529,14 +1541,15 @@ export default function ProdukteSeite() {
                     <span className="font-medium text-amber-800 dark:text-amber-200">
                       {formatMonthLong(m)}
                     </span>
-                    <span className="text-amber-600 dark:text-amber-400">wird überschrieben</span>
+                    <span className="text-amber-600 dark:text-amber-400">→ vollständig ersetzen</span>
                   </li>
                 ))}
               </ul>
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Willst du die bestehenden Daten für diese Monate durch die neuen Werte aus der Datei ersetzen?
+              Beim Überschreiben werden <strong className="text-foreground">alle bestehenden Einträge</strong> dieser
+              Monate gelöscht und durch die Daten aus der Datei ersetzt. So bleiben keine veralteten Produkte übrig.
             </p>
 
             <div className="flex gap-3 justify-end">
@@ -1544,7 +1557,7 @@ export default function ProdukteSeite() {
                 Abbrechen
               </Button>
               <Button size="sm" className="bg-amber-500 hover:bg-amber-600 text-white" onClick={confirmImport}>
-                Trotzdem importieren & überschreiben
+                Überschreiben & importieren
               </Button>
             </div>
           </div>
