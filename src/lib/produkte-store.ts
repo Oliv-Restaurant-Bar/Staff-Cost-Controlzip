@@ -1081,15 +1081,23 @@ export async function syncWesToProduktKosten(costs: ProductCostEntry[]): Promise
 // ── WES-Seed: vordefinierte Einzelwerte ───────────────────────────────────────
 
 const WES_SEED: Omit<ProductCostEntry, 'bruttoPrice' | 'nettoPrice'>[] = [
-  { name: 'Bao Buns Poulet',              category: 'food', wes: 3.572, wesQ: 25.74 },
-  { name: 'Blattsalat TA',                category: 'food', wes: 1.50,  wesQ: 16.22 },
-  { name: 'Burrata',                      category: 'food', wes: 4.28,  wesQ: 25.70 },
-  { name: 'Der Grieche TA',               category: 'food', wes: 3.411, wesQ: 24.58 },
-  { name: 'Gemüse im Tempurateig',        category: 'food', wes: 4.017, wesQ: 43.42 },
-  { name: 'Limone Minze Ravioli',         category: 'food', wes: 4.79,  wesQ: 17.86 },
-  { name: 'Limonen Minze Ricotta Ravioli',category: 'food', wes: 4.79,  wesQ: 17.86 },
-  { name: 'Sushi/Sashimi Teller',         category: 'food', wes: 3.375, wesQ: 0     },
-  { name: 'Glace 1 Kugel',               category: 'food', wes: 2.55,  wesQ: 55.13 },
+  // Food
+  { name: 'Bao Buns Poulet',              category: 'food',     wes: 3.572, wesQ: 25.74 },
+  { name: 'Blattsalat TA',                category: 'food',     wes: 1.50,  wesQ: 16.22 },
+  { name: 'Burrata',                      category: 'food',     wes: 4.28,  wesQ: 25.70 },
+  { name: 'Der Grieche TA',               category: 'food',     wes: 3.411, wesQ: 24.58 },
+  { name: 'Gemüse im Tempurateig',        category: 'food',     wes: 4.017, wesQ: 43.42 },
+  { name: 'Limone Minze Ravioli',         category: 'food',     wes: 4.79,  wesQ: 17.86 },
+  { name: 'Limonen Minze Ricotta Ravioli',category: 'food',     wes: 4.79,  wesQ: 17.86 },
+  { name: 'Sushi/Sashimi Teller',         category: 'food',     wes: 3.375, wesQ: 0     },
+  { name: 'Glace 1 Kugel',               category: 'food',     wes: 2.55,  wesQ: 55.13 },
+  // Beverage
+  { name: 'Aperol Spritz',               category: 'beverage', wes: 3.20,  wesQ: 22.0  },
+  { name: 'Hugo',                         category: 'beverage', wes: 2.80,  wesQ: 20.0  },
+  { name: 'Heineken 0.33',               category: 'beverage', wes: 1.50,  wesQ: 25.0  },
+  { name: 'Espresso',                     category: 'beverage', wes: 0.35,  wesQ: 12.0  },
+  { name: 'Cappuccino',                   category: 'beverage', wes: 0.60,  wesQ: 18.0  },
+  { name: 'Coca Cola 0.33',              category: 'beverage', wes: 0.90,  wesQ: 20.0  },
 ];
 
 /**
