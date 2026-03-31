@@ -34,9 +34,15 @@ import {
   loadProductSalesRows,
   loadAltbestandCount,
   loadProductWesMap,
+  loadProductCategoryMap,
   sourceLabel,
   type ProductSalesRow,
 } from '@/lib/sales-db';
+
+const MONTH_NAMES = [
+  '', 'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+];
 
 // ─── Formatierung ─────────────────────────────────────────────────────────────
 
@@ -188,32 +194,42 @@ function KpiCard({
 // ─── Hauptseite ───────────────────────────────────────────────────────────────
 
 export default function VerkaufsDashboard() {
+  const now = new Date();
   const [loading,         setLoading]         = useState(true);
   const [dbError,         setDbError]         = useState<string | null>(null);
   const [rawRows,         setRawRows]         = useState<ProductSalesRow[]>([]);
   const [altbestandCount, setAltbestandCount] = useState<number>(0);
   const [wesMap,          setWesMap]          = useState<Map<string, number>>(new Map());
+  const [categoryMap,     setCategoryMap]     = useState<Map<string, string>>(new Map());
   const [srcFilter,       setSrcFilter]       = useState<string>('all');
   const [batchFilter,     setBatchFilter]     = useState<string>('all');
   const [topSearch,       setTopSearch]       = useState('');
+
+  // ── Datum- & Kategorie-Filter ────────────────────────────────────────────────
+  const [selectedMonth,    setSelectedMonth]    = useState<number>(now.getMonth() + 1);
+  const [selectedYear,     setSelectedYear]     = useState<number>(now.getFullYear());
+  const [selectedCategory, setSelectedCategory] = useState<string>('Alle');
 
   const load = useCallback(async () => {
     setLoading(true);
     setDbError(null);
     try {
-      const [rows, altCount, wMap] = await Promise.all([
+      const [rows, altCount, wMap, catMap] = await Promise.all([
         loadProductSalesRows(),
         loadAltbestandCount(),
         loadProductWesMap(),
+        loadProductCategoryMap(),
       ]);
       setRawRows(rows);
       setAltbestandCount(altCount);
       setWesMap(wMap);
+      setCategoryMap(catMap);
 
       // Mapping-Statistik
       const distinctNames = new Set(rows.map(r => (r.product_name ?? '').trim().toLowerCase()));
       const matched = [...distinctNames].filter(n => wMap.has(n) && (wMap.get(n) ?? 0) > 0);
       console.log(`[VerkaufsDashboard] WES-Mapping: ${matched.length} / ${distinctNames.size} Produkte gemappt (${wMap.size} in WES-DB)`);
+      console.log(`[VerkaufsDashboard] Kategorie-Map: ${catMap.size} Einträge geladen`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[VerkaufsDashboard] load error:', msg);
@@ -244,10 +260,45 @@ export default function VerkaufsDashboard() {
     return Array.from(set).sort((a, b) => b.localeCompare(a));
   }, [rawRows]);
 
+  const availableYears = useMemo(() => {
+    const set = new Set<number>();
+    for (const r of rawRows) {
+      if (r.sale_date && r.sale_date.length >= 4) {
+        const y = parseInt(r.sale_date.substring(0, 4), 10);
+        if (!isNaN(y)) set.add(y);
+      }
+    }
+    return Array.from(set).sort((a, b) => b - a);
+  }, [rawRows]);
+
   // ── Gefilterte Zeilen ──────────────────────────────────────────────────────
 
   const filteredRows = useMemo(() => {
     let rows = rawRows;
+
+    // Datumsfilter (Monat + Jahr)
+    const mm = String(selectedMonth).padStart(2, '0');
+    const yyyy = String(selectedYear);
+    rows = rows.filter(r => {
+      if (!r.sale_date || r.sale_date.length < 7) return false;
+      return r.sale_date.substring(0, 4) === yyyy && r.sale_date.substring(5, 7) === mm;
+    });
+
+    // Kategorie-Filter
+    if (selectedCategory !== 'Alle') {
+      rows = rows.filter(r => {
+        const nameKey = (r.product_name ?? '').trim().toLowerCase();
+        const cat = categoryMap.get(nameKey) ?? '';
+        return cat.toLowerCase() === selectedCategory.toLowerCase();
+      });
+    }
+
+    // Debug-Logs
+    console.log(`[DASHBOARD] month/year filter: ${mm}/${yyyy}`);
+    console.log(`[DASHBOARD] category filter: ${selectedCategory}`);
+    console.log(`[DASHBOARD] rows after filter: ${rows.length}`);
+
+    // Quelle + Batch
     if (srcFilter !== 'all') {
       const matchNull = srcFilter === '__null__';
       rows = rows.filter(r => matchNull ? !r.source : r.source === srcFilter);
@@ -256,7 +307,7 @@ export default function VerkaufsDashboard() {
       rows = rows.filter(r => r.import_batch === batchFilter);
     }
     return rows;
-  }, [rawRows, srcFilter, batchFilter]);
+  }, [rawRows, selectedMonth, selectedYear, selectedCategory, categoryMap, srcFilter, batchFilter]);
 
   // ── Aggregation ─────────────────────────────────────────────────────────────
 
@@ -519,6 +570,66 @@ export default function VerkaufsDashboard() {
             </>
           )}
         </div>
+      )}
+
+      {/* ── Datum + Kategorie Filter ────────────────────────────────────────── */}
+      {rawRows.length > 0 && (
+        <Card className="bg-muted/40 border-primary/20">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-3 flex-wrap">
+              <Filter className="h-3.5 w-3.5 text-primary/70 shrink-0" />
+
+              <span className="text-xs font-medium text-muted-foreground">Monat:</span>
+              <Select
+                value={String(selectedMonth)}
+                onValueChange={v => setSelectedMonth(Number(v))}
+              >
+                <SelectTrigger className="h-8 w-36 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                    <SelectItem key={m} value={String(m)}>
+                      {MONTH_NAMES[m]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <span className="text-xs font-medium text-muted-foreground">Jahr:</span>
+              <Select
+                value={String(selectedYear)}
+                onValueChange={v => setSelectedYear(Number(v))}
+              >
+                <SelectTrigger className="h-8 w-28 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(availableYears.length > 0 ? availableYears : [now.getFullYear()]).map(y => (
+                    <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <span className="text-xs font-medium text-muted-foreground">Kategorie:</span>
+              <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                <SelectTrigger className="h-8 w-32 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Alle">Alle</SelectItem>
+                  <SelectItem value="Food">Food</SelectItem>
+                  <SelectItem value="Beverage">Beverage</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                {fmtNum(filteredRows.length)} Zeilen · {MONTH_NAMES[selectedMonth]} {selectedYear}
+                {selectedCategory !== 'Alle' && ` · ${selectedCategory}`}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* ── Filter-Leiste ────────────────────────────────────────────────────── */}
