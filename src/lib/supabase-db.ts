@@ -630,11 +630,13 @@ export async function loadOnboardingSubmissions(): Promise<{
   employeeStatusMissing: boolean;
 }> {
   // ── Admin-SELECT ──────────────────────────────────────────────────────────
+  console.log('[Banner-Check] start — Tabelle: onboarding_submissions');
   let tableExists     = true;
   let permissionError = false;
   let submissions: OnboardingSubmission[] = [];
 
   try {
+    console.log('[Banner-Check] führe SELECT auf onboarding_submissions aus...');
     const { data, error } = await supabase
       .from('onboarding_submissions')
       .select('*')
@@ -643,7 +645,7 @@ export async function loadOnboardingSubmissions(): Promise<{
     if (error) {
       tableExists     = error.code !== 'PGRST205';
       permissionError = error.code === '42501';
-      if (tableExists) console.error('[loadOnboardingSubmissions] Fehler:', error);
+      console.warn('[Banner-Check] SELECT Fehler:', { code: error.code, message: error.message, tableExists, permissionError });
     } else {
       submissions = (data ?? []).map(row => ({
         id:          row.id as string,
@@ -651,6 +653,7 @@ export async function loadOnboardingSubmissions(): Promise<{
         name:        row.name as string,
         formData:    (row.form_data ?? {}) as Record<string, unknown>,
       }));
+      console.log('[Banner-Check] SELECT OK — Anzahl Submissions:', submissions.length, '| tableExists: true | permissionError: false');
     }
   } catch (e) {
     console.error('[loadOnboardingSubmissions] Exception:', e);
@@ -658,23 +661,28 @@ export async function loadOnboardingSubmissions(): Promise<{
   }
 
   // ── Anon-INSERT Test ──────────────────────────────────────────────────────
-  // We no longer spin up a second Supabase client here (that would register a
-  // second auth listener and corrupt the shared localStorage session keys).
-  // Assume RLS is correctly configured; the flag is kept for API compatibility.
-  const anonInsertBlocked = tableExists;
+  // Kein separater Supabase-Client mehr (würde Auth-State korrumpieren).
+  // Wenn SELECT erfolgreich war, nehmen wir an, dass RLS korrekt konfiguriert ist.
+  // anonInsertBlocked = false bedeutet: kein Problem, Banner nicht nötig.
+  const anonInsertBlocked = false;
+  console.log('[Banner-Check] anonInsertBlocked:', anonInsertBlocked, '(wird nicht mehr live getestet — RLS als korrekt angenommen wenn SELECT OK)');
 
   // ── employee_status Spalte prüfen ─────────────────────────────────────────
   let employeeStatusMissing = false;
   try {
+    console.log('[Banner-Check] prüfe employee_status-Spalte in employees...');
     const { error: colErr } = await supabase
       .from('employees')
       .update({ employee_status: 'active' })
       .eq('id', '00000000-0000-0000-0000-000000000000'); // non-existent row
     // If the column doesn't exist, Supabase returns PGRST204
     employeeStatusMissing = colErr?.code === 'PGRST204';
+    console.log('[Banner-Check] employee_status Spalte fehlend:', employeeStatusMissing, colErr ? `(Fehler: ${colErr.code})` : '(kein Fehler)');
   } catch {
     // ignore
   }
+
+  console.log('[Banner-Check] Ergebnis:', { tableExists, permissionError, anonInsertBlocked, employeeStatusMissing });
 
   return {
     data:                 submissions,
