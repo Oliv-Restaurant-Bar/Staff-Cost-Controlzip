@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
+import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
 import { PlanVsIstGrid } from '@/components/schedule-planner/PlanVsIstGrid';
@@ -931,16 +932,21 @@ const SchedulePlanner = () => {
       let matchedCount = 0;
       const unmatched = new Set<string>();
 
+      const debugNames = ['sadete', 'momand'];
       for (const entry of entries) {
-        const employee = employees.find(emp => {
-          const a = emp.name.toLowerCase();
-          const b = entry.name.toLowerCase();
-          if (a === b) return true;
-          const ap = a.split(' ').filter(p => p.length > 1);
-          const bp = b.split(' ').filter(p => p.length > 1);
-          return ap.some(p => bp.some(q => p.includes(q) || q.includes(p)));
-        });
-        if (!employee) { unmatched.add(entry.name); continue; }
+        const isDebug = debugNames.some(d => entry.name.toLowerCase().includes(d));
+        if (isDebug) {
+          console.log('[Ist-Import] Verarbeite Eintrag:', { name: entry.name, date: entry.date, hours: entry.hours });
+        }
+        const { employee, matchStep } = matchEmployeeByName(entry.name, employees, isDebug);
+        if (!employee) {
+          unmatched.add(entry.name);
+          if (isDebug) console.warn('[Ist-Import] KEIN Match für:', entry.name);
+          continue;
+        }
+        if (isDebug) {
+          console.log('[Ist-Import] Match gefunden:', { importName: entry.name, empName: employee.name, empId: employee.id, matchStep });
+        }
         const cellKey = `${employee.id}-${entry.date}`;
         if (mode === 'replace' || !updated[cellKey]) {
           updated[cellKey] = { hours: entry.hours };

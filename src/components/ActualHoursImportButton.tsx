@@ -30,7 +30,7 @@ import {
 import { MirusDailyImportEntry, MirusImportMode, Employee, TimeEntry, Department } from '@/types/personnel';
 import { parseMirusDailyExcel } from '@/lib/personnel-utils';
 import {
-  loadNameMappings, saveNameMappingsBatch, lookupSavedMapping,
+  loadNameMappings, saveNameMappingsBatch, lookupSavedMapping, matchEmployeeByName,
 } from '@/lib/mirus-name-mapping-store';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -66,69 +66,21 @@ interface PreviewRow {
 
 // ─── Name-Matching ────────────────────────────────────────────────────────────
 
+/** Debug-Flag: Namen die immer geloggt werden (case-insensitiv) */
+const DEBUG_NAMES = ['sadete', 'momand'];
+
+function isDebugName(name: string): boolean {
+  const n = name.toLowerCase();
+  return DEBUG_NAMES.some(d => n.includes(d));
+}
+
 function findMatchingEmployee(
   importedName: string,
   existingEmployees: Employee[],
 ): { employee: Employee | null; matchType: 'exact' | 'saved' | 'firstName' | 'new' } {
-  const savedId = lookupSavedMapping(importedName);
-  if (savedId && savedId !== 'skip') {
-    const emp = existingEmployees.find(e => e.id === savedId);
-    if (emp) return { employee: emp, matchType: 'saved' };
-  }
-  if (savedId === 'skip') return { employee: null, matchType: 'new' };
-
-  const norm = importedName.toLowerCase().trim();
-  const importParts = norm.split(/\s+/).filter(p => p.length > 0);
-
-  // 1) Exact match
-  const exact = existingEmployees.find(e => e.name.toLowerCase().trim() === norm);
-  if (exact) return { employee: exact, matchType: 'exact' };
-
-  // 2) Reversed-order exact match — Mirus exports "Lastname Firstname",
-  //    the system may store "Firstname Lastname"
-  const reversed = [...importParts].reverse().join(' ');
-  const reversedExact = existingEmployees.find(e => e.name.toLowerCase().trim() === reversed);
-  if (reversedExact) return { employee: reversedExact, matchType: 'exact' };
-
-  // 3) Word-level scoring: exact word match scores 2, prefix-based match (min 4 chars) scores 1
-  const candParts = importParts.filter(p => p.length > 2);
-  if (candParts.length > 0) {
-    let bestScore = 0;
-    let bestEmp: Employee | null = null;
-    for (const emp of existingEmployees) {
-      const empParts = emp.name.toLowerCase().trim().split(/\s+/);
-      let score = 0;
-      for (const ip of candParts) {
-        for (const ep of empParts) {
-          if (ep === ip) { score += 2; break; }
-          if ((ep.startsWith(ip) && ip.length >= 4) || (ip.startsWith(ep) && ep.length >= 4)) {
-            score += 1; break;
-          }
-        }
-      }
-      if (score > bestScore) { bestScore = score; bestEmp = emp; }
-    }
-    if (bestEmp && bestScore > 0) return { employee: bestEmp, matchType: 'firstName' };
-  }
-
-  // 4) First-word match (original fallback)
-  const firstName = importParts[0] ?? '';
-  const firstMatch = existingEmployees.find(
-    e => e.name.toLowerCase().trim().split(/\s+/)[0] === firstName,
-  );
-  if (firstMatch) return { employee: firstMatch, matchType: 'firstName' };
-
-  // 5) Last-word match — handle "Lastname Firstname" by checking the last word against any employee word
-  const lastName = importParts[importParts.length - 1] ?? '';
-  if (lastName.length > 2) {
-    const lastMatch = existingEmployees.find(e => {
-      const eParts = e.name.toLowerCase().trim().split(/\s+/);
-      return eParts.some(ep => ep === lastName || ep.startsWith(lastName) || lastName.startsWith(ep));
-    });
-    if (lastMatch) return { employee: lastMatch, matchType: 'firstName' };
-  }
-
-  return { employee: null, matchType: 'new' };
+  const debug = isDebugName(importedName);
+  const result = matchEmployeeByName(importedName, existingEmployees, debug);
+  return { employee: result.employee, matchType: result.matchType };
 }
 
 // ─── Hauptkomponente ─────────────────────────────────────────────────────────

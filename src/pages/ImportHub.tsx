@@ -15,6 +15,7 @@ import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
 import { loadEmployees, saveActualHourEntry, upsertEmployee } from '@/lib/supabase-db';
 import { Employee, MirusDailyImportEntry, MirusImportMode, Department } from '@/types/personnel';
+import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue-import';
 import { parseAnnualSageKontoblattByMonth, AnnualKostenResult } from '@/lib/pdf-import-engine';
 import { matchCSVRows, buildMonthRecord } from '@/lib/csv-import-engine';
@@ -482,16 +483,21 @@ const IstStundenSection = () => {
     let matched = 0;
     const unmatched = new Set<string>();
 
+    const debugNames = ['sadete', 'momand'];
     for (const entry of entries) {
-      const emp = employees.find(e => {
-        const a = e.name.toLowerCase();
-        const b = entry.name.toLowerCase();
-        if (a === b) return true;
-        const ap = a.split(' ').filter(p => p.length > 1);
-        const bp = b.split(' ').filter(p => p.length > 1);
-        return ap.some(p => bp.some(q => p.includes(q) || q.includes(p)));
-      });
-      if (!emp) { unmatched.add(entry.name); continue; }
+      const isDebug = debugNames.some(d => entry.name.toLowerCase().includes(d));
+      if (isDebug) {
+        console.log('[ImportHub Ist] Verarbeite:', { name: entry.name, date: entry.date, hours: entry.hours });
+      }
+      const { employee: emp, matchStep } = matchEmployeeByName(entry.name, employees, isDebug);
+      if (!emp) {
+        unmatched.add(entry.name);
+        if (isDebug) console.warn('[ImportHub Ist] KEIN Match:', entry.name);
+        continue;
+      }
+      if (isDebug) {
+        console.log('[ImportHub Ist] Match:', { importName: entry.name, empName: emp.name, empId: emp.id, matchStep });
+      }
       const month = entry.date.slice(0, 7);
       const key = `${emp.id}-${entry.date}`;
       if (mode === 'replace' || !monthData[month]?.[key]) {
