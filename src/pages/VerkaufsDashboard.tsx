@@ -205,9 +205,15 @@ export default function VerkaufsDashboard() {
   const [batchFilter,     setBatchFilter]     = useState<string>('all');
   const [topSearch,       setTopSearch]       = useState('');
 
-  // ── Datum- & Kategorie-Filter ────────────────────────────────────────────────
+  // ── Zeitraum & Kategorie-Filter ─────────────────────────────────────────────
+  type ZeitraumTyp = 'monat' | 'mehrere' | 'jahr' | 'ytd' | 'benutzerdefiniert';
+  const [zeitraumTyp,      setZeitraumTyp]      = useState<ZeitraumTyp>('monat');
   const [selectedMonth,    setSelectedMonth]    = useState<number>(now.getMonth() + 1);
   const [selectedYear,     setSelectedYear]     = useState<number>(now.getFullYear());
+  const [startMonth,       setStartMonth]       = useState<number>(1);
+  const [endMonth,         setEndMonth]         = useState<number>(now.getMonth() + 1);
+  const [vonDatum,         setVonDatum]         = useState<string>(`${now.getFullYear()}-01-01`);
+  const [bisDatum,         setBisDatum]         = useState<string>(now.toISOString().slice(0, 10));
   const [selectedCategory, setSelectedCategory] = useState<string>('Alle');
 
   const load = useCallback(async () => {
@@ -271,18 +277,71 @@ export default function VerkaufsDashboard() {
     return Array.from(set).sort((a, b) => b - a);
   }, [rawRows]);
 
+  // ── Zeitraum-Berechnung ────────────────────────────────────────────────────
+
+  const { dateFrom, dateTo, ytdStichtag } = useMemo(() => {
+    const yyyy = String(selectedYear);
+    const pad = (n: number) => String(n).padStart(2, '0');
+
+    if (zeitraumTyp === 'monat') {
+      const mm = pad(selectedMonth);
+      return { dateFrom: `${yyyy}-${mm}-01`, dateTo: `${yyyy}-${mm}-31`, ytdStichtag: null };
+    }
+    if (zeitraumTyp === 'mehrere') {
+      const smm = pad(Math.min(startMonth, endMonth));
+      const emm = pad(Math.max(startMonth, endMonth));
+      return { dateFrom: `${yyyy}-${smm}-01`, dateTo: `${yyyy}-${emm}-31`, ytdStichtag: null };
+    }
+    if (zeitraumTyp === 'jahr') {
+      return { dateFrom: `${yyyy}-01-01`, dateTo: `${yyyy}-12-31`, ytdStichtag: null };
+    }
+    if (zeitraumTyp === 'ytd') {
+      // Letzter vorhandener sale_date im gewählten Jahr
+      const maxDate = rawRows
+        .filter(r => r.sale_date?.startsWith(yyyy))
+        .reduce<string>((max, r) => (r.sale_date! > max ? r.sale_date! : max), `${yyyy}-01-01`);
+      return { dateFrom: `${yyyy}-01-01`, dateTo: maxDate, ytdStichtag: maxDate };
+    }
+    // benutzerdefiniert
+    return { dateFrom: vonDatum, dateTo: bisDatum, ytdStichtag: null };
+  }, [zeitraumTyp, selectedMonth, selectedYear, startMonth, endMonth, vonDatum, bisDatum, rawRows]);
+
+  // ── Zeitraum-Label für Anzeige ─────────────────────────────────────────────
+
+  const zeitraumLabel = useMemo(() => {
+    if (zeitraumTyp === 'monat') return `${MONTH_NAMES[selectedMonth]} ${selectedYear}`;
+    if (zeitraumTyp === 'mehrere') {
+      const s = Math.min(startMonth, endMonth);
+      const e = Math.max(startMonth, endMonth);
+      return `${MONTH_NAMES[s]}–${MONTH_NAMES[e]} ${selectedYear}`;
+    }
+    if (zeitraumTyp === 'jahr') return `Jahr ${selectedYear}`;
+    if (zeitraumTyp === 'ytd') {
+      const d = ytdStichtag ? new Date(ytdStichtag).toLocaleDateString('de-CH') : '?';
+      return `YTD bis ${d}`;
+    }
+    // benutzerdefiniert
+    const vf = vonDatum ? new Date(vonDatum).toLocaleDateString('de-CH') : '?';
+    const bf = bisDatum ? new Date(bisDatum).toLocaleDateString('de-CH') : '?';
+    return `${vf} – ${bf}`;
+  }, [zeitraumTyp, selectedMonth, selectedYear, startMonth, endMonth, ytdStichtag, vonDatum, bisDatum]);
+
   // ── Gefilterte Zeilen ──────────────────────────────────────────────────────
 
   const filteredRows = useMemo(() => {
     let rows = rawRows;
 
-    // Datumsfilter (Monat + Jahr)
-    const mm = String(selectedMonth).padStart(2, '0');
-    const yyyy = String(selectedYear);
+    // Datumsfilter
     rows = rows.filter(r => {
-      if (!r.sale_date || r.sale_date.length < 7) return false;
-      return r.sale_date.substring(0, 4) === yyyy && r.sale_date.substring(5, 7) === mm;
+      if (!r.sale_date || r.sale_date.length < 10) return false;
+      return r.sale_date >= dateFrom && r.sale_date <= dateTo;
     });
+
+    // Debug-Logs
+    console.log(`[DASHBOARD] zeitraumtyp: ${zeitraumTyp}`);
+    console.log(`[DASHBOARD] datum von: ${dateFrom}`);
+    console.log(`[DASHBOARD] datum bis: ${dateTo}`);
+    console.log(`[DASHBOARD] rows after date filter: ${rows.length}`);
 
     // Kategorie-Filter
     if (selectedCategory !== 'Alle') {
@@ -293,11 +352,6 @@ export default function VerkaufsDashboard() {
       });
     }
 
-    // Debug-Logs
-    console.log(`[DASHBOARD] month/year filter: ${mm}/${yyyy}`);
-    console.log(`[DASHBOARD] category filter: ${selectedCategory}`);
-    console.log(`[DASHBOARD] rows after filter: ${rows.length}`);
-
     // Quelle + Batch
     if (srcFilter !== 'all') {
       const matchNull = srcFilter === '__null__';
@@ -307,7 +361,7 @@ export default function VerkaufsDashboard() {
       rows = rows.filter(r => r.import_batch === batchFilter);
     }
     return rows;
-  }, [rawRows, selectedMonth, selectedYear, selectedCategory, categoryMap, srcFilter, batchFilter]);
+  }, [rawRows, dateFrom, dateTo, zeitraumTyp, selectedCategory, categoryMap, srcFilter, batchFilter]);
 
   // ── Aggregation ─────────────────────────────────────────────────────────────
 
@@ -572,50 +626,128 @@ export default function VerkaufsDashboard() {
         </div>
       )}
 
-      {/* ── Datum + Kategorie Filter ────────────────────────────────────────── */}
+      {/* ── Zeitraum + Kategorie Filter ──────────────────────────────────────── */}
       {rawRows.length > 0 && (
         <Card className="bg-muted/40 border-primary/20">
           <CardContent className="py-3 px-4">
             <div className="flex items-center gap-3 flex-wrap">
               <Filter className="h-3.5 w-3.5 text-primary/70 shrink-0" />
 
-              <span className="text-xs font-medium text-muted-foreground">Monat:</span>
-              <Select
-                value={String(selectedMonth)}
-                onValueChange={v => setSelectedMonth(Number(v))}
-              >
-                <SelectTrigger className="h-8 w-36 text-sm">
+              {/* Zeitraumtyp */}
+              <span className="text-xs font-medium text-muted-foreground">Zeitraum:</span>
+              <Select value={zeitraumTyp} onValueChange={v => setZeitraumTyp(v as typeof zeitraumTyp)}>
+                <SelectTrigger className="h-8 w-44 text-sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-                    <SelectItem key={m} value={String(m)}>
-                      {MONTH_NAMES[m]}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="monat">Monat</SelectItem>
+                  <SelectItem value="mehrere">Mehrere Monate</SelectItem>
+                  <SelectItem value="jahr">Jahr</SelectItem>
+                  <SelectItem value="ytd">YTD</SelectItem>
+                  <SelectItem value="benutzerdefiniert">Benutzerdefiniert</SelectItem>
                 </SelectContent>
               </Select>
 
-              <span className="text-xs font-medium text-muted-foreground">Jahr:</span>
-              <Select
-                value={String(selectedYear)}
-                onValueChange={v => setSelectedYear(Number(v))}
-              >
-                <SelectTrigger className="h-8 w-28 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(availableYears.length > 0 ? availableYears : [now.getFullYear()]).map(y => (
-                    <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Monat */}
+              {zeitraumTyp === 'monat' && (
+                <>
+                  <Select value={String(selectedMonth)} onValueChange={v => setSelectedMonth(Number(v))}>
+                    <SelectTrigger className="h-8 w-36 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                        <SelectItem key={m} value={String(m)}>{MONTH_NAMES[m]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={String(selectedYear)} onValueChange={v => setSelectedYear(Number(v))}>
+                    <SelectTrigger className="h-8 w-24 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {(availableYears.length > 0 ? availableYears : [now.getFullYear()]).map(y => (
+                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
 
+              {/* Mehrere Monate */}
+              {zeitraumTyp === 'mehrere' && (
+                <>
+                  <span className="text-xs text-muted-foreground">Von</span>
+                  <Select value={String(startMonth)} onValueChange={v => setStartMonth(Number(v))}>
+                    <SelectTrigger className="h-8 w-32 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                        <SelectItem key={m} value={String(m)}>{MONTH_NAMES[m]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <span className="text-xs text-muted-foreground">bis</span>
+                  <Select value={String(endMonth)} onValueChange={v => setEndMonth(Number(v))}>
+                    <SelectTrigger className="h-8 w-32 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                        <SelectItem key={m} value={String(m)}>{MONTH_NAMES[m]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={String(selectedYear)} onValueChange={v => setSelectedYear(Number(v))}>
+                    <SelectTrigger className="h-8 w-24 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {(availableYears.length > 0 ? availableYears : [now.getFullYear()]).map(y => (
+                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
+
+              {/* Jahr */}
+              {zeitraumTyp === 'jahr' && (
+                <Select value={String(selectedYear)} onValueChange={v => setSelectedYear(Number(v))}>
+                  <SelectTrigger className="h-8 w-24 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {(availableYears.length > 0 ? availableYears : [now.getFullYear()]).map(y => (
+                      <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              {/* YTD */}
+              {zeitraumTyp === 'ytd' && (
+                <Select value={String(selectedYear)} onValueChange={v => setSelectedYear(Number(v))}>
+                  <SelectTrigger className="h-8 w-24 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {(availableYears.length > 0 ? availableYears : [now.getFullYear()]).map(y => (
+                      <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              {/* Benutzerdefiniert */}
+              {zeitraumTyp === 'benutzerdefiniert' && (
+                <>
+                  <span className="text-xs text-muted-foreground">Von</span>
+                  <Input
+                    type="date" value={vonDatum}
+                    onChange={e => setVonDatum(e.target.value)}
+                    className="h-8 w-36 text-sm px-2"
+                  />
+                  <span className="text-xs text-muted-foreground">bis</span>
+                  <Input
+                    type="date" value={bisDatum}
+                    onChange={e => setBisDatum(e.target.value)}
+                    className="h-8 w-36 text-sm px-2"
+                  />
+                </>
+              )}
+
+              {/* Kategorie */}
               <span className="text-xs font-medium text-muted-foreground">Kategorie:</span>
               <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                <SelectTrigger className="h-8 w-32 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger className="h-8 w-32 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Alle">Alle</SelectItem>
                   <SelectItem value="Food">Food</SelectItem>
@@ -623,9 +755,11 @@ export default function VerkaufsDashboard() {
                 </SelectContent>
               </Select>
 
-              <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-                {fmtNum(filteredRows.length)} Zeilen · {MONTH_NAMES[selectedMonth]} {selectedYear}
+              {/* Zeitraum-Zusammenfassung */}
+              <span className="ml-auto text-xs font-medium text-primary/80 tabular-nums">
+                Zeitraum: {zeitraumLabel}
                 {selectedCategory !== 'Alle' && ` · ${selectedCategory}`}
+                {' '}· {fmtNum(filteredRows.length)} Zeilen
               </span>
             </div>
           </CardContent>
