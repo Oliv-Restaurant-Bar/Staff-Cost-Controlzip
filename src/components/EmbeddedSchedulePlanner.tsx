@@ -5,7 +5,7 @@ import {
   Download, Upload, Save, Users, Clock, 
   AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, 
   Eye, EyeOff, Euro, Lock, Pencil, Trash2, CalendarOff, FileSpreadsheet,
-  ChevronDown, Settings, Loader2, RefreshCw
+  ChevronDown, ChevronLeft, ChevronRight, Settings, Loader2, RefreshCw
 } from 'lucide-react';
 import { Employee, Department } from '@/types/personnel';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
@@ -80,7 +80,7 @@ const toLocalEmployee = (emp: SupabaseEmployee): Employee => ({
 
 export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlannerProps) => {
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
-  const { currentWeekStart, currentMonthStart, weekNumber, monthLabel } = useWeekSync('EmbeddedSchedulePlanner', selectedDate);
+  const { currentWeekStart, currentMonthStart, weekNumber, monthLabel, navigateWeek, navigateMonth } = useWeekSync('EmbeddedSchedulePlanner', selectedDate);
   
   // Use Supabase hook for employees and schedule
   const {
@@ -746,36 +746,54 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
                     variant={calendarView === 'week' ? 'default' : 'ghost'}
                     size="sm"
                     onClick={() => setCalendarView('week')}
-                    className="h-7 px-2"
+                    className="h-7 px-2 gap-1 text-xs"
                   >
                     <Calendar className="h-3.5 w-3.5" />
+                    <span>Woche</span>
                   </Button>
                   <Button
                     variant={calendarView === 'month' ? 'default' : 'ghost'}
                     size="sm"
                     onClick={() => setCalendarView('month')}
-                    className="h-7 px-2"
+                    className="h-7 px-2 gap-1 text-xs"
                   >
                     <CalendarDays className="h-3.5 w-3.5" />
+                    <span>Monat</span>
                   </Button>
                 </div>
               </div>
 
-              {/* Period Display (synced with global DateSelector) */}
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/50 rounded-md">
-                <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2">
-                  <span className="text-sm font-medium">
+              {/* Period Navigator */}
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  onClick={() => calendarView === 'week' ? navigateWeek('prev') : navigateMonth('prev')}
+                  title={calendarView === 'week' ? 'Vorherige Woche' : 'Vorheriger Monat'}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <div className="flex flex-col items-center min-w-[120px]">
+                  <span className="text-sm font-medium leading-tight">
                     {calendarView === 'week' ? `KW ${weekNumber}` : monthLabel}
                   </span>
-                  <span className="text-xs text-muted-foreground hidden sm:inline">•</span>
-                  <span className="text-xs text-muted-foreground">
-                    {calendarView === 'week' 
-                      ? `${format(displayDays[0], 'd. MMM', { locale: de })} – ${format(displayDays[displayDays.length - 1], 'd. MMM yyyy', { locale: de })}`
-                      : `${format(startOfMonth(currentMonthStart), 'd.', { locale: de })} – ${format(endOfMonth(currentMonthStart), 'd. MMMM yyyy', { locale: de })}`
+                  <span className="text-xs text-muted-foreground leading-tight">
+                    {calendarView === 'week'
+                      ? `${format(displayDays[0], 'd. MMM', { locale: de })} – ${format(displayDays[displayDays.length - 1], 'd. MMM yy', { locale: de })}`
+                      : `${format(startOfMonth(currentMonthStart), 'd.', { locale: de })} – ${format(endOfMonth(currentMonthStart), 'd. MMM yyyy', { locale: de })}`
                     }
                   </span>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  onClick={() => calendarView === 'week' ? navigateWeek('next') : navigateMonth('next')}
+                  title={calendarView === 'week' ? 'Nächste Woche' : 'Nächster Monat'}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
               </div>
 
               {/* Actions */}
