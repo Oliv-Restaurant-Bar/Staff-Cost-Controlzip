@@ -238,34 +238,48 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
       continue;
     }
 
-    // "Total Haben  [haben]  [saldo]"
-    //   → letzter Betrag = Saldo (Soll − Haben) = Monatsbewegung
-    //   → erster Betrag (falls vorhanden) = Haben-Komponente
+    // "Total Haben   [haben-spalte]   [kumulativer-saldo]"
+    //
+    // Sage Kontoblatt-Format auf der "Total Haben"-Zeile:
+    //   Spalte 1: Haben-Summe (Gutschriften / Aufwandsminderungen im Monat)
+    //   Spalte 2: Kumulativer Endsaldo (Saldo Vortrag + Soll - Haben, periodenübergreifend)
+    //
+    // KORREKTE Monatswert-Formel:
+    //   Monatswert = Total Soll − Total Haben  (nur die Monatsbewegung, NICHT der kumul. Saldo!)
+    //
+    // Beispiel 4020 Wein:
+    //   Total Soll:  14'577.94
+    //   Total Haben:      0.00      36'002.68   ← 36'002.68 ist der kumulierte Saldo seit Kontoeröffnung
+    //   Monatswert = 14'577.94 − 0.00 = 14'577.94 ✓
+    //
+    // Beispiel 4030 Bier:
+    //   Total Soll:   9'022.43
+    //   Total Haben:     20.35      26'127.52
+    //   Monatswert = 9'022.43 − 20.35 = 9'002.08 ✓
+    //
     // currentAccount wird NICHT zurückgesetzt → Konto läuft auf nächster Seite weiter
     if (/^total\s+haben\b/i.test(trimmed) && currentAccount) {
       const allAmts = findAllAmounts(text);
-      if (allAmts.length > 0) {
-        const saldoRaw  = allAmts[allAmts.length - 1];         // letzter Betrag = Monatssaldo
-        const habenRaw  = allAmts.length > 1 ? allAmts[0] : '0.00'; // erster Betrag = Haben
-        const saldo  = parseAmount(saldoRaw);
-        const haben  = parseAmount(habenRaw) ?? 0;
+      // Ersten Betrag = Haben-Spalte (kann 0.00 sein); letzter Betrag = kumulativer Saldo (ignorieren)
+      const habenRaw = allAmts.length > 0 ? allAmts[0] : '0.00';
+      const haben    = parseAmount(habenRaw) ?? 0;
 
-        if (saldo !== null) {
-          const prev = accountData.get(currentAccount.number);
-          accountData.set(currentAccount.number, {
-            ...(prev ?? {
-              name: currentAccount.name, totalSoll: 0, totalHaben: 0,
-              lineIndex: i + 1, raw: saldoRaw, pageCount: 0,
-            }),
-            name:       currentAccount.name,
-            totalHaben: Math.abs(haben),
-            saldo:      Math.abs(saldo),  // Überschreiben → letzter kumulativer Wert korrekt
-            lineIndex:  i + 1,
-            raw:        saldoRaw,
-          });
-          // currentAccount bleibt aktiv für mehrseitige Konten
-        }
-      }
+      const prev       = accountData.get(currentAccount.number);
+      const totalSoll  = prev?.totalSoll ?? 0;
+      const monatswert = totalSoll - Math.abs(haben); // Netto-Monatsbewegung
+
+      accountData.set(currentAccount.number, {
+        ...(prev ?? {
+          name: currentAccount.name, totalSoll: 0, totalHaben: 0,
+          lineIndex: i + 1, raw: habenRaw, pageCount: 0,
+        }),
+        name:       currentAccount.name,
+        totalHaben: Math.abs(haben),
+        saldo:      monatswert,  // = Total Soll − Total Haben (Monatswert, nicht kumulativer Saldo)
+        lineIndex:  i + 1,
+        raw:        habenRaw,
+      });
+      // currentAccount bleibt aktiv für mehrseitige Konten
       continue;
     }
 
@@ -304,26 +318,25 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
   }
 
   // Debug-Log: alle erkannten Konten mit Total Soll / Total Haben / Monatswert
-  console.group('[PDF Import] Sage Kontoblatt – erkannte Konten (Monatswerte)');
+  console.group('[PDF Import] Sage Kontoblatt – erkannte Konten (Monatswerte = Total Soll − Total Haben)');
   for (const [num, d] of accountData.entries()) {
     const multiPage = d.pageCount > 0 ? ` ⚠ mehrseitig (${d.pageCount + 1} Seiten)` : '';
     console.log(
       `Konto ${num} "${d.name}": ` +
-      `Total Soll ${d.totalSoll.toFixed(2)}, ` +
-      `Total Haben ${d.totalHaben.toFixed(2)}, ` +
-      `Monatswert = ${d.saldo.toFixed(2)}${multiPage}`,
+      `Total Soll ${d.totalSoll.toFixed(2)} − Total Haben ${d.totalHaben.toFixed(2)} ` +
+      `= Monatswert ${d.saldo.toFixed(2)}${multiPage}`,
     );
   }
   console.groupEnd();
 
   return Array.from(accountData.entries())
-    .filter(([, v]) => v.saldo > 0)
+    .filter(([, v]) => v.saldo > 0) // Netto-Kreditpositionen (Haben > Soll) werden ausgeschlossen
     .map(([accNum, v]) => ({
       lineIndex:     v.lineIndex,
-      rawLine:       `${accNum} ${v.name}  TotalSoll:${v.totalSoll.toFixed(2)} TotalHaben:${v.totalHaben.toFixed(2)} Monatswert:${v.saldo.toFixed(2)}`,
+      rawLine:       `${accNum} ${v.name}  TotalSoll:${v.totalSoll.toFixed(2)} − TotalHaben:${v.totalHaben.toFixed(2)} = Monatswert:${v.saldo.toFixed(2)}`,
       accountNumber: accNum.padStart(4, '0'),
       accountName:   v.name,
-      rawAmount:     v.raw,
+      rawAmount:     v.saldo.toFixed(2),
       amount:        v.saldo,
     }));
 }
