@@ -1,0 +1,64 @@
+Bitte jetzt den Ist-Stunden Bug vollständig und endgültig debuggen.
+
+Problem:
+In Personal FIX + Variabel steht für März 2026 weiterhin:
+"Keine Ist-Stunden für 2026-03 im Dienstplan vorhanden"
+obwohl im Dienstplan Ist-Stunden existieren.
+
+Wichtig:
+Nicht nochmals allgemein refactoren.
+Jetzt bitte einen harten End-to-End Debug machen und den echten Speicher-/Leseweg vergleichen.
+
+Bitte exakt prüfen:
+
+1. Dienstplan – gespeicherte Ist-Daten
+Für März 2026 vollständig loggen:
+- welche Ist-Einträge im Schedule State vorhanden sind
+- welche Ist-Einträge in localStorage vorhanden sind
+- welche Ist-Einträge in Supabase vorhanden sind
+- genaue Struktur pro Eintrag:
+  employeeId
+  employeeName
+  date
+  slots / hours
+  monthKey
+
+2. Personal FIX – geladene Ist-Daten
+Für März 2026 vollständig loggen:
+- aus welcher Quelle gelesen wird
+- welcher Key / welche Query verwendet wird
+- wie viele Roh-Einträge geladen werden
+- welche Mitarbeiter daraus erkannt werden
+- warum am Ende 0 herauskommt
+
+3. Vergleich Dienstplan vs Personal FIX
+Bitte direkt im Code für März 2026 einen Vergleich loggen:
+- count im Dienstplan
+- count in localStorage
+- count in Supabase
+- count in Personal FIX
+- welche employeeIds / dates im einen da sind, im anderen fehlen
+
+4. Kritisch prüfen:
+- wird in Personal FIX evtl. weiterhin nach falschem Monatskey gesucht
+- wird dort auf eine alte Importquelle "Mirus" statt auf die echten Dienstplan-Ist-Daten gefiltert
+- wird nach department gefiltert und dadurch alles weggeworfen
+- wird nach falscher Datenstruktur gesucht (z.B. slots vs totalHours)
+- wird employeeId erwartet, aber nur name gespeichert oder umgekehrt
+
+5. Fix-Ziel
+Personal FIX muss exakt dieselben März-Ist-Daten lesen, die im Dienstplan gespeichert sind.
+Keine Parallelquelle. Keine zweite Interpretation.
+
+6. UI-Debug sichtbar machen
+In Personal FIX oberhalb der Tabelle temporär anzeigen:
+- geladene März-Einträge: X
+- erkannte Mitarbeitende: Y
+- Quelle: localStorage / Supabase / Dienstplan-State
+- verwendeter Monatskey
+
+7. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- was die echte Ursache war
+- welche Datenquelle jetzt die Source of Truth ist
+- warum Personal FIX vorher 0 zeigte

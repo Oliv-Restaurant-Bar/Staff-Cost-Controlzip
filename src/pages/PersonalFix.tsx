@@ -9,7 +9,7 @@ import {
   Repeat,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { loadEmployees, upsertEmployee } from '@/lib/supabase-db';
+import { loadEmployees, upsertEmployee, loadActualHoursForMonth } from '@/lib/supabase-db';
 import { Employee } from '@/types/personnel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -482,10 +482,48 @@ export default function PersonalFixPage() {
     });
   }, []);
 
-  // Reload Plan/Ist hours whenever month changes
+  // Reload Plan/Ist hours whenever month changes.
+  // Ist-Stunden: read localStorage first (fast), then enrich with Supabase data.
+  // Supabase is the canonical source when both planners write there; localStorage
+  // is the fallback/cache for entries that haven't round-tripped through Supabase.
   useEffect(() => {
     setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth));
-    setIstHours(loadIstHoursFromStorage(selectedYear, selectedMonth));
+
+    // Fast local read first
+    const localIst = loadIstHoursFromStorage(selectedYear, selectedMonth);
+    setIstHours(localIst);
+
+    // Then enrich with Supabase (async)
+    const monthDate = new Date(selectedYear, selectedMonth - 1, 1);
+    loadActualHoursForMonth(monthDate).then(supabaseRaw => {
+      if (!supabaseRaw) return; // Supabase error – keep local result
+      // Aggregate by empId (same logic as loadIstHoursFromStorage)
+      const supabaseAgg: Record<string, number> = {};
+      for (const [cellKey, entry] of Object.entries(supabaseRaw)) {
+        const empId = cellKey.slice(0, cellKey.length - 11);
+        if (!empId) continue;
+        const h = entry?.hours ?? 0;
+        if (h > 0) supabaseAgg[empId] = (supabaseAgg[empId] ?? 0) + Math.round(h * 100) / 100;
+      }
+      // Merge: Supabase wins on conflict
+      const merged = { ...localIst, ...supabaseAgg };
+      const totalH = Object.values(merged).reduce((s, h) => s + h, 0);
+      console.log(
+        `[IST] personal-fix rows loaded (merged): ${Object.keys(merged).length} Mitarbeiter / ${Math.round(totalH * 10) / 10} h`,
+        { localStorage: Object.keys(localIst).length, supabase: Object.keys(supabaseAgg).length },
+      );
+      setIstHours(merged);
+
+      // Write merged back to localStorage so subsequent reads stay in sync
+      if (Object.keys(supabaseRaw).length > 0) {
+        const monthKey = `actual-hours-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+        const existingLocal = (() => {
+          try { return JSON.parse(localStorage.getItem(monthKey) || '{}'); } catch { return {}; }
+        })();
+        const mergedRaw = { ...existingLocal, ...supabaseRaw };
+        localStorage.setItem(monthKey, JSON.stringify(mergedRaw));
+      }
+    }).catch(err => console.error('[IST] Supabase load failed in PersonalFix:', err));
   }, [selectedYear, selectedMonth]);
 
   const budgetData = useBudgetMonth(selectedYear, selectedMonth);
@@ -1077,9 +1115,10 @@ export default function PersonalFixPage() {
               )}
               {varView === 'ist' && istHasDaten && (
                 <span className="ml-2 text-xs text-muted-foreground">
-                  Ist-Stunden aus Dienstplan {selectedYear}-{String(selectedMonth).padStart(2,'0')}:&nbsp;
+                  Ist {selectedYear}-{String(selectedMonth).padStart(2,'0')}:&nbsp;
                   {Object.keys(istHours).length} Mitarbeiter&nbsp;/&nbsp;
-                  {Math.round(Object.values(istHours).reduce((s,h) => s+h, 0) * 10) / 10} h
+                  {Math.round(Object.values(istHours).reduce((s,h) => s+h, 0) * 10) / 10} h&nbsp;
+                  <span className="opacity-60">(Dienstplan + Supabase)</span>
                 </span>
               )}
               {varView === 'manual' && (

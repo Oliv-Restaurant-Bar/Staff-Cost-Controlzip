@@ -35,6 +35,7 @@ import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem, calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { useWeekSync } from '@/hooks/useWeekSync';
 import { useSupabaseSchedule, Employee as SupabaseEmployee } from '@/hooks/useSupabaseSchedule';
+import { saveActualHourEntry } from '@/lib/supabase-db';
 import { Input } from '@/components/ui/input';
 import { formatCurrency } from '@/lib/personnel-utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -360,9 +361,16 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
       }
       localStorage.setItem(`actual-hours-${entryMonthKey}`, JSON.stringify(monthEntries));
 
+      // Also persist to Supabase (same as SchedulePlanner) so both planners
+      // share the same source of truth and neither can overwrite the other's data.
+      saveActualHourEntry(employeeId, date, entry).catch(err =>
+        console.error('[IST] Supabase saveActualHourEntry failed:', err)
+      );
+
       console.log(
         `[IST] saved entry: empId=${employeeId} date=${date} monthKey=${entryMonthKey}`,
         `entries in month: ${Object.keys(monthEntries).length}`,
+        entry ? `hours=${entry.hours}` : 'deleted',
       );
 
       // Dispatch event for sync

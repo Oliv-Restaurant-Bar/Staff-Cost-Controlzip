@@ -358,13 +358,23 @@ const SchedulePlanner = () => {
         return;
       }
 
+      // Always read localStorage too — it may contain entries saved by the
+      // EmbeddedSchedulePlanner that haven't been flushed to Supabase yet.
+      const localStored = (() => {
+        try { return JSON.parse(localStorage.getItem(`actual-hours-${monthKey}`) || '{}'); }
+        catch { return {}; }
+      })();
+
       if (supabaseActual !== null) {
-        console.log('[IST] state set', { gen, istKeys });
-        setActualHoursData(supabaseActual);
+        // Supabase wins on conflict; localStorage fills in any gaps.
+        const merged = { ...localStored, ...supabaseActual };
+        console.log('[IST] state set (merged)', { gen, supabase: istKeys, local: Object.keys(localStored).length, merged: Object.keys(merged).length });
+        setActualHoursData(merged);
+        // Write merged back so PersonalFix and others always see the full dataset.
+        localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(merged));
       } else {
-        console.warn('[IST] Supabase error – using localStorage fallback');
-        const saved = localStorage.getItem(`actual-hours-${monthKey}`);
-        setActualHoursData(saved ? JSON.parse(saved) : {});
+        console.warn('[IST] Supabase error – using localStorage only');
+        setActualHoursData(localStored);
       }
 
       // ── Tagesbudgets ─────────────────────────────────────────────────────────
