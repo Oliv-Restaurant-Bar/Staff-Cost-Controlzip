@@ -372,7 +372,7 @@ export function KüchenplanImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) handleClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-0">
+      <DialogContent className="w-[95vw] max-w-[920px] max-h-[92vh] flex flex-col p-0">
         <DialogHeader className="px-6 pt-5 pb-3 border-b">
           <DialogTitle className="flex items-center gap-2 text-base">
             <FileText className="h-4 w-4 text-orange-500" />
@@ -554,8 +554,8 @@ export function KüchenplanImportDialog({
                   </Alert>
                 )}
 
-                <div className="rounded-md border overflow-hidden">
-                  <table className="w-full text-sm">
+                <div className="rounded-md border overflow-x-auto">
+                  <table className="w-full min-w-[640px] text-sm">
                     <thead className="bg-muted/50">
                       <tr>
                         <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Code</th>
