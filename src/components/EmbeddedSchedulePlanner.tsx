@@ -22,6 +22,7 @@ import { Apply8HoursDialog, getPreferredWeekdaysFromDates } from '@/components/s
 import { MonthlyCostSummary } from '@/components/schedule-planner/MonthlyCostSummary';
 import { ExportOptionsDialog, ExportOptions } from '@/components/schedule-planner/ExportOptionsDialog';
 import { ImportMatchPreviewDialog, NameMatchOverride } from '@/components/schedule-planner/ImportMatchPreviewDialog';
+import { SimpleKüchenplanImportDialog } from '@/components/schedule-planner/SimpleKüchenplanImportDialog';
 import { LaborCostComparison } from '@/components/schedule-planner/LaborCostComparison';
 import { EmployeeForm } from '@/components/EmployeeForm';
 import { importScheduleFromExcelV2, NameMatchInfo } from '@/lib/schedule-export-import';
@@ -127,6 +128,7 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
   const [isExpanded, setIsExpanded] = useState(true);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
+  const [simpleKüchenImportOpen, setSimpleKüchenImportOpen] = useState(false);
   const [pendingImportResult, setPendingImportResult] = useState<{
     scheduleData: Record<string, DaySchedule>;
     newEmployees: Employee[];
@@ -499,6 +501,23 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     await refresh();
   };
 
+  // ── Einfacher Küchenplan PDF-Import ─────────────────────────────────────────
+  const handleSimpleKüchenImport = async (delta: Record<string, DaySchedule>, count: number) => {
+    for (const [key, ds] of Object.entries(delta)) {
+      const parts = key.split('-');
+      const employeeId = parts[0];
+      const date = parts.slice(1).join('-');
+      if (ds.früh) {
+        await updateScheduleEntry(employeeId, date, 'früh', ds.früh, ds.frühAbsence ?? null);
+      }
+      if (ds.spät) {
+        await updateScheduleEntry(employeeId, date, 'spät', ds.spät, ds.spätAbsence ?? null);
+      }
+    }
+    toast.success(`Küchenplan importiert: ${count} Einträge übernommen`);
+    await refresh();
+  };
+
   const handleConfirmImport = (overrides: NameMatchOverride[]) => {
     if (!pendingImportResult) return;
     
@@ -809,8 +828,18 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
                   <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
                 </Button>
                 <input type="file" ref={fileInputRef} onChange={handleImportFile} accept=".xlsx,.xls" className="hidden" />
-                <Button variant="ghost" size="sm" onClick={() => fileInputRef.current?.click()} className="h-8 gap-1">
+                <Button variant="ghost" size="sm" onClick={() => fileInputRef.current?.click()} className="h-8 gap-1" title="Excel importieren">
                   <Upload className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSimpleKüchenImportOpen(true)}
+                  className="h-8 gap-1 text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-900/20"
+                  title="Küchenplan PDF importieren"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline text-xs">Küchenplan</span>
                 </Button>
                 <Button variant="ghost" size="sm" onClick={handleExportTemplate} className="h-8 gap-1" title="Exportieren">
                   <Download className="h-3.5 w-3.5" />
@@ -1198,6 +1227,14 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
         existingEmployees={employees}
         onConfirm={handleConfirmImport}
         onCancel={handleCancelImport}
+      />
+
+      <SimpleKüchenplanImportDialog
+        open={simpleKüchenImportOpen}
+        onClose={() => setSimpleKüchenImportOpen(false)}
+        employees={employees}
+        scheduleData={scheduleData}
+        onImport={handleSimpleKüchenImport}
       />
     </Collapsible>
   );
