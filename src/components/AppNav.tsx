@@ -4,17 +4,21 @@
  * Desktop: linke Sidebar (220px), sticky
  * Mobile: Bottom-Navigation (fixiert)
  *
- * Sichtbarkeit der Navigationspunkte wird nach Rolle gefiltert:
- *   admin           → alle Punkte
- *   service_manager → Dienstplanung (Service), Soll/Ist Analyse (Service)
- *   kueche_manager  → Dienstplanung (Küche),   Soll/Ist Analyse (Küche)
+ * Struktur:
+ *   Dashboard · Dienstplanung · Verkaufs-Dashboard
+ *   Kosten:      Personal FIX · WES-Analyse
+ *   Stammdaten:  Produkte
+ *   Admin:       Verkaufsdaten Upload · Einstellungen
  */
 
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Calendar, BarChart2, Users,
-  Settings, LogOut, ChefHat, Utensils, ShieldCheck,
-  TrendingUp, Upload, Truck, Calculator, CalendarClock, X, Eye, DollarSign, Package, UserX, Archive, TrendingDown, Activity, ShoppingBag, Layers, PieChart,
+  LayoutDashboard, Calendar, PieChart,
+  DollarSign, TrendingDown,
+  Package,
+  Upload, Settings,
+  LogOut, ChefHat, Utensils, ShieldCheck,
+  CalendarClock, X, Eye,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -23,185 +27,109 @@ import { useStichtag } from '@/contexts/StichtagContext';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { Button } from '@/components/ui/button';
-import {
-  Tooltip, TooltipContent, TooltipTrigger,
-} from '@/components/ui/tooltip';
 
-// ─── Navigationsstruktur ─────────────────────────────────────────────────────
+// ─── Typen ───────────────────────────────────────────────────────────────────
 
 interface NavItem {
   path: string;
   label: string;
-  shortLabel: string; // für Mobile-Bottom-Bar
+  shortLabel: string;
   icon: React.FC<{ className?: string }>;
   adminOnly?: boolean;
-  comingSoon?: boolean;
   module?: import('@/hooks/usePermissions').AppModule;
 }
 
-const NAV_ITEMS: NavItem[] = [
+interface NavGroup {
+  groupLabel?: string;
+  adminOnly?: boolean;
+  items: NavItem[];
+}
+
+// ─── Navigationsstruktur ─────────────────────────────────────────────────────
+
+const NAV_GROUPS: NavGroup[] = [
   {
-    path: '/',
-    label: 'Dashboard',
-    shortLabel: 'Home',
-    icon: LayoutDashboard,
-    module: 'dashboard',
+    items: [
+      {
+        path: '/',
+        label: 'Dashboard',
+        shortLabel: 'Home',
+        icon: LayoutDashboard,
+        module: 'dashboard',
+      },
+      {
+        path: '/personal',
+        label: 'Dienstplanung',
+        shortLabel: 'Dienst',
+        icon: Calendar,
+        module: 'dienstplanung',
+      },
+      {
+        path: '/verkauf-dashboard',
+        label: 'Verkaufs-Dashboard',
+        shortLabel: 'Verkauf',
+        icon: PieChart,
+        adminOnly: true,
+      },
+    ],
   },
   {
-    path: '/personal',
-    label: 'Dienstplanung',
-    shortLabel: 'Dienst',
-    icon: Calendar,
-    module: 'dienstplanung',
-  },
-  {
-    path: '/analyse',
-    label: 'Soll / Ist Analyse',
-    shortLabel: 'Analyse',
-    icon: BarChart2,
-    module: 'soll_ist_analyse',
-  },
-  {
-    path: '/personal-stamm',
-    label: 'Personalstamm',
-    shortLabel: 'Personal',
-    icon: Users,
+    groupLabel: 'Kosten',
     adminOnly: true,
+    items: [
+      {
+        path: '/personal-fix',
+        label: 'Personal FIX',
+        shortLabel: 'FIX',
+        icon: DollarSign,
+        adminOnly: true,
+      },
+      {
+        path: '/wes-analyse',
+        label: 'WES-Analyse',
+        shortLabel: 'WES',
+        icon: TrendingDown,
+        adminOnly: true,
+      },
+    ],
   },
   {
-    path: '/settings',
-    label: 'Einstellungen',
-    shortLabel: 'Settings',
-    icon: Settings,
+    groupLabel: 'Stammdaten',
     adminOnly: true,
+    items: [
+      {
+        path: '/artikel',
+        label: 'Produkte',
+        shortLabel: 'Produkte',
+        icon: Package,
+        adminOnly: true,
+      },
+    ],
   },
   {
-    path: '/reporting',
-    label: 'Reporting',
-    shortLabel: 'Report',
-    icon: TrendingUp,
+    groupLabel: 'Admin',
     adminOnly: true,
-  },
-  {
-    path: '/erfolgsrechnung',
-    label: 'Erfolgsrechnung',
-    shortLabel: 'P&L',
-    icon: BarChart2,
-    adminOnly: true,
-  },
-  {
-    path: '/import',
-    label: 'Import-Zentrale',
-    shortLabel: 'Import',
-    icon: Upload,
-    adminOnly: true,
-  },
-  {
-    path: '/lieferanten',
-    label: 'Lieferanten',
-    shortLabel: 'Lief.',
-    icon: Truck,
-    adminOnly: true,
-  },
-  {
-    path: '/budget',
-    label: 'Budget-Planung',
-    shortLabel: 'Budget',
-    icon: Calculator,
-    adminOnly: true,
-  },
-  {
-    path: '/personal-fix',
-    label: 'Personal FIX',
-    shortLabel: 'FIX',
-    icon: DollarSign,
-    adminOnly: true,
-  },
-  {
-    path: '/produkte',
-    label: 'Produkte',
-    shortLabel: 'Produkte',
-    icon: Package,
-    adminOnly: true,
-  },
-  {
-    path: '/artikel',
-    label: 'Artikelstamm',
-    shortLabel: 'Artikel',
-    icon: Archive,
-    adminOnly: true,
-  },
-  {
-    path: '/artikel-tracking',
-    label: 'Artikel-Tracking',
-    shortLabel: 'Tracking',
-    icon: Activity,
-    adminOnly: true,
-  },
-  {
-    path: '/wes-analyse',
-    label: 'WES-Analyse',
-    shortLabel: 'WES',
-    icon: TrendingDown,
-    adminOnly: true,
-  },
-  {
-    path: '/lunch-analyse',
-    label: 'Lunch-Analyse',
-    shortLabel: 'Lunch',
-    icon: Utensils,
-    adminOnly: true,
-  },
-  {
-    path: '/takeaway-analyse',
-    label: 'Take-Away-Analyse',
-    shortLabel: 'Take Away',
-    icon: ShoppingBag,
-    adminOnly: true,
-  },
-  {
-    path: '/absenzen',
-    label: 'Absenzen & Ersatz',
-    shortLabel: 'Absenzen',
-    icon: UserX,
-    adminOnly: true,
-  },
-  {
-    path: '/verkauf-dashboard',
-    label: 'Verkaufs-Dashboard',
-    shortLabel: 'Verkauf',
-    icon: PieChart,
-    adminOnly: true,
-  },
-  {
-    path: '/sales-upload',
-    label: 'Verkaufsdaten Upload',
-    shortLabel: 'Upload',
-    icon: Upload,
-    adminOnly: true,
-  },
-  {
-    path: '/produkt-analyse',
-    label: 'Produktanalyse',
-    shortLabel: 'Produkte',
-    icon: Layers,
-    adminOnly: true,
-  },
-  {
-    path: '/kategorien',
-    label: 'Kategorien',
-    shortLabel: 'Kategorien',
-    icon: BarChart2,
-    adminOnly: true,
-  },
-  {
-    path: '/produkt-stamm',
-    label: 'Produkt-Stammdaten',
-    shortLabel: 'Stammdaten',
-    icon: Package,
-    adminOnly: true,
+    items: [
+      {
+        path: '/sales-upload',
+        label: 'Verkaufsdaten Upload',
+        shortLabel: 'Upload',
+        icon: Upload,
+        adminOnly: true,
+      },
+      {
+        path: '/settings',
+        label: 'Einstellungen',
+        shortLabel: 'Settings',
+        icon: Settings,
+        adminOnly: true,
+      },
+    ],
   },
 ];
+
+// Flache Liste aller Items (für Mobile-Nav und Routing-Hilfsfunktionen)
+const ALL_NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap(g => g.items);
 
 // ─── Rollen-Konfiguration ─────────────────────────────────────────────────────
 
@@ -229,22 +157,17 @@ const ROLE_CONFIG = {
   },
 };
 
-// ─── Stichtag-Picker (Sidebar-Widget) ───────────────────────────────────────
+// ─── Stichtag-Picker ─────────────────────────────────────────────────────────
 
 const StichtagPicker = () => {
   const { stichtag, isActive, setStichtag, clearStichtag, formatted } = useStichtag();
 
-  const inputValue = stichtag
-    ? stichtag.toISOString().split('T')[0]  // "YYYY-MM-DD"
-    : '';
+  const inputValue = stichtag ? stichtag.toISOString().split('T')[0] : '';
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
-    if (!val) {
-      clearStichtag();
-    } else {
-      setStichtag(new Date(val + 'T12:00:00'));
-    }
+    if (!val) clearStichtag();
+    else setStichtag(new Date(val + 'T12:00:00'));
   };
 
   return (
@@ -269,17 +192,11 @@ const StichtagPicker = () => {
           </button>
         )}
       </div>
-
       {isActive ? (
-        <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
-          per {formatted}
-        </p>
+        <p className="text-xs font-bold text-amber-800 dark:text-amber-300">per {formatted}</p>
       ) : (
-        <p className="text-[10px] text-muted-foreground leading-tight">
-          Auswertungen auf Datum begrenzen
-        </p>
+        <p className="text-[10px] text-muted-foreground leading-tight">Auswertungen auf Datum begrenzen</p>
       )}
-
       <input
         type="date"
         value={inputValue}
@@ -299,23 +216,14 @@ const StichtagPicker = () => {
 // ─── Desktop-Sidebar ─────────────────────────────────────────────────────────
 
 export const AppSidebar = () => {
-  const location      = useLocation();
+  const location = useLocation();
   const { user, signOut } = useAuth();
   const { role, isAdmin, isManager, allowedDepartment, canAccessModule } = usePermissions();
   const { isGuest, guestMinutesLeft, clearGuestSession } = useGuestSession();
   const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
 
-  console.log('[NAV] AppSidebar render', { role, isAdmin, userEmail: user?.email });
-
   const roleConfig = ROLE_CONFIG[role as keyof typeof ROLE_CONFIG] ?? ROLE_CONFIG.admin;
   const RoleIcon = isGuest ? Eye : roleConfig.Icon;
-
-  const visibleItems = NAV_ITEMS.filter(item => {
-    if (item.comingSoon && !isAdmin && !isGuest) return false;
-    if (item.adminOnly && !isAdmin && !isGuest) return false;
-    if (item.module && !canAccessModule(item.module) && !isGuest) return false;
-    return true;
-  });
 
   const emailShort = user?.email
     ? user.email.length > 22 ? user.email.slice(0, 22) + '…' : user.email
@@ -324,6 +232,18 @@ export const AppSidebar = () => {
   const guestH = Math.floor(guestMinutesLeft / 60);
   const guestM = guestMinutesLeft % 60;
   const guestLabel = guestH > 0 ? `${guestH}h ${guestM}min` : `${guestMinutesLeft} Min.`;
+
+  function isItemVisible(item: NavItem): boolean {
+    if (item.adminOnly && !isAdmin && !isGuest) return false;
+    if (item.module && !canAccessModule(item.module) && !isGuest) return false;
+    return true;
+  }
+
+  function isLinkActive(path: string): boolean {
+    return path === '/'
+      ? location.pathname === '/'
+      : location.pathname.startsWith(path);
+  }
 
   return (
     <aside className="hidden md:flex flex-col flex-shrink-0 w-[220px] min-h-screen bg-card border-r border-border sticky top-0 h-screen overflow-y-auto">
@@ -335,44 +255,42 @@ export const AppSidebar = () => {
         <p className="text-[10px] text-muted-foreground mt-0.5">Personalkostentracker</p>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 px-2 py-3 space-y-0.5">
-        {visibleItems.map(item => {
-          const Icon = item.icon;
-          const isActive = item.path === '/'
-            ? location.pathname === '/'
-            : location.pathname.startsWith(item.path);
-
-          if (item.comingSoon) {
-            return (
-              <div
-                key={item.path}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-md text-muted-foreground/40 cursor-not-allowed"
-              >
-                <Icon className="h-4 w-4 flex-shrink-0" />
-                <span className="text-sm">{item.label}</span>
-                <span className="ml-auto text-[9px] font-bold uppercase tracking-wide bg-muted/50 text-muted-foreground/60 px-1.5 py-0.5 rounded">
-                  Bald
-                </span>
-              </div>
-            );
-          }
+      {/* Navigation (gruppiert) */}
+      <nav className="flex-1 px-2 py-3 space-y-4">
+        {NAV_GROUPS.map((group, gi) => {
+          const visibleItems = group.items.filter(isItemVisible);
+          if (visibleItems.length === 0) return null;
 
           return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              end={item.path === '/'}
-              className={cn(
-                'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors',
-                isActive
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+            <div key={gi}>
+              {group.groupLabel && (
+                <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                  {group.groupLabel}
+                </p>
               )}
-            >
-              <Icon className="h-4 w-4 flex-shrink-0" />
-              {item.label}
-            </NavLink>
+              <div className="space-y-0.5">
+                {visibleItems.map(item => {
+                  const Icon = item.icon;
+                  const active = isLinkActive(item.path);
+                  return (
+                    <NavLink
+                      key={item.path}
+                      to={item.path}
+                      end={item.path === '/'}
+                      className={cn(
+                        'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+                        active
+                          ? 'bg-primary text-primary-foreground shadow-sm'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                      )}
+                    >
+                      <Icon className="h-4 w-4 flex-shrink-0" />
+                      {item.label}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            </div>
           );
         })}
       </nav>
@@ -391,9 +309,7 @@ export const AppSidebar = () => {
             onClick={() => setShowNetRevenue(true)}
             className={cn(
               'flex-1 transition-colors font-medium',
-              showNetRevenue
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:bg-muted',
+              showNetRevenue ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
             )}
           >
             Netto
@@ -403,9 +319,7 @@ export const AppSidebar = () => {
             onClick={() => setShowNetRevenue(false)}
             className={cn(
               'flex-1 transition-colors font-medium',
-              !showNetRevenue
-                ? 'bg-amber-500 text-white'
-                : 'text-muted-foreground hover:bg-muted',
+              !showNetRevenue ? 'bg-amber-500 text-white' : 'text-muted-foreground hover:bg-muted',
             )}
           >
             Brutto
@@ -421,7 +335,6 @@ export const AppSidebar = () => {
 
       {/* Rollen-Bereich + Abmelden */}
       <div className="border-t border-border px-3 py-3 space-y-2">
-        {/* Rollen-Badge / Gast-Badge */}
         {isGuest ? (
           <div className="flex items-center gap-2 rounded-md px-2.5 py-2 border text-xs font-semibold bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/30 dark:text-violet-300 dark:border-violet-700">
             <Eye className="h-3.5 w-3.5 flex-shrink-0" />
@@ -431,10 +344,7 @@ export const AppSidebar = () => {
             </div>
           </div>
         ) : (
-          <div className={cn(
-            'flex items-center gap-2 rounded-md px-2.5 py-2 border text-xs font-semibold',
-            roleConfig.color,
-          )}>
+          <div className={cn('flex items-center gap-2 rounded-md px-2.5 py-2 border text-xs font-semibold', roleConfig.color)}>
             <RoleIcon className="h-3.5 w-3.5 flex-shrink-0" />
             <div className="min-w-0">
               <p className="font-bold truncate">{roleConfig.label}</p>
@@ -443,19 +353,15 @@ export const AppSidebar = () => {
                   Bereich: {allowedDepartment === 'service' ? 'Service' : 'Küche'}
                 </p>
               )}
-              {isAdmin && (
-                <p className="text-[10px] opacity-80 font-normal">Alle Abteilungen</p>
-              )}
+              {isAdmin && <p className="text-[10px] opacity-80 font-normal">Alle Abteilungen</p>}
             </div>
           </div>
         )}
 
-        {/* E-Mail */}
         {emailShort && !isGuest && (
           <p className="text-[10px] text-muted-foreground px-1 truncate">{emailShort}</p>
         )}
 
-        {/* Abmelden / Sitzung beenden */}
         <Button
           variant="outline"
           size="sm"
@@ -480,13 +386,11 @@ export const AppBottomNav = () => {
   const { isAdmin, canAccessModule } = usePermissions();
   const { isGuest } = useGuestSession();
 
-  // Mobile zeigt max. 4 Hauptpunkte
-  const mobileItems = NAV_ITEMS.filter(item => {
-    if (item.comingSoon) return false;
+  const mobileItems = ALL_NAV_ITEMS.filter(item => {
     if (item.adminOnly && !isAdmin && !isGuest) return false;
     if (item.module && !canAccessModule(item.module) && !isGuest) return false;
-    // Einstellungen auf Mobile weglassen (zu wenig Platz)
     if (item.path === '/settings') return false;
+    if (item.path === '/sales-upload') return false;
     return true;
   }).slice(0, 5);
 
@@ -505,9 +409,7 @@ export const AppBottomNav = () => {
             end={item.path === '/'}
             className={cn(
               'flex-1 flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] font-medium transition-colors',
-              isActive
-                ? 'text-primary'
-                : 'text-muted-foreground hover:text-foreground',
+              isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
             )}
           >
             <Icon className={cn('h-5 w-5', isActive && 'stroke-[2.5]')} />
@@ -519,7 +421,7 @@ export const AppBottomNav = () => {
   );
 };
 
-// ─── Kombiniertes Export (für App.tsx) ───────────────────────────────────────
+// ─── Kombiniertes Export ──────────────────────────────────────────────────────
 
 export const AppNav = () => (
   <>
