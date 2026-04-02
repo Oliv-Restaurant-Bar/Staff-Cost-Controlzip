@@ -132,7 +132,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       {
         path: '/sales-upload',
-        label: 'Upload',
+        label: 'Verkaufsdaten Upload',
         shortLabel: 'Upload',
         icon: Upload,
         adminOnly: true,
@@ -264,7 +264,7 @@ export const AppSidebar = () => {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-2 py-3 space-y-4">
+      <nav className="flex-1 px-2 py-3">
 
         {/* Dashboard — standalone, kein Gruppen-Label */}
         {isItemVisible(DASHBOARD_ITEM) && (() => {
@@ -287,14 +287,15 @@ export const AppSidebar = () => {
           );
         })()}
 
-        {/* Gruppen */}
+        {/* Gruppen mit Trennlinie */}
         {NAV_GROUPS.map((group, gi) => {
           const visibleItems = group.items.filter(isItemVisible);
           if (visibleItems.length === 0) return null;
 
           return (
-            <div key={gi}>
-              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/55">
+            <div key={gi} className="mt-5">
+              <div className="mx-3 mb-2 border-t border-border/50" />
+              <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
                 {group.groupLabel}
               </p>
               <div className="space-y-0.5">
