@@ -1349,7 +1349,8 @@ const SchedulePlanner = () => {
   // ── Feature 1: Personalkostenquote ──────────────────────────────────────
   const _planYear  = currentMonth.getFullYear();
   const _planMonth = currentMonth.getMonth() + 1;
-  const laborCostThreshold = resolveZielwert(_planYear, _planMonth, undefined, false).targetPercent;
+  const _globalResolved    = resolveZielwert(_planYear, _planMonth, undefined, false);
+  const laborCostThreshold = _globalResolved.targetPercent;
 
   // Kosten und Stunden werden auf die sichtbare Abteilung gefiltert.
   // Ein Manager sieht nur die Zahlen seiner eigenen Abteilung.
@@ -1851,6 +1852,49 @@ const SchedulePlanner = () => {
       </header>
 
       <main className="max-w-[1800px] mx-auto px-4 py-6 space-y-6">
+
+        {/* ── Aktiver-Zielwert Info-Banner ─────────────────────────────── */}
+        {(() => {
+          const srcLabel = (src: string): string => (({
+            'month+dept':   'Monat + Abt.',
+            'year+dept':    'Jahr + Abt.',
+            'month+global': 'Monat global',
+            'year+global':  'Jahr global',
+            'fallback':     'Fallback',
+          } as Record<string, string>)[src] ?? src);
+
+          const items: { label: string; pct: number; src: string; color: string }[] = [];
+          if (activeDepartment !== 'küche') {
+            items.push({ label: 'Service', pct: _serviceResolved.targetPercent, src: _serviceResolved.source,
+              color: 'text-blue-700 bg-blue-50 border-blue-200 dark:text-blue-300 dark:bg-blue-950/30 dark:border-blue-700' });
+          }
+          if (activeDepartment !== 'service') {
+            items.push({ label: 'Küche', pct: _kücheResolved.targetPercent, src: _kücheResolved.source,
+              color: 'text-orange-700 bg-orange-50 border-orange-200 dark:text-orange-300 dark:bg-orange-950/30 dark:border-orange-700' });
+          }
+          if (activeDepartment === 'all') {
+            items.push({ label: 'Global', pct: _globalResolved.targetPercent, src: _globalResolved.source,
+              color: 'text-muted-foreground bg-muted border-border' });
+          }
+
+          return (
+            <div className="flex flex-wrap gap-2 items-center py-1">
+              <span className="text-xs text-muted-foreground font-medium shrink-0">Aktiver Zielwert:</span>
+              {items.map(({ label, pct, src, color }) => (
+                <span key={label} className={cn(
+                  'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border',
+                  color
+                )}>
+                  <span className="font-semibold">{label}:</span>
+                  <span className="tabular-nums">{pct.toFixed(1)}&thinsp;%</span>
+                  <span className="opacity-60 font-normal">({srcLabel(src)})</span>
+                </span>
+              ))}
+              <span className="text-[10px] text-muted-foreground/50 ml-0.5">für {pkqPeriodLabel}</span>
+            </div>
+          );
+        })()}
+
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>

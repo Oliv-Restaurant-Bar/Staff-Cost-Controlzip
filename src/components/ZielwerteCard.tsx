@@ -242,11 +242,11 @@ export function ZielwerteCard() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead className="text-xs">Zeitraum</TableHead>
+                  <TableHead className="text-xs">Jahr</TableHead>
+                  <TableHead className="text-xs">Monat</TableHead>
                   <TableHead className="text-xs">Abteilung</TableHead>
-                  <TableHead className="text-xs text-right">Ziel %</TableHead>
-                  <TableHead className="text-xs text-right">Ziel CHF</TableHead>
-                  <TableHead className="text-xs w-20">Aktion</TableHead>
+                  <TableHead className="text-xs text-right">Zielwert %</TableHead>
+                  <TableHead className="text-xs w-20">Aktionen</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -259,26 +259,40 @@ export function ZielwerteCard() {
                   })
                   .map(e => (
                     <TableRow key={e.id} className="text-sm">
-                      <TableCell>{scopeLabel(e)}</TableCell>
+                      <TableCell className="font-medium tabular-nums">{e.year}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {e.month !== undefined ? MONTH_NAMES[e.month] : (
+                          <span className="italic text-muted-foreground/70">Ganzes Jahr</span>
+                        )}
+                      </TableCell>
                       <TableCell>
-                        <Badge variant="outline" className="text-xs font-normal">
+                        <Badge
+                          variant="outline"
+                          className={
+                            e.department === 'service'
+                              ? 'text-xs font-normal border-blue-300 text-blue-700 dark:text-blue-300'
+                              : e.department === 'küche'
+                              ? 'text-xs font-normal border-orange-300 text-orange-700 dark:text-orange-300'
+                              : 'text-xs font-normal'
+                          }
+                        >
                           {DEPT_LABELS[e.department]}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right font-medium tabular-nums">
-                        {e.targetPercent.toFixed(1)} %
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {e.targetChf !== undefined
-                          ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(e.targetChf)
-                          : '–'}
+                      <TableCell className="text-right">
+                        <span className="font-semibold tabular-nums">{e.targetPercent.toFixed(1)} %</span>
+                        {e.targetChf !== undefined && (
+                          <span className="block text-[10px] text-muted-foreground tabular-nums">
+                            {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(e.targetChf)}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => startEdit(e)}>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => startEdit(e)} title="Bearbeiten">
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10" onClick={() => handleDelete(e.id)}>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10" onClick={() => handleDelete(e.id)} title="Löschen">
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
