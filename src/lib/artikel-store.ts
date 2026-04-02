@@ -9,6 +9,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { supabase } from '@/integrations/supabase/client';
 
 // ── Konstanten ────────────────────────────────────────────────────────────────
 
@@ -285,11 +286,121 @@ export function resolveIngredientAccount(
   return ingredient.accountingAccount || '4090';
 }
 
+// ── Import aus product_sales ──────────────────────────────────────────────────
+
 /**
- * Stellt sicher, dass jeder Artikel ein Fibu-Konto hat.
- * Fehlende Konten werden auf '4090' (Diverses) gesetzt.
- * Wird beim Laden aus der DB aufgerufen – keine UI-Interaktion nötig.
+ * Liest alle eindeutigen product_name-Werte aus product_sales und legt
+ * fehlende Artikel im Artikelstamm an.
+ *
+ * Regeln:
+ *  - Keine bestehenden Artikel überschreiben (Dedup: exact lowercase match)
+ *  - inventoryType aus `source`-Spalte (food_csv_export → food, beverage_ → beverage)
+ *  - Fallback: Lookup in produkte_kosten nach category
+ *  - Wenn keines verfügbar: inventoryType = 'food', accountingAccount = '4090'
+ *
+ * @returns { newCount, updatedStore }
  */
+export async function importArtikelFromProductSales(
+  currentStore: ArtikelStore,
+): Promise<{ newCount: number; updatedStore: ArtikelStore }> {
+  // 1. Alle eindeutigen Produkte aus product_sales (name + neueste source)
+  const { data: salesRows, error: salesErr } = await (supabase as any)
+    .from('product_sales')
+    .select('product_name, source')
+    .not('product_name', 'is', null);
+
+  if (salesErr) throw new Error(`product_sales Fehler: ${salesErr.message}`);
+
+  // Deduplizieren: pro product_name die zuerst gefundene source behalten
+  const salesMap = new Map<string, string>(); // lc-name → source
+  for (const row of salesRows ?? []) {
+    const lc = (row.product_name as string).trim().toLowerCase();
+    if (lc && !salesMap.has(lc)) salesMap.set(lc, row.source ?? '');
+  }
+
+  console.log(`[Artikel-Import] product_sales: ${salesMap.size} eindeutige Produkte`);
+
+  // 2. Kategorie-Fallback aus produkte_kosten
+  const { data: kostRows } = await (supabase as any)
+    .from('produkte_kosten')
+    .select('name, category');
+
+  const kostMap = new Map<string, 'food' | 'beverage'>(); // lc-name → category
+  for (const row of kostRows ?? []) {
+    if (row.name && row.category) {
+      kostMap.set((row.name as string).trim().toLowerCase(), row.category as 'food' | 'beverage');
+    }
+  }
+
+  // 3. Bestehende Artikel-Namen (lowercase) für Dedup
+  const existingNames = new Set(
+    currentStore.articles.map(a => a.name.trim().toLowerCase()),
+  );
+
+  // 4. Neue Artikel erzeugen
+  const newArticles: Artikel[] = [];
+  const now = new Date().toISOString();
+
+  for (const [lcName, source] of salesMap.entries()) {
+    if (existingNames.has(lcName)) continue; // Bereits vorhanden – überspringen
+
+    // originalName: erster Eintrag aus salesRows mit passendem lc-Name
+    const original = salesRows?.find(
+      (r: any) => r.product_name.trim().toLowerCase() === lcName,
+    )?.product_name ?? lcName;
+
+    // inventoryType aus source oder produkte_kosten
+    let inventoryType: InventoryType = 'food';
+    if (source.startsWith('beverage')) {
+      inventoryType = 'beverage';
+    } else if (source.startsWith('food')) {
+      inventoryType = 'food';
+    } else if (kostMap.has(lcName)) {
+      inventoryType = kostMap.get(lcName)!;
+    }
+
+    // Fibu-Konto
+    const accountingAccount = inventoryType === 'food' ? '4060' : '4090';
+
+    const artikel: Artikel = {
+      id:                 uuidv4(),
+      name:               original.trim(),
+      inventoryType,
+      unit:               inventoryType === 'food' ? 'Portion' : 'Stück',
+      defaultCostPerUnit: 0,
+      standardSupplier:   '',
+      fallbackEnabled:    false,
+      fallbackSupplier:   '',
+      fallbackPrice:      0,
+      accountingAccount,
+      storageLocations:   [],
+      inventurRelevant:   false,
+      trackingAktiv:      false,
+      active:             true,
+      createdAt:          now,
+      updatedAt:          now,
+    };
+
+    newArticles.push(artikel);
+    existingNames.add(lcName); // in-loop dedup
+  }
+
+  console.log(
+    `[Artikel-Import] ${newArticles.length} neue Artikel (von ${salesMap.size} Produkten, ` +
+    `${salesMap.size - newArticles.length} bereits vorhanden)`,
+  );
+
+  if (newArticles.length === 0) {
+    return { newCount: 0, updatedStore: currentStore };
+  }
+
+  const updatedStore: ArtikelStore = {
+    articles: [...currentStore.articles, ...newArticles],
+    updatedAt: now,
+  };
+  return { newCount: newArticles.length, updatedStore };
+}
+
 export function ensureAccountingAccounts(articles: Artikel[]): { articles: Artikel[]; patched: number } {
   let patched = 0;
   const fixed = articles.map(a => {

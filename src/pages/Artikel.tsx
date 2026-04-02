@@ -13,6 +13,7 @@ import {
   Plus, Pencil, Trash2, Search, X, Package, Wine,
   ChevronDown, ChevronUp, Eye, EyeOff, Info,
   MapPin, LayoutList, Layers, Star, ClipboardList, Activity, ExternalLink,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,6 +47,7 @@ import {
   getArtikelStats,
   loadArtikelFromDB,
   saveArtikelToDB,
+  importArtikelFromProductSales,
 } from '@/lib/artikel-store';
 
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────────
@@ -456,6 +458,7 @@ function ArtikelDialog({ open, initial, onSave, onClose }: ArtikelDialogProps) {
 export default function ArtikelPage() {
   const [store, setStore]               = useState<ArtikelStore>({ articles: [], updatedAt: '' });
   const [loading, setLoading]           = useState(true);
+  const [importing, setImporting]       = useState(false);
   const [dialogOpen, setDialogOpen]     = useState(false);
   const [editArtikel, setEditArtikel]   = useState<Artikel | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Artikel | null>(null);
@@ -519,6 +522,24 @@ export default function ArtikelPage() {
   function openCreate() {
     setEditArtikel(null);
     setDialogOpen(true);
+  }
+
+  async function handleImportFromSales() {
+    setImporting(true);
+    try {
+      const { newCount, updatedStore } = await importArtikelFromProductSales(store);
+      if (newCount === 0) {
+        toast.info('Keine neuen Artikel – alle Verkaufsprodukte sind bereits im Artikelstamm vorhanden.');
+      } else {
+        await persist(updatedStore);
+        toast.success(`${newCount} neue Artikel aus Verkaufsdaten übernommen.`);
+      }
+    } catch (err) {
+      console.error('[Artikel-Import] Fehler:', err);
+      toast.error(`Fehler beim Import: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setImporting(false);
+    }
   }
 
   function toggleSort(field: typeof sortField) {
@@ -625,6 +646,15 @@ export default function ArtikelPage() {
                 </p>
               </TooltipContent>
             </Tooltip>
+            <Button
+              variant="outline"
+              onClick={handleImportFromSales}
+              disabled={importing}
+              title="Eindeutige Produkte aus product_sales als Artikel übernehmen (keine Überschreibung bestehender Artikel)"
+            >
+              <RefreshCw className={`h-4 w-4 mr-1 ${importing ? 'animate-spin' : ''}`} />
+              {importing ? 'Importiere…' : 'Aus Verkaufsdaten'}
+            </Button>
             <Button onClick={openCreate} className="bg-emerald-600 hover:bg-emerald-700 text-white">
               <Plus className="h-4 w-4 mr-1" /> Neuer Artikel
             </Button>
