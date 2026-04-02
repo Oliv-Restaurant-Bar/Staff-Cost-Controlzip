@@ -151,27 +151,67 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
       logs.push('⚠️ Zeitraum nicht erkannt – verwende aktuellen Monat');
     }
 
-    // Find date-header row: row with ≥7 integers 1–31
+    // Find date-header band: look for a Y-band of rows (within ±14px of each other)
+    // that together contain ≥5 distinct integers in range 1–31.
+    // This handles PDFs where the date row is split across multiple sub-rows due to
+    // the complex multi-week-column layout (Excel export quirk).
     let headerRowIdx = -1;
     let headerDayCols: Array<{ x: number; day: number }> = [];
+    let headerBandMaxIdx = -1; // last row index that is part of the header band
+
+    const isDayItem = (it: { x: number; text: string }) => {
+      const trimmed = it.text.trim();
+      const n = parseInt(trimmed, 10);
+      // Accept exact integer match: "5", "10", "31" — not "10 11" or "05"
+      return !isNaN(n) && n >= 1 && n <= 31 && trimmed === String(n);
+    };
+
+    const Y_BAND = 14; // px tolerance for merging rows into the date header band
 
     for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const dayItems = row.items.filter(it => {
-        const n = parseInt(it.text, 10);
-        return !isNaN(n) && n >= 1 && n <= 31 && it.text.trim() === String(n);
+      // Collect all items from rows within ±Y_BAND y-distance of rows[i]
+      const bandItems: { x: number; text: string }[] = [];
+      let maxBandIdx = i;
+      for (let j = 0; j < rows.length; j++) {
+        if (Math.abs(rows[j].y - rows[i].y) <= Y_BAND) {
+          bandItems.push(...rows[j].items);
+          if (j > maxBandIdx) maxBandIdx = j;
+        }
+      }
+
+      const dayItems = bandItems.filter(isDayItem);
+
+      // Deduplicate by x-position (same item might appear from multiple rows in band)
+      const seenX = new Set<number>();
+      const uniqueDayItems = dayItems.filter(it => {
+        const rx = Math.round(it.x / 2) * 2; // round to nearest 2px
+        if (seenX.has(rx)) return false;
+        seenX.add(rx);
+        return true;
       });
-      if (dayItems.length >= 7) {
+
+      if (uniqueDayItems.length >= 5) {
         headerRowIdx = i;
-        headerDayCols = dayItems.map(it => ({ x: it.x, day: parseInt(it.text, 10) }));
-        logs.push(`Datum-Headerzeile bei y=${rows[i].y}: ${dayItems.length} Tagesspalten`);
-        logs.push(`Tage: ${dayItems.map(d => d.day).join(', ')}`);
+        headerBandMaxIdx = maxBandIdx;
+        headerDayCols = uniqueDayItems.map(it => ({ x: it.x, day: parseInt(it.text, 10) }));
+        logs.push(
+          `Datum-Headerband bei y≈${rows[i].y} (±${Y_BAND}px): ` +
+          `${uniqueDayItems.length} Tagesspalten erkannt`,
+        );
+        logs.push(`Tage: ${uniqueDayItems.sort((a, b) => a.day - b.day).map(d => d.day).join(', ')}`);
         break;
       }
     }
 
     if (headerRowIdx === -1) {
       logs.push('❌ Keine Datum-Headerzeile gefunden (erwartet: Zeile mit Zahlen 1–31)');
+      // Extra diagnostic: list largest day-number count per row to help debug
+      for (let i = 0; i < Math.min(rows.length, 20); i++) {
+        const cnt = rows[i].items.filter(isDayItem).length;
+        if (cnt > 0) {
+          logs.push(`  Zeile y=${rows[i].y}: ${cnt} Tageszahlen, Inhalt: ${rows[i].items.map(t => t.text).slice(0, 15).join(' ')}`);
+        }
+      }
       return {
         entries: [], detectedPeriod: null, detectedMonth: null,
         detectedStartDate: null, headerDays: [],
@@ -180,7 +220,10 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
       };
     }
 
-    const firstDayX = Math.min(...headerDayCols.map(d => d.x));
+    // Sort by x so colGap and firstDayX are always computed from ordered columns
+    headerDayCols.sort((a, b) => a.x - b.x);
+
+    const firstDayX = headerDayCols[0].x;
     const colGap = headerDayCols.length > 1
       ? (headerDayCols[headerDayCols.length - 1].x - headerDayCols[0].x) / (headerDayCols.length - 1)
       : 20;
@@ -217,8 +260,9 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
       return best;
     }
 
-    // Skip weekday row immediately after header (contains Mo, Di, Mi …)
-    let dataStart = headerRowIdx + 1;
+    // Skip weekday row immediately after header band (contains Mo, Di, Mi …)
+    // Use headerBandMaxIdx so we skip past ALL rows that were part of the header y-band
+    let dataStart = headerBandMaxIdx + 1;
     if (dataStart < rows.length) {
       const nextRowText = rows[dataStart].items.map(i => i.text.toLowerCase()).join(' ');
       if (/\bmo\b|\bdi\b|\bmi\b|\bdo\b|\bfr\b|\bsa\b|\bso\b/.test(nextRowText)) {
