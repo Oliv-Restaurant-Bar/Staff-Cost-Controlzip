@@ -388,18 +388,6 @@ export const AppSidebar = () => {
         <div className="flex rounded-md overflow-hidden border border-border text-xs h-7">
           <button
             type="button"
-            onClick={() => setShowNetRevenue(false)}
-            className={cn(
-              'flex-1 transition-colors font-medium',
-              !showNetRevenue
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:bg-muted',
-            )}
-          >
-            Brutto
-          </button>
-          <button
-            type="button"
             onClick={() => setShowNetRevenue(true)}
             className={cn(
               'flex-1 transition-colors font-medium',
@@ -410,9 +398,24 @@ export const AppSidebar = () => {
           >
             Netto
           </button>
+          <button
+            type="button"
+            onClick={() => setShowNetRevenue(false)}
+            className={cn(
+              'flex-1 transition-colors font-medium',
+              !showNetRevenue
+                ? 'bg-amber-500 text-white'
+                : 'text-muted-foreground hover:bg-muted',
+            )}
+          >
+            Brutto
+          </button>
         </div>
-        <p className="text-[9px] text-muted-foreground mt-1 px-0.5 leading-tight">
-          {showNetRevenue ? 'exkl. MWST (÷1.081 / ÷1.026)' : 'inkl. MWST'}
+        <p className="text-[9px] mt-1 px-0.5 leading-tight">
+          {showNetRevenue
+            ? <span className="text-emerald-700 dark:text-emerald-400 font-medium">✓ Controlling-Basis · exkl. MWST</span>
+            : <span className="text-amber-600 dark:text-amber-400 font-medium">⚠ Kontrollansicht · inkl. MWST</span>
+          }
         </p>
       </div>
 

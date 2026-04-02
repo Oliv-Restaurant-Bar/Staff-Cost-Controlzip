@@ -1017,8 +1017,8 @@ const Dashboard = () => {
                 <SectionTitle icon={<TrendingUp className="h-4 w-4" />}>
                   Umsatz · {PERIOD_LABELS[period]}
                   <span className="ml-2 font-normal text-muted-foreground normal-case">{periodLabel}</span>
-                  <span className={`ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${showNetRevenue ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'bg-muted text-muted-foreground'}`}>
-                    {showNetRevenue ? 'Netto (exkl. MWST)' : 'Brutto (inkl. MWST)'}
+                  <span className={`ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${showNetRevenue ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'}`}>
+                    {showNetRevenue ? '✓ Netto · Controlling-Basis' : '⚠ Brutto · Kontrollansicht'}
                   </span>
                 </SectionTitle>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1357,7 +1357,7 @@ const Dashboard = () => {
                   <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 mt-1">
                     <span className="shrink-0 mt-0.5">⚠</span>
                     <span>
-                      <span className="font-semibold">Bruttoumsatz aktiv:</span> Verhältniskennzahlen (PKQ, FIX-Quote) basieren auf dem Bruttoumsatz inkl. MWST — nicht direkt vergleichbar mit Buchhaltungswerten (die Kosten sind stets Netto).
+                      <span className="font-semibold">Kontrollansicht (Bruttoumsatz):</span> Personalquoten (PKQ, FIX-Quote) werden tiefer dargestellt, da der Nenner inkl. MWST ist. Personalkosten bleiben unverändert. Für Controlling-Vergleiche <span className="font-semibold">Netto</span> verwenden.
                     </span>
                   </div>
                 )}

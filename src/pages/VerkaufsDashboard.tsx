@@ -608,7 +608,7 @@ export default function VerkaufsDashboard() {
             <div className="col-span-full flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
               <span className="shrink-0 mt-0.5">⚠</span>
               <span>
-                <span className="font-semibold">Bruttoumsatz aktiv:</span> WES % und Deckungsbeitrag-Marge basieren auf dem Bruttoumsatz inkl. MWST — nicht direkt vergleichbar mit Buchhaltungswerten (WES-Kosten sind Netto).
+                <span className="font-semibold">Kontrollansicht (Bruttoumsatz):</span> WES % und Deckungsbeitrag-Marge werden tiefer dargestellt, da der Umsatz inkl. MWST ist. WES-Kosten bleiben unverändert. Für Controlling-Vergleiche <span className="font-semibold">Netto</span> verwenden.
               </span>
             </div>
           )}
