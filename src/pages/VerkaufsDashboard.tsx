@@ -38,6 +38,8 @@ import {
   sourceLabel,
   type ProductSalesRow,
 } from '@/lib/sales-db';
+import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
+import { grossToNet } from '@/types/personnel';
 
 const MONTH_NAMES = [
   '', 'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
@@ -194,6 +196,7 @@ function KpiCard({
 // ─── Hauptseite ───────────────────────────────────────────────────────────────
 
 export default function VerkaufsDashboard() {
+  const { showNetRevenue } = useRevenueDisplay();
   const now = new Date();
   const [loading,         setLoading]         = useState(true);
   const [dbError,         setDbError]         = useState<string | null>(null);
@@ -370,8 +373,9 @@ export default function VerkaufsDashboard() {
     [filteredRows, wesMap],
   );
 
-  const wesPercent       = totalRevenue > 0 ? (totalWes / totalRevenue) * 100 : 0;
-  const deckungsbeitrag  = totalRevenue - totalWes;
+  const totalRevenueB    = showNetRevenue ? grossToNet(totalRevenue) : totalRevenue;
+  const wesPercent       = totalRevenueB > 0 ? (totalWes / totalRevenueB) * 100 : 0;
+  const deckungsbeitrag  = totalRevenueB - totalWes;
   const hasWes           = totalWes > 0;
 
   const filteredTop = useMemo(() =>
@@ -583,10 +587,11 @@ export default function VerkaufsDashboard() {
       {filteredRows.length > 0 && (
         <div className={`grid gap-3 md:gap-4 ${hasWes ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-3'}`}>
           <KpiCard
-            label="Gesamtumsatz"
-            value={fmtChf(totalRevenue)}
+            label={`Gesamtumsatz${showNetRevenue ? ' (Netto)' : ''}`}
+            value={fmtChf(totalRevenueB)}
             icon={DollarSign}
             color="green"
+            sub={showNetRevenue ? 'exkl. MWST' : 'inkl. MWST'}
           />
           <KpiCard
             label="Gesamtabsatz"
@@ -611,14 +616,14 @@ export default function VerkaufsDashboard() {
                 label="WES %"
                 value={`${wesPercent.toFixed(1)} %`}
                 icon={TrendingUp}
-                sub={`von ${fmtChf(totalRevenue)} Umsatz`}
+                sub={`von ${fmtChf(totalRevenueB)} Umsatz`}
                 color={wesPercent > 35 ? 'muted' : 'default'}
               />
               <KpiCard
                 label="Deckungsbeitrag CHF"
                 value={fmtChf(deckungsbeitrag)}
                 icon={TrendingUp}
-                sub={totalRevenue > 0 ? `${((deckungsbeitrag / totalRevenue) * 100).toFixed(1)} % Marge` : undefined}
+                sub={totalRevenueB > 0 ? `${((deckungsbeitrag / totalRevenueB) * 100).toFixed(1)} % Marge` : undefined}
                 color={deckungsbeitrag >= 0 ? 'green' : 'muted'}
               />
             </>
@@ -894,7 +899,7 @@ export default function VerkaufsDashboard() {
               </thead>
               <tbody className="divide-y divide-border/40">
                 {bySource.map(s => {
-                  const share    = totalRevenue > 0 ? (s.revenue / totalRevenue) * 100 : 0;
+                  const share    = totalRevenueB > 0 ? (s.revenue / totalRevenueB) * 100 : 0;
                   const srcWesP  = s.revenue > 0 ? (s.wes / s.revenue) * 100 : 0;
                   return (
                     <tr key={s.label} className="hover:bg-muted/30 transition-colors">

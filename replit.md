@@ -14,6 +14,13 @@ Internes Reporting-Tool für Umsatz, Personalkosten, Dienstplan und KPIs. 2–3 
 - Login: `admin@olivbern.ch` / `OlivAdmin2026!`
 - Datei: `src/integrations/supabase/client.ts`
 
+## Globaler Netto/Brutto Umsatzbasis-Switch (COMPLETED)
+- `RevenueDisplayContext` (localStorage `revenue-display-mode`): `showNetRevenue` / `setShowNetRevenue`
+- Toggle-Widget in AppSidebar (zwischen Stichtag-Picker und Rollen-Bereich)
+- `grossToNet(gross, takeaway=0)` in `src/types/personnel.ts`: Restaurant ÷1.081, Take Away ÷1.026
+- Dashboard.tsx: alle Umsatz-KPIs, Kostenverhältnisse, Stichtag/Effective/Budget verwenden `*B` Variablen (toBase-helper)
+- VerkaufsDashboard.tsx: `totalRevenueB`, WES%, Deckungsbeitrag%, bySource-Anteil
+
 ## Ziel-Modulstruktur (in Umsetzung)
 1. **Dashboard** — Übersicht KPIs, Umsatz, Kosten; pro-rata Personalkosten; Personal FIX-Sektion
 2. **Dienstplanung** — Plan- und Ist-Dienstplan (SchedulePlanner.tsx)

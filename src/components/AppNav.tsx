@@ -21,6 +21,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
+import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { Button } from '@/components/ui/button';
 import {
   Tooltip, TooltipContent, TooltipTrigger,
@@ -302,6 +303,7 @@ export const AppSidebar = () => {
   const { user, signOut } = useAuth();
   const { role, isAdmin, isManager, allowedDepartment, canAccessModule } = usePermissions();
   const { isGuest, guestMinutesLeft, clearGuestSession } = useGuestSession();
+  const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
 
   console.log('[NAV] AppSidebar render', { role, isAdmin, userEmail: user?.email });
 
@@ -377,6 +379,42 @@ export const AppSidebar = () => {
 
       {/* Stichtag-Picker */}
       <StichtagPicker />
+
+      {/* Umsatzbasis-Toggle */}
+      <div className="border-t border-border px-3 py-2.5">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 px-0.5">
+          Umsatzbasis
+        </p>
+        <div className="flex rounded-md overflow-hidden border border-border text-xs h-7">
+          <button
+            type="button"
+            onClick={() => setShowNetRevenue(false)}
+            className={cn(
+              'flex-1 transition-colors font-medium',
+              !showNetRevenue
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-muted',
+            )}
+          >
+            Brutto
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowNetRevenue(true)}
+            className={cn(
+              'flex-1 transition-colors font-medium',
+              showNetRevenue
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-muted',
+            )}
+          >
+            Netto
+          </button>
+        </div>
+        <p className="text-[9px] text-muted-foreground mt-1 px-0.5 leading-tight">
+          {showNetRevenue ? 'exkl. MWST (÷1.081 / ÷1.026)' : 'inkl. MWST'}
+        </p>
+      </div>
 
       {/* Rollen-Bereich + Abmelden */}
       <div className="border-t border-border px-3 py-3 space-y-2">

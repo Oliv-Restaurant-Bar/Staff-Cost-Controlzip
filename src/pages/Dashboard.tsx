@@ -36,8 +36,9 @@ import {
   DaySchedule,
   ActualHourEntry,
 } from '@/lib/supabase-db';
-import { Employee } from '@/types/personnel';
+import { Employee, grossToNet } from '@/types/personnel';
 import { useStichtag } from '@/contexts/StichtagContext';
+import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
 import { WesMarginWidget } from '@/components/WesMarginWidget';
 import { resolveZielwert } from '@/lib/zielwerte-store';
@@ -83,6 +84,7 @@ interface DailyBudget {
   plannedRevenue: number;
   actualRevenue: number;
   previousYearRevenue: number;
+  takeawayRevenue?: number;
 }
 
 // ─── KPI-Karte ────────────────────────────────────────────────────────────────
@@ -228,6 +230,7 @@ const Dashboard = () => {
     isActive: stichtagActive, stichtagYear, stichtagMonth, stichtagDay,
     stichtag, formatted: stichtagFormatted,
   } = useStichtag();
+  const { showNetRevenue } = useRevenueDisplay();
 
   const deptLabel = allowedDepartment === 'service' ? 'Service'
     : allowedDepartment === 'küche' ? 'Küche'
@@ -478,6 +481,28 @@ const Dashboard = () => {
       : budgetData.revenueBudget * 12  // Jahr: Monatsbudget × 12
     : 0;
 
+  // ── Umsatzbasis-Konvertierung ─────────────────────────────────────────────────
+  // toBase(): gibt Netto (exkl. MWST) oder Brutto zurück je nach globalem Switch.
+  // - Restaurant: ÷ 1.081  |  Take Away: ÷ 1.026
+  const toBase = (gross: number, takeaway = 0): number => {
+    if (!showNetRevenue) return gross;
+    return grossToNet(gross, takeaway);
+  };
+  const takeawayActiveSum  = sumRevenue(activeDays, 'takeawayRevenue');
+  const takeawayMonthSum   = sumRevenue(monthDays,  'takeawayRevenue');
+  console.log('[UMSATZBASIS] mode:', showNetRevenue ? 'netto' : 'brutto');
+  if (showNetRevenue && revenueActive > 0) {
+    const ta  = takeawayActiveSum;
+    const reg = revenueActive - ta;
+    console.log('[UMSATZBASIS] restaurant gross ->', reg.toFixed(0), '-> net:', (reg / 1.081).toFixed(0));
+    if (ta > 0) console.log('[UMSATZBASIS] takeaway gross ->', ta.toFixed(0), '-> net:', (ta / 1.026).toFixed(0));
+  }
+  const revenueActiveB         = toBase(revenueActive, takeawayActiveSum);
+  const revenuePrevYearActiveB = toBase(revenuePrevYearActive);
+  const budgetActiveB          = toBase(budgetActive);
+  const revenueMonthB          = toBase(revenueMonth, takeawayMonthSum);
+  const revenuePlannedMonthB   = toBase(revenuePlannedMonth, takeawayMonthSum);
+
   // ── Personalkosten-Berechnungen ─────────────────────────────────────────────
   const monthDateSet = new Set(monthDays);
 
@@ -556,11 +581,11 @@ const Dashboard = () => {
 
   const hoursVariance = actualHours > 0 ? actualHours - plannedHours : null;
 
-  const plannedCostRatio = revenuePlannedMonth > 0
-    ? (plannedLaborCost / revenuePlannedMonth) * 100
+  const plannedCostRatio = revenuePlannedMonthB > 0
+    ? (plannedLaborCost / revenuePlannedMonthB) * 100
     : null;
-  const actualCostRatio = revenueMonth > 0 && actualLaborCost > 0
-    ? (actualLaborCost / revenueMonth) * 100
+  const actualCostRatio = revenueMonthB > 0 && actualLaborCost > 0
+    ? (actualLaborCost / revenueMonthB) * 100
     : null;
 
   // ── Buchhaltungs-Personalkosten (aus P&L-Import, 5xxx Konten) ───────────────
@@ -611,11 +636,12 @@ const Dashboard = () => {
 
   // ── Budget-Vergleichs-Berechnungen ───────────────────────────────────────────
   // Abweichung Umsatz: Ist (aus dailyBudgets) vs. Jahresbudget
-  const revVsBudgetAbs = budgetData.revenueBudget > 0
-    ? revenueMonth - budgetData.revenueBudget
+  const budgetMonthB = budgetData.revenueBudget > 0 ? toBase(budgetData.revenueBudget) : 0;
+  const revVsBudgetAbs = budgetMonthB > 0
+    ? revenueMonthB - budgetMonthB
     : null;
-  const revVsBudgetPct = budgetData.revenueBudget > 0
-    ? ((revenueMonth - budgetData.revenueBudget) / budgetData.revenueBudget) * 100
+  const revVsBudgetPct = budgetMonthB > 0
+    ? ((revenueMonthB - budgetMonthB) / budgetMonthB) * 100
     : null;
 
   // Abweichung Personalkosten: Ist vs. Jahresbudget
@@ -657,6 +683,7 @@ const Dashboard = () => {
   const budgetProRataStichtag = stichtagInMonth && stichtagDay && budgetData.revenueBudget > 0
     ? Math.round(budgetData.revenueBudget * stichtagDay / daysInRefMonth)
     : null;
+  const budgetProRataStichtagB = budgetProRataStichtag !== null ? toBase(budgetProRataStichtag) : null;
 
   const personnelBudgetProRata = stichtagInMonth && stichtagDay && budgetData.personnelBudget > 0
     ? Math.round(budgetData.personnelBudget * stichtagDay / daysInRefMonth)
@@ -671,6 +698,11 @@ const Dashboard = () => {
   const revenuePrevYearStichtag = stichtagDateStr
     ? sumRevenuePrevYear(daysUpToStichtag)
     : null;
+
+  // Umsatzbasis-Stichtag
+  const takeawayStichtagSum    = stichtagDateStr ? sumRevenue(daysUpToStichtag, 'takeawayRevenue') : 0;
+  const revenueIstStichtagB    = revenueIstStichtag !== null ? toBase(revenueIstStichtag, takeawayStichtagSum) : null;
+  const revenuePrevYearStichtagB = revenuePrevYearStichtag !== null ? toBase(revenuePrevYearStichtag) : null;
 
   // Personalkosten bis Stichtag (aus Ist-Stunden × Stundenlohn)
   const actualLaborCostStichtag = useMemo(() => {
@@ -708,12 +740,17 @@ const Dashboard = () => {
     ? sumRevenue(effectiveDays, 'actualRevenue')
     : null;
 
-  const revEffectiveVsBudgetAbs = budgetEffective !== null && revenueIstEffective !== null
-    ? revenueIstEffective - budgetEffective
+  // Umsatzbasis-Effective
+  const takeawayEffectiveSum  = effectiveDays.length > 0 ? sumRevenue(effectiveDays, 'takeawayRevenue') : 0;
+  const revenueIstEffectiveB  = revenueIstEffective !== null ? toBase(revenueIstEffective, takeawayEffectiveSum) : null;
+  const budgetEffectiveB      = budgetEffective !== null ? toBase(budgetEffective) : null;
+
+  const revEffectiveVsBudgetAbs = budgetEffectiveB !== null && revenueIstEffectiveB !== null
+    ? revenueIstEffectiveB - budgetEffectiveB
     : null;
 
-  const revEffectiveVsBudgetPct = budgetEffective && revenueIstEffective !== null && budgetEffective > 0
-    ? ((revenueIstEffective - budgetEffective) / budgetEffective) * 100
+  const revEffectiveVsBudgetPct = budgetEffectiveB && revenueIstEffectiveB !== null && budgetEffectiveB > 0
+    ? ((revenueIstEffectiveB - budgetEffectiveB) / budgetEffectiveB) * 100
     : null;
 
   const effectiveCutoffLabel = effectiveCutoff
@@ -770,11 +807,12 @@ const Dashboard = () => {
     }
     return 0;
   })();
-  const istVsPrevYearPct = prevYearEffective > 0 && revenueIstEffective !== null
-    ? ((revenueIstEffective - prevYearEffective) / prevYearEffective) * 100
+  const prevYearEffectiveB = prevYearEffective > 0 ? toBase(prevYearEffective) : 0;
+  const istVsPrevYearPct = prevYearEffectiveB > 0 && revenueIstEffectiveB !== null
+    ? ((revenueIstEffectiveB - prevYearEffectiveB) / prevYearEffectiveB) * 100
     : null;
-  const istVsPrevYearAbs = prevYearEffective > 0 && revenueIstEffective !== null
-    ? revenueIstEffective - prevYearEffective
+  const istVsPrevYearAbs = prevYearEffectiveB > 0 && revenueIstEffectiveB !== null
+    ? revenueIstEffectiveB - prevYearEffectiveB
     : null;
 
   // ── Ansicht-Filter-Helfer ────────────────────────────────────────────────────
@@ -979,32 +1017,35 @@ const Dashboard = () => {
                 <SectionTitle icon={<TrendingUp className="h-4 w-4" />}>
                   Umsatz · {PERIOD_LABELS[period]}
                   <span className="ml-2 font-normal text-muted-foreground normal-case">{periodLabel}</span>
+                  <span className={`ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${showNetRevenue ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'bg-muted text-muted-foreground'}`}>
+                    {showNetRevenue ? 'Netto (exkl. MWST)' : 'Brutto (inkl. MWST)'}
+                  </span>
                 </SectionTitle>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <KpiCard
                     title={`Umsatz Ist · ${PERIOD_LABELS[period]}`}
-                    value={revenueActive > 0 ? formatCHF(revenueActive) : '–'}
+                    value={revenueActiveB > 0 ? formatCHF(revenueActiveB) : '–'}
                     subtitle="Tatsächlicher Umsatz"
                     icon={<TrendingUp className="h-5 w-5" />}
-                    color={revenueActive > 0 ? 'green' : 'default'}
+                    color={revenueActiveB > 0 ? 'green' : 'default'}
                   />
                   <KpiCard
                     title={`Budget · ${PERIOD_LABELS[period]}`}
-                    value={budgetActive > 0 ? formatCHF(Math.round(budgetActive)) : '–'}
+                    value={budgetActiveB > 0 ? formatCHF(Math.round(budgetActiveB)) : '–'}
                     subtitle={period === 'month' ? 'Monatsbudget 2026' : period === 'year' ? 'Jahresbudget (×12)' : 'Anteiliges Budget'}
-                    delta={budgetActive > 0 ? ((revenueActive - budgetActive) / budgetActive) * 100 : null}
+                    delta={budgetActiveB > 0 ? ((revenueActiveB - budgetActiveB) / budgetActiveB) * 100 : null}
                     deltaLabel="% vs. Budget"
                     icon={<CalendarDays className="h-5 w-5" />}
                     color="blue"
                   />
                   <KpiCard
                     title={`Vorjahr · ${PERIOD_LABELS[period]}`}
-                    value={revenuePrevYearActive > 0 ? formatCHF(revenuePrevYearActive) : '–'}
+                    value={revenuePrevYearActiveB > 0 ? formatCHF(revenuePrevYearActiveB) : '–'}
                     subtitle="Vergleich Vorjahr"
-                    delta={revenuePrevYearActive > 0 ? ((revenueActive - revenuePrevYearActive) / revenuePrevYearActive) * 100 : null}
+                    delta={revenuePrevYearActiveB > 0 ? ((revenueActiveB - revenuePrevYearActiveB) / revenuePrevYearActiveB) * 100 : null}
                     deltaLabel="% vs. Vorjahr"
                     icon={<TrendingUp className="h-5 w-5" />}
-                    color={revenuePrevYearActive > 0 ? (revenueActive >= revenuePrevYearActive ? 'green' : 'red') : 'default'}
+                    color={revenuePrevYearActiveB > 0 ? (revenueActiveB >= revenuePrevYearActiveB ? 'green' : 'red') : 'default'}
                   />
                 </div>
 
@@ -1065,9 +1106,9 @@ const Dashboard = () => {
                             onClick={openRevenueEdit}
                             className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-background hover:bg-muted transition-colors group"
                           >
-                            {revenueActive > 0 ? (
+                            {revenueActiveB > 0 ? (
                               <>
-                                <span className="text-sm font-bold tabular-nums">{formatCHF(revenueActive)}</span>
+                                <span className="text-sm font-bold tabular-nums">{formatCHF(revenueActiveB)}</span>
                                 <Pencil className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                               </>
                             ) : (
@@ -1099,7 +1140,7 @@ const Dashboard = () => {
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                       <KpiCard
                         title="Ist Umsatz"
-                        value={revenueMonth > 0 ? formatCHF(revenueMonth) : '–'}
+                        value={revenueMonthB > 0 ? formatCHF(revenueMonthB) : '–'}
                         subtitle="Tatsächlich erfasst"
                         icon={<TrendingUp className="h-5 w-5" />}
                         color={
@@ -1144,8 +1185,8 @@ const Dashboard = () => {
                           {/* 1. IST Umsatz – zuerst links */}
                           <KpiCard
                             title="Ist Umsatz"
-                            value={revenueIstEffective !== null && revenueIstEffective > 0
-                              ? formatCHF(revenueIstEffective) : '–'}
+                            value={revenueIstEffectiveB !== null && revenueIstEffectiveB > 0
+                              ? formatCHF(revenueIstEffectiveB) : '–'}
                             subtitle={`bis ${effectiveCutoffLabel}`}
                             icon={<TrendingUp className="h-5 w-5" />}
                             color={
@@ -1159,7 +1200,7 @@ const Dashboard = () => {
                           {/* 2. Budget pro rata */}
                           <KpiCard
                             title="Budget pro rata"
-                            value={formatCHF(budgetEffective)}
+                            value={budgetEffectiveB !== null ? formatCHF(budgetEffectiveB) : '–'}
                             subtitle={`${effectiveDayNum} von ${daysInRefMonth} Tagen`}
                             icon={<CalendarDays className="h-5 w-5" />}
                             color="blue"
@@ -1168,7 +1209,7 @@ const Dashboard = () => {
                           {/* 3. Vorjahr pro rata (immer anzeigen, auch wenn 0) */}
                           <KpiCard
                             title="Vorjahr p.r."
-                            value={prevYearEffective > 0 ? formatCHF(prevYearEffective) : '–'}
+                            value={prevYearEffectiveB > 0 ? formatCHF(prevYearEffectiveB) : '–'}
                             subtitle={`Vorjahr bis ${effectiveCutoffLabel}`}
                             icon={<TrendingUp className="h-5 w-5" />}
                             color={
@@ -1220,7 +1261,7 @@ const Dashboard = () => {
                         </div>
 
                         {/* Zeile 1: vs. Vorjahr (zuerst) */}
-                        {revenuePrevYearStichtag !== null && revenuePrevYearStichtag > 0 && revenueIstStichtag !== null && (
+                        {revenuePrevYearStichtagB !== null && revenuePrevYearStichtagB > 0 && revenueIstStichtagB !== null && (
                           <>
                             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
                               Umsatz vs. Vorjahr pro rata
@@ -1228,15 +1269,15 @@ const Dashboard = () => {
                             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
                               <KpiCard
                                 title="Ist Umsatz"
-                                value={revenueIstStichtag > 0 ? formatCHF(revenueIstStichtag) : '–'}
+                                value={revenueIstStichtagB > 0 ? formatCHF(revenueIstStichtagB) : '–'}
                                 subtitle={`bis ${stichtagFormatted}`}
                                 icon={<TrendingUp className="h-5 w-5" />}
-                                color={(revenueIstStichtag - revenuePrevYearStichtag) >= 0 ? 'green' : 'red'}
+                                color={(revenueIstStichtagB - revenuePrevYearStichtagB) >= 0 ? 'green' : 'red'}
                                 small
                               />
                               <KpiCard
                                 title="Vorjahr bis Stichtag"
-                                value={formatCHF(revenuePrevYearStichtag)}
+                                value={formatCHF(revenuePrevYearStichtagB)}
                                 subtitle={`Vorjahr bis ${stichtagFormatted}`}
                                 icon={<TrendingUp className="h-5 w-5" />}
                                 color="default"
@@ -1244,16 +1285,16 @@ const Dashboard = () => {
                               />
                               <KpiCard
                                 title="Abw. vs. Vorjahr"
-                                value={`${(revenueIstStichtag - revenuePrevYearStichtag) >= 0 ? '+' : ''}${formatCHF(revenueIstStichtag - revenuePrevYearStichtag)}`}
-                                subtitle={`Ist vs. Vorjahr · ${revenuePrevYearStichtag > 0
-                                  ? `${(((revenueIstStichtag - revenuePrevYearStichtag) / revenuePrevYearStichtag) * 100).toFixed(1)} %`
+                                value={`${(revenueIstStichtagB - revenuePrevYearStichtagB) >= 0 ? '+' : ''}${formatCHF(revenueIstStichtagB - revenuePrevYearStichtagB)}`}
+                                subtitle={`Ist vs. Vorjahr · ${revenuePrevYearStichtagB > 0
+                                  ? `${(((revenueIstStichtagB - revenuePrevYearStichtagB) / revenuePrevYearStichtagB) * 100).toFixed(1)} %`
                                   : '–'}`}
-                                icon={(revenueIstStichtag - revenuePrevYearStichtag) >= 0
+                                icon={(revenueIstStichtagB - revenuePrevYearStichtagB) >= 0
                                   ? <TrendingUp className="h-5 w-5" />
                                   : <TrendingDown className="h-5 w-5" />}
-                                color={(revenueIstStichtag - revenuePrevYearStichtag) >= 0 ? 'green' : 'red'}
-                                badge={(revenueIstStichtag - revenuePrevYearStichtag) >= 0 ? '✓ Über Vorjahr' : '↓ Unter Vorjahr'}
-                                badgeColor={(revenueIstStichtag - revenuePrevYearStichtag) >= 0
+                                color={(revenueIstStichtagB - revenuePrevYearStichtagB) >= 0 ? 'green' : 'red'}
+                                badge={(revenueIstStichtagB - revenuePrevYearStichtagB) >= 0 ? '✓ Über Vorjahr' : '↓ Unter Vorjahr'}
+                                badgeColor={(revenueIstStichtagB - revenuePrevYearStichtagB) >= 0
                                   ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
                                   : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'}
                                 small
@@ -1271,36 +1312,38 @@ const Dashboard = () => {
                             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                               <KpiCard
                                 title="Ist Umsatz"
-                                value={revenueIstStichtag > 0 ? formatCHF(revenueIstStichtag) : '–'}
+                                value={revenueIstStichtagB !== null && revenueIstStichtagB > 0 ? formatCHF(revenueIstStichtagB) : '–'}
                                 subtitle={`bis ${stichtagFormatted}`}
                                 icon={<TrendingUp className="h-5 w-5" />}
-                                color={revenueIstStichtag >= budgetProRataStichtag ? 'green' : 'red'}
+                                color={revenueIstStichtagB !== null && budgetProRataStichtagB !== null && revenueIstStichtagB >= budgetProRataStichtagB ? 'green' : 'red'}
                                 small
                               />
                               <KpiCard
                                 title="Budget pro rata"
-                                value={formatCHF(budgetProRataStichtag)}
+                                value={budgetProRataStichtagB !== null ? formatCHF(budgetProRataStichtagB) : '–'}
                                 subtitle={`Monatsbudget × ${stichtagDay}/${daysInRefMonth}`}
                                 icon={<CalendarDays className="h-5 w-5" />}
                                 color="blue"
                                 small
                               />
-                              <KpiCard
-                                title="Abw. vs. Budget p.r."
-                                value={`${(revenueIstStichtag - budgetProRataStichtag) >= 0 ? '+' : ''}${formatCHF(revenueIstStichtag - budgetProRataStichtag)}`}
-                                subtitle={`Ist vs. Budget pro rata · ${budgetProRataStichtag > 0
-                                  ? `${(((revenueIstStichtag - budgetProRataStichtag) / budgetProRataStichtag) * 100).toFixed(1)} %`
-                                  : '–'}`}
-                                icon={(revenueIstStichtag - budgetProRataStichtag) >= 0
-                                  ? <TrendingUp className="h-5 w-5" />
-                                  : <TrendingDown className="h-5 w-5" />}
-                                color={(revenueIstStichtag - budgetProRataStichtag) >= 0 ? 'green' : 'red'}
-                                badge={(revenueIstStichtag - budgetProRataStichtag) >= 0 ? '✓ Über Budget' : '↓ Unter Budget'}
-                                badgeColor={(revenueIstStichtag - budgetProRataStichtag) >= 0
-                                  ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
-                                  : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'}
-                                small
-                              />
+                              {revenueIstStichtagB !== null && budgetProRataStichtagB !== null && (
+                                <KpiCard
+                                  title="Abw. vs. Budget p.r."
+                                  value={`${(revenueIstStichtagB - budgetProRataStichtagB) >= 0 ? '+' : ''}${formatCHF(revenueIstStichtagB - budgetProRataStichtagB)}`}
+                                  subtitle={`Ist vs. Budget pro rata · ${budgetProRataStichtagB > 0
+                                    ? `${(((revenueIstStichtagB - budgetProRataStichtagB) / budgetProRataStichtagB) * 100).toFixed(1)} %`
+                                    : '–'}`}
+                                  icon={(revenueIstStichtagB - budgetProRataStichtagB) >= 0
+                                    ? <TrendingUp className="h-5 w-5" />
+                                    : <TrendingDown className="h-5 w-5" />}
+                                  color={(revenueIstStichtagB - budgetProRataStichtagB) >= 0 ? 'green' : 'red'}
+                                  badge={(revenueIstStichtagB - budgetProRataStichtagB) >= 0 ? '✓ Über Budget' : '↓ Unter Budget'}
+                                  badgeColor={(revenueIstStichtagB - budgetProRataStichtagB) >= 0
+                                    ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
+                                    : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'}
+                                  small
+                                />
+                              )}
                             </div>
                           </>
                         )}
@@ -1562,19 +1605,19 @@ const Dashboard = () => {
                           small
                         />
                       )}
-                      {actualLaborCostEffective !== null && actualLaborCostEffective > 0 && revenueIstEffective !== null && revenueIstEffective > 0 && (
+                      {actualLaborCostEffective !== null && actualLaborCostEffective > 0 && revenueIstEffectiveB !== null && revenueIstEffectiveB > 0 && (
                         <KpiCard
                           title="PKQ pro rata"
-                          value={`${((actualLaborCostEffective / revenueIstEffective) * 100).toFixed(1)} %`}
+                          value={`${((actualLaborCostEffective / revenueIstEffectiveB) * 100).toFixed(1)} %`}
                           subtitle="Ist-Kosten / Ist-Umsatz p.r."
                           icon={<Target className="h-5 w-5" />}
                           color={budgetData.personnelRatioTarget !== null
                             ? budgetRatioColor(
-                                (actualLaborCostEffective / revenueIstEffective) * 100,
+                                (actualLaborCostEffective / revenueIstEffectiveB) * 100,
                                 budgetData.personnelRatioTarget,
                               )
-                            : ratioStatus((actualLaborCostEffective / revenueIstEffective) * 100) === 'good' ? 'green'
-                            : ratioStatus((actualLaborCostEffective / revenueIstEffective) * 100) === 'ok' ? 'yellow'
+                            : ratioStatus((actualLaborCostEffective / revenueIstEffectiveB) * 100) === 'good' ? 'green'
+                            : ratioStatus((actualLaborCostEffective / revenueIstEffectiveB) * 100) === 'ok' ? 'yellow'
                             : 'red'}
                           small
                         />
@@ -1621,14 +1664,14 @@ const Dashboard = () => {
                           small
                         />
                       )}
-                      {actualLaborCost > 0 && revenueMonth > 0 && (
+                      {actualLaborCost > 0 && revenueMonthB > 0 && (
                         <KpiCard
                           title="FIX-Quote"
-                          value={`${((personalFixCost / revenueMonth) * 100).toFixed(1)} %`}
+                          value={`${((personalFixCost / revenueMonthB) * 100).toFixed(1)} %`}
                           subtitle="FIX-Lohn / Ist-Umsatz"
                           icon={<Target className="h-5 w-5" />}
                           color={budgetData.personnelRatioTarget !== null
-                            ? budgetRatioColor((personalFixCost / revenueMonth) * 100, budgetData.personnelRatioTarget)
+                            ? budgetRatioColor((personalFixCost / revenueMonthB) * 100, budgetData.personnelRatioTarget)
                             : 'default'}
                           small
                         />
