@@ -268,6 +268,7 @@ const DEFAULT_SHIFTS: ShiftConfigItem[] = [
 ];
 
 const STORAGE_KEY = 'shift-config';
+const SHIFT_CONFIG_CHANGED = 'shift-config-changed';
 
 // Color mapping for excelColor based on tailwind color
 const COLOR_TO_EXCEL: Record<string, { excelColor: string; textColor: string }> = {
@@ -319,8 +320,8 @@ function loadShiftsFromStorage(): ShiftConfigItem[] {
       const newDefaults = DEFAULT_SHIFTS.filter(d => !storedNames.has(d.name));
       if (newDefaults.length > 0) {
         const merged = [...enriched, ...newDefaults];
-        // Save merged config back to storage
-        saveShiftsToStorage(merged);
+        // Save merged config back to storage (no broadcast – internal migration)
+        saveShiftsToStorage(merged, false);
         return merged;
       }
       
@@ -332,9 +333,12 @@ function loadShiftsFromStorage(): ShiftConfigItem[] {
   return DEFAULT_SHIFTS;
 }
 
-function saveShiftsToStorage(shifts: ShiftConfigItem[]): void {
+function saveShiftsToStorage(shifts: ShiftConfigItem[], broadcast = true): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(shifts));
+    if (broadcast) {
+      window.dispatchEvent(new CustomEvent(SHIFT_CONFIG_CHANGED));
+    }
     // Supabase sync (fire-and-forget)
     kvSet(STORAGE_KEY, shifts).catch(() => {});
   } catch (e) {
@@ -428,6 +432,15 @@ export function useShiftConfig() {
         setShiftMap(shiftsToMap(merged));
       }
     });
+
+    // Listen for changes made by OTHER hook instances in the same tab
+    const handleExternalChange = () => {
+      const fresh = loadShiftsFromStorage();
+      setShifts(fresh);
+      setShiftMap(shiftsToMap(fresh));
+    };
+    window.addEventListener(SHIFT_CONFIG_CHANGED, handleExternalChange);
+    return () => window.removeEventListener(SHIFT_CONFIG_CHANGED, handleExternalChange);
   }, []);
 
   const updateShifts = useCallback((newShifts: ShiftConfigItem[]) => {
