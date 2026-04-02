@@ -393,6 +393,39 @@ export default function VerkaufsDashboard() {
     return { qty, revenue, wes, wesP };
   }, [filteredTop]);
 
+  // ── Produkte ohne WES (im aktuellen Filterkontext) ──────────────────────────
+
+  const missingWesProducts = useMemo(() => {
+    const prodMap = new Map<string, {
+      product_name: string;
+      category:     string;
+      source:       string | null;
+      qty:          number;
+      revenue:      number;
+    }>();
+    for (const r of filteredRows) {
+      const nameKey = (r.product_name ?? '').trim().toLowerCase();
+      if ((wesMap.get(nameKey) ?? 0) > 0) continue; // hat WES → überspringen
+      const pKey = r.product_name ?? '(unbekannt)';
+      if (!prodMap.has(pKey)) {
+        prodMap.set(pKey, {
+          product_name: pKey,
+          category:     categoryMap.get(nameKey) ?? '',
+          source:       r.source ?? null,
+          qty:          0,
+          revenue:      0,
+        });
+      }
+      const p = prodMap.get(pKey)!;
+      p.qty     += Number(r.quantity ?? 0);
+      p.revenue += Number(r.revenue  ?? 0);
+    }
+    return Array.from(prodMap.values()).sort((a, b) => b.revenue - a.revenue);
+  }, [filteredRows, wesMap, categoryMap]);
+
+  const missingWesRevenue         = missingWesProducts.reduce((s, p) => s + p.revenue, 0);
+  const missingWesRevenueSharePct = totalRevenue > 0 ? (missingWesRevenue / totalRevenue) * 100 : 0;
+
   // ── Export-Funktionen ──────────────────────────────────────────────────────
 
   function buildExportRows() {
@@ -1041,6 +1074,99 @@ export default function VerkaufsDashboard() {
                               {p.wes > 0 ? `${pWesP.toFixed(1)} %` : '–'}
                             </td>
                           )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Produkte ohne WES ─────────────────────────────────────────────────── */}
+      {filteredRows.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3 pt-4 px-4">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-500" />
+                Produkte ohne WES
+              </CardTitle>
+              {missingWesProducts.length > 0 ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300 border border-amber-300 dark:border-amber-700 px-2.5 py-0.5 text-xs font-semibold">
+                    {missingWesProducts.length} Produkte ohne WES
+                  </span>
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {fmtChf(missingWesRevenue)} · {missingWesRevenueSharePct.toFixed(1)} % des Gesamtumsatzes
+                  </span>
+                </div>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300 border border-emerald-300 px-2.5 py-0.5 text-xs font-semibold">
+                  ✓ Alle Produkte haben WES
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Verkaufte Produkte im gewählten Zeitraum ohne hinterlegten WES-Wert · reagiert auf alle aktiven Filter
+            </p>
+          </CardHeader>
+          <CardContent className="p-0">
+            {missingWesProducts.length === 0 ? (
+              <div className="px-4 py-10 text-center">
+                <p className="text-3xl mb-2">✓</p>
+                <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                  Alle Produkte im gewählten Zeitraum haben einen WES-Wert
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">#</th>
+                      <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Produkt</th>
+                      <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Kategorie</th>
+                      <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Quelle</th>
+                      <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Absatz</th>
+                      <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Umsatz CHF</th>
+                      <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Anteil</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/40">
+                    {/* Totalzeile */}
+                    <tr className="bg-amber-50/60 dark:bg-amber-950/20 border-b-2 border-amber-200 dark:border-amber-800 font-semibold">
+                      <td className="px-4 py-2.5 text-xs text-amber-600 dark:text-amber-400 font-bold">∑</td>
+                      <td className="px-4 py-2.5 text-amber-700 dark:text-amber-300">{missingWesProducts.length} Produkte</td>
+                      <td className="px-4 py-2.5 text-muted-foreground text-xs">–</td>
+                      <td className="px-4 py-2.5 text-muted-foreground text-xs">–</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums">
+                        {fmtNum(missingWesProducts.reduce((s, p) => s + p.qty, 0))}
+                      </td>
+                      <td className="px-4 py-2.5 text-right tabular-nums">{fmtChf(missingWesRevenue)}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-xs font-semibold text-amber-700 dark:text-amber-400">
+                        {missingWesRevenueSharePct.toFixed(1)} %
+                      </td>
+                    </tr>
+                    {missingWesProducts.map((p, i) => {
+                      const share = totalRevenue > 0 ? (p.revenue / totalRevenue) * 100 : 0;
+                      return (
+                        <tr key={p.product_name} className="hover:bg-muted/30 transition-colors">
+                          <td className="px-4 py-2 text-muted-foreground tabular-nums text-xs">{i + 1}</td>
+                          <td className="px-4 py-2 font-medium max-w-[220px] truncate" title={p.product_name}>
+                            {p.product_name}
+                          </td>
+                          <td className="px-4 py-2 text-muted-foreground text-xs">{p.category || '–'}</td>
+                          <td className="px-4 py-2">
+                            <Badge variant="outline" className="text-[10px] font-normal">
+                              {sourceLabel(p.source)}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{fmtNum(p.qty)}</td>
+                          <td className="px-4 py-2 text-right tabular-nums font-semibold">{fmtChf(p.revenue)}</td>
+                          <td className="px-4 py-2 text-right tabular-nums text-xs text-muted-foreground">{share.toFixed(1)} %</td>
                         </tr>
                       );
                     })}
