@@ -172,6 +172,37 @@ function aggregate(
   return { totalQty, totalRevenue, totalWes, totalProducts: allProducts.size, bySource, topProducts };
 }
 
+// ─── WES-Ampel ────────────────────────────────────────────────────────────────
+
+function WesAmpel({ wesP }: { wesP: number | null }) {
+  if (wesP === null) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border border-gray-200 dark:border-gray-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums whitespace-nowrap">
+        <span className="h-2 w-2 rounded-full bg-gray-400 dark:bg-gray-500 shrink-0" />
+        kein WES
+      </span>
+    );
+  }
+  const isGreen  = wesP <= 25;
+  const isYellow = wesP > 25 && wesP <= 30;
+  return isGreen ? (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums whitespace-nowrap">
+      <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+      {wesP.toFixed(1)} %
+    </span>
+  ) : isYellow ? (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-400 border border-yellow-300 dark:border-yellow-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums whitespace-nowrap">
+      <span className="h-2 w-2 rounded-full bg-yellow-500 shrink-0" />
+      {wesP.toFixed(1)} %
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400 border border-red-300 dark:border-red-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums whitespace-nowrap">
+      <span className="h-2 w-2 rounded-full bg-red-500 shrink-0" />
+      {wesP.toFixed(1)} %
+    </span>
+  );
+}
+
 // ─── KPI-Karte ────────────────────────────────────────────────────────────────
 
 function KpiCard({
@@ -1102,7 +1133,7 @@ export default function VerkaufsDashboard() {
                       <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Absatz</th>
                       <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Umsatz CHF</th>
                       {hasWes && <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">WES CHF</th>}
-                      {hasWes && <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">WES %</th>}
+                      <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">WES-Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40">
@@ -1121,11 +1152,12 @@ export default function VerkaufsDashboard() {
                             {topTotals.wes > 0 ? fmtChf(topTotals.wes) : '–'}
                           </td>
                         )}
-                        {hasWes && (
-                          <td className="px-4 py-2.5 text-right tabular-nums text-xs">
-                            {topTotals.wes > 0 ? `${topTotals.wesP.toFixed(1)} %` : '–'}
-                          </td>
-                        )}
+                        <td className="px-4 py-2.5 text-right">
+                          {topTotals.wes > 0
+                            ? <WesAmpel wesP={topTotals.wesP} />
+                            : <span className="text-xs text-muted-foreground">–</span>
+                          }
+                        </td>
                       </tr>
                     )}
                     {filteredTop.map((p, i) => {
@@ -1141,12 +1173,14 @@ export default function VerkaufsDashboard() {
                           </td>
                           <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{fmtNum(p.qty)}</td>
                           <td className="px-4 py-2 text-right tabular-nums font-semibold">{fmtChf(p.revenue)}</td>
-                          {hasWes && <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{p.wes > 0 ? fmtChf(p.wes) : '–'}</td>}
                           {hasWes && (
-                            <td className="px-4 py-2 text-right tabular-nums text-muted-foreground text-xs">
-                              {p.wes > 0 ? `${pWesP.toFixed(1)} %` : '–'}
+                            <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                              {p.wes > 0 ? fmtChf(p.wes) : '–'}
                             </td>
                           )}
+                          <td className="px-4 py-2 text-right">
+                            <WesAmpel wesP={p.wes > 0 ? pWesP : null} />
+                          </td>
                         </tr>
                       );
                     })}
