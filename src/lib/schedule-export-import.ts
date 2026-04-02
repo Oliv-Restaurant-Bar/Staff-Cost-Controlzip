@@ -3,10 +3,25 @@ import * as ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Employee } from '@/types/personnel';
+
 import { format, eachWeekOfInterval, startOfMonth, endOfMonth, endOfWeek, eachDayOfInterval, isWithinInterval } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { getShiftConfig, getShiftConfigMap } from '@/hooks/useShiftConfig';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
+
+/**
+ * Normalisiert einen roh importierten Namen auf Title-Case.
+ * Verhindert, dass ALL-CAPS oder all-lowercase Namen aus Importdateien
+ * unverändert in den Personalstamm übernommen werden.
+ * Beispiel: "SAJED MOMAND" → "Sajed Momand", "sadete ramadani" → "Sadete Ramadani"
+ */
+function normalizeImportedName(raw: string): string {
+  return raw
+    .trim()
+    .split(/\s+/)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
 
 interface ExportOptionsV2 {
   employees: Employee[];
@@ -2340,7 +2355,7 @@ export function importScheduleFromExcelV2(
               const department = detectDepartment(sheetName);
               const newEmployee: Employee = {
                 id: generateEmployeeId(),
-                name: originalName,
+                name: normalizeImportedName(originalName),
                 department,
                 employmentType: 'aushilfe',
                 hourlyWage: 25.00, // Default wage

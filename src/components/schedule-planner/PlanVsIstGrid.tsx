@@ -2,6 +2,7 @@ import React from 'react';
 import { format, isWeekend, isSunday } from 'date-fns';
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
+import { getEmployeeDisplayName } from '@/lib/personnel-utils';
 import { calculateBreakDeduction, useShiftConfig } from '@/hooks/useShiftConfig';
 import { cn } from '@/lib/utils';
 
@@ -167,7 +168,7 @@ export const PlanVsIstGrid = ({
                   return (
                     <tr key={employee.id} className="group hover:bg-muted/30">
                       <td className="sticky left-0 z-10 bg-card group-hover:bg-muted/30 px-2 py-1 border-b border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                        <div className="font-medium text-xs truncate" title={employee.name}>{employee.name}</div>
+                        <div className="font-medium text-xs truncate" title={getEmployeeDisplayName(employee)}>{getEmployeeDisplayName(employee)}</div>
                         <div className="text-[9px] text-muted-foreground">
                           {employee.department === 'service' ? 'Service' : 'Küche'}
                         </div>

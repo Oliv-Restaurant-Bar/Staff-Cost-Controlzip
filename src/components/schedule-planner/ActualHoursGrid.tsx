@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { format, isWeekend, isSunday, getDay } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
+import { getEmployeeDisplayName } from '@/lib/personnel-utils';
 import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
@@ -203,7 +204,7 @@ const ActualHoursCell = ({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Clock className="h-4 w-4" />
-              Ist-Stunden: {employee.name}
+              Ist-Stunden: {getEmployeeDisplayName(employee)}
             </DialogTitle>
           </DialogHeader>
           <div className="text-sm text-muted-foreground mb-4">
@@ -593,8 +594,8 @@ export const ActualHoursGrid = ({
                           employee.department === 'service' ? "bg-blue-500" : "bg-orange-500"
                         )}
                       />
-                      <span className="truncate font-medium" title={employee.name}>
-                        {employee.name}
+                      <span className="truncate font-medium" title={getEmployeeDisplayName(employee)}>
+                        {getEmployeeDisplayName(employee)}
                       </span>
                     </div>
                     <div className="text-[9px] text-muted-foreground mt-0.5">
@@ -804,7 +805,7 @@ export const ActualHoursGrid = ({
                   <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ist-Stunden nach Mitarbeiter</div>
                   {breakdown.map(({ employee, hours, cost }) => (
                     <div key={employee.id} className="flex items-center gap-2 text-xs">
-                      <div className="flex-1 truncate">{employee.name}</div>
+                      <div className="flex-1 truncate">{getEmployeeDisplayName(employee)}</div>
                       <div className="text-muted-foreground shrink-0">{hours.toFixed(1)}h × CHF {employee.hourlyWage.toFixed(2)}</div>
                       <div className="font-semibold shrink-0 w-20 text-right">CHF {cost.toFixed(0)}</div>
                     </div>
@@ -838,7 +839,7 @@ export const ActualHoursGrid = ({
                     </p>
                     {suggestions.map(({ employee, currentHours, suggestedCut, saving }) => (
                       <div key={employee.id} className="bg-white dark:bg-card rounded p-2 border border-blue-200 dark:border-blue-700 text-xs space-y-0.5">
-                        <div className="font-semibold">{employee.name}</div>
+                        <div className="font-semibold">{getEmployeeDisplayName(employee)}</div>
                         <div className="text-muted-foreground">
                           Gearbeitet: {currentHours.toFixed(1)}h → Vorschlag: {(currentHours - suggestedCut).toFixed(1)}h
                           <span className="ml-2 text-[10px]">(−{suggestedCut.toFixed(1)}h)</span>

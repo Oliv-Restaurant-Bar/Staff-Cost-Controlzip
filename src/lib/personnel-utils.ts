@@ -2,6 +2,15 @@ import { Employee, TimeEntry, DailySummary, EmploymentType, MirusImportEntry, Mi
 import * as XLSX from 'xlsx';
 import { format, parse, addDays, endOfMonth } from 'date-fns';
 
+/**
+ * Kanonischer Anzeigename eines Mitarbeiters aus dem Personalstamm.
+ * Einzige Quelle der Wahrheit für alle Namensanzeigen im Dienstplan.
+ * Niemals Roh-Importnamen (z.B. aus Mirus-Exporten) direkt anzeigen.
+ */
+export function getEmployeeDisplayName(emp: { name: string }): string {
+  return emp.name;
+}
+
 export const formatCurrency = (value: number): string => {
   return new Intl.NumberFormat('de-CH', {
     style: 'currency',

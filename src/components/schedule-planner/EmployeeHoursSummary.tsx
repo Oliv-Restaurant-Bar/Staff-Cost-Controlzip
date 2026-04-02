@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Employee } from '@/types/personnel';
+import { getEmployeeDisplayName } from '@/lib/personnel-utils';
 import { cn } from '@/lib/utils';
 import { CheckCircle, TrendingDown, TrendingUp, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -75,7 +76,7 @@ export const EmployeeHoursSummary = ({
                       <div className="flex items-center gap-4">
                         <div className="w-32 shrink-0">
                           <div className="font-medium text-sm truncate flex items-center gap-1">
-                            {employee.name}
+                            {getEmployeeDisplayName(employee)}
                             {planExceedsEstimate && (
                               <Tooltip>
                                 <TooltipTrigger asChild>

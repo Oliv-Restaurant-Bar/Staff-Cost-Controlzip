@@ -3,6 +3,7 @@ import React, { useState, useMemo } from 'react';
 import { format, isWeekend, getDay, isSunday, parseISO, isAfter } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
+import { getEmployeeDisplayName } from '@/lib/personnel-utils';
 import { TimeInputCell } from './TimeInputCell';
 import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
@@ -836,7 +837,7 @@ export const ScheduleGrid = ({
                   )}>
                     <div className="flex items-center justify-between gap-0.5">
                       <div className="flex-1 min-w-0 overflow-hidden">
-                        <div className="font-medium text-xs truncate" title={employee.name}>{employee.name}</div>
+                        <div className="font-medium text-xs truncate" title={getEmployeeDisplayName(employee)}>{getEmployeeDisplayName(employee)}</div>
                         <div className="text-[10px] text-muted-foreground truncate">
                           {employee.employmentType === 'vollzeit' && 'VZ'}
                           {employee.employmentType === 'teilzeit' && 'TZ'}
@@ -1528,7 +1529,7 @@ export const ScheduleGrid = ({
                           }}>
                             {employee.employmentType === 'aushilfe' ? 'AH' : employee.employmentType === 'vollzeit' ? 'VZ' : employee.employmentType === 'teilzeit' ? 'TZ' : 'MJ'}
                           </span>
-                          <span style={{ fontWeight: 600, fontSize: 14, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{employee.name}</span>
+                          <span style={{ fontWeight: 600, fontSize: 14, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getEmployeeDisplayName(employee)}</span>
                           {shiftDisplay && (
                             <span style={{ fontSize: 11, color: '#64748b', flexShrink: 0, fontFamily: 'monospace', background: '#f1f5f9', padding: '2px 6px', borderRadius: 4 }}>
                               {shiftDisplay}
