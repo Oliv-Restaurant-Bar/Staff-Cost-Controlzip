@@ -1,0 +1,67 @@
+Bitte jetzt den Küchen-Dienstplan-PDF-Import so erweitern, dass aus den Schichtcodes direkt Planstunden in den Dienstplan geschrieben werden.
+
+Ausgangslage:
+Es gibt eine PDF-Datei mit Küchen-Dienstplan für den Zeitraum 30.03.2026 bis 26.04.2026.
+Die Schichtcodes sollen anhand dieser fixen Legende in Stunden umgerechnet werden.
+
+Verwende exakt dieses Mapping:
+
+A  = 7.0   // 10:00–17:30 minus 30 Min Pause
+B  = 9.0   // 11:30–21:30 minus 1 h Pause
+C  = 3.5   // 10:00–14:00 minus 30 Min Pause
+O2 = 4.25  // 07:00–11:30 minus 15 Min Pause
+H  = 5.0   // 18:00–23:30 minus 30 Min Pause
+D  = 8.5   // 14:00–23:00 minus 30 Min Pause
+O1 = 8.5   // 11:00–14:00 + 18:00–23:30
+
+F  = 0     // Frei
+FE = 0     // Ferien
+FT = 0     // Feiertag
+K  = 0     // Krank
+M  = 0     // Militär
+FW = 0     // Feuerwehr
+MS = 0     // Mutterschaft
+
+Bitte umsetzen:
+
+1. PDF-Datei parsen
+- Zeitraum erkennen
+- Mitarbeitende erkennen
+- pro Tag den Schichtcode je Mitarbeiter erkennen
+
+2. Mitarbeitende robust mit Personalstamm matchen
+- nach erfolgreichem Match immer den kanonischen Namen aus dem Personalstamm verwenden
+
+3. Für jeden erkannten Code:
+- plan_hours gemäss obigem Mapping setzen
+- optional zusätzlich den originalen Schichtcode speichern, falls bereits ein Feld dafür existiert
+- bei FE, FT, K, M, FW, MS, F = 0 Stunden setzen und Status entsprechend markieren, falls unterstützt
+
+4. Vorschau vor dem Speichern anzeigen:
+- Mitarbeiter
+- Datum
+- erkannter Code
+- berechnete Planstunden
+- Hinweis bei unbekanntem Code oder nicht gematchtem Mitarbeiter
+
+5. Nach Bestätigung in den Dienstplan schreiben
+- nur für Küche
+- nur für den im PDF erkannten Zeitraum
+- bestehende Einträge nicht blind überschreiben, sondern vorher warnen und bestätigen lassen
+
+6. Debug-Logs:
+- erkannter Zeitraum
+- erkannte Mitarbeitende
+- erkannte Codes
+- berechnete Stunden
+- nicht gematchte Mitarbeitende
+- unbekannte Codes
+
+7. Wichtig:
+- keine Änderungen an Sales, Dashboard, WES oder anderen Modulen
+- nur Küchenplan-PDF-Import für Planstunden
+
+Bitte danach kurz sagen:
+- welche Dateien geändert wurden
+- wie ich den Import teste
+- welche Mitarbeitenden oder Codes nicht sauber erkannt wurden

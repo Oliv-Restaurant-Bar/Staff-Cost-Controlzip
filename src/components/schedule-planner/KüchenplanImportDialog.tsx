@@ -226,11 +226,20 @@ export function KüchenplanImportDialog({
 
     for (const row of previewRows) {
       const cellKey = `${row.employee.id}-${row.date}`;
-      if (row.mapped.type === 'work' && row.mapped.start && row.mapped.end) {
-        delta[cellKey] = { früh: { start: row.mapped.start, end: row.mapped.end } };
+      if (row.mapped.type === 'work') {
+        const ds: DaySchedule = {};
+        if (row.mapped.start && row.mapped.end) {
+          ds.früh = { start: row.mapped.start, end: row.mapped.end };
+        }
+        // Split shift (e.g. O1): write second slot as spät
+        if (row.mapped.start2 && row.mapped.end2) {
+          ds.spät = { start: row.mapped.start2, end: row.mapped.end2 };
+        }
+        if (ds.früh || ds.spät) delta[cellKey] = ds;
       } else if (row.mapped.type === 'vacation' || row.mapped.type === 'absence') {
         delta[cellKey] = { früh: null, frühAbsence: row.code };
       }
+      // type 'off' (F = Frei): nothing written, day is explicitly free
     }
 
     onImport(delta, previewRows.length);
@@ -365,8 +374,9 @@ export function KüchenplanImportDialog({
                 <div className="flex items-start gap-2">
                   <Info className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
                   <p className="text-sm text-muted-foreground">
-                    Definiere für jeden erkannten Schichtcode die Start- und Endzeit.
-                    Das Mapping wird gespeichert und beim nächsten Import vorbelegt.
+                    Überprüfe die Planstunden für jeden erkannten Schichtcode.
+                    Die Stunden-Spalte ist autoritative Quelle — Start/Ende dienen als Referenz
+                    für den Dienstplan-Eintrag. Wird gespeichert und beim nächsten Import vorbelegt.
                   </p>
                 </div>
 
@@ -374,7 +384,7 @@ export function KüchenplanImportDialog({
                   <Alert className="border-yellow-200 bg-yellow-50 dark:bg-yellow-900/20">
                     <AlertTriangle className="h-4 w-4 text-yellow-600" />
                     <AlertDescription className="text-yellow-800 dark:text-yellow-300">
-                      Neue Codes ohne Mapping: <strong>{unmappedCodes.join(', ')}</strong> — bitte unten definieren.
+                      Neue Codes ohne Mapping: <strong>{unmappedCodes.join(', ')}</strong> — bitte unten als Arbeit oder Abwesenheit definieren.
                     </AlertDescription>
                   </Alert>
                 )}
@@ -384,10 +394,10 @@ export function KüchenplanImportDialog({
                     <thead className="bg-muted/50">
                       <tr>
                         <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Code</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Bezeichnung</th>
+                        <th className="px-3 py-2 text-center text-xs font-semibold text-muted-foreground">Planstunden</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Zeiten (Ref.)</th>
                         <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Typ</th>
-                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Start</th>
-                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Ende</th>
-                        <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">Std.</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -397,20 +407,42 @@ export function KüchenplanImportDialog({
                           parsed.detectedCodes.some(c => c.toUpperCase() === entry.code.toUpperCase())
                         )
                         .map(({ entry, globalIdx }) => (
-                          <tr key={entry.code} className={`transition-colors ${
-                            parsed.detectedCodes.some(c => c.toUpperCase() === entry.code.toUpperCase())
-                              ? 'bg-white dark:bg-card'
-                              : 'bg-muted/20'
-                          }`}>
+                          <tr key={entry.code} className="bg-white dark:bg-card">
                             <td className="px-3 py-2">
                               <span className="font-mono font-bold text-sm bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300 px-1.5 py-0.5 rounded">
                                 {entry.code}
                               </span>
                             </td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground">
+                              {entry.label}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              {entry.type === 'work' ? (
+                                <Input
+                                  className="h-7 text-xs w-16 font-mono text-center mx-auto"
+                                  value={entry.hours}
+                                  type="number"
+                                  step="0.25"
+                                  min="0"
+                                  onChange={e => updateCodeEntry(globalIdx, { hours: parseFloat(e.target.value) || 0 })}
+                                />
+                              ) : (
+                                <span className="text-xs font-semibold text-muted-foreground">0.0</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-xs font-mono text-muted-foreground">
+                              {entry.type === 'work' ? (
+                                entry.start2
+                                  ? <span>{entry.start}–{entry.end} <span className="text-[10px]">+</span> {entry.start2}–{entry.end2}</span>
+                                  : <span>{entry.start ?? '?'}–{entry.end ?? '?'}</span>
+                              ) : (
+                                <span className="italic">—</span>
+                              )}
+                            </td>
                             <td className="px-3 py-2">
                               <Select
                                 value={entry.type}
-                                onValueChange={v => updateCodeEntry(globalIdx, { type: v as any })}
+                                onValueChange={v => updateCodeEntry(globalIdx, { type: v as any, hours: v === 'work' ? entry.hours : 0 })}
                               >
                                 <SelectTrigger className="h-7 text-xs w-28">
                                   <SelectValue />
@@ -422,37 +454,6 @@ export function KüchenplanImportDialog({
                                   <SelectItem value="off">Frei</SelectItem>
                                 </SelectContent>
                               </Select>
-                            </td>
-                            <td className="px-3 py-2">
-                              {entry.type === 'work' ? (
-                                <Input
-                                  className="h-7 text-xs w-20 font-mono"
-                                  value={entry.start ?? ''}
-                                  onChange={e => updateCodeEntry(globalIdx, { start: e.target.value })}
-                                  placeholder="07:00"
-                                />
-                              ) : (
-                                <span className="text-xs text-muted-foreground">—</span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2">
-                              {entry.type === 'work' ? (
-                                <Input
-                                  className="h-7 text-xs w-20 font-mono"
-                                  value={entry.end ?? ''}
-                                  onChange={e => updateCodeEntry(globalIdx, { end: e.target.value })}
-                                  placeholder="15:30"
-                                />
-                              ) : (
-                                <span className="text-xs text-muted-foreground">—</span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-right">
-                              <span className={`text-xs font-semibold tabular-nums ${
-                                entry.type === 'work' ? 'text-foreground' : 'text-muted-foreground'
-                              }`}>
-                                {entry.type === 'work' ? computeHours(entry).toFixed(1) : '0.0'}
-                              </span>
                             </td>
                           </tr>
                         ))}
@@ -572,7 +573,7 @@ export function KüchenplanImportDialog({
                     <AlertTriangle className="h-4 w-4 text-red-600" />
                     <AlertDescription className="text-red-800 dark:text-red-300 text-xs">
                       <strong>{conflictRows.length} Einträge</strong> haben bereits Daten im Dienstplan.
-                      Diese werden beim Import überschrieben (nur der Früh-Slot).
+                      Diese werden beim Import überschrieben. Splitschichten (O1) schreiben Früh- und Spät-Slot.
                     </AlertDescription>
                   </Alert>
                 )}
