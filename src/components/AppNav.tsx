@@ -4,15 +4,15 @@
  * Desktop: linke Sidebar (220px), sticky
  * Mobile: Bottom-Navigation (fixiert)
  *
- * Aktive Gruppen:
- *   Dashboard   → Verkaufs-Dashboard
- *   Operations  → Dienstplanung
- *   Kosten      → Personal FIX · WES-Analyse
+ * Struktur:
+ *   Dashboard   (standalone)
+ *   Verkauf     → Verkaufs-Dashboard
+ *   Personal    → Dienstplanung · Personal FIX
+ *   Kosten      → WES-Analyse
  *   Stammdaten  → Produkte
- *   Admin       → Verkaufsdaten Upload · Einstellungen  (nur Admin)
+ *   Admin       → Upload · Einstellungen  (nur Admin)
  *
  * Ausgeblendet (Routen existieren weiterhin, nur nicht verlinkt):
- *   /           Dashboard-Startseite
  *   /artikel    Artikelstamm
  *   /artikel-tracking
  *   /lunch-analyse
@@ -24,7 +24,7 @@
 
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  Calendar, PieChart,
+  LayoutDashboard, Calendar, PieChart,
   DollarSign, TrendingDown,
   Package,
   Upload, Settings,
@@ -58,9 +58,19 @@ interface NavGroup {
 
 // ─── Navigationsstruktur ─────────────────────────────────────────────────────
 
+// Standalone top item (kein Gruppen-Label)
+const DASHBOARD_ITEM: NavItem = {
+  path: '/',
+  label: 'Dashboard',
+  shortLabel: 'Home',
+  icon: LayoutDashboard,
+  module: 'dashboard',
+};
+
 const NAV_GROUPS: NavGroup[] = [
   {
-    groupLabel: 'Dashboard',
+    groupLabel: 'Verkauf',
+    adminOnly: true,
     items: [
       {
         path: '/verkauf-dashboard',
@@ -72,7 +82,7 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    groupLabel: 'Operations',
+    groupLabel: 'Personal',
     items: [
       {
         path: '/personal',
@@ -81,12 +91,6 @@ const NAV_GROUPS: NavGroup[] = [
         icon: Calendar,
         module: 'dienstplanung',
       },
-    ],
-  },
-  {
-    groupLabel: 'Kosten',
-    adminOnly: true,
-    items: [
       {
         path: '/personal-fix',
         label: 'Personal FIX',
@@ -94,6 +98,12 @@ const NAV_GROUPS: NavGroup[] = [
         icon: DollarSign,
         adminOnly: true,
       },
+    ],
+  },
+  {
+    groupLabel: 'Kosten',
+    adminOnly: true,
+    items: [
       {
         path: '/wes-analyse',
         label: 'WES-Analyse',
@@ -122,7 +132,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       {
         path: '/sales-upload',
-        label: 'Verkaufsdaten Upload',
+        label: 'Upload',
         shortLabel: 'Upload',
         icon: Upload,
         adminOnly: true,
@@ -253,8 +263,31 @@ export const AppSidebar = () => {
         <p className="text-[10px] text-muted-foreground mt-0.5">Personalkostentracker</p>
       </div>
 
-      {/* Navigation (gruppiert) */}
-      <nav className="flex-1 px-2 py-3 space-y-5">
+      {/* Navigation */}
+      <nav className="flex-1 px-2 py-3 space-y-4">
+
+        {/* Dashboard — standalone, kein Gruppen-Label */}
+        {isItemVisible(DASHBOARD_ITEM) && (() => {
+          const Icon = DASHBOARD_ITEM.icon;
+          const active = location.pathname === '/';
+          return (
+            <NavLink
+              to={DASHBOARD_ITEM.path}
+              end
+              className={cn(
+                'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+                active
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
+            >
+              <Icon className="h-4 w-4 flex-shrink-0" />
+              {DASHBOARD_ITEM.label}
+            </NavLink>
+          );
+        })()}
+
+        {/* Gruppen */}
         {NAV_GROUPS.map((group, gi) => {
           const visibleItems = group.items.filter(isItemVisible);
           if (visibleItems.length === 0) return null;
@@ -381,8 +414,10 @@ export const AppBottomNav = () => {
   const { isAdmin, canAccessModule } = usePermissions();
   const { isGuest } = useGuestSession();
 
+  const allItems = [DASHBOARD_ITEM, ...ALL_NAV_ITEMS];
+
   // Mobile: max. 5 Punkte — Einstellungen und Upload weglassen
-  const mobileItems = ALL_NAV_ITEMS.filter(item => {
+  const mobileItems = allItems.filter(item => {
     if (item.adminOnly && !isAdmin && !isGuest) return false;
     if (item.module && !canAccessModule(item.module) && !isGuest) return false;
     if (item.path === '/settings') return false;
@@ -394,11 +429,14 @@ export const AppBottomNav = () => {
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border flex">
       {mobileItems.map(item => {
         const Icon = item.icon;
-        const isActive = location.pathname.startsWith(item.path);
+        const isActive = item.path === '/'
+          ? location.pathname === '/'
+          : location.pathname.startsWith(item.path);
         return (
           <NavLink
             key={item.path}
             to={item.path}
+            end={item.path === '/'}
             className={cn(
               'flex-1 flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] font-medium transition-colors',
               isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
