@@ -1,0 +1,68 @@
+Bitte jetzt den Kosten-Import aus dem Kontoblatt-PDF fachlich korrekt reparieren.
+
+Ausgangslage:
+Die Ist-Kosten in der App sind klar falsch, weil Kontoblatt-Daten nur teilweise oder mit falscher Logik übernommen werden.
+
+Konkrete Hinweise aus dem PDF März 2026:
+- 4020 Wein: PDF Total Soll 14'577.94, App zeigt nur ca. 757 -> es werden nur frühe Buchungen übernommen
+- 4030 Bier: PDF Total Soll 9'022.43 / Total Haben 20.35, App zeigt nur ca. 4'611 -> ebenfalls nur Teil der Buchungen
+- 4060 Küche: PDF Total Soll 52'717.18, App zeigt ca. 27'171 -> mehrseitiges Konto wird nicht vollständig übernommen
+- 4701 Betriebsmaterial: PDF Total Soll 2'470.58, App zeigt ca. 1'608
+- 4090 Übriger Handelswaren Aufwand: PDF Total Soll 4'172.57 / Total Haben 3'500.00 -> Monatswert muss netto berechnet werden
+- Lohnaufwand ist im PDF vorhanden, in der App aber falsch bzw. 0
+
+Bitte prüfen und fixen:
+
+1. Parser
+- stelle sicher, dass ALLE Seiten des PDFs vollständig gelesen werden
+- mehrseitige Konten wie 4060 Küche müssen über Seiten hinweg zusammengeführt werden
+- ein Konto darf nicht beim Seitenwechsel abgeschnitten werden
+
+2. Kontologik
+- pro Konto den Monatswert korrekt berechnen
+- NICHT Saldo Vortrag verwenden
+- NICHT Endsaldo verwenden
+- sondern Monatsbewegung:
+  Monatswert = Total Soll - Total Haben
+- für Aufwandskonten 4020, 4030, 4040, 4050, 4060, 4070, 4090, 4701, 4800, 5000 ff. genau so
+
+3. Personalaufwand
+- Lohnkonten 5000 ff. korrekt einlesen und in den Lohnaufwand übernehmen
+- nicht nur Warenaufwand, sondern auch Personalaufwand sauber importieren
+
+4. Mapping
+- sicherstellen, dass die Kontonummern aus dem Kontoplan korrekt den Dashboard-Positionen zugeordnet sind
+- insbesondere:
+  4020 Wein
+  4030 Bier
+  4040 Spirituosen
+  4050 Mineral
+  4060 Küche
+  4070 Kaffee
+  4090 Übriger Warenaufwand
+  4701 Betriebsmaterial Restaurant
+  4800 Einkaufsabrechnungskonto Gebinde
+  5000 ff. Lohnaufwand
+
+5. Debug-Logs in Browser-Konsole oder Serverlog
+für jedes erkannte Konto loggen:
+- Kontonummer
+- Kontobezeichnung
+- Total Soll
+- Total Haben
+- berechneter Monatswert
+- ob das Konto mehrseitig zusammengeführt wurde
+
+6. Validierung
+Nach dem Fix bitte explizit diese Werte aus März 2026 gegen das PDF prüfen:
+- 4020 Wein = 14'577.94
+- 4030 Bier = 9'002.08
+- 4060 Küche = 52'717.18
+- 4701 Betriebsmaterial = 2'470.58
+- 4090 Übriger Handelswaren Aufwand = 672.57
+- Lohnaufwand nicht mehr 0
+
+7. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- was genau die Ursache war
+- wie die Monatswerte jetzt berechnet werden

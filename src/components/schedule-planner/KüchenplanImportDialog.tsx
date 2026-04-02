@@ -3,9 +3,15 @@
  * ======================
  * Halbautomatischer PDF-Import für Küchen-Dienstpläne.
  * 4-stufiger Wizard: Upload → Code-Mapping → Mitarbeiter-Matching → Vorschau & Import
+ *
+ * Neu:
+ * - Zeitraum-Picker nach dem Upload: Start-Datum wählen, Tage werden automatisch zugewiesen
+ *   und Monats-Rollover (z.B. 30.03 → 31.03 → 01.04) wird erkannt.
+ * - Zeiten in Schritt 2 sind editierbar.
+ * - Datum pro Zeile in Schritt 4 ist inline editierbar.
  */
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import {
@@ -21,7 +27,7 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Upload, ChevronRight, Check, X, AlertTriangle, Info,
-  FileText, User, RefreshCw, ChevronDown, ChevronUp,
+  FileText, RefreshCw, ChevronDown, ChevronUp, CalendarDays,
 } from 'lucide-react';
 import { Employee } from '@/types/personnel';
 import { DaySchedule } from './ScheduleGrid';
@@ -47,7 +53,8 @@ interface NameMatch {
 interface PreviewRow {
   rawName: string;
   employee: Employee;
-  date: string;
+  origDate: string;  // original date from parser (key for dateOverrides)
+  date: string;      // resolved date (after month override + per-entry override)
   code: string;
   mapped: SchichtCodeEntry;
   hours: number;
@@ -87,6 +94,51 @@ const TYPE_COLORS: Record<string, string> = {
   off: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
 };
 
+/** Baut eine Map origDate → resolvedDate unter Berücksichtigung von Monats-Rollover. */
+function buildResolvedDayMap(
+  headerDays: ParsedKüchenplan['headerDays'],
+  startDateStr: string,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!headerDays.length || !startDateStr) return map;
+
+  const startDate = new Date(startDateStr + 'T00:00:00');
+  if (isNaN(startDate.getTime())) return map;
+
+  let year  = startDate.getFullYear();
+  let month = startDate.getMonth(); // 0-based
+  let prevDay = -1;
+
+  for (const hd of headerDays) {
+    // Monats-Rollover: Tageszahl ist kleiner als vorheriger Tag → neuer Monat
+    if (prevDay >= 0 && hd.day < prevDay) {
+      month++;
+      if (month > 11) { month = 0; year++; }
+    }
+    prevDay = hd.day;
+
+    // Sicherstellen, dass der Tag im Monat gültig ist
+    const maxDay = new Date(year, month + 1, 0).getDate();
+    const safeDay = Math.min(hd.day, maxDay);
+    const newDate = format(new Date(year, month, safeDay), 'yyyy-MM-dd');
+
+    if (hd.origDate) {
+      map.set(hd.origDate, newDate);
+    }
+  }
+  return map;
+}
+
+function safeFormatDate(isoDate: string, fmt: string): string {
+  try {
+    const d = new Date(isoDate + 'T00:00:00');
+    if (isNaN(d.getTime())) return isoDate;
+    return format(d, fmt, { locale: de });
+  } catch {
+    return isoDate;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,7 +154,30 @@ export function KüchenplanImportDialog({
   const [nameMatches, setNameMatches] = useState<NameMatch[]>([]);
   const [showLogs, setShowLogs] = useState(false);
 
+  // ── Zeitraum-Override ────────────────────────────────────────────────────
+  const [startDateStr, setStartDateStr] = useState(''); // yyyy-MM-dd
+  // Map von origDate → manuell korrigiertem Datum (pro Zelle in Schritt 4)
+  const [dateOverrides, setDateOverrides] = useState<Map<string, string>>(new Map());
+
   const kücheEmployees = employees.filter(e => e.department === 'küche');
+
+  // Neu berechnet wenn startDateStr oder headerDays sich ändern
+  const resolvedDayMap = useMemo(
+    () => buildResolvedDayMap(parsed?.headerDays ?? [], startDateStr),
+    [parsed?.headerDays, startDateStr],
+  );
+
+  const resolveDate = useCallback((origDate: string): string => {
+    return dateOverrides.get(origDate) ?? resolvedDayMap.get(origDate) ?? origDate;
+  }, [dateOverrides, resolvedDayMap]);
+
+  const setDateOverride = useCallback((origDate: string, newDate: string) => {
+    setDateOverrides(prev => {
+      const next = new Map(prev);
+      next.set(origDate, newDate);
+      return next;
+    });
+  }, []);
 
   // ── Step 1: Upload & Parse ─────────────────────────────────────────────────
 
@@ -115,20 +190,27 @@ export function KüchenplanImportDialog({
     try {
       const result = await parseKüchenplanPDF(file);
       setParsed(result);
+      setDateOverrides(new Map());
 
-      // Pre-build name matches using existing matching logic
+      // Start-Datum aus erkanntem Bereich initialisieren
+      const initStart = result.detectedStartDate
+        ?? result.detectedPeriod?.from
+        ?? format(new Date(), 'yyyy-MM-dd');
+      setStartDateStr(initStart);
+
+      // Pre-build name matches
       const matches: NameMatch[] = result.detectedNames.map(rawName => {
         const { employee } = matchEmployeeByName(rawName, kücheEmployees);
         return { rawName, employeeId: employee ? employee.id : 'skip' };
       });
       setNameMatches(matches);
 
-      // Add any new codes to the mapping if not already present
+      // Add any new codes to the mapping
       const currentCodes = codeMapping.map(e => e.code.toUpperCase());
       const newEntries: SchichtCodeEntry[] = [];
       for (const code of result.detectedCodes) {
         if (!currentCodes.includes(code.toUpperCase())) {
-          newEntries.push({ code, label: code, type: 'work', start: '07:00', end: '15:30' });
+          newEntries.push({ code, label: code, type: 'work', hours: 0, start: '07:00', end: '15:30' });
         }
       }
       if (newEntries.length > 0) {
@@ -180,12 +262,12 @@ export function KüchenplanImportDialog({
 
   // ── Step 3: Employee Matching ──────────────────────────────────────────────
 
-  const matchedCount = nameMatches.filter(m => m.employeeId !== 'skip').length;
+  const matchedCount   = nameMatches.filter(m => m.employeeId !== 'skip').length;
   const unmatchedCount = nameMatches.filter(m => m.employeeId === 'skip').length;
 
   const updateMatch = (rawName: string, employeeId: string) => {
     setNameMatches(prev => prev.map(m =>
-      m.rawName === rawName ? { ...m, employeeId } : m
+      m.rawName === rawName ? { ...m, employeeId } : m,
     ));
   };
 
@@ -206,18 +288,28 @@ export function KüchenplanImportDialog({
       if (!mapped) continue;
 
       const hours = computeHours(mapped);
-      const cellKey = `${employee.id}-${entry.date}`;
+      const resolvedDate = resolveDate(entry.date);
+      const cellKey = `${employee.id}-${resolvedDate}`;
       const existing = scheduleData[cellKey];
       const hasConflict = !!(existing?.früh || existing?.frühAbsence);
 
-      rows.push({ rawName: entry.rawName, employee, date: entry.date, code: entry.code, mapped, hours, hasConflict });
+      rows.push({
+        rawName: entry.rawName,
+        employee,
+        origDate: entry.date,
+        date: resolvedDate,
+        code: entry.code,
+        mapped,
+        hours,
+        hasConflict,
+      });
     }
 
     return rows.sort((a, b) => a.date.localeCompare(b.date) || a.employee.name.localeCompare(b.employee.name));
   };
 
-  const previewRows = step === 'preview' ? buildPreview() : [];
-  const conflictRows = previewRows.filter(r => r.hasConflict);
+  const previewRows   = step === 'preview' ? buildPreview() : [];
+  const conflictRows  = previewRows.filter(r => r.hasConflict);
 
   // ── Final Import ───────────────────────────────────────────────────────────
 
@@ -225,13 +317,12 @@ export function KüchenplanImportDialog({
     const delta: Record<string, DaySchedule> = {};
 
     for (const row of previewRows) {
-      const cellKey = `${row.employee.id}-${row.date}`;
+      const cellKey = `${row.employee.id}-${row.date}`; // row.date bereits resolved
       if (row.mapped.type === 'work') {
         const ds: DaySchedule = {};
         if (row.mapped.start && row.mapped.end) {
           ds.früh = { start: row.mapped.start, end: row.mapped.end };
         }
-        // Split shift (e.g. O1): write second slot as spät
         if (row.mapped.start2 && row.mapped.end2) {
           ds.spät = { start: row.mapped.start2, end: row.mapped.end2 };
         }
@@ -239,7 +330,6 @@ export function KüchenplanImportDialog({
       } else if (row.mapped.type === 'vacation' || row.mapped.type === 'absence') {
         delta[cellKey] = { früh: null, frühAbsence: row.code };
       }
-      // type 'off' (F = Frei): nothing written, day is explicitly free
     }
 
     onImport(delta, previewRows.length);
@@ -253,6 +343,8 @@ export function KüchenplanImportDialog({
     setParsed(null);
     setNameMatches([]);
     setShowLogs(false);
+    setStartDateStr('');
+    setDateOverrides(new Map());
     onClose();
   };
 
@@ -261,8 +353,18 @@ export function KüchenplanImportDialog({
     setParsed(null);
     setNameMatches([]);
     setShowLogs(false);
+    setStartDateStr('');
+    setDateOverrides(new Map());
     if (fileRef.current) fileRef.current.value = '';
   };
+
+  // Kompaktes Datumsanzeige für Zeitraum-Preview
+  const resolvedFrom = parsed?.headerDays[0]
+    ? resolveDate(parsed.headerDays[0].origDate)
+    : null;
+  const resolvedTo = parsed?.headerDays[parsed.headerDays.length - 1]
+    ? resolveDate(parsed.headerDays[parsed.headerDays.length - 1].origDate)
+    : null;
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Render
@@ -348,6 +450,70 @@ export function KüchenplanImportDialog({
                         </AlertDescription>
                       </Alert>
                     )}
+
+                    {/* ── Zeitraum anpassen ────────────────────────────── */}
+                    {!parsed.error && parsed.headerDays.length > 0 && (
+                      <div className="rounded-md border border-blue-200 bg-blue-50/60 dark:bg-blue-900/10 dark:border-blue-800 p-4 space-y-3">
+                        <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
+                          <CalendarDays className="h-3.5 w-3.5" />
+                          Zeitraum prüfen &amp; korrigieren
+                        </p>
+
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <label className="text-xs text-muted-foreground whitespace-nowrap font-medium">
+                            Start-Datum:
+                          </label>
+                          <Input
+                            type="date"
+                            value={startDateStr}
+                            onChange={e => {
+                              setStartDateStr(e.target.value);
+                              setDateOverrides(new Map()); // Manuelle Overrides bei Monatswechsel zurücksetzen
+                            }}
+                            className="h-7 text-xs w-36"
+                          />
+                          {resolvedFrom && resolvedTo && (
+                            <span className="text-xs text-muted-foreground">
+                              → Plan: <strong className="text-foreground">
+                                {safeFormatDate(resolvedFrom, 'dd.MM.yyyy')}
+                              </strong>
+                              {' – '}
+                              <strong className="text-foreground">
+                                {safeFormatDate(resolvedTo, 'dd.MM.yyyy')}
+                              </strong>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Kompakte Tages-Vorschau */}
+                        {resolvedDayMap.size > 0 && (
+                          <div className="text-[11px] text-muted-foreground leading-5">
+                            <span className="font-medium text-foreground">Tage: </span>
+                            {parsed.headerDays.slice(0, 7).map((hd, idx) => {
+                              const resolved = resolveDate(hd.origDate);
+                              const label = safeFormatDate(resolved, 'dd.MM');
+                              return (
+                                <span key={idx} className="inline-flex items-center mr-1.5">
+                                  <span className="font-mono bg-muted rounded px-1">{hd.day}</span>
+                                  <span className="mx-0.5 text-muted-foreground/50">→</span>
+                                  <span>{label}</span>
+                                </span>
+                              );
+                            })}
+                            {parsed.headerDays.length > 7 && (
+                              <span className="text-muted-foreground/70">
+                                … bis {safeFormatDate(resolveDate(parsed.headerDays[parsed.headerDays.length - 1].origDate), 'dd.MM.yyyy')}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        <p className="text-[11px] text-muted-foreground">
+                          Monatswechsel wird automatisch erkannt. Einzelne Daten können in Schritt 4 (Vorschau) übersteuert werden.
+                        </p>
+                      </div>
+                    )}
+
                     <button
                       type="button"
                       className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
@@ -374,9 +540,8 @@ export function KüchenplanImportDialog({
                 <div className="flex items-start gap-2">
                   <Info className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
                   <p className="text-sm text-muted-foreground">
-                    Überprüfe die Planstunden für jeden erkannten Schichtcode.
-                    Die Stunden-Spalte ist autoritative Quelle — Start/Ende dienen als Referenz
-                    für den Dienstplan-Eintrag. Wird gespeichert und beim nächsten Import vorbelegt.
+                    Überprüfe Stunden und Zeiten für jeden Schichtcode.
+                    Start/Ende bestimmt den Dienstplan-Eintrag. Änderungen werden gespeichert.
                   </p>
                 </div>
 
@@ -396,7 +561,7 @@ export function KüchenplanImportDialog({
                         <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Code</th>
                         <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Bezeichnung</th>
                         <th className="px-3 py-2 text-center text-xs font-semibold text-muted-foreground">Planstunden</th>
-                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Zeiten (Ref.)</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Zeiten</th>
                         <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Typ</th>
                       </tr>
                     </thead>
@@ -404,7 +569,7 @@ export function KüchenplanImportDialog({
                       {codeMapping
                         .map((entry, globalIdx) => ({ entry, globalIdx }))
                         .filter(({ entry }) =>
-                          parsed.detectedCodes.some(c => c.toUpperCase() === entry.code.toUpperCase())
+                          parsed.detectedCodes.some(c => c.toUpperCase() === entry.code.toUpperCase()),
                         )
                         .map(({ entry, globalIdx }) => (
                           <tr key={entry.code} className="bg-white dark:bg-card">
@@ -430,13 +595,47 @@ export function KüchenplanImportDialog({
                                 <span className="text-xs font-semibold text-muted-foreground">0.0</span>
                               )}
                             </td>
-                            <td className="px-3 py-2 text-xs font-mono text-muted-foreground">
+                            <td className="px-3 py-2">
                               {entry.type === 'work' ? (
-                                entry.start2
-                                  ? <span>{entry.start}–{entry.end} <span className="text-[10px]">+</span> {entry.start2}–{entry.end2}</span>
-                                  : <span>{entry.start ?? '?'}–{entry.end ?? '?'}</span>
+                                <div className="space-y-1">
+                                  {/* Erste Schicht */}
+                                  <div className="flex items-center gap-1">
+                                    <Input
+                                      type="time"
+                                      value={entry.start ?? ''}
+                                      onChange={e => updateCodeEntry(globalIdx, { start: e.target.value })}
+                                      className="h-6 text-xs w-24 font-mono px-1"
+                                    />
+                                    <span className="text-[10px] text-muted-foreground">–</span>
+                                    <Input
+                                      type="time"
+                                      value={entry.end ?? ''}
+                                      onChange={e => updateCodeEntry(globalIdx, { end: e.target.value })}
+                                      className="h-6 text-xs w-24 font-mono px-1"
+                                    />
+                                  </div>
+                                  {/* Zweite Schicht (Splitschicht) */}
+                                  {(entry.start2 !== undefined || entry.end2 !== undefined) && (
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[10px] text-muted-foreground w-3">+</span>
+                                      <Input
+                                        type="time"
+                                        value={entry.start2 ?? ''}
+                                        onChange={e => updateCodeEntry(globalIdx, { start2: e.target.value })}
+                                        className="h-6 text-xs w-24 font-mono px-1"
+                                      />
+                                      <span className="text-[10px] text-muted-foreground">–</span>
+                                      <Input
+                                        type="time"
+                                        value={entry.end2 ?? ''}
+                                        onChange={e => updateCodeEntry(globalIdx, { end2: e.target.value })}
+                                        className="h-6 text-xs w-24 font-mono px-1"
+                                      />
+                                    </div>
+                                  )}
+                                </div>
                               ) : (
-                                <span className="italic">—</span>
+                                <span className="italic text-muted-foreground text-xs">—</span>
                               )}
                             </td>
                             <td className="px-3 py-2">
@@ -566,14 +765,27 @@ export function KüchenplanImportDialog({
                       {conflictRows.length} Konflikte (werden überschrieben)
                     </Badge>
                   )}
+                  {dateOverrides.size > 0 && (
+                    <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+                      <CalendarDays className="h-3 w-3 mr-1" />
+                      {dateOverrides.size} Datum-Korrekturen
+                    </Badge>
+                  )}
                 </div>
+
+                <Alert className="border-blue-200 bg-blue-50/60 dark:bg-blue-900/10 py-2">
+                  <Info className="h-4 w-4 text-blue-500" />
+                  <AlertDescription className="text-blue-800 dark:text-blue-300 text-xs">
+                    Datum pro Zeile direkt editierbar — Klick auf das Datumsfeld zum Korrigieren.
+                  </AlertDescription>
+                </Alert>
 
                 {conflictRows.length > 0 && (
                   <Alert className="border-red-200 bg-red-50 dark:bg-red-900/20">
                     <AlertTriangle className="h-4 w-4 text-red-600" />
                     <AlertDescription className="text-red-800 dark:text-red-300 text-xs">
                       <strong>{conflictRows.length} Einträge</strong> haben bereits Daten im Dienstplan.
-                      Diese werden beim Import überschrieben. Splitschichten (O1) schreiben Früh- und Spät-Slot.
+                      Diese werden beim Import überschrieben.
                     </AlertDescription>
                   </Alert>
                 )}
@@ -591,7 +803,10 @@ export function KüchenplanImportDialog({
                       <thead className="bg-muted/50">
                         <tr>
                           <th className="px-2 py-2 text-left font-semibold text-muted-foreground">Mitarbeiter</th>
-                          <th className="px-2 py-2 text-left font-semibold text-muted-foreground">Datum</th>
+                          <th className="px-2 py-2 text-left font-semibold text-muted-foreground">
+                            Datum
+                            <span className="ml-1 text-[10px] font-normal text-muted-foreground/70">(editierbar)</span>
+                          </th>
                           <th className="px-2 py-2 text-center font-semibold text-muted-foreground">Code</th>
                           <th className="px-2 py-2 text-center font-semibold text-muted-foreground">Typ</th>
                           <th className="px-2 py-2 text-right font-semibold text-muted-foreground">Stunden</th>
@@ -599,38 +814,50 @@ export function KüchenplanImportDialog({
                         </tr>
                       </thead>
                       <tbody className="divide-y">
-                        {previewRows.map((row, i) => (
-                          <tr key={i} className={row.hasConflict ? 'bg-red-50/60 dark:bg-red-900/10' : ''}>
-                            <td className="px-2 py-1.5 font-medium">
-                              {getEmployeeDisplayName(row.employee)}
-                            </td>
-                            <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
-                              {format(new Date(row.date + 'T00:00:00'), 'dd.MM.yy', { locale: de })}
-                            </td>
-                            <td className="px-2 py-1.5 text-center">
-                              <span className="font-mono font-bold bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300 px-1.5 py-0.5 rounded text-[11px]">
-                                {row.code}
-                              </span>
-                            </td>
-                            <td className="px-2 py-1.5 text-center">
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${TYPE_COLORS[row.mapped.type]}`}>
-                                {TYPE_LABELS[row.mapped.type]}
-                              </span>
-                            </td>
-                            <td className="px-2 py-1.5 text-right font-semibold tabular-nums">
-                              {row.mapped.type === 'work'
-                                ? `${row.hours.toFixed(1)}h`
-                                : <span className="text-muted-foreground">—</span>
-                              }
-                            </td>
-                            <td className="px-2 py-1.5 text-center">
-                              {row.hasConflict
-                                ? <AlertTriangle className="h-3.5 w-3.5 text-red-500 mx-auto" />
-                                : <span className="text-muted-foreground text-[10px]">—</span>
-                              }
-                            </td>
-                          </tr>
-                        ))}
+                        {previewRows.map((row, i) => {
+                          const isOverridden = dateOverrides.has(row.origDate);
+                          return (
+                            <tr key={i} className={row.hasConflict ? 'bg-red-50/60 dark:bg-red-900/10' : ''}>
+                              <td className="px-2 py-1.5 font-medium">
+                                {getEmployeeDisplayName(row.employee)}
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input
+                                  type="date"
+                                  value={dateOverrides.get(row.origDate) ?? row.date}
+                                  onChange={e => setDateOverride(row.origDate, e.target.value)}
+                                  className={`border rounded text-xs px-1.5 py-0.5 h-6 w-32 tabular-nums font-mono bg-background
+                                    ${isOverridden
+                                      ? 'border-blue-400 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20'
+                                      : 'border-border text-muted-foreground'
+                                    }`}
+                                />
+                              </td>
+                              <td className="px-2 py-1.5 text-center">
+                                <span className="font-mono font-bold bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300 px-1.5 py-0.5 rounded text-[11px]">
+                                  {row.code}
+                                </span>
+                              </td>
+                              <td className="px-2 py-1.5 text-center">
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${TYPE_COLORS[row.mapped.type]}`}>
+                                  {TYPE_LABELS[row.mapped.type]}
+                                </span>
+                              </td>
+                              <td className="px-2 py-1.5 text-right font-semibold tabular-nums">
+                                {row.mapped.type === 'work'
+                                  ? `${row.hours.toFixed(1)}h`
+                                  : <span className="text-muted-foreground">—</span>
+                                }
+                              </td>
+                              <td className="px-2 py-1.5 text-center">
+                                {row.hasConflict
+                                  ? <AlertTriangle className="h-3.5 w-3.5 text-red-500 mx-auto" />
+                                  : <span className="text-muted-foreground text-[10px]">—</span>
+                                }
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

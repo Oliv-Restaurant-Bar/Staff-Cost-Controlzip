@@ -2,7 +2,7 @@
  * Küchen-Dienstplan PDF Parser
  * =============================
  * Liest einen aus Excel exportierten Küchen-Dienstplan-PDF und extrahiert:
- * - Zeitraum (Monat/Jahr)
+ * - Zeitraum (Monat/Jahr), inkl. Start-Datum aus Bereichsangabe
  * - Mitarbeitende (Zeilen)
  * - Schichtcodes pro Tag (Spalten)
  *
@@ -17,10 +17,17 @@ export interface ParsedScheduleEntry {
   code: string;
 }
 
+export interface ParsedHeaderDay {
+  day: number;
+  origDate: string; // ISO date assigned by parser (based on detected month)
+}
+
 export interface ParsedKüchenplan {
   entries: ParsedScheduleEntry[];
   detectedPeriod: { from: string; to: string } | null;
   detectedMonth: string | null;
+  detectedStartDate: string | null; // yyyy-MM-dd extracted from range "dd.mm.yyyy BIS …"
+  headerDays: ParsedHeaderDay[];    // sorted left→right (chronological column order)
   detectedNames: string[];
   detectedCodes: string[];
   logs: string[];
@@ -47,6 +54,18 @@ function detectMonth(text: string): Date | null {
   const m2 = text.match(shortRe);
   if (m2) return new Date(parseInt(m2[2]), parseInt(m2[1]) - 1, 1);
   return null;
+}
+
+/** Versucht "dd.mm.yyyy" aus Freitext zu lesen. */
+function parseGermanDate(text: string): string | null {
+  const m = text.match(/(\d{1,2})\.(\d{1,2})\.(20\d{2})/);
+  if (!m) return null;
+  const d = parseInt(m[1]);
+  const mo = parseInt(m[2]) - 1;
+  const y = parseInt(m[3]);
+  const date = new Date(y, mo, d);
+  if (isNaN(date.getTime())) return null;
+  return format(date, 'yyyy-MM-dd');
 }
 
 export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan> {
@@ -91,16 +110,41 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
       items: rowMap.get(y)!.sort((a, b) => a.x - b.x),
     }));
 
-    // Detect month from title rows (first 6 rows)
+    // Detect month + start date from title rows (first 8 rows)
     let detectedMonth: Date | null = null;
+    let detectedStartDate: string | null = null;
+
     for (const row of rows.slice(0, 8)) {
       const joined = row.items.map(i => i.text).join(' ');
-      detectedMonth = detectMonth(joined);
-      if (detectedMonth) {
-        logs.push(`Zeitraum erkannt: ${MONTH_NAMES_DE[getMonth(detectedMonth)]} ${getYear(detectedMonth)}`);
-        break;
+
+      // Try to extract date range like "30.03.2026 BIS 26.04.2026"
+      if (!detectedStartDate) {
+        const rangeMatch = joined.match(/(\d{1,2}\.\d{1,2}\.20\d{2})\s+BIS\b/i);
+        if (rangeMatch) {
+          detectedStartDate = parseGermanDate(rangeMatch[1]);
+          if (detectedStartDate) {
+            logs.push(`Start-Datum aus Bereich erkannt: ${detectedStartDate}`);
+          }
+        }
       }
+
+      if (!detectedMonth) {
+        detectedMonth = detectMonth(joined);
+        if (detectedMonth) {
+          logs.push(`Monat erkannt: ${MONTH_NAMES_DE[getMonth(detectedMonth)]} ${getYear(detectedMonth)}`);
+        }
+      }
+
+      if (detectedStartDate && detectedMonth) break;
     }
+
+    // If we have a start date but no month, derive month from start date
+    if (detectedStartDate && !detectedMonth) {
+      const sd = new Date(detectedStartDate + 'T00:00:00');
+      detectedMonth = new Date(sd.getFullYear(), sd.getMonth(), 1);
+      logs.push(`Monat aus Start-Datum abgeleitet: ${MONTH_NAMES_DE[getMonth(detectedMonth)]} ${getYear(detectedMonth)}`);
+    }
+
     if (!detectedMonth) {
       detectedMonth = new Date();
       detectedMonth.setDate(1);
@@ -128,7 +172,12 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
 
     if (headerRowIdx === -1) {
       logs.push('❌ Keine Datum-Headerzeile gefunden (erwartet: Zeile mit Zahlen 1–31)');
-      return { entries: [], detectedPeriod: null, detectedMonth: null, detectedNames: [], detectedCodes: [], logs, error: 'Keine Datum-Kopfzeile gefunden. Bitte prüfen ob das PDF das richtige Format hat.' };
+      return {
+        entries: [], detectedPeriod: null, detectedMonth: null,
+        detectedStartDate: null, headerDays: [],
+        detectedNames: [], detectedCodes: [], logs,
+        error: 'Keine Datum-Kopfzeile gefunden. Bitte prüfen ob das PDF das richtige Format hat.',
+      };
     }
 
     const firstDayX = Math.min(...headerDayCols.map(d => d.x));
@@ -138,7 +187,7 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
     const colTol = colGap * 0.55;
     logs.push(`Spaltengrösse: ~${colGap.toFixed(1)}px, Toleranz: ±${colTol.toFixed(1)}px`);
 
-    // Map day number → ISO date
+    // Map day number → ISO date (using detectedMonth, handles single-month plans)
     const year = getYear(detectedMonth);
     const month = getMonth(detectedMonth);
     const daysInMonth = getDaysInMonth(detectedMonth);
@@ -148,6 +197,15 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
         dayToDate.set(day, format(new Date(year, month, day), 'yyyy-MM-dd'));
       }
     }
+
+    // Build headerDays sorted left→right (chronological)
+    const headerDays: ParsedHeaderDay[] = headerDayCols
+      .slice()
+      .sort((a, b) => a.x - b.x)
+      .map(col => ({
+        day: col.day,
+        origDate: dayToDate.get(col.day) ?? format(new Date(year, month, col.day), 'yyyy-MM-dd'),
+      }));
 
     function nearestDay(x: number): number | null {
       let best: number | null = null;
@@ -216,10 +274,15 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
       logs.push(`Zeitraum: ${detectedPeriod.from} → ${detectedPeriod.to}`);
     }
 
+    // Use detectedStartDate from range if available; fallback to detectedPeriod.from
+    const finalStartDate = detectedStartDate ?? detectedPeriod?.from ?? null;
+
     return {
       entries,
       detectedPeriod,
       detectedMonth: detectedMonth ? format(detectedMonth, 'yyyy-MM') : null,
+      detectedStartDate: finalStartDate,
+      headerDays,
       detectedNames,
       detectedCodes: [...codesSet],
       logs,
@@ -233,6 +296,8 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
       entries: [],
       detectedPeriod: null,
       detectedMonth: null,
+      detectedStartDate: null,
+      headerDays: [],
       detectedNames: [],
       detectedCodes: [],
       logs,
