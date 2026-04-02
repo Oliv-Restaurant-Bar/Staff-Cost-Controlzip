@@ -4,18 +4,18 @@
  * Verwaltet die Zuordnung von Küchen-Schichtcodes (aus PDF-Dienstplänen)
  * zu Planstunden und Schichttypen im System.
  *
- * Gespeichert in localStorage unter 'schicht_code_mapping_v2'.
+ * Gespeichert in localStorage unter 'schicht_code_mapping_v3'.
  *
- * Legende (Referenz aus dem Küchen-Dienstplan):
- *   A  = 7.0h   10:00–17:30 minus 30 Min Pause
+ * Legende (Olív Küchen-Dienstplan):
+ *   A  = Splitschicht Früh+Spät: 10:00–14:00 / 17:30–23:00  (~8.0h netto)
  *   B  = 9.0h   11:30–21:30 minus 1h Pause
  *   C  = 3.5h   10:00–14:00 minus 30 Min Pause
  *   O2 = 4.25h  07:00–11:30 minus 15 Min Pause
- *   H  = 5.0h   18:00–23:30 minus 30 Min Pause
- *   D  = 8.5h   14:00–23:00 minus 30 Min Pause
+ *   D  = 5.0h   18:00–23:30 minus 30 Min Pause
+ *   E  = 8.5h   14:00–23:00 minus 30 Min Pause
  *   O1 = 8.5h   11:00–14:00 + 18:00–23:30 (Splitschicht)
  *   F  = 0      Frei
- *   FE = 0      Ferien
+ *   FE = 0      Ferien   (KEINE Arbeit – Typ: vacation)
  *   FT = 0      Feiertag
  *   K  = 0      Krank
  *   M  = 0      Militär
@@ -23,7 +23,7 @@
  *   MS = 0      Mutterschaft
  */
 
-const STORAGE_KEY = 'schicht_code_mapping_v2';
+const STORAGE_KEY = 'schicht_code_mapping_v3';
 
 export type SchichtType = 'work' | 'vacation' | 'absence' | 'off';
 
@@ -50,22 +50,23 @@ export function computeHours(entry: SchichtCodeEntry): number {
 
 export const DEFAULT_MAPPING: SchichtCodeEntry[] = [
   // ── Arbeitsschichten ───────────────────────────────────────────────────────
-  { code: 'A',  label: 'Schicht A',   type: 'work',     hours: 7.0,  start: '10:00', end: '17:30' },
-  { code: 'B',  label: 'Schicht B',   type: 'work',     hours: 9.0,  start: '11:30', end: '21:30' },
-  { code: 'C',  label: 'Schicht C',   type: 'work',     hours: 3.5,  start: '10:00', end: '14:00' },
-  { code: 'O2', label: 'Offen 2',     type: 'work',     hours: 4.25, start: '07:00', end: '11:30' },
-  { code: 'H',  label: 'Abend',       type: 'work',     hours: 5.0,  start: '18:00', end: '23:30' },
-  { code: 'D',  label: 'Spät',        type: 'work',     hours: 8.5,  start: '14:00', end: '23:00' },
+  // A = Splitschicht Früh+Spät: 10:00–14:00 / 17:30–23:00
+  { code: 'A',  label: 'Früh/Spät (Split)', type: 'work', hours: 8.0,  start: '10:00', end: '14:00', start2: '17:30', end2: '23:00' },
+  { code: 'B',  label: 'Schicht B',         type: 'work', hours: 9.0,  start: '11:30', end: '21:30' },
+  { code: 'C',  label: 'Schicht C',         type: 'work', hours: 3.5,  start: '10:00', end: '14:00' },
+  { code: 'O2', label: 'Offen 2',           type: 'work', hours: 4.25, start: '07:00', end: '11:30' },
+  { code: 'D',  label: 'Abend',             type: 'work', hours: 5.0,  start: '18:00', end: '23:30' },
+  { code: 'E',  label: 'Spät',              type: 'work', hours: 8.5,  start: '14:00', end: '23:00' },
   // Splitschicht O1: früh-Slot 11:00–14:00, spät-Slot 18:00–23:30
-  { code: 'O1', label: 'Offen 1 (Split)', type: 'work', hours: 8.5,  start: '11:00', end: '14:00', start2: '18:00', end2: '23:30' },
+  { code: 'O1', label: 'Offen 1 (Split)',   type: 'work', hours: 8.5,  start: '11:00', end: '14:00', start2: '18:00', end2: '23:30' },
   // ── Abwesenheiten / Frei ───────────────────────────────────────────────────
-  { code: 'F',  label: 'Frei',        type: 'off',      hours: 0 },
-  { code: 'FE', label: 'Ferien',      type: 'vacation', hours: 0 },
-  { code: 'FT', label: 'Feiertag',    type: 'vacation', hours: 0 },
-  { code: 'K',  label: 'Krank',       type: 'absence',  hours: 0 },
-  { code: 'M',  label: 'Militär',     type: 'absence',  hours: 0 },
-  { code: 'FW', label: 'Feuerwehr',   type: 'absence',  hours: 0 },
-  { code: 'MS', label: 'Mutterschaft',type: 'absence',  hours: 0 },
+  { code: 'F',  label: 'Frei',              type: 'off',      hours: 0 },
+  { code: 'FE', label: 'Ferien',            type: 'vacation', hours: 0 },
+  { code: 'FT', label: 'Feiertag',          type: 'vacation', hours: 0 },
+  { code: 'K',  label: 'Krank',             type: 'absence',  hours: 0 },
+  { code: 'M',  label: 'Militär',           type: 'absence',  hours: 0 },
+  { code: 'FW', label: 'Feuerwehr',         type: 'absence',  hours: 0 },
+  { code: 'MS', label: 'Mutterschaft',      type: 'absence',  hours: 0 },
 ];
 
 export function loadSchichtCodeMapping(): SchichtCodeEntry[] {

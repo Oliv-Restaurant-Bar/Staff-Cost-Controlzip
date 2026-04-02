@@ -27,7 +27,7 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Upload, ChevronRight, Check, X, AlertTriangle, Info,
-  FileText, RefreshCw, ChevronDown, ChevronUp, CalendarDays,
+  FileText, RefreshCw, ChevronDown, ChevronUp, CalendarDays, Plus,
 } from 'lucide-react';
 import { Employee } from '@/types/personnel';
 import { DaySchedule } from './ScheduleGrid';
@@ -613,24 +613,44 @@ export function KüchenplanImportDialog({
                                       onChange={e => updateCodeEntry(globalIdx, { end: e.target.value })}
                                       className="h-6 text-xs w-24 font-mono px-1"
                                     />
+                                    {/* Splitschicht hinzufügen – nur wenn noch keine */}
+                                    {entry.start2 === undefined && entry.end2 === undefined && (
+                                      <button
+                                        type="button"
+                                        title="Splitschicht hinzufügen"
+                                        className="ml-1 h-5 w-5 rounded text-muted-foreground hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/20 flex items-center justify-center transition-colors"
+                                        onClick={() => updateCodeEntry(globalIdx, { start2: '', end2: '' })}
+                                      >
+                                        <Plus className="h-3 w-3" />
+                                      </button>
+                                    )}
                                   </div>
                                   {/* Zweite Schicht (Splitschicht) */}
                                   {(entry.start2 !== undefined || entry.end2 !== undefined) && (
                                     <div className="flex items-center gap-1">
-                                      <span className="text-[10px] text-muted-foreground w-3">+</span>
+                                      <span className="text-[10px] text-orange-500 font-bold w-3">+</span>
                                       <Input
                                         type="time"
                                         value={entry.start2 ?? ''}
                                         onChange={e => updateCodeEntry(globalIdx, { start2: e.target.value })}
-                                        className="h-6 text-xs w-24 font-mono px-1"
+                                        className="h-6 text-xs w-24 font-mono px-1 border-orange-200 dark:border-orange-800"
                                       />
                                       <span className="text-[10px] text-muted-foreground">–</span>
                                       <Input
                                         type="time"
                                         value={entry.end2 ?? ''}
                                         onChange={e => updateCodeEntry(globalIdx, { end2: e.target.value })}
-                                        className="h-6 text-xs w-24 font-mono px-1"
+                                        className="h-6 text-xs w-24 font-mono px-1 border-orange-200 dark:border-orange-800"
                                       />
+                                      {/* Splitschicht entfernen */}
+                                      <button
+                                        type="button"
+                                        title="Splitschicht entfernen"
+                                        className="ml-0.5 h-5 w-5 rounded text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center justify-center transition-colors"
+                                        onClick={() => updateCodeEntry(globalIdx, { start2: undefined, end2: undefined })}
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
                                     </div>
                                   )}
                                 </div>
