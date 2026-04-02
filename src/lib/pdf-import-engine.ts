@@ -181,61 +181,146 @@ function isSageKontoblatt(rawLines: string[]): boolean {
  * State-Machine-Parser für Sage Kontoblatt-PDFs.
  *
  * Format:
- *   4020            Wein Warenaufwand          ← Konto-Header (kein Betrag)
+ *   4020            Wein Warenaufwand          ← Konto-Header (kein CHF-Betrag)
  *                   Saldo Vortrag  0.00         ← ignorieren
- *   20.01.2026  54  Paul Ullrich AG  2001  1'324.01  1'324.01  ← Buchungszeilen ignorieren
- *                   Total Soll      11'790.66   ← Debit-Summe
- *                   Total Haben     0.00        11'790.66  ← letzter Betrag = Netto-Saldo
+ *   20.01.2026  54  Paul Ullrich AG  2001  1'324.01  1'324.01  ← Buchungszeile (ignoriert)
+ *                   Total Soll      14'577.94   ← Debit-Summe des Monats
+ *                   Total Haben     0.00        14'577.94  ← letzter Betrag = Monatssaldo
  *
- * Ergebnis: eine ParsedCSVRow pro Konto mit dem Netto-Saldo als amount.
- * Mehrseitige Konten (Saldo-Vortrag auf Folgeseite) werden korrekt behandelt.
+ * Monatswert = letzter Betrag auf der "Total Haben"-Zeile
+ *   = Total Soll − Total Haben (enthält den Netto-Monatsumsatz)
+ *   NICHT den Saldo-Vortrag, NICHT den Endsaldo über alle Perioden
+ *
+ * Mehrseitige Konten (z.B. 4060 Küche über 2+ Seiten):
+ *   - currentAccount wird nach "Total Haben" NICHT zurückgesetzt
+ *   - Wenn dasselbe Konto erneut auftaucht (Seite 2), wird es als Fortsetzung erkannt
+ *   - Jedes neue "Total Haben" für dasselbe Konto überschreibt mit dem kumulativen Wert
+ *   - Damit enthält der letzte Eintrag immer den korrekten Monatswert
+ *
+ * Bug-Fix für Seiten-Nummern in Konto-Headers:
+ *   Alte Logik: findLastAmount("4060 Küche Warenaufwand  Seite 2") → "2" → hasAmount=true → Header nicht erkannt
+ *   Neue Logik: hasCHFAmount("Küche Warenaufwand  Seite 2") → false → Header korrekt erkannt
  */
 function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
-  const accountTotals = new Map<string, { name: string; saldo: number; lineIndex: number; raw: string }>();
+  interface AccountEntry {
+    name: string;
+    totalSoll: number;
+    totalHaben: number;
+    saldo: number;       // Monatswert = letzter Betrag auf "Total Haben"-Zeile (= Soll − Haben)
+    lineIndex: number;
+    raw: string;
+    pageCount: number;   // Wie oft dieses Konto auf einer neuen Seite fortgesetzt wurde
+  }
+
+  const accountData = new Map<string, AccountEntry>();
   let currentAccount: { number: string; name: string } | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const { text } = lines[i];
-    const lower = text.toLowerCase().trim();
+    const trimmed = text.trim();
 
-    // "Total Haben …  <saldo>" → letzter Betrag auf der Zeile ist der Netto-Saldo
-    if (/^total\s+haben\b/i.test(lower) && currentAccount) {
+    // "Total Soll X" → Debit-Summe des Monats festhalten (für Debug-Log)
+    if (/^total\s+soll\b/i.test(trimmed) && currentAccount) {
       const lastAmt = findLastAmount(text);
       if (lastAmt) {
-        const saldo = parseAmount(lastAmt.raw);
-        if (saldo !== null && saldo >= 0) {
-          accountTotals.set(currentAccount.number, {
-            name:      currentAccount.name,
-            saldo:     Math.abs(saldo),
-            lineIndex: i + 1,
-            raw:       lastAmt.raw,
+        const soll = parseAmount(lastAmt.raw);
+        if (soll !== null) {
+          const prev = accountData.get(currentAccount.number);
+          accountData.set(currentAccount.number, {
+            ...(prev ?? {
+              name: currentAccount.name, totalSoll: 0, totalHaben: 0,
+              saldo: 0, lineIndex: i + 1, raw: '', pageCount: 0,
+            }),
+            totalSoll: Math.abs(soll), // Überschreiben: späterer Wert ist kumulativ
           });
         }
       }
-      currentAccount = null;
       continue;
     }
 
-    // Konto-Header: 4-stellige Zahl am Anfang, gefolgt von Name – kein Betrag dahinter
+    // "Total Haben  [haben]  [saldo]"
+    //   → letzter Betrag = Saldo (Soll − Haben) = Monatsbewegung
+    //   → erster Betrag (falls vorhanden) = Haben-Komponente
+    // currentAccount wird NICHT zurückgesetzt → Konto läuft auf nächster Seite weiter
+    if (/^total\s+haben\b/i.test(trimmed) && currentAccount) {
+      const allAmts = findAllAmounts(text);
+      if (allAmts.length > 0) {
+        const saldoRaw  = allAmts[allAmts.length - 1];         // letzter Betrag = Monatssaldo
+        const habenRaw  = allAmts.length > 1 ? allAmts[0] : '0.00'; // erster Betrag = Haben
+        const saldo  = parseAmount(saldoRaw);
+        const haben  = parseAmount(habenRaw) ?? 0;
+
+        if (saldo !== null) {
+          const prev = accountData.get(currentAccount.number);
+          accountData.set(currentAccount.number, {
+            ...(prev ?? {
+              name: currentAccount.name, totalSoll: 0, totalHaben: 0,
+              lineIndex: i + 1, raw: saldoRaw, pageCount: 0,
+            }),
+            name:       currentAccount.name,
+            totalHaben: Math.abs(haben),
+            saldo:      Math.abs(saldo),  // Überschreiben → letzter kumulativer Wert korrekt
+            lineIndex:  i + 1,
+            raw:        saldoRaw,
+          });
+          // currentAccount bleibt aktiv für mehrseitige Konten
+        }
+      }
+      continue;
+    }
+
+    // Konto-Header: 4-stellige Zahl am Anfang, gefolgt von Name
+    // Erkennung schlägt fehl wenn "afterNum" eine echte CHF-Zahl enthält (Betragszeile)
+    // Seitenzahlen wie "Seite 2" werden mit hasCHFAmount() korrekt herausgefiltert
     const accM = /^\s*(\d{4})\s+(.+)/.exec(text);
     if (accM) {
-      const afterNum = accM[2].trim();
-      const hasAmount = findLastAmount(afterNum) !== null;
-      if (!hasAmount) {
-        // Prüfe, dass der Name sinnvoll lang ist (mind. 2 Zeichen, keine reine Zahl)
-        const cleanName = afterNum.replace(/^\s+|\s+$/g, '');
+      const accountNum = accM[1];
+      const afterNum   = accM[2].trim();
+
+      // Nur als Header erkennen wenn KEIN echter CHF-Betrag vorhanden (kein Apostroph/Dezimal)
+      if (!hasCHFAmount(afterNum)) {
+        // Name bereinigen: bare Einzel-/Zweistellige Ziffern (Seitenzahlen) entfernen
+        const cleanName = afterNum
+          .split(/\s+/)
+          .filter(t => !/^\d{1,3}$/.test(t)) // Seitenzahlen wie "2", "12" entfernen
+          .join(' ')
+          .trim();
+
         if (cleanName.length >= 2 && !/^\d+$/.test(cleanName)) {
-          currentAccount = { number: accM[1], name: cleanName };
+          if (accountNum !== currentAccount?.number) {
+            // Neues Konto
+            currentAccount = { number: accountNum, name: cleanName };
+          } else {
+            // Dasselbe Konto auf nächster Seite → Fortsetzung
+            const prev = accountData.get(accountNum);
+            if (prev) {
+              accountData.set(accountNum, { ...prev, pageCount: prev.pageCount + 1 });
+            }
+            currentAccount = { number: accountNum, name: cleanName };
+          }
         }
       }
     }
   }
 
-  return Array.from(accountTotals.entries())
+  // Debug-Log: alle erkannten Konten mit Total Soll / Total Haben / Monatswert
+  console.group('[PDF Import] Sage Kontoblatt – erkannte Konten (Monatswerte)');
+  for (const [num, d] of accountData.entries()) {
+    const multiPage = d.pageCount > 0 ? ` ⚠ mehrseitig (${d.pageCount + 1} Seiten)` : '';
+    console.log(
+      `Konto ${num} "${d.name}": ` +
+      `Total Soll ${d.totalSoll.toFixed(2)}, ` +
+      `Total Haben ${d.totalHaben.toFixed(2)}, ` +
+      `Monatswert = ${d.saldo.toFixed(2)}${multiPage}`,
+    );
+  }
+  console.groupEnd();
+
+  return Array.from(accountData.entries())
     .filter(([, v]) => v.saldo > 0)
     .map(([accNum, v]) => ({
       lineIndex:     v.lineIndex,
-      rawLine:       `${accNum} ${v.name}  Total Haben ${v.raw}`,
+      rawLine:       `${accNum} ${v.name}  TotalSoll:${v.totalSoll.toFixed(2)} TotalHaben:${v.totalHaben.toFixed(2)} Monatswert:${v.saldo.toFixed(2)}`,
       accountNumber: accNum.padStart(4, '0'),
       accountName:   v.name,
       rawAmount:     v.raw,
@@ -281,6 +366,28 @@ function findLastAmount(text: string): { raw: string; pos: number } | null {
     }
   }
   return last;
+}
+
+/** Gibt ALLE Beträge in einem Text zurück (in Reihenfolge links→rechts). */
+function findAllAmounts(text: string): string[] {
+  const results: string[] = [];
+  const re = new RegExp(MONEY_RE.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const raw = m[1]?.trim() ?? m[0].trim();
+    if (raw && parseAmount(raw) !== null) results.push(raw);
+  }
+  return results;
+}
+
+/**
+ * Prüft ob ein Text eine "echte" CHF-Geldangabe enthält.
+ * Verlangt Apostroph-Tausendertrenner ODER zwei Dezimalstellen (.XX).
+ * Filtert damit Seitenzahlen (z.B. "2", "3") und kurze Nummern heraus.
+ */
+function hasCHFAmount(text: string): boolean {
+  // Matches: 1'234.56, 1'234, 1234.56, 0.00, 12.50 — NOT bare "2" or "3"
+  return /\d{1,3}(?:'\d{3})+(?:\.\d+)?|\d+\.\d{2,}/.test(text);
 }
 
 function parseLine(
