@@ -12,7 +12,7 @@ const RevenueDisplayContext = createContext<RevenueDisplayContextType | undefine
 export const RevenueDisplayProvider = ({ children }: { children: ReactNode }) => {
   const [showNetRevenue, setShowNetRevenueState] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    return saved === 'netto';
+    return saved !== 'brutto'; // default: netto (nur explizit 'brutto' schaltet um)
   });
 
   // Persist to localStorage whenever the value changes

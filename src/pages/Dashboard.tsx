@@ -1352,6 +1352,16 @@ const Dashboard = () => {
                   </>
                 )}
 
+                {/* Brutto-Warnung: Verhältniskennzahlen auf Brutto-Basis */}
+                {!showNetRevenue && canSeePersonnelCostTotals && (
+                  <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 mt-1">
+                    <span className="shrink-0 mt-0.5">⚠</span>
+                    <span>
+                      <span className="font-semibold">Bruttoumsatz aktiv:</span> Verhältniskennzahlen (PKQ, FIX-Quote) basieren auf dem Bruttoumsatz inkl. MWST — nicht direkt vergleichbar mit Buchhaltungswerten (die Kosten sind stets Netto).
+                    </span>
+                  </div>
+                )}
+
                 {/* Personalkosten: Ist vs. Plan vs. Budget */}
                 {canSeePersonnelCostTotals && budgetData.personnelBudget > 0 && (
                   <div className="mt-3">
@@ -1440,8 +1450,8 @@ const Dashboard = () => {
                         <KpiCard
                           title="Ist Personalkosten"
                           value={formatCHF(actualLaborCostStichtag)}
-                          subtitle={revenueIstStichtag && revenueIstStichtag > 0
-                            ? `${((actualLaborCostStichtag / revenueIstStichtag) * 100).toFixed(1)} % v. Ist-Umsatz`
+                          subtitle={revenueIstStichtagB !== null && revenueIstStichtagB > 0
+                            ? `${((actualLaborCostStichtag / revenueIstStichtagB) * 100).toFixed(1)} % v. Ist-Umsatz`
                             : `bis ${stichtagFormatted}`}
                           icon={<Users className="h-5 w-5" />}
                           color={actualLaborCostStichtag <= personnelBudgetProRata ? 'green' : 'red'}
@@ -1452,15 +1462,15 @@ const Dashboard = () => {
                           small
                         />
                       )}
-                      {revenueIstStichtag !== null && revenueIstStichtag > 0 && actualLaborCostStichtag !== null && actualLaborCostStichtag > 0 && (
+                      {revenueIstStichtagB !== null && revenueIstStichtagB > 0 && actualLaborCostStichtag !== null && actualLaborCostStichtag > 0 && (
                         <KpiCard
                           title="Ist-Quote bis Stichtag"
-                          value={`${((actualLaborCostStichtag / revenueIstStichtag) * 100).toFixed(1)} %`}
+                          value={`${((actualLaborCostStichtag / revenueIstStichtagB) * 100).toFixed(1)} %`}
                           subtitle="Personalkosten / Umsatz"
                           icon={<Target className="h-5 w-5" />}
                           color={budgetData.personnelRatioTarget !== null
                             ? budgetRatioColor(
-                                (actualLaborCostStichtag / revenueIstStichtag) * 100,
+                                (actualLaborCostStichtag / revenueIstStichtagB) * 100,
                                 budgetData.personnelRatioTarget,
                               )
                             : 'default'}
