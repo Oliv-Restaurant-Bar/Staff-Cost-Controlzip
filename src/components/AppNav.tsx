@@ -4,16 +4,27 @@
  * Desktop: linke Sidebar (220px), sticky
  * Mobile: Bottom-Navigation (fixiert)
  *
- * Struktur:
- *   Dashboard · Dienstplanung · Verkaufs-Dashboard
- *   Kosten:      Personal FIX · WES-Analyse
- *   Stammdaten:  Produkte
- *   Admin:       Verkaufsdaten Upload · Einstellungen
+ * Aktive Gruppen:
+ *   Dashboard   → Verkaufs-Dashboard
+ *   Operations  → Dienstplanung
+ *   Kosten      → Personal FIX · WES-Analyse
+ *   Stammdaten  → Produkte
+ *   Admin       → Verkaufsdaten Upload · Einstellungen  (nur Admin)
+ *
+ * Ausgeblendet (Routen existieren weiterhin, nur nicht verlinkt):
+ *   /           Dashboard-Startseite
+ *   /artikel    Artikelstamm
+ *   /artikel-tracking
+ *   /lunch-analyse
+ *   /takeaway-analyse
+ *   /absenzen
+ *   /produkt-analyse
+ *   /kategorien
  */
 
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Calendar, PieChart,
+  Calendar, PieChart,
   DollarSign, TrendingDown,
   Package,
   Upload, Settings,
@@ -40,7 +51,7 @@ interface NavItem {
 }
 
 interface NavGroup {
-  groupLabel?: string;
+  groupLabel: string;
   adminOnly?: boolean;
   items: NavItem[];
 }
@@ -49,27 +60,26 @@ interface NavGroup {
 
 const NAV_GROUPS: NavGroup[] = [
   {
+    groupLabel: 'Dashboard',
     items: [
-      {
-        path: '/',
-        label: 'Dashboard',
-        shortLabel: 'Home',
-        icon: LayoutDashboard,
-        module: 'dashboard',
-      },
-      {
-        path: '/personal',
-        label: 'Dienstplanung',
-        shortLabel: 'Dienst',
-        icon: Calendar,
-        module: 'dienstplanung',
-      },
       {
         path: '/verkauf-dashboard',
         label: 'Verkaufs-Dashboard',
         shortLabel: 'Verkauf',
         icon: PieChart,
         adminOnly: true,
+      },
+    ],
+  },
+  {
+    groupLabel: 'Operations',
+    items: [
+      {
+        path: '/personal',
+        label: 'Dienstplanung',
+        shortLabel: 'Dienst',
+        icon: Calendar,
+        module: 'dienstplanung',
       },
     ],
   },
@@ -98,7 +108,7 @@ const NAV_GROUPS: NavGroup[] = [
     adminOnly: true,
     items: [
       {
-        path: '/artikel',
+        path: '/produkt-stamm',
         label: 'Produkte',
         shortLabel: 'Produkte',
         icon: Package,
@@ -128,32 +138,26 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-// Flache Liste aller Items (für Mobile-Nav und Routing-Hilfsfunktionen)
+// Flache Liste (für Mobile-Nav)
 const ALL_NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap(g => g.items);
 
 // ─── Rollen-Konfiguration ─────────────────────────────────────────────────────
 
 const ROLE_CONFIG = {
   admin: {
-    label:     'Administrator',
-    shortLabel: 'Admin',
-    color:     'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-700',
-    dotColor:  'bg-purple-500',
-    Icon:      ShieldCheck,
+    label:      'Administrator',
+    color:      'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-700',
+    Icon:       ShieldCheck,
   },
   service_manager: {
-    label:     'Service-Manager',
-    shortLabel: 'Service-Mgr',
-    color:     'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700',
-    dotColor:  'bg-blue-500',
-    Icon:      Utensils,
+    label:      'Service-Manager',
+    color:      'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700',
+    Icon:       Utensils,
   },
   kueche_manager: {
-    label:     'Küchen-Manager',
-    shortLabel: 'Küchen-Mgr',
-    color:     'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700',
-    dotColor:  'bg-orange-500',
-    Icon:      ChefHat,
+    label:      'Küchen-Manager',
+    color:      'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700',
+    Icon:       ChefHat,
   },
 };
 
@@ -161,7 +165,6 @@ const ROLE_CONFIG = {
 
 const StichtagPicker = () => {
   const { stichtag, isActive, setStichtag, clearStichtag, formatted } = useStichtag();
-
   const inputValue = stichtag ? stichtag.toISOString().split('T')[0] : '';
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -192,11 +195,10 @@ const StichtagPicker = () => {
           </button>
         )}
       </div>
-      {isActive ? (
-        <p className="text-xs font-bold text-amber-800 dark:text-amber-300">per {formatted}</p>
-      ) : (
-        <p className="text-[10px] text-muted-foreground leading-tight">Auswertungen auf Datum begrenzen</p>
-      )}
+      {isActive
+        ? <p className="text-xs font-bold text-amber-800 dark:text-amber-300">per {formatted}</p>
+        : <p className="text-[10px] text-muted-foreground leading-tight">Auswertungen auf Datum begrenzen</p>
+      }
       <input
         type="date"
         value={inputValue}
@@ -204,9 +206,7 @@ const StichtagPicker = () => {
         max={new Date().toISOString().split('T')[0]}
         className={cn(
           'w-full text-[11px] rounded px-1.5 py-1 border bg-background transition-colors',
-          isActive
-            ? 'border-amber-300 dark:border-amber-700 focus:ring-amber-400'
-            : 'border-border focus:ring-primary',
+          isActive ? 'border-amber-300 dark:border-amber-700' : 'border-border',
         )}
       />
     </div>
@@ -240,9 +240,7 @@ export const AppSidebar = () => {
   }
 
   function isLinkActive(path: string): boolean {
-    return path === '/'
-      ? location.pathname === '/'
-      : location.pathname.startsWith(path);
+    return location.pathname.startsWith(path);
   }
 
   return (
@@ -256,18 +254,16 @@ export const AppSidebar = () => {
       </div>
 
       {/* Navigation (gruppiert) */}
-      <nav className="flex-1 px-2 py-3 space-y-4">
+      <nav className="flex-1 px-2 py-3 space-y-5">
         {NAV_GROUPS.map((group, gi) => {
           const visibleItems = group.items.filter(isItemVisible);
           if (visibleItems.length === 0) return null;
 
           return (
             <div key={gi}>
-              {group.groupLabel && (
-                <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
-                  {group.groupLabel}
-                </p>
-              )}
+              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/55">
+                {group.groupLabel}
+              </p>
               <div className="space-y-0.5">
                 {visibleItems.map(item => {
                   const Icon = item.icon;
@@ -276,7 +272,6 @@ export const AppSidebar = () => {
                     <NavLink
                       key={item.path}
                       to={item.path}
-                      end={item.path === '/'}
                       className={cn(
                         'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors',
                         active
@@ -333,7 +328,7 @@ export const AppSidebar = () => {
         </p>
       </div>
 
-      {/* Rollen-Bereich + Abmelden */}
+      {/* Rolle + Abmelden */}
       <div className="border-t border-border px-3 py-3 space-y-2">
         {isGuest ? (
           <div className="flex items-center gap-2 rounded-md px-2.5 py-2 border text-xs font-semibold bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/30 dark:text-violet-300 dark:border-violet-700">
@@ -350,7 +345,7 @@ export const AppSidebar = () => {
               <p className="font-bold truncate">{roleConfig.label}</p>
               {isManager && allowedDepartment !== 'all' && (
                 <p className="text-[10px] opacity-80 font-normal">
-                  Bereich: {allowedDepartment === 'service' ? 'Service' : 'Küche'}
+                  {allowedDepartment === 'service' ? 'Service' : 'Küche'}
                 </p>
               )}
               {isAdmin && <p className="text-[10px] opacity-80 font-normal">Alle Abteilungen</p>}
@@ -386,6 +381,7 @@ export const AppBottomNav = () => {
   const { isAdmin, canAccessModule } = usePermissions();
   const { isGuest } = useGuestSession();
 
+  // Mobile: max. 5 Punkte — Einstellungen und Upload weglassen
   const mobileItems = ALL_NAV_ITEMS.filter(item => {
     if (item.adminOnly && !isAdmin && !isGuest) return false;
     if (item.module && !canAccessModule(item.module) && !isGuest) return false;
@@ -398,15 +394,11 @@ export const AppBottomNav = () => {
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border flex">
       {mobileItems.map(item => {
         const Icon = item.icon;
-        const isActive = item.path === '/'
-          ? location.pathname === '/'
-          : location.pathname.startsWith(item.path);
-
+        const isActive = location.pathname.startsWith(item.path);
         return (
           <NavLink
             key={item.path}
             to={item.path}
-            end={item.path === '/'}
             className={cn(
               'flex-1 flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] font-medium transition-colors',
               isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
