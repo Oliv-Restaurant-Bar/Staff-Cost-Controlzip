@@ -16,7 +16,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -68,6 +68,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { FileSpreadsheet, FileText } from 'lucide-react';
@@ -1498,6 +1499,13 @@ const SchedulePlanner = () => {
   const isNextDisabled = calendarView === 'week' ? selectedWeekIndex >= weeksInMonth.length - 1
     : calendarView === 'day' ? selectedDayOffset >= daysInMonth.length - 1 : false;
 
+  const handleNavigateToday = () => {
+    const today = new Date();
+    setCurrentMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+    setSelectedWeekIndex(0);
+    setSelectedDayOffset(0);
+  };
+
   // Für Rückwärtskompatibilität (wird noch an anderen Stellen referenziert)
   const totalPlannedRevenue = monthlyPlannedRevenue;
 
@@ -1597,8 +1605,8 @@ const SchedulePlanner = () => {
       <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
         <div className="max-w-[1800px] mx-auto px-4">
 
-          {/* ── Zeile 1: Titel + Primäraktionen ──────────────────────────────── */}
-          <div className="flex items-center justify-between gap-3 py-2.5 border-b border-border/50">
+          {/* ── Row 1: Titel + primäre Aktionen ────────────────────────────── */}
+          <div className="flex items-center justify-between gap-2 py-2 border-b border-border/40">
             <div className="flex items-center gap-2 min-w-0">
               <Link to="/">
                 <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" title="Zur Übersicht">
@@ -1606,14 +1614,14 @@ const SchedulePlanner = () => {
                 </Button>
               </Link>
               <div className="min-w-0">
-                <h1 className="text-base font-bold text-foreground leading-tight">Personal</h1>
+                <h1 className="text-base font-bold text-foreground leading-tight">Dienstplanung</h1>
                 <p className="text-[11px] text-muted-foreground leading-tight hidden sm:block">
-                  Dienstplan, Mitarbeiter und Kostenübersicht
+                  Oliv Gastro AG
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
               <Button onClick={handleSave} size="sm" className="gap-1.5 h-8">
                 <Save className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Speichern</span>
@@ -1623,360 +1631,226 @@ const SchedulePlanner = () => {
                   <Settings className="h-4 w-4" />
                 </Button>
               </Link>
+              {/* Mehr-Dropdown: alle selteneren Werkzeuge */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" title="Weitere Werkzeuge">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuItem onClick={() => setPlanningAssistantOpen(true)}>
+                    <Lightbulb className="h-4 w-4 mr-2 text-indigo-500" />
+                    Planungshilfe
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setBulkActionsOpen(true)}>
+                    <Zap className="h-4 w-4 mr-2 text-yellow-500" />
+                    Schnellaktionen
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setTimeSlotStaffingOpen(true)}>
+                    <Clock className="h-4 w-4 mr-2 text-teal-500" />
+                    Besetzungscheck
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setTemplateDialogOpen(true)}>
+                    <BookOpen className="h-4 w-4 mr-2 text-emerald-500" />
+                    Wochenvorlagen
+                  </DropdownMenuItem>
+                  {isAdmin && (
+                    <DropdownMenuItem onClick={() => setStationMatrixOpen(true)}>
+                      <LayoutGrid className="h-4 w-4 mr-2 text-violet-500" />
+                      Stationen
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onClick={() => setAvailabilityOpen(true)}>
+                    <CalendarX2 className="h-4 w-4 mr-2 text-teal-500" />
+                    Verfügbarkeit
+                  </DropdownMenuItem>
+                  {isAdmin && (
+                    <DropdownMenuItem onClick={() => setStaffingTargetOpen(true)}>
+                      <Target className="h-4 w-4 mr-2 text-rose-500" />
+                      Besetzungsziele
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setCopyWeekDialogOpen(true)}>
+                    <Copy className="h-4 w-4 mr-2" />
+                    Woche kopieren
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleImportClick}>
+                    <Upload className="h-4 w-4 mr-2" />
+                    Importieren
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportTemplate}>
+                    <FileSpreadsheet className="h-4 w-4 mr-2" />
+                    Export Excel (.xlsx)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportPDF}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Export PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setPrintDialogOpen(true)}>
+                    <Printer className="h-4 w-4 mr-2" />
+                    Drucken
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
 
-          {/* ── Zeile 2: Werkzeug-Toolbar ─────────────────────────────────────── */}
-          <div className="flex items-center gap-1 py-1.5 overflow-x-auto scrollbar-none">
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleImportFile}
-              accept=".xlsx,.xls"
-              className="hidden"
-            />
+          {/* ── Row 2: Steuerung (Zeitraum / Bereich / Modus) ─────────────────── */}
+          <div className="flex items-center gap-2 py-1.5 flex-wrap">
+            <input type="file" ref={fileInputRef} onChange={handleImportFile} accept=".xlsx,.xls" className="hidden" />
 
-            {/* Konfiguration */}
-            <Button
-              variant="ghost" size="sm"
-              onClick={() => setTemplateDialogOpen(true)}
-              className="h-7 gap-1 px-2 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 shrink-0"
-              title="Wochenvorlagen verwalten"
-            >
-              <BookOpen className="h-3.5 w-3.5" />
-              <span className="hidden md:inline text-xs">Vorlagen</span>
-            </Button>
-
-            {isAdmin && (
-              <Button
-                variant="ghost" size="sm"
-                onClick={() => setStationMatrixOpen(true)}
-                className="h-7 gap-1 px-2 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/40 shrink-0"
-                title="Stationen & Funktionen verwalten"
-              >
-                <LayoutGrid className="h-3.5 w-3.5" />
-                <span className="hidden md:inline text-xs">Stationen</span>
-              </Button>
-            )}
-
-            <Button
-              variant="ghost" size="sm"
-              onClick={() => setAvailabilityOpen(true)}
-              className="h-7 gap-1 px-2 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 shrink-0"
-              title="Verfügbarkeit & Wunschfrei verwalten"
-            >
-              <CalendarX2 className="h-3.5 w-3.5" />
-              <span className="hidden md:inline text-xs">Verfügbarkeit</span>
-            </Button>
-
-            {isAdmin && (
-              <Button
-                variant="ghost" size="sm"
-                onClick={() => setStaffingTargetOpen(true)}
-                className="h-7 gap-1 px-2 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 shrink-0"
-                title="Besetzungsziele konfigurieren"
-              >
-                <Target className="h-3.5 w-3.5" />
-                <span className="hidden md:inline text-xs">Ziele</span>
-              </Button>
-            )}
-
-            {/* Separator */}
-            <div className="w-px h-4 bg-border mx-0.5 shrink-0" />
-
-            {/* Planung */}
-            <Button
-              variant="ghost" size="sm"
-              onClick={() => setPlanningAssistantOpen(true)}
-              className="h-7 gap-1 px-2 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 shrink-0"
-              title="Planungshilfe öffnen"
-            >
-              <Lightbulb className="h-3.5 w-3.5" />
-              <span className="hidden md:inline text-xs">Planungshilfe</span>
-            </Button>
-
-            <Button
-              variant="ghost" size="sm"
-              onClick={() => setBulkActionsOpen(true)}
-              className="h-7 gap-1 px-2 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-950/40 shrink-0"
-              title="Schnellaktionen: Abwesenheiten, Schichten und Wochen per Bulk einplanen"
-            >
-              <Zap className="h-3.5 w-3.5" />
-              <span className="hidden md:inline text-xs">Schnellaktionen</span>
-            </Button>
-
-            <Button
-              variant="ghost" size="sm"
-              onClick={() => setTimeSlotStaffingOpen(true)}
-              className="h-7 gap-1 px-2 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 shrink-0"
-              title="Besetzungscheck: Wer war in einem bestimmten Zeitfenster im Einsatz?"
-            >
-              <Clock className="h-3.5 w-3.5" />
-              <span className="hidden md:inline text-xs">Besetzungscheck</span>
-            </Button>
-
-            {/* Separator */}
-            <div className="w-px h-4 bg-border mx-0.5 shrink-0" />
-
-            {/* Datenaktionen — als Dropdown gebündelt */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost" size="sm"
-                  className="h-7 gap-1 px-2 shrink-0"
-                  title="Weitere Aktionen"
+            {/* Zeitraum-Typ */}
+            <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
+              {(['month', 'week', 'day'] as const).map(v => (
+                <button
+                  key={v}
+                  onClick={() => setCalendarView(v)}
+                  className={cn(
+                    "h-7 px-2.5 text-xs font-medium rounded-md transition-colors",
+                    calendarView === v
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
                 >
-                  <Copy className="h-3.5 w-3.5" />
-                  <span className="hidden md:inline text-xs">Aktionen</span>
+                  {v === 'month' ? 'Monat' : v === 'week' ? 'Woche' : 'Tag'}
+                </button>
+              ))}
+            </div>
+
+            {/* Zeitraum-Navigation */}
+            <div className="flex items-center gap-0.5">
+              <Button
+                variant="ghost" size="icon" className="h-7 w-7"
+                onClick={handlePrevPeriod} disabled={isPrevDisabled}
+                title="Vorherige Periode"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="text-sm font-semibold min-w-[140px] text-center select-none">
+                {pkqPeriodLabel}
+              </span>
+              <Button
+                variant="ghost" size="icon" className="h-7 w-7"
+                onClick={handleNextPeriod} disabled={isNextDisabled}
+                title="Nächste Periode"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground"
+                onClick={handleNavigateToday}
+                title="Zum aktuellen Zeitraum"
+              >
+                Heute
+              </Button>
+            </div>
+
+            <div className="w-px h-5 bg-border shrink-0 hidden sm:block" />
+
+            {/* Abteilung */}
+            {canSwitchDepartment ? (
+              <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
+                {([
+                  { key: 'service', label: 'Service', dot: 'bg-blue-500' },
+                  { key: 'küche',   label: 'Küche',   dot: 'bg-orange-500' },
+                ] as const).map(({ key, label, dot }) => (
+                  <button
+                    key={key}
+                    onClick={() => setActiveDepartment(key as Department)}
+                    className={cn(
+                      "h-7 px-2.5 text-xs font-medium rounded-md flex items-center gap-1.5 transition-colors",
+                      activeDepartment === key
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <span className={cn("w-2 h-2 rounded-full shrink-0", dot)} />
+                    {label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setActiveDepartment('all' as Department)}
+                  className={cn(
+                    "h-7 px-2.5 text-xs font-medium rounded-md flex items-center gap-1.5 transition-colors",
+                    activeDepartment === 'all'
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <Users className="h-3 w-3 shrink-0" />
+                  Alle ({employees.length})
+                </button>
+              </div>
+            ) : (
+              <div className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border",
+                isServiceManager && "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-700",
+                isKuecheManager  && "border-orange-300 bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:border-orange-700"
+              )}>
+                <span className={cn("w-2 h-2 rounded-full", isServiceManager && "bg-blue-500", isKuecheManager && "bg-orange-500")} />
+                {isServiceManager ? 'Service' : 'Küche'}
+                <Lock className="h-3 w-3 opacity-60" />
+              </div>
+            )}
+
+            <div className="w-px h-5 bg-border shrink-0 hidden sm:block" />
+
+            {/* Modus (Plan / Ist / Vergleich) */}
+            <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
+              <button
+                onClick={() => setScheduleMode('plan')}
+                className={cn(
+                  "h-7 px-2.5 text-xs font-medium rounded-md transition-colors",
+                  scheduleMode === 'plan'
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >Plan</button>
+              <button
+                onClick={() => setScheduleMode('ist')}
+                className={cn(
+                  "h-7 px-2.5 text-xs font-medium rounded-md transition-colors",
+                  scheduleMode === 'ist'
+                    ? "bg-green-600 text-white shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >Ist</button>
+              <button
+                onClick={() => setScheduleMode('compare')}
+                className={cn(
+                  "h-7 px-2.5 text-xs font-medium rounded-md transition-colors",
+                  scheduleMode === 'compare'
+                    ? "bg-purple-600 text-white shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >Vergleich</button>
+            </div>
+
+            {/* Kosten-Toggle */}
+            {canToggleCostView && (
+              <>
+                <div className="w-px h-5 bg-border shrink-0 hidden sm:block" />
+                <Button
+                  variant={showCosts ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs px-2.5"
+                  onClick={() => showCosts ? setShowCosts(false) : setCostPasswordDialogOpen(true)}
+                  title={showCosts ? 'Kosten ausblenden' : 'Kosten einblenden (Passwort erforderlich)'}
+                >
+                  {showCosts ? <Euro className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+                  <span className="hidden sm:inline">Kosten</span>
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
-                <DropdownMenuItem onClick={() => setCopyWeekDialogOpen(true)}>
-                  <Copy className="h-4 w-4 mr-2" />
-                  Woche kopieren
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleImportClick}>
-                  <Upload className="h-4 w-4 mr-2" />
-                  Importieren
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleExportTemplate}>
-                  <FileSpreadsheet className="h-4 w-4 mr-2" />
-                  Export Excel (.xlsx)
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleExportPDF}>
-                  <FileText className="h-4 w-4 mr-2" />
-                  Export PDF
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setPrintDialogOpen(true)}>
-                  <Printer className="h-4 w-4 mr-2" />
-                  Drucken
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              </>
+            )}
           </div>
 
         </div>
       </header>
 
       <main className="max-w-[1800px] mx-auto px-4 py-6 space-y-6">
-        {/* Month/Week Navigation */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {/* Cost Button - nur für User mit Lohn-Berechtigung */}
-            {canToggleCostView && (
-              <Button
-                variant={showCosts ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  if (showCosts) {
-                    setShowCosts(false);
-                  } else {
-                    setCostPasswordDialogOpen(true);
-                  }
-                }}
-                className="gap-1"
-                title={showCosts ? 'Kosten ausblenden' : 'Kosten einblenden (Passwort erforderlich)'}
-              >
-                {showCosts ? <Euro className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
-                <span className="hidden sm:inline">{showCosts ? 'Kosten' : 'Kosten'}</span>
-              </Button>
-            )}
-            
-            <div className="w-px h-6 bg-border mx-1" />
-            
-            {/* Calendar View Toggle */}
-            <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
-              <Button
-                variant={calendarView === 'month' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setCalendarView('month')}
-                className="h-7 gap-1"
-              >
-                <CalendarDays className="h-3 w-3" />
-                <span className="hidden sm:inline">Monat</span>
-              </Button>
-              <Button
-                variant={calendarView === 'week' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setCalendarView('week')}
-                className="h-7 gap-1"
-              >
-                <Calendar className="h-3 w-3" />
-                <span className="hidden sm:inline">Woche</span>
-              </Button>
-              <Button
-                variant={calendarView === 'day' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setCalendarView('day')}
-                className="h-7 gap-1"
-              >
-                <Clock className="h-3 w-3" />
-                <span className="hidden sm:inline">Tag</span>
-              </Button>
-            </div>
-            
-            <div className="w-px h-6 bg-border mx-1" />
-            
-            <Button variant="outline" size="sm" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}>
-              <ChevronLeft className="h-4 w-4 mr-1" />
-              {format(subMonths(currentMonth, 1), 'MMM', { locale: de })}
-            </Button>
-            
-            {calendarView === 'week' && (
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => setSelectedWeekIndex(Math.max(0, selectedWeekIndex - 1))}
-                disabled={selectedWeekIndex === 0}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-            )}
-            {calendarView === 'day' && (
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => setSelectedDayOffset(prev => Math.max(0, prev - 1))}
-                disabled={selectedDayOffset === 0}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
-          
-          <div className="text-center flex-1">
-            <h2 className="text-xl font-semibold">
-              {format(currentMonth, 'MMMM yyyy', { locale: de })}
-            </h2>
-            {calendarView === 'week' && weeksInMonth[selectedWeekIndex] && (
-              <p className="text-sm text-muted-foreground">
-                KW {format(weeksInMonth[selectedWeekIndex], 'w')} ({format(weeksInMonth[selectedWeekIndex], 'd.MM.')} - {format(endOfWeek(weeksInMonth[selectedWeekIndex], { weekStartsOn: 1 }), 'd.MM.')})
-              </p>
-            )}
-            {calendarView === 'day' && daysInMonth[selectedDayOffset] && (
-              <p className="text-sm text-muted-foreground">
-                {format(daysInMonth[selectedDayOffset], 'EEEE, d. MMMM', { locale: de })}
-              </p>
-            )}
-            {calendarView === 'month' && (
-              <div className="flex items-center justify-center gap-1 mt-1">
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => setVisibleWeekInMonth(Math.max(0, visibleWeekInMonth - 1))}
-                  disabled={visibleWeekInMonth === 0}
-                >
-                  <ChevronLeft className="h-3 w-3" />
-                </Button>
-                {weeksInMonth.map((week, idx) => (
-                  <Button
-                    key={idx}
-                    variant={visibleWeekInMonth === idx ? 'default' : 'ghost'}
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    onClick={() => setVisibleWeekInMonth(idx)}
-                  >
-                    KW{format(week, 'w')}
-                  </Button>
-                ))}
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => setVisibleWeekInMonth(Math.min(weeksInMonth.length - 1, visibleWeekInMonth + 1))}
-                  disabled={visibleWeekInMonth >= weeksInMonth.length - 1}
-                >
-                  <ChevronRight className="h-3 w-3" />
-                </Button>
-              </div>
-            )}
-          </div>
-          
-          <div className="flex items-center gap-2">
-            {calendarView === 'week' && (
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => setSelectedWeekIndex(Math.min(weeksInMonth.length - 1, selectedWeekIndex + 1))}
-                disabled={selectedWeekIndex >= weeksInMonth.length - 1}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            )}
-            {calendarView === 'day' && (
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => setSelectedDayOffset(prev => Math.min(daysInMonth.length - 1, prev + 1))}
-                disabled={selectedDayOffset >= daysInMonth.length - 1}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            )}
-            <Button variant="outline" size="sm" onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}>
-              {format(addMonths(currentMonth, 1), 'MMM', { locale: de })}
-              <ChevronRight className="h-4 w-4 ml-1" />
-            </Button>
-          </div>
-        </div>
-
-        {/* Department Toggle – nur für User mit Abteilungs-Berechtigung schaltbar */}
-        {canSwitchDepartment ? (
-          <div className="flex items-center justify-center gap-2 flex-wrap">
-            <Button
-              variant={activeDepartment === 'service' ? 'default' : 'outline'}
-              onClick={() => setActiveDepartment('service')}
-              className="min-w-[100px]"
-              size="sm"
-            >
-              <span className={cn(
-                "w-2 h-2 rounded-full mr-2",
-                activeDepartment === 'service' ? "bg-white" : "bg-blue-500"
-              )} />
-              Service
-            </Button>
-            <Button
-              variant={activeDepartment === 'küche' ? 'default' : 'outline'}
-              onClick={() => setActiveDepartment('küche')}
-              className="min-w-[100px]"
-              size="sm"
-            >
-              <span className={cn(
-                "w-2 h-2 rounded-full mr-2",
-                activeDepartment === 'küche' ? "bg-white" : "bg-orange-500"
-              )} />
-              Küche
-            </Button>
-            <Button
-              variant={activeDepartment === 'all' ? 'default' : 'outline'}
-              onClick={() => setActiveDepartment('all' as Department)}
-              className="min-w-[120px]"
-              size="sm"
-            >
-              <Users className="h-4 w-4 mr-2" />
-              Alle ({employees.length})
-            </Button>
-          </div>
-        ) : (
-          // Manager: zeigt nur die eigene Abteilung als Hinweis
-          <div className="flex items-center justify-center">
-            <div className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border",
-              isServiceManager && "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-700",
-              isKuecheManager  && "border-orange-300 bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:border-orange-700"
-            )}>
-              <span className={cn(
-                "w-2.5 h-2.5 rounded-full",
-                isServiceManager && "bg-blue-500",
-                isKuecheManager  && "bg-orange-500"
-              )} />
-              {isServiceManager ? 'Service-Ansicht' : 'Küchen-Ansicht'}
-              <Lock className="h-3.5 w-3.5 ml-1 opacity-60" />
-            </div>
-          </div>
-        )}
-
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
@@ -2038,27 +1912,11 @@ const SchedulePlanner = () => {
           costRatioStatus === 'high'    && "border-red-500 bg-red-50 dark:bg-red-950/30",
           costRatioStatus === 'unknown' && "border-slate-300 bg-slate-50 dark:bg-slate-800/40"
         )}>
-          {/* Periode-Toggle (Monat / Woche / Tag) – steuert auch den Dienstplan-Kalender */}
           <div className="flex items-center justify-between">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Personalkostenquote – Planung
+              Personalkostenquote
             </p>
-            <div className="flex rounded-md overflow-hidden border border-border text-xs">
-              {(['month', 'week', 'day'] as const).map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setCalendarView(v)}
-                  className={cn(
-                    "px-3 py-1 font-medium transition-colors",
-                    calendarView === v
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-background text-muted-foreground hover:bg-muted"
-                  )}
-                >
-                  {v === 'month' ? 'Monat' : v === 'week' ? 'Woche' : 'Tag'}
-                </button>
-              ))}
-            </div>
+            <p className="text-xs text-muted-foreground">{pkqPeriodLabel}</p>
           </div>
 
           {/* Hauptinhalt */}
@@ -2212,111 +2070,18 @@ const SchedulePlanner = () => {
                 )}
               </div>
               
-              {/* Plan/Ist Toggle and Footer Toggle */}
-              <div className="flex items-center gap-2">
-                {/* Monat / Woche / Tag – kompakt im Grid-Header mit Navigation */}
-                <div className="flex items-center gap-1">
-                  {/* Ansichts-Wähler */}
-                  <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
-                    <Button
-                      variant={calendarView === 'month' ? 'default' : 'ghost'}
-                      size="sm"
-                      onClick={() => setCalendarView('month')}
-                      className="h-7 px-2 text-xs"
-                      title="Monatsansicht"
-                    >Mo</Button>
-                    <Button
-                      variant={calendarView === 'week' ? 'default' : 'ghost'}
-                      size="sm"
-                      onClick={() => setCalendarView('week')}
-                      className="h-7 px-2 text-xs"
-                      title="Wochenansicht"
-                    >Wo</Button>
-                    <Button
-                      variant={calendarView === 'day' ? 'default' : 'ghost'}
-                      size="sm"
-                      onClick={() => setCalendarView('day')}
-                      className="h-7 px-2 text-xs"
-                      title="Tagesansicht"
-                    >Ta</Button>
-                  </div>
-                  {/* Perioden-Navigation ◀ Label ▶ */}
-                  <div className="flex items-center gap-0.5 bg-muted rounded-lg px-1 py-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handlePrevPeriod}
-                      disabled={isPrevDisabled}
-                      className="h-7 w-6 p-0"
-                      title="Vorherige Periode"
-                    >
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                    </Button>
-                    <span className="text-xs font-medium min-w-[52px] text-center select-none">
-                      {periodShortLabel}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleNextPeriod}
-                      disabled={isNextDisabled}
-                      className="h-7 w-6 p-0"
-                      title="Nächste Periode"
-                    >
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
-                  <Button
-                    variant={scheduleMode === 'plan' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setScheduleMode('plan')}
-                    className="h-7 gap-1"
-                    title="Plan-Dienstplan anzeigen"
-                  >
-                    <Calendar className="h-3 w-3" />
-                    <span className="hidden sm:inline">Plan</span>
-                  </Button>
-                  <Button
-                    variant={scheduleMode === 'ist' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setScheduleMode('ist')}
-                    className={cn(
-                      "h-7 gap-1",
-                      scheduleMode === 'ist' && "bg-green-600 hover:bg-green-700"
-                    )}
-                    title="Ist-Dienstplan anzeigen"
-                  >
-                    <Clock className="h-3 w-3" />
-                    <span className="hidden sm:inline">Ist</span>
-                  </Button>
-                  <Button
-                    variant={scheduleMode === 'compare' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setScheduleMode('compare')}
-                    className={cn(
-                      "h-7 gap-1",
-                      scheduleMode === 'compare' && "bg-purple-600 hover:bg-purple-700"
-                    )}
-                    title="Plan/Ist-Vergleich anzeigen"
-                  >
-                    <CalendarDays className="h-3 w-3" />
-                    <span className="hidden sm:inline">Ver.</span>
-                  </Button>
-                </div>
-                <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
-                  <Button
-                    variant={showFooter ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setShowFooter(!showFooter)}
-                    className="h-7 gap-1"
-                    title={showFooter ? 'Tages-Summe ausblenden' : 'Tages-Summe einblenden'}
-                  >
-                    {showFooter ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
-                    <span className="hidden sm:inline">Σ</span>
-                  </Button>
-                </div>
+              {/* Footer-Toggle */}
+              <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+                <Button
+                  variant={showFooter ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setShowFooter(!showFooter)}
+                  className="h-7 gap-1"
+                  title={showFooter ? 'Tages-Summe ausblenden' : 'Tages-Summe einblenden'}
+                >
+                  {showFooter ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                  <span className="hidden sm:inline text-xs">Σ</span>
+                </Button>
               </div>
             </div>
           </CardHeader>
