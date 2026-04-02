@@ -20,6 +20,7 @@ import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Cl
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
+import { resolveZielwert } from '@/lib/zielwerte-store';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
 import { PlanVsIstGrid } from '@/components/schedule-planner/PlanVsIstGrid';
@@ -1345,7 +1346,9 @@ const SchedulePlanner = () => {
   );
 
   // ── Feature 1: Personalkostenquote ──────────────────────────────────────
-  const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 40);
+  const _planYear  = currentMonth.getFullYear();
+  const _planMonth = currentMonth.getMonth() + 1;
+  const laborCostThreshold = resolveZielwert(_planYear, _planMonth, undefined, false).targetPercent;
 
   // Kosten und Stunden werden auf die sichtbare Abteilung gefiltert.
   // Ein Manager sieht nur die Zahlen seiner eigenen Abteilung.
@@ -1428,14 +1431,26 @@ const SchedulePlanner = () => {
     ? (calendarView === 'month' ? monthlyIstLaborCost : weeklyIstLaborCost)
     : (calendarView === 'month' ? totalPlannedLaborCost : weeklyPlannedLaborCost);
 
-  // ── Effektiver Zielwert: pro Abteilung halb so hoch wie Gesamtziel ─────────
-  // (Service + Küche = 40% total → je 20% pro Abteilung)
-  const effectiveLaborCostThreshold = activeDepartment !== 'all'
-    ? laborCostThreshold / 2
-    : laborCostThreshold;
+  // ── Effektiver Zielwert: aus Zielwerte-Store, abteilungsspezifisch ──────────
+  const _serviceResolved = resolveZielwert(_planYear, _planMonth, 'service', false);
+  const _kücheResolved   = resolveZielwert(_planYear, _planMonth, 'küche',   false);
 
-  // Jedes ScheduleGrid zeigt immer nur eine Abteilung → immer Abteilungs-Zielwert
-  const gridLaborCostThreshold = laborCostThreshold / 2;
+  // Wenn kein abteilungsspezifischer Zielwert hinterlegt: altes Verhalten (global / 2)
+  const serviceThreshold = _serviceResolved.source !== 'fallback' && _serviceResolved.source !== 'month+global' && _serviceResolved.source !== 'year+global'
+    ? _serviceResolved.targetPercent
+    : laborCostThreshold / 2;
+  const kücheThreshold = _kücheResolved.source !== 'fallback' && _kücheResolved.source !== 'month+global' && _kücheResolved.source !== 'year+global'
+    ? _kücheResolved.targetPercent
+    : laborCostThreshold / 2;
+
+  const effectiveLaborCostThreshold = activeDepartment === 'service'
+    ? serviceThreshold
+    : activeDepartment === 'küche'
+      ? kücheThreshold
+      : laborCostThreshold;
+
+  // Jedes ScheduleGrid zeigt immer nur eine Abteilung → Durchschnitt der dept-Zielwerte
+  const gridLaborCostThreshold = Math.round((serviceThreshold + kücheThreshold) / 2);
 
   // ── Label für die aktive Periode ─────────────────────────────────────────
   const pkqPeriodLabel = useMemo(() => {

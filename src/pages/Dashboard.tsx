@@ -40,6 +40,7 @@ import { Employee } from '@/types/personnel';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
 import { WesMarginWidget } from '@/components/WesMarginWidget';
+import { resolveZielwert } from '@/lib/zielwerte-store';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -376,11 +377,10 @@ const Dashboard = () => {
     setPendingRevenue('');
   }, [refDateStr, period]);
 
-  const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 40);
-
   // ── Budget-Daten (aus Budget-Modul, budget_v1) ───────────────────────────────
   const currentYear  = referenceDate.getFullYear();
   const currentMonth = referenceDate.getMonth() + 1;
+  const laborCostThreshold = resolveZielwert(currentYear, currentMonth).targetPercent;
   const budgetData   = useBudgetMonth(currentYear, currentMonth);
 
   // ── Mitarbeiter nach Abteilung filtern ──────────────────────────────────────

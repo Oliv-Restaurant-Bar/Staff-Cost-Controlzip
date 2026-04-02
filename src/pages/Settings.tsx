@@ -25,6 +25,7 @@ import { migrateLocalStorageToSupabase } from '@/hooks/useSupabaseSchedule';
 import { saveSetting } from '@/lib/supabase-db';
 import { CapacitySettingsCard } from '@/components/CapacitySettingsCard';
 import { UserManagementCard } from '@/components/UserManagementCard';
+import { ZielwerteCard } from '@/components/ZielwerteCard';
 
 const DEFAULT_PASSWORD = 'admin123';
 
@@ -1936,6 +1937,9 @@ const Settings = () => {
               )}
             </CardContent>
           </Card>
+
+          {/* Zielwerte */}
+          <ZielwerteCard />
 
           {/* Capacity Settings */}
           <CapacitySettingsCard />
