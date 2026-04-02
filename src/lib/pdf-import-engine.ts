@@ -330,7 +330,7 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
   console.groupEnd();
 
   return Array.from(accountData.entries())
-    .filter(([, v]) => v.saldo > 0) // Netto-Kreditpositionen (Haben > Soll) werden ausgeschlossen
+    .filter(([, v]) => v.totalSoll > 0 || v.totalHaben > 0) // Konten ohne jede Bewegung ausschliessen
     .map(([accNum, v]) => ({
       lineIndex:     v.lineIndex,
       rawLine:       `${accNum} ${v.name}  TotalSoll:${v.totalSoll.toFixed(2)} − TotalHaben:${v.totalHaben.toFixed(2)} = Monatswert:${v.saldo.toFixed(2)}`,
