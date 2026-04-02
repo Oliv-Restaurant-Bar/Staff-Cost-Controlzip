@@ -23,6 +23,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -38,6 +46,12 @@ import {
   sourceLabel,
   type ProductSalesRow,
 } from '@/lib/sales-db';
+import {
+  loadProductCostsFromDB,
+  saveProductCostsToDB,
+  mergeProductCosts,
+  type ProductCostEntry,
+} from '@/lib/produkte-store';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { grossToNet } from '@/types/personnel';
 
@@ -204,6 +218,15 @@ export default function VerkaufsDashboard() {
   const [altbestandCount, setAltbestandCount] = useState<number>(0);
   const [wesMap,          setWesMap]          = useState<Map<string, number>>(new Map());
   const [categoryMap,     setCategoryMap]     = useState<Map<string, string>>(new Map());
+
+  // ── WES-Pflege Modal ─────────────────────────────────────────────────────────
+  type WesModalProduct = { product_name: string; category: string; source: string | null };
+  const [wesModal,        setWesModal]        = useState<WesModalProduct | null>(null);
+  const [wesInputChf,     setWesInputChf]     = useState('');
+  const [wesInputPct,     setWesInputPct]     = useState('');
+  const [wesSaving,       setWesSaving]       = useState(false);
+  const [wesSaveError,    setWesSaveError]    = useState<string | null>(null);
+
   const [srcFilter,       setSrcFilter]       = useState<string>('all');
   const [batchFilter,     setBatchFilter]     = useState<string>('all');
   const [topSearch,       setTopSearch]       = useState('');
@@ -254,6 +277,56 @@ export default function VerkaufsDashboard() {
     window.addEventListener('product_sales_updated', load);
     return () => window.removeEventListener('product_sales_updated', load);
   }, [load]);
+
+  // ── WES-Pflege: Speichern ────────────────────────────────────────────────────
+
+  const handleSaveWes = useCallback(async () => {
+    if (!wesModal) return;
+    const wes = parseFloat(wesInputChf.replace(',', '.'));
+    if (!Number.isFinite(wes) || wes <= 0) {
+      setWesSaveError('Bitte einen gültigen WES-Wert > 0 eingeben.');
+      return;
+    }
+    const wesQ = wesInputPct.trim()
+      ? parseFloat(wesInputPct.replace(',', '.'))
+      : 0;
+
+    // Kategorie aus source ableiten (food_csv_export → food, beverage_csv_export → beverage)
+    const srcLower = (wesModal.source ?? '').toLowerCase();
+    const catFromSource: 'food' | 'beverage' =
+      srcLower.includes('bev') ? 'beverage' : 'food';
+    const catFromMap = (wesModal.category ?? '').toLowerCase();
+    const category: 'food' | 'beverage' =
+      catFromMap === 'beverage' ? 'beverage'
+      : catFromMap === 'food'   ? 'food'
+      : catFromSource;
+
+    setWesSaving(true);
+    setWesSaveError(null);
+    try {
+      const existing = await loadProductCostsFromDB();
+      const entry: ProductCostEntry = {
+        name:        wesModal.product_name,
+        category,
+        bruttoPrice: 0,
+        nettoPrice:  0,
+        wes,
+        wesQ:        Number.isFinite(wesQ) && wesQ > 0 ? wesQ : 0,
+      };
+      const merged = mergeProductCosts(existing, [entry]);
+      await saveProductCostsToDB(merged);
+      // WES-Map neu laden damit das Produkt sofort aus der Liste verschwindet
+      const freshMap = await loadProductWesMap();
+      setWesMap(freshMap);
+      setWesModal(null);
+      setWesInputChf('');
+      setWesInputPct('');
+    } catch (err) {
+      setWesSaveError(err instanceof Error ? err.message : 'Fehler beim Speichern');
+    } finally {
+      setWesSaving(false);
+    }
+  }, [wesModal, wesInputChf, wesInputPct]);
 
   // ── Filter-Optionen ────────────────────────────────────────────────────────
 
@@ -1133,6 +1206,7 @@ export default function VerkaufsDashboard() {
                       <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Absatz</th>
                       <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Umsatz CHF</th>
                       <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Anteil</th>
+                      <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Aktion</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40">
@@ -1149,6 +1223,7 @@ export default function VerkaufsDashboard() {
                       <td className="px-4 py-2.5 text-right tabular-nums text-xs font-semibold text-amber-700 dark:text-amber-400">
                         {missingWesRevenueSharePct.toFixed(1)} %
                       </td>
+                      <td className="px-4 py-2.5" />
                     </tr>
                     {missingWesProducts.map((p, i) => {
                       const share = totalRevenue > 0 ? (p.revenue / totalRevenue) * 100 : 0;
@@ -1167,6 +1242,21 @@ export default function VerkaufsDashboard() {
                           <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{fmtNum(p.qty)}</td>
                           <td className="px-4 py-2 text-right tabular-nums font-semibold">{fmtChf(p.revenue)}</td>
                           <td className="px-4 py-2 text-right tabular-nums text-xs text-muted-foreground">{share.toFixed(1)} %</td>
+                          <td className="px-4 py-2 text-right">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs px-2 border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                              onClick={() => {
+                                setWesModal({ product_name: p.product_name, category: p.category, source: p.source });
+                                setWesInputChf('');
+                                setWesInputPct('');
+                                setWesSaveError(null);
+                              }}
+                            >
+                              WES erfassen
+                            </Button>
+                          </td>
                         </tr>
                       );
                     })}
@@ -1177,6 +1267,102 @@ export default function VerkaufsDashboard() {
           </CardContent>
         </Card>
       )}
+
+      {/* ── WES-Pflege Modal ────────────────────────────────────────────────────── */}
+      <Dialog
+        open={wesModal !== null}
+        onOpenChange={(open) => {
+          if (!open && !wesSaving) {
+            setWesModal(null);
+            setWesInputChf('');
+            setWesInputPct('');
+            setWesSaveError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              WES erfassen
+            </DialogTitle>
+          </DialogHeader>
+          {wesModal && (
+            <div className="space-y-4 py-2">
+              {/* Produktinfo */}
+              <div className="rounded-md bg-muted/50 px-4 py-3 space-y-1">
+                <p className="text-sm font-semibold">{wesModal.product_name}</p>
+                {wesModal.category && (
+                  <p className="text-xs text-muted-foreground capitalize">{wesModal.category}</p>
+                )}
+              </div>
+
+              {/* WES CHF */}
+              <div className="space-y-1.5">
+                <Label htmlFor="wes-chf" className="text-sm font-medium">
+                  WES CHF / Stück <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="wes-chf"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="z.B. 3.50"
+                  value={wesInputChf}
+                  onChange={e => { setWesInputChf(e.target.value); setWesSaveError(null); }}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSaveWes(); }}
+                  autoFocus
+                  disabled={wesSaving}
+                />
+              </div>
+
+              {/* WES % optional */}
+              <div className="space-y-1.5">
+                <Label htmlFor="wes-pct" className="text-sm font-medium text-muted-foreground">
+                  WES % <span className="text-xs font-normal">(optional – wird berechnet wenn leer)</span>
+                </Label>
+                <Input
+                  id="wes-pct"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="z.B. 28.5"
+                  value={wesInputPct}
+                  onChange={e => setWesInputPct(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSaveWes(); }}
+                  disabled={wesSaving}
+                />
+              </div>
+
+              {/* Fehlermeldung */}
+              {wesSaveError && (
+                <p className="text-xs text-destructive font-medium">{wesSaveError}</p>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setWesModal(null);
+                setWesInputChf('');
+                setWesInputPct('');
+                setWesSaveError(null);
+              }}
+              disabled={wesSaving}
+            >
+              Abbrechen
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSaveWes}
+              disabled={wesSaving || !wesInputChf.trim()}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {wesSaving ? 'Speichern…' : 'Speichern'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </div>
   );
