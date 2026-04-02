@@ -1,0 +1,68 @@
+Bitte jetzt den Bug reparieren, dass Ist-Stunden aus dem Dienstplan in "Personal FIX + Variabel" verloren gehen oder nicht übernommen werden.
+
+Problem:
+Im Dienstplan vorhandene Ist-Stunden erscheinen in Personal FIX + Variabel nicht zuverlässig. Teilweise verschwinden sie oder werden nach Reload / Navigation nicht mehr berücksichtigt.
+
+Ziel:
+Ist-Stunden müssen stabil aus dem Dienstplan übernommen, gespeichert und in Personal FIX + Variabel korrekt angezeigt werden.
+
+Bitte prüfen und beheben:
+
+1. Quelle der Wahrheit identifizieren
+- Wo werden Ist-Stunden im Dienstplan gespeichert?
+- local state
+- localStorage
+- Supabase
+- import store
+- app_settings
+- schedule table
+
+2. Sicherstellen:
+- Dienstplan und Personal FIX lesen dieselbe Datenquelle
+- keine Parallel-Logik
+- keine zweite Berechnung aus anderem Store
+
+3. Datenfluss debuggen
+Bitte für einen Testmonat (z.B. März 2026) loggen:
+- welche Ist-Stunden im Dienstplan pro Mitarbeiter vorhanden sind
+- was in der Persistenz gespeichert wird
+- was Personal FIX einliest
+- warum dort ggf. 0 oder leer ankommt
+
+4. Speziell prüfen:
+- Nach Navigation auf andere Seite und zurück
+- Nach Reload
+- Nach Wechsel zwischen Plan / Ist / Vergleich
+- Nach Monatswechsel
+- Ob März 2026 im Dienstplan und in Personal FIX exakt denselben Monat benutzen
+
+5. Aggregation prüfen
+- Ist-Stunden pro Mitarbeiter korrekt summieren
+- nicht durch Name-Mismatch verlieren
+- keine Mitarbeiter durch Filter / Abteilung ausschliessen, wenn sie eigentlich vorhanden sind
+
+6. Fix
+- Ist-Stunden müssen persistent gespeichert bleiben
+- Personal FIX + Variabel muss immer die tatsächlich gespeicherten Ist-Stunden des gewählten Monats lesen
+- wenn keine Ist-Stunden vorhanden sind, erst dann leer anzeigen
+- niemals durch UI-Wechsel verlieren
+
+7. UI-Validierung
+In Personal FIX:
+- Zeige für den gewählten Monat klar an, aus welcher Quelle gelesen wird
+- optional kleine Debug-Zeile:
+  "Ist-Stunden aus Dienstplan März 2026: X Mitarbeiter / Y Stunden"
+
+8. Debug Logs
+Bitte loggen:
+[IST] month selected: ...
+[IST] rows in dienstplan: ...
+[IST] persisted rows: ...
+[IST] personal-fix rows loaded: ...
+[IST] missing employees: ...
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- was genau die Ursache war
+- warum die Ist-Stunden verloren gingen
+- wie jetzt sichergestellt ist, dass Personal FIX immer dieselben Ist-Stunden wie der Dienstplan nutzt

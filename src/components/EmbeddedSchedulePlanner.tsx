@@ -332,8 +332,13 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
   // Handle actual hours change
   const handleActualHoursChange = (employeeId: string, date: string, entry: ActualHoursEntry | null) => {
     const cellKey = `${employeeId}-${date}`;
-    const monthKey = format(currentMonthStart, 'yyyy-MM');
-    
+
+    // FIX: derive the month key from the *entry date*, not from currentMonthStart.
+    // In week view a week can span month boundaries, so currentMonthStart can be
+    // a different month than the day being edited.  Saving to the wrong key is what
+    // caused Ist-Stunden to disappear in PersonalFix.
+    const entryMonthKey = date.slice(0, 7); // "YYYY-MM" from "YYYY-MM-DD"
+
     setActualHoursData(prev => {
       const newState = { ...prev };
       if (entry === null) {
@@ -341,13 +346,28 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
       } else {
         newState[cellKey] = entry;
       }
-      
-      // Auto-save to localStorage
-      localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(newState));
-      
+
+      // FIX: save ONLY entries that belong to entryMonthKey to that month's key.
+      // The old code wrote the entire merged state (prev + current + next month)
+      // to one key, polluting it with other months' data and causing PersonalFix
+      // to over- or under-count hours.
+      const monthEntries: Record<string, ActualHoursEntry> = {};
+      for (const [k, v] of Object.entries(newState)) {
+        // key format: "{employeeId}-YYYY-MM-DD" → last 10 chars are the date
+        if (k.slice(-10, -3) === entryMonthKey) {
+          monthEntries[k] = v;
+        }
+      }
+      localStorage.setItem(`actual-hours-${entryMonthKey}`, JSON.stringify(monthEntries));
+
+      console.log(
+        `[IST] saved entry: empId=${employeeId} date=${date} monthKey=${entryMonthKey}`,
+        `entries in month: ${Object.keys(monthEntries).length}`,
+      );
+
       // Dispatch event for sync
       window.dispatchEvent(new CustomEvent('schedule-updated'));
-      
+
       return newState;
     });
   };

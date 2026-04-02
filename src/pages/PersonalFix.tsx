@@ -165,16 +165,36 @@ function loadPlanHoursFromStorage(year: number, month: number): Record<string, n
  */
 function loadIstHoursFromStorage(year: number, month: number): Record<string, number> {
   const key = `actual-hours-${year}-${String(month).padStart(2, '0')}`;
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  console.log(`[IST] month selected: ${monthPrefix} (key: ${key})`);
   try {
     const raw = localStorage.getItem(key);
-    if (!raw) return {};
+    if (!raw) {
+      console.log(`[IST] persisted rows: 0 (key not found in localStorage)`);
+      return {};
+    }
     const data: Record<string, any> = JSON.parse(raw);
+    const allRows = Object.keys(data);
+    // Filter: only count entries whose date matches this month (guards against old corrupted data)
     const out: Record<string, number> = {};
+    const mismatched: string[] = [];
     for (const [cellKey, val] of Object.entries(data)) {
+      // key format: "{employeeId}-YYYY-MM-DD" → date is last 10 chars
+      const entryDate = cellKey.slice(-10);
+      if (!entryDate.startsWith(monthPrefix)) {
+        mismatched.push(cellKey);
+        continue; // skip entries from other months that ended up in this key (old bug)
+      }
       const empId = cellKey.slice(0, cellKey.length - 11);
       if (!empId) continue;
       const h = typeof val === 'number' ? val : (val?.hours ?? 0);
       if (h > 0) out[empId] = (out[empId] ?? 0) + Math.round(h * 100) / 100;
+    }
+    const totalHours = Object.values(out).reduce((s, h) => s + h, 0);
+    console.log(`[IST] persisted rows: ${allRows.length} total, ${mismatched.length} from wrong month (filtered out)`);
+    console.log(`[IST] personal-fix rows loaded: ${Object.keys(out).length} Mitarbeiter / ${Math.round(totalHours * 10) / 10} Stunden`);
+    if (mismatched.length > 0) {
+      console.warn(`[IST] missing employees / cross-month entries filtered:`, mismatched.slice(0, 10));
     }
     return out;
   } catch { return {}; }
@@ -1053,7 +1073,14 @@ export default function PersonalFixPage() {
                 <span className="ml-2 text-muted-foreground italic">— Keine Plan-Stunden für diesen Monat im Dienstplan gefunden</span>
               )}
               {varView === 'ist' && !istHasDaten && (
-                <span className="ml-2 text-muted-foreground italic">— Keine Ist-Stunden für diesen Monat importiert (Mirus)</span>
+                <span className="ml-2 text-muted-foreground italic">— Keine Ist-Stunden für {selectedYear}-{String(selectedMonth).padStart(2,'0')} im Dienstplan vorhanden</span>
+              )}
+              {varView === 'ist' && istHasDaten && (
+                <span className="ml-2 text-xs text-muted-foreground">
+                  Ist-Stunden aus Dienstplan {selectedYear}-{String(selectedMonth).padStart(2,'0')}:&nbsp;
+                  {Object.keys(istHours).length} Mitarbeiter&nbsp;/&nbsp;
+                  {Math.round(Object.values(istHours).reduce((s,h) => s+h, 0) * 10) / 10} h
+                </span>
               )}
               {varView === 'manual' && (
                 <span className="ml-2 text-muted-foreground">— Klicke auf eine Stundenzahl zum Bearbeiten</span>
