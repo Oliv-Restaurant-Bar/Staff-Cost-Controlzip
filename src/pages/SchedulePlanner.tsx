@@ -38,6 +38,7 @@ import { MonthlyCostSummary } from '@/components/schedule-planner/MonthlyCostSum
 import { ExportOptionsDialog, ExportOptions } from '@/components/schedule-planner/ExportOptionsDialog';
 import { ImportMatchPreviewDialog, NameMatchOverride } from '@/components/schedule-planner/ImportMatchPreviewDialog';
 import { LaborCostComparison } from '@/components/schedule-planner/LaborCostComparison';
+import { KüchenplanImportDialog } from '@/components/schedule-planner/KüchenplanImportDialog';
 import { EmployeeForm } from '@/components/EmployeeForm';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { MirusDailyImportEntry, MirusImportMode } from '@/types/personnel';
@@ -196,6 +197,7 @@ const SchedulePlanner = () => {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
+  const [küchenplanImportOpen, setKüchenplanImportOpen] = useState(false);
   const [pendingImportResult, setPendingImportResult] = useState<{
     scheduleData: Record<string, DaySchedule>;
     newEmployees: Employee[];
@@ -1088,6 +1090,25 @@ const SchedulePlanner = () => {
     }
   };
 
+  // Küchen-Plan PDF Import: delta-merge, küche-only, no full replace
+  const handleKüchenplanImport = (delta: Record<string, DaySchedule>, count: number) => {
+    setScheduleData(prev => {
+      const merged = { ...prev };
+      for (const [key, ds] of Object.entries(delta)) {
+        merged[key] = { ...(merged[key] || {}), ...ds };
+        // Persist each entry to Supabase
+        const date = key.slice(-10);
+        const empId = key.slice(0, -11);
+        saveScheduleEntry(empId, date, merged[key]);
+      }
+      const monthKey = format(currentMonth, 'yyyy-MM');
+      localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(merged));
+      window.dispatchEvent(new CustomEvent('schedule-updated'));
+      return merged;
+    });
+    toast.success(`Küchenplan importiert: ${count} Einträge übernommen`);
+  };
+
   const handleConfirmImport = (overrides: NameMatchOverride[]) => {
     if (!pendingImportResult) return;
     
@@ -1681,6 +1702,10 @@ const SchedulePlanner = () => {
                   <DropdownMenuItem onClick={handleImportClick}>
                     <Upload className="h-4 w-4 mr-2" />
                     Importieren
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setKüchenplanImportOpen(true)}>
+                    <FileText className="h-4 w-4 mr-2 text-orange-500" />
+                    Küchenplan PDF importieren
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleExportTemplate}>
                     <FileSpreadsheet className="h-4 w-4 mr-2" />
@@ -2847,6 +2872,14 @@ const SchedulePlanner = () => {
         onClose={() => setAvailabilityOpen(false)}
         employees={employees}
         initialMonth={currentMonth}
+      />
+
+      <KüchenplanImportDialog
+        open={küchenplanImportOpen}
+        onClose={() => setKüchenplanImportOpen(false)}
+        employees={employees}
+        scheduleData={scheduleData}
+        onImport={handleKüchenplanImport}
       />
     </div>
   );

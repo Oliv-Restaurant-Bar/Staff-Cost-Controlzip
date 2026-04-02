@@ -1,0 +1,92 @@
+Bitte baue jetzt einen halbautomatischen PDF-Import für Küchen-Dienstpläne.
+
+Ziel:
+Ich möchte Küchen-Planstunden aus einem hochgeladenen PDF-Dienstplan in den Dienstplan übernehmen, ohne alles manuell eingeben zu müssen.
+
+Wichtig:
+Kein Blind-Import direkt in den Dienstplan.
+Erst:
+1. PDF lesen
+2. Dienstplanstruktur erkennen
+3. Schichtcodes extrahieren
+4. Vorschau anzeigen
+5. Benutzer bestätigt
+6. Dann speichern
+
+Ausgangslage:
+Die PDF-Datei ist ein Küchen-Dienstplan aus Excel exportiert.
+Er enthält:
+- Zeitraum
+- Mitarbeitende zeilenweise
+- Tage spaltenweise
+- Schichtcodes in den Zellen, z.B. A, B, F, O2, FE, F-
+- FE bedeutet Ferien
+
+Bitte umsetzen:
+
+1. Neue Upload-Funktion für Küchenplan-PDF
+- Upload eines PDF
+- nur für Bereich Küche vorerst
+- PDF lokal parsen
+
+2. Parser-Ziel
+Erkennen:
+- Zeitraum von/bis
+- Mitarbeitendenamen
+- pro Tag den Schichtcode je Mitarbeiter
+
+3. WICHTIG: Kein direktes Speichern der Codes als Stunden
+Stattdessen zuerst eine Mapping-Maske:
+- A = ? Stunden / Schichttyp
+- B = ? Stunden / Schichttyp
+- F = ? Stunden / Schichttyp
+- O2 = ? Stunden / Schichttyp
+- F- = ? Stunden / Schichttyp
+- FE = Ferien / 0 Stunden / Abwesenheit
+
+Dieses Mapping soll editierbar sein und gespeichert werden.
+
+4. Vorschau
+Vor dem finalen Import anzeigen:
+- Mitarbeiter
+- Datum
+- erkannter Code
+- daraus berechnete Planstunden
+- erkannter Status (z.B. Ferien)
+
+5. Matching mit Personalstamm
+- Mitarbeitende robust gegen Personalstamm matchen
+- nach Match immer den kanonischen Personalstamm-Namen verwenden
+- unbekannte Namen separat anzeigen und nicht blind importieren
+
+6. Speichern
+Nach Bestätigung:
+- Planstunden in den Dienstplan schreiben
+- nur für den gewählten Zeitraum
+- nur für Küche
+- bestehende Einträge nicht blind überschreiben, sondern vorher warnen
+
+7. Logging / Debug
+Bitte loggen:
+- erkannter Zeitraum
+- erkannte Mitarbeitende
+- erkannte Codes
+- Code-Mapping
+- wie viele Zeilen importierbar sind
+- welche Namen nicht gematcht wurden
+
+8. Wichtige UX
+- Import mit Vorschau
+- kein automatisches Speichern ohne Kontrolle
+- unbekannte Codes sichtbar melden
+- unbekannte Mitarbeitende sichtbar melden
+
+9. Keine Änderungen an anderen Bereichen
+- nur Küchenplan-PDF-Import
+- keine Sales-Logik ändern
+- keine Dashboard-Logik ändern
+
+Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wo das Code-Mapping gespeichert wird
+- wie ich den ersten Test mit diesem PDF machen soll
