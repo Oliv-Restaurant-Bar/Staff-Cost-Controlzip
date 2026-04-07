@@ -182,42 +182,69 @@ export const useSupabaseSchedule = ({ token, department, currentMonth }: UseSupa
 
   // Load schedule data for the current month including week overlaps
   const loadScheduleData = useCallback(async () => {
+    const monthKey = format(currentMonth, 'yyyy-MM');
+    console.log(`[SCHEDULE] load start – month=${monthKey}`);
+
     try {
-      // Calculate date range including week overlaps at month boundaries
-      // This ensures days visible in week view (e.g., Sunday in next month) are included
       const monthStart = startOfMonth(currentMonth);
       const monthEnd = endOfMonth(currentMonth);
-      
-      // Extend range to include full weeks at boundaries
-      // Start: go back to Monday of the week containing month start
       const extendedStart = startOfWeek(monthStart, { weekStartsOn: 1 });
-      // End: go forward to Sunday of the week containing month end
       const extendedEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
-      
       const startStr = format(extendedStart, 'yyyy-MM-dd');
       const endStr = format(extendedEnd, 'yyyy-MM-dd');
-      
+
       let query = supabase
         .from('schedule_entries')
         .select('*, employees!inner(department)')
         .gte('date', startStr)
         .lte('date', endStr);
-      
-      // Filter by department if specified
+
       if (department) {
         query = query.eq('employees.department', department);
       }
-      
+
       const { data, error } = await query;
-      
+
       if (error) throw error;
-      
-      const scheduleMap = dbToScheduleData(data || []);
-      setScheduleData(scheduleMap);
-      
-      return scheduleMap;
+
+      const supabaseRows = (data || []).length;
+      console.log(`[SCHEDULE] supabase rows count – ${supabaseRows}`);
+
+      // Also read localStorage as fallback
+      const localRaw = (() => {
+        try { return JSON.parse(localStorage.getItem(`schedule-v2-${monthKey}`) || '{}'); }
+        catch { return {}; }
+      })();
+      const localRows = Object.keys(localRaw).length;
+      console.log(`[SCHEDULE] local rows count – ${localRows}`);
+
+      const supabaseMap = dbToScheduleData(data || []);
+
+      // Guard: never overwrite existing non-empty state with an empty result.
+      // An empty result may mean RLS returned 0 rows (stale JWT) — not that
+      // the plan is genuinely empty.
+      let finalMap = supabaseMap;
+
+      if (supabaseRows === 0 && localRows > 0) {
+        console.warn(`[SCHEDULE] Supabase returned 0 rows but localStorage has ${localRows} – using localStorage fallback`);
+        finalMap = localRaw;
+      }
+
+      const mergedRows = Object.keys(finalMap).length;
+      console.log(`[SCHEDULE] merged rows count – ${mergedRows}`);
+
+      setScheduleData(prev => {
+        const prevKeys = Object.keys(prev).length;
+        if (prevKeys > 0 && mergedRows === 0) {
+          console.warn(`[SCHEDULE] overwrite blocked – prev had ${prevKeys} entries, incoming is empty`);
+          return prev;
+        }
+        return finalMap;
+      });
+
+      return finalMap;
     } catch (err) {
-      console.error('Error loading schedule:', err);
+      console.error('[SCHEDULE] load error:', err);
       setError('Fehler beim Laden des Dienstplans');
       return {};
     }

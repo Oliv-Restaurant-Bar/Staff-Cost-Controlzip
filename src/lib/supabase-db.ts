@@ -295,42 +295,63 @@ export async function saveScheduleEntry(
   }
 }
 
+/**
+ * SAFE bulk-save for a month.
+ *
+ * ► Uses UPSERT only — never DELETE-all.
+ *   The old DELETE+INSERT pattern was the #1 data-loss risk:
+ *   if scheduleData was empty at save time, Supabase was wiped.
+ *
+ * ► Individual cell deletions still happen via saveScheduleEntry(id, date, null)
+ *   when the user clears a cell in real-time.
+ *
+ * ► Guard: if the payload is empty, the save is skipped entirely and logged.
+ */
 export async function saveFullScheduleForMonth(
   month: Date,
   scheduleData: Record<string, DaySchedule>
 ): Promise<void> {
-  const startStr = format(startOfMonth(month), 'yyyy-MM-dd');
-  const endStr = format(endOfMonth(month), 'yyyy-MM-dd');
+  const monthKey  = format(month, 'yyyy-MM-dd').slice(0, 7);
+  const startStr  = format(startOfMonth(month), 'yyyy-MM-dd');
+  const endStr    = format(endOfMonth(month), 'yyyy-MM-dd');
+
+  const rows = Object.entries(scheduleData)
+    .filter(([key, s]) => {
+      const date = key.slice(-10);
+      return date >= startStr && date <= endStr
+        && s && (s.früh || s.spät || s.frühAbsence || s.spätAbsence);
+    })
+    .map(([key, s]) => ({
+      employee_id: key.slice(0, -11),
+      date:        key.slice(-10),
+      frueh_start:  s.früh?.start   ?? null,
+      frueh_end:    s.früh?.end     ?? null,
+      frueh_absence: s.frühAbsence  ?? null,
+      spaet_start:  s.spät?.start   ?? null,
+      spaet_end:    s.spät?.end     ?? null,
+      spaet_absence: s.spätAbsence  ?? null,
+    }));
+
+  console.log(`[SCHEDULE] save start – month=${monthKey} payload=${rows.length} rows`);
+
+  if (rows.length === 0) {
+    console.warn(`[SCHEDULE] overwrite blocked – payload is empty for month=${monthKey}, skip save`);
+    return;
+  }
 
   try {
-    await supabase
+    const { error } = await supabase
       .from('schedule_entries')
-      .delete()
-      .gte('date', startStr)
-      .lte('date', endStr);
+      .upsert(rows, { onConflict: 'employee_id,date' });
 
-    const rows = Object.entries(scheduleData)
-      .filter(([, s]) => s && (s.früh || s.spät || s.frühAbsence || s.spätAbsence))
-      .map(([key, s]) => {
-        const date = key.slice(-10);
-        const employeeId = key.slice(0, -11);
-        return {
-          employee_id: employeeId,
-          date,
-          frueh_start: s.früh?.start ?? null,
-          frueh_end: s.früh?.end ?? null,
-          frueh_absence: s.frühAbsence ?? null,
-          spaet_start: s.spät?.start ?? null,
-          spaet_end: s.spät?.end ?? null,
-          spaet_absence: s.spätAbsence ?? null,
-        };
-      });
-
-    if (rows.length > 0) {
-      await supabase.from('schedule_entries').insert(rows);
+    if (error) {
+      console.error(`[SCHEDULE] save error – ${error.message}`, error);
+      throw error;
     }
+    console.log(`[SCHEDULE] save success – ${rows.length} rows upserted for month=${monthKey}`);
   } catch (e) {
     console.error('[supabase-db] saveFullScheduleForMonth exception:', e);
+    throw e; // re-throw so callers can show an error toast
   }
 }
 

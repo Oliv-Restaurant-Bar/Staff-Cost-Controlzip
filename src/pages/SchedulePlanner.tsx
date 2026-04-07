@@ -218,6 +218,15 @@ const SchedulePlanner = () => {
   const [availabilityOpen, setAvailabilityOpen]               = useState(false);
   const [dataLoading, setDataLoading]                         = useState(false);
 
+  // ── Save / Dirty state ────────────────────────────────────────────────────
+  const [isDirty,       setIsDirty]       = useState(false);
+  const [isSaving,      setIsSaving]      = useState(false);
+  const [saveError,     setSaveError]     = useState<string | null>(null);
+  const [lastSaveTime,  setLastSaveTime]  = useState<Date | null>(null);
+  // ── Debug panel ──────────────────────────────────────────────────────────
+  const [scheduleSource,    setScheduleSource]    = useState<'supabase' | 'cache' | 'loading'>('loading');
+  const [loadedEntryCount,  setLoadedEntryCount]  = useState(0);
+
   // ── Budget-Daten (für PlanningAssistant) ─────────────────────────────────
   const { personnelBudget } = useBudgetMonth(
     currentMonth.getFullYear(),
@@ -277,6 +286,7 @@ const SchedulePlanner = () => {
     const gen = ++fetchGenRef.current;
     const monthKey = format(currentMonth, 'yyyy-MM');
 
+    setScheduleSource('loading');
     console.log('[ROUTE] loadMonthData gen=' + gen, { monthKey, sessionVersion });
 
     // ── Defensive getSession() ───────────────────────────────────────────────
@@ -336,15 +346,21 @@ const SchedulePlanner = () => {
           const newKeys  = Object.keys(supabaseSchedule).length;
           if (prevKeys > 0 && newKeys === 0 && gen > 1) {
             console.warn('[PLAN] state set: skipping overwrite – prev had', prevKeys, 'entries, new result empty (gen=' + gen + ')');
+            // scheduleSource stays 'supabase' but we keep prev data
             return prev;
           }
           console.log('[PLAN] state set', { gen, newKeys, prevKeys });
+          setScheduleSource('supabase');
+          setLoadedEntryCount(newKeys);
           return supabaseSchedule;
         });
       } else {
         console.warn('[PLAN] Supabase error – using localStorage fallback');
         const saved = localStorage.getItem(`schedule-v2-${monthKey}`);
-        setScheduleData(saved ? JSON.parse(saved) : {});
+        const fallback = saved ? JSON.parse(saved) : {};
+        setScheduleSource('cache');
+        setLoadedEntryCount(Object.keys(fallback).length);
+        setScheduleData(fallback);
       }
 
       // ── IST-Daten (actual_hours) ─────────────────────────────────────────────
@@ -812,31 +828,36 @@ const SchedulePlanner = () => {
       if (!updated.früh && !updated.spät && !updated.frühAbsence && !updated.spätAbsence) {
         const newState = { ...prev };
         delete newState[cellKey];
-        
-        // Save to Supabase
+
         const date = cellKey.slice(-10);
         const employeeId = cellKey.slice(0, -11);
-        saveScheduleEntry(employeeId, date, null);
-        
-        // Keep localStorage as backup
+        saveScheduleEntry(employeeId, date, null).catch(err =>
+          console.error('[SCHEDULE] saveScheduleEntry (delete) error:', err)
+        );
+
         const monthKey = format(currentMonth, 'yyyy-MM');
         localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(newState));
-        
+        console.log(`[SCHEDULE] cell cleared – key=${cellKey}`);
+
         window.dispatchEvent(new CustomEvent('schedule-updated'));
         return newState;
       }
-      
+
       const newState = { ...prev, [cellKey]: updated };
-      
-      // Save to Supabase
+
       const date = cellKey.slice(-10);
       const employeeId = cellKey.slice(0, -11);
-      saveScheduleEntry(employeeId, date, updated);
-      
-      // Keep localStorage as backup
+      saveScheduleEntry(employeeId, date, updated).catch(err => {
+        console.error('[SCHEDULE] saveScheduleEntry error:', err);
+        setSaveError('Eintrag konnte nicht gespeichert werden');
+      });
+
       const monthKey = format(currentMonth, 'yyyy-MM');
       localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(newState));
-      
+      setLastSaveTime(new Date());
+      setSaveError(null);
+      console.log(`[SCHEDULE] cell saved – key=${cellKey}`);
+
       window.dispatchEvent(new CustomEvent('schedule-updated'));
       return newState;
     });
@@ -866,21 +887,48 @@ const SchedulePlanner = () => {
   };
 
   const handleSave = async () => {
+    if (isSaving) return;
     const monthKey = format(currentMonth, 'yyyy-MM');
-    
-    // Save to Supabase
-    await saveFullScheduleForMonth(currentMonth, scheduleData);
-    await upsertAllEmployees(employees);
-    
-    // Keep localStorage as backup
-    localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(scheduleData));
-    localStorage.setItem('schedule-employees', JSON.stringify(employees));
-    localStorage.setItem('dailyBudgets', JSON.stringify(dailyBudgets));
-    import('@/lib/supabase-kv').then(({ kvSet }) => kvSet('dailyBudgets', dailyBudgets).catch(() => {}));
-    localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(actualHoursData));
-    
-    window.dispatchEvent(new CustomEvent('schedule-updated'));
-    toast.success(`Dienstplan für ${format(currentMonth, 'MMMM yyyy', { locale: de })} gespeichert`);
+    const entryCount = Object.keys(scheduleData).length;
+
+    console.log(`[SCHEDULE] handleSave – month=${monthKey} entries=${entryCount}`);
+
+    if (entryCount === 0) {
+      const confirmed = window.confirm(
+        'Der Dienstplan ist leer. Trotzdem speichern? (Einträge in der Datenbank werden NICHT gelöscht.)'
+      );
+      if (!confirmed) return;
+    }
+
+    setIsSaving(true);
+    setSaveError(null);
+
+    try {
+      // Safe upsert-only save (no delete-all)
+      await saveFullScheduleForMonth(currentMonth, scheduleData);
+      await upsertAllEmployees(employees);
+
+      // localStorage backup
+      localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(scheduleData));
+      localStorage.setItem('schedule-employees', JSON.stringify(employees));
+      localStorage.setItem('dailyBudgets', JSON.stringify(dailyBudgets));
+      import('@/lib/supabase-kv').then(({ kvSet }) => kvSet('dailyBudgets', dailyBudgets).catch(() => {}));
+      localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(actualHoursData));
+
+      setLastSaveTime(new Date());
+      setIsDirty(false);
+      setSaveError(null);
+      window.dispatchEvent(new CustomEvent('schedule-updated'));
+      toast.success(`Dienstplan für ${format(currentMonth, 'MMMM yyyy', { locale: de })} gespeichert (${entryCount} Einträge)`);
+      console.log(`[SCHEDULE] handleSave success – ${entryCount} entries`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSaveError(msg);
+      toast.error(`Speichern fehlgeschlagen: ${msg}`);
+      console.error('[SCHEDULE] handleSave failed:', err);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Calculate actual hours for an employee (monthly total)
@@ -1654,9 +1702,28 @@ const SchedulePlanner = () => {
             </div>
 
             <div className="flex items-center gap-1 shrink-0">
-              <Button onClick={handleSave} size="sm" className="gap-1.5 h-8">
+              {/* ── Save-Status Pill ───────────────────────────────── */}
+              {saveError && (
+                <span className="hidden sm:flex items-center gap-1 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5" title={saveError}>
+                  <span>⚠ Fehler</span>
+                </span>
+              )}
+              {!saveError && lastSaveTime && (
+                <span className="hidden sm:flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">
+                  ✓ {lastSaveTime.toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+              {/* ── Debug Pill ─────────────────────────────────────── */}
+              <span
+                title={`Quelle: ${scheduleSource} | Einträge beim Laden: ${loadedEntryCount} | Aktuell im State: ${Object.keys(scheduleData).length}`}
+                className="hidden lg:flex items-center gap-0.5 text-[10px] text-muted-foreground bg-muted border rounded px-1 py-0.5 cursor-default select-none"
+              >
+                <span>{scheduleSource === 'loading' ? '⏳' : scheduleSource === 'supabase' ? '☁' : '💾'}</span>
+                <span>{Object.keys(scheduleData).length}</span>
+              </span>
+              <Button onClick={handleSave} disabled={isSaving} size="sm" className="gap-1.5 h-8">
                 <Save className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Speichern</span>
+                <span className="hidden sm:inline">{isSaving ? 'Speichert…' : 'Speichern'}</span>
               </Button>
               <Link to="/settings">
                 <Button variant="ghost" size="icon" className="h-8 w-8" title="Einstellungen">

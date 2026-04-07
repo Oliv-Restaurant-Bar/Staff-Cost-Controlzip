@@ -1,0 +1,79 @@
+Bitte jetzt NUR den Dienstplan-Speicherbug endgültig reparieren.
+
+Problem:
+Bereits eingetragene Dienste verschwinden wieder oder werden gelöscht. Das ist kritisch. Bevor andere Features weitergebaut werden, muss der Dienstplan absolut stabil speichern.
+
+Ziel:
+Eingetragene Dienste dürfen niemals mehr stillschweigend verloren gehen oder durch leere Daten überschrieben werden.
+
+Bitte jetzt exakt prüfen und beheben:
+
+1. Source of Truth festlegen
+- Supabase muss die einzige echte Source of Truth für den Dienstplan sein
+- localStorage nur als Cache / Fallback
+- nie umgekehrt
+
+2. Niemals leere Daten über bestehende Daten schreiben
+- wenn ein Load {} / [] / leer zurückgibt, darf das NICHT automatisch in State oder Persistenz übernommen werden, falls bereits echte Daten existieren
+- baue einen Schutz ein:
+  "don't overwrite non-empty schedule with empty result"
+
+3. End-to-End Logging einbauen
+Bitte loggen:
+[SCHEDULE] load start
+[SCHEDULE] local rows count
+[SCHEDULE] supabase rows count
+[SCHEDULE] merged rows count
+[SCHEDULE] save start
+[SCHEDULE] save payload rows count
+[SCHEDULE] overwrite blocked because incoming result was empty
+[SCHEDULE] save success
+[SCHEDULE] save error
+
+4. Speichern robust machen
+- jede Änderung im Dienstplan muss zuverlässig in Supabase gespeichert werden
+- nach erfolgreichem Save localStorage aktualisieren
+- kein anderer Prozess darf danach alte/leere Daten zurückschreiben
+
+5. Laden robust machen
+- beim Öffnen:
+  - localStorage laden
+  - Supabase laden
+  - sinnvoll mergen
+  - falls Supabase leer ist, aber localStorage echte Daten hat: NICHT localStorage zerstören
+- nur echte Daten dürfen gewinnen, nie leere
+
+6. Kritisch prüfen:
+- Monatswechsel
+- Woche mit Monatsgrenze
+- Navigation auf andere Seite und zurück
+- Reload
+- Plan / Ist / Vergleich wechseln
+- PDF-Import
+- manuelle Eingabe
+- EmbeddedSchedulePlanner vs SchedulePlanner Vollseite
+- beide dürfen sich nicht gegenseitig überschreiben
+
+7. Save Guard / Dirty Protection
+- wenn ungespeicherte Änderungen existieren, sichtbar anzeigen
+- optional "Speichert..." / "Gespeichert" Status zeigen
+- wenn Save fehlschlägt, Fehlermeldung zeigen statt still weiterzumachen
+
+8. UI-Validierung
+Bitte temporär im Dienstplan sichtbar anzeigen:
+- Quelle aktiv: Supabase / Cache
+- geladene Einträge: X
+- letzter Save: Zeitstempel
+- Dirty state: ja/nein
+
+9. Wichtig:
+- keine neuen Features
+- keine Navigation ändern
+- keine UX-Spielereien
+- nur Stabilität und Datensicherheit
+
+10. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- was die genaue Ursache des Löschens war
+- wie jetzt verhindert wird, dass Daten verloren gehen
+- wie ich den Fix am sichersten testen soll
