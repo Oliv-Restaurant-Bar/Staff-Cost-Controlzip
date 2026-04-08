@@ -31,6 +31,7 @@ import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { grossToNet } from '@/types/personnel';
 import { loadMonth } from '@/lib/reporting-store';
 import { useVj2025Import } from '@/hooks/useVj2025Import';
+import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -87,6 +88,9 @@ export default function TagesansichtPage() {
   // dailyBudgets: localStorage sofort + KV nachladen
   const [dailyBudgets, setDailyBudgets] = useState<Record<string, DailyEntry>>(readDailyBudgets);
 
+  // vjSupabaseData: VJ-Tagesumsätze aus Supabase (primäre Quelle)
+  const [vjSupabaseData, setVjSupabaseData] = useState<Record<string, VjDayRecord>>({});
+
   // reportingTick: hochzählen bei Sync, damit rows-useMemo loadMonth() neu liest
   const [reportingTick, setReportingTick] = useState(0);
 
@@ -94,6 +98,15 @@ export default function TagesansichtPage() {
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [editValue,   setEditValue]   = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // VJ-Supabase-Daten für den angezeigten VJ-Monat laden
+  useEffect(() => {
+    const vjYear  = year - 1;
+    const vjMonth = month;
+    loadVjDailyMonth(vjYear, vjMonth).then(data => {
+      setVjSupabaseData(data);
+    });
+  }, [year, month]);
 
   useEffect(() => {
     setDailyBudgets(readDailyBudgets());
@@ -105,10 +118,12 @@ export default function TagesansichtPage() {
     const onSync = () => {
       setDailyBudgets(readDailyBudgets());
       setReportingTick(t => t + 1); // reporting_v1 neu einlesen
+      // VJ aus Supabase neu laden nach Import
+      loadVjDailyMonth(year - 1, month).then(setVjSupabaseData);
     };
     window.addEventListener('supabase-kv-synced', onSync);
     return () => window.removeEventListener('supabase-kv-synced', onSync);
-  }, []);
+  }, [year, month]);
 
   // Budget
   const budgetData = useBudgetMonth(year, month);
@@ -149,10 +164,12 @@ export default function TagesansichtPage() {
       const takeaway = dailyBudgets[d]?.takeawayRevenue ?? 0;
       const ist      = showNetRevenue ? grossToNet(gross, takeaway) : gross;
 
-      // VJ: 1. exakter Tageswert aus dailyBudgets, 2. Pro-rata aus reporting_v1
+      // VJ: 1. Supabase (vj_daily:YYYY-MM-DD) → 2. dailyBudgets-Blob → 3. Pro-rata aus reporting_v1
       const vjKey      = `${year - 1}-${d.slice(5)}`;
+      const vjSupabase = vjSupabaseData[vjKey]?.actualRevenue ?? 0;
       const vjDirect   = dailyBudgets[d]?.previousYearRevenue ?? 0;
-      const vjDailyRaw = vjDirect > 0 ? vjDirect : (dailyBudgets[vjKey]?.actualRevenue ?? 0);
+      const vjBlob     = vjDirect > 0 ? vjDirect : (dailyBudgets[vjKey]?.actualRevenue ?? 0);
+      const vjDailyRaw = vjSupabase > 0 ? vjSupabase : vjBlob; // Supabase hat Priorität
       const vjIsExact  = vjDailyRaw > 0;
       const vjBase     = vjIsExact
         ? (showNetRevenue ? grossToNet(vjDailyRaw) : vjDailyRaw)
@@ -161,10 +178,11 @@ export default function TagesansichtPage() {
 
       // Diagnose-Log (nur Tag 1-5)
       if (day.getDate() <= 5) {
+        const src = vjSupabase > 0 ? 'supabase' : vjBlob > 0 ? 'blob' : 'proRata';
         console.log(
           `[TAGESANSICHT] ${d} → VJ ${vjKey}:` +
-          ` exact=${vjDailyRaw} | proRata=${vjProRata.toFixed(0)}` +
-          ` | vjMonthly=${vjMonthlyGross} | using=${vjIsExact ? 'exact' : 'proRata'}`,
+          ` supabase=${vjSupabase} | blob=${vjBlob} | proRata=${vjProRata.toFixed(0)}` +
+          ` | vjMonthly=${vjMonthlyGross} | using=${src}`,
         );
       }
 
@@ -195,7 +213,7 @@ export default function TagesansichtPage() {
       };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthDays, dailyBudgets, showNetRevenue, dailyBudgetBase, year, month, reportingTick]);
+  }, [monthDays, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetBase, year, month, reportingTick]);
 
   const lastRow = rows[rows.length - 1];
 
