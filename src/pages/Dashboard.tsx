@@ -15,7 +15,7 @@ import {
   LayoutDashboard, Calendar, BarChart2,
   BookOpen, Target, Upload, ChevronLeft, ChevronRight,
   Pencil, Check, X as XIcon, Scale, Printer, DollarSign,
-  UserX, Palmtree, Stethoscope,
+  UserX, Palmtree, Stethoscope, Table2,
 } from 'lucide-react';
 import {
   computeAbsenceEvents, resolveAbsenceEvent, summarizeAbsences,
@@ -187,7 +187,7 @@ const PERIOD_LABELS: Record<Period, string> = {
   year:  'Jahr',
 };
 
-type DashView = 'alle' | 'umsatz' | 'personal' | 'budget' | 'vorjahr';
+type DashView = 'alle' | 'umsatz' | 'personal' | 'budget' | 'vorjahr' | 'tagesansicht';
 
 const Dashboard = () => {
   const today = useMemo(() => new Date(), []);
@@ -816,11 +816,55 @@ const Dashboard = () => {
     : null;
 
   // ── Ansicht-Filter-Helfer ────────────────────────────────────────────────────
-  const showUmsatz    = ['alle', 'umsatz', 'vorjahr'].includes(dashView);
-  const showJbv       = ['alle', 'umsatz', 'budget', 'vorjahr'].includes(dashView);
-  const showPersonal  = ['alle', 'personal', 'budget'].includes(dashView);
-  const showStunden   = ['alle', 'personal'].includes(dashView);
-  const showPkVergl   = ['alle', 'personal', 'budget'].includes(dashView);
+  const showUmsatz       = ['alle', 'umsatz', 'vorjahr'].includes(dashView);
+  const showJbv          = ['alle', 'umsatz', 'budget', 'vorjahr'].includes(dashView);
+  const showPersonal     = ['alle', 'personal', 'budget'].includes(dashView);
+  const showStunden      = ['alle', 'personal'].includes(dashView);
+  const showPkVergl      = ['alle', 'personal', 'budget'].includes(dashView);
+  const showTagesansicht = dashView === 'tagesansicht';
+
+  // ── Tagesansicht: Zeilen pro Tag des gewählten Monats ────────────────────────
+  const tagesansichtRows = useMemo(() => {
+    if (!showTagesansicht) return [];
+
+    const dailyBudgetGross = budgetData.revenueBudget > 0 ? budgetData.revenueBudget / daysInRefMonth : 0;
+    const dailyBudgetBase  = showNetRevenue ? grossToNet(dailyBudgetGross) : dailyBudgetGross;
+
+    let cumIst = 0;
+    let cumVj  = 0;
+    let cumBud = 0;
+
+    return monthDays.map(d => {
+      const gross    = dailyBudgets[d]?.actualRevenue   ?? 0;
+      const takeaway = dailyBudgets[d]?.takeawayRevenue ?? 0;
+      const ist      = showNetRevenue ? grossToNet(gross, takeaway) : gross;
+
+      // Vorjahr: direktes Feld, Fallback auf Vorjahres-Ist-Datensatz
+      const vjDirect      = dailyBudgets[d]?.previousYearRevenue ?? 0;
+      const vjFallbackKey = d.replace(/^(\d{4})/, (_, y) => String(parseInt(y) - 1));
+      const vjGross       = vjDirect > 0 ? vjDirect : (dailyBudgets[vjFallbackKey]?.actualRevenue ?? 0);
+      const vj            = showNetRevenue ? grossToNet(vjGross) : vjGross;
+
+      cumIst += ist;
+      cumVj  += vj;
+      cumBud += dailyBudgetBase;
+
+      return {
+        date:     d,
+        ist,
+        vj,
+        bud:      dailyBudgetBase,
+        devVj:    ist - vj,
+        devBud:   ist - dailyBudgetBase,
+        cumIst,
+        cumVj,
+        cumBud,
+        cumDevVj:  cumIst - cumVj,
+        cumDevBud: cumIst - cumBud,
+        hasData:   gross > 0,
+      };
+    });
+  }, [showTagesansicht, monthDays, dailyBudgets, budgetData.revenueBudget, daysInRefMonth, showNetRevenue]);
 
   // ─── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -944,11 +988,12 @@ const Dashboard = () => {
           <div className="border-t border-border/60 pt-2 pb-0.5 flex items-center gap-1.5 flex-wrap">
             <span className="text-xs text-muted-foreground font-medium mr-1">Ansicht:</span>
             {([
-              { id: 'alle',     label: 'Alle',          icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
-              { id: 'umsatz',   label: 'Umsatz',        icon: <TrendingUp className="h-3.5 w-3.5" /> },
-              { id: 'budget',   label: 'Ist vs. Budget', icon: <BookOpen className="h-3.5 w-3.5" /> },
-              { id: 'vorjahr',  label: 'Ist vs. Vorjahr', icon: <CalendarDays className="h-3.5 w-3.5" /> },
-              { id: 'personal', label: 'Personal',      icon: <Users className="h-3.5 w-3.5" /> },
+              { id: 'alle',          label: 'Alle',            icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { id: 'umsatz',        label: 'Umsatz',          icon: <TrendingUp className="h-3.5 w-3.5" /> },
+              { id: 'budget',        label: 'Ist vs. Budget',  icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { id: 'vorjahr',       label: 'Ist vs. Vorjahr', icon: <CalendarDays className="h-3.5 w-3.5" /> },
+              { id: 'personal',      label: 'Personal',        icon: <Users className="h-3.5 w-3.5" /> },
+              { id: 'tagesansicht',  label: 'Tagesansicht',    icon: <Table2 className="h-3.5 w-3.5" /> },
             ] as { id: DashView; label: string; icon: React.ReactNode }[]).map(v => (
               <button
                 key={v.id}
@@ -1857,6 +1902,139 @@ const Dashboard = () => {
                 </div>
               </>
             )}
+
+            {/* ── Tagesansicht ──────────────────────────────────────────────── */}
+            {isAdmin && showTagesansicht && (() => {
+              const fmtN = (v: number, hasData?: boolean) =>
+                !hasData && v === 0 ? '–' : new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 }).format(Math.round(v));
+              const fmtDev = (v: number, hasData?: boolean) => {
+                if (!hasData && v === 0) return '–';
+                const s = (v >= 0 ? '+' : '') + new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 }).format(Math.round(v));
+                return s;
+              };
+              const devCls = (v: number, hasData?: boolean) =>
+                !hasData && v === 0 ? 'text-muted-foreground' : v > 0 ? 'text-emerald-600 font-medium' : v < 0 ? 'text-red-600 font-medium' : 'text-muted-foreground';
+              const lastRow = tagesansichtRows[tagesansichtRows.length - 1];
+
+              return (
+                <Card>
+                  <CardHeader className="pb-2 pt-4">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Table2 className="h-4 w-4 text-muted-foreground" />
+                      Tagesansicht · {format(referenceDate, 'MMMM yyyy', { locale: de })}
+                      <span className="ml-auto text-xs font-normal text-muted-foreground">
+                        {showNetRevenue ? 'Netto' : 'Brutto'}
+                        {budgetData.revenueBudget > 0 ? '' : ' · kein Monatsbudget hinterlegt'}
+                      </span>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0 pb-2">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border-collapse min-w-[900px]">
+                        <thead>
+                          <tr className="border-b border-border bg-muted/50 text-muted-foreground">
+                            <th className="text-left px-3 py-2 font-medium w-16">Tag</th>
+                            <th className="text-right px-3 py-2 font-medium">Ist</th>
+                            <th className="text-right px-3 py-2 font-medium">Vorjahr</th>
+                            <th className="text-right px-3 py-2 font-medium">Budget</th>
+                            <th className="text-right px-3 py-2 font-medium">Abw. VJ</th>
+                            <th className="text-right px-3 py-2 font-medium">Abw. Budget</th>
+                            <th className="text-right px-3 py-2 font-medium border-l border-border/60 bg-muted/70">Kum. Ist</th>
+                            <th className="text-right px-3 py-2 font-medium bg-muted/70">Kum. VJ</th>
+                            <th className="text-right px-3 py-2 font-medium bg-muted/70">Kum. Budget</th>
+                            <th className="text-right px-3 py-2 font-medium bg-muted/70">Kum. Abw. VJ</th>
+                            <th className="text-right px-3 py-2 font-medium bg-muted/70">Kum. Abw. Budget</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tagesansichtRows.map((row, i) => {
+                            const dayDate  = new Date(row.date + 'T00:00:00');
+                            const dayNum   = format(dayDate, 'd');
+                            const dayName  = format(dayDate, 'EEE', { locale: de });
+                            const isWeekend = dayDate.getDay() === 0 || dayDate.getDay() === 6;
+                            return (
+                              <tr
+                                key={row.date}
+                                className={cn(
+                                  'border-b border-border/40 transition-colors',
+                                  i % 2 === 0 ? 'bg-background' : 'bg-muted/20',
+                                  isWeekend && 'bg-blue-50/40 dark:bg-blue-950/10',
+                                  !row.hasData && 'opacity-60',
+                                )}
+                              >
+                                <td className="px-3 py-1.5 text-left tabular-nums">
+                                  <span className="font-medium">{dayNum}</span>
+                                  <span className="text-muted-foreground ml-1">{dayName}</span>
+                                </td>
+                                <td className={cn('px-3 py-1.5 text-right tabular-nums', row.hasData && 'font-medium')}>
+                                  {fmtN(row.ist, row.hasData)}
+                                </td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
+                                  {fmtN(row.vj, row.hasData)}
+                                </td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
+                                  {budgetData.revenueBudget > 0 ? fmtN(row.bud, true) : '–'}
+                                </td>
+                                <td className={cn('px-3 py-1.5 text-right tabular-nums', devCls(row.devVj, row.hasData && row.vj > 0))}>
+                                  {row.vj > 0 ? fmtDev(row.devVj, row.hasData) : '–'}
+                                </td>
+                                <td className={cn('px-3 py-1.5 text-right tabular-nums', devCls(row.devBud, row.hasData && budgetData.revenueBudget > 0))}>
+                                  {budgetData.revenueBudget > 0 ? fmtDev(row.devBud, row.hasData) : '–'}
+                                </td>
+                                <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/60 font-medium">
+                                  {fmtN(row.cumIst, true)}
+                                </td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
+                                  {fmtN(row.cumVj, row.cumVj > 0)}
+                                </td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
+                                  {budgetData.revenueBudget > 0 ? fmtN(row.cumBud, true) : '–'}
+                                </td>
+                                <td className={cn('px-3 py-1.5 text-right tabular-nums', devCls(row.cumDevVj, row.cumVj > 0))}>
+                                  {row.cumVj > 0 ? fmtDev(row.cumDevVj, true) : '–'}
+                                </td>
+                                <td className={cn('px-3 py-1.5 text-right tabular-nums', devCls(row.cumDevBud, budgetData.revenueBudget > 0))}>
+                                  {budgetData.revenueBudget > 0 ? fmtDev(row.cumDevBud, true) : '–'}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        {lastRow && (
+                          <tfoot>
+                            <tr className="border-t-2 border-border bg-muted/60 font-semibold">
+                              <td className="px-3 py-2 text-left text-muted-foreground">Gesamt</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{fmtN(lastRow.cumIst, true)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{fmtN(lastRow.cumVj, lastRow.cumVj > 0)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                                {budgetData.revenueBudget > 0 ? fmtN(lastRow.cumBud, true) : '–'}
+                              </td>
+                              <td className={cn('px-3 py-2 text-right tabular-nums', devCls(lastRow.cumDevVj, lastRow.cumVj > 0))}>
+                                {lastRow.cumVj > 0 ? fmtDev(lastRow.cumDevVj, true) : '–'}
+                              </td>
+                              <td className={cn('px-3 py-2 text-right tabular-nums', devCls(lastRow.cumDevBud, budgetData.revenueBudget > 0))}>
+                                {budgetData.revenueBudget > 0 ? fmtDev(lastRow.cumDevBud, true) : '–'}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums border-l border-border/60">{fmtN(lastRow.cumIst, true)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{fmtN(lastRow.cumVj, lastRow.cumVj > 0)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                                {budgetData.revenueBudget > 0 ? fmtN(lastRow.cumBud, true) : '–'}
+                              </td>
+                              <td className={cn('px-3 py-2 text-right tabular-nums', devCls(lastRow.cumDevVj, lastRow.cumVj > 0))}>
+                                {lastRow.cumVj > 0 ? fmtDev(lastRow.cumDevVj, true) : '–'}
+                              </td>
+                              <td className={cn('px-3 py-2 text-right tabular-nums', devCls(lastRow.cumDevBud, budgetData.revenueBudget > 0))}>
+                                {budgetData.revenueBudget > 0 ? fmtDev(lastRow.cumDevBud, true) : '–'}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })()}
 
             {/* ── Margenkontrolle – WES-Ampel ──────────────────────────────── */}
             {isAdmin && <WesMarginWidget />}
