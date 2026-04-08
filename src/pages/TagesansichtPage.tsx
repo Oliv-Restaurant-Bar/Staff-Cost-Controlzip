@@ -30,6 +30,7 @@ import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { grossToNet } from '@/types/personnel';
 import { loadMonth } from '@/lib/reporting-store';
+import { useVj2025Import } from '@/hooks/useVj2025Import';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,9 @@ function readDailyBudgets(): Record<string, DailyEntry> {
 export default function TagesansichtPage() {
   const { showNetRevenue } = useRevenueDisplay();
   const today = useMemo(() => new Date(), []);
+
+  // Einmaliger Import der VJ-2025-Tagesdaten (löst 'supabase-kv-synced' aus wenn fertig)
+  useVj2025Import();
 
   // Monat-Selektor
   const [refDate, setRefDate] = useState(() =>
