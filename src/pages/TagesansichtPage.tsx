@@ -1,38 +1,33 @@
 /**
  * TagesansichtPage – Tages-Umsatzvergleich (standalone)
  * =======================================================
- * Route:     /tagesansicht
- * NavLink:   Verkauf → Tagesansicht  (adminOnly)
+ * Route:   /tagesansicht   |   Nav: Verkauf → Tagesansicht (adminOnly)
  *
- * Spaltenreihenfolge:
- *   Datum · WT · Ist · Umsatz VJ · WT VJ · Datum VJ · Abw. VJ
- *   [Budget · Abw. Budget · Kum. Ist · Kum. VJ · Kum. Abw. VJ]
+ * Gruppen:
+ *   Tagesvergleich : Datum · WT · Ist · Umsatz VJ · Abw. VJ CHF
+ *   Kumulierter Verlauf : Kum.Ist · Kum.VJ · Kum.Abw.CHF · Kum.Abw.%
+ *   Optional: Budget-Spalten
  *
- * VJ-Logik:
- *   1. dailyBudgets[currentDate].previousYearRevenue  (aus Import)
- *   2. dailyBudgets[sameCalendarDayLastYear].actualRevenue  (Fallback)
- *   z.B. 03.03.2026  →  03.03.2025
- *
- * Konsolen-Logs:
- *   [TAGESANSICHT] current date: 2026-03-03
- *   [TAGESANSICHT] prior-year date: 2025-03-03
- *   [TAGESANSICHT] prior-year revenue found: 4320
+ * VJ-Logik:  gleicher Kalendertag, Jahr-1
+ *   2026-03-15 → 2025-03-15
+ *   1. dailyBudgets[currentDate].previousYearRevenue (Import)
+ *   2. dailyBudgets[prevYearDate].actualRevenue (Fallback)
  */
 
 import { useState, useEffect, useMemo } from 'react';
 import {
   startOfMonth, endOfMonth, eachDayOfInterval, format,
-  addMonths, subMonths,
+  addMonths, subMonths, isSameMonth,
 } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { ChevronLeft, ChevronRight, Table2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Table2, TrendingUp, TrendingDown } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { grossToNet } from '@/types/personnel';
 
-// ── Typen ────────────────────────────────────────────────────────────────────
+// ── Typen ─────────────────────────────────────────────────────────────────────
 
 interface DailyEntry {
   actualRevenue?:       number;
@@ -43,25 +38,22 @@ interface DailyEntry {
 
 type ViewMode = 'alles' | 'vs-budget' | 'vs-vorjahr' | 'nur-umsaetze';
 
-// ── Wochentags-Abkürzungen (So=0 … Sa=6) ─────────────────────────────────────
+// ── Hilfsfunktionen ───────────────────────────────────────────────────────────
 
 const WT_ABBR = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'] as const;
-const wtOf     = (d: Date) => WT_ABBR[d.getDay()];
-const isWE     = (d: Date) => d.getDay() === 0 || d.getDay() === 6;
+const wtOf    = (d: Date) => WT_ABBR[d.getDay()];
+const isWE    = (d: Date) => d.getDay() === 0 || d.getDay() === 6;
 
-// ── Zahlenformate ─────────────────────────────────────────────────────────────
-
-const NUM = new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 });
-const fmtN = (v: number) => NUM.format(Math.round(v));
-const fmtDev = (v: number): string =>
-  (v >= 0 ? '+' : '') + NUM.format(Math.round(v));
-const devCls = (v: number, active = true) =>
-  !active ? 'text-muted-foreground'
-  : v > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium'
-  : v < 0 ? 'text-red-600 dark:text-red-400 font-medium'
-  : 'text-muted-foreground';
-
-// ── Hilfsfunktion: dailyBudgets aus localStorage sicher lesen ────────────────
+const NUM     = new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 });
+const NUM1    = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const fmtN    = (v: number) => NUM.format(Math.round(v));
+const fmtDev  = (v: number) => (v >= 0 ? '+' : '') + NUM.format(Math.round(v));
+const fmtPct  = (v: number) => (v >= 0 ? '+' : '') + NUM1.format(v) + ' %';
+const devCls  = (v: number, active = true) =>
+  !active       ? 'text-muted-foreground'
+  : v > 0       ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+  : v < 0       ? 'text-red-600    dark:text-red-400    font-medium'
+  :               'text-muted-foreground';
 
 function readDailyBudgets(): Record<string, DailyEntry> {
   try { return JSON.parse(localStorage.getItem('dailyBudgets') || '{}'); }
@@ -72,46 +64,38 @@ function readDailyBudgets(): Record<string, DailyEntry> {
 
 export default function TagesansichtPage() {
   const { showNetRevenue } = useRevenueDisplay();
+  const today = useMemo(() => new Date(), []);
 
-  // ── Monat-Selektor ──────────────────────────────────────────────────────────
-  const [refDate, setRefDate] = useState(() => {
-    const n = new Date();
-    return new Date(n.getFullYear(), n.getMonth(), 1);
-  });
+  // Monat-Selektor
+  const [refDate, setRefDate] = useState(() =>
+    new Date(today.getFullYear(), today.getMonth(), 1),
+  );
   const year  = refDate.getFullYear();
   const month = refDate.getMonth() + 1;
 
-  // ── Vergleichs-Modus ────────────────────────────────────────────────────────
-  const [mode, setMode] = useState<ViewMode>('alles');
+  // Vergleichs-Modus
+  const [mode, setMode] = useState<ViewMode>('vs-vorjahr');
 
-  // ── Daten laden: localStorage sofort + KV-Sync-Event ────────────────────────
+  // dailyBudgets: localStorage sofort + KV nachladen
   const [dailyBudgets, setDailyBudgets] = useState<Record<string, DailyEntry>>(readDailyBudgets);
 
   useEffect(() => {
-    // Beim Mounten nochmals aus localStorage frisch lesen
     setDailyBudgets(readDailyBudgets());
-
-    // Zusätzlich aus Supabase KV nachladen (async, falls frischer als localStorage)
     import('@/lib/supabase-kv').then(({ kvGet }) =>
       kvGet('dailyBudgets')
-        .then(remote => {
-          if (remote && typeof remote === 'object') {
-            setDailyBudgets(remote as Record<string, DailyEntry>);
-          }
-        })
-        .catch(() => { /* Netzwerk-Fehler – localStorage-Wert wird verwendet */ })
+        .then(r => { if (r && typeof r === 'object') setDailyBudgets(r as Record<string, DailyEntry>); })
+        .catch(() => {}),
     );
-
     const onSync = () => setDailyBudgets(readDailyBudgets());
     window.addEventListener('supabase-kv-synced', onSync);
     return () => window.removeEventListener('supabase-kv-synced', onSync);
   }, []);
 
-  // ── Budget ──────────────────────────────────────────────────────────────────
+  // Budget
   const budgetData = useBudgetMonth(year, month);
   const hasBud     = budgetData.revenueBudget > 0;
 
-  // ── Tage des Monats ─────────────────────────────────────────────────────────
+  // Monatstage
   const monthDays = useMemo(() =>
     eachDayOfInterval({ start: startOfMonth(refDate), end: endOfMonth(refDate) }),
   [refDate]);
@@ -120,35 +104,29 @@ export default function TagesansichtPage() {
   const dailyBudgetGross = hasBud ? budgetData.revenueBudget / daysInMonth : 0;
   const dailyBudgetBase  = showNetRevenue ? grossToNet(dailyBudgetGross) : dailyBudgetGross;
 
-  // ── Zeilenberechnung ────────────────────────────────────────────────────────
+  // ── Zeilenberechnung ──────────────────────────────────────────────────────
   const rows = useMemo(() => {
-    let cumIst = 0;
-    let cumVj  = 0;
-    let cumBud = 0;
+    let cumIst = 0, cumVj = 0, cumBud = 0;
 
     return monthDays.map(day => {
       const d = format(day, 'yyyy-MM-dd');
 
-      // Ist-Umsatz
+      // Ist
       const gross    = dailyBudgets[d]?.actualRevenue   ?? 0;
       const takeaway = dailyBudgets[d]?.takeawayRevenue ?? 0;
       const ist      = showNetRevenue ? grossToNet(gross, takeaway) : gross;
 
-      // Vorjahr: exakt gleicher Kalendertag, Jahr -1
-      //   z.B. 2026-03-03  →  2025-03-03
-      const vjKey    = `${year - 1}-${d.slice(5)}`; // "2025-03-03"
+      // VJ: exakt gleicher Kalendertag, Jahr -1
+      const vjKey    = `${year - 1}-${d.slice(5)}`;
       const vjDirect = dailyBudgets[d]?.previousYearRevenue ?? 0;
-      const vjRaw    = vjDirect > 0
-        ? vjDirect
-        : (dailyBudgets[vjKey]?.actualRevenue ?? 0);
+      const vjRaw    = vjDirect > 0 ? vjDirect : (dailyBudgets[vjKey]?.actualRevenue ?? 0);
       const vj       = showNetRevenue ? grossToNet(vjRaw) : vjRaw;
       const vjDate   = new Date(vjKey + 'T00:00:00');
 
-      // Konsolen-Log für Diagnose (nur erste 5 Tage pro Monat um Flut zu vermeiden)
+      // Diagnose-Log (nur Tag 1-5)
       if (day.getDate() <= 5) {
         console.log(
-          `[TAGESANSICHT] current date: ${d} | prior-year date: ${vjKey}` +
-          ` | prior-year revenue found: ${vjRaw}` +
+          `[TAGESANSICHT] ${d} → VJ ${vjKey}: ${vjRaw}` +
           ` (direct=${vjDirect}, fallback=${dailyBudgets[vjKey]?.actualRevenue ?? 0})`,
         );
       }
@@ -157,6 +135,11 @@ export default function TagesansichtPage() {
       cumVj  += vj;
       cumBud += dailyBudgetBase;
 
+      // Kumulierte Abweichung VJ in %
+      const cumDevVj    = cumIst - cumVj;
+      const cumDevVjPct = cumVj > 0 ? (cumDevVj / cumVj) * 100 : 0;
+      const cumDevBud   = cumIst - cumBud;
+
       return {
         day, vjDate,
         ist, vj,
@@ -164,8 +147,10 @@ export default function TagesansichtPage() {
         devVj:     ist - vj,
         devBud:    ist - dailyBudgetBase,
         cumIst, cumVj, cumBud,
-        cumDevVj:  cumIst - cumVj,
-        cumDevBud: cumIst - cumBud,
+        cumDevVj,
+        cumDevVjPct,
+        cumDevBud,
+        cumDevBudPct: cumBud > 0 ? (cumDevBud / cumBud) * 100 : 0,
         hasIst: gross > 0,
         hasVj:  vjRaw > 0,
       };
@@ -175,7 +160,18 @@ export default function TagesansichtPage() {
 
   const lastRow = rows[rows.length - 1];
 
-  // ── Spalten-Sichtbarkeit je Modus ───────────────────────────────────────────
+  // ── KPI: kumulierter Stand bis heute (letzter Tag mit Ist-Daten) ───────────
+  const isCurrentMonth = isSameMonth(refDate, today);
+  const lastDataRow = useMemo(() => {
+    if (!isCurrentMonth) return lastRow; // zurückliegender Monat: ganzer Monat
+    // aktueller Monat: letzter Tag mit Ist > 0
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].hasIst) return rows[i];
+    }
+    return null;
+  }, [rows, isCurrentMonth, lastRow]);
+
+  // ── Spalten-Sichtbarkeit ──────────────────────────────────────────────────
   const showVjCols   = ['alles', 'vs-vorjahr', 'nur-umsaetze'].includes(mode);
   const showBudCol   = ['alles', 'vs-budget',  'nur-umsaetze'].includes(mode);
   const showDevVj    = ['alles', 'vs-vorjahr'].includes(mode);
@@ -187,35 +183,36 @@ export default function TagesansichtPage() {
   const showKumDevBud= showKum && ['alles', 'vs-budget'].includes(mode);
 
   // ── CSS-Kürzel ────────────────────────────────────────────────────────────
-  const th  = (align: 'l'|'r', extra = '') =>
-    cn(`text-${align === 'l' ? 'left' : 'right'} px-2 py-2 font-medium text-[11px] whitespace-nowrap`, extra);
-  const td  = (align: 'l'|'r', extra = '') =>
-    cn(`px-2 py-[5px] ${align === 'l' ? 'text-left' : 'text-right tabular-nums'} whitespace-nowrap text-xs`, extra);
-  const tdK = (extra = '') =>
-    cn('px-2 py-[5px] text-right tabular-nums whitespace-nowrap text-xs border-l border-border/40', extra);
+  const thL = 'text-left  px-2 py-1.5 font-medium text-[11px] whitespace-nowrap';
+  const thR = 'text-right px-2 py-1.5 font-medium text-[11px] whitespace-nowrap';
+  const thRK= 'text-right px-2 py-1.5 font-medium text-[11px] whitespace-nowrap border-l border-border/40';
+  const tdL = 'px-2 py-[4px] text-left  whitespace-nowrap text-xs';
+  const tdR = 'px-2 py-[4px] text-right tabular-nums whitespace-nowrap text-xs';
+  const tdRK= 'px-2 py-[4px] text-right tabular-nums whitespace-nowrap text-xs border-l border-border/40';
 
   const MODES: { id: ViewMode; label: string }[] = [
     { id: 'alles',        label: 'Alles' },
-    { id: 'vs-budget',    label: 'Ist vs. Budget' },
-    { id: 'vs-vorjahr',   label: 'Ist vs. Vorjahr' },
+    { id: 'vs-budget',    label: 'vs. Budget' },
+    { id: 'vs-vorjahr',   label: 'vs. Vorjahr' },
     { id: 'nur-umsaetze', label: 'Nur Umsätze' },
   ];
+
+  const hasPrevYearData = rows.some(r => r.hasVj);
 
   return (
     <div className="min-h-screen bg-background">
 
       {/* ── Sticky Header ──────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3 flex-wrap">
+        <div className="max-w-6xl mx-auto px-4 py-2.5 flex items-center gap-3 flex-wrap">
 
-          {/* Titel */}
           <div className="flex items-center gap-2">
             <Table2 className="h-4 w-4 text-muted-foreground" />
             <h1 className="text-sm font-semibold">Tagesansicht</h1>
           </div>
 
           {/* Monat-Navigator */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             <button
               onClick={() => setRefDate(d => subMonths(d, 1))}
               className="h-7 w-7 rounded flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
@@ -233,42 +230,123 @@ export default function TagesansichtPage() {
             </button>
           </div>
 
-          {/* Basis-Info + Vergleichs-Buttons */}
-          <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
-            <span className="text-[11px] text-muted-foreground">
-              {showNetRevenue ? 'Netto' : 'Brutto'}
-              {!hasBud && ' · kein Budget'}
-            </span>
+          <span className="text-[11px] text-muted-foreground">
+            {showNetRevenue ? 'Netto' : 'Brutto'}
+            {!hasBud && ' · kein Budget'}
+          </span>
 
-            <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
-              {MODES.map(m => (
-                <button
-                  key={m.id}
-                  onClick={() => setMode(m.id)}
-                  className={cn(
-                    'px-2.5 py-1 text-[11px] font-medium rounded-md transition-all whitespace-nowrap',
-                    mode === m.id
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
+          {/* Vergleichs-Buttons */}
+          <div className="ml-auto flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+            {MODES.map(m => (
+              <button
+                key={m.id}
+                onClick={() => setMode(m.id)}
+                className={cn(
+                  'px-2.5 py-1 text-[11px] font-medium rounded-md transition-all whitespace-nowrap',
+                  mode === m.id
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
           </div>
         </div>
       </header>
 
-      {/* ── Tabelle ────────────────────────────────────────────────────────── */}
-      <main className="max-w-5xl mx-auto px-4 py-4">
+      <main className="max-w-6xl mx-auto px-4 py-4 space-y-3">
+
+        {/* ── KPI-Banner ───────────────────────────────────────────────────── */}
+        {lastDataRow && (showKumDevVj || showKumDevBud) && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+
+            {/* Kum. Ist bis heute */}
+            <Card className="px-3 py-2.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+                Kumuliert Ist{isCurrentMonth ? ' bis heute' : ''}
+              </p>
+              <p className="text-base font-bold mt-0.5">
+                {fmtN(lastDataRow.cumIst)}
+              </p>
+            </Card>
+
+            {/* Kum. VJ */}
+            {showKumVj && (
+              <Card className="px-3 py-2.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+                  Kumuliert VJ
+                </p>
+                <p className="text-base font-bold mt-0.5 text-muted-foreground">
+                  {hasPrevYearData ? fmtN(lastDataRow.cumVj) : '—'}
+                </p>
+              </Card>
+            )}
+
+            {/* Kum. Abw. VJ CHF */}
+            {showKumDevVj && hasPrevYearData && (
+              <Card className="px-3 py-2.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+                  Abw. vs. Vorjahr
+                </p>
+                <p className={cn('text-base font-bold mt-0.5', devCls(lastDataRow.cumDevVj))}>
+                  {fmtDev(lastDataRow.cumDevVj)}
+                </p>
+              </Card>
+            )}
+
+            {/* Kum. Abw. VJ % */}
+            {showKumDevVj && hasPrevYearData && lastDataRow.cumVj > 0 && (
+              <Card className="px-3 py-2.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+                  Abw. vs. Vorjahr %
+                </p>
+                <p className={cn('text-base font-bold mt-0.5 flex items-center gap-1', devCls(lastDataRow.cumDevVjPct))}>
+                  {lastDataRow.cumDevVjPct >= 0
+                    ? <TrendingUp className="h-3.5 w-3.5" />
+                    : <TrendingDown className="h-3.5 w-3.5" />}
+                  {fmtPct(lastDataRow.cumDevVjPct)}
+                </p>
+              </Card>
+            )}
+
+            {/* Kum. Abw. Budget CHF */}
+            {showKumDevBud && hasBud && (
+              <Card className="px-3 py-2.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+                  Abw. vs. Budget
+                </p>
+                <p className={cn('text-base font-bold mt-0.5', devCls(lastDataRow.cumDevBud))}>
+                  {fmtDev(lastDataRow.cumDevBud)}
+                </p>
+              </Card>
+            )}
+
+            {/* Kum. Abw. Budget % */}
+            {showKumDevBud && hasBud && lastDataRow.cumBud > 0 && (
+              <Card className="px-3 py-2.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+                  Abw. vs. Budget %
+                </p>
+                <p className={cn('text-base font-bold mt-0.5 flex items-center gap-1', devCls(lastDataRow.cumDevBudPct))}>
+                  {lastDataRow.cumDevBudPct >= 0
+                    ? <TrendingUp className="h-3.5 w-3.5" />
+                    : <TrendingDown className="h-3.5 w-3.5" />}
+                  {fmtPct(lastDataRow.cumDevBudPct)}
+                </p>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* ── Tabelle ──────────────────────────────────────────────────────── */}
         <Card>
-          <CardHeader className="py-2.5 px-4 border-b border-border/60">
+          <CardHeader className="py-2 px-4 border-b border-border/60">
             <CardTitle className="text-xs font-normal text-muted-foreground">
               {format(refDate, 'MMMM yyyy', { locale: de })} · {daysInMonth} Tage
-              {!hasBud && (
+              {!hasPrevYearData && showVjCols && (
                 <span className="ml-2 text-amber-600 dark:text-amber-400">
-                  Kein Monatsbudget hinterlegt
+                  Keine Vorjahresdaten für diesen Monat importiert
                 </span>
               )}
             </CardTitle>
@@ -278,120 +356,144 @@ export default function TagesansichtPage() {
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
 
-                {/* Kopfzeile */}
+                {/* ── Gruppen-Header ─────────────────────────────────────── */}
                 <thead>
+                  <tr className="bg-muted/30 border-b border-border/40 text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">
+                    <th colSpan={2 + (showVjCols ? 1 : 0) + (showVjCols ? 1 : 0) + (showDevVj ? 1 : 0) + (showBudCol ? 1 : 0) + (showDevBud ? 1 : 0) + 1}
+                      className="text-left px-3 py-1">
+                      Tagesvergleich
+                    </th>
+                    {showKum && (
+                      <th
+                        colSpan={1 + (showKumVj ? 1 : 0) + (showKumBud ? 1 : 0) + (showKumDevVj ? 2 : 0) + (showKumDevBud ? 2 : 0)}
+                        className="text-left px-3 py-1 border-l border-border/40"
+                      >
+                        Kumulierter Verlauf
+                      </th>
+                    )}
+                  </tr>
+
+                  {/* ── Spalten-Titel ─────────────────────────────────────── */}
                   <tr className="border-b border-border bg-muted/40 text-muted-foreground">
-                    <th className={th('l')}>Datum</th>
-                    <th className={th('l')}>WT</th>
-                    <th className={th('r')}>Ist</th>
-                    {showVjCols && <th className={th('r')}>Umsatz VJ</th>}
-                    {showVjCols && <th className={th('l')}>WT VJ</th>}
-                    {showVjCols && <th className={th('l')}>Datum VJ</th>}
-                    {showDevVj  && <th className={th('r')}>Abw. VJ</th>}
-                    {showBudCol && <th className={th('r')}>Budget</th>}
-                    {showDevBud && <th className={th('r')}>Abw. Budget</th>}
-                    {showKum    && <th className={th('r', 'border-l border-border/40')}>Kum. Ist</th>}
-                    {showKumVj  && <th className={th('r')}>Kum. VJ</th>}
-                    {showKumBud && <th className={th('r')}>Kum. Budget</th>}
-                    {showKumDevVj  && <th className={th('r')}>Kum. Abw. VJ</th>}
-                    {showKumDevBud && <th className={th('r')}>Kum. Abw. Bud.</th>}
+                    {/* Tagesvergleich */}
+                    <th className={thL}>Datum</th>
+                    <th className={thL}>WT</th>
+                    <th className={thR}>Ist</th>
+                    {showVjCols && <th className={thR}>Umsatz VJ</th>}
+                    {showVjCols && <th className={thL}>WT VJ</th>}
+                    {showDevVj  && <th className={thR}>Abw. VJ</th>}
+                    {showBudCol && <th className={thR}>Budget</th>}
+                    {showDevBud && <th className={thR}>Abw. Bud.</th>}
+                    {/* Kumul. Verlauf */}
+                    {showKum    && <th className={thRK}>Kum. Ist</th>}
+                    {showKumVj  && <th className={thR}>Kum. VJ</th>}
+                    {showKumDevVj  && <th className={thR}>Kum. Abw. CHF</th>}
+                    {showKumDevVj  && <th className={thR}>Kum. Abw. %</th>}
+                    {showKumBud    && <th className={thR}>Kum. Bud.</th>}
+                    {showKumDevBud && <th className={thR}>Kum. Abw. Bud. CHF</th>}
+                    {showKumDevBud && <th className={thR}>Kum. Abw. Bud. %</th>}
                   </tr>
                 </thead>
 
-                {/* Datenzeilen */}
+                {/* ── Datenzeilen ───────────────────────────────────────── */}
                 <tbody>
                   {rows.map((row, i) => {
                     const we = isWE(row.day);
+                    const isToday = isCurrentMonth &&
+                      row.day.getDate() === today.getDate() &&
+                      isSameMonth(row.day, today);
                     return (
                       <tr
                         key={i}
                         className={cn(
-                          'border-b border-border/20',
-                          we
-                            ? 'bg-slate-50/80 dark:bg-slate-900/30'
-                            : i % 2 === 0 ? 'bg-background' : 'bg-muted/10',
+                          'border-b border-border/20 transition-colors',
+                          isToday  ? 'bg-primary/5 dark:bg-primary/10 ring-1 ring-inset ring-primary/20'
+                          : we     ? 'bg-slate-50/70 dark:bg-slate-900/30'
+                          : i % 2 === 0 ? 'bg-background' : 'bg-muted/10',
                         )}
                       >
                         {/* Datum */}
-                        <td className={td('l', cn('font-mono', we ? 'text-slate-500 dark:text-slate-400' : 'text-muted-foreground'))}>
+                        <td className={cn(tdL, 'font-mono text-[11px]', we ? 'text-slate-500' : 'text-muted-foreground')}>
                           {format(row.day, 'dd.MM.yyyy')}
                         </td>
                         {/* WT */}
-                        <td className={td('l', cn('font-medium', we ? 'text-slate-600 dark:text-slate-300' : ''))}>
+                        <td className={cn(tdL, 'font-medium text-[11px]', we ? 'text-slate-600 dark:text-slate-300' : '')}>
                           {wtOf(row.day)}
                         </td>
                         {/* Ist */}
-                        <td className={td('r', row.hasIst ? 'font-semibold' : 'text-muted-foreground')}>
+                        <td className={cn(tdR, row.hasIst ? 'font-semibold' : 'text-muted-foreground')}>
                           {row.hasIst ? fmtN(row.ist) : '–'}
                         </td>
                         {/* Umsatz VJ */}
                         {showVjCols && (
-                          <td className={td('r', 'text-muted-foreground')}>
-                            {row.hasVj ? fmtN(row.vj) : '0'}
+                          <td className={cn(tdR, 'text-muted-foreground')}>
+                            {fmtN(row.vj)}
                           </td>
                         )}
                         {/* WT VJ */}
                         {showVjCols && (
-                          <td className={td('l', cn(
-                            isWE(row.vjDate)
-                              ? 'text-slate-500 dark:text-slate-400'
-                              : 'text-muted-foreground',
-                          ))}>
+                          <td className={cn(tdL, 'text-[11px]', isWE(row.vjDate) ? 'text-slate-500' : 'text-muted-foreground')}>
                             {wtOf(row.vjDate)}
-                          </td>
-                        )}
-                        {/* Datum VJ */}
-                        {showVjCols && (
-                          <td className={td('l', 'text-muted-foreground font-mono')}>
-                            {format(row.vjDate, 'dd.MM.yyyy')}
                           </td>
                         )}
                         {/* Abw. VJ */}
                         {showDevVj && (
-                          <td className={td('r', devCls(row.devVj, row.hasIst))}>
+                          <td className={cn(tdR, devCls(row.devVj, row.hasIst))}>
                             {row.hasIst ? fmtDev(row.devVj) : '–'}
                           </td>
                         )}
                         {/* Budget */}
                         {showBudCol && (
-                          <td className={td('r', 'text-muted-foreground')}>
+                          <td className={cn(tdR, 'text-muted-foreground')}>
                             {hasBud ? fmtN(row.bud) : '–'}
                           </td>
                         )}
                         {/* Abw. Budget */}
                         {showDevBud && (
-                          <td className={td('r', devCls(row.devBud, row.hasIst && hasBud))}>
+                          <td className={cn(tdR, devCls(row.devBud, row.hasIst && hasBud))}>
                             {row.hasIst && hasBud ? fmtDev(row.devBud) : '–'}
                           </td>
                         )}
                         {/* Kum. Ist */}
                         {showKum && (
-                          <td className={tdK('font-medium')}>
+                          <td className={cn(tdRK, 'font-medium')}>
                             {fmtN(row.cumIst)}
                           </td>
                         )}
                         {/* Kum. VJ */}
                         {showKumVj && (
-                          <td className={td('r', 'text-muted-foreground')}>
+                          <td className={cn(tdR, 'text-muted-foreground')}>
                             {fmtN(row.cumVj)}
+                          </td>
+                        )}
+                        {/* Kum. Abw. VJ CHF */}
+                        {showKumDevVj && (
+                          <td className={cn(tdR, devCls(row.cumDevVj, row.cumIst > 0))}>
+                            {fmtDev(row.cumDevVj)}
+                          </td>
+                        )}
+                        {/* Kum. Abw. VJ % */}
+                        {showKumDevVj && (
+                          <td className={cn(tdR, devCls(row.cumDevVjPct, row.cumIst > 0))}>
+                            {row.cumVj > 0 ? fmtPct(row.cumDevVjPct) : '–'}
                           </td>
                         )}
                         {/* Kum. Budget */}
                         {showKumBud && (
-                          <td className={td('r', 'text-muted-foreground')}>
+                          <td className={cn(tdR, 'text-muted-foreground')}>
                             {hasBud ? fmtN(row.cumBud) : '–'}
                           </td>
                         )}
-                        {/* Kum. Abw. VJ */}
-                        {showKumDevVj && (
-                          <td className={td('r', devCls(row.cumDevVj, row.cumVj > 0 || row.cumIst > 0))}>
-                            {fmtDev(row.cumDevVj)}
+                        {/* Kum. Abw. Budget CHF */}
+                        {showKumDevBud && (
+                          <td className={cn(tdR, devCls(row.cumDevBud, hasBud))}>
+                            {hasBud ? fmtDev(row.cumDevBud) : '–'}
                           </td>
                         )}
-                        {/* Kum. Abw. Budget */}
+                        {/* Kum. Abw. Budget % */}
                         {showKumDevBud && (
-                          <td className={td('r', devCls(row.cumDevBud, hasBud))}>
-                            {hasBud ? fmtDev(row.cumDevBud) : '–'}
+                          <td className={cn(tdR, devCls(row.cumDevBudPct, hasBud && row.cumBud > 0))}>
+                            {hasBud && row.cumBud > 0 ? fmtPct(row.cumDevBudPct) : '–'}
                           </td>
                         )}
                       </tr>
@@ -399,25 +501,24 @@ export default function TagesansichtPage() {
                   })}
                 </tbody>
 
-                {/* Gesamt-Zeile */}
+                {/* ── Gesamt-Zeile ────────────────────────────────────────── */}
                 {lastRow && (
                   <tfoot>
                     <tr className="border-t-2 border-border bg-muted/50 font-semibold text-xs">
-                      <td className={td('l', 'text-muted-foreground')} colSpan={2}>
-                        Gesamt
-                      </td>
-                      <td className={td('r')}>{fmtN(lastRow.cumIst)}</td>
-                      {showVjCols && <td className={td('r', 'text-muted-foreground')}>{fmtN(lastRow.cumVj)}</td>}
-                      {showVjCols && <td className={td('l')} />}
-                      {showVjCols && <td className={td('l')} />}
-                      {showDevVj  && <td className={td('r', devCls(lastRow.cumDevVj, lastRow.cumVj > 0 || lastRow.cumIst > 0))}>{fmtDev(lastRow.cumDevVj)}</td>}
-                      {showBudCol && <td className={td('r', 'text-muted-foreground')}>{hasBud ? fmtN(lastRow.cumBud) : '–'}</td>}
-                      {showDevBud && <td className={td('r', devCls(lastRow.cumDevBud, hasBud))}>{hasBud ? fmtDev(lastRow.cumDevBud) : '–'}</td>}
-                      {showKum    && <td className={tdK()}>{fmtN(lastRow.cumIst)}</td>}
-                      {showKumVj  && <td className={td('r', 'text-muted-foreground')}>{fmtN(lastRow.cumVj)}</td>}
-                      {showKumBud && <td className={td('r', 'text-muted-foreground')}>{hasBud ? fmtN(lastRow.cumBud) : '–'}</td>}
-                      {showKumDevVj  && <td className={td('r', devCls(lastRow.cumDevVj, lastRow.cumVj > 0 || lastRow.cumIst > 0))}>{fmtDev(lastRow.cumDevVj)}</td>}
-                      {showKumDevBud && <td className={td('r', devCls(lastRow.cumDevBud, hasBud))}>{hasBud ? fmtDev(lastRow.cumDevBud) : '–'}</td>}
+                      <td className={cn(tdL, 'text-muted-foreground text-[11px]')} colSpan={2}>Gesamt</td>
+                      <td className={tdR}>{fmtN(lastRow.cumIst)}</td>
+                      {showVjCols && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(lastRow.cumVj)}</td>}
+                      {showVjCols && <td className={tdL} />}
+                      {showDevVj  && <td className={cn(tdR, devCls(lastRow.cumDevVj, lastRow.cumIst > 0))}>{fmtDev(lastRow.cumDevVj)}</td>}
+                      {showBudCol && <td className={cn(tdR, 'text-muted-foreground')}>{hasBud ? fmtN(lastRow.cumBud) : '–'}</td>}
+                      {showDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBud, hasBud))}>{hasBud ? fmtDev(lastRow.cumDevBud) : '–'}</td>}
+                      {showKum    && <td className={cn(tdRK)}>{fmtN(lastRow.cumIst)}</td>}
+                      {showKumVj  && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(lastRow.cumVj)}</td>}
+                      {showKumDevVj  && <td className={cn(tdR, devCls(lastRow.cumDevVj, lastRow.cumIst > 0))}>{fmtDev(lastRow.cumDevVj)}</td>}
+                      {showKumDevVj  && <td className={cn(tdR, devCls(lastRow.cumDevVjPct, lastRow.cumVj > 0))}>{lastRow.cumVj > 0 ? fmtPct(lastRow.cumDevVjPct) : '–'}</td>}
+                      {showKumBud    && <td className={cn(tdR, 'text-muted-foreground')}>{hasBud ? fmtN(lastRow.cumBud) : '–'}</td>}
+                      {showKumDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBud, hasBud))}>{hasBud ? fmtDev(lastRow.cumDevBud) : '–'}</td>}
+                      {showKumDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBudPct, hasBud && lastRow.cumBud > 0))}>{hasBud && lastRow.cumBud > 0 ? fmtPct(lastRow.cumDevBudPct) : '–'}</td>}
                     </tr>
                   </tfoot>
                 )}
