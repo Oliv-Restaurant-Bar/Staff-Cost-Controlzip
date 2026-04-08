@@ -1,0 +1,83 @@
+Bitte eine neue Ansicht "Tagesansicht" im Dashboard bzw. Verkaufsbereich ergänzen.
+
+Ziel:
+Ich möchte den Umsatz Tag für Tag für einen gewählten Monat sehen und dabei direkt erkennen:
+- welches Datum es ist
+- welcher Wochentag es im aktuellen Jahr ist
+- welcher Wochentag es im Vorjahr am gleichen Kalendertag war
+So sehe ich besser, ob Abweichungen z.B. wegen unterschiedlicher Wochentage entstehen.
+
+Bitte umsetzen:
+
+1. Neue Ansicht / Tab:
+- Name: Tagesansicht
+
+2. Datengrundlage:
+- Tage 1 bis 31 des gewählten Monats
+- Monat und Jahr aus den bestehenden Filtern übernehmen
+- Netto/Brutto-Umsatzbasis muss respektiert werden
+
+3. Tabelle mit diesen Spalten:
+- Tag
+- Datum aktuell (z.B. 03.03.2026)
+- Wochentag aktuell (z.B. Montag)
+- Datum Vorjahr (z.B. 03.03.2025)
+- Wochentag Vorjahr (z.B. Samstag)
+- Ist-Umsatz
+- Vorjahresumsatz
+- Budget-Umsatz
+- Abweichung zu Vorjahr
+- Abweichung zu Budget
+- Kumuliert Ist
+- Kumuliert Vorjahr
+- Kumuliert Budget
+- Kumulierte Abweichung zu Vorjahr
+- Kumulierte Abweichung zu Budget
+
+4. Vergleichs-Buttons / Anzeige-Modus
+Oben über der Tabelle Buttons oder Segmented Control:
+
+- Alles
+- Ist vs Budget
+- Ist vs Vorjahr
+- Nur Umsätze
+
+Verhalten:
+- Alles:
+  alle Spalten sichtbar
+- Ist vs Budget:
+  nur Ist, Budget, Abweichung Budget, kumuliert Ist/Budget, kumulative Abweichung Budget
+- Ist vs Vorjahr:
+  nur Ist, Vorjahr, Abweichung Vorjahr, kumuliert Ist/Vorjahr, kumulative Abweichung Vorjahr
+- Nur Umsätze:
+  nur Datum, Wochentage, Ist, Vorjahr, Budget
+  Abweichungsspalten ausblenden
+
+5. Regeln:
+- Wenn für einen Tag keine Daten vorhanden sind, 0 anzeigen
+- Kumuliert immer laufend aufsummieren
+- Abweichung = Ist minus Vergleichswert
+- gleiche Logik für Budget und Vorjahr
+
+6. Wochentage:
+- aktueller Monat/Jahr korrekt berechnen
+- Vorjahr auf genau denselben Kalendertag beziehen
+- also z.B. 03.03.2026 und 03.03.2025
+- beide Wochentage explizit anzeigen
+
+7. Optional UI:
+- positive Abweichung grün
+- negative Abweichung rot
+- Tabellenansicht kompakt und gut lesbar
+- Spalten bei kleineren Ansichten horizontal scrollbar machen
+
+8. Wichtig:
+- Keine neue fachliche Logik erfinden
+- Nur bestehende Umsatzdaten nach Tagen aufsplitten
+- Dieselbe Umsatzbasis wie im restlichen Dashboard verwenden
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wo die Tagesansicht erreichbar ist
+- wie die Vergleichs-Buttons funktionieren
+- wie aktuelle und Vorjahres-Wochentage berechnet werden

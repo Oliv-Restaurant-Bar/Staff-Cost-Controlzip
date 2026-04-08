@@ -242,6 +242,10 @@ const Dashboard = () => {
   // ── Dashboard-Ansicht ───────────────────────────────────────────────────────
   const [dashView, setDashView] = useState<DashView>('alle');
 
+  // ── Tagesansicht Vergleichsmodus ─────────────────────────────────────────
+  type TagesViewMode = 'alles' | 'vs-budget' | 'vs-vorjahr' | 'nur-umsaetze';
+  const [tagesViewMode, setTagesViewMode] = useState<TagesViewMode>('alles');
+
   // ── Rohdaten ────────────────────────────────────────────────────────────────
   const [employees, setEmployees]       = useState<Employee[]>([]);
   const [scheduleData, setScheduleData] = useState<Record<string, DaySchedule>>({});
@@ -1905,127 +1909,208 @@ const Dashboard = () => {
 
             {/* ── Tagesansicht ──────────────────────────────────────────────── */}
             {isAdmin && showTagesansicht && (() => {
-              const fmtN = (v: number, hasData?: boolean) =>
-                !hasData && v === 0 ? '–' : new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 }).format(Math.round(v));
-              const fmtDev = (v: number, hasData?: boolean) => {
-                if (!hasData && v === 0) return '–';
-                const s = (v >= 0 ? '+' : '') + new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 }).format(Math.round(v));
-                return s;
+              // ── Hilfsfunktionen ─────────────────────────────────────────────
+              const numFmt = new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 });
+              const fmtN = (v: number, visible = true) =>
+                !visible || v === 0 ? '–' : numFmt.format(Math.round(v));
+              const fmtDev = (v: number, visible = true) => {
+                if (!visible) return '–';
+                return (v >= 0 ? '+' : '') + numFmt.format(Math.round(v));
               };
-              const devCls = (v: number, hasData?: boolean) =>
-                !hasData && v === 0 ? 'text-muted-foreground' : v > 0 ? 'text-emerald-600 font-medium' : v < 0 ? 'text-red-600 font-medium' : 'text-muted-foreground';
+              const devCls = (v: number, visible = true) =>
+                !visible ? 'text-muted-foreground'
+                : v > 0 ? 'text-emerald-600 font-medium'
+                : v < 0 ? 'text-red-600 font-medium'
+                : 'text-muted-foreground';
+
+              // ── Spalten-Sichtbarkeit je Modus ───────────────────────────────
+              const modeIs    = (m: TagesViewMode) => tagesViewMode === m;
+              const hasBud    = budgetData.revenueBudget > 0;
+              const showVjDate   = ['alles','vs-vorjahr','nur-umsaetze'].includes(tagesViewMode);
+              const showVjRev    = ['alles','vs-vorjahr','nur-umsaetze'].includes(tagesViewMode);
+              const showBudRev   = ['alles','vs-budget','nur-umsaetze'].includes(tagesViewMode);
+              const showDevVj    = ['alles','vs-vorjahr'].includes(tagesViewMode);
+              const showDevBud   = ['alles','vs-budget'].includes(tagesViewMode);
+              const showKum      = !modeIs('nur-umsaetze');
+              const showKumVj    = showKum && ['alles','vs-vorjahr'].includes(tagesViewMode);
+              const showKumBud   = showKum && ['alles','vs-budget'].includes(tagesViewMode);
+              const showKumDevVj  = showKum && ['alles','vs-vorjahr'].includes(tagesViewMode);
+              const showKumDevBud = showKum && ['alles','vs-budget'].includes(tagesViewMode);
+              const showKumIst   = showKum;
+
               const lastRow = tagesansichtRows[tagesansichtRows.length - 1];
+
+              // ── Spalten-Header-Klassen ───────────────────────────────────────
+              const thL  = 'text-left  px-3 py-2 font-medium whitespace-nowrap';
+              const thR  = 'text-right px-3 py-2 font-medium whitespace-nowrap';
+              const thRK = 'text-right px-3 py-2 font-medium whitespace-nowrap border-l border-border/60 bg-muted/70';
+              const tdL  = 'px-3 py-1.5 text-left  whitespace-nowrap';
+              const tdR  = 'px-3 py-1.5 text-right tabular-nums whitespace-nowrap';
+              const tdRK = 'px-3 py-1.5 text-right tabular-nums whitespace-nowrap border-l border-border/60';
+
+              const MODES: { id: TagesViewMode; label: string }[] = [
+                { id: 'alles',        label: 'Alles' },
+                { id: 'vs-budget',    label: 'Ist vs. Budget' },
+                { id: 'vs-vorjahr',   label: 'Ist vs. Vorjahr' },
+                { id: 'nur-umsaetze', label: 'Nur Umsätze' },
+              ];
 
               return (
                 <Card>
                   <CardHeader className="pb-2 pt-4">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Table2 className="h-4 w-4 text-muted-foreground" />
-                      Tagesansicht · {format(referenceDate, 'MMMM yyyy', { locale: de })}
-                      <span className="ml-auto text-xs font-normal text-muted-foreground">
-                        {showNetRevenue ? 'Netto' : 'Brutto'}
-                        {budgetData.revenueBudget > 0 ? '' : ' · kein Monatsbudget hinterlegt'}
-                      </span>
-                    </CardTitle>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Table2 className="h-4 w-4 text-muted-foreground" />
+                        Tagesansicht · {format(referenceDate, 'MMMM yyyy', { locale: de })}
+                        <span className="text-xs font-normal text-muted-foreground">
+                          {showNetRevenue ? 'Netto' : 'Brutto'}
+                          {hasBud ? '' : ' · kein Budget'}
+                        </span>
+                      </CardTitle>
+
+                      {/* Vergleichs-Buttons */}
+                      <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+                        {MODES.map(m => (
+                          <button
+                            key={m.id}
+                            onClick={() => setTagesViewMode(m.id)}
+                            className={cn(
+                              'px-2.5 py-1 text-xs font-medium rounded-md transition-all whitespace-nowrap',
+                              tagesViewMode === m.id
+                                ? 'bg-background text-foreground shadow-sm'
+                                : 'text-muted-foreground hover:text-foreground',
+                            )}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </CardHeader>
+
                   <CardContent className="p-0 pb-2">
                     <div className="overflow-x-auto">
-                      <table className="w-full text-xs border-collapse min-w-[900px]">
+                      <table className="w-full text-xs border-collapse">
                         <thead>
                           <tr className="border-b border-border bg-muted/50 text-muted-foreground">
-                            <th className="text-left px-3 py-2 font-medium w-16">Tag</th>
-                            <th className="text-right px-3 py-2 font-medium">Ist</th>
-                            <th className="text-right px-3 py-2 font-medium">Vorjahr</th>
-                            <th className="text-right px-3 py-2 font-medium">Budget</th>
-                            <th className="text-right px-3 py-2 font-medium">Abw. VJ</th>
-                            <th className="text-right px-3 py-2 font-medium">Abw. Budget</th>
-                            <th className="text-right px-3 py-2 font-medium border-l border-border/60 bg-muted/70">Kum. Ist</th>
-                            <th className="text-right px-3 py-2 font-medium bg-muted/70">Kum. VJ</th>
-                            <th className="text-right px-3 py-2 font-medium bg-muted/70">Kum. Budget</th>
-                            <th className="text-right px-3 py-2 font-medium bg-muted/70">Kum. Abw. VJ</th>
-                            <th className="text-right px-3 py-2 font-medium bg-muted/70">Kum. Abw. Budget</th>
+                            <th className={thL}>Tag</th>
+                            <th className={thL}>Datum</th>
+                            <th className={thL}>Wochentag</th>
+                            {showVjDate && <th className={thL}>Datum VJ</th>}
+                            {showVjDate && <th className={thL}>Wochentag VJ</th>}
+                            <th className={thR}>Ist</th>
+                            {showVjRev  && <th className={thR}>Vorjahr</th>}
+                            {showBudRev && <th className={thR}>Budget</th>}
+                            {showDevVj  && <th className={thR}>Abw. VJ</th>}
+                            {showDevBud && <th className={thR}>Abw. Budget</th>}
+                            {showKumIst   && <th className={thRK}>Kum. Ist</th>}
+                            {showKumVj    && <th className={thR}>Kum. VJ</th>}
+                            {showKumBud   && <th className={thR}>Kum. Budget</th>}
+                            {showKumDevVj  && <th className={thR}>Kum. Abw. VJ</th>}
+                            {showKumDevBud && <th className={thR}>Kum. Abw. Budget</th>}
                           </tr>
                         </thead>
                         <tbody>
                           {tagesansichtRows.map((row, i) => {
-                            const dayDate  = new Date(row.date + 'T00:00:00');
-                            const dayNum   = format(dayDate, 'd');
-                            const dayName  = format(dayDate, 'EEE', { locale: de });
+                            const dayDate   = new Date(row.date + 'T00:00:00');
+                            const vjDate    = new Date((row.date.replace(/^(\d{4})/, (_, y) => String(parseInt(y) - 1))) + 'T00:00:00');
                             const isWeekend = dayDate.getDay() === 0 || dayDate.getDay() === 6;
+                            const vjIsWeekend = vjDate.getDay() === 0 || vjDate.getDay() === 6;
+                            const vjHasData = row.vj > 0;
                             return (
                               <tr
                                 key={row.date}
                                 className={cn(
-                                  'border-b border-border/40 transition-colors',
+                                  'border-b border-border/40',
                                   i % 2 === 0 ? 'bg-background' : 'bg-muted/20',
-                                  isWeekend && 'bg-blue-50/40 dark:bg-blue-950/10',
-                                  !row.hasData && 'opacity-60',
+                                  isWeekend && 'bg-amber-50/50 dark:bg-amber-950/10',
                                 )}
                               >
-                                <td className="px-3 py-1.5 text-left tabular-nums">
-                                  <span className="font-medium">{dayNum}</span>
-                                  <span className="text-muted-foreground ml-1">{dayName}</span>
+                                <td className={cn(tdL, 'font-medium w-8')}>
+                                  {format(dayDate, 'd')}
                                 </td>
-                                <td className={cn('px-3 py-1.5 text-right tabular-nums', row.hasData && 'font-medium')}>
+                                <td className={cn(tdL, 'text-muted-foreground')}>
+                                  {format(dayDate, 'dd.MM.yyyy')}
+                                </td>
+                                <td className={cn(tdL, isWeekend ? 'font-medium text-amber-700 dark:text-amber-400' : '')}>
+                                  {format(dayDate, 'EEEE', { locale: de })}
+                                </td>
+                                {showVjDate && (
+                                  <td className={cn(tdL, 'text-muted-foreground')}>
+                                    {format(vjDate, 'dd.MM.yyyy')}
+                                  </td>
+                                )}
+                                {showVjDate && (
+                                  <td className={cn(tdL, vjIsWeekend ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')}>
+                                    {format(vjDate, 'EEEE', { locale: de })}
+                                  </td>
+                                )}
+                                <td className={cn(tdR, row.hasData ? 'font-medium' : 'text-muted-foreground')}>
                                   {fmtN(row.ist, row.hasData)}
                                 </td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
-                                  {fmtN(row.vj, row.hasData)}
-                                </td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
-                                  {budgetData.revenueBudget > 0 ? fmtN(row.bud, true) : '–'}
-                                </td>
-                                <td className={cn('px-3 py-1.5 text-right tabular-nums', devCls(row.devVj, row.hasData && row.vj > 0))}>
-                                  {row.vj > 0 ? fmtDev(row.devVj, row.hasData) : '–'}
-                                </td>
-                                <td className={cn('px-3 py-1.5 text-right tabular-nums', devCls(row.devBud, row.hasData && budgetData.revenueBudget > 0))}>
-                                  {budgetData.revenueBudget > 0 ? fmtDev(row.devBud, row.hasData) : '–'}
-                                </td>
-                                <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/60 font-medium">
-                                  {fmtN(row.cumIst, true)}
-                                </td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
-                                  {fmtN(row.cumVj, row.cumVj > 0)}
-                                </td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
-                                  {budgetData.revenueBudget > 0 ? fmtN(row.cumBud, true) : '–'}
-                                </td>
-                                <td className={cn('px-3 py-1.5 text-right tabular-nums', devCls(row.cumDevVj, row.cumVj > 0))}>
-                                  {row.cumVj > 0 ? fmtDev(row.cumDevVj, true) : '–'}
-                                </td>
-                                <td className={cn('px-3 py-1.5 text-right tabular-nums', devCls(row.cumDevBud, budgetData.revenueBudget > 0))}>
-                                  {budgetData.revenueBudget > 0 ? fmtDev(row.cumDevBud, true) : '–'}
-                                </td>
+                                {showVjRev && (
+                                  <td className={cn(tdR, 'text-muted-foreground')}>
+                                    {fmtN(row.vj, vjHasData)}
+                                  </td>
+                                )}
+                                {showBudRev && (
+                                  <td className={cn(tdR, 'text-muted-foreground')}>
+                                    {hasBud ? fmtN(row.bud, true) : '–'}
+                                  </td>
+                                )}
+                                {showDevVj && (
+                                  <td className={cn(tdR, devCls(row.devVj, row.hasData && vjHasData))}>
+                                    {fmtDev(row.devVj, row.hasData && vjHasData)}
+                                  </td>
+                                )}
+                                {showDevBud && (
+                                  <td className={cn(tdR, devCls(row.devBud, row.hasData && hasBud))}>
+                                    {hasBud ? fmtDev(row.devBud, row.hasData) : '–'}
+                                  </td>
+                                )}
+                                {showKumIst && (
+                                  <td className={cn(tdRK, 'font-medium')}>
+                                    {fmtN(row.cumIst, true)}
+                                  </td>
+                                )}
+                                {showKumVj && (
+                                  <td className={cn(tdR, 'text-muted-foreground')}>
+                                    {fmtN(row.cumVj, row.cumVj > 0)}
+                                  </td>
+                                )}
+                                {showKumBud && (
+                                  <td className={cn(tdR, 'text-muted-foreground')}>
+                                    {hasBud ? fmtN(row.cumBud, true) : '–'}
+                                  </td>
+                                )}
+                                {showKumDevVj && (
+                                  <td className={cn(tdR, devCls(row.cumDevVj, row.cumVj > 0))}>
+                                    {fmtDev(row.cumDevVj, row.cumVj > 0)}
+                                  </td>
+                                )}
+                                {showKumDevBud && (
+                                  <td className={cn(tdR, devCls(row.cumDevBud, hasBud))}>
+                                    {hasBud ? fmtDev(row.cumDevBud, true) : '–'}
+                                  </td>
+                                )}
                               </tr>
                             );
                           })}
                         </tbody>
                         {lastRow && (
                           <tfoot>
-                            <tr className="border-t-2 border-border bg-muted/60 font-semibold">
-                              <td className="px-3 py-2 text-left text-muted-foreground">Gesamt</td>
-                              <td className="px-3 py-2 text-right tabular-nums">{fmtN(lastRow.cumIst, true)}</td>
-                              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{fmtN(lastRow.cumVj, lastRow.cumVj > 0)}</td>
-                              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
-                                {budgetData.revenueBudget > 0 ? fmtN(lastRow.cumBud, true) : '–'}
-                              </td>
-                              <td className={cn('px-3 py-2 text-right tabular-nums', devCls(lastRow.cumDevVj, lastRow.cumVj > 0))}>
-                                {lastRow.cumVj > 0 ? fmtDev(lastRow.cumDevVj, true) : '–'}
-                              </td>
-                              <td className={cn('px-3 py-2 text-right tabular-nums', devCls(lastRow.cumDevBud, budgetData.revenueBudget > 0))}>
-                                {budgetData.revenueBudget > 0 ? fmtDev(lastRow.cumDevBud, true) : '–'}
-                              </td>
-                              <td className="px-3 py-2 text-right tabular-nums border-l border-border/60">{fmtN(lastRow.cumIst, true)}</td>
-                              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{fmtN(lastRow.cumVj, lastRow.cumVj > 0)}</td>
-                              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
-                                {budgetData.revenueBudget > 0 ? fmtN(lastRow.cumBud, true) : '–'}
-                              </td>
-                              <td className={cn('px-3 py-2 text-right tabular-nums', devCls(lastRow.cumDevVj, lastRow.cumVj > 0))}>
-                                {lastRow.cumVj > 0 ? fmtDev(lastRow.cumDevVj, true) : '–'}
-                              </td>
-                              <td className={cn('px-3 py-2 text-right tabular-nums', devCls(lastRow.cumDevBud, budgetData.revenueBudget > 0))}>
-                                {budgetData.revenueBudget > 0 ? fmtDev(lastRow.cumDevBud, true) : '–'}
-                              </td>
+                            <tr className="border-t-2 border-border bg-muted/60 font-semibold text-xs">
+                              <td className={cn(tdL, 'text-muted-foreground')} colSpan={showVjDate ? 5 : 3}>Gesamt</td>
+                              <td className={tdR}>{fmtN(lastRow.cumIst, true)}</td>
+                              {showVjRev  && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(lastRow.cumVj, lastRow.cumVj > 0)}</td>}
+                              {showBudRev && <td className={cn(tdR, 'text-muted-foreground')}>{hasBud ? fmtN(lastRow.cumBud, true) : '–'}</td>}
+                              {showDevVj  && <td className={cn(tdR, devCls(lastRow.cumDevVj, lastRow.cumVj > 0))}>{fmtDev(lastRow.cumDevVj, lastRow.cumVj > 0)}</td>}
+                              {showDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBud, hasBud))}>{hasBud ? fmtDev(lastRow.cumDevBud, true) : '–'}</td>}
+                              {showKumIst   && <td className={cn(tdRK, '')}>{fmtN(lastRow.cumIst, true)}</td>}
+                              {showKumVj    && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(lastRow.cumVj, lastRow.cumVj > 0)}</td>}
+                              {showKumBud   && <td className={cn(tdR, 'text-muted-foreground')}>{hasBud ? fmtN(lastRow.cumBud, true) : '–'}</td>}
+                              {showKumDevVj  && <td className={cn(tdR, devCls(lastRow.cumDevVj, lastRow.cumVj > 0))}>{fmtDev(lastRow.cumDevVj, lastRow.cumVj > 0)}</td>}
+                              {showKumDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBud, hasBud))}>{hasBud ? fmtDev(lastRow.cumDevBud, true) : '–'}</td>}
                             </tr>
                           </tfoot>
                         )}
