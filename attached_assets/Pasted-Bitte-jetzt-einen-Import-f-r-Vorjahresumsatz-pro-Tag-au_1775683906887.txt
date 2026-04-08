@@ -1,0 +1,75 @@
+Bitte jetzt einen Import für Vorjahresumsatz pro Tag aus Excel bauen.
+
+Ausgangslage:
+Es gibt eine Excel-Datei "Vorjahr Umsatz 2025.xlsx".
+
+Dateistruktur:
+- Zeile 1 enthält die Tages-Spalten: 01.01., 02.01., 03.01. ... 31.12.
+- Spalte A = Bezeichnung
+- relevante Zeilen sind:
+  - Gesamt
+  - Food (Speisen)
+  - Beverage (Getränke), falls vorhanden
+- die Tageswerte stehen als CHF-Strings in den Zellen, z.B. "CHF 7'118.00" oder "CHF 96,70"
+
+Ziel:
+Diese Datei soll die Vorjahresumsätze pro Tag importieren, damit Tagesansicht und andere Vergleiche korrekt mit Vorjahr arbeiten können.
+
+Bitte umsetzen:
+
+1. Neue Upload-Funktion:
+- Bereich / Button: "Vorjahresumsatz importieren"
+- Excel-Datei (.xlsx) hochladen
+
+2. Parser:
+- erste Zeile als Datumsheader lesen
+- "01.01." + Importjahr = 2025-01-01 usw.
+- relevante Zeilen anhand von Spalte A erkennen:
+  - Gesamt
+  - Food (Speisen)
+  - Beverage (Getränke), falls vorhanden
+
+3. Werte normalisieren:
+- CHF entfernen
+- Apostrophe / Tausendertrennzeichen entfernen
+- Komma/Punkt sauber in Zahl umwandeln
+- leere Zellen = 0
+
+4. Speicherung:
+- pro Datum einen Tageswert speichern
+- Struktur so, dass bestehende Tagesansicht darauf zugreifen kann
+- previousYearRevenue pro Tag muss danach sauber verfügbar sein
+
+5. Kategorien:
+- "Gesamt" = Gesamtumsatz VJ
+- "Food (Speisen)" = Food VJ
+- "Beverage (Getränke)" = Beverage VJ
+- falls Beverage-Zeile fehlt, nur Gesamt + Food importieren
+
+6. Wichtig:
+- bestehende Budgetdaten nicht zerstören
+- nur Vorjahresumsatz ergänzen/aktualisieren
+- Importjahr frei wählbar oder aus Dateiname ableiten (hier: 2025)
+
+7. Validierung / Vorschau:
+Vor dem finalen Speichern anzeigen:
+- erkanntes Jahr
+- wie viele Tage erkannt wurden
+- welche Zeilen erkannt wurden (Gesamt / Food / Beverage)
+- Beispielwerte für 3 Tage
+
+8. Debug Logs:
+[VJ-IMPORT] detected year: 2025
+[VJ-IMPORT] row found: Gesamt
+[VJ-IMPORT] row found: Food (Speisen)
+[VJ-IMPORT] row found: Beverage (Getränke)
+[VJ-IMPORT] imported day count: 365
+
+9. Nach dem Import:
+- Tagesansicht soll für 2026 automatisch auf 2025 zugreifen können
+- z.B. 03.03.2026 -> Umsatz VJ aus 03.03.2025
+
+10. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wohin die Vorjahres-Tagesumsätze gespeichert werden
+- wie die Datei erkannt und normalisiert wird

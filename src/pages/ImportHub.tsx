@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { GastronoviImportSection } from '@/components/GastronoviImportSection';
+import { VjDailyImportSection } from '@/components/VjDailyImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
 import { loadEmployees, saveActualHourEntry, upsertEmployee } from '@/lib/supabase-db';
@@ -629,6 +630,19 @@ const ImportHub = () => {
           badgeColor="border-blue-300 text-blue-700 bg-blue-50 dark:bg-blue-950/20"
         >
           <AnnualRevenueImportSection />
+        </Section>
+
+        {/* ── 2b. Vorjahres-Tagesumsatz ────────────────────────────────── */}
+        <Section
+          id="vj-tagesumsatz"
+          title="Vorjahres-Tagesumsatz"
+          subtitle="Tägliche Vorjahresumsätze aus Gastronovi-Excel importieren (für Tagesansicht-Vergleich)"
+          icon={<TrendingUp className="h-4 w-4" />}
+          color="border-teal-400 dark:border-teal-600"
+          badge="Excel Tageswerte"
+          badgeColor="border-teal-300 text-teal-700 bg-teal-50 dark:bg-teal-950/20"
+        >
+          <VjDailyImportSection />
         </Section>
 
         {/* ── 3. Ist-Stunden ────────────────────────────────────────────── */}
