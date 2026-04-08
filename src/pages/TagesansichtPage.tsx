@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { grossToNet } from '@/types/personnel';
+import { loadMonth } from '@/lib/reporting-store';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -79,6 +80,9 @@ export default function TagesansichtPage() {
   // dailyBudgets: localStorage sofort + KV nachladen
   const [dailyBudgets, setDailyBudgets] = useState<Record<string, DailyEntry>>(readDailyBudgets);
 
+  // reportingTick: hochzählen bei Sync, damit rows-useMemo loadMonth() neu liest
+  const [reportingTick, setReportingTick] = useState(0);
+
   useEffect(() => {
     setDailyBudgets(readDailyBudgets());
     import('@/lib/supabase-kv').then(({ kvGet }) =>
@@ -86,7 +90,10 @@ export default function TagesansichtPage() {
         .then(r => { if (r && typeof r === 'object') setDailyBudgets(r as Record<string, DailyEntry>); })
         .catch(() => {}),
     );
-    const onSync = () => setDailyBudgets(readDailyBudgets());
+    const onSync = () => {
+      setDailyBudgets(readDailyBudgets());
+      setReportingTick(t => t + 1); // reporting_v1 neu einlesen
+    };
     window.addEventListener('supabase-kv-synced', onSync);
     return () => window.removeEventListener('supabase-kv-synced', onSync);
   }, []);
@@ -108,6 +115,20 @@ export default function TagesansichtPage() {
   const rows = useMemo(() => {
     let cumIst = 0, cumVj = 0, cumBud = 0;
 
+    // VJ-Monat aus reporting_v1 (gleiche Quelle wie Dashboard-KPI)
+    // Priorität: revenuePreviousYear des aktuellen Monats > revenueActual des VJ-Monats
+    const currentRec = loadMonth(year, month);
+    const vjRec      = loadMonth(year - 1, month);
+    const vjMonthlyGross =
+      (currentRec.revenuePreviousYear && currentRec.revenuePreviousYear > 0)
+        ? currentRec.revenuePreviousYear
+        : (vjRec.revenueActual ?? 0);
+    const vjMonthlyBase = showNetRevenue ? grossToNet(vjMonthlyGross) : vjMonthlyGross;
+
+    // Pro-rata Tageswert aus Monatssumme (Anzahl Tage im VJ-Monat)
+    const daysInVJMonth = endOfMonth(new Date(year - 1, month - 1, 1)).getDate();
+    const vjProRata     = vjMonthlyBase > 0 ? vjMonthlyBase / daysInVJMonth : 0;
+
     return monthDays.map(day => {
       const d = format(day, 'yyyy-MM-dd');
 
@@ -116,23 +137,27 @@ export default function TagesansichtPage() {
       const takeaway = dailyBudgets[d]?.takeawayRevenue ?? 0;
       const ist      = showNetRevenue ? grossToNet(gross, takeaway) : gross;
 
-      // VJ: exakt gleicher Kalendertag, Jahr -1
-      const vjKey    = `${year - 1}-${d.slice(5)}`;
-      const vjDirect = dailyBudgets[d]?.previousYearRevenue ?? 0;
-      const vjRaw    = vjDirect > 0 ? vjDirect : (dailyBudgets[vjKey]?.actualRevenue ?? 0);
-      const vj       = showNetRevenue ? grossToNet(vjRaw) : vjRaw;
-      const vjDate   = new Date(vjKey + 'T00:00:00');
+      // VJ: 1. exakter Tageswert aus dailyBudgets, 2. Pro-rata aus reporting_v1
+      const vjKey      = `${year - 1}-${d.slice(5)}`;
+      const vjDirect   = dailyBudgets[d]?.previousYearRevenue ?? 0;
+      const vjDailyRaw = vjDirect > 0 ? vjDirect : (dailyBudgets[vjKey]?.actualRevenue ?? 0);
+      const vjIsExact  = vjDailyRaw > 0;
+      const vjBase     = vjIsExact
+        ? (showNetRevenue ? grossToNet(vjDailyRaw) : vjDailyRaw)
+        : vjProRata; // Fallback: pro-rata aus reporting_v1
+      const vjDate     = new Date(vjKey + 'T00:00:00');
 
       // Diagnose-Log (nur Tag 1-5)
       if (day.getDate() <= 5) {
         console.log(
-          `[TAGESANSICHT] ${d} → VJ ${vjKey}: ${vjRaw}` +
-          ` (direct=${vjDirect}, fallback=${dailyBudgets[vjKey]?.actualRevenue ?? 0})`,
+          `[TAGESANSICHT] ${d} → VJ ${vjKey}:` +
+          ` exact=${vjDailyRaw} | proRata=${vjProRata.toFixed(0)}` +
+          ` | vjMonthly=${vjMonthlyGross} | using=${vjIsExact ? 'exact' : 'proRata'}`,
         );
       }
 
       cumIst += ist;
-      cumVj  += vj;
+      cumVj  += vjBase;
       cumBud += dailyBudgetBase;
 
       // Kumulierte Abweichung VJ in %
@@ -142,21 +167,23 @@ export default function TagesansichtPage() {
 
       return {
         day, vjDate,
-        ist, vj,
-        bud:       dailyBudgetBase,
-        devVj:     ist - vj,
-        devBud:    ist - dailyBudgetBase,
+        ist,
+        vj:         vjBase,
+        vjIsExact,              // true = Tages-Exaktwert, false = pro-rata aus reporting_v1
+        bud:        dailyBudgetBase,
+        devVj:      ist - vjBase,
+        devBud:     ist - dailyBudgetBase,
         cumIst, cumVj, cumBud,
         cumDevVj,
         cumDevVjPct,
         cumDevBud,
         cumDevBudPct: cumBud > 0 ? (cumDevBud / cumBud) * 100 : 0,
-        hasIst: gross > 0,
-        hasVj:  vjRaw > 0,
+        hasIst:  gross > 0,
+        hasVj:   vjBase > 0,           // pro-rata zählt auch als VJ-Wert vorhanden
       };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthDays, dailyBudgets, showNetRevenue, dailyBudgetBase, year]);
+  }, [monthDays, dailyBudgets, showNetRevenue, dailyBudgetBase, year, month, reportingTick]);
 
   const lastRow = rows[rows.length - 1];
 
@@ -424,10 +451,10 @@ export default function TagesansichtPage() {
                         <td className={cn(tdR, row.hasIst ? 'font-semibold' : 'text-muted-foreground')}>
                           {row.hasIst ? fmtN(row.ist) : '–'}
                         </td>
-                        {/* Umsatz VJ */}
+                        {/* Umsatz VJ — exakt oder pro-rata (~) */}
                         {showVjCols && (
-                          <td className={cn(tdR, 'text-muted-foreground')}>
-                            {fmtN(row.vj)}
+                          <td className={cn(tdR, row.vjIsExact ? 'text-muted-foreground' : 'text-muted-foreground/60 italic')}>
+                            {row.hasVj ? (row.vjIsExact ? '' : '~') + fmtN(row.vj) : '0'}
                           </td>
                         )}
                         {/* WT VJ */}
