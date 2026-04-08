@@ -14,13 +14,16 @@
  *   2. dailyBudgets[prevYearDate].actualRevenue (Fallback)
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   startOfMonth, endOfMonth, eachDayOfInterval, format,
   addMonths, subMonths, isSameMonth,
 } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { ChevronLeft, ChevronRight, Table2, TrendingUp, TrendingDown } from 'lucide-react';
+import {
+  ChevronLeft, ChevronRight, Table2, TrendingUp, TrendingDown,
+  Pencil, CheckCircle2, X, AlertTriangle, CheckCircle,
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
@@ -82,6 +85,11 @@ export default function TagesansichtPage() {
 
   // reportingTick: hochzählen bei Sync, damit rows-useMemo loadMonth() neu liest
   const [reportingTick, setReportingTick] = useState(0);
+
+  // Manuelle Ist-Eingabe
+  const [editingDate, setEditingDate] = useState<string | null>(null);
+  const [editValue,   setEditValue]   = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setDailyBudgets(readDailyBudgets());
@@ -226,6 +234,56 @@ export default function TagesansichtPage() {
 
   const hasPrevYearData = rows.some(r => r.hasVj);
 
+  // ── VJ-Status: Prüfung ob Vorjahres-Monatsdaten vorhanden ────────────────
+  const vjStatus = useMemo(() => {
+    const vjMonthRec     = loadMonth(year - 1, month);
+    const currentRec     = loadMonth(year, month);
+    const hasMonthly     = (vjMonthRec.revenueActual ?? 0) > 0 ||
+                           (currentRec.revenuePreviousYear ?? 0) > 0;
+    const vjMonthLabel   = format(new Date(year - 1, month - 1, 1), 'MMMM yyyy', { locale: de });
+    // Exakte Tages-Einträge im VJ-Monat (aus dailyBudgets)
+    const vjMonthDays    = eachDayOfInterval({
+      start: startOfMonth(new Date(year - 1, month - 1, 1)),
+      end:   endOfMonth(new Date(year - 1, month - 1, 1)),
+    });
+    const exactDays = vjMonthDays.filter(d => {
+      const key = format(d, 'yyyy-MM-dd');
+      return (dailyBudgets[key]?.actualRevenue ?? 0) > 0;
+    }).length;
+
+    console.log(
+      `[TAGESANSICHT VJ] Monat: ${format(refDate, 'MMMM yyyy', { locale: de })}` +
+      ` | Vergleich: ${vjMonthLabel}` +
+      ` | VJ-Monatssumme (reporting_v1): ${vjMonthRec.revenueActual ?? 0}` +
+      ` | Exakte Tagesdaten: ${exactDays} von ${vjMonthDays.length} Tagen`,
+    );
+
+    return { hasMonthly, vjMonthLabel, exactDays, totalDays: vjMonthDays.length };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month, dailyBudgets, reportingTick]);
+
+  // ── Manuelle Ist-Eingabe speichern ────────────────────────────────────────
+  const saveManualIst = useCallback(async (dateKey: string, rawInput: string) => {
+    const parsed = parseFloat(rawInput.replace(/['''\s]/g, '').replace(',', '.'));
+    if (isNaN(parsed) || parsed < 0) { setEditingDate(null); return; }
+    // Immer als Brutto speichern (gleich wie Import)
+    const grossValue = parsed;
+    const updated = { ...readDailyBudgets(), [dateKey]: { ...readDailyBudgets()[dateKey], actualRevenue: grossValue } };
+    localStorage.setItem('dailyBudgets', JSON.stringify(updated));
+    setDailyBudgets(updated);
+    setEditingDate(null);
+    try {
+      const { kvSet } = await import('@/lib/supabase-kv');
+      await kvSet('dailyBudgets', updated);
+    } catch { /* lokaler Stand bleibt */ }
+  }, []);
+
+  const openEdit = useCallback((dateKey: string, currentGross: number) => {
+    setEditingDate(dateKey);
+    setEditValue(currentGross > 0 ? String(Math.round(currentGross)) : '');
+    setTimeout(() => inputRef.current?.select(), 30);
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
 
@@ -283,6 +341,38 @@ export default function TagesansichtPage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-4 space-y-3">
+
+        {/* ── VJ-Status-Bar ────────────────────────────────────────────────── */}
+        {showVjCols && (
+          <div className={cn(
+            'flex items-center gap-3 px-3 py-2 rounded-lg border text-xs flex-wrap',
+            vjStatus.hasMonthly
+              ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+              : 'bg-amber-50  dark:bg-amber-950/30  border-amber-200  dark:border-amber-800  text-amber-800  dark:text-amber-300',
+          )}>
+            {vjStatus.hasMonthly
+              ? <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+              : <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
+            <span className="font-medium">
+              {vjStatus.hasMonthly
+                ? 'Vorjahresdaten verfügbar'
+                : 'Keine Vorjahresdaten importiert'}
+            </span>
+            <span className="text-current/70">
+              Vergleichsmonat: {vjStatus.vjMonthLabel}
+            </span>
+            {vjStatus.exactDays > 0 && (
+              <span className="text-current/70">
+                · {vjStatus.exactDays} von {vjStatus.totalDays} Tagen mit Tageswerten
+              </span>
+            )}
+            {vjStatus.hasMonthly && vjStatus.exactDays === 0 && (
+              <span className="text-current/70">
+                · Monatssumme aus Sage/Buchhaltung, pro-rata auf Tage aufgeteilt
+              </span>
+            )}
+          </div>
+        )}
 
         {/* ── KPI-Banner ───────────────────────────────────────────────────── */}
         {lastDataRow && (showKumDevVj || showKumDevBud) && (
@@ -447,9 +537,42 @@ export default function TagesansichtPage() {
                         <td className={cn(tdL, 'font-medium text-[11px]', we ? 'text-slate-600 dark:text-slate-300' : '')}>
                           {wtOf(row.day)}
                         </td>
-                        {/* Ist */}
-                        <td className={cn(tdR, row.hasIst ? 'font-semibold' : 'text-muted-foreground')}>
-                          {row.hasIst ? fmtN(row.ist) : '–'}
+                        {/* Ist — klickbar für manuelle Eingabe */}
+                        <td className={cn(tdR, 'group relative', row.hasIst ? 'font-semibold' : 'text-muted-foreground')}>
+                          {editingDate === format(row.day, 'yyyy-MM-dd') ? (
+                            <div className="flex items-center gap-1 justify-end">
+                              <input
+                                ref={inputRef}
+                                type="text"
+                                inputMode="numeric"
+                                value={editValue}
+                                onChange={e => setEditValue(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') saveManualIst(format(row.day, 'yyyy-MM-dd'), editValue);
+                                  if (e.key === 'Escape') setEditingDate(null);
+                                }}
+                                onBlur={() => saveManualIst(format(row.day, 'yyyy-MM-dd'), editValue)}
+                                autoFocus
+                                className="w-20 text-right border border-primary rounded px-1 py-0 text-xs bg-background tabular-nums focus:outline-none focus:ring-1 focus:ring-primary"
+                                placeholder="Brutto"
+                              />
+                              <button onMouseDown={() => saveManualIst(format(row.day, 'yyyy-MM-dd'), editValue)} className="text-emerald-600 hover:text-emerald-700">
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                              </button>
+                              <button onMouseDown={() => setEditingDate(null)} className="text-muted-foreground hover:text-foreground">
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div
+                              className="flex items-center gap-1 justify-end cursor-pointer"
+                              onClick={() => openEdit(format(row.day, 'yyyy-MM-dd'), dailyBudgets[format(row.day, 'yyyy-MM-dd')]?.actualRevenue ?? 0)}
+                              title="Klicken zum manuellen Eintragen"
+                            >
+                              <span>{row.hasIst ? fmtN(row.ist) : '–'}</span>
+                              <Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-40 transition-opacity" />
+                            </div>
+                          )}
                         </td>
                         {/* Umsatz VJ — exakt oder pro-rata (~) */}
                         {showVjCols && (
