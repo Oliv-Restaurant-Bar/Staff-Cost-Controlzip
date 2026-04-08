@@ -47,6 +47,7 @@ import SalesUpload from "./pages/SalesUpload";
 import ProduktAnalyse from "./pages/ProduktAnalyse";
 import KategorienAnalyse from "./pages/KategorienAnalyse";
 import ProduktStamm from "./pages/ProduktStamm";
+import TagesansichtPage from "./pages/TagesansichtPage";
 
 const queryClient = new QueryClient();
 
@@ -144,6 +145,7 @@ const AppContent = () => {
             <Route path="/absenzen"         element={<AbsenzKostenPage />} />
 
             {/* Verkaufsdaten & Produktanalyse */}
+            <Route path="/tagesansicht"      element={<TagesansichtPage />} />
             <Route path="/verkauf-dashboard" element={<VerkaufsDashboard />} />
             <Route path="/sales-upload"      element={<SalesUpload />} />
             <Route path="/produkt-analyse"   element={<ProduktAnalyse />} />

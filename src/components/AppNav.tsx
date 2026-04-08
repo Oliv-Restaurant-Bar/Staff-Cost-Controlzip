@@ -29,7 +29,7 @@ import {
   Package,
   Upload, Settings,
   LogOut, ChefHat, Utensils, ShieldCheck,
-  CalendarClock, X, Eye,
+  CalendarClock, X, Eye, Table2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -77,6 +77,13 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Verkaufs-Dashboard',
         shortLabel: 'Verkauf',
         icon: PieChart,
+        adminOnly: true,
+      },
+      {
+        path: '/tagesansicht',
+        label: 'Tagesansicht',
+        shortLabel: 'Tage',
+        icon: Table2,
         adminOnly: true,
       },
     ],
