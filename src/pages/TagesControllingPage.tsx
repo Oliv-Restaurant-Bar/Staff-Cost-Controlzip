@@ -19,7 +19,7 @@
  *   CHF-Spalten = Summe; %-Spalten = Total Kosten / Total Umsatz (gewichtet)
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear,
   eachDayOfInterval, format, addWeeks, subWeeks, addMonths, subMonths,
@@ -28,7 +28,7 @@ import {
 import { de } from 'date-fns/locale';
 import {
   ChevronLeft, ChevronRight, CalendarDays, Calendar, CalendarRange,
-  TrendingUp, TrendingDown,
+  TrendingUp, TrendingDown, Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -36,6 +36,13 @@ import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { grossToNet } from '@/types/personnel';
 import { getMonthSummary } from '@/lib/supplier-documents-store';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import {
+  loadScheduleForMonth,
+  loadActualHoursForMonth,
+  loadEmployees as loadEmployeesFromSupabase,
+  type DaySchedule,
+  type ActualHourEntry,
+} from '@/lib/supabase-db';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -44,18 +51,6 @@ type Period = 'woche' | 'monat' | 'jahr';
 interface EmployeeLite {
   id: string;
   hourlyWage: number;
-}
-
-interface TimeSlot {
-  start?: string;
-  end?: string;
-}
-
-interface DaySchedule {
-  früh?: TimeSlot | null;
-  spät?: TimeSlot | null;
-  frühAbsence?: string | null;
-  spätAbsence?: string | null;
 }
 
 interface ControllingRow {
@@ -79,7 +74,6 @@ interface MonthRow {
 // ── Konstanten ────────────────────────────────────────────────────────────────
 
 const WT_ABBR = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'] as const;
-const EMPLOYEES_KEY = 'employees';
 
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────────
 
@@ -89,7 +83,7 @@ const fmtN   = (v: number) => NUM.format(Math.round(v));
 const fmtPct = (v: number, active = true) =>
   active ? NUM1.format(v) + ' %' : '–';
 
-function slotHours(slot: TimeSlot | null | undefined): number {
+function slotHours(slot: { start?: string; end?: string } | null | undefined): number {
   if (!slot?.start || !slot?.end) return 0;
   const [sh, sm] = slot.start.split(':').map(Number);
   const [eh, em] = slot.end.split(':').map(Number);
@@ -104,17 +98,17 @@ function dayNetHours(ds: DaySchedule): number {
   return Math.max(0, Math.round((gross - deduction) * 100) / 100);
 }
 
-// ── Daten laden ───────────────────────────────────────────────────────────────
-
-function loadEmployees(): EmployeeLite[] {
+/**
+ * Liest Mitarbeiter — zuerst aus 'schedule-employees' localStorage, dann Fallback.
+ */
+function loadLocalEmployees(): EmployeeLite[] {
   try {
-    const raw = localStorage.getItem(EMPLOYEES_KEY);
+    const raw = localStorage.getItem('schedule-employees');
     if (raw) {
-      const parsed = JSON.parse(raw) as Array<{ id: string; hourlyWage: number }>;
-      return parsed.map(e => ({ id: e.id, hourlyWage: Number(e.hourlyWage) || 0 }));
+      const parsed = JSON.parse(raw) as Array<{ id: string; hourlyWage?: number; hourly_wage?: number }>;
+      return parsed.map(e => ({ id: e.id, hourlyWage: Number(e.hourlyWage ?? e.hourly_wage) || 0 }));
     }
   } catch { /* ignore */ }
-  // Hard-coded fallback wage map (matches defaultEmployees)
   return [
     { id: '1', hourlyWage: 36.92 }, { id: '2', hourlyWage: 33.85 },
     { id: '3', hourlyWage: 28.00 }, { id: '4', hourlyWage: 31.33 },
@@ -137,70 +131,44 @@ function readDailyBudgets(): Record<string, { actualRevenue?: number; takeawayRe
 }
 
 /**
- * Berechnet Plan-Personalkosten pro Tag aus schedule-v2-YYYY-MM.
+ * Berechnet Plan-Personalkosten pro Tag aus Supabase-Schedule-Map.
  * Rückgabe: Map { 'yyyy-MM-dd' → CHF }
  */
-function buildPlanCostMap(
-  dates: Date[],
-  employees: EmployeeLite[],
+function buildPlanCostFromSchedule(
+  scheduleMap: Record<string, DaySchedule>,
+  wageMap: Record<string, number>,
 ): Record<string, number> {
-  // Betroffene Monate ermitteln
-  const monthKeys = new Set<string>();
-  for (const d of dates) monthKeys.add(format(d, 'yyyy-MM'));
-
-  const wageMap: Record<string, number> = {};
-  for (const e of employees) wageMap[e.id] = e.hourlyWage;
-
-  // dayKey → planCost CHF
   const map: Record<string, number> = {};
-  for (const mk of monthKeys) {
-    try {
-      const raw = localStorage.getItem(`schedule-v2-${mk}`);
-      if (!raw) continue;
-      const scheduleData: Record<string, DaySchedule> = JSON.parse(raw);
-      for (const [cellKey, ds] of Object.entries(scheduleData)) {
-        if (!ds) continue;
-        // cellKey = "${employeeId}-${yyyy-MM-dd}"
-        const dashIdx = cellKey.indexOf('-');
-        if (dashIdx === -1) continue;
-        const empId  = cellKey.slice(0, dashIdx);
-        const dateStr = cellKey.slice(dashIdx + 1);
-        const wage   = wageMap[empId] ?? 0;
-        if (wage === 0) continue;
-        const netH   = dayNetHours(ds);
-        if (netH <= 0) continue;
-        map[dateStr] = (map[dateStr] ?? 0) + netH * wage;
-      }
-    } catch { /* ignore parse errors */ }
+  for (const [cellKey, ds] of Object.entries(scheduleMap)) {
+    if (!ds) continue;
+    const dateStr = cellKey.slice(-10);       // yyyy-MM-dd (last 10 chars)
+    const empId   = cellKey.slice(0, -11);    // strip '-yyyy-MM-dd'
+    const wage    = wageMap[empId] ?? 0;
+    if (wage === 0) continue;
+    const netH    = dayNetHours(ds);
+    if (netH <= 0) continue;
+    map[dateStr] = (map[dateStr] ?? 0) + netH * wage;
   }
   return map;
 }
 
 /**
- * Berechnet Ist-Personalkosten pro Tag aus timeEntries (localStorage).
+ * Berechnet Ist-Personalkosten pro Tag aus Supabase-ActualHours-Map.
  * Rückgabe: Map { 'yyyy-MM-dd' → CHF }
  */
-function buildActualCostMap(
-  dates: Date[],
-  employees: EmployeeLite[],
+function buildActualCostFromHours(
+  actualHoursMap: Record<string, ActualHourEntry>,
+  wageMap: Record<string, number>,
 ): Record<string, number> {
-  const dateSet = new Set(dates.map(d => format(d, 'yyyy-MM-dd')));
-  const wageMap: Record<string, number> = {};
-  for (const e of employees) wageMap[e.id] = e.hourlyWage;
-
   const map: Record<string, number> = {};
-  try {
-    const raw = localStorage.getItem('timeEntries');
-    if (!raw) return map;
-    const entries: Array<{ employeeId?: string; date?: string; actualHours?: number }> = JSON.parse(raw);
-    for (const te of entries) {
-      if (!te.date || !dateSet.has(te.date)) continue;
-      const hours = te.actualHours ?? 0;
-      if (hours <= 0) continue;
-      const wage = wageMap[te.employeeId ?? ''] ?? 0;
-      map[te.date] = (map[te.date] ?? 0) + hours * wage;
-    }
-  } catch { /* ignore */ }
+  for (const [cellKey, entry] of Object.entries(actualHoursMap)) {
+    if (!entry || entry.hours <= 0) continue;
+    const dateStr = cellKey.slice(-10);
+    const empId   = cellKey.slice(0, -11);
+    const wage    = wageMap[empId] ?? 0;
+    if (wage === 0) continue;
+    map[dateStr] = (map[dateStr] ?? 0) + entry.hours * wage;
+  }
   return map;
 }
 
@@ -314,12 +282,20 @@ export default function TagesControllingPage() {
   const [period, setPeriod]   = useState<Period>('monat');
   const [anchor, setAnchor]   = useState(today);
   const [dailyBudgets, setDailyBudgets] = useState(readDailyBudgets);
-  const [employees, setEmployees]       = useState<EmployeeLite[]>([]);
-  const [tick, setTick] = useState(0);
+  const [employees, setEmployees]     = useState<EmployeeLite[]>([]);
+  const [scheduleMap, setScheduleMap] = useState<Record<string, DaySchedule>>({});
+  const [actualHoursMap, setActualHoursMap] = useState<Record<string, ActualHourEntry>>({});
+  const [loadingPK, setLoadingPK]     = useState(false);
+  const loadGenRef = useRef(0);
 
-  // Employees einmalig laden (aus localStorage)
+  // Employees: zuerst localStorage, dann Supabase
   useEffect(() => {
-    setEmployees(loadEmployees());
+    setEmployees(loadLocalEmployees());
+    loadEmployeesFromSupabase().then(emps => {
+      if (emps && emps.length > 0) {
+        setEmployees(emps.map(e => ({ id: e.id, hourlyWage: e.hourlyWage })));
+      }
+    }).catch(() => {});
   }, []);
 
   // dailyBudgets: sofort + bei Sync neu laden
@@ -330,10 +306,7 @@ export default function TagesControllingPage() {
         if (r && typeof r === 'object') setDailyBudgets(r as Record<string, { actualRevenue?: number; takeawayRevenue?: number }>);
       }).catch(() => {}),
     );
-    const onSync = () => {
-      setDailyBudgets(readDailyBudgets());
-      setTick(t => t + 1);
-    };
+    const onSync = () => setDailyBudgets(readDailyBudgets());
     window.addEventListener('supabase-kv-synced', onSync);
     return () => window.removeEventListener('supabase-kv-synced', onSync);
   }, []);
@@ -341,10 +314,46 @@ export default function TagesControllingPage() {
   // Tage der Periode
   const dates = useMemo(() => getPeriodDates(period, anchor), [period, anchor]);
 
+  // Plan & Ist-Stunden aus Supabase laden wenn sich Periode ändert
+  useEffect(() => {
+    const gen = ++loadGenRef.current;
+    setLoadingPK(true);
+
+    // Betroffene Monate bestimmen
+    const monthSet = new Set<string>();
+    for (const d of dates) monthSet.add(format(d, 'yyyy-MM'));
+    const monthDates = Array.from(monthSet).map(mk => {
+      const [y, m] = mk.split('-').map(Number);
+      return new Date(y, m - 1, 1);
+    });
+
+    Promise.all([
+      Promise.all(monthDates.map(md => loadScheduleForMonth(md))),
+      Promise.all(monthDates.map(md => loadActualHoursForMonth(md))),
+    ]).then(([schedules, actuals]) => {
+      if (loadGenRef.current !== gen) return; // veraltete Antwort ignorieren
+      const combined: Record<string, DaySchedule> = {};
+      for (const s of schedules) if (s) Object.assign(combined, s);
+      setScheduleMap(combined);
+
+      const combinedAct: Record<string, ActualHourEntry> = {};
+      for (const a of actuals) if (a) Object.assign(combinedAct, a);
+      setActualHoursMap(combinedAct);
+      setLoadingPK(false);
+    }).catch(() => { if (loadGenRef.current === gen) setLoadingPK(false); });
+  }, [dates]);
+
+  // WageMap aus employees
+  const wageMap = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const e of employees) m[e.id] = e.hourlyWage;
+    return m;
+  }, [employees]);
+
   // Plan / Ist / WES-Maps berechnen
-  const planMap   = useMemo(() => buildPlanCostMap(dates, employees),   [dates, employees, tick]);
-  const actualMap = useMemo(() => buildActualCostMap(dates, employees), [dates, employees, tick]);
-  const wesMap    = useMemo(() => buildWesMap(dates),                   [dates, tick]);
+  const planMap   = useMemo(() => buildPlanCostFromSchedule(scheduleMap, wageMap),   [scheduleMap, wageMap]);
+  const actualMap = useMemo(() => buildActualCostFromHours(actualHoursMap, wageMap), [actualHoursMap, wageMap]);
+  const wesMap    = useMemo(() => buildWesMap(dates), [dates]);
 
   // Zeilenberechnung
   const rows = useMemo((): ControllingRow[] => {
@@ -443,6 +452,14 @@ export default function TagesControllingPage() {
           >
             Heute
           </Button>
+
+          {/* Ladeanzeige PK */}
+          {loadingPK && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <span className="hidden sm:inline">PK lädt…</span>
+            </div>
+          )}
         </div>
       </header>
 
