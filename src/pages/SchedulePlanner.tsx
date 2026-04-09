@@ -30,7 +30,6 @@ import { ShiftLegend } from '@/components/schedule-planner/ShiftLegend';
 import { AddAushilfeDialog } from '@/components/schedule-planner/AddAushilfeDialog';
 import { CopyWeekDialog } from '@/components/schedule-planner/CopyWeekDialog';
 import { PrintScheduleDialog } from '@/components/schedule-planner/PrintScheduleDialog';
-import { SchedulePDFDialog } from '@/components/schedule-planner/SchedulePDFDialog';
 import { DayDetailDialog } from '@/components/schedule-planner/DayDetailDialog';
 import { ShiftConfigDialog } from '@/components/schedule-planner/ShiftConfigDialog';
 import { DaysOffConfigDialog } from '@/components/schedule-planner/DaysOffConfigDialog';
@@ -197,7 +196,7 @@ const SchedulePlanner = () => {
   const [costPassword, setCostPassword] = useState('');
   const [dailyBudgets, setDailyBudgets] = useState<{[key: string]: { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }}>({});
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+  const [exportInitialFormat, setExportInitialFormat] = useState<'excel' | 'pdf'>('excel');
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [küchenplanImportOpen, setKüchenplanImportOpen] = useState(false);
   const [pendingImportResult, setPendingImportResult] = useState<{
@@ -1125,13 +1124,14 @@ const SchedulePlanner = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExportPDF = () => {
-    setPdfDialogOpen(true);
+    setExportInitialFormat('pdf');
+    setExportDialogOpen(true);
   };
 
   const handleExportWithRange = async (options: ExportOptions) => {
     try {
       let specificDays: Date[] | undefined;
-      
+
       if (options.range === 'week') {
         const weekStart = weeksInMonth[selectedWeekIndex] || weeksInMonth[0];
         const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
@@ -1141,30 +1141,47 @@ const SchedulePlanner = () => {
       } else if (options.range === 'custom' && options.customStartDate && options.customEndDate) {
         specificDays = eachDayOfInterval({ start: options.customStartDate, end: options.customEndDate });
       }
-      
-      // Always export both departments
-      await exportScheduleTemplate({
-        employees,
-        currentMonth,
-        department: 'all',
-        dailyBudgets,
-        scheduleData,
-        specificDays
-      });
-      
-      const successMsg = options.range === 'week' 
-        ? 'Woche erfolgreich exportiert' 
+
+      const rangeLabel = options.range === 'week'
+        ? 'Woche'
         : options.range === 'custom'
-          ? 'Benutzerdefinierter Zeitraum erfolgreich exportiert'
-          : 'Dienstplan erfolgreich exportiert';
-      toast.success(successMsg);
+          ? 'Zeitraum'
+          : 'Monat';
+
+      if (options.format === 'pdf') {
+        await exportScheduleToPDF({
+          employees,
+          currentMonth,
+          department: options.department,
+          dailyBudgets,
+          scheduleData,
+          showCosts: options.includeCosts,
+          includeWeeklyPages: true,
+          specificDays,
+        });
+        toast.success(`PDF (${rangeLabel}) erfolgreich exportiert`);
+      } else {
+        await exportScheduleTemplate({
+          employees,
+          currentMonth,
+          department: options.department,
+          dailyBudgets,
+          scheduleData,
+          specificDays,
+          hoursType: options.hoursType,
+          includeCosts: options.includeCosts,
+          actualHoursData,
+        });
+        toast.success(`Excel (${rangeLabel}) erfolgreich exportiert`);
+      }
     } catch (error) {
       toast.error('Fehler beim Export');
-      console.error('Template export error:', error);
+      console.error('Export error:', error);
     }
   };
 
   const handleExportTemplate = () => {
+    setExportInitialFormat('excel');
     setExportDialogOpen(true);
   };
 
@@ -2966,6 +2983,7 @@ const SchedulePlanner = () => {
         currentWeekStart={weeksInMonth[selectedWeekIndex] || weeksInMonth[0]}
         currentWeekEnd={endOfWeek(weeksInMonth[selectedWeekIndex] || weeksInMonth[0], { weekStartsOn: 1 })}
         onExport={handleExportWithRange}
+        initialFormat={exportInitialFormat}
       />
 
       <ImportMatchPreviewDialog
@@ -2977,15 +2995,6 @@ const SchedulePlanner = () => {
         onCancel={handleCancelImport}
       />
 
-      <SchedulePDFDialog
-        open={pdfDialogOpen}
-        onOpenChange={setPdfDialogOpen}
-        employees={employees}
-        scheduleData={scheduleData}
-        currentMonth={currentMonth}
-        dailyBudgets={dailyBudgets}
-        showCosts={showCosts}
-      />
 
       <PlanningAssistant
         open={planningAssistantOpen}

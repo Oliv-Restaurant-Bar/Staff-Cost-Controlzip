@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Calendar, CalendarDays, CalendarRange, FileSpreadsheet, FileText, Clock, Euro, ClipboardList, CheckSquare } from 'lucide-react';
+import { Calendar, CalendarDays, CalendarRange, FileSpreadsheet, FileText, Clock, Euro, ClipboardList, CheckSquare, Users } from 'lucide-react';
 import { format, eachDayOfInterval, startOfMonth, endOfMonth } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -15,6 +15,7 @@ import { Separator } from '@/components/ui/separator';
 export type ExportRange = 'month' | 'week' | 'custom';
 export type ExportHoursType = 'plan' | 'ist' | 'both';
 export type ExportFormat = 'excel' | 'pdf';
+export type ExportDepartment = 'service' | 'küche' | 'all';
 
 export interface ExportOptions {
   range: ExportRange;
@@ -23,6 +24,7 @@ export interface ExportOptions {
   hoursType: ExportHoursType;
   includeCosts: boolean;
   format: ExportFormat;
+  department: ExportDepartment;
 }
 
 interface ExportOptionsDialogProps {
@@ -32,7 +34,7 @@ interface ExportOptionsDialogProps {
   currentWeekStart: Date;
   currentWeekEnd: Date;
   onExport: (options: ExportOptions) => void;
-  onExportPDF?: (options: ExportOptions) => void;
+  initialFormat?: ExportFormat;
 }
 
 export const ExportOptionsDialog = ({
@@ -42,14 +44,15 @@ export const ExportOptionsDialog = ({
   currentWeekStart,
   currentWeekEnd,
   onExport,
-  onExportPDF
+  initialFormat = 'excel',
 }: ExportOptionsDialogProps) => {
   const [selectedRange, setSelectedRange] = useState<ExportRange>('month');
   const [customStartDate, setCustomStartDate] = useState<Date | undefined>(startOfMonth(currentMonth));
   const [customEndDate, setCustomEndDate] = useState<Date | undefined>(endOfMonth(currentMonth));
   const [hoursType, setHoursType] = useState<ExportHoursType>('both');
   const [includeCosts, setIncludeCosts] = useState(true);
-  const [exportFormat, setExportFormat] = useState<ExportFormat>('excel');
+  const [exportFormat, setExportFormat] = useState<ExportFormat>(initialFormat);
+  const [department, setDepartment] = useState<ExportDepartment>('all');
 
   const handleExport = () => {
     const options: ExportOptions = {
@@ -58,14 +61,10 @@ export const ExportOptionsDialog = ({
       customEndDate,
       hoursType,
       includeCosts,
-      format: exportFormat
+      format: exportFormat,
+      department,
     };
-    
-    if (exportFormat === 'pdf' && onExportPDF) {
-      onExportPDF(options);
-    } else {
-      onExport(options);
-    }
+    onExport(options);
     onOpenChange(false);
   };
 
@@ -73,13 +72,44 @@ export const ExportOptionsDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Dienstplan exportieren</DialogTitle>
           <DialogDescription>
-            Wähle Zeitraum, Stundentyp und ob Kosten inkludiert werden sollen
+            Format, Zeitraum und weitere Optionen konfigurieren
           </DialogDescription>
         </DialogHeader>
+
+        {/* Format Section */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Exportformat</Label>
+          <div className="grid grid-cols-2 gap-2">
+            <div
+              className={cn(
+                "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
+                exportFormat === 'excel' ? "border-primary bg-primary/5" : "hover:bg-accent"
+              )}
+              onClick={() => setExportFormat('excel')}
+            >
+              <FileSpreadsheet className={cn("h-6 w-6 mb-1", exportFormat === 'excel' ? "text-primary" : "text-muted-foreground")} />
+              <span className="text-sm font-medium">Excel</span>
+              <span className="text-xs text-muted-foreground">Zum Bearbeiten</span>
+            </div>
+            <div
+              className={cn(
+                "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
+                exportFormat === 'pdf' ? "border-primary bg-primary/5" : "hover:bg-accent"
+              )}
+              onClick={() => setExportFormat('pdf')}
+            >
+              <FileText className={cn("h-6 w-6 mb-1", exportFormat === 'pdf' ? "text-primary" : "text-muted-foreground")} />
+              <span className="text-sm font-medium">PDF</span>
+              <span className="text-xs text-muted-foreground">Zum Drucken</span>
+            </div>
+          </div>
+        </div>
+
+        <Separator />
 
         {/* Time Range Section */}
         <div className="space-y-3">
@@ -92,7 +122,7 @@ export const ExportOptionsDialog = ({
             onValueChange={(value) => setSelectedRange(value as ExportRange)}
             className="space-y-2"
           >
-            <div 
+            <div
               className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-accent cursor-pointer"
               onClick={() => setSelectedRange('month')}
             >
@@ -108,7 +138,7 @@ export const ExportOptionsDialog = ({
               </Label>
             </div>
 
-            <div 
+            <div
               className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-accent cursor-pointer"
               onClick={() => setSelectedRange('week')}
             >
@@ -124,7 +154,7 @@ export const ExportOptionsDialog = ({
               </Label>
             </div>
 
-            <div 
+            <div
               className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-accent cursor-pointer"
               onClick={() => setSelectedRange('custom')}
             >
@@ -215,65 +245,96 @@ export const ExportOptionsDialog = ({
 
         <Separator />
 
-        {/* Hours Type Section */}
-        <div className="space-y-3">
+        {/* Department Section */}
+        <div className="space-y-2">
           <Label className="text-sm font-medium flex items-center gap-2">
-            <Clock className="h-4 w-4" />
-            Stundentyp
+            <Users className="h-4 w-4" />
+            Abteilung
           </Label>
-          <RadioGroup
-            value={hoursType}
-            onValueChange={(value) => setHoursType(value as ExportHoursType)}
-            className="grid grid-cols-3 gap-2"
-          >
-            <div 
-              className={cn(
-                "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
-                hoursType === 'plan' ? "border-primary bg-primary/5" : "hover:bg-accent"
-              )}
-              onClick={() => setHoursType('plan')}
-            >
-              <RadioGroupItem value="plan" id="plan" className="sr-only" />
-              <ClipboardList className={cn("h-5 w-5 mb-1", hoursType === 'plan' ? "text-primary" : "text-muted-foreground")} />
-              <Label htmlFor="plan" className="text-xs font-medium cursor-pointer">
-                Nur Plan
-              </Label>
-            </div>
-
-            <div 
-              className={cn(
-                "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
-                hoursType === 'ist' ? "border-primary bg-primary/5" : "hover:bg-accent"
-              )}
-              onClick={() => setHoursType('ist')}
-            >
-              <RadioGroupItem value="ist" id="ist" className="sr-only" />
-              <CheckSquare className={cn("h-5 w-5 mb-1", hoursType === 'ist' ? "text-primary" : "text-muted-foreground")} />
-              <Label htmlFor="ist" className="text-xs font-medium cursor-pointer">
-                Nur Ist
-              </Label>
-            </div>
-
-            <div 
-              className={cn(
-                "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
-                hoursType === 'both' ? "border-primary bg-primary/5" : "hover:bg-accent"
-              )}
-              onClick={() => setHoursType('both')}
-            >
-              <RadioGroupItem value="both" id="both" className="sr-only" />
-              <div className="flex gap-0.5 mb-1">
-                <ClipboardList className={cn("h-4 w-4", hoursType === 'both' ? "text-primary" : "text-muted-foreground")} />
-                <CheckSquare className={cn("h-4 w-4", hoursType === 'both' ? "text-primary" : "text-muted-foreground")} />
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { value: 'all', label: 'Beide' },
+              { value: 'service', label: 'Service' },
+              { value: 'küche', label: 'Küche' },
+            ] as { value: ExportDepartment; label: string }[]).map(opt => (
+              <div
+                key={opt.value}
+                className={cn(
+                  "flex flex-col items-center p-2 rounded-lg border cursor-pointer transition-colors",
+                  department === opt.value ? "border-primary bg-primary/5" : "hover:bg-accent"
+                )}
+                onClick={() => setDepartment(opt.value)}
+              >
+                <span className={cn("text-sm font-medium", department === opt.value ? "text-primary" : "")}>{opt.label}</span>
               </div>
-              <Label htmlFor="both" className="text-xs font-medium cursor-pointer">
-                Beides
-              </Label>
-            </div>
-          </RadioGroup>
+            ))}
+          </div>
         </div>
 
         <Separator />
+
+        {/* Hours Type Section — nur für Excel relevant */}
+        {exportFormat === 'excel' && (
+          <>
+            <div className="space-y-3">
+              <Label className="text-sm font-medium flex items-center gap-2">
+                <Clock className="h-4 w-4" />
+                Stundentyp
+              </Label>
+              <RadioGroup
+                value={hoursType}
+                onValueChange={(value) => setHoursType(value as ExportHoursType)}
+                className="grid grid-cols-3 gap-2"
+              >
+                <div
+                  className={cn(
+                    "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
+                    hoursType === 'plan' ? "border-primary bg-primary/5" : "hover:bg-accent"
+                  )}
+                  onClick={() => setHoursType('plan')}
+                >
+                  <RadioGroupItem value="plan" id="plan" className="sr-only" />
+                  <ClipboardList className={cn("h-5 w-5 mb-1", hoursType === 'plan' ? "text-primary" : "text-muted-foreground")} />
+                  <Label htmlFor="plan" className="text-xs font-medium cursor-pointer">
+                    Nur Plan
+                  </Label>
+                </div>
+
+                <div
+                  className={cn(
+                    "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
+                    hoursType === 'ist' ? "border-primary bg-primary/5" : "hover:bg-accent"
+                  )}
+                  onClick={() => setHoursType('ist')}
+                >
+                  <RadioGroupItem value="ist" id="ist" className="sr-only" />
+                  <CheckSquare className={cn("h-5 w-5 mb-1", hoursType === 'ist' ? "text-primary" : "text-muted-foreground")} />
+                  <Label htmlFor="ist" className="text-xs font-medium cursor-pointer">
+                    Nur Ist
+                  </Label>
+                </div>
+
+                <div
+                  className={cn(
+                    "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
+                    hoursType === 'both' ? "border-primary bg-primary/5" : "hover:bg-accent"
+                  )}
+                  onClick={() => setHoursType('both')}
+                >
+                  <RadioGroupItem value="both" id="both" className="sr-only" />
+                  <div className="flex gap-0.5 mb-1">
+                    <ClipboardList className={cn("h-4 w-4", hoursType === 'both' ? "text-primary" : "text-muted-foreground")} />
+                    <CheckSquare className={cn("h-4 w-4", hoursType === 'both' ? "text-primary" : "text-muted-foreground")} />
+                  </div>
+                  <Label htmlFor="both" className="text-xs font-medium cursor-pointer">
+                    Beides
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
+            <Separator />
+          </>
+        )}
 
         {/* Costs Option */}
         <div className="flex items-center justify-between p-3 rounded-lg border">
@@ -293,40 +354,6 @@ export const ExportOptionsDialog = ({
             checked={includeCosts}
             onCheckedChange={(checked) => setIncludeCosts(checked === true)}
           />
-        </div>
-
-        <Separator />
-
-        {/* Export Format Section */}
-        <div className="space-y-3">
-          <Label className="text-sm font-medium flex items-center gap-2">
-            Exportformat
-          </Label>
-          <div className="grid grid-cols-2 gap-2">
-            <div 
-              className={cn(
-                "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
-                exportFormat === 'excel' ? "border-primary bg-primary/5" : "hover:bg-accent"
-              )}
-              onClick={() => setExportFormat('excel')}
-            >
-              <FileSpreadsheet className={cn("h-6 w-6 mb-1", exportFormat === 'excel' ? "text-primary" : "text-muted-foreground")} />
-              <span className="text-sm font-medium">Excel</span>
-              <span className="text-xs text-muted-foreground">Zum Bearbeiten</span>
-            </div>
-
-            <div 
-              className={cn(
-                "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
-                exportFormat === 'pdf' ? "border-primary bg-primary/5" : "hover:bg-accent"
-              )}
-              onClick={() => setExportFormat('pdf')}
-            >
-              <FileText className={cn("h-6 w-6 mb-1", exportFormat === 'pdf' ? "text-primary" : "text-muted-foreground")} />
-              <span className="text-sm font-medium">PDF</span>
-              <span className="text-xs text-muted-foreground">Zum Drucken</span>
-            </div>
-          </div>
         </div>
 
         <DialogFooter className="gap-2">

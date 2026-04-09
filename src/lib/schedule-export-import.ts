@@ -31,6 +31,7 @@ interface ExportOptionsV2 {
   dailyBudgets?: Record<string, { plannedRevenue?: number; actualRevenue?: number }>;
   showCosts?: boolean;
   includeWeeklyPages?: boolean;
+  specificDays?: Date[];
 }
 
 export interface NameMatchInfo {
@@ -1525,12 +1526,15 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
 }
 
 export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<void> {
-  const { employees, scheduleData, currentMonth, department = 'all', dailyBudgets = {}, showCosts = false } = options;
+  const { employees, scheduleData, currentMonth, department = 'all', dailyBudgets = {}, showCosts = false, specificDays } = options;
   
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
-  const days = getDaysInMonth(year, month);
-  const monthName = format(currentMonth, 'MMMM yyyy', { locale: de });
+  const days = specificDays ?? getDaysInMonth(year, month);
+  const isPartial = !!specificDays;
+  const monthName = isPartial
+    ? `${format(days[0], 'dd.MM.', { locale: de })}–${format(days[days.length - 1], 'dd.MM.yyyy', { locale: de })}`
+    : format(currentMonth, 'MMMM yyyy', { locale: de });
   
   const shifts = getShiftConfig();
   const shiftMap = getShiftConfigMap();
@@ -1986,7 +1990,9 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
   addLegendPage(pdf, shifts, shiftMap, monthName);
 
   // Save PDF
-  const fileName = `Dienstplan_${format(currentMonth, 'MMMM_yyyy', { locale: de })}.pdf`;
+  const fileName = isPartial
+    ? `Dienstplan_${format(days[0], 'dd-MM', { locale: de })}_bis_${format(days[days.length - 1], 'dd-MM-yyyy', { locale: de })}.pdf`
+    : `Dienstplan_${format(currentMonth, 'MMMM_yyyy', { locale: de })}.pdf`;
   pdf.save(fileName);
 }
 
