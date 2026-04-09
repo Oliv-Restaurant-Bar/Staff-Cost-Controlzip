@@ -18,8 +18,6 @@
  *   /lunch-analyse
  *   /takeaway-analyse
  *   /absenzen
- *   /produkt-analyse
- *   /kategorien
  */
 
 import { NavLink, useLocation } from 'react-router-dom';
@@ -92,6 +90,20 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Tages-Controlling',
         shortLabel: 'Controlling',
         icon: Activity,
+        adminOnly: true,
+      },
+      {
+        path: '/produkt-analyse',
+        label: 'Produktanalyse',
+        shortLabel: 'Produkte',
+        icon: BarChart3,
+        adminOnly: true,
+      },
+      {
+        path: '/kategorien',
+        label: 'Kategorien',
+        shortLabel: 'Kategorien',
+        icon: PieChart,
         adminOnly: true,
       },
     ],
