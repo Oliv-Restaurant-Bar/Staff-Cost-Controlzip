@@ -29,7 +29,7 @@ import {
   Package,
   Upload, Settings,
   LogOut, ChefHat, Utensils, ShieldCheck,
-  CalendarClock, X, Eye, Table2,
+  CalendarClock, X, Eye, Table2, Activity,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -84,6 +84,13 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Tagesansicht',
         shortLabel: 'Tage',
         icon: Table2,
+        adminOnly: true,
+      },
+      {
+        path: '/tages-controlling',
+        label: 'Tages-Controlling',
+        shortLabel: 'Controlling',
+        icon: Activity,
         adminOnly: true,
       },
     ],
