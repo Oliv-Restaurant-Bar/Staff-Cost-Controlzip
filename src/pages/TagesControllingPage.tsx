@@ -67,6 +67,15 @@ interface ControllingRow {
   wesChf:     number;    // Wareneinsatz CHF (pro-rata aus Monatswert)
 }
 
+interface MonthRow {
+  monthKey:  string;   // yyyy-MM
+  label:     string;   // "Januar 2025"
+  umsatz:    number;
+  pkPlanChf: number;
+  pkIstChf:  number;
+  wesChf:    number;
+}
+
 // ── Konstanten ────────────────────────────────────────────────────────────────
 
 const WT_ABBR = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'] as const;
@@ -223,6 +232,27 @@ function buildWesMap(dates: Date[]): Record<string, number> {
   return map;
 }
 
+/**
+ * Aggregiert ControllingRows monatsweise für die Jahresansicht.
+ */
+function buildMonthRows(rows: ControllingRow[]): MonthRow[] {
+  const map = new Map<string, MonthRow>();
+  for (const r of rows) {
+    const mk = r.date.slice(0, 7); // yyyy-MM
+    if (!map.has(mk)) {
+      const [y, m] = mk.split('-').map(Number);
+      const label = format(new Date(y, m - 1, 1), 'MMMM yyyy', { locale: de });
+      map.set(mk, { monthKey: mk, label, umsatz: 0, pkPlanChf: 0, pkIstChf: 0, wesChf: 0 });
+    }
+    const mr = map.get(mk)!;
+    mr.umsatz    += r.umsatz;
+    mr.pkPlanChf += r.pkPlanChf;
+    mr.pkIstChf  += r.pkIstChf;
+    mr.wesChf    += r.wesChf;
+  }
+  return Array.from(map.values()).sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+}
+
 // ── Periode navigieren ────────────────────────────────────────────────────────
 
 function getPeriodDates(period: Period, anchor: Date): Date[] {
@@ -342,6 +372,12 @@ export default function TagesControllingPage() {
     return { sumUmsatz, sumPkPlan, sumPkIst, sumWes, pkPlanPct, pkIstPct, wesPct };
   }, [rows]);
 
+  // Monatszeilen für Jahresansicht
+  const monthRows = useMemo((): MonthRow[] => {
+    if (period !== 'jahr') return [];
+    return buildMonthRows(rows);
+  }, [period, rows]);
+
   const navigate = useCallback((dir: 1 | -1) => {
     setAnchor(a => navAnchor(period, a, dir));
   }, [period]);
@@ -418,8 +454,12 @@ export default function TagesControllingPage() {
               <thead>
                 {/* ── Spalten-Header ──────────────────────────────────────── */}
                 <tr className="bg-muted/60 dark:bg-muted/30">
-                  <th className="px-3 py-2 text-left font-medium text-muted-foreground w-24">Datum</th>
-                  <th className="px-2 py-2 text-center font-medium text-muted-foreground w-10">WT</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground w-24">
+                    {period === 'jahr' ? 'Monat' : 'Datum'}
+                  </th>
+                  {period !== 'jahr' && (
+                    <th className="px-2 py-2 text-center font-medium text-muted-foreground w-10">WT</th>
+                  )}
                   <th className="px-3 py-2 text-right font-medium text-muted-foreground">
                     Ist-Umsatz CHF
                   </th>
@@ -445,7 +485,7 @@ export default function TagesControllingPage() {
 
                 {/* ── Total-Zeile (oben) ──────────────────────────────────── */}
                 <tr className="bg-primary/5 dark:bg-primary/10 border-b-2 border-primary/20 font-semibold">
-                  <td className="px-3 py-2 text-left text-[11px] text-muted-foreground uppercase tracking-wide" colSpan={2}>
+                  <td className="px-3 py-2 text-left text-[11px] text-muted-foreground uppercase tracking-wide" colSpan={period === 'jahr' ? 1 : 2}>
                     Total
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
@@ -473,84 +513,120 @@ export default function TagesControllingPage() {
               </thead>
 
               <tbody>
-                {rows.map(row => {
-                  const isWeekend = row.day.getDay() === 0 || row.day.getDay() === 6;
-                  const isToday   = format(row.day, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd');
-                  const otherMonth = period === 'woche' ? false : !isSameMonth(row.day, anchor);
-                  const pkPlanPct = row.umsatz > 0 ? (row.pkPlanChf / row.umsatz) * 100 : 0;
-                  const pkIstPct  = row.umsatz > 0 && row.pkIstChf > 0 ? (row.pkIstChf  / row.umsatz) * 100 : 0;
-                  const wesPct    = row.umsatz > 0 && row.wesChf  > 0 ? (row.wesChf   / row.umsatz) * 100 : 0;
-
-                  return (
-                    <tr
-                      key={row.date}
-                      className={cn(
-                        'border-b border-border/40 transition-colors hover:bg-muted/30',
-                        isToday && 'bg-blue-50/60 dark:bg-blue-950/20',
-                        isWeekend && !isToday && 'bg-muted/20 dark:bg-muted/10',
-                        otherMonth && 'opacity-40',
-                      )}
-                    >
-                      {/* Datum */}
-                      <td className="px-3 py-1.5 font-mono text-[11px] sm:text-xs text-muted-foreground whitespace-nowrap">
-                        {format(row.day, 'dd.MM.yyyy')}
-                        {isToday && <span className="ml-1 text-blue-600 dark:text-blue-400">◀</span>}
-                      </td>
-
-                      {/* Wochentag */}
-                      <td className={cn(
-                        'px-2 py-1.5 text-center text-[11px] font-medium',
-                        isWeekend ? 'text-muted-foreground' : 'text-foreground',
-                      )}>
-                        {WT_ABBR[row.day.getDay()]}
-                      </td>
-
-                      {/* Ist-Umsatz */}
-                      <td className={cn(
-                        'px-3 py-1.5 text-right tabular-nums font-medium',
-                        row.umsatz === 0 && 'text-muted-foreground',
-                      )}>
-                        {row.umsatz > 0 ? fmtN(row.umsatz) : '–'}
-                      </td>
-
-                      {/* PK Plan CHF */}
-                      <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-muted-foreground">
-                        {row.pkPlanChf > 0 ? fmtN(row.pkPlanChf) : '–'}
-                      </td>
-
-                      {/* PK Ist CHF */}
-                      <td className="px-3 py-1.5 text-right tabular-nums">
-                        {row.pkIstChf > 0
-                          ? <span className={cn(
-                              row.pkIstChf > row.pkPlanChf && row.pkPlanChf > 0
-                                ? 'text-amber-600 dark:text-amber-400'
-                                : 'text-foreground',
-                            )}>{fmtN(row.pkIstChf)}</span>
-                          : <span className="text-muted-foreground">–</span>}
-                      </td>
-
-                      {/* PK Plan % */}
-                      <td className={cn('px-3 py-1.5 text-right tabular-nums border-l border-border/30', pctCls(pkPlanPct))}>
-                        {row.umsatz > 0 && row.pkPlanChf > 0 ? fmtPct(pkPlanPct) : '–'}
-                      </td>
-
-                      {/* PK Ist % */}
-                      <td className={cn('px-3 py-1.5 text-right tabular-nums', pctCls(pkIstPct))}>
-                        {row.umsatz > 0 && row.pkIstChf > 0 ? fmtPct(pkIstPct) : '–'}
-                      </td>
-
-                      {/* WES CHF */}
-                      <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-muted-foreground">
-                        {row.wesChf > 0 ? fmtN(row.wesChf) : '–'}
-                      </td>
-
-                      {/* WES % */}
-                      <td className={cn('px-3 py-1.5 text-right tabular-nums', pctCls(wesPct))}>
-                        {row.umsatz > 0 && row.wesChf > 0 ? fmtPct(wesPct) : '–'}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {period === 'jahr'
+                  /* ── Jahresansicht: 12 Monatszeilen ──────────────────────── */
+                  ? monthRows.map(mr => {
+                      const pkPlanPct = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
+                      const pkIstPct  = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
+                      const wesPct    = mr.umsatz > 0 && mr.wesChf   > 0 ? (mr.wesChf   / mr.umsatz) * 100 : 0;
+                      const isCurrentMonth = mr.monthKey === format(today, 'yyyy-MM');
+                      return (
+                        <tr
+                          key={mr.monthKey}
+                          className={cn(
+                            'border-b border-border/40 transition-colors hover:bg-muted/30',
+                            isCurrentMonth && 'bg-blue-50/60 dark:bg-blue-950/20',
+                          )}
+                        >
+                          {/* Monatsname */}
+                          <td className="px-3 py-2 font-medium text-sm whitespace-nowrap">
+                            {mr.label}
+                            {isCurrentMonth && <span className="ml-1.5 text-blue-600 dark:text-blue-400 text-xs">◀</span>}
+                          </td>
+                          {/* Ist-Umsatz */}
+                          <td className={cn('px-3 py-2 text-right tabular-nums font-medium', mr.umsatz === 0 && 'text-muted-foreground')}>
+                            {mr.umsatz > 0 ? fmtN(mr.umsatz) : '–'}
+                          </td>
+                          {/* PK Plan CHF */}
+                          <td className="px-3 py-2 text-right tabular-nums border-l border-border/30 text-muted-foreground">
+                            {mr.pkPlanChf > 0 ? fmtN(mr.pkPlanChf) : '–'}
+                          </td>
+                          {/* PK Ist CHF */}
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {mr.pkIstChf > 0
+                              ? <span className={cn(mr.pkIstChf > mr.pkPlanChf && mr.pkPlanChf > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')}>{fmtN(mr.pkIstChf)}</span>
+                              : <span className="text-muted-foreground">–</span>}
+                          </td>
+                          {/* PK Plan % */}
+                          <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/30', pctCls(pkPlanPct))}>
+                            {mr.umsatz > 0 && mr.pkPlanChf > 0 ? fmtPct(pkPlanPct) : '–'}
+                          </td>
+                          {/* PK Ist % */}
+                          <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(pkIstPct))}>
+                            {mr.umsatz > 0 && mr.pkIstChf > 0 ? fmtPct(pkIstPct) : '–'}
+                          </td>
+                          {/* WES CHF */}
+                          <td className="px-3 py-2 text-right tabular-nums border-l border-border/30 text-muted-foreground">
+                            {mr.wesChf > 0 ? fmtN(mr.wesChf) : '–'}
+                          </td>
+                          {/* WES % */}
+                          <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(wesPct))}>
+                            {mr.umsatz > 0 && mr.wesChf > 0 ? fmtPct(wesPct) : '–'}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  /* ── Wochen- / Monatsansicht: einzelne Tage ─────────────── */
+                  : rows.map(row => {
+                      const isWeekend  = row.day.getDay() === 0 || row.day.getDay() === 6;
+                      const isToday    = format(row.day, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd');
+                      const otherMonth = period === 'woche' ? false : !isSameMonth(row.day, anchor);
+                      const pkPlanPct  = row.umsatz > 0 ? (row.pkPlanChf / row.umsatz) * 100 : 0;
+                      const pkIstPct   = row.umsatz > 0 && row.pkIstChf > 0 ? (row.pkIstChf / row.umsatz) * 100 : 0;
+                      const wesPct     = row.umsatz > 0 && row.wesChf   > 0 ? (row.wesChf   / row.umsatz) * 100 : 0;
+                      return (
+                        <tr
+                          key={row.date}
+                          className={cn(
+                            'border-b border-border/40 transition-colors hover:bg-muted/30',
+                            isToday && 'bg-blue-50/60 dark:bg-blue-950/20',
+                            isWeekend && !isToday && 'bg-muted/20 dark:bg-muted/10',
+                            otherMonth && 'opacity-40',
+                          )}
+                        >
+                          {/* Datum */}
+                          <td className="px-3 py-1.5 font-mono text-[11px] sm:text-xs text-muted-foreground whitespace-nowrap">
+                            {format(row.day, 'dd.MM.yyyy')}
+                            {isToday && <span className="ml-1 text-blue-600 dark:text-blue-400">◀</span>}
+                          </td>
+                          {/* Wochentag */}
+                          <td className={cn('px-2 py-1.5 text-center text-[11px] font-medium', isWeekend ? 'text-muted-foreground' : 'text-foreground')}>
+                            {WT_ABBR[row.day.getDay()]}
+                          </td>
+                          {/* Ist-Umsatz */}
+                          <td className={cn('px-3 py-1.5 text-right tabular-nums font-medium', row.umsatz === 0 && 'text-muted-foreground')}>
+                            {row.umsatz > 0 ? fmtN(row.umsatz) : '–'}
+                          </td>
+                          {/* PK Plan CHF */}
+                          <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-muted-foreground">
+                            {row.pkPlanChf > 0 ? fmtN(row.pkPlanChf) : '–'}
+                          </td>
+                          {/* PK Ist CHF */}
+                          <td className="px-3 py-1.5 text-right tabular-nums">
+                            {row.pkIstChf > 0
+                              ? <span className={cn(row.pkIstChf > row.pkPlanChf && row.pkPlanChf > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')}>{fmtN(row.pkIstChf)}</span>
+                              : <span className="text-muted-foreground">–</span>}
+                          </td>
+                          {/* PK Plan % */}
+                          <td className={cn('px-3 py-1.5 text-right tabular-nums border-l border-border/30', pctCls(pkPlanPct))}>
+                            {row.umsatz > 0 && row.pkPlanChf > 0 ? fmtPct(pkPlanPct) : '–'}
+                          </td>
+                          {/* PK Ist % */}
+                          <td className={cn('px-3 py-1.5 text-right tabular-nums', pctCls(pkIstPct))}>
+                            {row.umsatz > 0 && row.pkIstChf > 0 ? fmtPct(pkIstPct) : '–'}
+                          </td>
+                          {/* WES CHF */}
+                          <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-muted-foreground">
+                            {row.wesChf > 0 ? fmtN(row.wesChf) : '–'}
+                          </td>
+                          {/* WES % */}
+                          <td className={cn('px-3 py-1.5 text-right tabular-nums', pctCls(wesPct))}>
+                            {row.umsatz > 0 && row.wesChf > 0 ? fmtPct(wesPct) : '–'}
+                          </td>
+                        </tr>
+                      );
+                    })
+                }
               </tbody>
             </table>
           </div>
