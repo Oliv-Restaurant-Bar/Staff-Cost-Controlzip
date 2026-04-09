@@ -281,8 +281,8 @@ export const DayDetailDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
+      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-3">
             <span className={cn(
               "text-lg",
@@ -298,6 +298,7 @@ export const DayDetailDialog = ({
           </DialogTitle>
         </DialogHeader>
 
+        <div className="flex-1 overflow-y-auto min-h-0">
         <div className="space-y-6 py-4">
           {/* Summary */}
           <div className="flex gap-6 p-3 bg-muted/30 rounded-lg flex-wrap">
@@ -633,6 +634,7 @@ export const DayDetailDialog = ({
           {kücheEmployees.length > 0 && (
             renderEmployeeList(kücheEmployees, 'Küche', 'bg-orange-500')
           )}
+        </div>
         </div>
       </DialogContent>
     </Dialog>

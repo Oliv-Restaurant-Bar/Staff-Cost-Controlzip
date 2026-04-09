@@ -218,6 +218,8 @@ const SchedulePlanner = () => {
   const [stationMatrixOpen, setStationMatrixOpen]             = useState(false);
   const [availabilityOpen, setAvailabilityOpen]               = useState(false);
   const [dataLoading, setDataLoading]                         = useState(false);
+  const [proRataDay, setProRataDay]                           = useState<string>('');
+  const [pkDetailOpen, setPkDetailOpen]                       = useState(false);
 
   // ── Save / Dirty state ────────────────────────────────────────────────────
   const [isDirty,       setIsDirty]       = useState(false);
@@ -2154,89 +2156,6 @@ const SchedulePlanner = () => {
           </Card>
         </div>
 
-        {/* ════════════════════════════════════════════════════════════
-            FEATURE 1 – PERSONALKOSTENQUOTE (direkt unter den 4 Karten)
-            ════════════════════════════════════════════════════════════ */}
-        <div className={cn(
-          "rounded-xl border-2 p-4 flex flex-col gap-3",
-          costRatioStatus === 'good'    && "border-green-500 bg-green-50 dark:bg-green-950/30",
-          costRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
-          costRatioStatus === 'high'    && "border-red-500 bg-red-50 dark:bg-red-950/30",
-          costRatioStatus === 'unknown' && "border-slate-300 bg-slate-50 dark:bg-slate-800/40"
-        )}>
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Personalkostenquote
-            </p>
-            <p className="text-xs text-muted-foreground">{pkqPeriodLabel}</p>
-          </div>
-
-          {/* Hauptinhalt */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            {/* Left: icon + big % */}
-            <div className="flex items-center gap-3">
-              <div className={cn(
-                "w-14 h-14 rounded-full flex items-center justify-center text-white text-2xl font-black shrink-0",
-                costRatioStatus === 'good'    && "bg-green-500",
-                costRatioStatus === 'ok'      && "bg-yellow-400",
-                costRatioStatus === 'high'    && "bg-red-500",
-                costRatioStatus === 'unknown' && "bg-slate-400"
-              )}>
-                {costRatioStatus === 'good'    && '✓'}
-                {costRatioStatus === 'ok'      && '!'}
-                {costRatioStatus === 'high'    && '✗'}
-                {costRatioStatus === 'unknown' && '?'}
-              </div>
-              <div>
-                <p className={cn(
-                  "text-4xl font-black leading-none",
-                  costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
-                  costRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
-                  costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
-                  costRatioStatus === 'unknown' && "text-slate-500"
-                )}>
-                  {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '– %'}
-                </p>
-                <p className="text-sm mt-1">
-                  {costRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {effectiveLaborCostThreshold}% erreicht</span>}
-                  {costRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({effectiveLaborCostThreshold}%)</span>}
-                  {costRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {effectiveLaborCostThreshold}% überschritten</span>}
-                  {costRatioStatus === 'unknown' && <span className="text-muted-foreground">Kein Umsatzbudget – Quote noch nicht berechenbar</span>}
-                </p>
-              </div>
-            </div>
-            {/* Right: three key numbers */}
-            <div className="flex gap-5 flex-wrap sm:flex-nowrap">
-              <div className="text-center">
-                <p className="text-xl font-bold tabular-nums">
-                  {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
-                </p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Personalkosten / {pkqPeriodName}
-                </p>
-                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
-              </div>
-              <div className="text-center">
-                <p className="text-xl font-bold tabular-nums">
-                  {activeRevenue > 0
-                    ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue)
-                    : <span className="text-muted-foreground text-base">{scheduleMode === 'ist' ? 'kein Ist-Umsatz' : 'kein Budget'}</span>}
-                </p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {scheduleMode === 'ist' ? 'Ist-Umsatz' : 'Budget'} / {pkqPeriodName}
-                </p>
-                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
-              </div>
-              <div className="text-center">
-                <p className="text-xl font-bold tabular-nums">{effectiveLaborCostThreshold} %</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Zielwert{activeDepartment !== 'all' && <span className="block text-[10px] text-muted-foreground/70">(pro Abteilung)</span>}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
         {/* Overhours Warning */}
         {overhoursEmployees.length > 0 && (
           <Card className="border-destructive/50 bg-destructive/5">
@@ -2560,28 +2479,67 @@ const SchedulePlanner = () => {
             ════════════════════════════════════════════════════════════ */}
         <Card className="border-2 border-blue-200 dark:border-blue-800">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base font-bold flex items-center gap-2">
-              <Clock className="h-5 w-5 text-blue-600" />
-              Soll / Ist – Vergleich
-              <span className="text-sm font-normal text-muted-foreground ml-1">
-                {format(currentMonth, 'MMMM yyyy', { locale: de })}
-              </span>
-              {!hasActualHours && (
-                <span className="ml-auto text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-700">
-                  Keine Ist-Stunden eingetragen
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <CardTitle className="text-base font-bold flex items-center gap-2">
+                <Clock className="h-5 w-5 text-blue-600" />
+                Soll / Ist – Vergleich
+                <span className="text-sm font-normal text-muted-foreground ml-1">
+                  {format(currentMonth, 'MMMM yyyy', { locale: de })}
                 </span>
-              )}
-            </CardTitle>
+                {!hasActualHours && (
+                  <span className="ml-auto text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-700">
+                    Keine Ist-Stunden eingetragen
+                  </span>
+                )}
+              </CardTitle>
+              {/* Pro-Rata Eingabe */}
+              <div className="flex items-center gap-2 shrink-0">
+                <label className="text-xs text-muted-foreground whitespace-nowrap">Soll pro-rata bis Tag:</label>
+                <input
+                  type="number"
+                  min="1"
+                  max={daysInMonth.length}
+                  value={proRataDay}
+                  onChange={e => setProRataDay(e.target.value)}
+                  placeholder={`1–${daysInMonth.length}`}
+                  className="w-16 h-7 rounded border border-input bg-background px-2 text-xs text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                {proRataDay !== '' && (
+                  <button
+                    onClick={() => setProRataDay('')}
+                    className="text-xs text-muted-foreground hover:text-foreground px-1"
+                    title="Zurücksetzen"
+                  >✕</button>
+                )}
+                {proRataDay !== '' && (
+                  <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                    ×{(Math.min(Number(proRataDay), daysInMonth.length) / daysInMonth.length).toFixed(2)}
+                  </span>
+                )}
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="pt-0">
+            {/* Pro-Rata computed values */}
+            {(() => {
+              const day = proRataDay !== '' ? Math.max(1, Math.min(Number(proRataDay), daysInMonth.length)) : null;
+              const factor = day !== null ? day / daysInMonth.length : 1;
+              const sollH   = totalPlannedHoursAll * factor;
+              const sollPK  = totalPlannedLaborCost * factor;
+              const sollRev = totalPlannedRevenue   * factor;
+              const sollPct = sollRev > 0 ? (sollPK / sollRev) * 100 : null;
+              const CHF = new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 });
+              return (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {/* Stunden */}
               <div className="rounded-lg border bg-card p-4">
                 <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">⏱ Stunden</p>
                 <div className="space-y-2">
                   <div className="flex justify-between items-baseline">
-                    <span className="text-sm text-muted-foreground">Soll</span>
-                    <span className="text-base font-bold tabular-nums">{totalPlannedHoursAll.toFixed(1)} h</span>
+                    <span className="text-sm text-muted-foreground">
+                      Soll{day !== null && <span className="ml-1 text-blue-500 text-[10px]">(bis {day}.)</span>}
+                    </span>
+                    <span className="text-base font-bold tabular-nums">{sollH.toFixed(1)} h</span>
                   </div>
                   <div className="flex justify-between items-baseline">
                     <span className="text-sm text-muted-foreground">Ist</span>
@@ -2591,16 +2549,19 @@ const SchedulePlanner = () => {
                   </div>
                   <div className="flex justify-between items-baseline border-t pt-2 mt-1">
                     <span className="text-sm text-muted-foreground">Differenz</span>
-                    <span className={cn(
-                      "text-base font-bold tabular-nums",
-                      !hasActualHours   ? "text-muted-foreground" :
-                      hoursVariance > 0 ? "text-red-600"          :
-                      hoursVariance < 0 ? "text-green-600"         : "text-muted-foreground"
-                    )}>
-                      {hasActualHours
-                        ? (hoursVariance >= 0 ? `+${hoursVariance.toFixed(1)} h` : `${hoursVariance.toFixed(1)} h`)
-                        : '–'}
-                    </span>
+                    {(() => {
+                      const diff = totalActualHoursAll - sollH;
+                      return (
+                        <span className={cn(
+                          "text-base font-bold tabular-nums",
+                          !hasActualHours ? "text-muted-foreground" :
+                          diff > 0 ? "text-red-600" :
+                          diff < 0 ? "text-green-600" : "text-muted-foreground"
+                        )}>
+                          {hasActualHours ? (diff >= 0 ? `+${diff.toFixed(1)} h` : `${diff.toFixed(1)} h`) : '–'}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -2610,30 +2571,35 @@ const SchedulePlanner = () => {
                 <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">💼 Personalkosten</p>
                 <div className="space-y-2">
                   <div className="flex justify-between items-baseline">
-                    <span className="text-sm text-muted-foreground">Soll</span>
+                    <span className="text-sm text-muted-foreground">
+                      Soll{day !== null && <span className="ml-1 text-blue-500 text-[10px]">(bis {day}.)</span>}
+                    </span>
                     <span className="text-base font-bold tabular-nums">
-                      {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedLaborCost)}
+                      {CHF.format(sollPK)}
                     </span>
                   </div>
                   <div className="flex justify-between items-baseline">
                     <span className="text-sm text-muted-foreground">Ist (gesch.)</span>
                     <span className="text-base font-bold tabular-nums">
-                      {hasActualHours
-                        ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalActualLaborCost)
-                        : '–'}
+                      {hasActualHours ? CHF.format(totalActualLaborCost) : '–'}
                     </span>
                   </div>
                   <div className="flex justify-between items-baseline border-t pt-2 mt-1">
                     <span className="text-sm text-muted-foreground">Differenz</span>
-                    <span className={cn(
-                      "text-base font-bold tabular-nums",
-                      !hasActualHours ? "text-muted-foreground" :
-                      (totalActualLaborCost - totalPlannedLaborCost) > 0 ? "text-red-600" : "text-green-600"
-                    )}>
-                      {hasActualHours
-                        ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0, signDisplay: 'always' }).format(totalActualLaborCost - totalPlannedLaborCost)
-                        : '–'}
-                    </span>
+                    {(() => {
+                      const diff = totalActualLaborCost - sollPK;
+                      return (
+                        <span className={cn(
+                          "text-base font-bold tabular-nums",
+                          !hasActualHours ? "text-muted-foreground" :
+                          diff > 0 ? "text-red-600" : "text-green-600"
+                        )}>
+                          {hasActualHours
+                            ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0, signDisplay: 'always' }).format(diff)
+                            : '–'}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -2643,19 +2609,17 @@ const SchedulePlanner = () => {
                 <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">📈 Umsatz</p>
                 <div className="space-y-2">
                   <div className="flex justify-between items-baseline">
-                    <span className="text-sm text-muted-foreground">Soll</span>
+                    <span className="text-sm text-muted-foreground">
+                      Soll{day !== null && <span className="ml-1 text-blue-500 text-[10px]">(bis {day}.)</span>}
+                    </span>
                     <span className="text-base font-bold tabular-nums">
-                      {totalPlannedRevenue > 0
-                        ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedRevenue)
-                        : '–'}
+                      {sollRev > 0 ? CHF.format(sollRev) : '–'}
                     </span>
                   </div>
                   <div className="flex justify-between items-baseline">
                     <span className="text-sm text-muted-foreground">Ist</span>
                     <span className="text-base font-bold tabular-nums">
-                      {hasActualRevenue
-                        ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalActualRevenue)
-                        : '–'}
+                      {hasActualRevenue ? CHF.format(totalActualRevenue) : '–'}
                     </span>
                   </div>
                 </div>
@@ -2669,9 +2633,11 @@ const SchedulePlanner = () => {
                 <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">% Kostenquote</p>
                 <div className="space-y-2">
                   <div className="flex justify-between items-baseline">
-                    <span className="text-sm text-muted-foreground">Soll</span>
+                    <span className="text-sm text-muted-foreground">
+                      Soll{day !== null && <span className="ml-1 text-blue-500 text-[10px]">(bis {day}.)</span>}
+                    </span>
                     <span className="text-base font-bold tabular-nums">
-                      {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '–'}
+                      {sollPct !== null ? `${sollPct.toFixed(1)} %` : '–'}
                     </span>
                   </div>
                   <div className="flex justify-between items-baseline">
@@ -2692,6 +2658,8 @@ const SchedulePlanner = () => {
                 </div>
               </div>
             </div>
+              );
+            })()}
             {!hasActualHours && (
               <p className="text-sm text-muted-foreground mt-4 text-center">
                 Wechseln Sie oben auf den Tab <strong>„Ist"</strong> und klicken Sie auf eine Zelle, um tatsächlich geleistete Stunden einzutragen.
@@ -2699,6 +2667,253 @@ const SchedulePlanner = () => {
             )}
           </CardContent>
         </Card>
+
+        {/* ════════════════════════════════════════════════════════════
+            PERSONALKOSTENQUOTE BANNER (nach Soll/Ist Vergleich)
+            ════════════════════════════════════════════════════════════ */}
+        <div className={cn(
+          "rounded-xl border-2 p-4 flex flex-col gap-3",
+          costRatioStatus === 'good'    && "border-green-500 bg-green-50 dark:bg-green-950/30",
+          costRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
+          costRatioStatus === 'high'    && "border-red-500 bg-red-50 dark:bg-red-950/30",
+          costRatioStatus === 'unknown' && "border-slate-300 bg-slate-50 dark:bg-slate-800/40"
+        )}>
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Personalkostenquote
+            </p>
+            <p className="text-xs text-muted-foreground">{pkqPeriodLabel}</p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            {/* Left: icon + big % (clickable) */}
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-14 h-14 rounded-full flex items-center justify-center text-white text-2xl font-black shrink-0",
+                costRatioStatus === 'good'    && "bg-green-500",
+                costRatioStatus === 'ok'      && "bg-yellow-400",
+                costRatioStatus === 'high'    && "bg-red-500",
+                costRatioStatus === 'unknown' && "bg-slate-400"
+              )}>
+                {costRatioStatus === 'good'    && '✓'}
+                {costRatioStatus === 'ok'      && '!'}
+                {costRatioStatus === 'high'    && '✗'}
+                {costRatioStatus === 'unknown' && '?'}
+              </div>
+              <div>
+                <button
+                  onClick={() => setPkDetailOpen(true)}
+                  className={cn(
+                    "text-4xl font-black leading-none underline-offset-4 hover:underline cursor-pointer",
+                    costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
+                    costRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
+                    costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
+                    costRatioStatus === 'unknown' && "text-slate-500"
+                  )}
+                  title="Details anzeigen"
+                >
+                  {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '– %'}
+                </button>
+                <p className="text-sm mt-1">
+                  {costRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {effectiveLaborCostThreshold}% erreicht</span>}
+                  {costRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({effectiveLaborCostThreshold}%)</span>}
+                  {costRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {effectiveLaborCostThreshold}% überschritten <span className="text-xs font-normal cursor-pointer underline" onClick={() => setPkDetailOpen(true)}>→ Details</span></span>}
+                  {costRatioStatus === 'unknown' && <span className="text-muted-foreground">Kein Umsatzbudget – Quote noch nicht berechenbar</span>}
+                </p>
+              </div>
+            </div>
+            {/* Right: three key numbers */}
+            <div className="flex gap-5 flex-wrap sm:flex-nowrap">
+              <div className="text-center">
+                <p className="text-xl font-bold tabular-nums">
+                  {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Personalkosten / {pkqPeriodName}
+                </p>
+                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-xl font-bold tabular-nums">
+                  {activeRevenue > 0
+                    ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue)
+                    : <span className="text-muted-foreground text-base">{scheduleMode === 'ist' ? 'kein Ist-Umsatz' : 'kein Budget'}</span>}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {scheduleMode === 'ist' ? 'Ist-Umsatz' : 'Budget'} / {pkqPeriodName}
+                </p>
+                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-xl font-bold tabular-nums">{effectiveLaborCostThreshold} %</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Zielwert{activeDepartment !== 'all' && <span className="block text-[10px] text-muted-foreground/70">(pro Abteilung)</span>}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── PKQ Detail Dialog ─────────────────────────────────────────── */}
+        <Dialog open={pkDetailOpen} onOpenChange={setPkDetailOpen}>
+          <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <span className={cn(
+                  "inline-flex w-7 h-7 rounded-full items-center justify-center text-white text-sm font-black shrink-0",
+                  costRatioStatus === 'good'    && "bg-green-500",
+                  costRatioStatus === 'ok'      && "bg-yellow-400",
+                  costRatioStatus === 'high'    && "bg-red-500",
+                  costRatioStatus === 'unknown' && "bg-slate-400"
+                )}>
+                  {costRatioStatus === 'good' ? '✓' : costRatioStatus === 'ok' ? '!' : costRatioStatus === 'high' ? '✗' : '?'}
+                </span>
+                Personalkostenquote – Details
+              </DialogTitle>
+              <DialogDescription>
+                {pkqPeriodLabel} · Ziel: {effectiveLaborCostThreshold}%
+                {plannedCostRatio !== null && ` · Aktuell: ${plannedCostRatio.toFixed(1)}%`}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex-1 overflow-y-auto min-h-0 space-y-4 pr-1">
+              {/* Summary row */}
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground mb-1">Personalkosten</p>
+                  <p className="text-lg font-bold tabular-nums">
+                    {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground mb-1">{scheduleMode === 'ist' ? 'Ist-Umsatz' : 'Budget'}</p>
+                  <p className="text-lg font-bold tabular-nums">
+                    {activeRevenue > 0
+                      ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue)
+                      : '–'}
+                  </p>
+                </div>
+                <div className={cn("rounded-lg border p-3",
+                  costRatioStatus === 'good'    && "border-green-400 bg-green-50 dark:bg-green-950/30",
+                  costRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
+                  costRatioStatus === 'high'    && "border-red-400 bg-red-50 dark:bg-red-950/30",
+                )}>
+                  <p className="text-xs text-muted-foreground mb-1">Quote (Ist/Budget)</p>
+                  <p className={cn("text-lg font-black tabular-nums",
+                    costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
+                    costRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
+                    costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
+                  )}>
+                    {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '–'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Cost delta if over target */}
+              {plannedCostRatio !== null && activeRevenue > 0 && plannedCostRatio > effectiveLaborCostThreshold && (
+                <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-red-700 dark:text-red-400">Mehrkosten gegenüber Ziel ({effectiveLaborCostThreshold}%)</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Bei Ziel wären Personalkosten: {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue * effectiveLaborCostThreshold / 100)}
+                    </p>
+                  </div>
+                  <p className="text-2xl font-black text-red-700 dark:text-red-400 tabular-nums">
+                    + {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(
+                      activeLaborCost - (activeRevenue * effectiveLaborCostThreshold / 100)
+                    )}
+                  </p>
+                </div>
+              )}
+
+              {/* Per-employee breakdown */}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Aufschlüsselung pro Mitarbeiter</p>
+                <div className="rounded-lg border overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-semibold text-xs">Mitarbeiter</th>
+                        <th className="text-right px-3 py-2 font-semibold text-xs">Soll-Std.</th>
+                        <th className="text-right px-3 py-2 font-semibold text-xs">Ist-Std.</th>
+                        <th className="text-right px-3 py-2 font-semibold text-xs">Δ Std.</th>
+                        <th className="text-right px-3 py-2 font-semibold text-xs">Kosten (Soll)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleEmployees.map((emp) => {
+                        const empPlannedH = daysInMonth.reduce((sum, d) => {
+                          const cell = scheduleData[emp.id]?.[format(d, 'yyyy-MM-dd')];
+                          if (!cell || cell.isAbsent) return sum;
+                          return sum + (cell.hours ?? emp.defaultHours ?? 8.4);
+                        }, 0);
+                        const empActualH = daysInMonth.reduce((sum, d) => {
+                          const cell = scheduleData[emp.id]?.[format(d, 'yyyy-MM-dd')];
+                          if (!cell?.actualHours) return sum;
+                          return sum + cell.actualHours;
+                        }, 0);
+                        const diffH = empActualH - empPlannedH;
+                        const hrRate = emp.hourlyRate ?? 0;
+                        const plannedCost = empPlannedH * hrRate;
+                        if (empPlannedH === 0 && empActualH === 0) return null;
+                        return (
+                          <tr key={emp.id} className="border-t hover:bg-muted/30">
+                            <td className="px-3 py-2 font-medium">{emp.name}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{empPlannedH.toFixed(1)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{empActualH > 0 ? empActualH.toFixed(1) : '–'}</td>
+                            <td className={cn("px-3 py-2 text-right tabular-nums font-semibold",
+                              empActualH === 0 ? "text-muted-foreground" :
+                              diffH > 0 ? "text-red-600" : diffH < 0 ? "text-green-600" : "text-muted-foreground"
+                            )}>
+                              {empActualH > 0 ? (diffH >= 0 ? `+${diffH.toFixed(1)}` : diffH.toFixed(1)) : '–'}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                              {hrRate > 0
+                                ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(plannedCost)
+                                : '–'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="bg-muted/50 font-semibold border-t">
+                      <tr>
+                        <td className="px-3 py-2 text-xs font-bold uppercase">Total</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{totalPlannedHoursAll.toFixed(1)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{hasActualHours ? totalActualHoursAll.toFixed(1) : '–'}</td>
+                        <td className={cn("px-3 py-2 text-right tabular-nums",
+                          !hasActualHours ? "text-muted-foreground" :
+                          (totalActualHoursAll - totalPlannedHoursAll) > 0 ? "text-red-600" : "text-green-600"
+                        )}>
+                          {hasActualHours
+                            ? ((totalActualHoursAll - totalPlannedHoursAll) >= 0 ? `+${(totalActualHoursAll - totalPlannedHoursAll).toFixed(1)}` : (totalActualHoursAll - totalPlannedHoursAll).toFixed(1))
+                            : '–'}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(totalPlannedLaborCost)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* Overtime employees */}
+              {overhoursEmployees.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Mitarbeiter mit Überstunden</p>
+                  <div className="space-y-1.5">
+                    {overhoursEmployees.map(({ employee, overhours }) => (
+                      <div key={employee.id} className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/20 px-3 py-2">
+                        <span className="text-sm font-medium">{employee.name}</span>
+                        <span className="text-sm font-bold text-red-600 dark:text-red-400 tabular-nums">+{overhours.toFixed(1)} h</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Monthly Cost Summary - only shows when costs are enabled */}
         <MonthlyCostSummary

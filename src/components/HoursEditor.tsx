@@ -2336,8 +2336,8 @@ export const HoursEditor = ({
 
       {/* Detail Breakdown Dialog */}
       <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
-        <DialogContent className="sm:max-w-[600px]">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] flex flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <Clock className="h-5 w-5" />
               Stunden-Aufschlüsselung
@@ -2347,7 +2347,7 @@ export const HoursEditor = ({
             </DialogDescription>
           </DialogHeader>
           
-          <ScrollArea className="max-h-[450px]">
+          <ScrollArea className="flex-1 min-h-0 max-h-[calc(90vh-120px)]">
             {selectedDateCombinedBreakdown.length > 0 ? (
               <div className="space-y-4">
                 {/* Summary comparison cards */}
