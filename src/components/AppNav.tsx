@@ -26,7 +26,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, PieChart,
   DollarSign, TrendingDown,
-  Package,
+  Package, Users,
   Upload, Settings,
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
@@ -131,6 +131,13 @@ const NAV_GROUPS: NavGroup[] = [
     groupLabel: 'Stammdaten',
     adminOnly: true,
     items: [
+      {
+        path: '/personal-stamm',
+        label: 'Personalstamm',
+        shortLabel: 'Personal',
+        icon: Users,
+        adminOnly: true,
+      },
       {
         path: '/produkt-stamm',
         label: 'Produkte',
