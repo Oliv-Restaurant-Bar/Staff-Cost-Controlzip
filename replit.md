@@ -137,7 +137,8 @@ Finanz- und Tagesbudget-Daten werden bidirektional zwischen localStorage (primä
 - `src/hooks/usePersonnelData.ts` — importMirusDailyData: mode-Parameter (replace/update), replace löscht Mirus-Einträge für den Zeitraum, source='mirus' wird gespeichert
 - `src/components/ActualHoursImportButton.tsx` — Neu: Import-Modus-Selektor (Replace/Update), persistente Namenszuordnungen, unresolved Warnung, source-Tagging
 - `src/pages/Dashboard.tsx` — Neue Dashboard-Startseite (rollenbasierte KPI-Karten)
-- `src/pages/SchedulePlanner.tsx` — Hauptseite Dienstplan (~2000 Zeilen)
+- `src/pages/SchedulePlanner.tsx` — Hauptseite Dienstplan (~3000 Zeilen)
+- `src/components/schedule-planner/MobileDayView.tsx` — Mobile Tagesansicht (Kartenformat, Plan+Ist+Vergleich)
 - `src/pages/Index.tsx` — Legacy Übersicht (unter /overview erreichbar)
 - `src/hooks/usePermissions.ts` — Zentrales Berechtigungssystem
 - `src/hooks/usePersonnelData.ts` — Mitarbeiter + Zeiteinträge (localStorage)

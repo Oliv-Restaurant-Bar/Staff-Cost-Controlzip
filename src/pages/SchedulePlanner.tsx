@@ -23,6 +23,7 @@ import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { resolveZielwert } from '@/lib/zielwerte-store';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
+import { MobileDayView } from '@/components/schedule-planner/MobileDayView';
 import { PlanVsIstGrid } from '@/components/schedule-planner/PlanVsIstGrid';
 import { EmployeeHoursSummary } from '@/components/schedule-planner/EmployeeHoursSummary';
 import { ShiftLegend } from '@/components/schedule-planner/ShiftLegend';
@@ -2321,7 +2322,22 @@ const SchedulePlanner = () => {
           </CardHeader>
           <CardContent>
             <div ref={scheduleGridRef}>
-              {scheduleMode === 'compare' ? (
+              {calendarView === 'day' && displayDays[0] ? (
+                // ── Mobile Tagesansicht ────────────────────────────────────
+                <MobileDayView
+                  employees={filteredEmployees}
+                  day={displayDays[0]}
+                  scheduleData={scheduleData}
+                  actualHoursData={actualHoursData}
+                  scheduleMode={scheduleMode}
+                  onSlotChange={handleSlotChange}
+                  onHoursChange={handleActualHoursChange}
+                  getEmployeeHours={calculateEmployeeHours}
+                  getEmployeeActualHours={calculateEmployeeActualHours}
+                  getTargetHours={getMonthlyTargetHours}
+                  showCosts={effectiveShowCosts}
+                />
+              ) : scheduleMode === 'compare' ? (
                 // ── Plan/Ist-Vergleich ─────────────────────────────────────
                 <PlanVsIstGrid
                   employees={filteredEmployees}
