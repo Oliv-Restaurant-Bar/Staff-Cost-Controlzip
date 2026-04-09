@@ -776,3 +776,174 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
   const month = String(selectedMonth).padStart(2, '0');
   pdf.save(`PersonalFix_${year}-${month}.pdf`);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VARIABEL KOSTENVERGLEICH EXPORT (Plan oder Ist)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface VarKostenvergleichData {
+  selectedYear: number;
+  selectedMonth: number;
+  varByDept: Record<string, VarRow[]>;
+  totalVarHours: number;
+  totalVarCost: number;
+  source: 'plan' | 'ist';
+}
+
+export function exportVarKostenvergleich(data: VarKostenvergleichData): void {
+  const { selectedYear, selectedMonth, varByDept, source } = data;
+  const monthLabel   = getMonthLabel(selectedYear, selectedMonth);
+  const sourceLabel  = source === 'plan' ? 'Plan' : 'Ist';
+  const now          = new Date();
+  const createdLabel = `Erstellt: ${now.toLocaleDateString('de-CH')}, ${now.toLocaleTimeString('de-CH')}`;
+
+  const pdf    = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const W      = pdf.internal.pageSize.getWidth();
+  const H      = pdf.internal.pageSize.getHeight();
+  const margin = 14;
+
+  // ── Dept-Farben nach Quelle ────────────────────────────────────────────────
+
+  const accentBg:   [number, number, number] = source === 'plan' ? C.lightBlue   : C.lightOrange;
+  const accentText: [number, number, number] = source === 'plan' ? C.textBlue    : C.textOrange;
+  const accentFill: [number, number, number] = source === 'plan' ? C.sectionBlue : C.sectionOrange;
+  const footBg:     [number, number, number] = source === 'plan' ? [219, 234, 254] : [255, 237, 213];
+
+  // ── Footer-Helfer ─────────────────────────────────────────────────────────
+
+  const addFooter = () => {
+    const pageCount = pdf.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      pdf.setPage(i);
+      setFont(pdf, 'normal', 7, C.textMuted);
+      const footerY = H - 8;
+      pdf.text(`Variabel Kostenvergleich (${sourceLabel}) · ${monthLabel} · Oliv Gastro AG`, margin, footerY);
+      pdf.text(createdLabel, W / 2, footerY, { align: 'center' });
+      pdf.text(`Seite ${i} / ${pageCount}`, W - margin, footerY, { align: 'right' });
+    }
+  };
+
+  let y = 0;
+
+  const addPageIfNeeded = (space: number) => {
+    if (y + space > H - 18) {
+      addFooter();
+      pdf.addPage();
+      y = margin;
+    }
+  };
+
+  // ── HEADER BANNER ─────────────────────────────────────────────────────────
+
+  pdf.setFillColor(...accentFill);
+  pdf.rect(0, 0, W, 22, 'F');
+
+  setFont(pdf, 'bold', 14, C.white);
+  pdf.text(`Variabel Kostenvergleich — ${sourceLabel}`, margin, 10);
+
+  setFont(pdf, 'normal', 9, [200, 220, 255] as [number, number, number]);
+  pdf.text(monthLabel, margin, 17);
+  pdf.text('Oliv Gastro AG', W - margin, 17, { align: 'right' });
+
+  y = 28;
+
+  // Source-Info Banner
+  pdf.setFillColor(...accentBg);
+  pdf.roundedRect(margin, y, W - 2 * margin, 8, 1.5, 1.5, 'F');
+  setFont(pdf, 'normal', 8, accentText);
+  const srcTxt = source === 'plan'
+    ? 'Quelle: Dienstplan Plan-Stunden'
+    : 'Quelle: Dienstplan Ist-Stunden (Mirus-Import)';
+  pdf.text(srcTxt, W / 2, y + 5, { align: 'center' });
+  y += 12;
+
+  // ── ABTEILUNGS-TABELLEN ───────────────────────────────────────────────────
+
+  let grandHours = 0;
+  let grandCost  = 0;
+
+  const deptEntries = Object.entries(varByDept);
+
+  for (const [dept, rows] of deptEntries) {
+    if (!rows || rows.length === 0) continue;
+
+    const deptLabel = DEPT_LABEL[dept] ?? dept;
+    const deptHours = rows.reduce((s, r) => s + r.hours, 0);
+    const deptCost  = rows.reduce((s, r) => s + r.monthlyCost, 0);
+    grandHours += deptHours;
+    grandCost  += deptCost;
+
+    addPageIfNeeded(40);
+
+    // Dept-Unterheader
+    const deptBg: [number, number, number]   = dept === 'küche' ? [255, 237, 213] : [254, 226, 226];
+    const deptTxt: [number, number, number]  = dept === 'küche' ? C.textOrange    : [185, 28, 28];
+    pdf.setFillColor(...deptBg);
+    pdf.rect(margin, y, W - 2 * margin, 7, 'F');
+    setFont(pdf, 'bold', 9, deptTxt);
+    pdf.text(`${deptLabel} (${rows.length})`, margin + 3, y + 4.8);
+    if (deptHours > 0) {
+      setFont(pdf, 'normal', 8, deptTxt);
+      pdf.text(
+        `${Math.round(deptHours * 10) / 10} h  →  ${fmtCHF(deptCost)}`,
+        W - margin - 3, y + 4.8, { align: 'right' },
+      );
+    }
+    y += 8;
+
+    autoTable(pdf, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [['Name', 'Anstellung', 'Stundenlohn', `${sourceLabel}-Std./Mt`, 'Kosten/Mt', 'Kosten/Jahr']],
+      body: rows.map(r => [
+        r.emp.name,
+        EMP_TYPE_LABEL[r.emp.employmentType] ?? r.emp.employmentType,
+        r.hourlyWage > 0 ? `${fmtCHFDec(r.hourlyWage)}/h` : '–',
+        r.hours > 0 ? `${Math.round(r.hours * 10) / 10} h` : '–',
+        r.monthlyCost > 0 ? fmtCHF(r.monthlyCost) : '–',
+        r.monthlyCost > 0 ? fmtCHF(r.monthlyCost * 12) : '–',
+      ]),
+      foot: [[
+        `Total ${deptLabel}`, '', '',
+        deptHours > 0 ? `${Math.round(deptHours * 10) / 10} h` : '–',
+        deptCost  > 0 ? fmtCHF(deptCost)      : '–',
+        deptCost  > 0 ? fmtCHF(deptCost * 12) : '–',
+      ]],
+      headStyles:    { fillColor: C.tableHead, textColor: C.headerGray, fontStyle: 'bold', fontSize: 7.5, cellPadding: 2.5 },
+      bodyStyles:    { fontSize: 8, cellPadding: { vertical: 2, horizontal: 3 } },
+      footStyles:    { fillColor: footBg, textColor: accentText, fontStyle: 'bold', fontSize: 8, cellPadding: 2.5 },
+      alternateRowStyles: { fillColor: C.rowGray },
+      showFoot: 'lastPage',
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 22 },
+        2: { halign: 'right', cellWidth: 26 },
+        3: { halign: 'right', cellWidth: 24 },
+        4: { halign: 'right', cellWidth: 24 },
+        5: { halign: 'right', cellWidth: 24 },
+      },
+    });
+
+    y = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
+  }
+
+  // ── GESAMT-TOTAL ──────────────────────────────────────────────────────────
+
+  addPageIfNeeded(14);
+  pdf.setFillColor(...accentFill);
+  pdf.roundedRect(margin, y, W - 2 * margin, 11, 2, 2, 'F');
+  setFont(pdf, 'bold', 9, C.white);
+  pdf.text(`Total Variabel · alle Abteilungen — ${sourceLabel}`, margin + 4, y + 7);
+  pdf.text(
+    `${Math.round(grandHours * 10) / 10} h  ·  ${fmtCHF(grandCost)}/Mt  ·  ${fmtCHF(grandCost * 12)}/Jahr`,
+    W - margin - 4, y + 7, { align: 'right' },
+  );
+
+  // ── Footer + Speichern ────────────────────────────────────────────────────
+
+  addFooter();
+
+  const yr  = String(selectedYear);
+  const mo  = String(selectedMonth).padStart(2, '0');
+  pdf.save(`PersonalVariabel_${sourceLabel}_${yr}-${mo}.pdf`);
+}

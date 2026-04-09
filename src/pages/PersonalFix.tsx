@@ -6,9 +6,9 @@ import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
   Utensils, Edit2, Check, X, Info, Building2, AlertCircle, Clock,
   ChevronLeft, ChevronRight, Calendar, BarChart2, Lightbulb, Target,
-  Repeat, FileText,
+  Repeat, FileText, Download,
 } from 'lucide-react';
-import { exportPersonalFixToPDF } from '@/lib/personalfix-export';
+import { exportPersonalFixToPDF, exportVarKostenvergleich } from '@/lib/personalfix-export';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth } from '@/lib/supabase-db';
@@ -809,6 +809,36 @@ export default function PersonalFixPage() {
     }
   };
 
+  const handleVarExport = (source: 'plan' | 'ist') => {
+    try {
+      const varRowsByDept: Record<string, Array<{ emp: Employee; hours: number; monthlyCost: number; hourlyWage: number }>> = {};
+      for (const [dept, emps] of Object.entries(varByDept)) {
+        varRowsByDept[dept] = emps.map(emp => {
+          const hrs = source === 'plan' ? (planHours[emp.id] ?? 0) : (istHours[emp.id] ?? 0);
+          return {
+            emp,
+            hours: hrs,
+            monthlyCost: hrs * (emp.hourlyWage ?? 0),
+            hourlyWage: emp.hourlyWage ?? 0,
+          };
+        });
+      }
+      const allRows = Object.values(varRowsByDept).flat();
+      exportVarKostenvergleich({
+        selectedYear,
+        selectedMonth,
+        varByDept: varRowsByDept,
+        totalVarHours: allRows.reduce((s, r) => s + r.hours, 0),
+        totalVarCost:  allRows.reduce((s, r) => s + r.monthlyCost, 0),
+        source,
+      });
+      toast.success(`${source === 'plan' ? 'Plan' : 'Ist'}-Kostenvergleich exportiert`);
+    } catch (err) {
+      console.error('[PersonalFix] Var-Export Fehler:', err);
+      toast.error('Fehler beim Export');
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -953,9 +983,9 @@ export default function PersonalFixPage() {
                   {DEPT_LABEL[dept] ?? dept} — FIX
                   <Badge variant="secondary" className="text-xs">{rows.length}</Badge>
                 </div>
-                <div className="flex items-center gap-6 text-xs text-muted-foreground">
-                  <span>Basis: <strong className="text-foreground font-mono">{fmtCHF(deptBase)}/Mt</strong></span>
-                  <span>FIX (inkl. 13.): <strong className="text-foreground font-mono">{fmtCHF(deptTotal)}/Mt</strong></span>
+                <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
+                  <span className="whitespace-nowrap">Basis: <strong className="text-foreground font-mono">{fmtCHF(deptBase)}/Mt</strong></span>
+                  <span className="whitespace-nowrap">FIX: <strong className="text-foreground font-mono">{fmtCHF(deptTotal)}/Mt</strong></span>
                 </div>
               </div>
 
@@ -1069,6 +1099,28 @@ export default function PersonalFixPage() {
                 <Clock className="h-4 w-4 text-orange-600" />
                 <span className="text-sm font-semibold">Variable Mitarbeiter — Stunden-Hochrechnung</span>
                 <Badge variant="outline" className="text-xs">{variableEmployees.length}</Badge>
+              </div>
+
+              {/* Export-Buttons Plan / Ist */}
+              <div className="flex items-center gap-1 border-r border-orange-200 dark:border-orange-800 pr-2 mr-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => handleVarExport('plan')}
+                  className="h-7 px-2 text-xs gap-1 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/30"
+                  title="Plan-Kostenvergleich exportieren"
+                >
+                  <Download className="h-3 w-3" />Plan
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => handleVarExport('ist')}
+                  className="h-7 px-2 text-xs gap-1 text-orange-600 hover:bg-orange-50 hover:text-orange-700 dark:text-orange-400 dark:hover:bg-orange-950/30"
+                  title="Ist-Kostenvergleich exportieren"
+                >
+                  <Download className="h-3 w-3" />Ist
+                </Button>
               </div>
 
               {/* Plan / Ist / Manuell Schalter */}
@@ -1401,9 +1453,9 @@ export default function PersonalFixPage() {
                   <span className="text-sm text-muted-foreground">Personalbudget gesamt</span>
                   <span className="font-mono font-semibold">{fmtCHF(personnelBudget)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
+                <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
                   <span className="text-sm text-muted-foreground">− Personal FIX</span>
-                  <span className="font-mono text-blue-700 dark:text-blue-400">− {fmtCHF(totalFixCost)}</span>
+                  <span className="font-mono text-blue-700 dark:text-blue-400 shrink-0">− {fmtCHF(totalFixCost)}</span>
                 </div>
                 <div className={cn(
                   'flex justify-between items-center py-2 px-3 rounded-lg',
@@ -1423,14 +1475,14 @@ export default function PersonalFixPage() {
                   <span className="text-sm text-muted-foreground">Verfügbar für Variabel</span>
                   <span className="font-mono font-semibold">{fmtCHF(availableVarBudget)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">
-                    − Geschätzte Kosten Variabel
-                    <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300">
+                <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
+                  <div className="flex items-center gap-1.5 flex-wrap text-sm text-muted-foreground">
+                    <span className="whitespace-nowrap">− Geschätzte Kosten Variabel</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">
                       {varView === 'plan' ? 'Plan' : varView === 'ist' ? 'Ist' : 'Manuell'}
                     </span>
-                  </span>
-                  <span className="font-mono text-orange-700 dark:text-orange-400">− {fmtCHF(totalVarCost)}</span>
+                  </div>
+                  <span className="font-mono text-orange-700 dark:text-orange-400 shrink-0">− {fmtCHF(totalVarCost)}</span>
                 </div>
                 <div className={cn(
                   'flex justify-between items-center py-2 px-3 rounded-lg',
