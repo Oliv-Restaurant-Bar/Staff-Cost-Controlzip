@@ -487,6 +487,9 @@ export default function TagesControllingPage() {
                     PK Ist CHF
                   </th>
                   <th className="px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50">
+                    Δ PK CHF
+                  </th>
+                  <th className="px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50">
                     PK Plan %
                   </th>
                   <th className="px-3 py-2 text-right font-medium text-muted-foreground">
@@ -513,6 +516,18 @@ export default function TagesControllingPage() {
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {total.sumPkIst > 0 ? fmtN(total.sumPkIst) : <span className="text-muted-foreground font-normal">–</span>}
+                  </td>
+                  {/* Δ PK CHF Total */}
+                  <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/50 font-semibold', (() => {
+                    const d = total.sumPkIst - total.sumPkPlan;
+                    if (total.sumPkIst === 0 || total.sumPkPlan === 0) return 'text-muted-foreground';
+                    return d > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
+                  })())}>
+                    {(() => {
+                      if (total.sumPkIst === 0 || total.sumPkPlan === 0) return '–';
+                      const d = total.sumPkIst - total.sumPkPlan;
+                      return (d > 0 ? '+' : '') + fmtN(d);
+                    })()}
                   </td>
                   <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/50', pctCls(total.pkPlanPct))}>
                     {fmtPct(total.pkPlanPct, total.sumUmsatz > 0)}
@@ -564,6 +579,16 @@ export default function TagesControllingPage() {
                               ? <span className={cn(mr.pkIstChf > mr.pkPlanChf && mr.pkPlanChf > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')}>{fmtN(mr.pkIstChf)}</span>
                               : <span className="text-muted-foreground">–</span>}
                           </td>
+                          {/* Δ PK CHF */}
+                          {(() => {
+                            const d = mr.pkIstChf - mr.pkPlanChf;
+                            const show = mr.pkIstChf > 0 && mr.pkPlanChf > 0;
+                            return (
+                              <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/30', show ? (d > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400') : 'text-muted-foreground')}>
+                                {show ? (d > 0 ? '+' : '') + fmtN(d) : '–'}
+                              </td>
+                            );
+                          })()}
                           {/* PK Plan % */}
                           <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/30', pctCls(pkPlanPct))}>
                             {mr.umsatz > 0 && mr.pkPlanChf > 0 ? fmtPct(pkPlanPct) : '–'}
@@ -624,6 +649,16 @@ export default function TagesControllingPage() {
                               ? <span className={cn(row.pkIstChf > row.pkPlanChf && row.pkPlanChf > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')}>{fmtN(row.pkIstChf)}</span>
                               : <span className="text-muted-foreground">–</span>}
                           </td>
+                          {/* Δ PK CHF */}
+                          {(() => {
+                            const d = row.pkIstChf - row.pkPlanChf;
+                            const show = row.pkIstChf > 0 && row.pkPlanChf > 0;
+                            return (
+                              <td className={cn('px-3 py-1.5 text-right tabular-nums border-l border-border/30', show ? (d > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400') : 'text-muted-foreground')}>
+                                {show ? (d > 0 ? '+' : '') + fmtN(d) : '–'}
+                              </td>
+                            );
+                          })()}
                           {/* PK Plan % */}
                           <td className={cn('px-3 py-1.5 text-right tabular-nums border-l border-border/30', pctCls(pkPlanPct))}>
                             {row.umsatz > 0 && row.pkPlanChf > 0 ? fmtPct(pkPlanPct) : '–'}
