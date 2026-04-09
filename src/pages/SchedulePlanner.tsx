@@ -845,9 +845,9 @@ const SchedulePlanner = () => {
 
       const newState = { ...prev, [cellKey]: updated };
 
-      const date = cellKey.slice(-10);
-      const employeeId = cellKey.slice(0, -11);
-      saveScheduleEntry(employeeId, date, updated).catch(err => {
+      const entryDate = cellKey.slice(-10);
+      const entryEmpId = cellKey.slice(0, -11);
+      saveScheduleEntry(entryEmpId, entryDate, updated).catch(err => {
         console.error('[SCHEDULE] saveScheduleEntry error:', err);
         setSaveError('Eintrag konnte nicht gespeichert werden');
       });
@@ -861,6 +861,35 @@ const SchedulePlanner = () => {
       window.dispatchEvent(new CustomEvent('schedule-updated'));
       return newState;
     });
+
+    // ── Auto-Kopie Abwesenheit → Ist-Stunden ───────────────────────────────
+    // Wenn eine Abwesenheit (FE, K, …) im Plan gesetzt wird, dieselben Stunden
+    // automatisch in die Ist-Stunden übernehmen — aber NUR wenn noch keine
+    // echten Arbeitsstunden (mit Uhrzeiten) importiert wurden.
+    if (absenceType) {
+      const absShiftCfg = Object.values(shiftMap).find(s => s.abbrev === absenceType);
+      const absHours = absShiftCfg?.hours ?? 0;
+      if (absHours > 0 && absShiftCfg?.countsToTarget !== false) {
+        setActualHoursData(prevActual => {
+          const existing = prevActual[cellKey];
+          // Echte Arbeitsschichten (Uhrzeit-Import) nicht überschreiben
+          if (existing?.start && existing?.end) return prevActual;
+
+          const newEntry = { hours: absHours };
+          saveActualHourEntry(employeeId, date, newEntry).catch(err =>
+            console.error('[SCHEDULE] auto-absence actualHours error:', err)
+          );
+          const mk = format(currentMonth, 'yyyy-MM');
+          const stored: Record<string, unknown> = (() => {
+            try { return JSON.parse(localStorage.getItem(`actual-hours-${mk}`) || '{}'); }
+            catch { return {}; }
+          })();
+          localStorage.setItem(`actual-hours-${mk}`, JSON.stringify({ ...stored, [cellKey]: newEntry }));
+          return { ...prevActual, [cellKey]: newEntry };
+        });
+      }
+    }
+    // ── Ende Auto-Kopie ────────────────────────────────────────────────────
   };
 
   const handleAddAushilfe = (employee: Omit<Employee, 'id'>) => {
