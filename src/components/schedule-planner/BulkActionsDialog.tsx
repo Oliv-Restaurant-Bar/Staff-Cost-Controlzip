@@ -9,7 +9,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Zap, CalendarX2, CalendarDays, Copy } from 'lucide-react';
+import { Zap, CalendarX2, CalendarDays, Copy, Wand2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
@@ -18,16 +18,21 @@ import { toast } from 'sonner';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+type ActualHourEntry = { hours: number; start?: string; end?: string };
+
 interface Props {
   open: boolean;
   onClose: () => void;
   employees: Employee[];
   scheduleData: Record<string, DaySchedule>;
+  actualHoursData: Record<string, ActualHourEntry>;
   currentMonth: Date;
   onApply: (delta: Record<string, DaySchedule>) => void;
+  onApplyActual: (delta: Record<string, ActualHourEntry>) => void;
 }
 
-type Tab = 'absence' | 'shift' | 'copy';
+type Tab = 'absence' | 'shift' | 'copy' | 'autofrei';
+type AutoFreiTarget = 'plan' | 'ist' | 'beide';
 type AbsenceSlot = 'früh' | 'spät' | 'beide';
 type CopyMode = 'overwrite' | 'merge';
 
@@ -57,7 +62,7 @@ function toMonday(d: Date): Date {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function BulkActionsDialog({
-  open, onClose, employees, scheduleData, currentMonth, onApply,
+  open, onClose, employees, scheduleData, actualHoursData, currentMonth, onApply, onApplyActual,
 }: Props) {
   const { shiftMap, shifts } = useShiftConfig();
 
@@ -95,6 +100,13 @@ export default function BulkActionsDialog({
   const [cpTgtWeek, setCpTgtWeek] = useState(todayMonday);
   const [cpMode,    setCpMode]    = useState<CopyMode>('overwrite');
 
+  // ── Auto-Frei tab state ──────────────────────────────────────────────────
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const [afCutoff,      setAfCutoff]      = useState(todayStr);
+  const [afEmpId,       setAfEmpId]       = useState('__alle__');
+  const [afSkipWeekend, setAfSkipWeekend] = useState(true);
+  const [afTarget,      setAfTarget]      = useState<AutoFreiTarget>('beide');
+
   // ── Previews ─────────────────────────────────────────────────────────────
 
   const absPreview = useMemo(() => {
@@ -125,6 +137,31 @@ export default function BulkActionsDialog({
     }
     return { shifts: found };
   }, [cpSrcEmp, cpTgtEmp, cpSrcWeek, scheduleData]);
+
+  const afPreview = useMemo(() => {
+    try {
+      const start = startOfMonth(currentMonth);
+      const end   = parseLocalDate(afCutoff < monthStart ? monthStart : afCutoff > monthEnd ? monthEnd : afCutoff);
+      if (end < start) return { planCount: 0, istCount: 0 };
+      const days = eachDayOfInterval({ start, end });
+      const activeDays = days.filter(d => !afSkipWeekend || !isWeekend(d));
+      const targetEmps = afEmpId === '__alle__' ? employees : employees.filter(e => e.id === afEmpId);
+
+      let planCount = 0;
+      let istCount  = 0;
+      for (const emp of targetEmps) {
+        for (const day of activeDays) {
+          const dateStr = format(day, 'yyyy-MM-dd');
+          const key     = `${emp.id}-${dateStr}`;
+          const plan    = scheduleData[key];
+          const isEmpty = !plan || (!plan.früh && !plan.spät && !plan.frühAbsence && !plan.spätAbsence);
+          if (isEmpty) planCount++;
+          if (!actualHoursData[key]) istCount++;
+        }
+      }
+      return { planCount, istCount };
+    } catch { return null; }
+  }, [afCutoff, afEmpId, afSkipWeekend, employees, scheduleData, actualHoursData, currentMonth, monthStart, monthEnd]);
 
   // ── Apply handlers ────────────────────────────────────────────────────────
 
@@ -249,6 +286,54 @@ export default function BulkActionsDialog({
     } catch { toast.error('Fehler beim Kopieren der Woche'); }
   };
 
+  const applyAutoFrei = () => {
+    try {
+      const start      = startOfMonth(currentMonth);
+      const cutoff     = afCutoff < monthStart ? monthStart : afCutoff > monthEnd ? monthEnd : afCutoff;
+      const end        = parseLocalDate(cutoff);
+      if (end < start) { toast.info('Stichtag liegt vor Monatsbeginn'); return; }
+      const days       = eachDayOfInterval({ start, end });
+      const activeDays = days.filter(d => !afSkipWeekend || !isWeekend(d));
+      const targetEmps = afEmpId === '__alle__' ? employees : employees.filter(e => e.id === afEmpId);
+
+      const planDelta: Record<string, DaySchedule>     = {};
+      const istDelta:  Record<string, ActualHourEntry>  = {};
+
+      for (const emp of targetEmps) {
+        for (const day of activeDays) {
+          const dateStr = format(day, 'yyyy-MM-dd');
+          const key     = `${emp.id}-${dateStr}`;
+
+          if (afTarget === 'plan' || afTarget === 'beide') {
+            const plan    = scheduleData[key];
+            const isEmpty = !plan || (!plan.früh && !plan.spät && !plan.frühAbsence && !plan.spätAbsence);
+            if (isEmpty) planDelta[key] = { früh: null, spät: null, frühAbsence: 'F', spätAbsence: null };
+          }
+
+          if (afTarget === 'ist' || afTarget === 'beide') {
+            if (!actualHoursData[key]) istDelta[key] = { hours: 0 };
+          }
+        }
+      }
+
+      const planCount = Object.keys(planDelta).length;
+      const istCount  = Object.keys(istDelta).length;
+
+      if (planCount === 0 && istCount === 0) {
+        toast.info('Alle Felder sind bereits gefüllt – nichts zu tun.');
+        return;
+      }
+      if (planCount > 0) onApply(planDelta);
+      if (istCount  > 0) onApplyActual(istDelta);
+
+      const parts: string[] = [];
+      if (planCount > 0) parts.push(`${planCount} Plan-Zelle(n) → F`);
+      if (istCount  > 0) parts.push(`${istCount} Ist-Zelle(n) → 0h`);
+      toast.success(`Auto-Frei: ${parts.join(', ')}`);
+      onClose();
+    } catch { toast.error('Fehler beim Auto-Frei-Auffüllen'); }
+  };
+
   // ── Shared UI fragments ───────────────────────────────────────────────────
 
   const empSelect = (value: string, onChange: (v: string) => void, placeholder: string) => (
@@ -302,9 +387,10 @@ export default function BulkActionsDialog({
         {/* Tab switcher */}
         <div className="flex gap-1 bg-muted/60 rounded-lg p-0.5 shrink-0">
           {([
-            { id: 'absence' as Tab, label: 'Abwesenheit',   icon: <CalendarX2   className="h-3.5 w-3.5" /> },
-            { id: 'shift'   as Tab, label: 'Schicht füllen', icon: <CalendarDays className="h-3.5 w-3.5" /> },
-            { id: 'copy'    as Tab, label: 'Woche kopieren', icon: <Copy         className="h-3.5 w-3.5" /> },
+            { id: 'absence'  as Tab, label: 'Abwesenheit',   icon: <CalendarX2   className="h-3.5 w-3.5" /> },
+            { id: 'shift'    as Tab, label: 'Schicht',        icon: <CalendarDays className="h-3.5 w-3.5" /> },
+            { id: 'copy'     as Tab, label: 'Kopieren',       icon: <Copy         className="h-3.5 w-3.5" /> },
+            { id: 'autofrei' as Tab, label: 'Auto-Frei',      icon: <Wand2        className="h-3.5 w-3.5" /> },
           ] as const).map(t => (
             <button
               key={t.id}
@@ -584,6 +670,87 @@ export default function BulkActionsDialog({
                 disabled={!cpPreview || cpPreview.shifts === 0}
               >
                 Kopieren
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── AUTO-FREI ────────────────────────────────────────────────────── */}
+        {tab === 'autofrei' && (
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Füllt alle leeren Felder bis zum Stichtag automatisch mit <strong>Frei (F)</strong> auf.
+              Bereits eingetragene Schichten, Abwesenheiten und Ist-Stunden werden <em>nicht</em> überschrieben.
+            </p>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-semibold">Stichtag (inklusive)</Label>
+              <input
+                type="date"
+                value={afCutoff}
+                min={monthStart}
+                max={monthEnd}
+                onChange={e => setAfCutoff(e.target.value)}
+                className="w-full h-8 px-2 text-xs rounded border border-input bg-background"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Alle Tage vom Monatsanfang bis zu diesem Datum werden geprüft.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-semibold">Mitarbeiter</Label>
+              <Select value={afEmpId} onValueChange={setAfEmpId}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Mitarbeiter wählen…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__alle__" className="text-xs font-semibold">— Alle Mitarbeiter —</SelectItem>
+                  {employees.map(e => (
+                    <SelectItem key={e.id} value={e.id} className="text-xs">{e.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Anwenden auf</Label>
+              <div className="flex gap-1.5">
+                {toggleBtn(afTarget === 'plan',  () => setAfTarget('plan'),  'Plan')}
+                {toggleBtn(afTarget === 'ist',   () => setAfTarget('ist'),   'Ist')}
+                {toggleBtn(afTarget === 'beide', () => setAfTarget('beide'), 'Plan + Ist')}
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Plan: setzt Frei (F) im Dienstplan · Ist: setzt 0 h in den Ist-Stunden
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="af-skip"
+                checked={afSkipWeekend}
+                onCheckedChange={v => setAfSkipWeekend(!!v)}
+              />
+              <Label htmlFor="af-skip" className="text-xs cursor-pointer">Wochenenden überspringen</Label>
+            </div>
+
+            <div className="flex items-center justify-between border-t pt-3">
+              <span className="text-xs text-muted-foreground">
+                {afPreview
+                  ? (() => {
+                      const parts: string[] = [];
+                      if (afTarget !== 'ist')   parts.push(`${afPreview.planCount} Plan`);
+                      if (afTarget !== 'plan')  parts.push(`${afPreview.istCount} Ist`);
+                      return `${parts.join(' · ')} leere Zelle(n) werden gefüllt`;
+                    })()
+                  : 'Berechnung…'}
+              </span>
+              <Button
+                size="sm"
+                onClick={applyAutoFrei}
+                disabled={!afPreview || (afPreview.planCount === 0 && afPreview.istCount === 0)}
+              >
+                Füllen
               </Button>
             </div>
           </div>

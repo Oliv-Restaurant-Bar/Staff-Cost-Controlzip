@@ -1723,6 +1723,24 @@ const SchedulePlanner = () => {
     setTimeout(() => handleSave(), 200);
   }, [handleSave]);
 
+  const handleBulkApplyActual = useCallback((delta: Record<string, { hours: number; start?: string; end?: string }>) => {
+    setActualHoursData(prev => {
+      const next = { ...prev, ...delta };
+      const monthKey = format(currentMonth, 'yyyy-MM');
+      localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(next));
+      // Persist each entry to Supabase
+      Object.entries(delta).forEach(([key, entry]) => {
+        const date = key.slice(-10);
+        const empId = key.slice(0, -11);
+        saveActualHourEntry(empId, date, entry).catch(err =>
+          console.error('[SCHEDULE] bulkActual save error:', err)
+        );
+      });
+      window.dispatchEvent(new CustomEvent('schedule-updated'));
+      return next;
+    });
+  }, [currentMonth]);
+
   /** Update a single employee's station data in local state */
   const handleStationEmployeeUpdated = useCallback((updated: Employee) => {
     setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
@@ -2974,8 +2992,10 @@ const SchedulePlanner = () => {
         onClose={() => setBulkActionsOpen(false)}
         employees={employees}
         scheduleData={scheduleData}
+        actualHoursData={actualHoursData}
         currentMonth={currentMonth}
         onApply={handleApplyTemplate}
+        onApplyActual={handleBulkApplyActual}
       />
 
       <TimeSlotStaffingDialog
