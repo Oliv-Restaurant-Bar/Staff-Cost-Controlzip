@@ -4,12 +4,15 @@ import { usePermissions } from '@/hooks/usePermissions';
 import {
   Upload, TrendingUp, Clock, BookOpen, ArrowLeft,
   CheckCircle2, AlertCircle, Loader2, ChevronDown,
+  ShoppingCart, Database, RefreshCw,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { format, parseISO, differenceInDays, differenceInCalendarMonths } from 'date-fns';
+import { de } from 'date-fns/locale';
 import { GastronoviImportSection } from '@/components/GastronoviImportSection';
 import { VjDailyImportSection } from '@/components/VjDailyImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
@@ -21,9 +24,221 @@ import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue
 import { parseAnnualSageKontoblattByMonth, AnnualKostenResult } from '@/lib/pdf-import-engine';
 import { matchCSVRows, buildMonthRecord } from '@/lib/csv-import-engine';
 import { saveMonth } from '@/lib/reporting-store';
+import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 
 const currentYear = new Date().getFullYear();
+
+// ─── Datenstand-Card ──────────────────────────────────────────────────────────
+
+interface DatenstandEntry {
+  label:      string;
+  sublabel:   string;
+  icon:       React.ReactNode;
+  latestDate: string | null;   // yyyy-MM-dd or yyyy-MM (monthly) or null
+  mode:       'daily' | 'monthly';
+  linkTo?:    string;
+}
+
+function formatDatenstandDate(d: string | null, mode: 'daily' | 'monthly'): string {
+  if (!d) return 'Keine Daten';
+  try {
+    if (mode === 'daily') return format(parseISO(d), 'dd.MM.yyyy', { locale: de });
+    const [y, m] = d.split('-').map(Number);
+    return format(new Date(y, m - 1, 1), 'MMMM yyyy', { locale: de });
+  } catch { return d; }
+}
+
+function staleness(d: string | null, mode: 'daily' | 'monthly'): 'ok' | 'warn' | 'stale' | 'none' {
+  if (!d) return 'none';
+  const today = new Date();
+  if (mode === 'daily') {
+    const diff = differenceInDays(today, parseISO(d));
+    if (diff <= 3)  return 'ok';
+    if (diff <= 14) return 'warn';
+    return 'stale';
+  } else {
+    const [y, m] = d.split('-').map(Number);
+    const monthDate = new Date(y, m - 1, 1);
+    const diff = differenceInCalendarMonths(today, monthDate);
+    if (diff <= 1)  return 'ok';
+    if (diff <= 3)  return 'warn';
+    return 'stale';
+  }
+}
+
+const STALENESS_DOT: Record<string, string> = {
+  ok:    'bg-emerald-500',
+  warn:  'bg-amber-400',
+  stale: 'bg-red-500',
+  none:  'bg-muted-foreground/30',
+};
+const STALENESS_LABEL: Record<string, string> = {
+  ok:    'Aktuell',
+  warn:  'Veraltet',
+  stale: 'Sehr veraltet',
+  none:  'Keine Daten',
+};
+const STALENESS_TEXT: Record<string, string> = {
+  ok:    'text-emerald-600 dark:text-emerald-400',
+  warn:  'text-amber-600 dark:text-amber-400',
+  stale: 'text-red-600 dark:text-red-400',
+  none:  'text-muted-foreground',
+};
+
+function readTagesumsatzDate(): string | null {
+  try {
+    const db = JSON.parse(localStorage.getItem('dailyBudgets') || '{}') as Record<string, { actualRevenue?: number }>;
+    const dates = Object.entries(db)
+      .filter(([, v]) => (v?.actualRevenue ?? 0) > 0)
+      .map(([k]) => k)
+      .sort();
+    return dates.at(-1) ?? null;
+  } catch { return null; }
+}
+
+function readIstStundenMonth(): string | null {
+  try {
+    const keys = Object.keys(localStorage).filter(k => /^actual-hours-\d{4}-\d{2}$/.test(k));
+    const validKeys = keys.filter(k => {
+      try { return Object.keys(JSON.parse(localStorage.getItem(k) || '{}')).length > 0; }
+      catch { return false; }
+    });
+    const latest = validKeys.sort().at(-1);
+    return latest ? latest.replace('actual-hours-', '') : null;
+  } catch { return null; }
+}
+
+function readBuchhaltungMonth(): string | null {
+  try {
+    const rep = JSON.parse(localStorage.getItem('reporting_v1') || '{}') as Record<string, { expenseCategories?: unknown[] }>;
+    const months = Object.entries(rep)
+      .filter(([k, v]) => /^\d{4}-\d{2}$/.test(k) && Array.isArray(v?.expenseCategories) && (v.expenseCategories.length ?? 0) > 0)
+      .map(([k]) => k)
+      .sort();
+    return months.at(-1) ?? null;
+  } catch { return null; }
+}
+
+async function fetchVerkaufsdatenDate(): Promise<string | null> {
+  try {
+    const { data } = await supabase
+      .from('product_sales')
+      .select('sale_date')
+      .order('sale_date', { ascending: false })
+      .limit(1);
+    return data?.[0]?.sale_date ?? null;
+  } catch { return null; }
+}
+
+const DatenstandCard = () => {
+  const [verkaufDate, setVerkaufDate]   = useState<string | null | 'loading'>('loading');
+  const [refreshKey, setRefreshKey]     = useState(0);
+
+  const tagesumsatzDate  = readTagesumsatzDate();
+  const istStundenMonth  = readIstStundenMonth();
+  const buchhaltungMonth = readBuchhaltungMonth();
+
+  useEffect(() => {
+    setVerkaufDate('loading');
+    fetchVerkaufsdatenDate().then(d => setVerkaufDate(d));
+  }, [refreshKey]);
+
+  const entries: DatenstandEntry[] = [
+    {
+      label:     'Tagesumsatz',
+      sublabel:  'Gastronovi täglich',
+      icon:      <TrendingUp className="h-3.5 w-3.5" />,
+      latestDate: tagesumsatzDate,
+      mode:      'daily',
+    },
+    {
+      label:     'Ist-Stunden',
+      sublabel:  'Mirus / CSV',
+      icon:      <Clock className="h-3.5 w-3.5" />,
+      latestDate: istStundenMonth,
+      mode:      'monthly',
+      linkTo:    '#ist-stunden',
+    },
+    {
+      label:     'Kosten Buchhaltung',
+      sublabel:  'Sage / CSV-Import',
+      icon:      <BookOpen className="h-3.5 w-3.5" />,
+      latestDate: buchhaltungMonth,
+      mode:      'monthly',
+      linkTo:    '#ist-kosten-buchhaltung',
+    },
+    {
+      label:     'Verkaufsdaten Produkte',
+      sublabel:  'Gastronovi CSV (Artikel)',
+      icon:      <ShoppingCart className="h-3.5 w-3.5" />,
+      latestDate: verkaufDate === 'loading' ? null : verkaufDate,
+      mode:      'daily',
+      linkTo:    '/sales-upload',
+    },
+  ];
+
+  return (
+    <Card className="border-border bg-card shadow-sm">
+      <CardHeader className="pb-2 pt-4">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Database className="h-4 w-4 text-muted-foreground" />
+            <span className="font-semibold">Datenstand</span>
+            <span className="text-xs font-normal text-muted-foreground">– bis wann sind Daten importiert?</span>
+          </CardTitle>
+          <button
+            onClick={() => setRefreshKey(k => k + 1)}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            title="Aktualisieren"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', verkaufDate === 'loading' && 'animate-spin')} />
+          </button>
+        </div>
+      </CardHeader>
+      <CardContent className="pb-4 pt-0">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {entries.map(e => {
+            const s = staleness(e.latestDate, e.mode);
+            const dateStr = formatDatenstandDate(e.latestDate, e.mode);
+            const loading = e.label === 'Verkaufsdaten Produkte' && verkaufDate === 'loading';
+            return (
+              <div
+                key={e.label}
+                className="flex items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5"
+              >
+                {/* Dot */}
+                <span className={cn('flex-none w-2 h-2 rounded-full', STALENESS_DOT[s])} />
+
+                {/* Icon + Labels */}
+                <span className="flex-none text-muted-foreground">{e.icon}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate">{e.label}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{e.sublabel}</p>
+                </div>
+
+                {/* Date + Status */}
+                <div className="text-right flex-none">
+                  {loading
+                    ? <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                    : <>
+                        <p className={cn('text-xs font-medium tabular-nums', STALENESS_TEXT[s])}>
+                          {dateStr}
+                        </p>
+                        <p className={cn('text-[10px]', STALENESS_TEXT[s])}>
+                          {STALENESS_LABEL[s]}
+                        </p>
+                      </>
+                  }
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
 
 // ─── Sektion-Wrapper ─────────────────────────────────────────────────────────
 
@@ -605,6 +820,9 @@ const ImportHub = () => {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-6 pb-24 space-y-4">
+
+        {/* ── 0. Datenstand ─────────────────────────────────────────────── */}
+        <DatenstandCard />
 
         {/* ── 1. Umsatz Ist ────────────────────────────────────────────── */}
         <Section

@@ -27,7 +27,7 @@ import {
   LayoutDashboard, Calendar, PieChart,
   DollarSign, TrendingDown,
   Package, Users,
-  Upload, Settings,
+  Upload, Settings, Inbox,
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
 } from 'lucide-react';
@@ -151,6 +151,13 @@ const NAV_GROUPS: NavGroup[] = [
     groupLabel: 'Admin',
     adminOnly: true,
     items: [
+      {
+        path: '/import',
+        label: 'Import-Zentrale',
+        shortLabel: 'Import',
+        icon: Inbox,
+        adminOnly: true,
+      },
       {
         path: '/sales-upload',
         label: 'Verkaufsdaten Upload',
