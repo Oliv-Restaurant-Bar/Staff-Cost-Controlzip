@@ -17,7 +17,7 @@ export interface ActualHoursEntry {
   hours: number;
   start?: string;
   end?: string;
-  absenceType?: 'FE' | 'K';
+  absenceType?: 'FE' | 'K' | 'F';
 }
 
 interface ActualHoursGridProps {
@@ -142,8 +142,9 @@ const ActualHoursCell = ({
   const cost = hours * employee.hourlyWage;
   const absenceType = entry?.absenceType;
 
-  const handleAbsenceQuick = (type: 'FE' | 'K') => {
-    onSave({ hours: 8.4, absenceType: type });
+  const handleAbsenceQuick = (type: 'FE' | 'K' | 'F') => {
+    const hours = type === 'K' ? 8.4 : 0;
+    onSave({ hours, absenceType: type });
     setIsEditing(false);
   };
 
@@ -156,8 +157,9 @@ const ActualHoursCell = ({
           isWeekendDay && "bg-amber-50 dark:bg-amber-900/20",
           isSundayDay && "bg-amber-100/50 dark:bg-amber-900/30 border-r-2 border-r-primary/30",
           isDayOffDay && "bg-muted/50",
-          absenceType === 'FE' && "bg-gray-100 dark:bg-gray-800/50",
+          absenceType === 'FE' && "bg-blue-50 dark:bg-blue-900/20",
           absenceType === 'K' && "bg-red-50 dark:bg-red-900/20",
+          absenceType === 'F' && "bg-slate-100 dark:bg-slate-800/50",
           !absenceType && hours > 0 && "bg-green-50 dark:bg-green-900/20"
         )}
         onClick={handleCellClick}
@@ -167,8 +169,9 @@ const ActualHoursCell = ({
           <div className="flex flex-col items-center gap-0.5">
             <span className={cn(
               "font-bold text-xs px-1.5 py-0.5 rounded",
-              absenceType === 'FE' && "text-gray-600 dark:text-gray-300",
-              absenceType === 'K' && "text-red-600 dark:text-red-400"
+              absenceType === 'FE' && "text-blue-600 dark:text-blue-400",
+              absenceType === 'K' && "text-red-600 dark:text-red-400",
+              absenceType === 'F' && "text-slate-500 dark:text-slate-400"
             )}>
               {absenceType}
             </span>
@@ -211,15 +214,15 @@ const ActualHoursCell = ({
             {format(day, 'EEEE, d. MMMM yyyy', { locale: de })}
           </div>
 
-          {/* FE / K Schnellauswahl */}
+          {/* FE / K / F Schnellauswahl */}
           <div className="flex gap-2 mb-4">
             <Button
               size="sm"
               variant="outline"
               onClick={() => handleAbsenceQuick('FE')}
-              className={cn("flex-1 font-semibold", absenceType === 'FE' && "border-gray-400 bg-gray-100 dark:bg-gray-800")}
+              className={cn("flex-1 font-semibold text-blue-600 border-blue-300 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/30", absenceType === 'FE' && "bg-blue-50 border-blue-400 dark:bg-blue-900/30")}
             >
-              FE – Ferien (8.4h)
+              FE – Ferien
             </Button>
             <Button
               size="sm"
@@ -228,6 +231,14 @@ const ActualHoursCell = ({
               className={cn("flex-1 font-semibold text-red-600 border-red-300 hover:bg-red-50", absenceType === 'K' && "bg-red-50 dark:bg-red-900/30")}
             >
               K – Krank (8.4h)
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleAbsenceQuick('F')}
+              className={cn("flex-1 font-semibold text-slate-500 border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800/30", absenceType === 'F' && "bg-slate-100 border-slate-400 dark:bg-slate-800/50")}
+            >
+              F – Frei
             </Button>
           </div>
           <div className="relative mb-4">

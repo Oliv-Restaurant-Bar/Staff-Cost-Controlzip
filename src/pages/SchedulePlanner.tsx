@@ -207,7 +207,7 @@ const SchedulePlanner = () => {
   
   // New state for Plan/Ist toggle
   const [scheduleMode, setScheduleMode] = useState<'plan' | 'ist' | 'compare'>('plan');
-  const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string }>>({});
+  const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string; absenceType?: 'FE' | 'K' | 'F' }>>({});
   const [paintTool, setPaintTool] = useState<string | null>(null);
   const [planningAssistantOpen, setPlanningAssistantOpen]     = useState(false);
   const [bulkActionsOpen, setBulkActionsOpen]                 = useState(false);
@@ -1016,7 +1016,7 @@ const SchedulePlanner = () => {
   };
 
   // Handle actual hours change
-  const handleActualHoursChange = (employeeId: string, date: string, entry: { hours: number; start?: string; end?: string } | null) => {
+  const handleActualHoursChange = (employeeId: string, date: string, entry: { hours: number; start?: string; end?: string; absenceType?: 'FE' | 'K' | 'F' } | null) => {
     const cellKey = `${employeeId}-${date}`;
     
     setActualHoursData(prev => {
