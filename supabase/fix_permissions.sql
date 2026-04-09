@@ -62,3 +62,8 @@ CREATE POLICY "auth_settings_select"   ON public.app_settings     FOR SELECT TO 
 CREATE POLICY "auth_settings_insert"   ON public.app_settings     FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "auth_settings_update"   ON public.app_settings     FOR UPDATE TO authenticated USING (true);
 CREATE POLICY "auth_settings_delete"   ON public.app_settings     FOR DELETE TO authenticated USING (true);
+
+-- Fehlende Mitarbeiter nachtragen (sicher: ON CONFLICT überspringt bereits existierende)
+INSERT INTO public.employees (id, name, department, employment_type, hourly_wage)
+VALUES ('24', 'Sajed', 'kueche', 'vollzeit', 20.36)
+ON CONFLICT (id) DO NOTHING;

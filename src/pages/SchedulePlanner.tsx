@@ -135,6 +135,7 @@ const defaultEmployees: Employee[] = [
   { id: '19', name: 'Asim', department: 'küche', employmentType: 'vollzeit', hourlyWage: 28.92, weeklyHours: 42, monthlySalary: 4338.45, monthlySalaryWith13th: 4859.06 },
   { id: '20', name: 'Ali', department: 'küche', employmentType: 'teilzeit', hourlyWage: 20.36 },
   { id: '21', name: 'Sadete', department: 'küche', employmentType: 'teilzeit', hourlyWage: 20.36 },
+  { id: '24', name: 'Sajed', department: 'küche', employmentType: 'vollzeit', hourlyWage: 20.36 },
   { id: '22', name: 'Aushilfe 1 Küche F', department: 'küche', employmentType: 'teilzeit', hourlyWage: 30.00 },
   { id: '23', name: 'Aushilfe 2 Küche A', department: 'küche', employmentType: 'teilzeit', hourlyWage: 30.00 },
 ];
@@ -319,6 +320,46 @@ const SchedulePlanner = () => {
       const supabaseEmployees = await loadEmployees();
       if (fetchGenRef.current !== gen) { console.log('[ROUTE] gen=' + gen + ' superseded after employees – aborting'); return; }
       if (supabaseEmployees && supabaseEmployees.length > 0) {
+        // ID-Migration: wenn Supabase andere IDs zurückgibt als der lokale Fallback,
+        // localStorage-Keys für actual-hours migrieren (verhindert Anzeige-Mismatch).
+        const idMap = new Map<string, string>(); // oldId → newId
+        for (const supaEmp of supabaseEmployees) {
+          const localMatch = defaultEmployees.find(d => d.name === supaEmp.name);
+          if (localMatch && localMatch.id !== supaEmp.id) {
+            idMap.set(localMatch.id, supaEmp.id);
+          }
+        }
+        if (idMap.size > 0) {
+          console.log('[ID-Migration] Veraltete Employee-IDs in localStorage migrieren:', Object.fromEntries(idMap));
+          for (let offset = 0; offset < 13; offset++) {
+            const d = new Date();
+            d.setMonth(d.getMonth() - offset);
+            const mk = format(d, 'yyyy-MM');
+            const sk = `actual-hours-${mk}`;
+            const stored = localStorage.getItem(sk);
+            if (!stored) continue;
+            try {
+              const data: Record<string, unknown> = JSON.parse(stored);
+              const migrated: Record<string, unknown> = {};
+              let changed = false;
+              for (const [key, value] of Object.entries(data)) {
+                const dateStr = key.slice(-10);
+                const empId = key.slice(0, -11);
+                const newId = idMap.get(empId);
+                if (newId) {
+                  migrated[`${newId}-${dateStr}`] = value;
+                  changed = true;
+                } else {
+                  migrated[key] = value;
+                }
+              }
+              if (changed) {
+                localStorage.setItem(sk, JSON.stringify(migrated));
+                console.log('[ID-Migration] Migriert:', sk, Object.keys(migrated).length, 'Einträge');
+              }
+            } catch { /* ignore */ }
+          }
+        }
         setEmployees(supabaseEmployees);
       } else if (supabaseEmployees === null) {
         const saved = localStorage.getItem('schedule-employees');

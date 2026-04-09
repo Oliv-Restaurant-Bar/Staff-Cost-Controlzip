@@ -120,8 +120,8 @@ function loadLocalEmployees(): EmployeeLite[] {
     { id: '15', hourlyWage: 34.46 }, { id: '16', hourlyWage: 47.33 },
     { id: '17', hourlyWage: 30.67 }, { id: '18', hourlyWage: 27.69 },
     { id: '19', hourlyWage: 28.92 }, { id: '20', hourlyWage: 20.36 },
-    { id: '21', hourlyWage: 20.36 }, { id: '22', hourlyWage: 30.00 },
-    { id: '23', hourlyWage: 30.00 },
+    { id: '21', hourlyWage: 20.36 }, { id: '24', hourlyWage: 20.36 },
+    { id: '22', hourlyWage: 30.00 }, { id: '23', hourlyWage: 30.00 },
   ];
 }
 

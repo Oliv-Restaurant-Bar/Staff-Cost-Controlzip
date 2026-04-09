@@ -125,6 +125,7 @@ INSERT INTO public.employees (id, name, department, employment_type, hourly_wage
   ('19', 'Asim',               'kueche',  'vollzeit', 28.92, 42, 4338.45, 4859.06),
   ('20', 'Ali',                'kueche',  'teilzeit', 20.36, NULL, NULL, NULL),
   ('21', 'Sadete',             'kueche',  'teilzeit', 20.36, NULL, NULL, NULL),
+  ('24', 'Sajed',              'kueche',  'vollzeit', 20.36, NULL, NULL, NULL),
   ('22', 'Aushilfe 1 Küche F', 'kueche', 'teilzeit', 30.00, NULL, NULL, NULL),
   ('23', 'Aushilfe 2 Küche A', 'kueche', 'teilzeit', 30.00, NULL, NULL, NULL)
 ON CONFLICT (id) DO NOTHING;
