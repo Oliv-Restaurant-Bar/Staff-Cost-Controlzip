@@ -6,8 +6,10 @@ import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
   Utensils, Edit2, Check, X, Info, Building2, AlertCircle, Clock,
   ChevronLeft, ChevronRight, Calendar, BarChart2, Lightbulb, Target,
-  Repeat,
+  Repeat, FileText,
 } from 'lucide-react';
+import { exportPersonalFixToPDF } from '@/lib/personalfix-export';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth } from '@/lib/supabase-db';
 import { Employee } from '@/types/personnel';
@@ -767,6 +769,46 @@ export default function PersonalFixPage() {
     manual: 'Quelle: Manuelle Eingabe (lokal gespeichert)',
   };
 
+  // ── PDF-Export ────────────────────────────────────────────────────────────
+
+  const handleExportPDF = () => {
+    try {
+      const varRowsByDept: Record<string, Array<{ emp: Employee; hours: number; monthlyCost: number; hourlyWage: number }>> = {};
+      for (const [dept, emps] of Object.entries(varByDept)) {
+        varRowsByDept[dept] = emps.map(emp => ({
+          emp,
+          hours: getVarHoursFor(emp.id),
+          monthlyCost: getVarMonthlyCostFor(emp.id, emp),
+          hourlyWage: emp.hourlyWage ?? 0,
+        }));
+      }
+
+      exportPersonalFixToPDF({
+        selectedYear,
+        selectedMonth,
+        byDept,
+        totalFixCost,
+        totalFixBase,
+        totalFixAnnual,
+        varByDept: varRowsByDept,
+        totalVarCost,
+        totalVarHours,
+        totalCombined,
+        personnelBudget: personnelBudget ?? 0,
+        availableVarBudget,
+        varBudgetDelta,
+        varBudgetOverrun,
+        varView,
+        avgHourlyWage,
+        maxVarHours,
+      });
+      toast.success('PDF erfolgreich exportiert');
+    } catch (err) {
+      console.error('[PersonalFix] PDF-Export Fehler:', err);
+      toast.error('Fehler beim PDF-Export');
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -788,6 +830,17 @@ export default function PersonalFixPage() {
               <p className="text-xs text-muted-foreground">Lohnkosten-Übersicht & Hochrechnung</p>
             </div>
           </div>
+
+          {/* PDF Export Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportPDF}
+            className="h-8 gap-1.5 text-xs border-rose-200 text-rose-700 hover:bg-rose-50 hover:border-rose-300 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/30"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            PDF Export
+          </Button>
 
           {/* Monatsnavigation */}
           <div className="flex items-center gap-1.5 bg-muted/40 rounded-lg px-2 py-1">
