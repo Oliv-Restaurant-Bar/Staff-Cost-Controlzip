@@ -8,7 +8,7 @@
  *   Dashboard   (standalone)
  *   Verkauf     → Verkaufs-Dashboard
  *   Personal    → Dienstplanung · Personal FIX
- *   Kosten      → WES-Analyse
+ *   Kosten      → WES-Analyse · Budget · Erfolgsrechnung
  *   Stammdaten  → Produkte
  *   Admin       → Upload · Einstellungen  (nur Admin)
  *
@@ -30,6 +30,7 @@ import {
   Upload, Settings, Inbox,
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
+  Wallet, BarChart3,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -123,6 +124,20 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'WES-Analyse',
         shortLabel: 'WES',
         icon: TrendingDown,
+        adminOnly: true,
+      },
+      {
+        path: '/budget',
+        label: 'Budget',
+        shortLabel: 'Budget',
+        icon: Wallet,
+        adminOnly: true,
+      },
+      {
+        path: '/erfolgsrechnung',
+        label: 'Erfolgsrechnung',
+        shortLabel: 'ER',
+        icon: BarChart3,
         adminOnly: true,
       },
     ],
