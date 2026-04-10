@@ -544,7 +544,7 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
       return null;
     };
 
-    const detectDateHeaderRow = (): { headerRowIdx: number; dateColumns: { index: number; date: string }[] } | null => {
+    const detectDateHeaderRow = (minCols = 5): { headerRowIdx: number; dateColumns: { index: number; date: string }[] } | null => {
       let best: { headerRowIdx: number; dateColumns: { index: number; date: string }[] } | null = null;
 
       for (let i = 0; i < Math.min(rows.length, 120); i++) {
@@ -559,7 +559,7 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
           .map((x) => ({ index: x.index, date: format(x.dateObj as Date, 'yyyy-MM-dd') }))
           .sort((a, b) => a.index - b.index);
 
-        if (dateColumns.length < 5) continue;
+        if (dateColumns.length < minCols) continue;
 
         // Ensure dates are strictly increasing (or at least non-decreasing) across columns
         const dateNums = dateColumns.map((dc) => new Date(dc.date + 'T00:00:00').getTime());
@@ -590,6 +590,14 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
         startDate = parse(dateRangeMatch[1], 'dd.MM.yyyy', new Date());
         endDate = parse(dateRangeMatch[2], 'dd.MM.yyyy', new Date());
         console.log('[mirus-daily][excel] found date range:', dateRangeMatch[1], 'to', dateRangeMatch[2]);
+        break;
+      }
+      // Single-day export: "am DD.MM.YYYY"
+      const singleDayMatch = rowText.match(/\bam\s+(\d{2}\.\d{2}\.\d{4})/i);
+      if (singleDayMatch) {
+        startDate = parse(singleDayMatch[1], 'dd.MM.yyyy', new Date());
+        endDate = startDate;
+        console.log('[mirus-daily][excel] found single day (am):', singleDayMatch[1]);
         break;
       }
     }
@@ -623,6 +631,32 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
       }
 
       const expectedDays = expectedDates.map((d) => d.day);
+      const minConsecutive = Math.min(5, expectedDays.length);
+
+      // For very short ranges (1–2 days) the day-number search is unreliable
+      // (single numbers appear everywhere). Use the date-cell detection instead.
+      let shortRangeDone = false;
+      if (expectedDays.length <= 2) {
+        const detected = detectDateHeaderRow(1);
+        if (detected && detected.dateColumns.length > 0) {
+          headerRowIdx = detected.headerRowIdx;
+          dateColumns = detected.dateColumns;
+          console.log('[mirus-daily][excel] short-range: used date-cell detection, cols:', dateColumns.length);
+          shortRangeDone = true;
+        } else {
+          // Last-resort: assume single data column at col 5
+          const firstDayCol = 5;
+          dateColumns = [{ index: firstDayCol, date: expectedDates[0].iso }];
+          headerRowIdx = (() => {
+            const idx = rows.findIndex((r) => String(r?.[0] || '').toLowerCase().includes('küche'));
+            return idx > 0 ? idx - 1 : 0;
+          })();
+          console.log('[mirus-daily][excel] short-range fallback: col', firstDayCol, 'row', headerRowIdx);
+          shortRangeDone = true;
+        }
+      }
+
+      if (!shortRangeDone) {
 
       const cellToIntDay = (cell: unknown): number | null => {
         if (typeof cell === 'number' && Number.isFinite(cell)) {
@@ -670,7 +704,7 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
       }
 
       // Fallback: common layout (first day at column 5)
-      if (bestLen < 5 || bestRowIdx === -1 || bestStartCol === -1) {
+      if (bestLen < minConsecutive || bestRowIdx === -1 || bestStartCol === -1) {
         const fallbackFirstDayCol = 5;
         bestRowIdx = (() => {
           const idx = rows.findIndex((r) => String(r?.[0] || '').toLowerCase().includes('1 küche'));
@@ -692,14 +726,16 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
       headerRowIdx = bestRowIdx;
 
       // If mapping looks wrong, try detecting actual date cells
-      if (dateColumns.length < 5) {
-        const detected = detectDateHeaderRow();
+      if (dateColumns.length < minConsecutive) {
+        const detected = detectDateHeaderRow(minConsecutive);
         if (detected) {
           headerRowIdx = detected.headerRowIdx;
           dateColumns = detected.dateColumns;
           console.log('[mirus-daily][excel] fallback to detected date header row:', headerRowIdx, dateColumns.slice(0, 5));
         }
       }
+
+      } // end if (!shortRangeDone)
     } else {
       // --- 2) Fallback: detect a header row with actual dates (date cells / serials / dd.mm strings) ---
       const detected = detectDateHeaderRow();
