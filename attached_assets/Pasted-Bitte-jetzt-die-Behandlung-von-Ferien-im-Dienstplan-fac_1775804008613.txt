@@ -1,0 +1,68 @@
+Bitte jetzt die Behandlung von Ferien im Dienstplan fachlich korrekt umsetzen.
+
+Ziel:
+Ferien sollen im Ist-Dienstplan nicht als Arbeitszeit zählen, aber separat als Ferienabbau in CHF ausgewertet werden.
+
+Bitte exakt so umsetzen:
+
+1. Ferien im Ist-Dienstplan
+- Wenn im Ist-Dienstplan "Ferien" / FE eingetragen ist:
+  - Stunden = 0
+  - nicht als Arbeitsstunden zählen
+  - nicht in Saldo / Totalstunden einfliessen
+  - wie Frei behandeln
+- Wichtig: keine automatische 8.4h Anrechnung mehr im Ist-Dienstplan
+
+2. Ferien separat auswerten
+In der Ist-Soll Analyse und bei den variablen Lohnkosten eine separate Position ergänzen:
+- "Ferienabbau CHF"
+
+Logik:
+- Ferienabbau CHF = Ferientage bzw. Ferieneinträge * Tages-/Stundenlohn gemäss Mitarbeiterbasis
+- diese Position separat ausweisen
+- nicht mit variablen Ist-Arbeitsstunden vermischen
+
+Ziel:
+Ich möchte sehen:
+- variable Arbeitskosten CHF
+- Ferienabbau CHF
+- und diese getrennt vergleichen können
+
+3. Plan -> Ist Übernahme
+Wenn im Plan-Dienstplan bei einem Mitarbeiter Ferien eingetragen werden:
+- soll dieser Ferieneintrag direkt auch im Ist-Dienstplan erscheinen
+- damit ich ihn nicht doppelt pflegen muss
+
+4. Ist-Import darf Ferien überschreiben
+Wenn im Ist-Stunden-Import für denselben Mitarbeiter / denselben Tag echte Arbeitsstunden vorhanden sind:
+- dann soll dieser Arbeitsstunden-Import den Ferien-Eintrag im Ist überschreiben
+- echte Arbeitszeit hat Vorrang vor übernommenem Ferienstatus
+
+5. Prioritätslogik klar umsetzen
+Für Ist-Dienstplan:
+- echte importierte Arbeitsstunden = höchste Priorität
+- manuell erfasster Ist-Eintrag = mittlere Priorität
+- aus Plan übernommene Ferien = niedrigere Priorität
+
+6. Total-/Saldo-Logik prüfen
+- Ferien dürfen in keiner Totalstunden-/Saldo-/Iststunden-Summe als Arbeitszeit auftauchen
+- Frei ebenso nicht
+
+7. UI / Transparenz
+- Ferien im Ist weiterhin sichtbar markieren
+- aber mit 0h
+- in Auswertungen klar getrennt von echten Ist-Stunden
+
+8. Debug Logs
+Bitte loggen:
+[FERIEN] plan->ist übernommen
+[FERIEN] im Ist mit 0h behandelt
+[FERIEN] nicht in Totalstunden eingerechnet
+[FERIEN] durch echten Ist-Import überschrieben
+[FERIEN] Ferienabbau CHF berechnet: ...
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie Ferien jetzt im Ist behandelt werden
+- wie Ferienabbau CHF berechnet wird
+- wie die Überschreiblogik bei echtem Ist-Import funktioniert

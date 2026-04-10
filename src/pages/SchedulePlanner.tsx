@@ -906,19 +906,30 @@ const SchedulePlanner = () => {
     });
 
     // ── Auto-Kopie Abwesenheit → Ist-Stunden ───────────────────────────────
-    // Wenn eine Abwesenheit (FE, K, …) im Plan gesetzt wird, dieselben Stunden
-    // automatisch in die Ist-Stunden übernehmen — aber NUR wenn noch keine
-    // echten Arbeitsstunden (mit Uhrzeiten) importiert wurden.
+    // Wenn Ferien (FE) im Plan gesetzt wird → Ist-Eintrag mit hours=0 + absenceType='FE'.
+    // Andere Abwesenheiten (K, …) → wie bisher mit konfigurierten Stunden, aber NUR
+    // wenn noch keine echten importierten Arbeitsstunden vorhanden sind.
     if (absenceType) {
+      const isFE = absenceType === 'FE';
       const absShiftCfg = Object.values(shiftMap).find(s => s.abbrev === absenceType);
       const absHours = absShiftCfg?.hours ?? 0;
-      if (absHours > 0 && absShiftCfg?.countsToTarget !== false) {
+      const shouldCopy = isFE || (absHours > 0 && absShiftCfg?.countsToTarget !== false);
+
+      if (shouldCopy) {
         setActualHoursData(prevActual => {
           const existing = prevActual[cellKey];
-          // Echte Arbeitsschichten (Uhrzeit-Import) nicht überschreiben
+          // Echte importierte Arbeitsstunden (Uhrzeit) nicht überschreiben
           if (existing?.start && existing?.end) return prevActual;
+          // Echten Ist-Import (hours > 0, kein absenceType) nicht überschreiben
+          if (existing && existing.hours > 0 && !existing.absenceType) return prevActual;
 
-          const newEntry = { hours: absHours };
+          // Ferien: 0h + absenceType='FE'; andere: konfigurierte Stunden
+          const newEntry: ActualHoursEntry = isFE
+            ? { hours: 0, absenceType: 'FE' as const }
+            : { hours: absHours };
+
+          console.log(`[FERIEN] plan->ist übernommen: ${employeeId} ${date} absenceType=${absenceType} → Ist hours=${newEntry.hours}`);
+
           saveActualHourEntry(employeeId, date, newEntry).catch(err =>
             console.error('[SCHEDULE] auto-absence actualHours error:', err)
           );
@@ -1082,7 +1093,12 @@ const SchedulePlanner = () => {
           console.log('[Ist-Import] Match gefunden:', { importName: entry.name, empName: employee.name, empId: employee.id, matchStep });
         }
         const cellKey = `${employee.id}-${entry.date}`;
-        if (mode === 'replace' || !updated[cellKey]) {
+        const existingEntry = updated[cellKey];
+        // Echte Arbeitsstunden überschreiben immer Ferien-Einträge
+        if (entry.hours > 0 && existingEntry?.absenceType === 'FE') {
+          console.log(`[FERIEN] durch echten Ist-Import überschrieben: ${employee.name} ${entry.date} (war FE 0h → jetzt ${entry.hours}h)`);
+        }
+        if (mode === 'replace' || !updated[cellKey] || (entry.hours > 0 && existingEntry?.absenceType === 'FE')) {
           updated[cellKey] = { hours: entry.hours };
           supabaseSaves.push({ empId: employee.id, date: entry.date, hours: entry.hours });
         }
@@ -1713,6 +1729,35 @@ const SchedulePlanner = () => {
     : null;
   const hasActualHours = totalActualHoursAll > 0;
   const hasActualRevenue = totalActualRevenue > 0;
+
+  // ── Ferienabbau (FE-Einträge im Ist) ───────────────────────────────────────
+  // Ferien werden im Ist mit hours=0 + absenceType='FE' gespeichert.
+  // Ferienabbau CHF = FE-Tage × tägliche Sollstunden × Stundenlohn
+  const { ferienIstTage, ferienabbauCHF } = useMemo(() => {
+    let tage = 0;
+    let chf = 0;
+    for (const emp of visibleEmployees) {
+      let empFeTage = 0;
+      for (const day of daysInMonth) {
+        const key = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
+        const e = actualHoursData[key];
+        if (e?.absenceType === 'FE') {
+          empFeTage++;
+          console.log(`[FERIEN] nicht in Totalstunden eingerechnet: ${emp.name} ${format(day, 'yyyy-MM-dd')} (FE 0h)`);
+        }
+      }
+      if (empFeTage > 0) {
+        // Tägliche Stunden: weeklyHours / 5, Fallback 8.4h
+        const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+        const empChf = empFeTage * dailyH * emp.hourlyWage;
+        console.log(`[FERIEN] Ferienabbau CHF berechnet: ${emp.name} ${empFeTage} Tage × ${dailyH.toFixed(1)}h × CHF ${emp.hourlyWage} = CHF ${empChf.toFixed(2)}`);
+        chf += empChf;
+        tage += empFeTage;
+      }
+    }
+    return { ferienIstTage: tage, ferienabbauCHF: chf };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actualHoursData, visibleEmployees, daysInMonth]);
 
   // ── Planungshilfe: Jump + Remove-Handler ──────────────────────────────────
 
@@ -2565,7 +2610,7 @@ const SchedulePlanner = () => {
               const sollPct = sollRev > 0 ? (sollPK / sollRev) * 100 : null;
               const CHF = new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 });
               return (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               {/* Stunden */}
               <div className="rounded-lg border bg-card p-4">
                 <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">⏱ Stunden</p>
@@ -2601,9 +2646,9 @@ const SchedulePlanner = () => {
                 </div>
               </div>
 
-              {/* Personalkosten */}
+              {/* Variable Arbeitskosten */}
               <div className="rounded-lg border bg-card p-4">
-                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">💼 Personalkosten</p>
+                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">💼 Variable Arbeitskosten</p>
                 <div className="space-y-2">
                   <div className="flex justify-between items-baseline">
                     <span className="text-sm text-muted-foreground">
@@ -2635,6 +2680,31 @@ const SchedulePlanner = () => {
                         </span>
                       );
                     })()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Ferienabbau CHF */}
+              <div className="rounded-lg border bg-card p-4">
+                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">🏖 Ferienabbau</p>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-sm text-muted-foreground">Ist (FE-Tage)</span>
+                    <span className="text-base font-bold tabular-nums text-blue-600">
+                      {ferienIstTage > 0 ? `${ferienIstTage} T` : '–'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-sm text-muted-foreground">Ferienabbau CHF</span>
+                    <span className="text-base font-bold tabular-nums text-blue-600">
+                      {ferienabbauCHF > 0 ? CHF.format(ferienabbauCHF) : '–'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-baseline border-t pt-2 mt-1">
+                    <span className="text-xs text-muted-foreground italic">Ø Tagessatz</span>
+                    <span className="text-sm tabular-nums text-muted-foreground">
+                      {ferienIstTage > 0 ? CHF.format(ferienabbauCHF / ferienIstTage) : '–'}
+                    </span>
                   </div>
                 </div>
               </div>
