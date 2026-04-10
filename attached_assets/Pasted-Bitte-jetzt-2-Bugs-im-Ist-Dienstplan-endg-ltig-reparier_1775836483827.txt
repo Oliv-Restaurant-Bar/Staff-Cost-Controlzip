@@ -1,0 +1,76 @@
+Bitte jetzt 2 Bugs im Ist-Dienstplan endgültig reparieren.
+
+## BUG 1: Ferien im Ist-Dienstplan werden überschrieben oder gelöscht
+
+Problem:
+Wenn ich im Ist-Dienstplan manuell Ferien eintrage, verschwinden diese beim nächsten Laden oder beim Ist-Stunden-Import wieder.
+Das darf NICHT passieren.
+
+Gewünschte Logik:
+- manuell gesetzte Ferien im Ist bleiben bestehen
+- Ferien im Ist zählen weiterhin 0 Stunden
+- Ferien werden NICHT durch Reload gelöscht
+- Ferien werden NICHT durch einen Ist-Import gelöscht, wenn für diesen Tag/Mitarbeiter keine echten Arbeitsstunden vorhanden sind
+- Ferien dürfen NUR dann überschrieben werden, wenn im Ist-Import für denselben Mitarbeiter am selben Datum echte Arbeitsstunden vorhanden sind
+
+Bitte exakt so umsetzen:
+
+1. Prioritätslogik im Ist-Dienstplan:
+- echte importierte Arbeitsstunden = höchste Priorität
+- manuell gesetzter Ferienstatus im Ist = zweite Priorität
+- leer = niedrigste Priorität
+
+2. Importverhalten:
+- wenn Importzeile für Mitarbeiter/Datum KEINE Arbeitsstunden enthält:
+  -> vorhandene Ferien im Ist NICHT löschen
+- wenn Importzeile echte Arbeitsstunden enthält:
+  -> vorhandene Ferien im Ist überschreiben
+- leere Importzellen dürfen NIE bestehende Ist-Einträge löschen
+
+3. Laden/Speichern:
+- Ferien-Einträge im Ist müssen persistent bleiben
+- Reload darf sie nicht entfernen
+- Merge-Logik muss bestehende Ferien beibehalten, solange kein echter Arbeitsstunden-Eintrag für denselben Tag kommt
+
+4. Debug Logs:
+[FERIEN-IST] existing entry found: ...
+[FERIEN-IST] preserved holiday entry because import had no hours
+[FERIEN-IST] replaced holiday entry because import had working hours
+[FERIEN-IST] reload preserved holiday entry
+
+## BUG 2: Einzel-Tag 09.04.2026 wird nicht korrekt importiert
+
+Problem:
+Der Tag 09.04.2026 wurde beim Import nicht korrekt erkannt bzw. nicht korrekt übernommen.
+
+Bitte jetzt nicht nur theoretisch, sondern praktisch absichern:
+
+1. Header-Erkennung:
+- zuerst vollständige Monatsreihe 1..30 bzw. 1..31 erkennen
+- daraus den exakten Spaltenoffset für den gewünschten Tag berechnen
+- Tag 9 in April muss korrekt die Spalte für den 09.04.2026 treffen
+
+2. Import-Logs:
+Bitte für den Test 09.04.2026 loggen:
+[IMPORT] expected day: 9
+[IMPORT] detected header row: ...
+[IMPORT] detected start column for day 1: ...
+[IMPORT] resolved column for day 9: ...
+[IMPORT] imported rows for 2026-04-09: ...
+
+3. Validierung:
+- prüfen, dass für 09.04.2026 wirklich Stunden importiert werden
+- nicht Tag 1, nicht falscher Offset
+- exakt 09.04.2026
+
+## Wichtig:
+- keine neuen Features
+- nur diese beiden Bugs sauber fixen
+- keine bestehenden Ist-/Plan-Daten durch leere Importresultate überschreiben
+
+## Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie die Ferien-Prioritätslogik jetzt funktioniert
+- warum Ferien vorher gelöscht wurden
+- wie der 09.04.2026 jetzt exakt gefunden wird
+- wie ich diese zwei Punkte am besten teste

@@ -770,9 +770,17 @@ export default function PersonalFixPage() {
   const proRataFactor = proRataDay !== null
     ? Math.min(proRataDay, daysInSelectedMonth) / daysInSelectedMonth
     : 1;
-  const proRataFixCost  = totalFixCost       * proRataFactor;
-  const proRataVarCost  = totalVariabelCHF   * proRataFactor;
-  const proRataTotal    = (totalFixCost + totalVariabelCHF) * proRataFactor;
+  const proRataFixCost      = totalFixCost          * proRataFactor;
+  const proRataVarCost      = totalVariabelCHF      * proRataFactor;
+  const proRataTotal        = (totalFixCost + totalVariabelCHF) * proRataFactor;
+  const proRataBudget       = personnelBudget        * proRataFactor;
+  const proRataAvailableVar = personnelBudget > 0
+    ? Math.max(0, proRataBudget - proRataFixCost) : 0;
+  const proRataVarArbeit    = totalVarArbeitCHF     * proRataFactor;
+  const proRataFerienabbau  = totalFerienabbauCHF   * proRataFactor;
+  const proRataVarDelta     = personnelBudget > 0
+    ? proRataAvailableVar - proRataVarArbeit : 0;
+  const proRataVarOverrun   = proRataVarDelta < 0;
 
   // Pro-Rata pro variablen Mitarbeiter (für UI-Tabelle + Export)
   const proRataVarByEmp = useMemo(() => {
@@ -1165,6 +1173,215 @@ export default function PersonalFixPage() {
             </p>
           )}
         </div>
+
+        {/* ── Pro-Rata Vollansicht ──────────────────────────────────────────── */}
+        {proRataDay !== null && (
+          <>
+            {/* Pro-Rata KPI-Karten */}
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              <KpiCard
+                title={`Personal FIX — bis ${proRataDay}.`}
+                value={fmtCHF(proRataFixCost)}
+                sub={`von ${fmtCHF(totalFixCost)} / Monat (${Math.round(proRataFactor * 100)} %)`}
+                icon={<DollarSign className="h-5 w-5" />}
+                color="blue"
+              />
+              <KpiCard
+                title={`Variable Arbeit — bis ${proRataDay}.`}
+                value={fmtCHF(proRataVarArbeit)}
+                sourceBadge={varView === 'plan' ? '● Plan-Stunden' : varView === 'ist' ? '● Ist-Stunden' : '● Manuell'}
+                sub={`von ${fmtCHF(totalVarArbeitCHF)} / Monat (${Math.round(proRataFactor * 100)} %)`}
+                icon={<Clock className="h-5 w-5" />}
+                color={proRataVarArbeit > 0 ? 'orange' : 'default'}
+              />
+              <KpiCard
+                title={`Total Personal — bis ${proRataDay}.`}
+                value={fmtCHF(proRataTotal)}
+                sub={proRataFerienabbau > 0
+                  ? `FIX + Variabel − ${fmtCHF(proRataFerienabbau)} Ferienabbau`
+                  : `von ${fmtCHF(totalFixCost + totalVariabelCHF)} / Monat`}
+                icon={<Users className="h-5 w-5" />}
+                color={proRataTotal > 0 ? 'green' : 'default'}
+              />
+            </div>
+
+            {/* Pro-Rata Budget-Planung */}
+            {personnelBudget > 0 && (
+              <section className="rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-card shadow-sm overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-violet-50/40 dark:bg-violet-950/20">
+                  <Target className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                  <span className="text-sm font-bold">
+                    Budget-Planung Personal — bis {proRataDay}. {getMonthLabel(selectedYear, selectedMonth)}
+                  </span>
+                  <Badge variant="secondary" className="text-xs tabular-nums ml-auto">
+                    {proRataDay}/{daysInSelectedMonth} · {Math.round(proRataFactor * 100)} % Pro-Rata
+                  </Badge>
+                </div>
+
+                <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Budgetverteilung pro rata */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Budgetverteilung</p>
+                    <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
+                      <span className="text-sm text-muted-foreground">Personalbudget gesamt</span>
+                      <span className="font-mono font-semibold">{fmtCHF(proRataBudget)}</span>
+                    </div>
+                    <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
+                      <span className="text-sm text-muted-foreground">− Personal FIX</span>
+                      <span className="font-mono text-blue-700 dark:text-blue-400 shrink-0">− {fmtCHF(proRataFixCost)}</span>
+                    </div>
+                    <div className={cn(
+                      'flex justify-between items-center py-2 px-3 rounded-lg',
+                      proRataAvailableVar > 0
+                        ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
+                        : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300'
+                    )}>
+                      <span className="text-sm font-bold">= Verfügbar für Variabel</span>
+                      <span className="font-mono font-bold text-base">{fmtCHF(proRataAvailableVar)}</span>
+                    </div>
+                  </div>
+
+                  {/* Schätzung vs. Budget pro rata */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Schätzung vs. Budget</p>
+                    <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
+                      <span className="text-sm text-muted-foreground">Verfügbar für Variabel</span>
+                      <span className="font-mono font-semibold">{fmtCHF(proRataAvailableVar)}</span>
+                    </div>
+                    <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
+                      <div className="flex items-center gap-1.5 flex-wrap text-sm text-muted-foreground">
+                        <span className="whitespace-nowrap">− Variable Arbeit</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">
+                          {varView === 'plan' ? 'Plan' : varView === 'ist' ? 'Ist' : 'Manuell'}
+                        </span>
+                      </div>
+                      <span className="font-mono text-orange-700 dark:text-orange-400 shrink-0">− {fmtCHF(proRataVarArbeit)}</span>
+                    </div>
+                    {proRataFerienabbau > 0 && (
+                      <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
+                        <span className="text-sm text-muted-foreground">+ Ferienabbau-Abzug (FE Ist)</span>
+                        <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">− {fmtCHF(proRataFerienabbau)}</span>
+                      </div>
+                    )}
+                    {proRataFerienabbau > 0 && (
+                      <div className="flex justify-between items-baseline gap-2 py-1 border-b border-dashed border-border">
+                        <span className="text-sm font-medium text-muted-foreground">= Netto Variabel</span>
+                        <span className="font-mono font-semibold text-orange-800 dark:text-orange-300 shrink-0">{fmtCHF(proRataVarCost)}</span>
+                      </div>
+                    )}
+                    <div className={cn(
+                      'flex justify-between items-center py-2 px-3 rounded-lg',
+                      !proRataVarOverrun
+                        ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
+                        : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300'
+                    )}>
+                      <span className="text-sm font-bold">
+                        {proRataVarOverrun ? '⚠ Überziehung' : '✓ Verbleibend'}
+                      </span>
+                      <span className="font-mono font-bold text-base">
+                        {proRataVarOverrun ? '– ' : '+ '}{fmtCHF(Math.abs(proRataVarDelta))}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {/* Pro-Rata Personalkosten-Übersicht nach Abteilung */}
+            {deptSummary.length > 0 && (
+              <section className="rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-card shadow-sm overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/20">
+                  <BarChart2 className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-bold">
+                    Personalkosten nach Abteilung — bis {proRataDay}. {getMonthLabel(selectedYear, selectedMonth)}
+                  </span>
+                  <Badge variant="secondary" className="text-xs tabular-nums ml-auto">
+                    {Math.round(proRataFactor * 100)} % Pro-Rata
+                  </Badge>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
+                        <th className="text-left px-4 py-2 font-medium">Kategorie</th>
+                        {deptSummary.map(ds => (
+                          <th key={ds.dept} className="text-right px-4 py-2 font-medium">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {DEPT_ICON[ds.dept]}
+                              {DEPT_LABEL[ds.dept] ?? ds.dept}
+                            </div>
+                          </th>
+                        ))}
+                        <th className="text-right px-4 py-2 font-medium">Gesamt</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      <tr className="hover:bg-muted/20">
+                        <td className="px-4 py-2.5 font-medium text-blue-700 dark:text-blue-400">FIX</td>
+                        {deptSummary.map(ds => (
+                          <td key={ds.dept} className="px-4 py-2.5 text-right font-mono text-blue-700 dark:text-blue-400">
+                            {ds.fix > 0 ? fmtCHF(ds.fix * proRataFactor) : <span className="text-muted-foreground">–</span>}
+                          </td>
+                        ))}
+                        <td className="px-4 py-2.5 text-right font-mono font-semibold text-blue-700 dark:text-blue-400">
+                          {fmtCHF(proRataFixCost)}
+                        </td>
+                      </tr>
+                      <tr className="hover:bg-muted/20">
+                        <td className="px-4 py-2.5 font-medium text-orange-700 dark:text-orange-400">VARIABLE ARBEIT</td>
+                        {deptSummary.map(ds => (
+                          <td key={ds.dept} className="px-4 py-2.5 text-right font-mono text-orange-700 dark:text-orange-400">
+                            {ds.varArbeit > 0 ? fmtCHF(ds.varArbeit * proRataFactor) : <span className="text-muted-foreground">–</span>}
+                          </td>
+                        ))}
+                        <td className="px-4 py-2.5 text-right font-mono font-semibold text-orange-700 dark:text-orange-400">
+                          {fmtCHF(proRataVarArbeit)}
+                        </td>
+                      </tr>
+                      {totalFerienabbauCHF > 0 && (
+                        <tr className="hover:bg-muted/20 bg-blue-50/30 dark:bg-blue-950/10">
+                          <td className="px-4 py-2.5 font-medium text-blue-600 dark:text-blue-400">− FERIENABBAU</td>
+                          {deptSummary.map(ds => (
+                            <td key={ds.dept} className="px-4 py-2.5 text-right font-mono text-blue-600 dark:text-blue-400">
+                              {ds.ferienabbau > 0 ? `− ${fmtCHF(ds.ferienabbau * proRataFactor)}` : <span className="text-muted-foreground">–</span>}
+                            </td>
+                          ))}
+                          <td className="px-4 py-2.5 text-right font-mono font-semibold text-blue-600 dark:text-blue-400">
+                            {proRataFerienabbau > 0 ? `− ${fmtCHF(proRataFerienabbau)}` : <span className="text-muted-foreground">–</span>}
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="hover:bg-muted/20 border-t border-orange-200 dark:border-orange-800">
+                        <td className="px-4 py-2.5 font-semibold text-orange-800 dark:text-orange-300">TOTAL VARIABEL</td>
+                        {deptSummary.map(ds => (
+                          <td key={ds.dept} className="px-4 py-2.5 text-right font-mono font-semibold text-orange-800 dark:text-orange-300">
+                            {ds.variabel > 0 ? fmtCHF(ds.variabel * proRataFactor) : <span className="text-muted-foreground">–</span>}
+                          </td>
+                        ))}
+                        <td className="px-4 py-2.5 text-right font-mono font-bold text-orange-800 dark:text-orange-300">
+                          {fmtCHF(proRataVarCost)}
+                        </td>
+                      </tr>
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-emerald-50/50 dark:bg-emerald-950/20 border-t-2 border-emerald-300 dark:border-emerald-700">
+                        <td className="px-4 py-2.5 font-bold text-emerald-800 dark:text-emerald-300">TOTAL PERSONAL</td>
+                        {deptSummary.map(ds => (
+                          <td key={ds.dept} className="px-4 py-2.5 text-right font-mono font-bold text-emerald-700 dark:text-emerald-400">
+                            {fmtCHF(ds.total * proRataFactor)}
+                          </td>
+                        ))}
+                        <td className="px-4 py-2.5 text-right font-mono font-bold text-emerald-800 dark:text-emerald-300">
+                          {fmtCHF(proRataTotal)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </section>
+            )}
+          </>
+        )}
 
         {/* ── Budget-Vergleich ─────────────────────────────────────────────── */}
         {personnelBudget > 0 && (
