@@ -2,14 +2,15 @@
  * ProduktAnalyse – Produkt-Rangliste nach Umsatz / Anzahl
  * =========================================================
  * Datenquelle: product_sales (Supabase)
- * Modi: Monatsansicht · Jahresansicht · Kumuliert (mehrere Monate)
+ * Modi: Monatsansicht · Mehrere Monate · Jahresansicht · Kumuliert
  * Anzeigeoptionen: Top 10 · Top 20 · Alle
  * Sortierung: Umsatz absteigend · Anzahl absteigend
+ * Produkte ausblenden: per Klick auf Mülleimer, mit Reset-Button
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  BarChart3, RefreshCw, TrendingUp, Hash,
+  BarChart3, RefreshCw, TrendingUp, Hash, Trash2, RotateCcw, EyeOff,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -42,6 +43,11 @@ const MONTH_NAMES = [
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
 ];
 
+const MONTH_SHORT = [
+  'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez',
+];
+
 function availableYears(rows: ProductSalesRow[]): number[] {
   const years = new Set<number>();
   for (const r of rows) {
@@ -59,7 +65,7 @@ type RankRow = {
 
 type SortKey = 'revenue' | 'qty';
 type LimitKey = 10 | 20 | 0;
-type ModeKey = 'month' | 'year' | 'cumulative';
+type ModeKey = 'month' | 'multimonth' | 'year' | 'cumulative';
 
 // ─── Hauptkomponente ──────────────────────────────────────────────────────────
 
@@ -74,12 +80,20 @@ export default function ProduktAnalyse() {
   const [mode, setMode]           = useState<ModeKey>('month');
   const [year, setYear]           = useState(currentYear);
   const [month, setMonth]         = useState(currentMonth);
+  // Mehrere Monate: Set der ausgewählten Monatsnummern (1–12) im gewählten Jahr
+  const [multiYear, setMultiYear] = useState(currentYear);
+  const [selectedMonths, setSelectedMonths] = useState<Set<number>>(
+    new Set([currentMonth])
+  );
   const [yearFrom, setYearFrom]   = useState(currentYear);
   const [monthFrom, setMonthFrom] = useState(1);
   const [yearTo, setYearTo]       = useState(currentYear);
   const [monthTo, setMonthTo]     = useState(currentMonth);
   const [sortBy, setSortBy]       = useState<SortKey>('revenue');
   const [limit, setLimit]         = useState<LimitKey>(10);
+
+  // Ausgeblendete Produkte (nur client-seitig, kein Supabase-Delete)
+  const [hiddenProducts, setHiddenProducts] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -98,6 +112,23 @@ export default function ProduktAnalyse() {
 
   const years = useMemo(() => availableYears(allRows), [allRows]);
 
+  // Monate umschalten (Mehrere-Monate-Modus)
+  const toggleMonth = (m: number) => {
+    setSelectedMonths(prev => {
+      const next = new Set(prev);
+      if (next.has(m)) {
+        if (next.size === 1) return prev; // mind. 1 Monat immer ausgewählt
+        next.delete(m);
+      } else {
+        next.add(m);
+      }
+      return next;
+    });
+  };
+
+  const selectAllMonths = () => setSelectedMonths(new Set([1,2,3,4,5,6,7,8,9,10,11,12]));
+  const selectOnlyMonth = (m: number) => setSelectedMonths(new Set([m]));
+
   // ── Gefilterte + aggregierte Rangliste ───────────────────────────────────
 
   const ranked = useMemo<RankRow[]>(() => {
@@ -106,20 +137,28 @@ export default function ProduktAnalyse() {
     if (mode === 'month') {
       const prefix = `${year}-${String(month).padStart(2, '0')}`;
       filtered = filtered.filter(r => r.sale_date.startsWith(prefix));
+    } else if (mode === 'multimonth') {
+      const yearStr = String(multiYear);
+      filtered = filtered.filter(r => {
+        if (!r.sale_date.startsWith(yearStr)) return false;
+        const m = parseInt(r.sale_date.slice(5, 7), 10);
+        return selectedMonths.has(m);
+      });
     } else if (mode === 'year') {
       filtered = filtered.filter(r => r.sale_date.startsWith(String(year)));
     } else {
       // cumulative
       const from = `${yearFrom}-${String(monthFrom).padStart(2, '0')}-01`;
-      const toY = yearTo;
-      const toM = monthTo;
-      const lastDay = new Date(toY, toM, 0).getDate();
-      const to = `${toY}-${String(toM).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      const lastDay = new Date(yearTo, monthTo, 0).getDate();
+      const to = `${yearTo}-${String(monthTo).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
       filtered = filtered.filter(r => r.sale_date >= from && r.sale_date <= to);
     }
 
     const map = new Map<string, RankRow>();
     for (const r of filtered) {
+      // Ausgeblendete Produkte überspringen
+      if (hiddenProducts.has(r.product_name)) continue;
+
       const existing = map.get(r.product_name);
       if (existing) {
         existing.total_revenue += Number(r.revenue ?? 0);
@@ -140,7 +179,7 @@ export default function ProduktAnalyse() {
         : b.total_qty - a.total_qty
     );
     return arr;
-  }, [allRows, mode, year, month, yearFrom, monthFrom, yearTo, monthTo, sortBy]);
+  }, [allRows, mode, year, month, multiYear, selectedMonths, yearFrom, monthFrom, yearTo, monthTo, sortBy, hiddenProducts]);
 
   const displayed = limit === 0 ? ranked : ranked.slice(0, limit);
 
@@ -152,8 +191,21 @@ export default function ProduktAnalyse() {
   const periodLabel = useMemo(() => {
     if (mode === 'month') return `${MONTH_NAMES[month - 1]} ${year}`;
     if (mode === 'year')  return String(year);
+    if (mode === 'multimonth') {
+      const sorted = Array.from(selectedMonths).sort((a, b) => a - b);
+      if (sorted.length === 12) return `Ganzes Jahr ${multiYear}`;
+      if (sorted.length === 1) return `${MONTH_NAMES[sorted[0] - 1]} ${multiYear}`;
+      const names = sorted.map(m => MONTH_SHORT[m - 1]).join(', ');
+      return `${names} ${multiYear}`;
+    }
     return `${MONTH_NAMES[monthFrom - 1]} ${yearFrom} – ${MONTH_NAMES[monthTo - 1]} ${yearTo}`;
-  }, [mode, year, month, yearFrom, monthFrom, yearTo, monthTo]);
+  }, [mode, year, month, multiYear, selectedMonths, yearFrom, monthFrom, yearTo, monthTo]);
+
+  const hideProduct = (name: string) => {
+    setHiddenProducts(prev => new Set([...prev, name]));
+  };
+
+  const resetHidden = () => setHiddenProducts(new Set());
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -165,10 +217,23 @@ export default function ProduktAnalyse() {
           <BarChart3 className="h-5 w-5 text-primary" />
           <h1 className="text-xl font-bold">Produkt-Rangliste</h1>
         </div>
-        <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="gap-1.5">
-          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-          Aktualisieren
-        </Button>
+        <div className="flex items-center gap-2">
+          {hiddenProducts.size > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={resetHidden}
+              className="gap-1.5 text-xs text-muted-foreground"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              {hiddenProducts.size} ausgeblendet – zurücksetzen
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="gap-1.5">
+            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            Aktualisieren
+          </Button>
+        </div>
       </div>
 
       {/* Controls */}
@@ -178,18 +243,19 @@ export default function ProduktAnalyse() {
           <div className="flex flex-col gap-1">
             <span className="text-xs text-muted-foreground font-medium">Ansicht</span>
             <Select value={mode} onValueChange={v => setMode(v as ModeKey)}>
-              <SelectTrigger className="h-8 w-[155px] text-sm">
+              <SelectTrigger className="h-8 w-[175px] text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="month">Monatsansicht</SelectItem>
+                <SelectItem value="month">Einzelner Monat</SelectItem>
+                <SelectItem value="multimonth">Mehrere Monate</SelectItem>
                 <SelectItem value="year">Jahresansicht</SelectItem>
-                <SelectItem value="cumulative">Kumuliert</SelectItem>
+                <SelectItem value="cumulative">Kumuliert (Bereich)</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          {/* Month controls */}
+          {/* Single month controls */}
           {mode === 'month' && (
             <>
               <div className="flex flex-col gap-1">
@@ -219,6 +285,56 @@ export default function ProduktAnalyse() {
                 </Select>
               </div>
             </>
+          )}
+
+          {/* Multi-month controls */}
+          {mode === 'multimonth' && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground font-medium">Jahr</span>
+                <Select value={String(multiYear)} onValueChange={v => setMultiYear(Number(v))}>
+                  <SelectTrigger className="h-7 w-[80px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(years.length ? years : [currentYear]).map(y => (
+                      <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs px-2 text-muted-foreground"
+                  onClick={selectAllMonths}
+                >
+                  Alle
+                </Button>
+              </div>
+              {/* Month toggle grid */}
+              <div className="flex flex-wrap gap-1">
+                {MONTH_SHORT.map((short, i) => {
+                  const m = i + 1;
+                  const active = selectedMonths.has(m);
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => toggleMonth(m)}
+                      onDoubleClick={() => selectOnlyMonth(m)}
+                      title={`${MONTH_NAMES[i]} – Doppelklick: nur dieser Monat`}
+                      className={cn(
+                        'h-7 w-10 rounded text-xs font-medium border transition-colors',
+                        active
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-background text-muted-foreground border-border hover:bg-muted'
+                      )}
+                    >
+                      {short}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           )}
 
           {/* Year controls */}
@@ -374,9 +490,21 @@ export default function ProduktAnalyse() {
               {limit === 0 ? 'Alle Produkte' : `Top ${limit} Produkte`}
               {' '}– sortiert nach {sortBy === 'revenue' ? 'Umsatz' : 'Anzahl'}
             </span>
-            <Badge variant="secondary" className="text-xs font-normal">
-              {periodLabel}
-            </Badge>
+            <div className="flex items-center gap-2">
+              {hiddenProducts.size > 0 && (
+                <button
+                  onClick={resetHidden}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  title="Alle ausgeblendeten Produkte wieder anzeigen"
+                >
+                  <EyeOff className="h-3.5 w-3.5" />
+                  {hiddenProducts.size} ausgeblendet
+                </button>
+              )}
+              <Badge variant="secondary" className="text-xs font-normal">
+                {periodLabel}
+              </Badge>
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -394,7 +522,9 @@ export default function ProduktAnalyse() {
           )}
           {!loading && !error && displayed.length === 0 && (
             <div className="p-8 text-center text-sm text-muted-foreground">
-              Keine Daten für diesen Zeitraum gefunden.
+              {ranked.length === 0
+                ? 'Keine Daten für diesen Zeitraum gefunden.'
+                : 'Alle Produkte ausgeblendet.'}
             </div>
           )}
           {!loading && !error && displayed.length > 0 && (
@@ -416,6 +546,7 @@ export default function ProduktAnalyse() {
                     <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
                       <span className={cn(sortBy === 'qty' && 'text-muted-foreground')}>% Anzahl</span>
                     </th>
+                    <th className="px-3 py-2.5 w-8" title="Produkt ausblenden" />
                   </tr>
                 </thead>
                 <tbody>
@@ -426,7 +557,7 @@ export default function ProduktAnalyse() {
                       <tr
                         key={row.product_name}
                         className={cn(
-                          'border-b last:border-0 transition-colors',
+                          'border-b last:border-0 transition-colors group',
                           isTop3
                             ? 'bg-primary/5 hover:bg-primary/10'
                             : 'hover:bg-muted/40'
@@ -471,6 +602,16 @@ export default function ProduktAnalyse() {
                         <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
                           {pct(row.total_qty, totalQty)}
                         </td>
+                        {/* Hide button */}
+                        <td className="px-3 py-2.5 text-center">
+                          <button
+                            onClick={() => hideProduct(row.product_name)}
+                            title={`"${row.product_name}" aus Rangliste entfernen`}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -494,6 +635,7 @@ export default function ProduktAnalyse() {
                     <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
                       {pct(displayed.reduce((s, r) => s + r.total_qty, 0), totalQty)}
                     </td>
+                    <td className="px-3 py-2.5" />
                   </tr>
                 </tfoot>
               </table>
@@ -501,6 +643,29 @@ export default function ProduktAnalyse() {
           )}
         </CardContent>
       </Card>
+
+      {/* Ausgeblendete Produkte – Info-Leiste */}
+      {hiddenProducts.size > 0 && (
+        <div className="flex items-center justify-between rounded-lg border border-dashed px-4 py-2.5 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <EyeOff className="h-4 w-4" />
+            <span>
+              <strong>{hiddenProducts.size}</strong> {hiddenProducts.size === 1 ? 'Produkt ausgeblendet' : 'Produkte ausgeblendet'}
+              {': '}
+              <span className="italic">{Array.from(hiddenProducts).join(', ')}</span>
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={resetHidden}
+            className="gap-1.5 h-7 text-xs"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Alle einblenden
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
