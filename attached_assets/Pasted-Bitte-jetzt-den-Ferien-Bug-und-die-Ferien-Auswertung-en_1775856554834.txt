@@ -1,0 +1,104 @@
+Bitte jetzt den Ferien-Bug und die Ferien-Auswertung endgültig und vollständig reparieren.
+
+Es gibt weiterhin 2 zentrale Probleme:
+
+1. Ferien im Dienstplan werden beim Wechsel auf Personal FIX oder nach Reload wieder gelöscht
+2. Die Trennung Ferienabbau / variable Arbeit soll sowohl für PLAN variabel als auch für IST variabel sauber sichtbar sein
+
+Bitte exakt so umsetzen:
+
+1. Source of Truth für Ferien festlegen
+Ferien-Einträge im Dienstplan dürfen nicht nur lokal im UI-State hängen.
+Sie müssen persistent gespeichert und beim Laden wieder korrekt hergestellt werden.
+
+Bitte prüfen:
+- wo FE/F/K aktuell gespeichert werden
+- warum sie beim Wechsel auf Personal FIX verschwinden
+- ob beim Laden oder Mergen leere Daten die Ferien überschreiben
+- ob Personal FIX oder ein anderer Load-Zyklus den Dienstplan-State indirekt zurücksetzt
+
+Fix-Ziel:
+- FE/Ferien im Dienstplan bleiben nach Speichern, Seitenwechsel, Reload und Rückkehr stabil bestehen
+- nicht nur im Plan, sondern auch im Ist
+
+2. Ferien-Overwrite-Regel hart absichern
+Die Logik muss sein:
+
+a) vorhandener Ferien-Eintrag bleibt bestehen, wenn
+- kein Importwert vorhanden ist
+- Importwert leer ist
+- Import keine echten Arbeitsstunden enthält
+
+b) vorhandener Ferien-Eintrag darf nur überschrieben werden, wenn
+- für denselben Mitarbeiter
+- am selben Datum
+- echte Arbeitsstunden > 0 vorhanden sind
+
+Wichtig:
+Leere Importzellen oder fehlende Importdaten dürfen NIE Ferien löschen.
+
+3. Logging einbauen
+Bitte loggen:
+[FERIEN] loaded existing entry: ...
+[FERIEN] preserved on navigation
+[FERIEN] preserved on reload
+[FERIEN] ignored empty import, kept holiday
+[FERIEN] replaced by working-hours import
+[FERIEN] saved persistently: source=...
+
+4. Plan variabel und Ist variabel sauber trennen
+In Personal FIX + Variabel soll die Aufteilung künftig in beiden Modi sauber sein:
+
+PLAN:
+- Variable Arbeit Plan CHF
+- Ferienabbau Plan CHF
+- Total Variabel Plan CHF
+
+IST:
+- Variable Arbeit Ist CHF
+- Ferienabbau Ist CHF
+- Total Variabel Ist CHF
+
+5. Abteilungsübersicht erweitern
+Die Übersicht nach Abteilung soll sowohl in Plan als auch Ist diese Struktur sauber zeigen:
+
+- FIX
+- VARIABLE ARBEIT
+- FERIENABBAU
+- TOTAL VARIABEL
+- TOTAL PERSONAL
+
+für:
+- Service
+- Küche
+- Gesamt
+
+6. Budget-/Schätzungsbox ebenfalls sauber trennen
+Im Plan-Modus und Ist-Modus bitte klar zeigen:
+- Variable Arbeit
+- Ferienabbau
+- Netto / Total Variabel
+- Verbleibend / Abweichung
+
+7. Wichtig
+- Ferien bleiben weiterhin 0 Stunden
+- Ferien zählen nicht in Ist-/Plan-Arbeitsstunden
+- Ferien werden aber in CHF separat ausgewiesen
+- das gilt für Plan und Ist konsistent
+
+8. Kritisch prüfen
+Bitte speziell testen:
+- FE im Ist manuell setzen
+- speichern
+- auf Personal FIX wechseln
+- zurück in Dienstplanung
+- Reload
+- prüfen ob FE noch da ist
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- warum Ferien bisher beim Wechsel auf Personal FIX gelöscht wurden
+- wo Ferien jetzt persistent gespeichert werden
+- wie die Schutzlogik gegen leere Imports aussieht
+- wie Plan variabel und Ist variabel jetzt getrennt ausgewiesen werden
+- wie ich den Fix am schnellsten testen soll

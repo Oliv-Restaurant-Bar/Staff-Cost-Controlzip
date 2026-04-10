@@ -189,6 +189,34 @@ function loadFerienDaysFromStorage(year: number, month: number): Record<string, 
 }
 
 /**
+ * Liest FE-Ferientage aus dem PLAN-Dienstplan (schedule-v2-YYYY-MM).
+ * Gibt eine Map empId → Anzahl Plan-FE-Tage im Monat zurück.
+ * Ein Plan-FE-Tag liegt vor, wenn frühAbsence === 'FE' ODER spätAbsence === 'FE'.
+ */
+function loadFerienDaysFromPlanStorage(year: number, month: number): Record<string, number> {
+  const key = `schedule-v2-${year}-${String(month).padStart(2, '0')}`;
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const data: Record<string, any> = JSON.parse(raw);
+    const out: Record<string, number> = {};
+    for (const [cellKey, ds] of Object.entries(data)) {
+      const entryDate = cellKey.slice(-10);
+      if (!entryDate.startsWith(monthPrefix)) continue;
+      const empId = cellKey.slice(0, cellKey.length - 11);
+      if (!empId) continue;
+      const hasFE = ds?.frühAbsence === 'FE' || ds?.spätAbsence === 'FE';
+      if (hasFE) {
+        out[empId] = (out[empId] ?? 0) + 1;
+        console.log(`[FERIEN] loaded existing entry: plan ${cellKey} absenceType=FE`);
+      }
+    }
+    return out;
+  } catch { return {}; }
+}
+
+/**
  * Liest Ist-Stunden aus localStorage (actual-hours-YYYY-MM = Mirus-Import).
  * Gibt eine Map empId → Gesamtstunden im Monat zurück.
  */
@@ -503,8 +531,10 @@ export default function PersonalFixPage() {
   const [varView, setVarView] = useState<VarView>('plan');
   const [planHours, setPlanHours] = useState<Record<string, number>>({});
   const [istHours, setIstHours] = useState<Record<string, number>>({});
-  // empId → Anzahl FE-Tage im Ist (absenceType='FE' in localStorage)
+  // empId → Anzahl FE-Tage im Ist (absenceType='FE' in actual-hours-* localStorage)
   const [ferienIstDays, setFerienIstDays] = useState<Record<string, number>>({});
+  // empId → Anzahl FE-Tage im PLAN (frühAbsence/spätAbsence='FE' in schedule-v2-* localStorage)
+  const [ferienPlanDays, setFerienPlanDays] = useState<Record<string, number>>({});
 
   // ── Pro-Rata-Abgrenzung ────────────────────────────────────────────────────
   // null = aus; Zahl = Stichtag (1–letzter Tag des Monats)
@@ -524,7 +554,11 @@ export default function PersonalFixPage() {
   useEffect(() => {
     setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth));
     // FE-Ferientage immer aus localStorage (Supabase speichert kein absenceType)
-    setFerienIstDays(loadFerienDaysFromStorage(selectedYear, selectedMonth));
+    const istFE = loadFerienDaysFromStorage(selectedYear, selectedMonth);
+    setFerienIstDays(istFE);
+    const planFE = loadFerienDaysFromPlanStorage(selectedYear, selectedMonth);
+    setFerienPlanDays(planFE);
+    console.log(`[FERIEN] preserved on reload: ist=${Object.values(istFE).reduce((s, v) => s + v, 0)} plan=${Object.values(planFE).reduce((s, v) => s + v, 0)} FE-Tage gesamt`);
 
     // Fast local read first
     const localIst = loadIstHoursFromStorage(selectedYear, selectedMonth);
@@ -551,14 +585,32 @@ export default function PersonalFixPage() {
       );
       setIstHours(merged);
 
-      // Write merged back to localStorage so subsequent reads stay in sync
+      // Write merged back to localStorage — smart merge: FE/K/F absenceType entries must NEVER be
+      // overwritten by Supabase data (Supabase has no absenceType column; FE are localStorage-only).
       if (Object.keys(supabaseRaw).length > 0) {
         const monthKey = `actual-hours-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
-        const existingLocal = (() => {
+        const existingLocal: Record<string, unknown> = (() => {
           try { return JSON.parse(localStorage.getItem(monthKey) || '{}'); } catch { return {}; }
         })();
-        const mergedRaw = { ...existingLocal, ...supabaseRaw };
+        // Start from local (preserves absenceType metadata), let Supabase win only for real hours
+        const mergedRaw: Record<string, unknown> = { ...existingLocal };
+        let fePreserved = 0;
+        for (const [key, val] of Object.entries(supabaseRaw)) {
+          const localEntry = mergedRaw[key] as Record<string, unknown> | undefined;
+          if ((val as { hours?: number })?.hours > 0 || !localEntry?.absenceType) {
+            // Supabase wins: real working hours OR no FE in local
+            mergedRaw[key] = val;
+          } else {
+            // Local FE/K/F entry protected — Supabase must not erase it
+            fePreserved++;
+            console.log(`[FERIEN] preserved on navigation: ${key} absenceType=${localEntry?.absenceType}`);
+          }
+        }
+        if (fePreserved > 0) {
+          console.log(`[FERIEN] PersonalFix load: preserved ${fePreserved} FE/K/F entries`);
+        }
         localStorage.setItem(monthKey, JSON.stringify(mergedRaw));
+        console.log(`[FERIEN] saved persistently: source=supabase+local merged=${Object.keys(mergedRaw).length}`);
       }
     }).catch(err => console.error('[IST] Supabase load failed in PersonalFix:', err));
   }, [selectedYear, selectedMonth]);
@@ -733,8 +785,10 @@ export default function PersonalFixPage() {
   const totalCombined = totalFixCost + totalVarCost;
 
   // ── Ferienabbau-Berechnungen ───────────────────────────────────────────────
-  // FE-Tage im Ist × (weeklyHours/5 oder 8.4h) × Stundenlohn
-  // Basis: localStorage (Supabase hat kein absenceType-Feld)
+  // FE-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn
+  // IST: aus actual-hours-* (localStorage), PLAN: aus schedule-v2-* (localStorage)
+  // Supabase hat kein absenceType-Feld → Ferien immer aus localStorage
+  // IST-Ferienabbau pro Mitarbeiter
   const getEmpFerienCHF = useCallback((emp: Employee): number => {
     const days = ferienIstDays[emp.id] ?? 0;
     if (!days) return 0;
@@ -742,24 +796,48 @@ export default function PersonalFixPage() {
     return days * dailyH * (emp.hourlyWage ?? 0);
   }, [ferienIstDays]);
 
+  // PLAN-Ferienabbau pro Mitarbeiter
+  const getEmpFerienPlanCHF = useCallback((emp: Employee): number => {
+    const days = ferienPlanDays[emp.id] ?? 0;
+    if (!days) return 0;
+    const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+    return days * dailyH * (emp.hourlyWage ?? 0);
+  }, [ferienPlanDays]);
+
+  // Ferienabbau nach Abteilung: IST-Basis
   const ferienabbauByDept = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
     for (const [dept, emps] of Object.entries(varByDept)) {
       const chf = emps.reduce((s, e) => s + getEmpFerienCHF(e), 0);
       map[dept] = chf;
-      if (chf > 0) console.log(`[FERIEN] ferienabbau ${dept} chf: ${chf.toFixed(2)}`);
+      if (chf > 0) console.log(`[FERIEN] ferienabbau IST ${dept} chf: ${chf.toFixed(2)}`);
     }
     return map;
   }, [varByDept, getEmpFerienCHF]);
 
+  // Ferienabbau nach Abteilung: PLAN-Basis
+  const ferienabbauPlanByDept = useMemo<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    for (const [dept, emps] of Object.entries(varByDept)) {
+      const chf = emps.reduce((s, e) => s + getEmpFerienPlanCHF(e), 0);
+      map[dept] = chf;
+      if (chf > 0) console.log(`[FERIEN] ferienabbau PLAN ${dept} chf: ${chf.toFixed(2)}`);
+    }
+    return map;
+  }, [varByDept, getEmpFerienPlanCHF]);
+
+  // Ferienabbau gesamt: IST im Ist-Modus, PLAN im Plan/Manuell-Modus
   const totalFerienabbauCHF = useMemo(() => {
-    const total = variableEmployees.reduce((s, e) => s + getEmpFerienCHF(e), 0);
+    const total = varView === 'ist'
+      ? variableEmployees.reduce((s, e) => s + getEmpFerienCHF(e), 0)
+      : variableEmployees.reduce((s, e) => s + getEmpFerienPlanCHF(e), 0);
     if (total > 0) {
+      console.log(`[FERIEN] ferienabbau (${varView}): ${total.toFixed(2)} CHF`);
       console.log(`[FERIEN] variable arbeit chf: ${totalVarCost.toFixed(2)}`);
       console.log(`[FERIEN] total variabel chf: ${(totalVarCost + total).toFixed(2)}`);
     }
     return total;
-  }, [variableEmployees, getEmpFerienCHF, totalVarCost]);
+  }, [variableEmployees, getEmpFerienCHF, getEmpFerienPlanCHF, varView, totalVarCost]);
 
   const totalVarArbeitCHF = totalVarCost;           // FE hat hours=0 → nicht in Var-Kosten
   // Ferienabbau reduziert die variablen Kosten (Abzug, da Ferien keine Arbeitsstunden sind)
@@ -783,10 +861,11 @@ export default function PersonalFixPage() {
   const proRataVarOverrun   = proRataVarDelta < 0;
 
   // Pro-Rata pro variablen Mitarbeiter (für UI-Tabelle + Export)
+  // ferienCHF: IST-Basis im Ist-Modus, PLAN-Basis im Plan/Manuell-Modus
   const proRataVarByEmp = useMemo(() => {
     return variableEmployees.map(emp => {
       const monthlyCost = getVarMonthlyCostFor(emp.id, emp);
-      const ferienCHF   = getEmpFerienCHF(emp);
+      const ferienCHF   = varView === 'ist' ? getEmpFerienCHF(emp) : getEmpFerienPlanCHF(emp);
       const netCost     = Math.max(0, monthlyCost - ferienCHF);
       return {
         name:         emp.name,
@@ -797,7 +876,7 @@ export default function PersonalFixPage() {
         ferienCHF,
       };
     }).filter(r => r.monthlyCost > 0 || r.proRataCost > 0);
-  }, [variableEmployees, getVarMonthlyCostFor, getEmpFerienCHF, getVarHoursFor, proRataFactor]);
+  }, [variableEmployees, getVarMonthlyCostFor, getEmpFerienCHF, getEmpFerienPlanCHF, getVarHoursFor, proRataFactor, varView]);
 
   // ── Departement-Zusammenfassung ────────────────────────────────────────────
 
@@ -807,11 +886,14 @@ export default function PersonalFixPage() {
       const fix = (byDept[dept] ?? []).reduce((s, r) => s + r.cost, 0);
       const varEmpList = varByDept[dept] ?? [];
       const varArbeit   = varEmpList.reduce((s, e) => s + getVarMonthlyCostFor(e.id, e), 0);
-      const ferienabbau = ferienabbauByDept[dept] ?? 0;
-      const variabel    = Math.max(0, varArbeit - ferienabbau);   // Ferienabbau = Abzug
+      // Ferienabbau: IST-Basis im Ist-Modus, PLAN-Basis im Plan/Manuell-Modus
+      const ferienabbau = varView === 'ist'
+        ? (ferienabbauByDept[dept] ?? 0)
+        : (ferienabbauPlanByDept[dept] ?? 0);
+      const variabel    = Math.max(0, varArbeit - ferienabbau);
       return { dept, fix, varArbeit, ferienabbau, variabel, total: fix + variabel };
     });
-  }, [byDept, varByDept, getVarMonthlyCostFor, ferienabbauByDept]);
+  }, [byDept, varByDept, getVarMonthlyCostFor, ferienabbauByDept, ferienabbauPlanByDept, varView]);
 
   // ── Budget für variable Mitarbeiter ───────────────────────────────────────
 
@@ -1259,7 +1341,9 @@ export default function PersonalFixPage() {
                     </div>
                     {proRataFerienabbau > 0 && (
                       <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
-                        <span className="text-sm text-muted-foreground">+ Ferienabbau-Abzug (FE Ist)</span>
+                        <span className="text-sm text-muted-foreground">
+                          + Ferienabbau-Abzug (FE {varView === 'ist' ? 'Ist' : 'Plan'})
+                        </span>
                         <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">− {fmtCHF(proRataFerienabbau)}</span>
                       </div>
                     )}
@@ -1340,7 +1424,9 @@ export default function PersonalFixPage() {
                       </tr>
                       {totalFerienabbauCHF > 0 && (
                         <tr className="hover:bg-muted/20 bg-blue-50/30 dark:bg-blue-950/10">
-                          <td className="px-4 py-2.5 font-medium text-blue-600 dark:text-blue-400">− FERIENABBAU</td>
+                          <td className="px-4 py-2.5 font-medium text-blue-600 dark:text-blue-400">
+                            − FERIENABBAU <span className="text-[10px] font-normal opacity-70">({varView === 'ist' ? 'Ist' : 'Plan'})</span>
+                          </td>
                           {deptSummary.map(ds => (
                             <td key={ds.dept} className="px-4 py-2.5 text-right font-mono text-blue-600 dark:text-blue-400">
                               {ds.ferienabbau > 0 ? `− ${fmtCHF(ds.ferienabbau * proRataFactor)}` : <span className="text-muted-foreground">–</span>}

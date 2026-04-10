@@ -536,7 +536,7 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
     pdf.text('Ferienabbau:', M + 5, curY + 5.2);
     setFont(pdf, 'normal', 7, C.textBlue);
     pdf.text(
-      `${fmtCHF(totalFerienabbauCHF)} werden von den variablen Kosten abgezogen (FE-Einträge im Ist-Dienstplan).`,
+      `${fmtCHF(totalFerienabbauCHF)} werden von den variablen Kosten abgezogen (FE-Einträge im ${varView === 'ist' ? 'Ist' : 'Plan'}-Dienstplan).`,
       M + 31, curY + 5.2,
     );
     curY += fH + SP_BLOCK;

@@ -1176,20 +1176,24 @@ export const usePersonnelData = () => {
           ),
         );
         // Also clear the monthly actual-hours localStorage cache for affected months
+        // IMPORTANT: FE/K/F entries (absenceType) must NEVER be deleted — they are localStorage-only
         const affectedMonths = new Set([...importedDates].map(d => d.slice(0, 7)));
         for (const monthKey of affectedMonths) {
           const storageKey = `actual-hours-${monthKey}`;
           try {
             const existing: Record<string, unknown> = JSON.parse(localStorage.getItem(storageKey) || '{}');
             for (const cellKey of Object.keys(existing)) {
-              const [, cellDate] = cellKey.split('-').length >= 3
-                ? [cellKey.slice(0, cellKey.lastIndexOf('-')), cellKey.slice(cellKey.lastIndexOf('-') + 1)]
-                : [cellKey, ''];
-              const fullDate = `${cellDate}`;
-              // The cell key is `${employeeId}-${date}` – date is the last 10 chars (YYYY-MM-DD)
+              // The cell key is `${employeeId}-YYYY-MM-DD` – date is the last 10 chars
               const dateFromKey = cellKey.length >= 10 ? cellKey.slice(-10) : '';
               if (importedDates.has(dateFromKey)) {
-                delete existing[cellKey];
+                const val = existing[cellKey];
+                const hasAbsenceType = typeof val === 'object' && val !== null && !!(val as Record<string, unknown>).absenceType;
+                if (hasAbsenceType) {
+                  // Keep FE/K/F: import must not erase vacation/sick entries
+                  console.log(`[FERIEN] preserved on navigation: ${cellKey} absenceType=${(val as Record<string, unknown>).absenceType}`);
+                } else {
+                  delete existing[cellKey];
+                }
               }
             }
             localStorage.setItem(storageKey, JSON.stringify(existing));
@@ -1283,7 +1287,16 @@ export const usePersonnelData = () => {
           }
         }
         
-        monthlyActualHours[storageKey][cellKey] = { hours: entry.hours };
+        // Only overwrite an FE/K/F entry if the import brings real working hours (>0)
+        const existingEntry = monthlyActualHours[storageKey][cellKey] as Record<string, unknown> | undefined;
+        if (existingEntry?.absenceType && entry.hours <= 0) {
+          console.log(`[FERIEN] ignored empty import, kept holiday: ${cellKey} absenceType=${existingEntry.absenceType}`);
+        } else {
+          monthlyActualHours[storageKey][cellKey] = { hours: entry.hours };
+          if (entry.hours > 0) {
+            console.log(`[FERIEN] replaced by working-hours import: ${cellKey} hours=${entry.hours}`);
+          }
+        }
       });
       
       // Persist updated actual hours to localStorage
