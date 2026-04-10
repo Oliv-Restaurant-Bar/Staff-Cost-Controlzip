@@ -2902,10 +2902,10 @@ const SchedulePlanner = () => {
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Mitarbeiter mit Überstunden</p>
                   <div className="space-y-1.5">
-                    {overhoursEmployees.map(({ employee, overhours }) => (
+                    {overhoursEmployees.map(({ employee, difference }) => (
                       <div key={employee.id} className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/20 px-3 py-2">
                         <span className="text-sm font-medium">{employee.name}</span>
-                        <span className="text-sm font-bold text-red-600 dark:text-red-400 tabular-nums">+{overhours.toFixed(1)} h</span>
+                        <span className="text-sm font-bold text-red-600 dark:text-red-400 tabular-nums">+{difference.toFixed(1)} h</span>
                       </div>
                     ))}
                   </div>
