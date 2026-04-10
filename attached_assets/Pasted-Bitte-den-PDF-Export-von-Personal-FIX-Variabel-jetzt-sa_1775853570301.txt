@@ -1,0 +1,83 @@
+Bitte den PDF-Export von "Personal FIX + Variabel" jetzt sauber finalisieren und alle Layout-/Randprobleme beheben.
+
+Wichtig:
+Der Export ist schon verbessert, aber noch nicht sauber genug.
+Er wirkt stellenweise noch wie ein UI-Export statt wie ein professioneller Controlling-Report.
+
+Bitte jetzt gezielt diese Probleme reparieren:
+
+1. Einheitliches Seitenraster / Ränder
+- auf allen Seiten identische linke/rechte/top/bottom margins
+- alle Inhalte auf einem konsistenten Content-Grid ausrichten
+- Boxen, Tabellen und Hinweisblöcke müssen dieselbe Nutzbreite haben
+- nichts soll optisch zu nah am Rand kleben
+
+2. Vertikale Abstände vereinheitlichen
+- zwischen Header, KPI-Boxen, Budgetblock, Tabellen und Hinweisboxen gleichmässige spacing
+- keine gequetschten oder zufällig grossen Lücken
+- Section-Titles mit konsistentem Abstand nach oben/unten
+
+3. Page-Breaks verbessern
+- Service/Küche/Variabel-Blöcke logisch umbrechen
+- keine unschönen Trennungen mitten in zusammengehörigen Bereichen
+- Tabellen möglichst komplett halten
+- Totale und zugehörige Tabellen nicht unlogisch auf zwei Seiten auseinanderziehen
+- Interpretation & Hinweise sauber auf eigener Restfläche platzieren
+
+4. Tabellen optisch finalisieren
+- Spaltenbreiten bewusst setzen, nicht zufällig
+- Zahlenkolonnen sauber rechtsbündig
+- Headerzeilen klar, aber ruhiger
+- Totalzeilen deutlicher hervorheben
+- Tabellen nicht zu dicht
+- Zellpadding erhöhen, damit alles luftiger wirkt
+
+5. KPI- und Summary-Boxen harmonisieren
+- gleiche Höhe / gleiche Innenabstände
+- gleiche Titelpositionierung
+- ruhigere Farbigkeit
+- Zahlen besser zentrieren bzw. visuell ausbalancieren
+- keine Box soll optisch aus dem Raster fallen
+
+6. Plan / Ist / Vergleich klarer machen
+- Export soll visuell klar kennzeichnen, ob es Plan, Ist oder Vergleich ist
+- falls Vergleich: Abweichungswerte und Vergleichslogik sauber mit aufnehmen
+- Headerbereich dafür deutlicher strukturieren
+
+7. Informationsumfang
+Es sollen weiterhin praktisch alle relevanten Infos aus Personal FIX exportiert werden:
+- KPI-Block
+- Budgetanalyse
+- Abteilungsübersicht
+- Detailtabellen Service/Küche
+- Variable Arbeit
+- Ferienabbau
+- Netto Variabel
+- Interpretation / Hinweise
+
+Aber:
+- besser gruppiert
+- besser lesbar
+- professioneller dargestellt
+
+8. Footer / Metadaten
+- Footer sauber und dezent
+- Seitenzahl, Erstellzeit, Reportname auf identischem Raster
+- nicht zu nah an den Seitenrändern
+
+9. Bitte besonders auf diese konkreten Qualitätsprobleme achten:
+- unsaubere Randabstände
+- nicht harmonische Blockbreiten
+- inkonsistente Innenabstände
+- zu viel Leerraum unten auf der letzten Seite
+- Tabellen-/Boxengruppen nicht optimal über Seiten verteilt
+
+10. Workflow
+Bitte nach den Änderungen den PDF neu rendern und visuell prüfen.
+Nicht nur Code ändern, sondern wirklich das PDF-Layout final sauber machen.
+
+11. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- welches Seitenraster / welche Margins jetzt verwendet werden
+- wie die Page-Break-Logik verbessert wurde
+- wie Plan / Ist / Vergleich im Export jetzt unterschieden werden
