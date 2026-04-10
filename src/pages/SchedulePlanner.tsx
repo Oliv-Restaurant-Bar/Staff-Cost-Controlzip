@@ -1088,7 +1088,14 @@ const SchedulePlanner = () => {
         for (const key of Object.keys(updated)) {
           const dateFromKey = key.slice(-10);
           if (importedDates.has(dateFromKey)) {
-            delete updated[key];
+            // BUG 1 FIX: NEVER delete FE/K/F absence entries in the replace-wipe loop.
+            // The check for "existingEntry?.absenceType" below can only work if we
+            // haven't already deleted the entry here.
+            if (updated[key]?.absenceType) {
+              console.log(`[FERIEN-IST] reload preserved holiday entry: ${key} (${updated[key].absenceType})`);
+            } else {
+              delete updated[key];
+            }
           }
         }
       }
@@ -1112,12 +1119,26 @@ const SchedulePlanner = () => {
           console.log('[Ist-Import] Match gefunden:', { importName: entry.name, empName: employee.name, empId: employee.id, matchStep });
         }
         const cellKey = `${employee.id}-${entry.date}`;
-        const existingEntry = updated[cellKey];
-        // Echte Arbeitsstunden überschreiben immer Ferien-Einträge
-        if (entry.hours > 0 && existingEntry?.absenceType === 'FE') {
-          console.log(`[FERIEN] durch echten Ist-Import überschrieben: ${employee.name} ${entry.date} (war FE 0h → jetzt ${entry.hours}h)`);
+        const existingEntry = updated[cellKey];  // now correctly reads preserved FE entries
+
+        if (existingEntry?.absenceType) {
+          console.log(`[FERIEN-IST] existing entry found: ${cellKey} absenceType=${existingEntry.absenceType} hours=${existingEntry.hours}`);
         }
-        if (mode === 'replace' || !updated[cellKey] || (entry.hours > 0 && existingEntry?.absenceType === 'FE')) {
+
+        // Priority rule:
+        // 1. Real imported hours (> 0) → highest priority, overwrites FE
+        // 2. Existing FE/K/F absence → second priority, survives 0-hour imports
+        // 3. Empty → lowest priority
+        if (existingEntry?.absenceType && entry.hours === 0) {
+          console.log(`[FERIEN-IST] preserved holiday entry because import had no hours: ${employee.name} ${entry.date}`);
+          matchedCount++;
+          continue;
+        }
+        if (existingEntry?.absenceType && entry.hours > 0) {
+          console.log(`[FERIEN-IST] replaced holiday entry because import had working hours: ${employee.name} ${entry.date} (${existingEntry.absenceType} → ${entry.hours}h)`);
+        }
+
+        if (mode === 'replace' || !updated[cellKey]) {
           updated[cellKey] = { hours: entry.hours };
           supabaseSaves.push({ empId: employee.id, date: entry.date, hours: entry.hours });
         }
@@ -1127,6 +1148,8 @@ const SchedulePlanner = () => {
       for (const m of affectedMonths) {
         const sk = `actual-hours-${m}`;
         const ex = (() => { try { return JSON.parse(localStorage.getItem(sk) || '{}'); } catch { return {}; } })();
+        // Merge: start from existing localStorage (preserves FE entries not in `updated`),
+        // then overlay with updated (which itself preserved FE via the delete loop fix above).
         const data = { ...ex };
         for (const [k, v] of Object.entries(updated)) {
           const dateFromKey = k.slice(-10);

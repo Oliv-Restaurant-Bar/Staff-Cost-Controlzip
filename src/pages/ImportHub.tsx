@@ -741,8 +741,19 @@ const IstStundenSection = () => {
       const key = `${emp.id}-${entry.date}`;
       const existing = monthData[month]?.[key];
 
-      // Never overwrite an absence entry (hours=0, absenceType set) with Mirus data
-      if (existing?.absenceType && existing.hours === 0) continue;
+      if (existing?.absenceType) {
+        console.log(`[FERIEN-IST] existing entry found: ${key} absenceType=${existing.absenceType} hours=${existing.hours}`);
+      }
+
+      // Priority: real imported hours > FE absence > empty
+      if (existing?.absenceType && existing.hours === 0) {
+        if (entry.hours === 0) {
+          console.log(`[FERIEN-IST] preserved holiday entry because import had no hours: ${entry.name} ${entry.date}`);
+          continue;
+        } else {
+          console.log(`[FERIEN-IST] replaced holiday entry because import had working hours: ${entry.name} ${entry.date} (${existing.absenceType} → ${entry.hours}h)`);
+        }
+      }
 
       if (mode === 'replace' || !existing) {
         if (!monthData[month]) monthData[month] = {};

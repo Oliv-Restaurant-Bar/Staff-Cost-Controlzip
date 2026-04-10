@@ -653,6 +653,11 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
       // then calculate the correct column offset for the requested day.
       let shortRangeDone = false;
       if (expectedDays.length <= 2) {
+        // [IMPORT] log the requested day(s) up front
+        for (const ed of expectedDates) {
+          console.log(`[IMPORT] expected day: ${ed.day} (${ed.iso})`);
+        }
+
         const daysInFullMonth = new Date(startDate!.getFullYear(), startDate!.getMonth() + 1, 0).getDate();
         const fullMonthSeq = Array.from({ length: daysInFullMonth }, (_, i) => i + 1);
         const minFullMatch = Math.min(5, daysInFullMonth);
@@ -684,6 +689,12 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
             date: ed.iso,
           }));
           headerRowIdx = fmHeaderRowIdx;
+          console.log(`[IMPORT] detected header row: ${fmHeaderRowIdx}`);
+          console.log(`[IMPORT] detected start column for day 1: ${fmStartCol}`);
+          for (const ed of expectedDates) {
+            const col = fmStartCol + (ed.day - 1);
+            console.log(`[IMPORT] resolved column for day ${ed.day}: ${col}`);
+          }
           console.log('[mirus-daily][excel] short-range: full-month header found at row', fmHeaderRowIdx, 'col', fmStartCol, '→ mapped cols:', dateColumns);
           shortRangeDone = true;
         } else {
@@ -691,8 +702,20 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
           const detected = detectDateHeaderRow(1);
           if (detected && detected.dateColumns.length > 0) {
             headerRowIdx = detected.headerRowIdx;
-            dateColumns = detected.dateColumns;
-            console.log('[mirus-daily][excel] short-range: date-cell detection, cols:', dateColumns.length);
+            // BUG 2 FIX: filter to only the requested dates — don't import the whole month
+            const requestedIsos = new Set(expectedDates.map(ed => ed.iso));
+            dateColumns = detected.dateColumns.filter(dc => requestedIsos.has(dc.date));
+            if (dateColumns.length === 0) {
+              // Fallback: take closest matching column
+              dateColumns = detected.dateColumns.slice(0, 1);
+            }
+            console.log(`[IMPORT] detected header row: ${headerRowIdx}`);
+            console.log(`[IMPORT] detected start column for day 1: ${detected.dateColumns[0]?.index ?? '?'}`);
+            for (const ed of expectedDates) {
+              const dc = dateColumns.find(c => c.date === ed.iso);
+              console.log(`[IMPORT] resolved column for day ${ed.day}: ${dc?.index ?? 'not found'}`);
+            }
+            console.log('[mirus-daily][excel] short-range: date-cell detection, filtered cols:', dateColumns.length);
             shortRangeDone = true;
           } else {
             // Last-resort: standard grid, day 1 at col 5 → offset by (day-1)
@@ -705,6 +728,11 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
               const idx = rows.findIndex((r) => String(r?.[0] || '').toLowerCase().includes('küche'));
               return idx > 0 ? idx - 1 : 0;
             })();
+            console.log(`[IMPORT] detected header row (last-resort): ${headerRowIdx}`);
+            console.log(`[IMPORT] detected start column for day 1 (last-resort): ${firstDayCol}`);
+            for (const ed of expectedDates) {
+              console.log(`[IMPORT] resolved column for day ${ed.day} (last-resort): ${firstDayCol + (ed.day - 1)}`);
+            }
             console.log('[mirus-daily][excel] short-range last-resort: col', dateColumns[0]?.index, 'row', headerRowIdx);
             shortRangeDone = true;
           }
@@ -875,6 +903,13 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
     }
 
     console.log('[mirus-daily][excel] entries:', entries.length, entries.slice(0, 10));
+    // [IMPORT] per-date summary log (only for single/short-range imports)
+    if (dateColumns.length <= 2) {
+      for (const dc of dateColumns) {
+        const dayEntries = entries.filter(e => e.date === dc.date);
+        console.log(`[IMPORT] imported rows for ${dc.date}: ${dayEntries.length}`, dayEntries.map(e => `${e.name} ${e.hours}h`));
+      }
+    }
     return { entries, dateRange: dateColumns.map((dc) => dc.date) };
   } catch (error) {
     console.error('[mirus-daily][excel] parsing error:', error);
