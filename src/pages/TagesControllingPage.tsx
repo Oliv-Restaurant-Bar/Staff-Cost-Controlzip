@@ -35,7 +35,7 @@ import { cn } from '@/lib/utils';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { grossToNet } from '@/types/personnel';
 import { getMonthSummary } from '@/lib/supplier-documents-store';
-import { loadMonth } from '@/lib/reporting-store';
+import { loadMonth, loadJournalEntries, loadJournalEntriesFromDB } from '@/lib/reporting-store';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import {
   loadScheduleForMonth,
@@ -204,19 +204,37 @@ function buildWesMap(dates: Date[]): Record<string, number> {
   for (const [mk, days] of monthGroups) {
     const [y, m] = mk.split('-').map(Number);
 
-    // Primär: Lieferantendokumente
+    // Primär: Lieferantendokumente (supplier_docs_v1)
     let total = 0;
     const summary = getMonthSummary(y, m);
     if (summary.totalCost > 0) {
       total = summary.totalCost;
-    } else {
-      // Fallback: Buchhaltungsdaten (Sage-Import) – wareneinsatz_* Kategorien
+    }
+
+    // Fallback 1: reporting_v1 – wareneinsatz_* Kategorien
+    if (total <= 0) {
       try {
         const rec = loadMonth(y, m);
         const warCats = rec.expenseCategories.filter(c =>
           c.categoryId.startsWith('wareneinsatz'),
         );
         total = warCats.reduce((s, c) => s + (c.amount ?? 0), 0);
+      } catch { /* ignore */ }
+    }
+
+    // Fallback 2: Sage-Journal (sage_journal_v1) – Konten 4000–4999 (Wareneinsatz)
+    if (total <= 0) {
+      try {
+        const entries = loadJournalEntries(y, m);
+        total = entries
+          .filter(e => {
+            const nr = parseInt(e.accountNumber, 10);
+            return nr >= 4000 && nr <= 4999;
+          })
+          .reduce((s, e) => s + (e.amount ?? 0), 0);
+        if (total > 0) {
+          console.log(`[WES] sage_journal Fallback ${mk}: ${entries.length} Einträge → ${total.toFixed(0)} CHF`);
+        }
       } catch { /* ignore */ }
     }
 
@@ -316,6 +334,7 @@ export default function TagesControllingPage() {
   const [scheduleMap, setScheduleMap] = useState<Record<string, DaySchedule>>({});
   const [actualHoursMap, setActualHoursMap] = useState<Record<string, ActualHourEntry>>({});
   const [loadingPK, setLoadingPK]     = useState(false);
+  const [journalTick, setJournalTick] = useState(0);
   const loadGenRef = useRef(0);
 
   // Spaltenbreiten (resizable)
@@ -395,6 +414,19 @@ export default function TagesControllingPage() {
     }).catch(() => { if (loadGenRef.current === gen) setLoadingPK(false); });
   }, [dates]);
 
+  // Sage-Journal für WES: bei jeder Periodenänderung aus Supabase laden
+  useEffect(() => {
+    const monthSet = new Set<string>();
+    for (const d of dates) monthSet.add(format(d, 'yyyy-MM'));
+    const pairs = Array.from(monthSet).map(mk => {
+      const [y, m] = mk.split('-').map(Number);
+      return { y, m };
+    });
+    Promise.all(pairs.map(({ y, m }) => loadJournalEntriesFromDB(y, m))).then(() => {
+      setJournalTick(t => t + 1);
+    }).catch(() => {});
+  }, [dates]);
+
   // WageMap aus employees
   const wageMap = useMemo(() => {
     const m: Record<string, number> = {};
@@ -405,7 +437,8 @@ export default function TagesControllingPage() {
   // Plan / Ist / WES-Maps berechnen
   const planMap   = useMemo(() => buildPlanCostFromSchedule(scheduleMap, wageMap),   [scheduleMap, wageMap]);
   const actualMap = useMemo(() => buildActualCostFromHours(actualHoursMap, wageMap), [actualHoursMap, wageMap]);
-  const wesMap    = useMemo(() => buildWesMap(dates), [dates]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const wesMap    = useMemo(() => buildWesMap(dates), [dates, journalTick]);
 
   // Zeilenberechnung
   const rows = useMemo((): ControllingRow[] => {
