@@ -50,43 +50,74 @@ export function matchEmployeeByName(
   existingEmps: Employee[],
   debug = false,
 ): EmployeeMatchResult {
-  const log = debug
-    ? (...args: unknown[]) => console.log('[Ist-Match]', importedName, '→', ...args)
-    : () => undefined;
+  // Always log with [MATCH] prefix for debug names so output matches the
+  // requested format (even when debug=false for non-targeted names).
+  const log = (...args: unknown[]) => {
+    if (debug) console.log('[MATCH]', `raw import name: "${importedName}" →`, ...args);
+  };
 
-  // 1. Gespeicherte Zuordnung
+  log(`processing against ${existingEmps.length} employees`);
+
+  // 1. Gespeicherte Zuordnung (mirus_name_mappings_v1)
   const savedId = lookupSavedMapping(importedName);
   if (savedId && savedId !== 'skip') {
     const emp = existingEmps.find(e => e.id === savedId);
     if (emp) {
-      log('saved mapping', emp.name);
+      log(`final resolved employee: "${emp.name}" via saved mapping`);
+      console.log(`[MATCH] import row saved: yes (saved mapping) — ${importedName} → ${emp.name}`);
       return { employee: emp, matchType: 'saved', matchStep: 'saved' };
     }
+    // Saved ID no longer matches any employee — fall through to heuristics
+    log(`saved mapping id="${savedId}" not found in employee list, continuing`);
   }
   if (savedId === 'skip') {
-    log('skip (saved)');
+    log('skip (saved mapping)');
+    console.log(`[MATCH] import row saved: no (skip mapping) — ${importedName}`);
     return { employee: null, matchType: 'new', matchStep: 'skip' };
   }
 
   const norm = importedName.toLowerCase().trim();
   const importParts = norm.split(/\s+/).filter(p => p.length > 0);
 
-  // 2. Exakter Match
+  if (debug) {
+    existingEmps.forEach(e => {
+      console.log(`[MATCH] candidate employee: "${e.name}" (id=${e.id})`);
+    });
+  }
+
+  // 2. Exakter Match (case-insensitiv)
   const exact = existingEmps.find(e => e.name.toLowerCase().trim() === norm);
   if (exact) {
-    log('exact', exact.name);
+    log(`final resolved employee: "${exact.name}" via exact match`);
+    console.log(`[MATCH] import row saved: yes (exact) — ${importedName} → ${exact.name}`);
     return { employee: exact, matchType: 'exact', matchStep: 'exact' };
   }
 
-  // 3. Umgekehrte Wortreihenfolge exakt
+  // 3. Umgekehrte Wortreihenfolge exakt ("Nachname Vorname" ↔ "Vorname Nachname")
   const reversed = [...importParts].reverse().join(' ');
   const reversedExact = existingEmps.find(e => e.name.toLowerCase().trim() === reversed);
   if (reversedExact) {
-    log('reversed-exact', reversedExact.name, '(reversed:', reversed, ')');
+    log(`reversed-order match: "${reversed}" → "${reversedExact.name}"`);
+    console.log(`[MATCH] reversed-order match: "${importedName}" ↔ "${reversedExact.name}"`);
+    console.log(`[MATCH] import row saved: yes (reversed-exact) — ${importedName} → ${reversedExact.name}`);
     return { employee: reversedExact, matchType: 'exact', matchStep: 'reversed-exact' };
   }
 
-  // 4. Wort-Scoring
+  // 3b. Jedes Token des Importnamens als vollständiger Mitarbeitername prüfen
+  // Fängt Fälle wie "Momand Sajed" → "Sajed" (nur-Vorname im System) zuverlässig ab.
+  for (const token of importParts) {
+    if (token.length < 3) continue;
+    const tokenFullMatch = existingEmps.find(e => e.name.toLowerCase().trim() === token);
+    if (tokenFullMatch) {
+      log(`token-full-name match: token="${token}" → "${tokenFullMatch.name}"`);
+      console.log(`[MATCH] reversed-order match: token "${token}" is full employee name "${tokenFullMatch.name}"`);
+      console.log(`[MATCH] final resolved employee: "${tokenFullMatch.name}" via token-full-name`);
+      console.log(`[MATCH] import row saved: yes (token-full-name) — ${importedName} → ${tokenFullMatch.name}`);
+      return { employee: tokenFullMatch, matchType: 'exact', matchStep: `token-full:${token}` };
+    }
+  }
+
+  // 4. Wort-Scoring: exakter Wortmatch +2, Präfix-Match (≥4 Zeichen) +1
   const candParts = importParts.filter(p => p.length > 2);
   if (candParts.length > 0) {
     let bestScore = 0;
@@ -102,25 +133,30 @@ export function matchEmployeeByName(
           }
         }
       }
+      if (debug && score > 0) {
+        console.log(`[MATCH] candidate employee: "${emp.name}" word-score=${score}`);
+      }
       if (score > bestScore) { bestScore = score; bestEmp = emp; }
     }
     if (bestEmp && bestScore > 0) {
-      log('word-score', bestEmp.name, '(score:', bestScore, ')');
+      log(`final resolved employee: "${bestEmp.name}" via word-score=${bestScore}`);
+      console.log(`[MATCH] import row saved: yes (word-score:${bestScore}) — ${importedName} → ${bestEmp.name}`);
       return { employee: bestEmp, matchType: 'firstName', matchStep: `word-score:${bestScore}` };
     }
   }
 
-  // 5. Erstes Wort (Vorname)
+  // 5. Erstes Token als Vorname
   const firstName = importParts[0] ?? '';
   const firstMatch = existingEmps.find(
     e => e.name.toLowerCase().trim().split(/\s+/)[0] === firstName,
   );
   if (firstMatch) {
-    log('first-word', firstMatch.name);
+    log(`final resolved employee: "${firstMatch.name}" via first-word match`);
+    console.log(`[MATCH] import row saved: yes (first-word) — ${importedName} → ${firstMatch.name}`);
     return { employee: firstMatch, matchType: 'firstName', matchStep: 'first-word' };
   }
 
-  // 6. Letztes Wort (Nachname)
+  // 6. Letztes Token als Nachname (fallback)
   const lastName = importParts[importParts.length - 1] ?? '';
   if (lastName.length > 2) {
     const lastMatch = existingEmps.find(e => {
@@ -128,12 +164,14 @@ export function matchEmployeeByName(
       return eParts.some(ep => ep === lastName || ep.startsWith(lastName) || lastName.startsWith(ep));
     });
     if (lastMatch) {
-      log('last-word', lastMatch.name);
+      log(`final resolved employee: "${lastMatch.name}" via last-word match`);
+      console.log(`[MATCH] import row saved: yes (last-word) — ${importedName} → ${lastMatch.name}`);
       return { employee: lastMatch, matchType: 'firstName', matchStep: 'last-word' };
     }
   }
 
-  log('no match');
+  log('no match found');
+  console.log(`[MATCH] import row saved: no — "${importedName}" did not match any employee`);
   return { employee: null, matchType: 'new', matchStep: 'none' };
 }
 

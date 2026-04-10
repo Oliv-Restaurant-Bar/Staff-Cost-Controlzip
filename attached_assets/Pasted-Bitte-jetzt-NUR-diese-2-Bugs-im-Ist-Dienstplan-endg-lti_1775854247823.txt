@@ -1,0 +1,92 @@
+Bitte jetzt NUR diese 2 Bugs im Ist-Dienstplan endgültig reparieren.
+
+Es geht um zwei weiterhin bestehende Probleme:
+
+1. Manuell erfasste Ferien im Ist-Dienstplan werden wieder gelöscht
+2. Die Küchenmitarbeiter Sadete und Momand Sajed werden beim Ist-Import nicht korrekt erkannt, daher werden ihre Stunden nicht importiert
+
+Bitte exakt so prüfen und fixen:
+
+--------------------------------------------------
+BUG 1: Ferien im Ist-Dienstplan bleiben nicht bestehen
+--------------------------------------------------
+
+Problem:
+Wenn ich im Ist-Dienstplan Ferien manuell erfasse, verschwinden diese später wieder.
+Das darf nicht passieren.
+
+Gewünschte Logik:
+- manuell gesetzte Ferien im Ist bleiben bestehen
+- Ferien im Ist zählen 0 Stunden
+- Ferien zählen NICHT in Ist-Stunden, Saldo oder Totalstunden
+- Ferien dürfen NICHT durch Reload verschwinden
+- Ferien dürfen NICHT durch Ist-Import gelöscht werden, wenn der Import für diesen Mitarbeiter/Tag keine echten Arbeitsstunden enthält
+- Ferien dürfen NUR überschrieben werden, wenn für denselben Mitarbeiter am selben Datum echte importierte Arbeitsstunden vorhanden sind
+
+Bitte konkret prüfen:
+1. Wo werden manuelle Ferien im Ist gespeichert?
+2. Beim Reload: warum verschwinden sie?
+3. Beim Ist-Import: welche Merge-Logik überschreibt sie?
+4. Leere Import-Zellen oder fehlende Importdaten dürfen NIE bestehende Ferien löschen
+
+Bitte Debug Logs einbauen:
+[FERIEN-IST] existing entry before merge: ...
+[FERIEN-IST] manual holiday preserved
+[FERIEN-IST] holiday replaced by imported working hours
+[FERIEN-IST] ignored empty import row, kept existing holiday
+[FERIEN-IST] reload restored holiday entry
+
+Bitte zusätzlich im Code absichern:
+- existing FE/Ferien entry im Ist behalten, solange imported hours <= 0 oder kein echter Importslot vorhanden ist
+
+--------------------------------------------------
+BUG 2: Sadete und Momand Sajed werden nicht korrekt importiert
+--------------------------------------------------
+
+Problem:
+Beim Küchen-Ist-Import werden Sadete und Momand Sajed nicht sauber erkannt bzw. ihre Stunden fehlen danach.
+
+Bitte genau diese zwei Namen gezielt debuggen.
+
+Wichtig:
+Im Dienstplan soll immer der kanonische Name aus dem Personalstamm verwendet werden.
+Das Matching muss aber beim Import auch für diese beiden robust funktionieren.
+
+Bitte prüfen:
+1. Wie heissen die Namen exakt im Importfile?
+2. Wie heissen sie exakt im Personalstamm?
+3. Welcher Matching-Schritt greift aktuell?
+4. Warum werden sie aktuell nicht übernommen?
+
+Bitte gezielt für diese zwei Namen Debug Logs einbauen:
+[MATCH] raw import name: ...
+[MATCH] candidate employee: ...
+[MATCH] reversed-order match: ...
+[MATCH] final resolved employee: ...
+[MATCH] import row saved: yes/no
+
+Bitte sicherstellen:
+- Sadete wird korrekt erkannt
+- Momand Sajed wird korrekt erkannt
+- falls Importformat "Sajed Momand" oder ähnlich ist, reversed-order Match muss greifen
+- nach Match muss immer der Personalstamm-Name gespeichert/angezeigt werden
+
+--------------------------------------------------
+WICHTIG
+--------------------------------------------------
+
+- keine neuen Features bauen
+- keine Navigation ändern
+- keine PDF-/Dashboard-Arbeiten
+- nur diese zwei Bugs sauber beheben
+
+--------------------------------------------------
+BITTE DANACH KURZ SAGEN:
+--------------------------------------------------
+
+- welche Datei(en) geändert wurden
+- warum Ferien bisher wieder gelöscht wurden
+- wie jetzt verhindert wird, dass Ferien ohne echte Arbeitsstunden überschrieben werden
+- warum Sadete und Momand Sajed bisher nicht importiert wurden
+- wie ihr Matching jetzt funktioniert
+- wie ich die zwei Fixes am schnellsten testen soll
