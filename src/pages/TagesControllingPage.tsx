@@ -28,12 +28,13 @@ import {
 import { de } from 'date-fns/locale';
 import {
   ChevronLeft, ChevronRight, CalendarDays, Calendar, CalendarRange,
-  TrendingUp, TrendingDown, Loader2, FileDown, FileSpreadsheet,
+  TrendingUp, TrendingDown, Loader2, FileDown, FileSpreadsheet, Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { grossToNet } from '@/types/personnel';
+import { kvSet } from '@/lib/supabase-kv';
 import { getMonthSummary } from '@/lib/supplier-documents-store';
 import { loadMonth, loadJournalEntries, loadJournalEntriesFromDB } from '@/lib/reporting-store';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
@@ -336,6 +337,32 @@ export default function TagesControllingPage() {
   const [loadingPK, setLoadingPK]     = useState(false);
   const [journalTick, setJournalTick] = useState(0);
   const loadGenRef = useRef(0);
+
+  // ── Inline-Umsatz-Bearbeitung ─────────────────────────────────────────────
+  const [editingDate, setEditingDate]   = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  const startEditUmsatz = (date: string, currentGross: number) => {
+    setEditingDate(date);
+    setEditingValue(currentGross > 0 ? String(Math.round(currentGross)) : '');
+    setTimeout(() => { editInputRef.current?.select(); }, 30);
+  };
+
+  const commitUmsatzEdit = (date: string) => {
+    const raw = editingValue.replace(/['''`\s]/g, '').replace(',', '.');
+    const gross = parseFloat(raw);
+    if (!isNaN(gross) && gross >= 0) {
+      const updated = {
+        ...dailyBudgets,
+        [date]: { ...dailyBudgets[date], actualRevenue: gross },
+      };
+      setDailyBudgets(updated);
+      localStorage.setItem('dailyBudgets', JSON.stringify(updated));
+      kvSet('dailyBudgets', updated).catch(() => {});
+    }
+    setEditingDate(null);
+  };
 
   // Spaltenbreiten (resizable)
   const [colWidths, setColWidths] = useState(DEFAULT_COL_WIDTHS);
@@ -695,8 +722,8 @@ export default function TagesControllingPage() {
                         <ResizeHandle col="wt" />
                       </th>
                     )}
-                    <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('umsatz')}>
-                      <span>Ist-Umsatz CHF</span>
+                    <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('umsatz')} title="Klicken zum Bearbeiten (Brutto CHF)">
+                      <span className="inline-flex items-center gap-1 justify-end">Ist-Umsatz CHF<Pencil className="h-2.5 w-2.5 opacity-40" /></span>
                       <ResizeHandle col="umsatz" />
                     </th>
                     <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('pkPlan')}>
@@ -849,8 +876,35 @@ export default function TagesControllingPage() {
                             <td className={cn('px-2 py-1.5 text-center text-[11px] font-medium', isWeekend ? 'text-muted-foreground' : 'text-foreground')} style={colStyle('wt')}>
                               {WT_ABBR[row.day.getDay()]}
                             </td>
-                            <td className={cn('px-3 py-1.5 text-right tabular-nums font-medium', row.umsatz === 0 && 'text-muted-foreground')} style={colStyle('umsatz')}>
-                              {row.umsatz > 0 ? fmtN(row.umsatz) : '–'}
+                            <td
+                              className={cn('px-0 py-0 text-right tabular-nums font-medium', row.umsatz === 0 && 'text-muted-foreground')}
+                              style={colStyle('umsatz')}
+                            >
+                              {editingDate === row.date ? (
+                                <input
+                                  ref={editInputRef}
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={editingValue}
+                                  onChange={e => setEditingValue(e.target.value)}
+                                  onBlur={() => commitUmsatzEdit(row.date)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') { e.currentTarget.blur(); }
+                                    if (e.key === 'Escape') { setEditingDate(null); }
+                                  }}
+                                  placeholder="Brutto CHF"
+                                  className="w-full h-full px-3 py-1.5 text-right bg-blue-50 dark:bg-blue-950/40 border border-blue-400 dark:border-blue-600 rounded focus:outline-none font-medium tabular-nums text-xs"
+                                  autoFocus
+                                />
+                              ) : (
+                                <button
+                                  onClick={() => startEditUmsatz(row.date, dailyBudgets[row.date]?.actualRevenue ?? 0)}
+                                  title="Klicken zum Bearbeiten (Brutto CHF)"
+                                  className="w-full px-3 py-1.5 text-right hover:bg-blue-50 dark:hover:bg-blue-950/20 rounded transition-colors cursor-text"
+                                >
+                                  {row.umsatz > 0 ? fmtN(row.umsatz) : '–'}
+                                </button>
+                              )}
                             </td>
                             <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-muted-foreground" style={colStyle('pkPlan')}>
                               {row.pkPlanChf > 0 ? fmtN(row.pkPlanChf) : '–'}
