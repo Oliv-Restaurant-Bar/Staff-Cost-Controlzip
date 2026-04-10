@@ -477,6 +477,10 @@ export default function PersonalFixPage() {
   const [planHours, setPlanHours] = useState<Record<string, number>>({});
   const [istHours, setIstHours] = useState<Record<string, number>>({});
 
+  // ── Pro-Rata-Abgrenzung ────────────────────────────────────────────────────
+  // null = aus; Zahl = Stichtag (1–letzter Tag des Monats)
+  const [proRataDay, setProRataDay] = useState<number | null>(null);
+
   useEffect(() => {
     loadEmployees().then(emps => {
       if (emps) setEmployees(emps);
@@ -696,6 +700,15 @@ export default function PersonalFixPage() {
     [variableEmployees, varView, varPricingMode, getVarHoursFor],
   );
   const totalCombined = totalFixCost + totalVarCost;
+
+  // ── Pro-Rata-Berechnungen ──────────────────────────────────────────────────
+  const daysInSelectedMonth = new Date(selectedYear, selectedMonth, 0).getDate();
+  const proRataFactor = proRataDay !== null
+    ? Math.min(proRataDay, daysInSelectedMonth) / daysInSelectedMonth
+    : 1;
+  const proRataFixCost  = totalFixCost  * proRataFactor;
+  const proRataVarCost  = totalVarCost  * proRataFactor;
+  const proRataTotal    = totalCombined * proRataFactor;
 
   // ── Departement-Zusammenfassung ────────────────────────────────────────────
 
@@ -924,6 +937,90 @@ export default function PersonalFixPage() {
             icon={<Users className="h-5 w-5" />}
             color={totalCombined > 0 ? 'green' : 'default'}
           />
+        </div>
+
+        {/* ── Pro-Rata-Abgrenzung ──────────────────────────────────────────── */}
+        <div className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Target className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold">Pro-Rata-Abgrenzung</span>
+              {proRataDay !== null && (
+                <Badge variant="secondary" className="text-xs tabular-nums">
+                  {proRataDay}/{daysInSelectedMonth} · {Math.round(proRataFactor * 100)} %
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {proRataDay !== null && (
+                <>
+                  <span className="text-xs text-muted-foreground">Tag:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={daysInSelectedMonth}
+                    value={proRataDay}
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10);
+                      if (!isNaN(v) && v >= 1 && v <= daysInSelectedMonth) setProRataDay(v);
+                    }}
+                    className="w-16 h-8 rounded border border-border text-center text-sm font-mono bg-background"
+                  />
+                  <span className="text-xs text-muted-foreground">/ {daysInSelectedMonth}</span>
+                </>
+              )}
+              <Button
+                size="sm"
+                variant={proRataDay !== null ? 'default' : 'outline'}
+                className="h-8 text-xs gap-1.5"
+                onClick={() => {
+                  if (proRataDay !== null) {
+                    setProRataDay(null);
+                  } else {
+                    // Standard: heutiger Tag wenn aktueller Monat, sonst letzter Tag
+                    const isCurrentMonth = selectedYear === today.getFullYear() && selectedMonth === today.getMonth() + 1;
+                    setProRataDay(isCurrentMonth ? today.getDate() : daysInSelectedMonth);
+                  }
+                }}
+              >
+                <Repeat className="h-3.5 w-3.5" />
+                {proRataDay !== null ? 'Abgrenzung aus' : 'Abgrenzen'}
+              </Button>
+            </div>
+          </div>
+
+          {proRataDay !== null && (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-lg border bg-muted/30 p-3 text-center">
+                <p className="text-xs text-muted-foreground mb-1">FIX bis {proRataDay}.</p>
+                <p className="text-xl font-bold tabular-nums text-blue-600">{fmtCHF(proRataFixCost)}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  von {fmtCHF(totalFixCost)}
+                </p>
+              </div>
+              <div className="rounded-lg border bg-muted/30 p-3 text-center">
+                <p className="text-xs text-muted-foreground mb-1">VARIABEL bis {proRataDay}.</p>
+                <p className="text-xl font-bold tabular-nums text-orange-600">{fmtCHF(proRataVarCost)}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  von {fmtCHF(totalVarCost)}
+                </p>
+              </div>
+              <div className="rounded-lg border bg-primary/5 border-primary/20 p-3 text-center">
+                <p className="text-xs text-muted-foreground mb-1">Total bis {proRataDay}.</p>
+                <p className="text-xl font-bold tabular-nums text-primary">{fmtCHF(proRataTotal)}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  von {fmtCHF(totalCombined)}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {proRataDay === null && (
+            <p className="text-xs text-muted-foreground">
+              Berechnet die aufgelaufenen Personalkosten bis zu einem bestimmten Tag des Monats.
+              Formel: Monatskosten × (Stichtag ÷ {daysInSelectedMonth} Tage).
+            </p>
+          )}
         </div>
 
         {/* ── Budget-Vergleich ─────────────────────────────────────────────── */}
