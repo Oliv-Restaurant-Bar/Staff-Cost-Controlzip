@@ -473,7 +473,7 @@ export default function PersonalFixPage() {
   const [varWeekly, setVarWeekly] = useState<Record<string, WeeklyBaseline>>(() => loadVarWeekly());
   const [varPricingMode, setVarPricingMode] = useState<Record<string, PricingMode>>(() => loadVarPricingMode());
   const [varDayRate, setVarDayRate] = useState<Record<string, DayRateData>>(() => loadVarDayRate());
-  const [varView, setVarView] = useState<VarView>('manual');
+  const [varView, setVarView] = useState<VarView>('plan');
   const [planHours, setPlanHours] = useState<Record<string, number>>({});
   const [istHours, setIstHours] = useState<Record<string, number>>({});
 
