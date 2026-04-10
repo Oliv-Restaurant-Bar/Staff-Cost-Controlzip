@@ -770,9 +770,26 @@ export default function PersonalFixPage() {
   const proRataFactor = proRataDay !== null
     ? Math.min(proRataDay, daysInSelectedMonth) / daysInSelectedMonth
     : 1;
-  const proRataFixCost  = totalFixCost  * proRataFactor;
-  const proRataVarCost  = totalVarCost  * proRataFactor;
-  const proRataTotal    = totalCombined * proRataFactor;
+  const proRataFixCost  = totalFixCost       * proRataFactor;
+  const proRataVarCost  = totalVariabelCHF   * proRataFactor;
+  const proRataTotal    = (totalFixCost + totalVariabelCHF) * proRataFactor;
+
+  // Pro-Rata pro variablen Mitarbeiter (für UI-Tabelle + Export)
+  const proRataVarByEmp = useMemo(() => {
+    return variableEmployees.map(emp => {
+      const monthlyCost = getVarMonthlyCostFor(emp.id, emp);
+      const ferienCHF   = getEmpFerienCHF(emp);
+      const netCost     = Math.max(0, monthlyCost - ferienCHF);
+      return {
+        name:         emp.name,
+        dept:         emp.department ?? '–',
+        hours:        getVarHoursFor(emp.id),
+        monthlyCost:  netCost,
+        proRataCost:  netCost * proRataFactor,
+        ferienCHF,
+      };
+    }).filter(r => r.monthlyCost > 0 || r.proRataCost > 0);
+  }, [variableEmployees, getVarMonthlyCostFor, getEmpFerienCHF, getVarHoursFor, proRataFactor]);
 
   // ── Departement-Zusammenfassung ────────────────────────────────────────────
 
@@ -880,6 +897,20 @@ export default function PersonalFixPage() {
         varView,
         avgHourlyWage,
         maxVarHours,
+        // Ferienabbau
+        totalVarArbeitCHF,
+        totalFerienabbauCHF,
+        totalVariabelCHF,
+        ferienabbauByDept,
+        deptSummary,
+        // Pro-Rata
+        proRataDay,
+        proRataFactor,
+        proRataFixCost,
+        proRataVarCost,
+        proRataTotal,
+        proRataVarByEmp,
+        daysInSelectedMonth,
       });
       toast.success('PDF erfolgreich exportiert');
     } catch (err) {
@@ -1058,28 +1089,72 @@ export default function PersonalFixPage() {
           </div>
 
           {proRataDay !== null && (
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-lg border bg-muted/30 p-3 text-center">
-                <p className="text-xs text-muted-foreground mb-1">FIX bis {proRataDay}.</p>
-                <p className="text-xl font-bold tabular-nums text-blue-600">{fmtCHF(proRataFixCost)}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  von {fmtCHF(totalFixCost)}
-                </p>
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-lg border bg-muted/30 p-3 text-center">
+                  <p className="text-xs text-muted-foreground mb-1">FIX bis {proRataDay}.</p>
+                  <p className="text-xl font-bold tabular-nums text-blue-600">{fmtCHF(proRataFixCost)}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">von {fmtCHF(totalFixCost)}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3 text-center">
+                  <p className="text-xs text-muted-foreground mb-1">VARIABEL bis {proRataDay}.</p>
+                  <p className="text-xl font-bold tabular-nums text-orange-600">{fmtCHF(proRataVarCost)}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">von {fmtCHF(totalVariabelCHF)}</p>
+                </div>
+                <div className="rounded-lg border bg-primary/5 border-primary/20 p-3 text-center">
+                  <p className="text-xs text-muted-foreground mb-1">Total bis {proRataDay}.</p>
+                  <p className="text-xl font-bold tabular-nums text-primary">{fmtCHF(proRataTotal)}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">von {fmtCHF(totalFixCost + totalVariabelCHF)}</p>
+                </div>
               </div>
-              <div className="rounded-lg border bg-muted/30 p-3 text-center">
-                <p className="text-xs text-muted-foreground mb-1">VARIABEL bis {proRataDay}.</p>
-                <p className="text-xl font-bold tabular-nums text-orange-600">{fmtCHF(proRataVarCost)}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  von {fmtCHF(totalVarCost)}
-                </p>
-              </div>
-              <div className="rounded-lg border bg-primary/5 border-primary/20 p-3 text-center">
-                <p className="text-xs text-muted-foreground mb-1">Total bis {proRataDay}.</p>
-                <p className="text-xl font-bold tabular-nums text-primary">{fmtCHF(proRataTotal)}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  von {fmtCHF(totalCombined)}
-                </p>
-              </div>
+              {/* Variable Mitarbeiter-Auflistung pro rata */}
+              {proRataVarByEmp.length > 0 && (
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <div className="px-3 py-2 bg-orange-50 dark:bg-orange-950/20 border-b border-orange-100 dark:border-orange-900">
+                    <p className="text-xs font-semibold text-orange-700 dark:text-orange-400 uppercase tracking-wide">
+                      Variable Kosten pro Mitarbeiter — bis {proRataDay}. ({Math.round(proRataFactor * 100)} %)
+                    </p>
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-muted/30 border-b border-border">
+                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">Name</th>
+                        <th className="px-3 py-2 text-center font-medium text-muted-foreground">Abt.</th>
+                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Stunden</th>
+                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Netto/Mt</th>
+                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">bis {proRataDay}.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {proRataVarByEmp.map((row, i) => (
+                        <tr key={i} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
+                          <td className="px-3 py-1.5 font-medium">{row.name}</td>
+                          <td className="px-3 py-1.5 text-center text-muted-foreground capitalize">{row.dept}</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">
+                            {row.hours > 0 ? `${Math.round(row.hours * 10) / 10} h` : '–'}
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-mono">
+                            {fmtCHF(row.monthlyCost)}
+                            {row.ferienCHF > 0 && (
+                              <span className="ml-1 text-blue-500 text-[10px]">−{fmtCHF(row.ferienCHF)} FE</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-mono font-semibold text-orange-700 dark:text-orange-400">
+                            {fmtCHF(row.proRataCost)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20">
+                        <td className="px-3 py-2 font-bold text-orange-800 dark:text-orange-300" colSpan={3}>Total Variable</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-orange-800 dark:text-orange-300">{fmtCHF(totalVariabelCHF)}</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-orange-700 dark:text-orange-400">{fmtCHF(proRataVarCost)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 

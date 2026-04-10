@@ -77,6 +77,24 @@ export interface VarRow {
   hourlyWage: number;
 }
 
+export interface DeptSummaryRow {
+  dept: string;
+  fix: number;
+  varArbeit: number;
+  ferienabbau: number;
+  variabel: number;
+  total: number;
+}
+
+export interface ProRataEmpRow {
+  name: string;
+  dept: string;
+  hours: number;
+  monthlyCost: number;
+  proRataCost: number;
+  ferienCHF: number;
+}
+
 export interface PersonalFixExportData {
   selectedYear: number;
   selectedMonth: number;
@@ -105,6 +123,22 @@ export interface PersonalFixExportData {
   varView: 'plan' | 'ist' | 'manual';
   avgHourlyWage: number;
   maxVarHours: number;
+
+  // Ferienabbau
+  totalVarArbeitCHF: number;
+  totalFerienabbauCHF: number;
+  totalVariabelCHF: number;
+  ferienabbauByDept: Record<string, number>;
+  deptSummary: DeptSummaryRow[];
+
+  // Pro-Rata
+  proRataDay: number | null;
+  proRataFactor: number;
+  proRataFixCost: number;
+  proRataVarCost: number;
+  proRataTotal: number;
+  proRataVarByEmp: ProRataEmpRow[];
+  daysInSelectedMonth: number;
 }
 
 // ── Interne Helfer ─────────────────────────────────────────────────────────────
@@ -264,6 +298,10 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
     varByDept, totalVarCost, totalVarHours, totalCombined,
     personnelBudget, availableVarBudget, varBudgetDelta, varBudgetOverrun,
     varView, avgHourlyWage, maxVarHours,
+    totalVarArbeitCHF, totalFerienabbauCHF, totalVariabelCHF,
+    deptSummary,
+    proRataDay, proRataFactor, proRataFixCost, proRataVarCost, proRataTotal,
+    proRataVarByEmp, daysInSelectedMonth,
   } = data;
 
   const monthLabel = getMonthLabel(selectedYear, selectedMonth);
@@ -309,13 +347,17 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
     : `${Object.values(varByDept).flat().length} MA · Stunden wählen`;
 
   drawKpiCard(pdf, margin + kpiW + 4,   curY, kpiW, kpiH,
-    'Personal VARIABEL / Monat', fmtCHF(totalVarCost),
+    'Variable Arbeit / Monat', fmtCHF(totalVarArbeitCHF),
     varSub,
     C.sectionOrange, C.lightOrange, varBadge);
 
+  const totalNetCHF = totalFixCost + totalVariabelCHF;
+  const totalSub = totalFerienabbauCHF > 0
+    ? `FIX + Variabel − ${fmtCHF(totalFerienabbauCHF)} Ferienabbau`
+    : 'FIX + VARIABEL';
   drawKpiCard(pdf, margin + 2 * (kpiW + 4), curY, kpiW, kpiH,
-    'Total Personal / Monat', fmtCHF(totalCombined),
-    'FIX + VARIABEL',
+    'Total Personal / Monat', fmtCHF(totalNetCHF),
+    totalSub,
     C.sectionGreen, C.lightGreen);
 
   curY += kpiH + 4;
@@ -633,24 +675,184 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
       curY = (pdf as any).lastAutoTable.finalY + 4;
     }
 
-    // Total Variabel Band
+    // Total Variabel Band (mit Ferienabbau-Split falls vorhanden)
     if (totalVarHours > 0 || totalVarCost > 0) {
-      pdf.setFillColor(...C.lightOrange);
-      pdf.setDrawColor(...C.sectionOrange);
-      pdf.setLineWidth(0.4);
-      pdf.roundedRect(margin, curY, usableW, 10, 1.5, 1.5, 'FD');
-      pdf.setFillColor(...C.sectionOrange);
-      pdf.rect(margin, curY, 2.5, 10, 'F');
-      setFont(pdf, 'bold', 8, C.textOrange);
-      pdf.text('Total Variabel · alle Abteilungen', margin + 6, curY + 4);
-      if (totalVarHours > 0) {
-        setFont(pdf, 'normal', 7.5, C.textMuted);
-        pdf.text(`${Math.round(totalVarHours * 10) / 10} h`, pw - margin - 60, curY + 4, { align: 'right' });
+      if (totalFerienabbauCHF > 0) {
+        // Erweiterte Darstellung: Variable Arbeit, −Ferienabbau, Netto Variabel
+        const bandH = 22;
+        pdf.setFillColor(...C.lightOrange);
+        pdf.setDrawColor(...C.sectionOrange);
+        pdf.setLineWidth(0.4);
+        pdf.roundedRect(margin, curY, usableW, bandH, 1.5, 1.5, 'FD');
+        pdf.setFillColor(...C.sectionOrange);
+        pdf.rect(margin, curY, 2.5, bandH, 'F');
+        setFont(pdf, 'bold', 7, C.textOrange);
+        pdf.text('Total Variable Arbeit:', margin + 6, curY + 6);
+        setFont(pdf, 'normal', 7, C.textMuted);
+        pdf.text(`${Math.round(totalVarHours * 10) / 10} h`, pw - margin - 80, curY + 6);
+        setFont(pdf, 'bold', 7.5, C.textOrange);
+        pdf.text(fmtCHF(totalVarArbeitCHF), pw - margin - 2, curY + 6, { align: 'right' });
+
+        setFont(pdf, 'bold', 7, [29, 78, 216]);
+        pdf.text('− Ferienabbau-Abzug:', margin + 6, curY + 13);
+        setFont(pdf, 'bold', 7.5, [29, 78, 216]);
+        pdf.text(`− ${fmtCHF(totalFerienabbauCHF)}`, pw - margin - 2, curY + 13, { align: 'right' });
+
+        pdf.setDrawColor(...C.sectionOrange);
+        pdf.setLineWidth(0.3);
+        pdf.line(margin + 3, curY + 15.5, pw - margin - 3, curY + 15.5);
+
+        setFont(pdf, 'bold', 8, C.textOrange);
+        pdf.text('Netto Variabel · alle Abteilungen', margin + 6, curY + 20);
+        setFont(pdf, 'bold', 9, C.textOrange);
+        pdf.text(`${fmtCHF(totalVariabelCHF)}/Mt`, pw - margin - 2, curY + 20, { align: 'right' });
+        curY += bandH + 4;
+      } else {
+        pdf.setFillColor(...C.lightOrange);
+        pdf.setDrawColor(...C.sectionOrange);
+        pdf.setLineWidth(0.4);
+        pdf.roundedRect(margin, curY, usableW, 10, 1.5, 1.5, 'FD');
+        pdf.setFillColor(...C.sectionOrange);
+        pdf.rect(margin, curY, 2.5, 10, 'F');
+        setFont(pdf, 'bold', 8, C.textOrange);
+        pdf.text('Total Variabel · alle Abteilungen', margin + 6, curY + 4);
+        if (totalVarHours > 0) {
+          setFont(pdf, 'normal', 7.5, C.textMuted);
+          pdf.text(`${Math.round(totalVarHours * 10) / 10} h`, pw - margin - 60, curY + 4, { align: 'right' });
+        }
+        setFont(pdf, 'bold', 9, C.textOrange);
+        pdf.text(`${fmtCHF(totalVariabelCHF)}/Mt`, pw - margin - 2, curY + 4, { align: 'right' });
+        curY += 14;
       }
-      setFont(pdf, 'bold', 9, C.textOrange);
-      pdf.text(`${fmtCHF(totalVarCost)}/Mt`, pw - margin - 2, curY + 4, { align: 'right' });
-      curY += 14;
     }
+  }
+
+  // ── KOSTENÜBERSICHT NACH ABTEILUNG ───────────────────────────────────────────
+  if (deptSummary.length > 0) {
+    if (curY > ph - 60) { pdf.addPage(); curY = 15; }
+
+    drawSectionHeader(pdf, margin, curY, usableW,
+      '● Kostenübersicht nach Abteilung', undefined,
+      [109, 40, 217], [237, 233, 254]);
+    curY += 10;
+
+    const DEPT_LABEL_LOCAL: Record<string, string> = { service: 'Service', küche: 'Küche' };
+    const deptCols = deptSummary.map(ds => DEPT_LABEL_LOCAL[ds.dept] ?? ds.dept);
+    const tableHead = [['Kostenart', ...deptCols, 'Total']];
+
+    const fix     = ['FIX',            ...deptSummary.map(ds => fmtCHF(ds.fix)),       fmtCHF(totalFixCost)];
+    const varA    = ['Variable Arbeit', ...deptSummary.map(ds => fmtCHF(ds.varArbeit)), fmtCHF(totalVarArbeitCHF)];
+    const feRow   = ['− Ferienabbau',   ...deptSummary.map(ds => ds.ferienabbau > 0 ? `− ${fmtCHF(ds.ferienabbau)}` : '–'), totalFerienabbauCHF > 0 ? `− ${fmtCHF(totalFerienabbauCHF)}` : '–'];
+    const varNet  = ['Netto Variabel',  ...deptSummary.map(ds => fmtCHF(ds.variabel)),  fmtCHF(totalVariabelCHF)];
+    const totRow  = ['TOTAL PERSONAL',  ...deptSummary.map(ds => fmtCHF(ds.total)),     fmtCHF(totalFixCost + totalVariabelCHF)];
+
+    const colW = usableW / (deptSummary.length + 2);
+    autoTable(pdf, {
+      startY: curY,
+      margin: { left: margin, right: margin },
+      head: tableHead,
+      body: [fix, varA, ...(totalFerienabbauCHF > 0 ? [feRow] : []), varNet],
+      foot: [totRow],
+      theme: 'plain',
+      styles: {
+        fontSize: 8, cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 },
+        lineColor: C.borderGray, lineWidth: 0.2,
+      },
+      headStyles: { fillColor: C.tableHead, textColor: C.headerGray, fontStyle: 'bold', fontSize: 7 },
+      footStyles: { fillColor: [209, 250, 229], textColor: [4, 120, 87], fontStyle: 'bold', fontSize: 8 },
+      columnStyles: {
+        0: { cellWidth: 40, fontStyle: 'bold' },
+        ...Object.fromEntries(deptSummary.map((_, i) => [i + 1, { cellWidth: colW, halign: 'right' as const }])),
+        [deptSummary.length + 1]: { cellWidth: colW, halign: 'right' as const, fontStyle: 'bold' },
+      },
+      didParseCell(h) {
+        if (h.section === 'body') {
+          const rowData = h.row.raw as string[];
+          if (rowData[0] === 'FIX') h.cell.styles.textColor = C.textBlue;
+          if (rowData[0] === 'Variable Arbeit') h.cell.styles.textColor = C.textOrange;
+          if (rowData[0] === '− Ferienabbau') h.cell.styles.textColor = [29, 78, 216];
+          if (rowData[0] === 'Netto Variabel') { h.cell.styles.textColor = C.textOrange; h.cell.styles.fontStyle = 'bold'; }
+        }
+        if (h.section === 'foot') { h.cell.styles.halign = h.column.index === 0 ? 'left' : 'right'; }
+      },
+    });
+    curY = (pdf as any).lastAutoTable.finalY + 6;
+  }
+
+  // ── PRO-RATA-ABGRENZUNG (optional) ──────────────────────────────────────────
+
+  if (proRataDay !== null && proRataVarByEmp.length > 0) {
+    if (curY > ph - 70) { pdf.addPage(); curY = 15; }
+
+    const pctLabel = `${Math.round(proRataFactor * 100)} %`;
+    drawSectionHeader(pdf, margin, curY, usableW,
+      `● Pro-Rata-Abgrenzung bis Tag ${proRataDay} von ${daysInSelectedMonth} (${pctLabel})`, undefined,
+      [16, 185, 129], [209, 250, 229]);
+    curY += 10;
+
+    // 3 Summary-Karten
+    const prW = (usableW - 8) / 3;
+    const prH = 22;
+    const drawProCard = (x: number, label: string, val: string, from: string, col: [number,number,number], bg: [number,number,number]) => {
+      pdf.setFillColor(...bg);
+      pdf.setDrawColor(...col);
+      pdf.setLineWidth(0.4);
+      pdf.roundedRect(x, curY, prW, prH, 2, 2, 'FD');
+      pdf.setFillColor(...col);
+      pdf.rect(x, curY + 2, 1.5, prH - 4, 'F');
+      setFont(pdf, 'normal', 6, C.textMuted);
+      pdf.text(label.toUpperCase(), x + 4, curY + 5);
+      setFont(pdf, 'bold', 11, col);
+      pdf.text(val, x + 4, curY + 13);
+      setFont(pdf, 'normal', 6, C.textMuted);
+      pdf.text(`von ${from}`, x + 4, curY + 19);
+    };
+    drawProCard(margin,              `FIX bis ${proRataDay}.`,      fmtCHF(proRataFixCost), fmtCHF(totalFixCost),      C.sectionBlue,  C.lightBlue);
+    drawProCard(margin + prW + 4,    `Variabel bis ${proRataDay}.`, fmtCHF(proRataVarCost), fmtCHF(totalVariabelCHF),  C.sectionOrange, C.lightOrange);
+    drawProCard(margin + 2*(prW+4),  `Total bis ${proRataDay}.`,    fmtCHF(proRataTotal),   fmtCHF(totalFixCost + totalVariabelCHF), C.sectionGreen, C.lightGreen);
+    curY += prH + 6;
+
+    // Per-employee table
+    const hoursHeader = varView === 'plan' ? 'Plan-Std./Mt' : varView === 'ist' ? 'Ist-Std./Mt' : 'Std./Mt';
+    autoTable(pdf, {
+      startY: curY,
+      margin: { left: margin, right: margin },
+      head: [['Name', 'Abt.', hoursHeader, `FE-Abzug`, 'Netto/Mt', `bis ${proRataDay}.`]],
+      body: proRataVarByEmp.map(r => [
+        r.name,
+        r.dept,
+        r.hours > 0 ? `${Math.round(r.hours * 10) / 10} h` : '–',
+        r.ferienCHF > 0 ? `− ${fmtCHF(r.ferienCHF)}` : '–',
+        fmtCHF(r.monthlyCost),
+        fmtCHF(r.proRataCost),
+      ]),
+      foot: [[
+        'Total Variabel', '', '',
+        proRataVarByEmp.reduce((s, r) => s + r.ferienCHF, 0) > 0 ? `− ${fmtCHF(proRataVarByEmp.reduce((s, r) => s + r.ferienCHF, 0))}` : '–',
+        fmtCHF(totalVariabelCHF),
+        fmtCHF(proRataVarCost),
+      ]],
+      theme: 'plain',
+      styles: { fontSize: 7.5, cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 }, lineColor: C.borderGray, lineWidth: 0.2 },
+      headStyles: { fillColor: C.tableHead, textColor: C.headerGray, fontStyle: 'bold', fontSize: 6.5 },
+      footStyles: { fillColor: C.lightGreen, textColor: C.textGreen, fontStyle: 'bold', fontSize: 7.5 },
+      alternateRowStyles: { fillColor: C.rowGray },
+      columnStyles: {
+        0: { cellWidth: 45, fontStyle: 'bold' },
+        1: { cellWidth: 20 },
+        2: { cellWidth: 24, halign: 'right' },
+        3: { cellWidth: 28, halign: 'right', textColor: [29, 78, 216] },
+        4: { cellWidth: 28, halign: 'right' },
+        5: { cellWidth: 30, halign: 'right', textColor: C.textOrange, fontStyle: 'bold' },
+      },
+      didParseCell(h) {
+        if (h.section === 'foot') {
+          h.cell.styles.halign = h.column.index === 0 ? 'left' : 'right';
+          if (h.column.index === 5) h.cell.styles.textColor = C.textGreen;
+        }
+      },
+    });
+    curY = (pdf as any).lastAutoTable.finalY + 8;
   }
 
   // ── BUDGET PLANUNG (optional, neue Seite wenn nötig) ─────────────────────────
@@ -709,9 +911,11 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
     pdf.text('SCHÄTZUNG VS. BUDGET', rightX, rightY);
     rightY += 4;
 
-    const compareRows = [
+    const compareRows: string[][] = [
       ['Verfügbar für Variabel', fmtCHF(budgetAvailForVar)],
-      [`− Geschätzte Kosten Variabel (${varView === 'plan' ? 'Plan' : varView === 'ist' ? 'Ist' : 'Manuell'})`, `− ${fmtCHF(totalVarCost)}`],
+      [`− Variable Arbeit (${varView === 'plan' ? 'Plan' : varView === 'ist' ? 'Ist' : 'Manuell'})`, `− ${fmtCHF(totalVarArbeitCHF)}`],
+      ...(totalFerienabbauCHF > 0 ? [['+ Ferienabbau-Abzug (FE Ist)', `− ${fmtCHF(totalFerienabbauCHF)}`]] : []),
+      ...(totalFerienabbauCHF > 0 ? [['= Netto Variabel', fmtCHF(totalVariabelCHF)]] : []),
     ];
     autoTable(pdf, {
       startY: rightY,
