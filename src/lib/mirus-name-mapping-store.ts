@@ -103,21 +103,8 @@ export function matchEmployeeByName(
     return { employee: reversedExact, matchType: 'exact', matchStep: 'reversed-exact' };
   }
 
-  // 3b. Jedes Token des Importnamens als vollständiger Mitarbeitername prüfen
-  // Fängt Fälle wie "Momand Sajed" → "Sajed" (nur-Vorname im System) zuverlässig ab.
-  for (const token of importParts) {
-    if (token.length < 3) continue;
-    const tokenFullMatch = existingEmps.find(e => e.name.toLowerCase().trim() === token);
-    if (tokenFullMatch) {
-      log(`token-full-name match: token="${token}" → "${tokenFullMatch.name}"`);
-      console.log(`[MATCH] reversed-order match: token "${token}" is full employee name "${tokenFullMatch.name}"`);
-      console.log(`[MATCH] final resolved employee: "${tokenFullMatch.name}" via token-full-name`);
-      console.log(`[MATCH] import row saved: yes (token-full-name) — ${importedName} → ${tokenFullMatch.name}`);
-      return { employee: tokenFullMatch, matchType: 'exact', matchStep: `token-full:${token}` };
-    }
-  }
-
-  // 4. Wort-Scoring: exakter Wortmatch +2, Präfix-Match (≥4 Zeichen) +1
+  // 4. Wort-Scoring: exakter Token-Match +2, Präfix-Match (≥4 Zeichen) +1
+  // Vergleicht ALLE Tokens beider Seiten → robuster als reine Vornamen-Logik.
   const candParts = importParts.filter(p => p.length > 2);
   if (candParts.length > 0) {
     let bestScore = 0;
@@ -156,7 +143,7 @@ export function matchEmployeeByName(
     return { employee: firstMatch, matchType: 'firstName', matchStep: 'first-word' };
   }
 
-  // 6. Letztes Token als Nachname (fallback)
+  // 6. Letztes Token als Nachname
   const lastName = importParts[importParts.length - 1] ?? '';
   if (lastName.length > 2) {
     const lastMatch = existingEmps.find(e => {
@@ -167,6 +154,35 @@ export function matchEmployeeByName(
       log(`final resolved employee: "${lastMatch.name}" via last-word match`);
       console.log(`[MATCH] import row saved: yes (last-word) — ${importedName} → ${lastMatch.name}`);
       return { employee: lastMatch, matchType: 'firstName', matchStep: 'last-word' };
+    }
+  }
+
+  // 7. Teilname-Fallback: ein einzelnes Token des Importnamens entspricht dem
+  //    vollständigen Mitarbeiternamen im System ("Momand Sajed" → "Sajed").
+  //    Nur wenn GENAU EIN Kandidat passt — bei Mehrdeutigkeit wird NICHT gematcht.
+  {
+    const tokenCandidates: Employee[] = [];
+    for (const token of importParts) {
+      if (token.length < 3) continue;
+      const hit = existingEmps.find(e => e.name.toLowerCase().trim() === token);
+      if (hit && !tokenCandidates.some(c => c.id === hit.id)) {
+        tokenCandidates.push(hit);
+      }
+    }
+
+    if (tokenCandidates.length === 1) {
+      const match = tokenCandidates[0];
+      log(`final resolved employee: "${match.name}" via token-full-name (unique)`);
+      console.log(`[MATCH] token-full-name match (unique): "${importedName}" → "${match.name}"`);
+      console.log(`[MATCH] import row saved: yes (token-full-name) — ${importedName} → ${match.name}`);
+      return { employee: match, matchType: 'firstName', matchStep: 'token-full-name' };
+    }
+
+    if (tokenCandidates.length > 1) {
+      const names = tokenCandidates.map(c => `"${c.name}"`).join(', ');
+      log(`token-full-name ambiguous — ${tokenCandidates.length} candidates: ${names} → unresolved`);
+      console.warn(`[MATCH] token-full-name AMBIGUOUS for "${importedName}": candidates ${names} — marking unresolved`);
+      return { employee: null, matchType: 'new', matchStep: 'token-full-name-ambiguous' };
     }
   }
 
