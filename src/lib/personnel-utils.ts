@@ -633,26 +633,81 @@ export const parseMirusDailyExcel = async (file: File): Promise<{ entries: Mirus
       const expectedDays = expectedDates.map((d) => d.day);
       const minConsecutive = Math.min(5, expectedDays.length);
 
-      // For very short ranges (1–2 days) the day-number search is unreliable
-      // (single numbers appear everywhere). Use the date-cell detection instead.
+      // Helper to parse a cell as an integer day number (1–31)
+      const cellToIntDayFn = (cell: unknown): number | null => {
+        if (typeof cell === 'number' && Number.isFinite(cell)) {
+          const n = Math.trunc(cell);
+          if (Math.abs(cell - n) < 1e-6 && n >= 1 && n <= 31) return n;
+          return null;
+        }
+        const s = String(cell ?? '').trim();
+        if (!s) return null;
+        const mm = s.match(/^(\d{1,2})$/);
+        return mm ? Number(mm[1]) : null;
+      };
+
+      // For short-range exports (1–2 days):
+      // The Mirus full-month grid format uses day numbers 1…30 in the header row.
+      // Searching for a single number like "9" would match many rows; instead we
+      // search for the FULL month sequence (1,2,3,…,daysInMonth) which is unique,
+      // then calculate the correct column offset for the requested day.
       let shortRangeDone = false;
       if (expectedDays.length <= 2) {
-        const detected = detectDateHeaderRow(1);
-        if (detected && detected.dateColumns.length > 0) {
-          headerRowIdx = detected.headerRowIdx;
-          dateColumns = detected.dateColumns;
-          console.log('[mirus-daily][excel] short-range: used date-cell detection, cols:', dateColumns.length);
+        const daysInFullMonth = new Date(startDate!.getFullYear(), startDate!.getMonth() + 1, 0).getDate();
+        const fullMonthSeq = Array.from({ length: daysInFullMonth }, (_, i) => i + 1);
+        const minFullMatch = Math.min(5, daysInFullMonth);
+
+        let fmHeaderRowIdx = -1;
+        let fmStartCol = -1;
+        let fmLen = 0;
+
+        for (let i = 0; i < Math.min(rows.length, 140); i++) {
+          const row = rows[i];
+          if (!row || row.length === 0) continue;
+          for (let col = 0; col < row.length; col++) {
+            if (cellToIntDayFn(row[col]) !== 1) continue; // must start with day 1
+            let len = 0;
+            while (len < fullMonthSeq.length && col + len < row.length) {
+              if (cellToIntDayFn(row[col + len]) === fullMonthSeq[len]) len++;
+              else break;
+            }
+            if (len >= minFullMatch && len > fmLen) {
+              fmLen = len; fmHeaderRowIdx = i; fmStartCol = col;
+            }
+          }
+        }
+
+        if (fmHeaderRowIdx >= 0) {
+          // Map each requested day to its column via offset from day-1 column
+          dateColumns = expectedDates.map(ed => ({
+            index: fmStartCol + (ed.day - 1),
+            date: ed.iso,
+          }));
+          headerRowIdx = fmHeaderRowIdx;
+          console.log('[mirus-daily][excel] short-range: full-month header found at row', fmHeaderRowIdx, 'col', fmStartCol, '→ mapped cols:', dateColumns);
           shortRangeDone = true;
         } else {
-          // Last-resort: assume single data column at col 5
-          const firstDayCol = 5;
-          dateColumns = [{ index: firstDayCol, date: expectedDates[0].iso }];
-          headerRowIdx = (() => {
-            const idx = rows.findIndex((r) => String(r?.[0] || '').toLowerCase().includes('küche'));
-            return idx > 0 ? idx - 1 : 0;
-          })();
-          console.log('[mirus-daily][excel] short-range fallback: col', firstDayCol, 'row', headerRowIdx);
-          shortRangeDone = true;
+          // Try date-cell detection (some exports use actual Excel date values)
+          const detected = detectDateHeaderRow(1);
+          if (detected && detected.dateColumns.length > 0) {
+            headerRowIdx = detected.headerRowIdx;
+            dateColumns = detected.dateColumns;
+            console.log('[mirus-daily][excel] short-range: date-cell detection, cols:', dateColumns.length);
+            shortRangeDone = true;
+          } else {
+            // Last-resort: standard grid, day 1 at col 5 → offset by (day-1)
+            const firstDayCol = 5;
+            dateColumns = expectedDates.map(ed => ({
+              index: firstDayCol + (ed.day - 1),
+              date: ed.iso,
+            }));
+            headerRowIdx = (() => {
+              const idx = rows.findIndex((r) => String(r?.[0] || '').toLowerCase().includes('küche'));
+              return idx > 0 ? idx - 1 : 0;
+            })();
+            console.log('[mirus-daily][excel] short-range last-resort: col', dateColumns[0]?.index, 'row', headerRowIdx);
+            shortRangeDone = true;
+          }
         }
       }
 
