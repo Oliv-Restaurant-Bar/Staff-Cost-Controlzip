@@ -99,13 +99,6 @@ const NAV_GROUPS: NavGroup[] = [
         icon: BarChart3,
         adminOnly: true,
       },
-      {
-        path: '/kategorien',
-        label: 'Kategorien',
-        shortLabel: 'Kategorien',
-        icon: PieChart,
-        adminOnly: true,
-      },
     ],
   },
   {

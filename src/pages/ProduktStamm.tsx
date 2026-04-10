@@ -404,9 +404,13 @@ export default function ProduktStamm() {
           <CardContent className="py-4 flex items-start gap-3">
             <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
             <div>
-              <p className="font-semibold text-red-700 dark:text-red-400 text-sm">Datenbankfehler</p>
-              <p className="text-xs text-red-600 dark:text-red-300 font-mono mt-1">{dbError}</p>
-              <Button size="sm" variant="outline" className="mt-2 h-7 text-xs" onClick={load}>Nochmals</Button>
+              <p className="font-semibold text-red-700 dark:text-red-400 text-sm">Tabelle nicht gefunden</p>
+              <p className="text-sm text-red-600 dark:text-red-300 mt-1">
+                Die Datenbanktabelle <code className="font-mono bg-red-100 dark:bg-red-900/40 px-1 rounded">produkte_kosten</code> existiert noch nicht in Supabase.
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">Bitte die Tabelle in Supabase anlegen, damit die Stammdaten verfügbar werden.</p>
+              <p className="text-xs text-red-500/70 font-mono mt-2">{dbError}</p>
+              <Button size="sm" variant="outline" className="mt-2 h-7 text-xs" onClick={load}>Nochmals versuchen</Button>
             </div>
           </CardContent>
         </Card>

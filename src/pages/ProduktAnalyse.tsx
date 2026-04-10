@@ -1,349 +1,506 @@
 /**
- * ProduktAnalyse – BCG Matrix Produktübersicht
- * ==============================================
- * Datenquelle: product_matrix View
- * Filter: Kategorie, Matrix-Kategorie, Produktname
+ * ProduktAnalyse – Produkt-Rangliste nach Umsatz / Anzahl
+ * =========================================================
+ * Datenquelle: product_sales (Supabase)
+ * Modi: Monatsansicht · Jahresansicht · Kumuliert (mehrere Monate)
+ * Anzeigeoptionen: Top 10 · Top 20 · Alle
+ * Sortierung: Umsatz absteigend · Anzahl absteigend
  */
 
-import { useState, useEffect, useMemo } from 'react';
-import { Search, Star, DollarSign, HelpCircle, TrendingDown, RefreshCw, Layers } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import {
+  BarChart3, RefreshCw, TrendingUp, Hash,
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { fetchProductMatrix, type ProductMatrixRow } from '@/lib/sales-db';
+import { cn } from '@/lib/utils';
+import { loadProductSalesRows, type ProductSalesRow } from '@/lib/sales-db';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
-function fmtChf(v: number | null | undefined): string {
-  if (v == null) return '–';
+function fmtChf(v: number): string {
   return new Intl.NumberFormat('de-CH', {
     style: 'currency', currency: 'CHF', maximumFractionDigits: 0,
   }).format(v);
 }
 
-function fmtNum(v: number | null | undefined): string {
-  if (v == null) return '–';
+function fmtNum(v: number): string {
   return new Intl.NumberFormat('de-CH').format(Math.round(v));
 }
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null) return '–';
-  return `${Number(v).toFixed(1)} %`;
+function pct(part: number, total: number): string {
+  if (total === 0) return '0.0 %';
+  return `${((part / total) * 100).toFixed(1)} %`;
 }
 
-// ─── Matrix-Konfiguration ─────────────────────────────────────────────────────
+const MONTH_NAMES = [
+  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+];
 
-interface MatrixConfig {
-  label: string;
-  icon: React.FC<{ className?: string }>;
-  cls: string;           // Badge-Klassen
-  rowCls: string;        // Zeilen-Highlight
-  description: string;
+function availableYears(rows: ProductSalesRow[]): number[] {
+  const years = new Set<number>();
+  for (const r of rows) {
+    const y = parseInt(r.sale_date.slice(0, 4), 10);
+    if (!isNaN(y)) years.add(y);
+  }
+  return Array.from(years).sort((a, b) => b - a);
 }
 
-const MATRIX_CONFIG: Record<string, MatrixConfig> = {
-  star: {
-    label: 'Star',
-    icon: Star,
-    cls: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/30 dark:text-green-300 dark:border-green-800',
-    rowCls: 'bg-green-50/30 dark:bg-green-950/10',
-    description: 'Hoher Umsatz, niedriger WES – Bestseller mit guten Margen',
-  },
-  cash_cow: {
-    label: 'Cash Cow',
-    icon: DollarSign,
-    cls: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800',
-    rowCls: 'bg-amber-50/30 dark:bg-amber-950/10',
-    description: 'Stabiler Umsatz, mittlerer WES – zuverlässige Performer',
-  },
-  puzzle: {
-    label: 'Puzzle',
-    icon: HelpCircle,
-    cls: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800',
-    rowCls: 'bg-blue-50/30 dark:bg-blue-950/10',
-    description: 'Hoher WES, tiefe Menge – Potenzial vorhanden, aber Optimierungsbedarf',
-  },
-  dog: {
-    label: 'Dog',
-    icon: TrendingDown,
-    cls: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-800',
-    rowCls: 'bg-red-50/30 dark:bg-red-950/10',
-    description: 'Tiefer Umsatz, hoher WES – Überprüfen oder aus Karte streichen',
-  },
+type RankRow = {
+  product_name: string;
+  total_revenue: number;
+  total_qty: number;
 };
 
-// ─── Legende ─────────────────────────────────────────────────────────────────
+type SortKey = 'revenue' | 'qty';
+type LimitKey = 10 | 20 | 0;
+type ModeKey = 'month' | 'year' | 'cumulative';
 
-function MatrixLegend() {
-  return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-      {Object.entries(MATRIX_CONFIG).map(([key, cfg]) => {
-        const Icon = cfg.icon;
-        return (
-          <div key={key} className={`rounded-lg border p-3 ${cfg.rowCls}`}>
-            <div className="flex items-center gap-2 mb-1">
-              <Icon className="h-3.5 w-3.5" />
-              <span className={`text-xs font-semibold px-1.5 py-0.5 rounded border ${cfg.cls}`}>
-                {cfg.label}
-              </span>
-            </div>
-            <p className="text-[10px] text-muted-foreground leading-tight">{cfg.description}</p>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── Zusammenfassungs-Karten ──────────────────────────────────────────────────
-
-function SummaryBar({ rows }: { rows: ProductMatrixRow[] }) {
-  const totalRevenue = rows.reduce((s, r) => s + (r.total_revenue ?? 0), 0);
-  const totalQty     = rows.reduce((s, r) => s + (r.total_qty ?? 0), 0);
-
-  return (
-    <div className="grid grid-cols-3 gap-3">
-      <Card>
-        <CardContent className="py-3 px-4">
-          <p className="text-[11px] text-muted-foreground uppercase tracking-wide">Gefilterte Produkte</p>
-          <p className="text-2xl font-bold tabular-nums">{rows.length}</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="py-3 px-4">
-          <p className="text-[11px] text-muted-foreground uppercase tracking-wide">Gesamtumsatz</p>
-          <p className="text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{fmtChf(totalRevenue)}</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="py-3 px-4">
-          <p className="text-[11px] text-muted-foreground uppercase tracking-wide">Gesamtabsatz</p>
-          <p className="text-2xl font-bold tabular-nums">{fmtNum(totalQty)}</p>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ─── Hauptseite ───────────────────────────────────────────────────────────────
+// ─── Hauptkomponente ──────────────────────────────────────────────────────────
 
 export default function ProduktAnalyse() {
-  const [loading, setLoading]       = useState(true);
-  const [rows, setRows]             = useState<ProductMatrixRow[]>([]);
-  const [search, setSearch]         = useState('');
-  const [catFilter, setCatFilter]   = useState('all');
-  const [matFilter, setMatFilter]   = useState('all');
-  const [sortCol, setSortCol]       = useState<keyof ProductMatrixRow>('total_revenue');
-  const [sortAsc, setSortAsc]       = useState(false);
+  const [allRows, setAllRows]   = useState<ProductSalesRow[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState<string | null>(null);
 
-  const load = async () => {
+  const currentYear  = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1;
+
+  const [mode, setMode]           = useState<ModeKey>('month');
+  const [year, setYear]           = useState(currentYear);
+  const [month, setMonth]         = useState(currentMonth);
+  const [yearFrom, setYearFrom]   = useState(currentYear);
+  const [monthFrom, setMonthFrom] = useState(1);
+  const [yearTo, setYearTo]       = useState(currentYear);
+  const [monthTo, setMonthTo]     = useState(currentMonth);
+  const [sortBy, setSortBy]       = useState<SortKey>('revenue');
+  const [limit, setLimit]         = useState<LimitKey>(10);
+
+  const load = useCallback(async () => {
     setLoading(true);
-    const data = await fetchProductMatrix();
-    setRows(data);
-    setLoading(false);
-  };
-
-  useEffect(() => { load(); }, []);
-
-  // Einzigartige Kategorien für Filter
-  const categories = useMemo(() =>
-    [...new Set(rows.map(r => r.category).filter(Boolean))].sort(),
-    [rows]);
-
-  const matrixCategories = useMemo(() =>
-    [...new Set(rows.map(r => r.matrix_category).filter(Boolean))].sort(),
-    [rows]);
-
-  // Gefilterte + sortierte Zeilen
-  const filtered = useMemo(() => {
-    let r = rows;
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      r = r.filter(row => row.name?.toLowerCase().includes(q) || row.category?.toLowerCase().includes(q));
+    setError(null);
+    try {
+      const data = await loadProductSalesRows();
+      setAllRows(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
     }
-    if (catFilter !== 'all') r = r.filter(row => row.category === catFilter);
-    if (matFilter !== 'all') r = r.filter(row => row.matrix_category === matFilter);
+  }, []);
 
-    return [...r].sort((a, b) => {
-      const av = (a[sortCol] ?? 0) as number;
-      const bv = (b[sortCol] ?? 0) as number;
-      if (typeof av === 'string') return sortAsc
-        ? String(av).localeCompare(String(bv))
-        : String(bv).localeCompare(String(av));
-      return sortAsc ? av - bv : bv - av;
-    });
-  }, [rows, search, catFilter, matFilter, sortCol, sortAsc]);
+  useEffect(() => { load(); }, [load]);
 
-  function toggleSort(col: keyof ProductMatrixRow) {
-    if (sortCol === col) setSortAsc(p => !p);
-    else { setSortCol(col); setSortAsc(false); }
-  }
+  const years = useMemo(() => availableYears(allRows), [allRows]);
 
-  function SortHeader({ col, label, right = true }: {
-    col: keyof ProductMatrixRow; label: string; right?: boolean;
-  }) {
-    const active = sortCol === col;
-    return (
-      <th
-        className={`px-4 py-2.5 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide cursor-pointer select-none hover:text-foreground transition-colors ${right ? 'text-right' : 'text-left'}`}
-        onClick={() => toggleSort(col)}
-      >
-        {label} {active ? (sortAsc ? '↑' : '↓') : ''}
-      </th>
+  // ── Gefilterte + aggregierte Rangliste ───────────────────────────────────
+
+  const ranked = useMemo<RankRow[]>(() => {
+    let filtered = allRows;
+
+    if (mode === 'month') {
+      const prefix = `${year}-${String(month).padStart(2, '0')}`;
+      filtered = filtered.filter(r => r.sale_date.startsWith(prefix));
+    } else if (mode === 'year') {
+      filtered = filtered.filter(r => r.sale_date.startsWith(String(year)));
+    } else {
+      // cumulative
+      const from = `${yearFrom}-${String(monthFrom).padStart(2, '0')}-01`;
+      const toY = yearTo;
+      const toM = monthTo;
+      const lastDay = new Date(toY, toM, 0).getDate();
+      const to = `${toY}-${String(toM).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      filtered = filtered.filter(r => r.sale_date >= from && r.sale_date <= to);
+    }
+
+    const map = new Map<string, RankRow>();
+    for (const r of filtered) {
+      const existing = map.get(r.product_name);
+      if (existing) {
+        existing.total_revenue += Number(r.revenue ?? 0);
+        existing.total_qty     += Number(r.quantity ?? 0);
+      } else {
+        map.set(r.product_name, {
+          product_name:  r.product_name,
+          total_revenue: Number(r.revenue ?? 0),
+          total_qty:     Number(r.quantity ?? 0),
+        });
+      }
+    }
+
+    const arr = Array.from(map.values());
+    arr.sort((a, b) =>
+      sortBy === 'revenue'
+        ? b.total_revenue - a.total_revenue
+        : b.total_qty - a.total_qty
     );
-  }
+    return arr;
+  }, [allRows, mode, year, month, yearFrom, monthFrom, yearTo, monthTo, sortBy]);
 
-  if (loading) {
-    return (
-      <div className="p-6 space-y-4 max-w-7xl mx-auto">
-        <div className="h-8 w-48 rounded bg-muted animate-pulse" />
-        <div className="grid grid-cols-4 gap-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-20 rounded-lg bg-muted animate-pulse" />
-          ))}
-        </div>
-        <div className="h-96 rounded-lg bg-muted animate-pulse" />
-      </div>
-    );
-  }
+  const displayed = limit === 0 ? ranked : ranked.slice(0, limit);
+
+  const totalRevenue = ranked.reduce((s, r) => s + r.total_revenue, 0);
+  const totalQty     = ranked.reduce((s, r) => s + r.total_qty, 0);
+
+  // ── Perioden-Label ───────────────────────────────────────────────────────
+
+  const periodLabel = useMemo(() => {
+    if (mode === 'month') return `${MONTH_NAMES[month - 1]} ${year}`;
+    if (mode === 'year')  return String(year);
+    return `${MONTH_NAMES[monthFrom - 1]} ${yearFrom} – ${MONTH_NAMES[monthTo - 1]} ${yearTo}`;
+  }, [mode, year, month, yearFrom, monthFrom, yearTo, monthTo]);
+
+  // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto">
-
+    <div className="p-4 sm:p-6 space-y-5 max-w-4xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="rounded-lg bg-blue-100 dark:bg-blue-950/40 p-2">
-            <Layers className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold">Produktanalyse</h1>
-            <p className="text-sm text-muted-foreground">BCG Matrix – Umsatz, WES & Produktstrategie</p>
-          </div>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="h-5 w-5 text-primary" />
+          <h1 className="text-xl font-bold">Produkt-Rangliste</h1>
         </div>
-        <Button variant="outline" size="sm" onClick={load} className="gap-1.5">
-          <RefreshCw className="h-3.5 w-3.5" />
+        <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="gap-1.5">
+          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
           Aktualisieren
         </Button>
       </div>
 
-      {/* Legende */}
-      <MatrixLegend />
-
-      {/* Zusammenfassung */}
-      <SummaryBar rows={filtered} />
-
-      {/* Filter */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <div className="relative">
-          <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Produkt suchen..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="h-8 pl-8 w-48 text-sm"
-          />
-        </div>
-        <Select value={catFilter} onValueChange={setCatFilter}>
-          <SelectTrigger className="h-8 w-40 text-sm">
-            <SelectValue placeholder="Kategorie" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Alle Kategorien</SelectItem>
-            {categories.map(c => (
-              <SelectItem key={c} value={c}>{c}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={matFilter} onValueChange={setMatFilter}>
-          <SelectTrigger className="h-8 w-40 text-sm">
-            <SelectValue placeholder="Matrix" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Alle Matrix-Typen</SelectItem>
-            {matrixCategories.map(m => (
-              <SelectItem key={m} value={m}>
-                {MATRIX_CONFIG[m.toLowerCase()]?.label ?? m}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {(search || catFilter !== 'all' || matFilter !== 'all') && (
-          <Button
-            variant="ghost" size="sm"
-            onClick={() => { setSearch(''); setCatFilter('all'); setMatFilter('all'); }}
-            className="h-8 text-xs text-muted-foreground"
-          >
-            Filter zurücksetzen
-          </Button>
-        )}
-      </div>
-
-      {/* Tabelle */}
+      {/* Controls */}
       <Card>
-        <CardContent className="p-0">
-          {filtered.length === 0 ? (
-            <div className="py-12 text-center text-sm text-muted-foreground">
-              {rows.length === 0 ? 'Noch keine Produktdaten vorhanden' : 'Keine Produkte entsprechen den Filterkriterien'}
+        <CardContent className="pt-4 pb-3 flex flex-wrap gap-3 items-end">
+          {/* Mode */}
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground font-medium">Ansicht</span>
+            <Select value={mode} onValueChange={v => setMode(v as ModeKey)}>
+              <SelectTrigger className="h-8 w-[155px] text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="month">Monatsansicht</SelectItem>
+                <SelectItem value="year">Jahresansicht</SelectItem>
+                <SelectItem value="cumulative">Kumuliert</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Month controls */}
+          {mode === 'month' && (
+            <>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground font-medium">Jahr</span>
+                <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
+                  <SelectTrigger className="h-8 w-[90px] text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(years.length ? years : [currentYear]).map(y => (
+                      <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground font-medium">Monat</span>
+                <Select value={String(month)} onValueChange={v => setMonth(Number(v))}>
+                  <SelectTrigger className="h-8 w-[130px] text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MONTH_NAMES.map((name, i) => (
+                      <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </>
+          )}
+
+          {/* Year controls */}
+          {mode === 'year' && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground font-medium">Jahr</span>
+              <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
+                <SelectTrigger className="h-8 w-[90px] text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(years.length ? years : [currentYear]).map(y => (
+                    <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          ) : (
+          )}
+
+          {/* Cumulative controls */}
+          {mode === 'cumulative' && (
+            <>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground font-medium">Von Monat</span>
+                <div className="flex gap-1">
+                  <Select value={String(monthFrom)} onValueChange={v => setMonthFrom(Number(v))}>
+                    <SelectTrigger className="h-8 w-[120px] text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MONTH_NAMES.map((name, i) => (
+                        <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={String(yearFrom)} onValueChange={v => setYearFrom(Number(v))}>
+                    <SelectTrigger className="h-8 w-[80px] text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(years.length ? years : [currentYear]).map(y => (
+                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground font-medium">Bis Monat</span>
+                <div className="flex gap-1">
+                  <Select value={String(monthTo)} onValueChange={v => setMonthTo(Number(v))}>
+                    <SelectTrigger className="h-8 w-[120px] text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MONTH_NAMES.map((name, i) => (
+                        <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={String(yearTo)} onValueChange={v => setYearTo(Number(v))}>
+                    <SelectTrigger className="h-8 w-[80px] text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(years.length ? years : [currentYear]).map(y => (
+                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Sort */}
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground font-medium">Sortierung</span>
+            <div className="flex gap-1">
+              <Button
+                size="sm"
+                variant={sortBy === 'revenue' ? 'default' : 'outline'}
+                className="h-8 gap-1 text-xs px-3"
+                onClick={() => setSortBy('revenue')}
+              >
+                <TrendingUp className="h-3.5 w-3.5" />
+                Umsatz
+              </Button>
+              <Button
+                size="sm"
+                variant={sortBy === 'qty' ? 'default' : 'outline'}
+                className="h-8 gap-1 text-xs px-3"
+                onClick={() => setSortBy('qty')}
+              >
+                <Hash className="h-3.5 w-3.5" />
+                Anzahl
+              </Button>
+            </div>
+          </div>
+
+          {/* Limit */}
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground font-medium">Anzeige</span>
+            <div className="flex gap-1">
+              {([10, 20, 0] as LimitKey[]).map(l => (
+                <Button
+                  key={l}
+                  size="sm"
+                  variant={limit === l ? 'default' : 'outline'}
+                  className="h-8 text-xs px-3"
+                  onClick={() => setLimit(l)}
+                >
+                  {l === 0 ? 'Alle' : `Top ${l}`}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Summary */}
+      {!loading && !error && (
+        <div className="grid grid-cols-3 gap-3">
+          <Card>
+            <CardContent className="pt-4 pb-3 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Produkte gesamt</p>
+              <p className="text-2xl font-bold tabular-nums">{fmtNum(ranked.length)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{periodLabel}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-4 pb-3 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Gesamtumsatz</p>
+              <p className="text-2xl font-bold tabular-nums">{fmtChf(totalRevenue)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{periodLabel}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-4 pb-3 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Gesamtanzahl</p>
+              <p className="text-2xl font-bold tabular-nums">{fmtNum(totalQty)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{periodLabel}</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Table */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center justify-between">
+            <span>
+              {limit === 0 ? 'Alle Produkte' : `Top ${limit} Produkte`}
+              {' '}– sortiert nach {sortBy === 'revenue' ? 'Umsatz' : 'Anzahl'}
+            </span>
+            <Badge variant="secondary" className="text-xs font-normal">
+              {periodLabel}
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loading && (
+            <div className="p-8 text-center text-sm text-muted-foreground">
+              <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2" />
+              Lade Verkaufsdaten…
+            </div>
+          )}
+          {error && (
+            <div className="p-6 text-center">
+              <p className="text-sm font-semibold text-destructive mb-1">Fehler beim Laden</p>
+              <p className="text-xs text-muted-foreground">{error}</p>
+            </div>
+          )}
+          {!loading && !error && displayed.length === 0 && (
+            <div className="p-8 text-center text-sm text-muted-foreground">
+              Keine Daten für diesen Zeitraum gefunden.
+            </div>
+          )}
+          {!loading && !error && displayed.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-border">
-                    <SortHeader col="name"             label="Produkt"   right={false} />
-                    <SortHeader col="category"         label="Kategorie" right={false} />
-                    <SortHeader col="total_qty"        label="Absatz"                  />
-                    <SortHeader col="total_revenue"    label="Umsatz CHF"              />
-                    <SortHeader col="wes_percent_fixed" label="WES %"                  />
-                    <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Matrix</th>
+                  <tr className="border-b bg-muted/40">
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground w-10">#</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground">Produkt</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
+                      <span className={cn(sortBy === 'revenue' && 'text-primary')}>Umsatz (CHF)</span>
+                    </th>
+                    <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
+                      <span className={cn(sortBy === 'revenue' && 'text-muted-foreground')}>% Umsatz</span>
+                    </th>
+                    <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
+                      <span className={cn(sortBy === 'qty' && 'text-primary')}>Anzahl</span>
+                    </th>
+                    <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
+                      <span className={cn(sortBy === 'qty' && 'text-muted-foreground')}>% Anzahl</span>
+                    </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border/40">
-                  {filtered.map((row, i) => {
-                    const mc = row.matrix_category?.toLowerCase() ?? 'dog';
-                    const cfg = MATRIX_CONFIG[mc] ?? MATRIX_CONFIG.dog;
+                <tbody>
+                  {displayed.map((row, idx) => {
+                    const rank = idx + 1;
+                    const isTop3 = rank <= 3;
                     return (
-                      <tr key={`${row.name}-${i}`} className={`hover:bg-muted/30 transition-colors ${cfg.rowCls}`}>
-                        <td className="px-4 py-2.5 font-medium">{row.name || '–'}</td>
-                        <td className="px-4 py-2.5">
-                          <Badge variant="outline" className="text-[10px] font-normal">{row.category || '–'}</Badge>
+                      <tr
+                        key={row.product_name}
+                        className={cn(
+                          'border-b last:border-0 transition-colors',
+                          isTop3
+                            ? 'bg-primary/5 hover:bg-primary/10'
+                            : 'hover:bg-muted/40'
+                        )}
+                      >
+                        {/* Rank */}
+                        <td className="px-4 py-2.5 text-center">
+                          {rank === 1 && (
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-yellow-400 text-white text-xs font-black">1</span>
+                          )}
+                          {rank === 2 && (
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-300 text-slate-700 text-xs font-black">2</span>
+                          )}
+                          {rank === 3 && (
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-600 text-white text-xs font-black">3</span>
+                          )}
+                          {rank > 3 && (
+                            <span className="text-muted-foreground tabular-nums">{rank}</span>
+                          )}
                         </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
-                          {fmtNum(row.total_qty)}
+                        {/* Name */}
+                        <td className={cn('px-4 py-2.5 font-medium', isTop3 && 'font-semibold')}>
+                          {row.product_name}
                         </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
+                        {/* Revenue */}
+                        <td className={cn(
+                          'px-4 py-2.5 text-right tabular-nums',
+                          sortBy === 'revenue' && 'font-semibold'
+                        )}>
                           {fmtChf(row.total_revenue)}
                         </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">
-                          <span className={
-                            !row.wes_percent_fixed ? 'text-muted-foreground'
-                            : row.wes_percent_fixed <= 25 ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
-                            : row.wes_percent_fixed <= 30 ? 'text-amber-600 dark:text-amber-400 font-semibold'
-                            : 'text-red-600 dark:text-red-400 font-semibold'
-                          }>
-                            {fmtPct(row.wes_percent_fixed)}
-                          </span>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
+                          {pct(row.total_revenue, totalRevenue)}
                         </td>
-                        <td className="px-4 py-2.5">
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${cfg.cls}`}>
-                            {cfg.label}
-                          </span>
+                        {/* Qty */}
+                        <td className={cn(
+                          'px-4 py-2.5 text-right tabular-nums',
+                          sortBy === 'qty' && 'font-semibold'
+                        )}>
+                          {fmtNum(row.total_qty)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
+                          {pct(row.total_qty, totalQty)}
                         </td>
                       </tr>
                     );
                   })}
                 </tbody>
+                {/* Total footer */}
+                <tfoot>
+                  <tr className="border-t-2 bg-muted/50 font-semibold">
+                    <td className="px-4 py-2.5" />
+                    <td className="px-4 py-2.5 text-xs uppercase tracking-wide text-muted-foreground">
+                      {limit === 0 ? 'Total' : `Top ${displayed.length} von ${ranked.length}`}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">
+                      {fmtChf(displayed.reduce((s, r) => s + r.total_revenue, 0))}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
+                      {pct(displayed.reduce((s, r) => s + r.total_revenue, 0), totalRevenue)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">
+                      {fmtNum(displayed.reduce((s, r) => s + r.total_qty, 0))}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
+                      {pct(displayed.reduce((s, r) => s + r.total_qty, 0), totalQty)}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}
         </CardContent>
       </Card>
-
     </div>
   );
 }
