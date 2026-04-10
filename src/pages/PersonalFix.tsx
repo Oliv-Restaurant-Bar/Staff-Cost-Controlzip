@@ -761,8 +761,9 @@ export default function PersonalFixPage() {
     return total;
   }, [variableEmployees, getEmpFerienCHF, totalVarCost]);
 
-  const totalVarArbeitCHF = totalVarCost;          // FE hat hours=0 → nicht in Var-Kosten
-  const totalVariabelCHF  = totalVarCost + totalFerienabbauCHF;
+  const totalVarArbeitCHF = totalVarCost;           // FE hat hours=0 → nicht in Var-Kosten
+  // Ferienabbau reduziert die variablen Kosten (Abzug, da Ferien keine Arbeitsstunden sind)
+  const totalVariabelCHF  = Math.max(0, totalVarCost - totalFerienabbauCHF);
 
   // ── Pro-Rata-Berechnungen ──────────────────────────────────────────────────
   const daysInSelectedMonth = new Date(selectedYear, selectedMonth, 0).getDate();
@@ -780,9 +781,9 @@ export default function PersonalFixPage() {
     return depts.map(dept => {
       const fix = (byDept[dept] ?? []).reduce((s, r) => s + r.cost, 0);
       const varEmpList = varByDept[dept] ?? [];
-      const varArbeit  = varEmpList.reduce((s, e) => s + getVarMonthlyCostFor(e.id, e), 0);
+      const varArbeit   = varEmpList.reduce((s, e) => s + getVarMonthlyCostFor(e.id, e), 0);
       const ferienabbau = ferienabbauByDept[dept] ?? 0;
-      const variabel = varArbeit + ferienabbau;
+      const variabel    = Math.max(0, varArbeit - ferienabbau);   // Ferienabbau = Abzug
       return { dept, fix, varArbeit, ferienabbau, variabel, total: fix + variabel };
     });
   }, [byDept, varByDept, getVarMonthlyCostFor, ferienabbauByDept]);
@@ -999,7 +1000,7 @@ export default function PersonalFixPage() {
             title="Total Personal / Monat"
             value={fmtCHF(totalFixCost + totalVariabelCHF)}
             sub={totalFerienabbauCHF > 0
-              ? `FIX + Variabel + ${fmtCHF(totalFerienabbauCHF)} Ferienabbau`
+              ? `FIX + Variabel − ${fmtCHF(totalFerienabbauCHF)} Ferienabbau`
               : 'FIX + VARIABEL'}
             icon={<Users className="h-5 w-5" />}
             color={totalFixCost + totalVariabelCHF > 0 ? 'green' : 'default'}
@@ -1128,9 +1129,9 @@ export default function PersonalFixPage() {
           <div className="flex items-start gap-2.5 rounded-lg border border-blue-300 bg-blue-50 dark:border-blue-700 dark:bg-blue-950/30 p-3 text-xs text-blue-800 dark:text-blue-200">
             <Info className="h-4 w-4 shrink-0 mt-0.5" />
             <p>
-              <strong>Ferienabbau:</strong>{' '}
-              {fmtCHF(totalFerienabbauCHF)} der variablen Kosten stammen aus Ferienabbau (FE-Einträge im Ist).
-              Variable Arbeit und Ferienabbau sind getrennt ausgewiesen — Ferien zählen nicht als Arbeitsstunden.
+              <strong>Ferienabbau-Abzug:</strong>{' '}
+              {fmtCHF(totalFerienabbauCHF)} werden von den variablen Kosten abgezogen (FE-Einträge im Ist).
+              Ferientage sind keine Arbeitsstunden — der Abzug reduziert die Netto-Variabelkosten entsprechend.
             </p>
           </div>
         )}
@@ -1662,13 +1663,13 @@ export default function PersonalFixPage() {
                 </div>
                 {totalFerienabbauCHF > 0 && (
                   <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
-                    <span className="text-sm text-muted-foreground">− Ferienabbau (FE Ist)</span>
+                    <span className="text-sm text-muted-foreground">+ Ferienabbau-Abzug (FE Ist)</span>
                     <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">− {fmtCHF(totalFerienabbauCHF)}</span>
                   </div>
                 )}
                 {totalFerienabbauCHF > 0 && (
                   <div className="flex justify-between items-baseline gap-2 py-1 border-b border-dashed border-border">
-                    <span className="text-sm font-medium text-muted-foreground">= Total Variabel</span>
+                    <span className="text-sm font-medium text-muted-foreground">= Netto Variabel</span>
                     <span className="font-mono font-semibold text-orange-800 dark:text-orange-300 shrink-0">{fmtCHF(totalVariabelCHF)}</span>
                   </div>
                 )}
@@ -1805,14 +1806,14 @@ export default function PersonalFixPage() {
                     </td>
                   </tr>
                   <tr className="hover:bg-muted/20 bg-blue-50/30 dark:bg-blue-950/10">
-                    <td className="px-4 py-2.5 font-medium text-blue-600 dark:text-blue-400">FERIENABBAU</td>
+                    <td className="px-4 py-2.5 font-medium text-blue-600 dark:text-blue-400">− FERIENABBAU</td>
                     {deptSummary.map(ds => (
                       <td key={ds.dept} className="px-4 py-2.5 text-right font-mono text-blue-600 dark:text-blue-400">
-                        {ds.ferienabbau > 0 ? fmtCHF(ds.ferienabbau) : <span className="text-muted-foreground">–</span>}
+                        {ds.ferienabbau > 0 ? `− ${fmtCHF(ds.ferienabbau)}` : <span className="text-muted-foreground">–</span>}
                       </td>
                     ))}
                     <td className="px-4 py-2.5 text-right font-mono font-semibold text-blue-600 dark:text-blue-400">
-                      {totalFerienabbauCHF > 0 ? fmtCHF(totalFerienabbauCHF) : <span className="text-muted-foreground">–</span>}
+                      {totalFerienabbauCHF > 0 ? `− ${fmtCHF(totalFerienabbauCHF)}` : <span className="text-muted-foreground">–</span>}
                     </td>
                   </tr>
                   <tr className="hover:bg-muted/20 border-t border-orange-200 dark:border-orange-800">

@@ -425,9 +425,24 @@ const SchedulePlanner = () => {
       })();
 
       if (supabaseActual !== null) {
-        // Supabase wins on conflict; localStorage fills in any gaps.
-        const merged = { ...localStored, ...supabaseActual };
-        console.log('[IST] state set (merged)', { gen, supabase: istKeys, local: Object.keys(localStored).length, merged: Object.keys(merged).length });
+        // Smart merge: start from localStorage (preserves absenceType metadata),
+        // then let Supabase win only when it has real hours (>0).
+        // FE/K/F absences have hours=0 and are localStorage-only (Supabase has no absenceType column),
+        // so we must NOT let a Supabase hours=0 overwrite a local absenceType entry.
+        const merged: Record<string, ActualHoursEntry> = { ...localStored };
+        for (const [key, supaVal] of Object.entries(supabaseActual as Record<string, ActualHoursEntry>)) {
+          const localVal = (localStored as Record<string, ActualHoursEntry>)[key];
+          if (supaVal.hours > 0) {
+            // Real work hours from Supabase always win
+            merged[key] = supaVal;
+          } else if (!localVal?.absenceType) {
+            // Supabase 0-hours only wins if localStorage has no absenceType (FE/K/F)
+            merged[key] = supaVal;
+          }
+          // else: keep localStorage entry which has absenceType (FE/K/F)
+        }
+        const feCount = Object.values(merged).filter(v => v.absenceType).length;
+        console.log('[IST] state set (merged)', { gen, supabase: istKeys, local: Object.keys(localStored).length, merged: Object.keys(merged).length, feEntries: feCount });
         setActualHoursData(merged);
         // Write merged back so PersonalFix and others always see the full dataset.
         localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(merged));
@@ -930,9 +945,13 @@ const SchedulePlanner = () => {
 
           console.log(`[FERIEN] plan->ist übernommen: ${employeeId} ${date} absenceType=${absenceType} → Ist hours=${newEntry.hours}`);
 
-          saveActualHourEntry(employeeId, date, newEntry).catch(err =>
-            console.error('[SCHEDULE] auto-absence actualHours error:', err)
-          );
+          // FE-Einträge werden NICHT nach Supabase gespeichert — Supabase hat keine absenceType-Spalte.
+          // Beim nächsten Load würde Supabase (hours:0 ohne absenceType) den localStorage-Eintrag überschreiben.
+          if (!isFE) {
+            saveActualHourEntry(employeeId, date, newEntry).catch(err =>
+              console.error('[SCHEDULE] auto-absence actualHours error:', err)
+            );
+          }
           const mk = format(currentMonth, 'yyyy-MM');
           const stored: Record<string, unknown> = (() => {
             try { return JSON.parse(localStorage.getItem(`actual-hours-${mk}`) || '{}'); }
@@ -2715,19 +2734,29 @@ const SchedulePlanner = () => {
               <div className="rounded-lg border bg-card p-4">
                 <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">🏖 Ferienabbau</p>
                 <div className="space-y-2">
-                  <div className="flex justify-between items-baseline">
-                    <span className="text-sm text-muted-foreground">
+                  <div className="flex justify-between items-start gap-2">
+                    <span className="text-sm text-muted-foreground shrink-0">
                       Soll{day !== null && <span className="ml-1 text-blue-500 text-[10px]">(bis {day}.)</span>}
                     </span>
-                    <span className="text-base font-bold tabular-nums text-blue-600">
-                      {ferienSollTage > 0 ? `${ferienSollTage} T · ${CHF.format(ferienSollCHF)}` : '–'}
-                    </span>
+                    <div className="text-right">
+                      {ferienSollTage > 0 ? (
+                        <>
+                          <div className="text-xs text-muted-foreground">{ferienSollTage} T</div>
+                          <div className="text-base font-bold tabular-nums text-blue-600">{CHF.format(ferienSollCHF)}</div>
+                        </>
+                      ) : <span className="text-base font-bold tabular-nums text-muted-foreground">–</span>}
+                    </div>
                   </div>
-                  <div className="flex justify-between items-baseline">
-                    <span className="text-sm text-muted-foreground">Ist</span>
-                    <span className="text-base font-bold tabular-nums text-blue-600">
-                      {ferienIstTage > 0 ? `${ferienIstTage} T · ${CHF.format(ferienabbauCHF)}` : '–'}
-                    </span>
+                  <div className="flex justify-between items-start gap-2">
+                    <span className="text-sm text-muted-foreground shrink-0">Ist</span>
+                    <div className="text-right">
+                      {ferienIstTage > 0 ? (
+                        <>
+                          <div className="text-xs text-muted-foreground">{ferienIstTage} T</div>
+                          <div className="text-base font-bold tabular-nums text-blue-600">{CHF.format(ferienabbauCHF)}</div>
+                        </>
+                      ) : <span className="text-base font-bold tabular-nums text-muted-foreground">–</span>}
+                    </div>
                   </div>
                   <div className="flex justify-between items-baseline border-t pt-2 mt-1">
                     <span className="text-sm text-muted-foreground">Differenz</span>
