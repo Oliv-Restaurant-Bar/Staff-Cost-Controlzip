@@ -1730,34 +1730,61 @@ const SchedulePlanner = () => {
   const hasActualHours = totalActualHoursAll > 0;
   const hasActualRevenue = totalActualRevenue > 0;
 
-  // ── Ferienabbau (FE-Einträge im Ist) ───────────────────────────────────────
-  // Ferien werden im Ist mit hours=0 + absenceType='FE' gespeichert.
-  // Ferienabbau CHF = FE-Tage × tägliche Sollstunden × Stundenlohn
-  const { ferienIstTage, ferienabbauCHF } = useMemo(() => {
-    let tage = 0;
-    let chf = 0;
+  // ── Ferienabbau (FE-Einträge im Plan + Ist) ────────────────────────────────
+  // Plan-FE: scheduleData[key].frühAbsence === 'FE' oder spätAbsence === 'FE'
+  // Ist-FE:  actualHoursData[key].absenceType === 'FE' (hours=0)
+  // Ferienabbau CHF = FE-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn
+  const { ferienSollTage, ferienSollCHF, ferienIstTage, ferienabbauCHF } = useMemo(() => {
+    let sollTage = 0;
+    let sollChf = 0;
+    let istTage = 0;
+    let istChf = 0;
+
     for (const emp of visibleEmployees) {
-      let empFeTage = 0;
+      const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+      let empSollFe = 0;
+      let empIstFe = 0;
+
       for (const day of daysInMonth) {
-        const key = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
-        const e = actualHoursData[key];
-        if (e?.absenceType === 'FE') {
-          empFeTage++;
-          console.log(`[FERIEN] nicht in Totalstunden eingerechnet: ${emp.name} ${format(day, 'yyyy-MM-dd')} (FE 0h)`);
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const key = `${emp.id}-${dateStr}`;
+
+        // Plan-Seite
+        const planEntry = scheduleData[key];
+        if (planEntry?.frühAbsence === 'FE' || planEntry?.spätAbsence === 'FE') {
+          empSollFe++;
+        }
+
+        // Ist-Seite
+        const istEntry = actualHoursData[key];
+        if (istEntry?.absenceType === 'FE') {
+          empIstFe++;
+          console.log(`[FERIEN] nicht in Totalstunden eingerechnet: ${emp.name} ${dateStr} (FE 0h)`);
         }
       }
-      if (empFeTage > 0) {
-        // Tägliche Stunden: weeklyHours / 5, Fallback 8.4h
-        const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-        const empChf = empFeTage * dailyH * emp.hourlyWage;
-        console.log(`[FERIEN] Ferienabbau CHF berechnet: ${emp.name} ${empFeTage} Tage × ${dailyH.toFixed(1)}h × CHF ${emp.hourlyWage} = CHF ${empChf.toFixed(2)}`);
-        chf += empChf;
-        tage += empFeTage;
+
+      if (empSollFe > 0) {
+        const chf = empSollFe * dailyH * emp.hourlyWage;
+        console.log(`[FERIEN] Soll-Ferienabbau: ${emp.name} ${empSollFe} Tage × ${dailyH.toFixed(1)}h × CHF ${emp.hourlyWage} = CHF ${chf.toFixed(2)}`);
+        sollTage += empSollFe;
+        sollChf  += chf;
+      }
+      if (empIstFe > 0) {
+        const chf = empIstFe * dailyH * emp.hourlyWage;
+        console.log(`[FERIEN] Ist-Ferienabbau: ${emp.name} ${empIstFe} Tage × ${dailyH.toFixed(1)}h × CHF ${emp.hourlyWage} = CHF ${chf.toFixed(2)}`);
+        istTage += empIstFe;
+        istChf  += chf;
       }
     }
-    return { ferienIstTage: tage, ferienabbauCHF: chf };
+
+    return {
+      ferienSollTage: sollTage,
+      ferienSollCHF:  sollChf,
+      ferienIstTage:  istTage,
+      ferienabbauCHF: istChf,
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actualHoursData, visibleEmployees, daysInMonth]);
+  }, [scheduleData, actualHoursData, visibleEmployees, daysInMonth]);
 
   // ── Planungshilfe: Jump + Remove-Handler ──────────────────────────────────
 
@@ -2689,22 +2716,36 @@ const SchedulePlanner = () => {
                 <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">🏖 Ferienabbau</p>
                 <div className="space-y-2">
                   <div className="flex justify-between items-baseline">
-                    <span className="text-sm text-muted-foreground">Ist (FE-Tage)</span>
+                    <span className="text-sm text-muted-foreground">
+                      Soll{day !== null && <span className="ml-1 text-blue-500 text-[10px]">(bis {day}.)</span>}
+                    </span>
                     <span className="text-base font-bold tabular-nums text-blue-600">
-                      {ferienIstTage > 0 ? `${ferienIstTage} T` : '–'}
+                      {ferienSollTage > 0 ? `${ferienSollTage} T · ${CHF.format(ferienSollCHF)}` : '–'}
                     </span>
                   </div>
                   <div className="flex justify-between items-baseline">
-                    <span className="text-sm text-muted-foreground">Ferienabbau CHF</span>
+                    <span className="text-sm text-muted-foreground">Ist</span>
                     <span className="text-base font-bold tabular-nums text-blue-600">
-                      {ferienabbauCHF > 0 ? CHF.format(ferienabbauCHF) : '–'}
+                      {ferienIstTage > 0 ? `${ferienIstTage} T · ${CHF.format(ferienabbauCHF)}` : '–'}
                     </span>
                   </div>
                   <div className="flex justify-between items-baseline border-t pt-2 mt-1">
-                    <span className="text-xs text-muted-foreground italic">Ø Tagessatz</span>
-                    <span className="text-sm tabular-nums text-muted-foreground">
-                      {ferienIstTage > 0 ? CHF.format(ferienabbauCHF / ferienIstTage) : '–'}
-                    </span>
+                    <span className="text-sm text-muted-foreground">Differenz</span>
+                    {(() => {
+                      const diff = ferienabbauCHF - ferienSollCHF;
+                      const hasBoth = ferienSollTage > 0 || ferienIstTage > 0;
+                      return (
+                        <span className={cn(
+                          "text-base font-bold tabular-nums",
+                          !hasBoth ? "text-muted-foreground" :
+                          diff > 0 ? "text-green-600" : diff < 0 ? "text-yellow-600" : "text-muted-foreground"
+                        )}>
+                          {hasBoth
+                            ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0, signDisplay: 'always' }).format(diff)
+                            : '–'}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
