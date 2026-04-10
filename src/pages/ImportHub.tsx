@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { format, parseISO, differenceInDays, differenceInCalendarMonths } from 'date-fns';
+import { format, parseISO, differenceInDays, differenceInCalendarMonths, endOfMonth } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { GastronoviImportSection } from '@/components/GastronoviImportSection';
 import { VjDailyImportSection } from '@/components/VjDailyImportSection';
@@ -32,20 +32,22 @@ const currentYear = new Date().getFullYear();
 // ─── Datenstand-Card ──────────────────────────────────────────────────────────
 
 interface DatenstandEntry {
-  label:      string;
-  sublabel:   string;
-  icon:       React.ReactNode;
-  latestDate: string | null;   // yyyy-MM-dd or yyyy-MM (monthly) or null
-  mode:       'daily' | 'monthly';
-  linkTo?:    string;
+  label:       string;
+  sublabel:    string;
+  icon:        React.ReactNode;
+  latestDate:  string | null;   // yyyy-MM-dd or yyyy-MM — used for staleness check
+  displayDate: string | null;   // yyyy-MM-dd — always shown as dd.MM.yyyy; falls back to latestDate
+  mode:        'daily' | 'monthly';
+  linkTo?:     string;
 }
 
-function formatDatenstandDate(d: string | null, mode: 'daily' | 'monthly'): string {
+function formatDatenstandDate(d: string | null): string {
   if (!d) return 'Keine Daten';
   try {
-    if (mode === 'daily') return format(parseISO(d), 'dd.MM.yyyy', { locale: de });
+    // Accept both yyyy-MM-dd and yyyy-MM
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return format(parseISO(d), 'dd.MM.yyyy', { locale: de });
     const [y, m] = d.split('-').map(Number);
-    return format(new Date(y, m - 1, 1), 'MMMM yyyy', { locale: de });
+    return format(endOfMonth(new Date(y, m - 1, 1)), 'dd.MM.yyyy', { locale: de });
   } catch { return d; }
 }
 
@@ -97,26 +99,34 @@ function readTagesumsatzDate(): string | null {
   } catch { return null; }
 }
 
-function readIstStundenMonth(): string | null {
+function readIstStundenDate(): string | null {
   try {
     const keys = Object.keys(localStorage).filter(k => /^actual-hours-\d{4}-\d{2}$/.test(k));
-    const validKeys = keys.filter(k => {
-      try { return Object.keys(JSON.parse(localStorage.getItem(k) || '{}')).length > 0; }
-      catch { return false; }
-    });
-    const latest = validKeys.sort().at(-1);
-    return latest ? latest.replace('actual-hours-', '') : null;
+    let latestDate: string | null = null;
+    for (const key of keys) {
+      try {
+        const entries = JSON.parse(localStorage.getItem(key) || '{}') as Record<string, unknown>;
+        for (const entryKey of Object.keys(entries)) {
+          // Key format: "{employeeId}-{yyyy-MM-dd}" — date is last 10 chars
+          const dateStr = entryKey.slice(-10);
+          if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr) && (!latestDate || dateStr > latestDate)) {
+            latestDate = dateStr;
+          }
+        }
+      } catch { /* skip */ }
+    }
+    return latestDate;
   } catch { return null; }
 }
 
-function readBuchhaltungMonth(): string | null {
+function readBuchhaltungDate(): string | null {
   try {
     const rep = JSON.parse(localStorage.getItem('reporting_v1') || '{}') as Record<string, { expenseCategories?: unknown[] }>;
     const months = Object.entries(rep)
       .filter(([k, v]) => /^\d{4}-\d{2}$/.test(k) && Array.isArray(v?.expenseCategories) && (v.expenseCategories.length ?? 0) > 0)
       .map(([k]) => k)
       .sort();
-    return months.at(-1) ?? null;
+    return months.at(-1) ?? null;   // returns "yyyy-MM"; formatDatenstandDate converts to end-of-month day
   } catch { return null; }
 }
 
@@ -136,8 +146,8 @@ const DatenstandCard = () => {
   const [refreshKey, setRefreshKey]     = useState(0);
 
   const tagesumsatzDate  = readTagesumsatzDate();
-  const istStundenMonth  = readIstStundenMonth();
-  const buchhaltungMonth = readBuchhaltungMonth();
+  const istStundenDate   = readIstStundenDate();
+  const buchhaltungDate  = readBuchhaltungDate();
 
   useEffect(() => {
     setVerkaufDate('loading');
@@ -146,35 +156,39 @@ const DatenstandCard = () => {
 
   const entries: DatenstandEntry[] = [
     {
-      label:     'Tagesumsatz',
-      sublabel:  'Gastronovi täglich',
-      icon:      <TrendingUp className="h-3.5 w-3.5" />,
-      latestDate: tagesumsatzDate,
-      mode:      'daily',
+      label:       'Tagesumsatz',
+      sublabel:    'Gastronovi täglich',
+      icon:        <TrendingUp className="h-3.5 w-3.5" />,
+      latestDate:  tagesumsatzDate,
+      displayDate: tagesumsatzDate,
+      mode:        'daily',
     },
     {
-      label:     'Ist-Stunden',
-      sublabel:  'Mirus / CSV',
-      icon:      <Clock className="h-3.5 w-3.5" />,
-      latestDate: istStundenMonth,
-      mode:      'monthly',
-      linkTo:    '#ist-stunden',
+      label:       'Ist-Stunden',
+      sublabel:    'Mirus / CSV',
+      icon:        <Clock className="h-3.5 w-3.5" />,
+      latestDate:  istStundenDate,
+      displayDate: istStundenDate,
+      mode:        'daily',
+      linkTo:      '#ist-stunden',
     },
     {
-      label:     'Kosten Buchhaltung',
-      sublabel:  'Sage / CSV-Import',
-      icon:      <BookOpen className="h-3.5 w-3.5" />,
-      latestDate: buchhaltungMonth,
-      mode:      'monthly',
-      linkTo:    '#ist-kosten-buchhaltung',
+      label:       'Kosten Buchhaltung',
+      sublabel:    'Sage / CSV-Import',
+      icon:        <BookOpen className="h-3.5 w-3.5" />,
+      latestDate:  buchhaltungDate,  // "yyyy-MM" for monthly staleness
+      displayDate: buchhaltungDate,  // formatDatenstandDate converts to end-of-month day
+      mode:        'monthly',
+      linkTo:      '#ist-kosten-buchhaltung',
     },
     {
-      label:     'Verkaufsdaten Produkte',
-      sublabel:  'Gastronovi CSV (Artikel)',
-      icon:      <ShoppingCart className="h-3.5 w-3.5" />,
-      latestDate: verkaufDate === 'loading' ? null : verkaufDate,
-      mode:      'daily',
-      linkTo:    '/sales-upload',
+      label:       'Verkaufsdaten Produkte',
+      sublabel:    'Gastronovi CSV (Artikel)',
+      icon:        <ShoppingCart className="h-3.5 w-3.5" />,
+      latestDate:  verkaufDate === 'loading' ? null : verkaufDate,
+      displayDate: verkaufDate === 'loading' ? null : verkaufDate,
+      mode:        'daily',
+      linkTo:      '/sales-upload',
     },
   ];
 
@@ -200,7 +214,7 @@ const DatenstandCard = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {entries.map(e => {
             const s = staleness(e.latestDate, e.mode);
-            const dateStr = formatDatenstandDate(e.latestDate, e.mode);
+            const dateStr = formatDatenstandDate(e.displayDate ?? e.latestDate);
             const loading = e.label === 'Verkaufsdaten Produkte' && verkaufDate === 'loading';
             return (
               <div
