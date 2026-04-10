@@ -1,0 +1,79 @@
+Bitte die Ferienabbau-Kosten jetzt sichtbar und fachlich sauber in "Personal FIX + Variabel" integrieren.
+
+Ziel:
+Ich möchte in der Personal FIX Übersicht klar sehen, welcher Teil der variablen Mehrkosten durch echte variable Arbeitsstunden kommt und welcher Teil durch Ferienabbau verursacht ist.
+
+Bitte umsetzen:
+
+1. Variable Kosten aufteilen
+In Personal FIX + Variabel die variablen Kosten nicht nur als eine Summe zeigen, sondern aufteilen in:
+
+- Variable Arbeit CHF
+- Ferienabbau CHF
+- Total Variabel CHF
+
+2. Definition
+- Variable Arbeit CHF = echte Ist-Arbeitsstunden * Stundenlohn
+- Ferienabbau CHF = Ferieneinträge im Ist * Ferienkostenbasis
+- Total Variabel CHF = Variable Arbeit CHF + Ferienabbau CHF
+
+3. In der Übersicht nach Abteilung
+Die Tabelle "Personalkosten-Übersicht nach Abteilung" erweitern:
+
+aktuell:
+- FIX
+- VARIABEL
+- TOTAL PERSONAL
+
+neu:
+- FIX
+- VARIABLE ARBEIT
+- FERIENABBAU
+- TOTAL VARIABEL
+- TOTAL PERSONAL
+
+für:
+- Service
+- Küche
+- Gesamt
+
+4. In der Budget-/Hochrechnungsbox
+Im Bereich "Schätzung vs. Budget" ebenfalls aufteilen:
+
+statt nur:
+- Geschätzte Kosten Variabel
+
+neu:
+- Geschätzte Kosten Variable Arbeit
+- Ferienabbau
+- Total Variabel
+
+5. Hinweis / Interpretation
+Wenn Ferienabbau CHF > 0, oberhalb oder unterhalb der Variabel-Karte einen kleinen Hinweis anzeigen, z.B.:
+
+"Ein Teil der variablen Mehrkosten ist auf Ferienabbau zurückzuführen."
+
+Optional mit Betrag:
+"CHF X der variablen Kosten stammen aus Ferienabbau."
+
+6. Wichtig
+- Ferien dürfen weiterhin NICHT als Arbeitsstunden zählen
+- Ferien sollen nur in CHF separat ausgewiesen werden
+- echte variable Arbeitsstunden und Ferienabbau dürfen nicht vermischt werden
+
+7. Prozent-Logik
+Falls Variabel-% oder Personal-% angezeigt werden:
+- nur wenn sinnvoll zusätzlich auch Ferienabbau in Prozent ausweisen
+- aber klar getrennt von echter variabler Arbeit
+
+8. Debug Logs
+Bitte loggen:
+[FERIEN] ferienabbau service chf: ...
+[FERIEN] ferienabbau kueche chf: ...
+[FERIEN] variable arbeit chf: ...
+[FERIEN] total variabel chf: ...
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wo Ferienabbau CHF jetzt sichtbar ist
+- wie Variable Arbeit und Ferienabbau getrennt berechnet werden

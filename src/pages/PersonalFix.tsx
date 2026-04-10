@@ -162,6 +162,33 @@ function loadPlanHoursFromStorage(year: number, month: number): Record<string, n
 }
 
 /**
+ * Liest FE-Ferientage aus localStorage (actual-hours-YYYY-MM).
+ * Gibt eine Map empId → Anzahl FE-Einträge im Monat zurück.
+ * FE-Einträge haben hours=0 und absenceType='FE' — werden hier gezählt.
+ */
+function loadFerienDaysFromStorage(year: number, month: number): Record<string, number> {
+  const key = `actual-hours-${year}-${String(month).padStart(2, '0')}`;
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const data: Record<string, any> = JSON.parse(raw);
+    const out: Record<string, number> = {};
+    for (const [cellKey, val] of Object.entries(data)) {
+      const entryDate = cellKey.slice(-10);
+      if (!entryDate.startsWith(monthPrefix)) continue;
+      const empId = cellKey.slice(0, cellKey.length - 11);
+      if (!empId) continue;
+      const absenceType = typeof val === 'object' ? val?.absenceType : undefined;
+      if (absenceType === 'FE') {
+        out[empId] = (out[empId] ?? 0) + 1;
+      }
+    }
+    return out;
+  } catch { return {}; }
+}
+
+/**
  * Liest Ist-Stunden aus localStorage (actual-hours-YYYY-MM = Mirus-Import).
  * Gibt eine Map empId → Gesamtstunden im Monat zurück.
  */
@@ -476,6 +503,8 @@ export default function PersonalFixPage() {
   const [varView, setVarView] = useState<VarView>('plan');
   const [planHours, setPlanHours] = useState<Record<string, number>>({});
   const [istHours, setIstHours] = useState<Record<string, number>>({});
+  // empId → Anzahl FE-Tage im Ist (absenceType='FE' in localStorage)
+  const [ferienIstDays, setFerienIstDays] = useState<Record<string, number>>({});
 
   // ── Pro-Rata-Abgrenzung ────────────────────────────────────────────────────
   // null = aus; Zahl = Stichtag (1–letzter Tag des Monats)
@@ -494,6 +523,8 @@ export default function PersonalFixPage() {
   // is the fallback/cache for entries that haven't round-tripped through Supabase.
   useEffect(() => {
     setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth));
+    // FE-Ferientage immer aus localStorage (Supabase speichert kein absenceType)
+    setFerienIstDays(loadFerienDaysFromStorage(selectedYear, selectedMonth));
 
     // Fast local read first
     const localIst = loadIstHoursFromStorage(selectedYear, selectedMonth);
@@ -701,6 +732,38 @@ export default function PersonalFixPage() {
   );
   const totalCombined = totalFixCost + totalVarCost;
 
+  // ── Ferienabbau-Berechnungen ───────────────────────────────────────────────
+  // FE-Tage im Ist × (weeklyHours/5 oder 8.4h) × Stundenlohn
+  // Basis: localStorage (Supabase hat kein absenceType-Feld)
+  const getEmpFerienCHF = useCallback((emp: Employee): number => {
+    const days = ferienIstDays[emp.id] ?? 0;
+    if (!days) return 0;
+    const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+    return days * dailyH * (emp.hourlyWage ?? 0);
+  }, [ferienIstDays]);
+
+  const ferienabbauByDept = useMemo<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    for (const [dept, emps] of Object.entries(varByDept)) {
+      const chf = emps.reduce((s, e) => s + getEmpFerienCHF(e), 0);
+      map[dept] = chf;
+      if (chf > 0) console.log(`[FERIEN] ferienabbau ${dept} chf: ${chf.toFixed(2)}`);
+    }
+    return map;
+  }, [varByDept, getEmpFerienCHF]);
+
+  const totalFerienabbauCHF = useMemo(() => {
+    const total = variableEmployees.reduce((s, e) => s + getEmpFerienCHF(e), 0);
+    if (total > 0) {
+      console.log(`[FERIEN] variable arbeit chf: ${totalVarCost.toFixed(2)}`);
+      console.log(`[FERIEN] total variabel chf: ${(totalVarCost + total).toFixed(2)}`);
+    }
+    return total;
+  }, [variableEmployees, getEmpFerienCHF, totalVarCost]);
+
+  const totalVarArbeitCHF = totalVarCost;          // FE hat hours=0 → nicht in Var-Kosten
+  const totalVariabelCHF  = totalVarCost + totalFerienabbauCHF;
+
   // ── Pro-Rata-Berechnungen ──────────────────────────────────────────────────
   const daysInSelectedMonth = new Date(selectedYear, selectedMonth, 0).getDate();
   const proRataFactor = proRataDay !== null
@@ -717,10 +780,12 @@ export default function PersonalFixPage() {
     return depts.map(dept => {
       const fix = (byDept[dept] ?? []).reduce((s, r) => s + r.cost, 0);
       const varEmpList = varByDept[dept] ?? [];
-      const variabel = varEmpList.reduce((s, e) => s + getVarMonthlyCostFor(e.id, e), 0);
-      return { dept, fix, variabel, total: fix + variabel };
+      const varArbeit  = varEmpList.reduce((s, e) => s + getVarMonthlyCostFor(e.id, e), 0);
+      const ferienabbau = ferienabbauByDept[dept] ?? 0;
+      const variabel = varArbeit + ferienabbau;
+      return { dept, fix, varArbeit, ferienabbau, variabel, total: fix + variabel };
     });
-  }, [byDept, varByDept, getVarMonthlyCostFor]);
+  }, [byDept, varByDept, getVarMonthlyCostFor, ferienabbauByDept]);
 
   // ── Budget für variable Mitarbeiter ───────────────────────────────────────
 
@@ -921,21 +986,23 @@ export default function PersonalFixPage() {
             color="blue"
           />
           <KpiCard
-            title="Personal VARIABEL / Monat"
-            value={fmtCHF(totalVarCost)}
+            title="Variable Arbeit / Monat"
+            value={fmtCHF(totalVarArbeitCHF)}
             sourceBadge={varView === 'plan' ? '● Plan-Stunden' : varView === 'ist' ? '● Ist-Stunden' : '● Manuell'}
             sub={totalVarHours > 0
               ? `${Math.round(totalVarHours * 10) / 10} h × Stundenlohn`
               : `${variableEmployees.length} MA · Stunden wählen ↓`}
             icon={<Clock className="h-5 w-5" />}
-            color={totalVarCost > 0 ? 'orange' : 'default'}
+            color={totalVarArbeitCHF > 0 ? 'orange' : 'default'}
           />
           <KpiCard
             title="Total Personal / Monat"
-            value={fmtCHF(totalCombined)}
-            sub="FIX + VARIABEL"
+            value={fmtCHF(totalFixCost + totalVariabelCHF)}
+            sub={totalFerienabbauCHF > 0
+              ? `FIX + Variabel + ${fmtCHF(totalFerienabbauCHF)} Ferienabbau`
+              : 'FIX + VARIABEL'}
             icon={<Users className="h-5 w-5" />}
-            color={totalCombined > 0 ? 'green' : 'default'}
+            color={totalFixCost + totalVariabelCHF > 0 ? 'green' : 'default'}
           />
         </div>
 
@@ -1053,6 +1120,18 @@ export default function PersonalFixPage() {
               icon={<BookOpen className="h-5 w-5" />}
               color="default"
             />
+          </div>
+        )}
+
+        {/* ── Ferienabbau-Hinweis ───────────────────────────────────────────── */}
+        {totalFerienabbauCHF > 0 && (
+          <div className="flex items-start gap-2.5 rounded-lg border border-blue-300 bg-blue-50 dark:border-blue-700 dark:bg-blue-950/30 p-3 text-xs text-blue-800 dark:text-blue-200">
+            <Info className="h-4 w-4 shrink-0 mt-0.5" />
+            <p>
+              <strong>Ferienabbau:</strong>{' '}
+              {fmtCHF(totalFerienabbauCHF)} der variablen Kosten stammen aus Ferienabbau (FE-Einträge im Ist).
+              Variable Arbeit und Ferienabbau sind getrennt ausgewiesen — Ferien zählen nicht als Arbeitsstunden.
+            </p>
           </div>
         )}
 
@@ -1574,13 +1653,25 @@ export default function PersonalFixPage() {
                 </div>
                 <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
                   <div className="flex items-center gap-1.5 flex-wrap text-sm text-muted-foreground">
-                    <span className="whitespace-nowrap">− Geschätzte Kosten Variabel</span>
+                    <span className="whitespace-nowrap">− Variable Arbeit</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">
                       {varView === 'plan' ? 'Plan' : varView === 'ist' ? 'Ist' : 'Manuell'}
                     </span>
                   </div>
-                  <span className="font-mono text-orange-700 dark:text-orange-400 shrink-0">− {fmtCHF(totalVarCost)}</span>
+                  <span className="font-mono text-orange-700 dark:text-orange-400 shrink-0">− {fmtCHF(totalVarArbeitCHF)}</span>
                 </div>
+                {totalFerienabbauCHF > 0 && (
+                  <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
+                    <span className="text-sm text-muted-foreground">− Ferienabbau (FE Ist)</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">− {fmtCHF(totalFerienabbauCHF)}</span>
+                  </div>
+                )}
+                {totalFerienabbauCHF > 0 && (
+                  <div className="flex justify-between items-baseline gap-2 py-1 border-b border-dashed border-border">
+                    <span className="text-sm font-medium text-muted-foreground">= Total Variabel</span>
+                    <span className="font-mono font-semibold text-orange-800 dark:text-orange-300 shrink-0">{fmtCHF(totalVariabelCHF)}</span>
+                  </div>
+                )}
                 <div className={cn(
                   'flex justify-between items-center py-2 px-3 rounded-lg',
                   !varBudgetOverrun
@@ -1703,14 +1794,36 @@ export default function PersonalFixPage() {
                     </td>
                   </tr>
                   <tr className="hover:bg-muted/20">
-                    <td className="px-4 py-2.5 font-medium text-orange-700 dark:text-orange-400">VARIABEL</td>
+                    <td className="px-4 py-2.5 font-medium text-orange-700 dark:text-orange-400">VARIABLE ARBEIT</td>
                     {deptSummary.map(ds => (
                       <td key={ds.dept} className="px-4 py-2.5 text-right font-mono text-orange-700 dark:text-orange-400">
-                        {ds.variabel > 0 ? fmtCHF(ds.variabel) : <span className="text-muted-foreground">–</span>}
+                        {ds.varArbeit > 0 ? fmtCHF(ds.varArbeit) : <span className="text-muted-foreground">–</span>}
                       </td>
                     ))}
                     <td className="px-4 py-2.5 text-right font-mono font-semibold text-orange-700 dark:text-orange-400">
-                      {fmtCHF(totalVarCost)}
+                      {fmtCHF(totalVarArbeitCHF)}
+                    </td>
+                  </tr>
+                  <tr className="hover:bg-muted/20 bg-blue-50/30 dark:bg-blue-950/10">
+                    <td className="px-4 py-2.5 font-medium text-blue-600 dark:text-blue-400">FERIENABBAU</td>
+                    {deptSummary.map(ds => (
+                      <td key={ds.dept} className="px-4 py-2.5 text-right font-mono text-blue-600 dark:text-blue-400">
+                        {ds.ferienabbau > 0 ? fmtCHF(ds.ferienabbau) : <span className="text-muted-foreground">–</span>}
+                      </td>
+                    ))}
+                    <td className="px-4 py-2.5 text-right font-mono font-semibold text-blue-600 dark:text-blue-400">
+                      {totalFerienabbauCHF > 0 ? fmtCHF(totalFerienabbauCHF) : <span className="text-muted-foreground">–</span>}
+                    </td>
+                  </tr>
+                  <tr className="hover:bg-muted/20 border-t border-orange-200 dark:border-orange-800">
+                    <td className="px-4 py-2.5 font-semibold text-orange-800 dark:text-orange-300">TOTAL VARIABEL</td>
+                    {deptSummary.map(ds => (
+                      <td key={ds.dept} className="px-4 py-2.5 text-right font-mono font-semibold text-orange-800 dark:text-orange-300">
+                        {ds.variabel > 0 ? fmtCHF(ds.variabel) : <span className="text-muted-foreground">–</span>}
+                      </td>
+                    ))}
+                    <td className="px-4 py-2.5 text-right font-mono font-bold text-orange-800 dark:text-orange-300">
+                      {fmtCHF(totalVariabelCHF)}
                     </td>
                   </tr>
                 </tbody>
@@ -1723,7 +1836,7 @@ export default function PersonalFixPage() {
                       </td>
                     ))}
                     <td className="px-4 py-2.5 text-right font-mono font-bold text-lg text-emerald-700 dark:text-emerald-400">
-                      {fmtCHF(totalCombined)}
+                      {fmtCHF(totalFixCost + totalVariabelCHF)}
                     </td>
                   </tr>
                 </tfoot>
