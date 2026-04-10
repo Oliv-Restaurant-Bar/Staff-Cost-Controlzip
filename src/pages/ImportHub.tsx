@@ -701,13 +701,22 @@ const IstStundenSection = () => {
     const affectedMonths = new Set(entries.map(e => e.date.slice(0, 7)));
     const saves: Array<{ empId: string; date: string; hours: number }> = [];
 
-    const loadMonthData = (month: string): Record<string, { hours: number }> => {
+    const loadMonthData = (month: string): Record<string, { hours: number; absenceType?: string }> => {
       try { return JSON.parse(localStorage.getItem(`actual-hours-${month}`) || '{}'); } catch { return {}; }
     };
 
-    const monthData: Record<string, Record<string, { hours: number }>> = {};
+    // Helper: returns only FE/K/F absence entries from a month's data.
+    // These are NEVER sent to Supabase and must survive any import mode.
+    const extractAbsenceEntries = (data: Record<string, { hours: number; absenceType?: string }>) =>
+      Object.fromEntries(
+        Object.entries(data).filter(([, v]) => v.absenceType && v.hours === 0)
+      );
+
+    const monthData: Record<string, Record<string, { hours: number; absenceType?: string }>> = {};
     for (const m of affectedMonths) {
-      monthData[m] = mode === 'replace' ? {} : loadMonthData(m);
+      const existing = loadMonthData(m);
+      // In replace mode start fresh BUT keep absence entries (FE/K/F)
+      monthData[m] = mode === 'replace' ? extractAbsenceEntries(existing) : { ...existing };
     }
 
     let matched = 0;
@@ -730,7 +739,12 @@ const IstStundenSection = () => {
       }
       const month = entry.date.slice(0, 7);
       const key = `${emp.id}-${entry.date}`;
-      if (mode === 'replace' || !monthData[month]?.[key]) {
+      const existing = monthData[month]?.[key];
+
+      // Never overwrite an absence entry (hours=0, absenceType set) with Mirus data
+      if (existing?.absenceType && existing.hours === 0) continue;
+
+      if (mode === 'replace' || !existing) {
         if (!monthData[month]) monthData[month] = {};
         monthData[month][key] = { hours: entry.hours };
         saves.push({ empId: emp.id, date: entry.date, hours: entry.hours });
