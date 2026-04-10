@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb } from 'lucide-react';
+import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb, Zap } from 'lucide-react';
 
 export interface ActualHoursEntry {
   hours: number;
@@ -66,12 +66,14 @@ const ActualHoursCell = ({
   entry,
   onSave,
   showCosts = false,
+  quickEntry = null,
 }: {
   employee: Employee;
   day: Date;
   entry: ActualHoursEntry | undefined;
   onSave: (entry: ActualHoursEntry | null) => void;
   showCosts?: boolean;
+  quickEntry?: 'FE' | 'K' | 'F' | null;
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [inputMode, setInputMode] = useState<'hours' | 'times' | 'chf'>('hours');
@@ -88,6 +90,18 @@ const ActualHoursCell = ({
   const hoursFromChf = chfInput ? (parseFloat(chfInput.replace(',', '.')) / employee.hourlyWage) : 0;
 
   const handleCellClick = () => {
+    // ── Schnellerfassung-Modus: kein Dialog, direkte Zuweisung ──
+    if (quickEntry) {
+      if (entry?.absenceType === quickEntry) {
+        // Gleicher Typ nochmal → aufheben
+        onSave(null);
+      } else {
+        const hours = quickEntry === 'K' ? 8.4 : 0;
+        onSave({ hours, absenceType: quickEntry });
+      }
+      return;
+    }
+    // ── Normaler Modus: Dialog öffnen ──
     if (entry) {
       setHoursInput(entry.hours.toString());
       setChfInput((entry.hours * employee.hourlyWage).toFixed(0));
@@ -148,22 +162,33 @@ const ActualHoursCell = ({
     setIsEditing(false);
   };
 
+  // Quick-entry hover color matches the active type
+  const quickHoverClass = quickEntry === 'FE'
+    ? 'hover:bg-blue-100 dark:hover:bg-blue-900/40 ring-1 ring-inset ring-blue-300/60 dark:ring-blue-700/60'
+    : quickEntry === 'K'
+      ? 'hover:bg-red-100 dark:hover:bg-red-900/40 ring-1 ring-inset ring-red-300/60 dark:ring-red-700/60'
+      : quickEntry === 'F'
+        ? 'hover:bg-slate-200 dark:hover:bg-slate-700/40 ring-1 ring-inset ring-slate-400/60 dark:ring-slate-600/60'
+        : 'hover:bg-primary/10';
+
   return (
     <>
       <td
         className={cn(
-          "px-1 py-1 text-center text-xs border-r border-b cursor-pointer transition-colors hover:bg-primary/10",
+          "px-1 py-1 text-center text-xs border-r border-b transition-colors",
           "min-w-[60px]",
+          quickEntry ? "cursor-cell" : "cursor-pointer",
           isWeekendDay && "bg-amber-50 dark:bg-amber-900/20",
           isSundayDay && "bg-amber-100/50 dark:bg-amber-900/30 border-r-2 border-r-primary/30",
           isDayOffDay && "bg-muted/50",
           absenceType === 'FE' && "bg-blue-50 dark:bg-blue-900/20",
           absenceType === 'K' && "bg-red-50 dark:bg-red-900/20",
           absenceType === 'F' && "bg-slate-100 dark:bg-slate-800/50",
-          !absenceType && hours > 0 && "bg-green-50 dark:bg-green-900/20"
+          !absenceType && hours > 0 && "bg-green-50 dark:bg-green-900/20",
+          quickHoverClass,
         )}
         onClick={handleCellClick}
-        title="Klicken zum Bearbeiten"
+        title={quickEntry ? `Klicken → ${quickEntry} setzen (nochmal klicken zum Aufheben)` : "Klicken zum Bearbeiten"}
       >
         {absenceType ? (
           <div className="flex flex-col items-center gap-0.5">
@@ -428,6 +453,13 @@ export const ActualHoursGrid = ({
 }: ActualHoursGridProps) => {
   const isWeekView = days.length <= 7;
 
+  // ── Schnellerfassung-Modus ─────────────────────────────────────────────────
+  const [quickEntry, setQuickEntry] = useState<'FE' | 'K' | 'F' | null>(null);
+
+  const toggleQuickEntry = (type: 'FE' | 'K' | 'F') => {
+    setQuickEntry(prev => prev === type ? null : type);
+  };
+
   // Over-budget dialog state
   const [openDialogDay, setOpenDialogDay] = useState<string | null>(null);
   const [showIdealPlan, setShowIdealPlan] = useState(false);
@@ -495,6 +527,82 @@ export const ActualHoursGrid = ({
 
   return (
     <>
+    {/* ── Schnellerfassung-Toolbar ───────────────────────────────────────────── */}
+    <div className={cn(
+      "flex items-center gap-2 mb-2 px-2 py-1.5 rounded-lg border text-sm transition-colors",
+      quickEntry
+        ? quickEntry === 'FE'
+          ? "bg-blue-50 border-blue-300 dark:bg-blue-950/40 dark:border-blue-700"
+          : quickEntry === 'K'
+            ? "bg-red-50 border-red-300 dark:bg-red-950/40 dark:border-red-700"
+            : "bg-slate-100 border-slate-300 dark:bg-slate-800/60 dark:border-slate-600"
+        : "bg-muted/40 border-border"
+    )}>
+      <Zap className={cn(
+        "h-3.5 w-3.5 shrink-0",
+        quickEntry ? "text-amber-500" : "text-muted-foreground"
+      )} />
+      <span className="text-xs font-medium text-muted-foreground shrink-0">Schnellerfassung:</span>
+      <div className="flex gap-1.5">
+        <button
+          onClick={() => toggleQuickEntry('FE')}
+          className={cn(
+            "px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all",
+            quickEntry === 'FE'
+              ? "bg-blue-500 text-white border-blue-500 shadow-sm"
+              : "border-blue-300 text-blue-600 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/40"
+          )}
+        >
+          FE – Ferien
+        </button>
+        <button
+          onClick={() => toggleQuickEntry('K')}
+          className={cn(
+            "px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all",
+            quickEntry === 'K'
+              ? "bg-red-500 text-white border-red-500 shadow-sm"
+              : "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950/40"
+          )}
+        >
+          K – Krank
+        </button>
+        <button
+          onClick={() => toggleQuickEntry('F')}
+          className={cn(
+            "px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all",
+            quickEntry === 'F'
+              ? "bg-slate-500 text-white border-slate-500 shadow-sm"
+              : "border-slate-300 text-slate-500 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800/30"
+          )}
+        >
+          F – Frei
+        </button>
+      </div>
+      {quickEntry ? (
+        <div className="flex items-center gap-1.5 ml-1">
+          <span className={cn(
+            "text-xs font-medium",
+            quickEntry === 'FE' && "text-blue-700 dark:text-blue-400",
+            quickEntry === 'K' && "text-red-700 dark:text-red-400",
+            quickEntry === 'F' && "text-slate-600 dark:text-slate-400",
+          )}>
+            Aktiv – direkt auf Zellen klicken
+          </span>
+          <button
+            onClick={() => setQuickEntry(null)}
+            className="ml-1 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+            title="Schnellerfassung beenden"
+          >
+            <X className="h-3 w-3 text-muted-foreground" />
+          </button>
+        </div>
+      ) : (
+        <span className="text-xs text-muted-foreground italic">
+          Typ wählen, dann Zellen anklicken
+        </span>
+      )}
+    </div>
+
     <div className="overflow-auto max-h-[calc(100vh-280px)]">
       <div className={cn("min-w-max", isWeekView && "min-w-0")}>
         <table className={cn("w-full border-collapse", isWeekView && "table-fixed")}>
@@ -672,6 +780,7 @@ export const ActualHoursGrid = ({
                         entry={entry}
                         onSave={(newEntry) => onHoursChange(employee.id, dateStr, newEntry)}
                         showCosts={showCosts}
+                        quickEntry={quickEntry}
                       />
                     );
                   })}
