@@ -2156,56 +2156,91 @@ const SchedulePlanner = () => {
           </Card>
         </div>
 
-        {/* Overhours Warning */}
-        {overhoursEmployees.length > 0 && (
-          <Card className="border-destructive/50 bg-destructive/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold text-destructive flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4" />
-                Überstunden ({overhoursEmployees.length} Mitarbeiter)
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                {overhoursEmployees.map(({ employee, plannedHours, targetHours, difference }) => (
-                  <div key={employee.id} className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground truncate">{employee.name}</span>
-                    <span className="text-destructive font-medium shrink-0 ml-2">
-                      +{difference.toFixed(1)}h ({plannedHours.toFixed(1)}h / {targetHours.toFixed(1)}h)
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        {/* ════════════════════════════════════════════════════════════
+            PERSONALKOSTENQUOTE BANNER (nach Summary Cards)
+            ════════════════════════════════════════════════════════════ */}
+        <div className={cn(
+          "rounded-xl border-2 p-4 flex flex-col gap-3",
+          costRatioStatus === 'good'    && "border-green-500 bg-green-50 dark:bg-green-950/30",
+          costRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
+          costRatioStatus === 'high'    && "border-red-500 bg-red-50 dark:bg-red-950/30",
+          costRatioStatus === 'unknown' && "border-slate-300 bg-slate-50 dark:bg-slate-800/40"
+        )}>
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Personalkostenquote
+            </p>
+            <p className="text-xs text-muted-foreground">{pkqPeriodLabel}</p>
+          </div>
 
-        {/* Variable hours exceeded estimated (Personal FIX) */}
-        {varHoursExceeded.length > 0 && (
-          <Card className="border-orange-400/50 bg-orange-50/50 dark:bg-orange-950/20 dark:border-orange-700/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold text-orange-700 dark:text-orange-300 flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4" />
-                Geschätzte Stunden überschritten — Variable Mitarbeiter ({varHoursExceeded.length})
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <p className="text-xs text-orange-600 dark:text-orange-400 mb-2">
-                Die geplanten Stunden übersteigen die in Personal FIX eingetragene Schätzung.
-              </p>
-              <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                {varHoursExceeded.map(({ emp, planned, estimated }) => (
-                  <div key={emp.id} className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground truncate">{emp.name}</span>
-                    <span className="text-orange-700 dark:text-orange-300 font-medium shrink-0 ml-2">
-                      +{(planned - estimated).toFixed(1)}h geplant ({planned.toFixed(1)}h / {estimated.toFixed(1)}h gesch.)
-                    </span>
-                  </div>
-                ))}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            {/* Left: icon + big % (clickable) */}
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-14 h-14 rounded-full flex items-center justify-center text-white text-2xl font-black shrink-0",
+                costRatioStatus === 'good'    && "bg-green-500",
+                costRatioStatus === 'ok'      && "bg-yellow-400",
+                costRatioStatus === 'high'    && "bg-red-500",
+                costRatioStatus === 'unknown' && "bg-slate-400"
+              )}>
+                {costRatioStatus === 'good'    && '✓'}
+                {costRatioStatus === 'ok'      && '!'}
+                {costRatioStatus === 'high'    && '✗'}
+                {costRatioStatus === 'unknown' && '?'}
               </div>
-            </CardContent>
-          </Card>
-        )}
+              <div>
+                <button
+                  onClick={() => setPkDetailOpen(true)}
+                  className={cn(
+                    "text-4xl font-black leading-none underline-offset-4 hover:underline cursor-pointer",
+                    costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
+                    costRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
+                    costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
+                    costRatioStatus === 'unknown' && "text-slate-500"
+                  )}
+                  title="Details anzeigen"
+                >
+                  {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '– %'}
+                </button>
+                <p className="text-sm mt-1">
+                  {costRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {effectiveLaborCostThreshold}% erreicht</span>}
+                  {costRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({effectiveLaborCostThreshold}%)</span>}
+                  {costRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {effectiveLaborCostThreshold}% überschritten <span className="text-xs font-normal cursor-pointer underline" onClick={() => setPkDetailOpen(true)}>→ Details</span></span>}
+                  {costRatioStatus === 'unknown' && <span className="text-muted-foreground">Kein Umsatzbudget – Quote noch nicht berechenbar</span>}
+                </p>
+              </div>
+            </div>
+            {/* Right: three key numbers */}
+            <div className="flex gap-5 flex-wrap sm:flex-nowrap">
+              <div className="text-center">
+                <p className="text-xl font-bold tabular-nums">
+                  {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Personalkosten / {pkqPeriodName}
+                </p>
+                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-xl font-bold tabular-nums">
+                  {activeRevenue > 0
+                    ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue)
+                    : <span className="text-muted-foreground text-base">{scheduleMode === 'ist' ? 'kein Ist-Umsatz' : 'kein Budget'}</span>}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {scheduleMode === 'ist' ? 'Ist-Umsatz' : 'Budget'} / {pkqPeriodName}
+                </p>
+                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-xl font-bold tabular-nums">{effectiveLaborCostThreshold} %</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Zielwert{activeDepartment !== 'all' && <span className="block text-[10px] text-muted-foreground/70">(pro Abteilung)</span>}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* Shift Legend */}
         <ShiftLegend 
@@ -2668,91 +2703,55 @@ const SchedulePlanner = () => {
           </CardContent>
         </Card>
 
-        {/* ════════════════════════════════════════════════════════════
-            PERSONALKOSTENQUOTE BANNER (nach Soll/Ist Vergleich)
-            ════════════════════════════════════════════════════════════ */}
-        <div className={cn(
-          "rounded-xl border-2 p-4 flex flex-col gap-3",
-          costRatioStatus === 'good'    && "border-green-500 bg-green-50 dark:bg-green-950/30",
-          costRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
-          costRatioStatus === 'high'    && "border-red-500 bg-red-50 dark:bg-red-950/30",
-          costRatioStatus === 'unknown' && "border-slate-300 bg-slate-50 dark:bg-slate-800/40"
-        )}>
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Personalkostenquote
-            </p>
-            <p className="text-xs text-muted-foreground">{pkqPeriodLabel}</p>
-          </div>
+        {/* Überstunden-Warnungen (nach Soll/Ist Vergleich) */}
+        {overhoursEmployees.length > 0 && (
+          <Card className="border-destructive/50 bg-destructive/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold text-destructive flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />
+                Überstunden ({overhoursEmployees.length} Mitarbeiter)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                {overhoursEmployees.map(({ employee, plannedHours, targetHours, difference }) => (
+                  <div key={employee.id} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground truncate">{employee.name}</span>
+                    <span className="text-destructive font-medium shrink-0 ml-2">
+                      +{difference.toFixed(1)}h ({plannedHours.toFixed(1)}h / {targetHours.toFixed(1)}h)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            {/* Left: icon + big % (clickable) */}
-            <div className="flex items-center gap-3">
-              <div className={cn(
-                "w-14 h-14 rounded-full flex items-center justify-center text-white text-2xl font-black shrink-0",
-                costRatioStatus === 'good'    && "bg-green-500",
-                costRatioStatus === 'ok'      && "bg-yellow-400",
-                costRatioStatus === 'high'    && "bg-red-500",
-                costRatioStatus === 'unknown' && "bg-slate-400"
-              )}>
-                {costRatioStatus === 'good'    && '✓'}
-                {costRatioStatus === 'ok'      && '!'}
-                {costRatioStatus === 'high'    && '✗'}
-                {costRatioStatus === 'unknown' && '?'}
+        {varHoursExceeded.length > 0 && (
+          <Card className="border-orange-400/50 bg-orange-50/50 dark:bg-orange-950/20 dark:border-orange-700/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold text-orange-700 dark:text-orange-300 flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />
+                Geschätzte Stunden überschritten — Variable Mitarbeiter ({varHoursExceeded.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="text-xs text-orange-600 dark:text-orange-400 mb-2">
+                Die geplanten Stunden übersteigen die in Personal FIX eingetragene Schätzung.
+              </p>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {varHoursExceeded.map(({ emp, planned, estimated }) => (
+                  <div key={emp.id} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground truncate">{emp.name}</span>
+                    <span className="text-orange-700 dark:text-orange-300 font-medium shrink-0 ml-2">
+                      +{(planned - estimated).toFixed(1)}h geplant ({planned.toFixed(1)}h / {estimated.toFixed(1)}h gesch.)
+                    </span>
+                  </div>
+                ))}
               </div>
-              <div>
-                <button
-                  onClick={() => setPkDetailOpen(true)}
-                  className={cn(
-                    "text-4xl font-black leading-none underline-offset-4 hover:underline cursor-pointer",
-                    costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
-                    costRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
-                    costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
-                    costRatioStatus === 'unknown' && "text-slate-500"
-                  )}
-                  title="Details anzeigen"
-                >
-                  {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '– %'}
-                </button>
-                <p className="text-sm mt-1">
-                  {costRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {effectiveLaborCostThreshold}% erreicht</span>}
-                  {costRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({effectiveLaborCostThreshold}%)</span>}
-                  {costRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {effectiveLaborCostThreshold}% überschritten <span className="text-xs font-normal cursor-pointer underline" onClick={() => setPkDetailOpen(true)}>→ Details</span></span>}
-                  {costRatioStatus === 'unknown' && <span className="text-muted-foreground">Kein Umsatzbudget – Quote noch nicht berechenbar</span>}
-                </p>
-              </div>
-            </div>
-            {/* Right: three key numbers */}
-            <div className="flex gap-5 flex-wrap sm:flex-nowrap">
-              <div className="text-center">
-                <p className="text-xl font-bold tabular-nums">
-                  {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
-                </p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Personalkosten / {pkqPeriodName}
-                </p>
-                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
-              </div>
-              <div className="text-center">
-                <p className="text-xl font-bold tabular-nums">
-                  {activeRevenue > 0
-                    ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue)
-                    : <span className="text-muted-foreground text-base">{scheduleMode === 'ist' ? 'kein Ist-Umsatz' : 'kein Budget'}</span>}
-                </p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {scheduleMode === 'ist' ? 'Ist-Umsatz' : 'Budget'} / {pkqPeriodName}
-                </p>
-                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
-              </div>
-              <div className="text-center">
-                <p className="text-xl font-bold tabular-nums">{effectiveLaborCostThreshold} %</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Zielwert{activeDepartment !== 'all' && <span className="block text-[10px] text-muted-foreground/70">(pro Abteilung)</span>}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* ── PKQ Detail Dialog ─────────────────────────────────────────── */}
         <Dialog open={pkDetailOpen} onOpenChange={setPkDetailOpen}>
