@@ -24,6 +24,7 @@ import { DailyBudget } from '@/types/personnel';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
+import { kvSet } from '@/lib/supabase-kv';
 
 const DAILY_BUDGETS_KEY = 'dailyBudgets';
 
@@ -145,6 +146,12 @@ function ManualEntryCard() {
     }
 
     saveBudgets(budgets);
+    // Sync to Supabase KV so all pages (TagesControlling, Dashboard, etc.) see the new value
+    console.log(`[UMSATZ] saved persistently: ${date} field=${target} total=${totalNum}`);
+    kvSet(DAILY_BUDGETS_KEY, budgets).then(() => {
+      console.log(`[UMSATZ] kvSet ok: dailyBudgets now has ${Object.keys(budgets).length} Tage`);
+      window.dispatchEvent(new Event('supabase-kv-synced'));
+    }).catch(err => console.error('[UMSATZ] kvSet failed:', err));
     setSaved(true);
     toast.success(`Umsatz für ${format(parseLocalDate(date), 'dd. MMM yyyy', { locale: de })} gespeichert`);
     setTimeout(() => setSaved(false), 3000);
@@ -525,6 +532,17 @@ export function GastronoviImportSection() {
     }
 
     saveBudgets(budgets);
+
+    // Sync to Supabase KV immediately — without this, TagesControlling/Dashboard
+    // read from Supabase KV and show the OLD data, ignoring what was just imported.
+    const dates = rows.map(r => r.date).sort();
+    console.log(`[UMSATZ] import committed: ${count} Tage, Bereich ${dates[0] ?? '?'} bis ${dates.at(-1) ?? '?'}`);
+    console.log(`[UMSATZ] available keys: [${Object.keys(budgets).sort().slice(-10).join(', ')}]`);
+    kvSet(DAILY_BUDGETS_KEY, budgets).then(() => {
+      console.log(`[UMSATZ] kvSet ok: dailyBudgets → ${Object.keys(budgets).length} Tage in Supabase`);
+      window.dispatchEvent(new Event('supabase-kv-synced'));
+    }).catch(err => console.error('[UMSATZ] kvSet failed:', err));
+
     setImported(true);
     const label = target === 'actual' ? 'Ist-Umsätze' : 'Vorjahresumsätze';
     toast.success(`${count} Tage importiert als ${label}`);

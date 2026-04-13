@@ -399,13 +399,33 @@ export default function TagesControllingPage() {
 
   // dailyBudgets: sofort + bei Sync neu laden
   useEffect(() => {
-    setDailyBudgets(readDailyBudgets());
+    const local = readDailyBudgets();
+    const localKeys = Object.keys(local).filter(k => (local[k]?.actualRevenue ?? 0) > 0).sort();
+    console.log(`[UMSATZ] localStorage keys with actualRevenue: [${localKeys.slice(-10).join(', ')}]`);
+    setDailyBudgets(local);
     import('@/lib/supabase-kv').then(({ kvGet }) =>
       kvGet('dailyBudgets').then(r => {
-        if (r && typeof r === 'object') setDailyBudgets(r as Record<string, { actualRevenue?: number; takeawayRevenue?: number }>);
+        if (r && typeof r === 'object') {
+          const kvKeys = Object.keys(r as object).filter(k => ((r as Record<string, { actualRevenue?: number }>)[k]?.actualRevenue ?? 0) > 0).sort();
+          console.log(`[UMSATZ] Supabase KV keys with actualRevenue: [${kvKeys.slice(-10).join(', ')}]`);
+          const latestLocal = localKeys.at(-1) ?? '–';
+          const latestKV    = kvKeys.at(-1) ?? '–';
+          if (latestKV < latestLocal) {
+            console.warn(`[UMSATZ] Supabase KV is STALE (latest: ${latestKV}) vs localStorage (latest: ${latestLocal}) — using localStorage`);
+            // Don't override state with stale KV data: localStorage is more current
+            return;
+          }
+          console.log(`[UMSATZ] Supabase KV loaded: ${kvKeys.length} Tage, latest=${latestKV}`);
+          setDailyBudgets(r as Record<string, { actualRevenue?: number; takeawayRevenue?: number }>);
+        }
       }).catch(() => {}),
     );
-    const onSync = () => setDailyBudgets(readDailyBudgets());
+    const onSync = () => {
+      const synced = readDailyBudgets();
+      const syncedKeys = Object.keys(synced).filter(k => (synced[k]?.actualRevenue ?? 0) > 0).sort();
+      console.log(`[UMSATZ] supabase-kv-synced: ${syncedKeys.length} Tage verfügbar, latest=${syncedKeys.at(-1) ?? '–'}`);
+      setDailyBudgets(synced);
+    };
     window.addEventListener('supabase-kv-synced', onSync);
     return () => window.removeEventListener('supabase-kv-synced', onSync);
   }, []);

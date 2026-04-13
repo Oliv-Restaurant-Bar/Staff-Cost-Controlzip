@@ -109,10 +109,25 @@ export default function TagesansichtPage() {
   }, [year, month]);
 
   useEffect(() => {
-    setDailyBudgets(readDailyBudgets());
+    const local = readDailyBudgets();
+    const localKeys = Object.keys(local).filter(k => (local[k]?.actualRevenue ?? 0) > 0).sort();
+    console.log(`[UMSATZ] TagesansichtPage localStorage: ${localKeys.length} Tage, latest=${localKeys.at(-1) ?? '–'}`);
+    setDailyBudgets(local);
     import('@/lib/supabase-kv').then(({ kvGet }) =>
       kvGet('dailyBudgets')
-        .then(r => { if (r && typeof r === 'object') setDailyBudgets(r as Record<string, DailyEntry>); })
+        .then(r => {
+          if (r && typeof r === 'object') {
+            const kvKeys = Object.keys(r as object).filter(k => ((r as Record<string, { actualRevenue?: number }>)[k]?.actualRevenue ?? 0) > 0).sort();
+            const latestLocal = localKeys.at(-1) ?? '–';
+            const latestKV    = kvKeys.at(-1) ?? '–';
+            if (latestKV < latestLocal) {
+              console.warn(`[UMSATZ] TagesansichtPage: KV stale (${latestKV}) < local (${latestLocal}) — keeping localStorage`);
+              return;
+            }
+            console.log(`[UMSATZ] TagesansichtPage KV: ${kvKeys.length} Tage, latest=${latestKV}`);
+            setDailyBudgets(r as Record<string, DailyEntry>);
+          }
+        })
         .catch(() => {}),
     );
     const onSync = () => {

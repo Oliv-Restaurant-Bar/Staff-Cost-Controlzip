@@ -68,6 +68,36 @@ export async function kvSet(key: string, value: unknown): Promise<void> {
 }
 
 /**
+ * Tages-Level-Merge zweier dailyBudgets-Objekte.
+ * Für jeden Tag gewinnt local wenn ein Feld > 0 ist — dadurch werden
+ * neue Importe nie durch ältere Supabase-Daten überschrieben.
+ */
+function mergeDailyBudgets(
+  local: Record<string, Record<string, unknown>>,
+  remote: Record<string, Record<string, unknown>>,
+): Record<string, Record<string, unknown>> {
+  const allDates = new Set([...Object.keys(local), ...Object.keys(remote)]);
+  const result: Record<string, Record<string, unknown>> = {};
+  for (const date of allDates) {
+    const l = local[date] ?? {};
+    const r = remote[date] ?? {};
+    // Start from remote, let local fields win when they carry a value
+    const merged: Record<string, unknown> = { ...r };
+    for (const field of Object.keys(l)) {
+      const lv = l[field];
+      const rv = r[field];
+      if (typeof lv === 'number' && typeof rv === 'number') {
+        merged[field] = lv > 0 ? lv : rv;
+      } else {
+        merged[field] = lv !== undefined && lv !== null ? lv : rv;
+      }
+    }
+    result[date] = merged;
+  }
+  return result;
+}
+
+/**
  * Feld-Level-Merge zweier reporting_v1-Objekte.
  * Für jeden Monatsdatensatz gewinnt das Feld mit dem "mehr Inhalt":
  * - arrays: längere Liste gewinnt
@@ -135,6 +165,32 @@ export async function syncLocalToSupabase(keys: string[]): Promise<void> {
           console.log(`[KV] syncLocalToSupabase: 'reporting_v1' → Merge hochgeladen`);
         } else {
           console.log(`[KV] syncLocalToSupabase: 'reporting_v1' – kein Merge-Unterschied`);
+        }
+        continue;
+      }
+
+      if (key === 'dailyBudgets' && !remoteIsEmpty) {
+        // Tages-Merge: neue Import-Daten dürfen Supabase ergänzen (nicht ersetzen).
+        // Ohne diesen Merge würden neu importierte Tage beim Startup-Sync verloren gehen,
+        // da syncLocalToSupabase sonst den Key bei vorhandenem Supabase-Eintrag überspringt.
+        const merged = mergeDailyBudgets(
+          local as Record<string, Record<string, unknown>>,
+          remote as Record<string, Record<string, unknown>>,
+        );
+        const mergedStr = JSON.stringify(merged);
+        const remoteStr = JSON.stringify(remote);
+        const localDates  = Object.keys(local as object);
+        const remoteDates = Object.keys(remote as object);
+        const newDates = localDates.filter(d => !remoteDates.includes(d));
+        if (mergedStr !== remoteStr) {
+          await kvSet(key, merged);
+          localStorage.setItem(key, mergedStr);
+          console.log(`[UMSATZ] syncLocalToSupabase: 'dailyBudgets' → Merge: ${newDates.length} neue Tage, gesamt ${Object.keys(merged).length}`);
+          if (newDates.length > 0) {
+            console.log(`[UMSATZ] neue Tage: [${newDates.sort().join(', ')}]`);
+          }
+        } else {
+          console.log(`[UMSATZ] syncLocalToSupabase: 'dailyBudgets' – kein Merge-Unterschied`);
         }
         continue;
       }
