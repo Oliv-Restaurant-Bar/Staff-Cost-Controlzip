@@ -1,0 +1,160 @@
+Bitte Personal FIX jetzt final vereinfachen, fachlich synchronisieren und die Mitarbeiter Aufschlüsselung per Popup ergänzen.
+
+Ziel:
+Die Seite soll klarer, vertrauenswürdiger und einheitlich werden.
+Zusätzlich möchte ich in der Mitarbeitertabelle pro Mitarbeiter direkt auf Beträge klicken können, um die Zusammensetzung zu sehen.
+Und überall soll "Variable" durch "Flex" ersetzt werden.
+
+Bitte exakt so umsetzen:
+
+1. Begriffe systemweit umbenennen
+Ersetze überall in Personal FIX:
+- Variable Arbeit -> Flex Arbeit
+- Total Variabel -> Total Flex
+- Variable Kosten -> Flex Kosten
+- Netto Variabel -> Netto Flex
+
+Wichtig:
+Nur in diesem fachlichen Bereich umbenennen, nicht versehentlich globale technische Variablennamen brechen.
+
+2. Seite vereinfachen und synchronisieren
+Es soll eine zentrale Master Logik geben.
+Alle Kennzahlen auf der Seite müssen aus derselben Berechnung kommen.
+
+Die 3 zentralen Kostenarten sind:
+- Flex Arbeit
+- Ferien
+- Total Flex = Flex Arbeit + Ferien
+
+Diese Definitionen müssen überall identisch gelten:
+- KPI Karten
+- Vergleichstabelle
+- Mitarbeitertabelle
+- Budgetblock
+- Stichtagssicht
+
+3. Nur 2 klare Modi auf der Seite
+Die Seite soll logisch zwischen diesen beiden Sichten unterscheiden:
+- Monat gesamt
+- bis Stichtag
+
+Wichtig:
+Wenn Stichtag aktiv ist, dürfen nur Werte bis zu diesem Datum verwendet werden.
+Keine Monatsvollwerte dazumischen.
+
+4. Neue Hauptübersicht vereinfachen
+Oben nur ein kompakter Block mit diesen Werten:
+- Flex Arbeit Plan
+- Flex Arbeit Ist
+- Ferien Plan
+- Ferien Ist
+- Total Flex Plan
+- Total Flex Ist
+- Differenz Total Flex
+- Personal FIX
+- Total Personal
+
+5. Einheitliche Vergleichstabelle
+Darunter eine klare Tabelle:
+Spalten:
+- Bereich
+- Plan
+- Ist
+- Differenz CHF
+- Differenz %
+
+Zeilen:
+- Flex Arbeit
+- Ferien
+- Total Flex
+- Personal FIX
+- Total Personal
+
+Diese Tabelle muss dieselben Totale zeigen wie die KPI Karten oben.
+
+6. Mitarbeitertabelle mit Aufschlüsselung per Popup
+In der Tabelle pro Mitarbeiter:
+- Flex Arbeit Plan
+- Flex Arbeit Ist
+- Ferien Plan
+- Ferien Ist
+- Total Flex Plan
+- Total Flex Ist
+- Differenz Total
+
+Diese Werte sollen klickbar sein, mindestens:
+- Flex Arbeit Plan
+- Flex Arbeit Ist
+- Ferien Plan
+- Ferien Ist
+- Total Flex Plan
+- Total Flex Ist
+
+Wenn ich auf einen Betrag klicke, soll ein Popup / Modal aufgehen.
+
+7. Inhalt des Popups
+Das Popup soll die Zusammensetzung des angeklickten Betrags zeigen.
+
+Beispiel für "Flex Arbeit Ist":
+- Mitarbeitername
+- Zeitraum
+- Modus: Monat oder bis Stichtag
+- Liste der relevanten Tage
+- pro Tag:
+  - Datum
+  - Stunden
+  - Stundenlohn
+  - Kosten CHF
+- Total unten
+
+Beispiel für "Flex Arbeit Plan":
+- geplante Stunden pro Tag
+- Stundenlohn
+- Kosten pro Tag
+- Total
+
+Beispiel für "Ferien Plan" / "Ferien Ist":
+- Liste der Ferientage
+- Kostenbasis je Tag oder je Stunde
+- Total Ferien CHF
+
+Beispiel für "Total Flex":
+- Flex Arbeit CHF
+- Ferien CHF
+- Total CHF
+
+8. Popup Anforderungen
+- sauber lesbar
+- kompakt
+- Total deutlich sichtbar
+- Datum und Berechnungslogik nachvollziehbar
+- wenn keine Details vorhanden sind, klar anzeigen warum
+
+9. Synchronität absichern
+Bitte Validierungs Logs einbauen:
+[PFIX] mode: month|cutoff
+[PFIX] flex work plan total: ...
+[PFIX] flex work ist total: ...
+[PFIX] holiday plan total: ...
+[PFIX] holiday ist total: ...
+[PFIX] total flex plan: ...
+[PFIX] total flex ist: ...
+[PFIX] employee table sum total flex: ...
+[PFIX] KPI total flex: ...
+
+Wenn Summen nicht identisch sind:
+console.error mit genauer Differenz
+
+10. Wichtig
+- keine neue freie Rechenlogik pro Komponente
+- nur eine zentrale Berechnungsfunktion als Source of Truth
+- Mitarbeitertabelle, Popups, KPI und Vergleichstabelle müssen exakt dieselben Totale verwenden
+- Seite soll verständlicher und kompakter werden, nicht komplexer
+
+11. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie die zentrale Master Logik jetzt definiert ist
+- ob überall "Variable" durch "Flex" ersetzt wurde
+- welche Beträge klickbar sind
+- was genau im Popup angezeigt wird
+- ob KPI, Vergleichstabelle und Mitarbeitertabelle jetzt dieselben Totale verwenden

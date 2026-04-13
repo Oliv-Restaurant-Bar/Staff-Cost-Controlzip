@@ -20,6 +20,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { usePermissions } from '@/hooks/usePermissions';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -527,6 +530,304 @@ const InlineWeeklyEditor = ({ value, unit, max, onSave }: InlineWeeklyEditorProp
   );
 };
 
+// ── Flex-Breakdown: Typen ──────────────────────────────────────────────────────
+
+type BreakdownField =
+  | 'planWork' | 'istWork'
+  | 'planHoliday' | 'istHoliday'
+  | 'planTotalVar' | 'istTotalVar';
+
+interface BreakdownTarget {
+  empId:       string;
+  empName:     string;
+  field:       BreakdownField;
+  hourlyWage:  number;
+  weeklyHours: number;
+  year:        number;
+  month:       number;
+  cutoffDay:   number | null;
+  factor:      number;
+}
+
+interface DayEntry  { date: string; hours: number; cost: number; }
+interface FerienDay { date: string; dailyH: number; cost: number; }
+
+/** Daily plan hours for one employee from schedule-v2-YYYY-MM */
+function loadDailyPlanDetails(
+  empId: string, year: number, month: number, cutoffDay: number | null, wage: number,
+): DayEntry[] {
+  const key = `schedule-v2-${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const data: Record<string, any> = JSON.parse(raw);
+    const prefix = `${year}-${String(month).padStart(2, '0')}`;
+    const entries: DayEntry[] = [];
+    for (const [cellKey, ds] of Object.entries(data)) {
+      const date  = cellKey.slice(-10);
+      if (!date.startsWith(prefix)) continue;
+      if (cellKey.slice(0, cellKey.length - 11) !== empId) continue;
+      const day = parseInt(date.slice(-2), 10);
+      if (cutoffDay !== null && day > cutoffDay) continue;
+      const gross = calcSlotHours(ds?.früh) + calcSlotHours(ds?.spät);
+      const net   = Math.max(0, gross - calculateBreakDeduction(gross));
+      if (net > 0) entries.push({ date, hours: Math.round(net * 100) / 100, cost: Math.round(net * wage * 100) / 100 });
+    }
+    return entries.sort((a, b) => a.date.localeCompare(b.date));
+  } catch { return []; }
+}
+
+/** Daily ist hours for one employee from actual-hours-YYYY-MM */
+function loadDailyIstDetails(
+  empId: string, year: number, month: number, cutoffDay: number | null, wage: number,
+): DayEntry[] {
+  const key = `actual-hours-${year}-${String(month).padStart(2, '0')}`;
+  const prefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const data: Record<string, any> = JSON.parse(raw);
+    const entries: DayEntry[] = [];
+    for (const [cellKey, val] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(prefix)) continue;
+      if (cellKey.slice(0, cellKey.length - 11) !== empId) continue;
+      const day = parseInt(date.slice(-2), 10);
+      if (cutoffDay !== null && day > cutoffDay) continue;
+      const absenceType = typeof val === 'object' ? val?.absenceType : undefined;
+      if (absenceType === 'FE') continue; // FE is vacation, not work
+      const h = typeof val === 'number' ? val : (val?.hours ?? 0);
+      if (h > 0) entries.push({ date, hours: Math.round(h * 100) / 100, cost: Math.round(h * wage * 100) / 100 });
+    }
+    return entries.sort((a, b) => a.date.localeCompare(b.date));
+  } catch { return []; }
+}
+
+/** FE vacation days from actual-hours-YYYY-MM (Ist) */
+function loadFerienIstDayDetails(
+  empId: string, year: number, month: number, cutoffDay: number | null, dailyH: number, wage: number,
+): FerienDay[] {
+  const key = `actual-hours-${year}-${String(month).padStart(2, '0')}`;
+  const prefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const data: Record<string, any> = JSON.parse(raw);
+    const entries: FerienDay[] = [];
+    for (const [cellKey, val] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(prefix)) continue;
+      if (cellKey.slice(0, cellKey.length - 11) !== empId) continue;
+      const day = parseInt(date.slice(-2), 10);
+      if (cutoffDay !== null && day > cutoffDay) continue;
+      const absenceType = typeof val === 'object' ? val?.absenceType : undefined;
+      if (absenceType === 'FE') entries.push({ date, dailyH: Math.round(dailyH * 100) / 100, cost: Math.round(dailyH * wage * 100) / 100 });
+    }
+    return entries.sort((a, b) => a.date.localeCompare(b.date));
+  } catch { return []; }
+}
+
+/** FE vacation days from schedule-v2-YYYY-MM (Plan) */
+function loadFerienPlanDayDetails(
+  empId: string, year: number, month: number, cutoffDay: number | null, dailyH: number, wage: number,
+): FerienDay[] {
+  const key = `schedule-v2-${year}-${String(month).padStart(2, '0')}`;
+  const prefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const data: Record<string, any> = JSON.parse(raw);
+    const entries: FerienDay[] = [];
+    for (const [cellKey, ds] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(prefix)) continue;
+      if (cellKey.slice(0, cellKey.length - 11) !== empId) continue;
+      const day = parseInt(date.slice(-2), 10);
+      if (cutoffDay !== null && day > cutoffDay) continue;
+      const hasFE = ds?.frühAbsence === 'FE' || ds?.spätAbsence === 'FE';
+      if (hasFE) entries.push({ date, dailyH: Math.round(dailyH * 100) / 100, cost: Math.round(dailyH * wage * 100) / 100 });
+    }
+    return entries.sort((a, b) => a.date.localeCompare(b.date));
+  } catch { return []; }
+}
+
+function fmtDate(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+}
+
+// ── FlexBreakdownModal ─────────────────────────────────────────────────────────
+
+function FlexBreakdownModal({ target, onClose }: {
+  target: BreakdownTarget | null;
+  onClose: () => void;
+}) {
+  if (!target) return null;
+
+  const { empId, empName, field, hourlyWage, weeklyHours, year, month, cutoffDay, factor } = target;
+  const dailyH    = weeklyHours ? weeklyHours / 5 : 8.4;
+  const modeLabel = cutoffDay !== null
+    ? `bis ${cutoffDay}. ${new Date(year, month - 1, 1).toLocaleString('de-CH', { month: 'long', year: 'numeric' })}`
+    : new Date(year, month - 1, 1).toLocaleString('de-CH', { month: 'long', year: 'numeric' });
+
+  const fieldLabels: Record<BreakdownField, string> = {
+    planWork:     'Flex Arbeit Plan',
+    istWork:      'Flex Arbeit Ist',
+    planHoliday:  'Ferien Plan',
+    istHoliday:   'Ferien Ist',
+    planTotalVar: 'Total Flex Plan',
+    istTotalVar:  'Total Flex Ist',
+  };
+
+  // Load daily data based on field
+  const planDays   = (field === 'planWork'  || field === 'planTotalVar')
+    ? loadDailyPlanDetails(empId, year, month, cutoffDay, hourlyWage)    : [];
+  const istDays    = (field === 'istWork'   || field === 'istTotalVar')
+    ? loadDailyIstDetails(empId, year, month, cutoffDay, hourlyWage)     : [];
+  const ferPlanDays = (field === 'planHoliday' || field === 'planTotalVar')
+    ? loadFerienPlanDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage) : [];
+  const ferIstDays  = (field === 'istHoliday'  || field === 'istTotalVar')
+    ? loadFerienIstDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage)  : [];
+
+  const totalWork    = [...planDays, ...istDays].reduce((s, r) => s + r.cost, 0);
+  const totalFerPlan = ferPlanDays.reduce((s, r) => s + r.cost, 0);
+  const totalFerIst  = ferIstDays.reduce((s, r) => s + r.cost, 0);
+
+  const renderDayTable = (rows: DayEntry[], label: string, color: string) => {
+    if (rows.length === 0) return (
+      <p className="text-xs text-muted-foreground italic py-2">Keine Tageseinträge gefunden — nur Monatstotal verfügbar.</p>
+    );
+    const total = rows.reduce((s, r) => s + r.cost, 0);
+    return (
+      <div>
+        <p className={`text-xs font-semibold mb-1 ${color}`}>{label}</p>
+        <table className="w-full text-xs border rounded overflow-hidden">
+          <thead>
+            <tr className="bg-muted/30 text-muted-foreground">
+              <th className="text-left px-2 py-1">Datum</th>
+              <th className="text-right px-2 py-1">Stunden</th>
+              <th className="text-right px-2 py-1">Lohn/h</th>
+              <th className="text-right px-2 py-1">Kosten</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
+                <td className="px-2 py-1">{fmtDate(r.date)}</td>
+                <td className="px-2 py-1 text-right font-mono">{r.hours.toFixed(2)} h</td>
+                <td className="px-2 py-1 text-right font-mono text-muted-foreground">{fmtCHFDec(hourlyWage)}</td>
+                <td className="px-2 py-1 text-right font-mono font-semibold">{fmtCHFDec(r.cost)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-border bg-muted/20 font-bold">
+              <td className="px-2 py-1.5" colSpan={3}>Total</td>
+              <td className="px-2 py-1.5 text-right font-mono">{fmtCHF(total)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    );
+  };
+
+  const renderFerienTable = (rows: FerienDay[], label: string, color: string) => {
+    if (rows.length === 0) return (
+      <p className="text-xs text-muted-foreground italic py-2">Keine Ferientage gefunden.</p>
+    );
+    const total = rows.reduce((s, r) => s + r.cost, 0);
+    return (
+      <div>
+        <p className={`text-xs font-semibold mb-1 ${color}`}>{label}</p>
+        <table className="w-full text-xs border rounded overflow-hidden">
+          <thead>
+            <tr className="bg-muted/30 text-muted-foreground">
+              <th className="text-left px-2 py-1">Datum</th>
+              <th className="text-right px-2 py-1">Tagessatz</th>
+              <th className="text-right px-2 py-1">Std./Tag</th>
+              <th className="text-right px-2 py-1">Kosten</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
+                <td className="px-2 py-1">{fmtDate(r.date)}</td>
+                <td className="px-2 py-1 text-right font-mono text-muted-foreground">{fmtCHFDec(r.dailyH * hourlyWage)}/Tag</td>
+                <td className="px-2 py-1 text-right font-mono text-muted-foreground">{r.dailyH.toFixed(2)} h</td>
+                <td className="px-2 py-1 text-right font-mono font-semibold">{fmtCHFDec(r.cost)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-border bg-muted/20 font-bold">
+              <td className="px-2 py-1.5" colSpan={3}>Total Ferien</td>
+              <td className="px-2 py-1.5 text-right font-mono">{fmtCHF(total)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        <p className="text-[10px] text-muted-foreground mt-1">
+          Basis: {hourlyWage > 0 ? `${fmtCHFDec(hourlyWage)}/h × ${dailyH.toFixed(2)} h/Tag` : '(kein Lohn hinterlegt)'}
+        </p>
+      </div>
+    );
+  };
+
+  // For Total Flex: show combined breakdown
+  const renderTotalFlex = (workDays: DayEntry[], ferDays: FerienDay[], workLabel: string, ferLabel: string) => {
+    const workTotal = workDays.reduce((s, r) => s + r.cost, 0);
+    const ferTotal  = ferDays.reduce((s, r) => s + r.cost, 0);
+    const grandTotal = workTotal + ferTotal;
+    return (
+      <div className="space-y-3">
+        {renderDayTable(workDays, workLabel, 'text-blue-700 dark:text-blue-400')}
+        {renderFerienTable(ferDays, ferLabel, 'text-emerald-700 dark:text-emerald-400')}
+        <div className="rounded-lg border-2 border-primary/20 bg-primary/5 px-3 py-2 flex justify-between items-center">
+          <span className="text-sm font-bold">Total Flex</span>
+          <div className="flex items-center gap-4 text-xs font-mono">
+            <span className="text-muted-foreground">
+              Arbeit: <span className="text-foreground font-semibold">{fmtCHF(workTotal)}</span>
+            </span>
+            <span className="text-muted-foreground">+</span>
+            <span className="text-muted-foreground">
+              Ferien: <span className="text-foreground font-semibold">{fmtCHF(ferTotal)}</span>
+            </span>
+            <span className="text-muted-foreground">=</span>
+            <span className="text-lg font-bold text-foreground">{fmtCHF(grandTotal)}</span>
+          </div>
+        </div>
+        {factor < 1 && (
+          <p className="text-xs text-muted-foreground">
+            Stichtagsfaktor: {Math.round(factor * 100)} % — Beträge bereits anteilig berechnet.
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <Dialog open={!!target} onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex flex-col gap-0.5">
+            <span>{fieldLabels[field]} — {empName}</span>
+            <span className="text-sm font-normal text-muted-foreground">
+              {modeLabel} · {fmtCHFDec(hourlyWage)}/h
+            </span>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 mt-1 text-sm">
+          {field === 'planWork'     && renderDayTable(planDays,   'Geplante Arbeitstage', 'text-blue-700 dark:text-blue-400')}
+          {field === 'istWork'      && renderDayTable(istDays,    'Effektive Arbeitstage (Ist)', 'text-orange-700 dark:text-orange-400')}
+          {field === 'planHoliday'  && renderFerienTable(ferPlanDays, 'Plan-Ferientage (FE)', 'text-blue-600 dark:text-blue-400')}
+          {field === 'istHoliday'   && renderFerienTable(ferIstDays,  'Ist-Ferientage (FE)',  'text-orange-600 dark:text-orange-400')}
+          {field === 'planTotalVar' && renderTotalFlex(planDays, ferPlanDays, 'Flex Arbeit Plan', 'Ferien Plan')}
+          {field === 'istTotalVar'  && renderTotalFlex(istDays,  ferIstDays,  'Flex Arbeit Ist',  'Ferien Ist')}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Hauptseite ────────────────────────────────────────────────────────────────
 
 export default function PersonalFixPage() {
@@ -556,6 +857,9 @@ export default function PersonalFixPage() {
   // ── Pro-Rata-Abgrenzung ────────────────────────────────────────────────────
   // null = aus; Zahl = Stichtag (1–letzter Tag des Monats)
   const [proRataDay, setProRataDay] = useState<number | null>(null);
+
+  // ── Flex-Breakdown-Popup ──────────────────────────────────────────────────
+  const [breakdown, setBreakdown] = useState<BreakdownTarget | null>(null);
 
   useEffect(() => {
     loadEmployees().then(emps => {
@@ -997,6 +1301,8 @@ export default function PersonalFixPage() {
         id:           emp.id,
         name:         emp.name,
         dept:         emp.department ?? '–',
+        hourlyWage:   emp.hourlyWage ?? 0,
+        weeklyHours:  emp.weeklyHours ?? 42,
         planWork:     planWork     * factor,
         istWork:      istWork      * factor,
         planHoliday:  planHoliday  * factor,
@@ -1334,14 +1640,14 @@ export default function PersonalFixPage() {
         {/* ── KPI-Block (8 Karten: Plan + Ist für alle 4 Ebenen) ───────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <KpiCard
-            title={proRataDay !== null ? `Var. Arbeit Plan bis ${proRataDay}.` : 'Var. Arbeit Plan'}
+            title={proRataDay !== null ? `Flex Arbeit Plan bis ${proRataDay}.` : 'Flex Arbeit Plan'}
             value={fmtCHF(pfix.active.planWork)}
             sub="Dienstplan-Stunden × Lohn"
             icon={<Clock className="h-5 w-5" />}
             color="blue"
           />
           <KpiCard
-            title={proRataDay !== null ? `Var. Arbeit Ist bis ${proRataDay}.` : 'Var. Arbeit Ist'}
+            title={proRataDay !== null ? `Flex Arbeit Ist bis ${proRataDay}.` : 'Flex Arbeit Ist'}
             value={fmtCHF(pfix.active.istWork)}
             sub="Mirus-Ist-Stunden × Lohn"
             icon={<Clock className="h-5 w-5" />}
@@ -1362,21 +1668,21 @@ export default function PersonalFixPage() {
             color={pfix.active.istHoliday > 0 ? 'orange' : 'default'}
           />
           <KpiCard
-            title={proRataDay !== null ? `Total Variabel Plan bis ${proRataDay}.` : 'Total Variabel Plan'}
+            title={proRataDay !== null ? `Total Flex Plan bis ${proRataDay}.` : 'Total Flex Plan'}
             value={fmtCHF(pfix.active.planTotalVar)}
-            sub="Var. Arbeit + Ferien (Plan)"
+            sub="Flex Arbeit + Ferien (Plan)"
             icon={<TrendingUp className="h-5 w-5" />}
             color="blue"
           />
           <KpiCard
-            title={proRataDay !== null ? `Total Variabel Ist bis ${proRataDay}.` : 'Total Variabel Ist'}
+            title={proRataDay !== null ? `Total Flex Ist bis ${proRataDay}.` : 'Total Flex Ist'}
             value={fmtCHF(pfix.active.istTotalVar)}
-            sub="Var. Arbeit + Ferien (Ist)"
+            sub="Flex Arbeit + Ferien (Ist)"
             icon={<TrendingUp className="h-5 w-5" />}
             color={pfix.active.istTotalVar > 0 ? 'orange' : 'default'}
           />
           <KpiCard
-            title={proRataDay !== null ? `Diff. Variabel bis ${proRataDay}.` : 'Diff. Variabel'}
+            title={proRataDay !== null ? `Diff. Flex bis ${proRataDay}.` : 'Diff. Flex'}
             value={fmtCHF(Math.abs(pfix.active.diffTotalVar))}
             sub={pfix.active.diffTotalVar === 0 ? 'Plan = Ist' : pfix.active.diffTotalVar > 0 ? '↑ Ist über Plan' : '✓ Ist unter Plan'}
             icon={<BarChart2 className="h-5 w-5" />}
@@ -1421,9 +1727,9 @@ export default function PersonalFixPage() {
               </thead>
               <tbody className="divide-y divide-border">
                 {([
-                  { label: 'Variable Arbeit', plan: pfix.active.planWork,     ist: pfix.active.istWork,     diff: pfix.active.diffWork     },
-                  { label: 'Ferienabbau',     plan: pfix.active.planHoliday,  ist: pfix.active.istHoliday,  diff: pfix.active.diffHoliday  },
-                  { label: 'Total Variabel',  plan: pfix.active.planTotalVar, ist: pfix.active.istTotalVar, diff: pfix.active.diffTotalVar, bold: true },
+                  { label: 'Flex Arbeit',    plan: pfix.active.planWork,     ist: pfix.active.istWork,     diff: pfix.active.diffWork     },
+                  { label: 'Ferienabbau',    plan: pfix.active.planHoliday,  ist: pfix.active.istHoliday,  diff: pfix.active.diffHoliday  },
+                  { label: 'Total Flex',     plan: pfix.active.planTotalVar, ist: pfix.active.istTotalVar, diff: pfix.active.diffTotalVar, bold: true },
                   { label: 'Personal FIX',   plan: pfix.active.fix,          ist: pfix.active.fix,         diff: 0,                       fixed: true },
                   { label: 'Total Personal', plan: pfix.active.planTotal,    ist: pfix.active.istTotal,    diff: pfix.active.diffTotal,   bold: true, highlight: true },
                 ] as Array<{ label: string; plan: number; ist: number; diff: number; bold?: boolean; fixed?: boolean; highlight?: boolean }>)
@@ -1492,7 +1798,7 @@ export default function PersonalFixPage() {
             <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/30">
               <Users className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-semibold">
-                Variable Kosten Plan vs. Ist — pro Mitarbeiter
+                Flex Kosten Plan vs. Ist — pro Mitarbeiter
                 {proRataDay !== null && ` (bis ${proRataDay}.)`}
               </span>
               <Badge variant="secondary" className="text-xs ml-auto">{pfixPerEmp.length} MA</Badge>
@@ -1503,8 +1809,8 @@ export default function PersonalFixPage() {
                   <tr className="bg-muted/30 border-b border-border text-muted-foreground">
                     <th className="px-3 py-2 text-left font-medium">Name</th>
                     <th className="px-3 py-2 text-center font-medium">Abt.</th>
-                    <th className="px-3 py-2 text-right font-medium text-blue-600">Var. Arbeit Plan</th>
-                    <th className="px-3 py-2 text-right font-medium text-orange-600">Var. Arbeit Ist</th>
+                    <th className="px-3 py-2 text-right font-medium text-blue-600">Flex Arbeit Plan</th>
+                    <th className="px-3 py-2 text-right font-medium text-orange-600">Flex Arbeit Ist</th>
                     <th className="px-3 py-2 text-right font-medium">Diff. Arbeit</th>
                     <th className="px-3 py-2 text-right font-medium text-blue-500">Ferien Plan</th>
                     <th className="px-3 py-2 text-right font-medium text-orange-500">Ferien Ist</th>
@@ -1517,18 +1823,45 @@ export default function PersonalFixPage() {
                 <tbody>
                   {pfixPerEmp.map((row, i) => {
                     const dc = (v: number) => v === 0 ? 'text-muted-foreground' : v > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
+                    const openBreakdown = (field: BreakdownField) => setBreakdown({
+                      empId:       row.id,
+                      empName:     row.name,
+                      field,
+                      hourlyWage:  row.hourlyWage,
+                      weeklyHours: row.weeklyHours,
+                      year:        selectedYear,
+                      month:       selectedMonth,
+                      cutoffDay:   proRataDay,
+                      factor:      proRataDay !== null ? proRataFactor : 1,
+                    });
+                    const clickCell = (field: BreakdownField, amount: number, colorClass: string, isSemibold = false) => (
+                      <td className="px-3 py-1.5 text-right">
+                        {amount > 0
+                          ? <button
+                              onClick={() => openBreakdown(field)}
+                              className={cn(
+                                'font-mono underline underline-offset-2 decoration-dotted hover:opacity-80 transition-opacity cursor-pointer',
+                                colorClass, isSemibold && 'font-semibold',
+                              )}
+                              title="Tagesdetails anzeigen"
+                            >
+                              {fmtCHF(amount)}
+                            </button>
+                          : <span className="text-muted-foreground font-mono">–</span>}
+                      </td>
+                    );
                     return (
                       <tr key={row.id} className={i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'}>
                         <td className="px-3 py-1.5 font-medium">{row.name}</td>
                         <td className="px-3 py-1.5 text-center text-muted-foreground capitalize">{row.dept}</td>
-                        <td className="px-3 py-1.5 text-right font-mono text-blue-700 dark:text-blue-400">{row.planWork > 0 ? fmtCHF(row.planWork) : <span className="text-muted-foreground">–</span>}</td>
-                        <td className="px-3 py-1.5 text-right font-mono text-orange-700 dark:text-orange-400">{row.istWork > 0 ? fmtCHF(row.istWork) : <span className="text-muted-foreground">–</span>}</td>
+                        {clickCell('planWork',     row.planWork,     'text-blue-700 dark:text-blue-400')}
+                        {clickCell('istWork',      row.istWork,      'text-orange-700 dark:text-orange-400')}
                         <td className={cn('px-3 py-1.5 text-right font-mono', dc(row.diffWork))}>{row.diffWork === 0 ? '–' : `${row.diffWork > 0 ? '+' : ''}${fmtCHF(row.diffWork)}`}</td>
-                        <td className="px-3 py-1.5 text-right font-mono text-blue-500 dark:text-blue-400">{row.planHoliday > 0 ? fmtCHF(row.planHoliday) : <span className="text-muted-foreground">–</span>}</td>
-                        <td className="px-3 py-1.5 text-right font-mono text-orange-500 dark:text-orange-400">{row.istHoliday > 0 ? fmtCHF(row.istHoliday) : <span className="text-muted-foreground">–</span>}</td>
+                        {clickCell('planHoliday',  row.planHoliday,  'text-blue-500 dark:text-blue-400')}
+                        {clickCell('istHoliday',   row.istHoliday,   'text-orange-500 dark:text-orange-400')}
                         <td className={cn('px-3 py-1.5 text-right font-mono', dc(row.diffHoliday))}>{row.diffHoliday === 0 ? '–' : `${row.diffHoliday > 0 ? '+' : ''}${fmtCHF(row.diffHoliday)}`}</td>
-                        <td className="px-3 py-1.5 text-right font-mono font-semibold text-blue-700 dark:text-blue-400">{fmtCHF(row.planTotalVar)}</td>
-                        <td className="px-3 py-1.5 text-right font-mono font-semibold text-orange-700 dark:text-orange-400">{fmtCHF(row.istTotalVar)}</td>
+                        {clickCell('planTotalVar', row.planTotalVar, 'text-blue-700 dark:text-blue-400', true)}
+                        {clickCell('istTotalVar',  row.istTotalVar,  'text-orange-700 dark:text-orange-400', true)}
                         <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', dc(row.diffTotalVar))}>{row.diffTotalVar === 0 ? '–' : `${row.diffTotalVar > 0 ? '+' : ''}${fmtCHF(row.diffTotalVar)}`}</td>
                       </tr>
                     );
@@ -1560,7 +1893,7 @@ export default function PersonalFixPage() {
             <strong>Personal FIX</strong>: Garantierter Monatslohn inkl. amortisiertem 13. Monatslohn.
             Mitarbeiter die im gewählten Monat austreten werden <em>pro rata</em> (Arbeitstage ÷ Monatstage) abgerechnet.
             Bereits ausgetretene Mitarbeiter werden ausgeblendet.{' '}
-            <strong>Personal VARIABEL</strong>: Stunden × Stundenlohn.
+            <strong>Personal FLEX</strong>: Stunden × Stundenlohn.
             Wähle Plan- oder Ist-Stunden direkt aus dem Dienstplan — oder trage Stunden manuell ein.
           </p>
         </div>
@@ -1691,7 +2024,7 @@ export default function PersonalFixPage() {
             <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-orange-200 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20">
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-orange-600" />
-                <span className="text-sm font-semibold">Variable Mitarbeiter — Stunden-Hochrechnung</span>
+                <span className="text-sm font-semibold">Flex Mitarbeiter — Stunden-Hochrechnung</span>
                 <Badge variant="outline" className="text-xs">{variableEmployees.length}</Badge>
               </div>
 
@@ -1760,7 +2093,7 @@ export default function PersonalFixPage() {
                     <div className={cn('h-2.5 w-2.5 rounded-full transition-all', !pfixIstVarOverrun && pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'bg-yellow-500 shadow-[0_0_4px_rgba(234,179,8,0.6)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
                     <div className={cn('h-2.5 w-2.5 rounded-full transition-all', !pfixIstVarOverrun && pfixIstVarDelta >= pfixAvailableVar * 0.15 ? 'bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.6)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
                   </div>
-                  <span className="text-muted-foreground">Restbudget Variabel (Ist):</span>
+                  <span className="text-muted-foreground">Restbudget Flex (Ist):</span>
                   <span className={cn('font-mono font-bold',
                     pfixIstVarOverrun ? 'text-red-600 dark:text-red-400'
                       : pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'text-yellow-600 dark:text-yellow-500'
@@ -2003,7 +2336,7 @@ export default function PersonalFixPage() {
                       {deptCost > 0 && (
                         <tfoot>
                           <tr className="bg-orange-50/40 dark:bg-orange-950/20 font-semibold border-t-2 border-orange-200 dark:border-orange-800">
-                            <td className="px-4 py-2.5 text-sm" colSpan={3}>Total {DEPT_LABEL[dept]} Variabel</td>
+                            <td className="px-4 py-2.5 text-sm" colSpan={3}>Total {DEPT_LABEL[dept]} Flex</td>
                             <td className="px-4 py-2.5 text-right font-mono text-sm text-muted-foreground">
                               {deptHours > 0 ? `${Math.round(deptHours * 10) / 10} h` : '–'}
                             </td>
@@ -2021,7 +2354,7 @@ export default function PersonalFixPage() {
             {/* Gesamt-Variabel-Footer — Ist-Werte aus pfix.active (identisch mit KPI oben) */}
             {totalVarHours > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-orange-100/40 dark:bg-orange-950/30 border-t-2 border-orange-300 dark:border-orange-700">
-                <span className="text-sm font-bold text-orange-800 dark:text-orange-300">Total Variabel Ist · alle Abteilungen</span>
+                <span className="text-sm font-bold text-orange-800 dark:text-orange-300">Total Flex Ist · alle Abteilungen</span>
                 <div className="flex items-center gap-4 text-sm">
                   <span className="text-muted-foreground font-mono">{Math.round(totalVarHours * 10) / 10} h</span>
                   <span className="font-bold font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfix.active.istWork)}/Mt</span>
@@ -2057,7 +2390,7 @@ export default function PersonalFixPage() {
                     ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
                     : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300'
                 )}>
-                  <span className="text-sm font-bold">= Verfügbar für Variabel</span>
+                  <span className="text-sm font-bold">= Verfügbar für Flex</span>
                   <span className="font-mono font-bold text-base">{fmtCHF(pfixAvailableVar)}</span>
                 </div>
               </div>
@@ -2066,12 +2399,12 @@ export default function PersonalFixPage() {
               <div className="space-y-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Schätzung vs. Budget</p>
                 <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">Verfügbar für Variabel</span>
+                  <span className="text-sm text-muted-foreground">Verfügbar für Flex</span>
                   <span className="font-mono font-semibold">{fmtCHF(pfixAvailableVar)}</span>
                 </div>
                 <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
                   <div className="flex items-center gap-1.5 flex-wrap text-sm text-muted-foreground">
-                    <span className="whitespace-nowrap">− Variable Arbeit</span>
+                    <span className="whitespace-nowrap">− Flex Arbeit</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">Ist</span>
                   </div>
                   <span className="font-mono text-orange-700 dark:text-orange-400 shrink-0">− {fmtCHF(pfix.active.istWork)}</span>
@@ -2084,7 +2417,7 @@ export default function PersonalFixPage() {
                 )}
                 {pfix.active.istHoliday > 0 && (
                   <div className="flex justify-between items-baseline gap-2 py-1 border-b border-dashed border-border">
-                    <span className="text-sm font-medium text-muted-foreground">= Total Variabel Ist</span>
+                    <span className="text-sm font-medium text-muted-foreground">= Total Flex Ist</span>
                     <span className="font-mono font-semibold text-orange-800 dark:text-orange-300 shrink-0">{fmtCHF(pfix.active.istTotalVar)}</span>
                   </div>
                 )}
@@ -2121,7 +2454,7 @@ export default function PersonalFixPage() {
                   {/* Hauptstatus */}
                   <p className="text-sm font-semibold">
                     {pfix.active.istTotalVar === 0 && !pfixIstVarOverrun
-                      ? `Noch kein Variabel erfasst — Budget: ${fmtCHF(pfixAvailableVar)} verfügbar`
+                      ? `Noch kein Flex erfasst — Budget: ${fmtCHF(pfixAvailableVar)} verfügbar`
                       : pfixIstVarOverrun
                         ? `⚠ Budgetüberschreitung: ${fmtCHF(Math.abs(pfixIstVarDelta))} zu viel`
                         : pfixIstVarDelta < pfixAvailableVar * 0.15
@@ -2132,7 +2465,7 @@ export default function PersonalFixPage() {
                   {/* Stunden-Info */}
                   <div className="text-xs text-muted-foreground space-y-0.5">
                     <p>
-                      Ø Stundenlohn Variabel: <strong className="font-mono text-foreground">{fmtCHFDec(avgHourlyWage)}/h</strong>
+                      Ø Stundenlohn Flex: <strong className="font-mono text-foreground">{fmtCHFDec(avgHourlyWage)}/h</strong>
                       {maxVarHours > 0 && (
                         <> · Budget reicht für max. <strong className="font-mono text-foreground">{maxVarHours} h</strong></>
                       )}
@@ -2156,7 +2489,7 @@ export default function PersonalFixPage() {
                     {pfix.active.istTotalVar === 0 && !pfixIstVarOverrun
                       ? `→ Stunden planen: Noch ca. ${maxVarHours} h verfügbar — trage unten Stunden ein.`
                       : pfixIstVarOverrun
-                        ? `→ Reduziere variable Stunden um ca. ${Math.ceil(Math.abs(pfixIstVarDelta) / avgHourlyWage)} h, um das Budget einzuhalten.`
+                        ? `→ Reduziere Flex Stunden um ca. ${Math.ceil(Math.abs(pfixIstVarDelta) / avgHourlyWage)} h, um das Budget einzuhalten.`
                         : pfixIstVarDelta < pfixAvailableVar * 0.15
                           ? `→ Vorsicht: Noch ${Math.max(0, maxVarHours - Math.round(totalVarHours))} h Spielraum — zusätzliche Schichten könnten das Budget sprengen.`
                           : `→ Kapazität vorhanden: Noch ca. ${Math.max(0, maxVarHours - Math.round(totalVarHours))} h planbar ohne Budgetüberschreitung.`}
@@ -2219,6 +2552,8 @@ export default function PersonalFixPage() {
         )}
 
       </main>
+
+      <FlexBreakdownModal target={breakdown} onClose={() => setBreakdown(null)} />
     </div>
   );
 }
