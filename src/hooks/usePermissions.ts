@@ -22,6 +22,7 @@
  */
 
 import { useAuth } from './useAuth';
+import { useGuestSession } from '@/contexts/GuestSessionContext';
 import type { UserRole } from '@/contexts/AuthContext';
 
 export type AppModule =
@@ -79,9 +80,13 @@ export interface Permissions {
 }
 
 export const usePermissions = (): Permissions => {
-  const { role, isAdmin, isServiceManager, isKuecheManager } = useAuth();
+  const { role, isAdmin: isAdminUser, isServiceManager, isKuecheManager } = useAuth();
+  const { isGuest } = useGuestSession();
 
-  const isManager = isServiceManager || isKuecheManager;
+  // Gäste erhalten vollständige Admin-Rechte (Lese-Zugriff)
+  const isAdmin = isAdminUser || isGuest;
+
+  const isManager = isServiceManager || isKuecheManager || isGuest;
 
   // Welche Abteilung darf dieser User sehen?
   const allowedDepartment: Department = isAdmin
