@@ -1489,10 +1489,6 @@ export default function PersonalFixPage() {
   const pfixAvailableVar  = pfixBudget > 0 ? Math.max(0, pfixBudget - pfix.active.fix) : 0;
   const pfixIstVarDelta   = pfixBudget > 0 ? pfixAvailableVar - pfix.active.istTotalVar : 0;
   const pfixIstVarOverrun = pfixIstVarDelta < 0;
-  // Max plannable Flex hours on the effective (pro-rata) budget — used in the budget block
-  // (separate from the general-purpose maxVarHours which uses the full month budget)
-  const pfixMaxVarHours   = pfixAvailableVar > 0 && avgHourlyWage > 0
-    ? Math.floor(pfixAvailableVar / avgHourlyWage) : 0;
 
   // [PFIX-BUDGET] validation logs
   if (personnelBudget > 0) {
@@ -1713,6 +1709,9 @@ export default function PersonalFixPage() {
   const maxVarHours = availableVarBudget > 0 && avgHourlyWage > 0
     ? Math.round(availableVarBudget / avgHourlyWage)
     : 0;
+  // Pro-rata version for the budget block (uses pfixAvailableVar which is already scaled)
+  const pfixMaxVarHours = pfixAvailableVar > 0 && avgHourlyWage > 0
+    ? Math.floor(pfixAvailableVar / avgHourlyWage) : 0;
 
   // ── Stundensaldo aller Mitarbeiter ────────────────────────────────────────
 
