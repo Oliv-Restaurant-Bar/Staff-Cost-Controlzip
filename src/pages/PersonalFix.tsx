@@ -819,15 +819,6 @@ export default function PersonalFixPage() {
     variableEmployees.reduce((s, e) => s + (istHours[e.id] ?? 0) * (e.hourlyWage ?? 0), 0),
     [variableEmployees, istHours],
   );
-  // Ferienabbau Plan + Ist gesamt (für Stichtag-Controlling)
-  const ferienIstTotalCHF = useMemo(() =>
-    variableEmployees.reduce((s, e) => s + getEmpFerienCHF(e), 0),
-    [variableEmployees, getEmpFerienCHF],
-  );
-  const ferienPlanTotalCHF = useMemo(() =>
-    variableEmployees.reduce((s, e) => s + getEmpFerienPlanCHF(e), 0),
-    [variableEmployees, getEmpFerienPlanCHF],
-  );
 
   // ── Ferienabbau-Berechnungen ───────────────────────────────────────────────
   // FE-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn
@@ -848,6 +839,16 @@ export default function PersonalFixPage() {
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
     return days * dailyH * (emp.hourlyWage ?? 0);
   }, [ferienPlanDays]);
+
+  // Ferienabbau Plan + Ist gesamt (für Stichtag-Controlling)
+  const ferienIstTotalCHF = useMemo(() =>
+    variableEmployees.reduce((s, e) => s + getEmpFerienCHF(e), 0),
+    [variableEmployees, getEmpFerienCHF],
+  );
+  const ferienPlanTotalCHF = useMemo(() =>
+    variableEmployees.reduce((s, e) => s + getEmpFerienPlanCHF(e), 0),
+    [variableEmployees, getEmpFerienPlanCHF],
+  );
 
   // Ferienabbau nach Abteilung: IST-Basis
   const ferienabbauByDept = useMemo<Record<string, number>>(() => {
