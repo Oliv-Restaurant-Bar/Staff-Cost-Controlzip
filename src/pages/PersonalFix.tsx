@@ -905,16 +905,7 @@ export default function PersonalFixPage() {
   // Total Variabel Ist  = Variable Arbeit Ist  + Ferienabbau Ist
   const totalVarIstMonat    = varArbeitIstMonat  + ferienIstTotalCHF;
 
-  // ── Debug-Logging [VAR-KOSTEN] ─────────────────────────────────────────────
-  console.log(`[VAR-KOSTEN] plan arbeit total: ${varArbeitPlanMonat.toFixed(2)}`);
-  console.log(`[VAR-KOSTEN] ist arbeit total:  ${varArbeitIstMonat.toFixed(2)}`);
-  console.log(`[VAR-KOSTEN] plan ferien total: ${ferienPlanTotalCHF.toFixed(2)}`);
-  console.log(`[VAR-KOSTEN] ist ferien total:  ${ferienIstTotalCHF.toFixed(2)}`);
-  console.log(`[VAR-KOSTEN] plan total variabel: ${totalVarPlanMonat.toFixed(2)}`);
-  console.log(`[VAR-KOSTEN] ist total variabel:  ${totalVarIstMonat.toFixed(2)}`);
-  console.log(`[VAR-KOSTEN] diff arbeit:        ${(varArbeitIstMonat - varArbeitPlanMonat).toFixed(2)}`);
-  console.log(`[VAR-KOSTEN] diff ferien:        ${(ferienIstTotalCHF - ferienPlanTotalCHF).toFixed(2)}`);
-  console.log(`[VAR-KOSTEN] diff total variabel: ${(totalVarIstMonat - totalVarPlanMonat).toFixed(2)}`);
+
 
   // ── Pro-Rata-Berechnungen ──────────────────────────────────────────────────
   const daysInSelectedMonth = new Date(selectedYear, selectedMonth, 0).getDate();
@@ -985,6 +976,13 @@ export default function PersonalFixPage() {
   }, [varArbeitPlanMonat, varArbeitIstMonat, ferienPlanTotalCHF, ferienIstTotalCHF,
       totalFixCost, proRataDay, proRataFactor]);
 
+  // ── pfix-derived budget comparison (always uses Ist actuals as "spend") ────
+  // These replace the old varView-dependent varBudgetDelta / varBudgetOverrun
+  // in all financial displays so every number on the page agrees with the KPI block.
+  const pfixAvailableVar    = personnelBudget > 0 ? Math.max(0, personnelBudget - pfix.active.fix) : 0;
+  const pfixIstVarDelta     = personnelBudget > 0 ? pfixAvailableVar - pfix.active.istTotalVar : 0;
+  const pfixIstVarOverrun   = pfixIstVarDelta < 0;
+
   // Per-employee Plan vs Ist table — synchronized to pfix
   const pfixPerEmp = useMemo(() => {
     const factor = proRataDay !== null ? proRataFactor : 1;
@@ -1012,13 +1010,29 @@ export default function PersonalFixPage() {
     }).filter(r => r.planTotalVar > 0 || r.istTotalVar > 0);
 
     // [PFIX] Validate: per-employee sums must match pfix.active totals
-    const ref       = proRataDay !== null ? pfix.cutoff! : pfix.month;
-    const sumPlanVar = rows.reduce((s, r) => s + r.planTotalVar, 0);
-    const sumIstVar  = rows.reduce((s, r) => s + r.istTotalVar,  0);
+    const ref        = proRataDay !== null ? pfix.cutoff! : pfix.month;
+    const sumPlanWork = rows.reduce((s, r) => s + r.planWork,     0);
+    const sumIstWork  = rows.reduce((s, r) => s + r.istWork,      0);
+    const sumPlanHol  = rows.reduce((s, r) => s + r.planHoliday,  0);
+    const sumIstHol   = rows.reduce((s, r) => s + r.istHoliday,   0);
+    const sumPlanVar  = rows.reduce((s, r) => s + r.planTotalVar,  0);
+    const sumIstVar   = rows.reduce((s, r) => s + r.istTotalVar,   0);
+
+    const mode = proRataDay !== null ? `cutoff day=${proRataDay}` : 'month';
+    console.log(`[PFIX] mode: ${mode}`);
+    console.log(`[PFIX] plan work total: ${sumPlanWork.toFixed(2)}`);
+    console.log(`[PFIX] ist work total: ${sumIstWork.toFixed(2)}`);
+    console.log(`[PFIX] plan holiday total: ${sumPlanHol.toFixed(2)}`);
+    console.log(`[PFIX] ist holiday total: ${sumIstHol.toFixed(2)}`);
+    console.log(`[PFIX] employee table sum plan variable: ${sumPlanVar.toFixed(2)}`);
+    console.log(`[PFIX] employee table sum ist variable: ${sumIstVar.toFixed(2)}`);
+    console.log(`[PFIX] KPI plan totalVar: ${ref.planTotalVar.toFixed(2)}`);
+    console.log(`[PFIX] KPI ist totalVar: ${ref.istTotalVar.toFixed(2)}`);
+
     if (Math.abs(sumPlanVar - ref.planTotalVar) > 0.05)
-      console.error(`[PFIX] SYNC ERR planTotalVar: emp=${sumPlanVar.toFixed(2)} vs pfix=${ref.planTotalVar.toFixed(2)}`);
+      console.error(`[PFIX] SYNC ERR planTotalVar: emp=${sumPlanVar.toFixed(2)} vs pfix=${ref.planTotalVar.toFixed(2)} diff=${(sumPlanVar - ref.planTotalVar).toFixed(2)}`);
     if (Math.abs(sumIstVar - ref.istTotalVar) > 0.05)
-      console.error(`[PFIX] SYNC ERR istTotalVar: emp=${sumIstVar.toFixed(2)} vs pfix=${ref.istTotalVar.toFixed(2)}`);
+      console.error(`[PFIX] SYNC ERR istTotalVar: emp=${sumIstVar.toFixed(2)} vs pfix=${ref.istTotalVar.toFixed(2)} diff=${(sumIstVar - ref.istTotalVar).toFixed(2)}`);
 
     return rows;
   }, [variableEmployees, planHours, istHours, getEmpFerienPlanCHF, getEmpFerienCHF,
@@ -1473,7 +1487,7 @@ export default function PersonalFixPage() {
         </section>
 
         {/* ── Variable Kosten Plan vs. Ist — pro Mitarbeiter ────────────────── */}
-        {planHasDaten && istHasDaten && pfixPerEmp.length > 0 && (
+        {pfixPerEmp.length > 0 && (
           <section className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/30">
               <Users className="h-4 w-4 text-muted-foreground" />
@@ -1733,54 +1747,54 @@ export default function PersonalFixPage() {
             {personnelBudget > 0 && (
               <div className={cn(
                 'px-4 py-2 border-b flex flex-wrap items-center justify-between gap-3 text-xs',
-                varBudgetOverrun
+                pfixIstVarOverrun
                   ? 'border-red-200 dark:border-red-800 bg-red-50/40 dark:bg-red-950/15'
-                  : varBudgetDelta < availableVarBudget * 0.15
+                  : pfixIstVarDelta < pfixAvailableVar * 0.15
                     ? 'border-yellow-200 dark:border-yellow-800 bg-yellow-50/40 dark:bg-yellow-950/15'
                     : 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/15'
               )}>
                 {/* Left: status text */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex gap-1 items-center shrink-0">
-                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', varBudgetOverrun ? 'bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.6)]' : 'bg-red-200 dark:bg-red-900')} />
-                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', !varBudgetOverrun && varBudgetDelta < availableVarBudget * 0.15 ? 'bg-yellow-500 shadow-[0_0_4px_rgba(234,179,8,0.6)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
-                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', !varBudgetOverrun && varBudgetDelta >= availableVarBudget * 0.15 ? 'bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.6)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
+                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', pfixIstVarOverrun ? 'bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.6)]' : 'bg-red-200 dark:bg-red-900')} />
+                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', !pfixIstVarOverrun && pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'bg-yellow-500 shadow-[0_0_4px_rgba(234,179,8,0.6)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
+                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', !pfixIstVarOverrun && pfixIstVarDelta >= pfixAvailableVar * 0.15 ? 'bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.6)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
                   </div>
-                  <span className="text-muted-foreground">Restbudget Variabel:</span>
+                  <span className="text-muted-foreground">Restbudget Variabel (Ist):</span>
                   <span className={cn('font-mono font-bold',
-                    varBudgetOverrun ? 'text-red-600 dark:text-red-400'
-                      : varBudgetDelta < availableVarBudget * 0.15 ? 'text-yellow-600 dark:text-yellow-500'
+                    pfixIstVarOverrun ? 'text-red-600 dark:text-red-400'
+                      : pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'text-yellow-600 dark:text-yellow-500'
                       : 'text-emerald-600 dark:text-emerald-400'
                   )}>
-                    {varBudgetOverrun
-                      ? `⚠ ${fmtCHF(Math.abs(varBudgetDelta))} überschritten`
-                      : `${fmtCHF(varBudgetDelta)} noch verfügbar`}
+                    {pfixIstVarOverrun
+                      ? `⚠ ${fmtCHF(Math.abs(pfixIstVarDelta))} überschritten`
+                      : `${fmtCHF(pfixIstVarDelta)} noch verfügbar`}
                   </span>
-                  {avgHourlyWage > 0 && !varBudgetOverrun && maxVarHours > 0 && (
+                  {avgHourlyWage > 0 && !pfixIstVarOverrun && maxVarHours > 0 && (
                     <span className="text-muted-foreground">
                       ≈ <strong className="text-foreground font-mono">
                         {Math.max(0, maxVarHours - Math.round(totalVarHours))} h
                       </strong> noch planbar
                     </span>
                   )}
-                  {varBudgetOverrun && avgHourlyWage > 0 && (
+                  {pfixIstVarOverrun && avgHourlyWage > 0 && (
                     <span className="text-red-600 dark:text-red-400">
-                      → ca. <strong className="font-mono">{Math.ceil(Math.abs(varBudgetDelta) / avgHourlyWage)} h</strong> reduzieren
+                      → ca. <strong className="font-mono">{Math.ceil(Math.abs(pfixIstVarDelta) / avgHourlyWage)} h</strong> reduzieren
                     </span>
                   )}
                 </div>
                 {/* Right: progress bar */}
-                {availableVarBudget > 0 && (
+                {pfixAvailableVar > 0 && (
                   <div className="flex items-center gap-1.5 shrink-0">
                     <span className="text-muted-foreground tabular-nums">
-                      {Math.min(100, Math.round((totalVarCost / availableVarBudget) * 100))} %
+                      {Math.min(100, Math.round((pfix.active.istTotalVar / pfixAvailableVar) * 100))} %
                     </span>
                     <div className="w-28 h-2 bg-muted rounded-full overflow-hidden">
                       <div
                         className={cn('h-full rounded-full transition-all duration-300',
-                          varBudgetOverrun ? 'bg-red-500' : varBudgetDelta < availableVarBudget * 0.15 ? 'bg-yellow-500' : 'bg-emerald-500'
+                          pfixIstVarOverrun ? 'bg-red-500' : pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'bg-yellow-500' : 'bg-emerald-500'
                         )}
-                        style={{ width: `${Math.min(100, (totalVarCost / availableVarBudget) * 100)}%` }}
+                        style={{ width: `${Math.min(100, (pfix.active.istTotalVar / pfixAvailableVar) * 100)}%` }}
                       />
                     </div>
                   </div>
@@ -2004,13 +2018,13 @@ export default function PersonalFixPage() {
               );
             })}
 
-            {/* Gesamt-Variabel-Footer */}
+            {/* Gesamt-Variabel-Footer — Ist-Werte aus pfix.active (identisch mit KPI oben) */}
             {totalVarHours > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-orange-100/40 dark:bg-orange-950/30 border-t-2 border-orange-300 dark:border-orange-700">
-                <span className="text-sm font-bold text-orange-800 dark:text-orange-300">Total Variabel · alle Abteilungen</span>
+                <span className="text-sm font-bold text-orange-800 dark:text-orange-300">Total Variabel Ist · alle Abteilungen</span>
                 <div className="flex items-center gap-4 text-sm">
                   <span className="text-muted-foreground font-mono">{Math.round(totalVarHours * 10) / 10} h</span>
-                  <span className="font-bold font-mono text-orange-700 dark:text-orange-400">{fmtCHF(totalVarCost)}/Mt</span>
+                  <span className="font-bold font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfix.active.istWork)}/Mt</span>
                 </div>
               </div>
             )}
@@ -2034,17 +2048,17 @@ export default function PersonalFixPage() {
                   <span className="font-mono font-semibold">{fmtCHF(personnelBudget)}</span>
                 </div>
                 <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">− Personal FIX</span>
-                  <span className="font-mono text-blue-700 dark:text-blue-400 shrink-0">− {fmtCHF(totalFixCost)}</span>
+                  <span className="text-sm text-muted-foreground">− Personal FIX{proRataDay !== null ? ` bis ${proRataDay}.` : ''}</span>
+                  <span className="font-mono text-blue-700 dark:text-blue-400 shrink-0">− {fmtCHF(pfix.active.fix)}</span>
                 </div>
                 <div className={cn(
                   'flex justify-between items-center py-2 px-3 rounded-lg',
-                  availableVarBudget > 0
+                  pfixAvailableVar > 0
                     ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
                     : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300'
                 )}>
                   <span className="text-sm font-bold">= Verfügbar für Variabel</span>
-                  <span className="font-mono font-bold text-base">{fmtCHF(availableVarBudget)}</span>
+                  <span className="font-mono font-bold text-base">{fmtCHF(pfixAvailableVar)}</span>
                 </div>
               </div>
 
@@ -2053,40 +2067,38 @@ export default function PersonalFixPage() {
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Schätzung vs. Budget</p>
                 <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
                   <span className="text-sm text-muted-foreground">Verfügbar für Variabel</span>
-                  <span className="font-mono font-semibold">{fmtCHF(availableVarBudget)}</span>
+                  <span className="font-mono font-semibold">{fmtCHF(pfixAvailableVar)}</span>
                 </div>
                 <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
                   <div className="flex items-center gap-1.5 flex-wrap text-sm text-muted-foreground">
                     <span className="whitespace-nowrap">− Variable Arbeit</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">
-                      {varView === 'plan' ? 'Plan' : varView === 'ist' ? 'Ist' : 'Manuell'}
-                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">Ist</span>
                   </div>
-                  <span className="font-mono text-orange-700 dark:text-orange-400 shrink-0">− {fmtCHF(totalVarArbeitCHF)}</span>
+                  <span className="font-mono text-orange-700 dark:text-orange-400 shrink-0">− {fmtCHF(pfix.active.istWork)}</span>
                 </div>
-                {totalFerienabbauCHF > 0 && (
+                {pfix.active.istHoliday > 0 && (
                   <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
-                    <span className="text-sm text-muted-foreground">+ Ferienabbau-Abzug (FE Ist)</span>
-                    <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">− {fmtCHF(totalFerienabbauCHF)}</span>
+                    <span className="text-sm text-muted-foreground">+ Ferienabbau (FE Ist)</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">− {fmtCHF(pfix.active.istHoliday)}</span>
                   </div>
                 )}
-                {totalFerienabbauCHF > 0 && (
+                {pfix.active.istHoliday > 0 && (
                   <div className="flex justify-between items-baseline gap-2 py-1 border-b border-dashed border-border">
-                    <span className="text-sm font-medium text-muted-foreground">= Netto Variabel</span>
-                    <span className="font-mono font-semibold text-orange-800 dark:text-orange-300 shrink-0">{fmtCHF(totalVariabelCHF)}</span>
+                    <span className="text-sm font-medium text-muted-foreground">= Total Variabel Ist</span>
+                    <span className="font-mono font-semibold text-orange-800 dark:text-orange-300 shrink-0">{fmtCHF(pfix.active.istTotalVar)}</span>
                   </div>
                 )}
                 <div className={cn(
                   'flex justify-between items-center py-2 px-3 rounded-lg',
-                  !varBudgetOverrun
+                  !pfixIstVarOverrun
                     ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
                     : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300'
                 )}>
                   <span className="text-sm font-bold">
-                    {varBudgetOverrun ? '⚠ Überziehung' : '✓ Verbleibend'}
+                    {pfixIstVarOverrun ? '⚠ Überziehung' : '✓ Verbleibend'}
                   </span>
                   <span className="font-mono font-bold text-base">
-                    {varBudgetOverrun ? '– ' : '+ '}{fmtCHF(Math.abs(varBudgetDelta))}
+                    {pfixIstVarOverrun ? '– ' : '+ '}{fmtCHF(Math.abs(pfixIstVarDelta))}
                   </span>
                 </div>
               </div>
@@ -2096,25 +2108,25 @@ export default function PersonalFixPage() {
             {avgHourlyWage > 0 && (
               <div className={cn(
                 'mx-4 mb-4 p-3 rounded-lg border flex flex-wrap items-start gap-3',
-                varBudgetOverrun
+                pfixIstVarOverrun
                   ? 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
-                  : varBudgetDelta < availableVarBudget * 0.15
+                  : pfixIstVarDelta < pfixAvailableVar * 0.15
                     ? 'border-yellow-200 dark:border-yellow-800 bg-yellow-50/60 dark:bg-yellow-950/20'
                     : 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20'
               )}>
                 <Lightbulb className={cn('h-4 w-4 mt-0.5 shrink-0',
-                  varBudgetOverrun ? 'text-red-600' : varBudgetDelta < availableVarBudget * 0.15 ? 'text-yellow-600' : 'text-emerald-600'
+                  pfixIstVarOverrun ? 'text-red-600' : pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'text-yellow-600' : 'text-emerald-600'
                 )} />
                 <div className="flex-1 min-w-0 space-y-1.5">
                   {/* Hauptstatus */}
                   <p className="text-sm font-semibold">
-                    {totalVarHours === 0 && !varBudgetOverrun
-                      ? `Noch kein Variabel geplant — Budget: ${fmtCHF(availableVarBudget)} verfügbar`
-                      : varBudgetOverrun
-                        ? `⚠ Budgetüberschreitung: ${fmtCHF(Math.abs(varBudgetDelta))} zu viel geplant`
-                        : varBudgetDelta < availableVarBudget * 0.15
-                          ? `Achtung: Budget fast ausgeschöpft — noch ${fmtCHF(varBudgetDelta)} Puffer`
-                          : `Budget im grünen Bereich — Puffer ${fmtCHF(varBudgetDelta)}`}
+                    {pfix.active.istTotalVar === 0 && !pfixIstVarOverrun
+                      ? `Noch kein Variabel erfasst — Budget: ${fmtCHF(pfixAvailableVar)} verfügbar`
+                      : pfixIstVarOverrun
+                        ? `⚠ Budgetüberschreitung: ${fmtCHF(Math.abs(pfixIstVarDelta))} zu viel`
+                        : pfixIstVarDelta < pfixAvailableVar * 0.15
+                          ? `Achtung: Budget fast ausgeschöpft — noch ${fmtCHF(pfixIstVarDelta)} Puffer`
+                          : `Budget im grünen Bereich — Puffer ${fmtCHF(pfixIstVarDelta)}`}
                   </p>
 
                   {/* Stunden-Info */}
@@ -2129,23 +2141,23 @@ export default function PersonalFixPage() {
                       <p>
                         Aktuell geplant: <strong className="font-mono text-foreground">{Math.round(totalVarHours * 10) / 10} h</strong>
                         {totalVarHours <= maxVarHours
-                          ? <span className="text-emerald-600 dark:text-emerald-400"> · Reserve: {Math.max(0, maxVarHours - Math.round(totalVarHours))} h (≈ {fmtCHF(varBudgetDelta)})</span>
-                          : <span className="text-red-600 dark:text-red-400"> · {Math.round(totalVarHours) - maxVarHours} h zu viel (≈ {fmtCHF(Math.abs(varBudgetDelta))})</span>}
+                          ? <span className="text-emerald-600 dark:text-emerald-400"> · Reserve: {Math.max(0, maxVarHours - Math.round(totalVarHours))} h (≈ {fmtCHF(pfixIstVarDelta)})</span>
+                          : <span className="text-red-600 dark:text-red-400"> · {Math.round(totalVarHours) - maxVarHours} h zu viel (≈ {fmtCHF(Math.abs(pfixIstVarDelta))})</span>}
                       </p>
                     )}
                   </div>
 
                   {/* Regelbasierte Handlungsempfehlung */}
                   <p className={cn('text-xs font-medium mt-0.5',
-                    varBudgetOverrun ? 'text-red-600 dark:text-red-400'
-                      : varBudgetDelta < availableVarBudget * 0.15 ? 'text-yellow-600 dark:text-yellow-500'
+                    pfixIstVarOverrun ? 'text-red-600 dark:text-red-400'
+                      : pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'text-yellow-600 dark:text-yellow-500'
                       : 'text-emerald-600 dark:text-emerald-400'
                   )}>
-                    {totalVarHours === 0 && !varBudgetOverrun
+                    {pfix.active.istTotalVar === 0 && !pfixIstVarOverrun
                       ? `→ Stunden planen: Noch ca. ${maxVarHours} h verfügbar — trage unten Stunden ein.`
-                      : varBudgetOverrun
-                        ? `→ Reduziere variable Stunden um ca. ${Math.ceil(Math.abs(varBudgetDelta) / avgHourlyWage)} h, um das Budget einzuhalten.`
-                        : varBudgetDelta < availableVarBudget * 0.15
+                      : pfixIstVarOverrun
+                        ? `→ Reduziere variable Stunden um ca. ${Math.ceil(Math.abs(pfixIstVarDelta) / avgHourlyWage)} h, um das Budget einzuhalten.`
+                        : pfixIstVarDelta < pfixAvailableVar * 0.15
                           ? `→ Vorsicht: Noch ${Math.max(0, maxVarHours - Math.round(totalVarHours))} h Spielraum — zusätzliche Schichten könnten das Budget sprengen.`
                           : `→ Kapazität vorhanden: Noch ca. ${Math.max(0, maxVarHours - Math.round(totalVarHours))} h planbar ohne Budgetüberschreitung.`}
                   </p>
@@ -2153,9 +2165,9 @@ export default function PersonalFixPage() {
 
                 {/* Ampel */}
                 <div className="flex flex-col gap-1 items-center shrink-0 self-center">
-                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', varBudgetOverrun ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)]' : 'bg-red-200 dark:bg-red-900')} />
-                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', !varBudgetOverrun && varBudgetDelta < availableVarBudget * 0.15 ? 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.7)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
-                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', !varBudgetOverrun && varBudgetDelta >= availableVarBudget * 0.15 ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
+                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', pfixIstVarOverrun ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)]' : 'bg-red-200 dark:bg-red-900')} />
+                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', !pfixIstVarOverrun && pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.7)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
+                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', !pfixIstVarOverrun && pfixIstVarDelta >= pfixAvailableVar * 0.15 ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
                 </div>
               </div>
             )}
@@ -2173,32 +2185,35 @@ export default function PersonalFixPage() {
         )}
 
         {/* ── Gesamt-Total FIX + VARIABEL ──────────────────────────────────── */}
-        {totalVarCost > 0 && (
+        {pfix.active.istTotalVar > 0 && (
           <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm font-bold">
               <Users className="h-4 w-4 text-emerald-600" />
-              Total Personal FIX + VARIABEL · {getMonthLabel(selectedYear, selectedMonth)}
+              Total Personal FIX + VARIABEL Ist{proRataDay !== null ? ` bis ${proRataDay}.` : ''} · {getMonthLabel(selectedYear, selectedMonth)}
             </div>
             <div className="flex flex-wrap items-center gap-6 text-sm">
               <span className="text-muted-foreground">
-                FIX: <strong className="font-mono text-blue-700 dark:text-blue-300">{fmtCHF(totalFixCost)}</strong>
+                FIX: <strong className="font-mono text-blue-700 dark:text-blue-300">{fmtCHF(pfix.active.fix)}</strong>
               </span>
               <span className="text-muted-foreground">+</span>
               <span className="text-muted-foreground">
-                VARIABEL: <strong className="font-mono text-orange-700 dark:text-orange-400">{fmtCHF(totalVarCost)}</strong>
+                VARIABEL: <strong className="font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfix.active.istTotalVar)}</strong>
               </span>
               <span className="text-muted-foreground">=</span>
-              <span className="text-emerald-700 dark:text-emerald-300 font-bold text-lg font-mono">{fmtCHF(totalCombined)}/Mt</span>
-              {personnelBudget > 0 && (
-                <span className={cn(
-                  'text-xs font-medium px-2 py-0.5 rounded-full',
-                  totalCombined <= personnelBudget
-                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                    : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
-                )}>
-                  {totalCombined <= personnelBudget ? '✓ im Budget' : `↑ ${fmtCHF(totalCombined - personnelBudget)} über Budget`}
-                </span>
-              )}
+              <span className="text-emerald-700 dark:text-emerald-300 font-bold text-lg font-mono">{fmtCHF(pfix.active.istTotal)}/Mt</span>
+              {personnelBudget > 0 && (() => {
+                const budget = personnelBudget * (proRataDay !== null ? proRataFactor : 1);
+                return (
+                  <span className={cn(
+                    'text-xs font-medium px-2 py-0.5 rounded-full',
+                    pfix.active.istTotal <= budget
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                      : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+                  )}>
+                    {pfix.active.istTotal <= budget ? '✓ im Budget' : `↑ ${fmtCHF(pfix.active.istTotal - budget)} über Budget`}
+                  </span>
+                );
+              })()}
             </div>
           </div>
         )}

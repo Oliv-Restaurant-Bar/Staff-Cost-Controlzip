@@ -1,0 +1,146 @@
+Bitte Personal FIX jetzt vereinfachen und vollständig synchronisieren.
+
+Problem:
+Die Totale und Kennzahlen sind aktuell nicht konsistent.
+Beispiel:
+- KPI zeigt Var. Arbeit Ist = CHF 5’357
+- andere Übersicht zeigt Variable bis 12. = CHF 12’411
+- die Seite ist dadurch nicht vertrauenswürdig und zu unübersichtlich
+
+Ziel:
+Es soll eine EINHEITLICHE Master-Logik geben, und alle Totale/KPIs/Tabellen müssen dieselben Zahlen zeigen, wenn sie dieselbe Definition und denselben Zeitraum meinen.
+
+Bitte exakt so umsetzen:
+
+1. Zentrale Definitionen festlegen
+Es gibt nur noch diese 3 Kostenarten:
+
+- Variable Arbeit
+  = echte Arbeitsstunden * Stundenlohn
+
+- Ferien
+  = Ferienabbau CHF separat
+
+- Total Variabel
+  = Variable Arbeit + Ferien
+
+Diese Definitionen müssen überall identisch gelten.
+
+2. Zeitraum strikt trennen
+Jede Zahl auf der Seite muss klar einem dieser Typen zugeordnet sein:
+
+- Plan Monat
+- Ist Monat
+- Plan bis Stichtag
+- Ist bis Stichtag
+
+Wichtig:
+Niemals Monatswerte und Stichtagswerte auf derselben Ebene mischen.
+
+3. Eine zentrale Berechnungsfunktion / einen zentralen Selector bauen
+Alle Komponenten auf Personal FIX müssen ihre Werte aus derselben zentralen Berechnung beziehen.
+
+Also nicht:
+- KPI A rechnet selbst
+- Tabelle B rechnet anders
+- Pro-Rata C rechnet wieder separat
+
+Sondern:
+eine Masterfunktion liefert:
+- planWork
+- istWork
+- planHoliday
+- istHoliday
+- planTotalVariable
+- istTotalVariable
+- diffWork
+- diffHoliday
+- diffTotalVariable
+jeweils für:
+- month
+- cutoff
+
+4. Seite vereinfachen
+Bitte die Personal-FIX-Seite so umbauen, dass sie klarer wird.
+
+Oben nur ein kompakter KPI-Block:
+
+Für den aktuell gewählten Modus:
+- Variable Arbeit Plan
+- Variable Arbeit Ist
+- Ferien Plan
+- Ferien Ist
+- Total Variabel Plan
+- Total Variabel Ist
+- Differenz Total Variabel
+
+Darunter nur EINE klare Vergleichstabelle:
+Spalten:
+- Bereich
+- Plan
+- Ist
+- Differenz CHF
+- Differenz %
+
+Zeilen:
+- Variable Arbeit
+- Ferien
+- Total Variabel
+- Personal FIX
+- Total Personal
+
+5. Stichtag separat und klar
+Wenn ein Stichtag aktiv ist:
+- überall "bis Stichtag" verwenden
+- alle Werte nur bis zu diesem Tag berechnen
+- keine Monatsvollwerte dazumischen
+
+Wenn kein Stichtag aktiv ist:
+- überall Monatswerte
+
+6. Mitarbeitertabelle ebenfalls synchronisieren
+Neue Mitarbeitertabelle:
+"Variable Kosten Plan vs Ist pro Mitarbeiter"
+
+Spalten:
+- Mitarbeiter
+- Arbeit Plan
+- Arbeit Ist
+- Diff Arbeit
+- Ferien Plan
+- Ferien Ist
+- Diff Ferien
+- Total Variabel Plan
+- Total Variabel Ist
+- Diff Total
+
+Wichtig:
+Die Summe dieser Tabelle muss exakt dieselben Totale ergeben wie die KPI oben.
+
+7. Validierungs-Logs einbauen
+Bitte loggen:
+[PFIX] mode: month|cutoff
+[PFIX] plan work total: ...
+[PFIX] ist work total: ...
+[PFIX] plan holiday total: ...
+[PFIX] ist holiday total: ...
+[PFIX] plan total variable: ...
+[PFIX] ist total variable: ...
+[PFIX] employee table sum total variable: ...
+[PFIX] KPI total variable: ...
+
+Wenn Summen nicht identisch sind:
+console.error mit Differenz ausgeben
+
+8. Visuell vereinfachen
+- weniger Boxen
+- weniger doppelte Blöcke
+- keine zweite Übersicht, wenn sie dieselbe Logik nochmal anders zeigt
+- kompakter, klarer, vertrauenswürdiger
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- welche Logik vorher gemischt wurde
+- welche zentrale Berechnungsfunktion jetzt Source of Truth ist
+- ob KPI, Vergleichstabelle und Mitarbeitertabelle jetzt exakt dieselben Totale verwenden
+- wie ich die Synchronität am schnellsten testen kann
