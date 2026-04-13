@@ -5,7 +5,7 @@ import { Navigate } from 'react-router-dom';
 import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
   Utensils, Edit2, Check, X, Info, Building2, AlertCircle, Clock,
-  ChevronLeft, ChevronRight, Calendar, BarChart2, Lightbulb, Target,
+  ChevronLeft, ChevronRight, ChevronDown, Calendar, BarChart2, Lightbulb, Target,
   Repeat, FileText, Download, TrendingDown,
 } from 'lucide-react';
 import { exportPersonalFixToPDF, exportVarKostenvergleich } from '@/lib/personalfix-export';
@@ -676,9 +676,19 @@ interface AbwRow {
   istTotal:  number;
   diff:      number;
   diffPct:   number | null;
+  dates:     string[];
 }
 
-type AbwMode = 'day' | 'week' | 'month';
+type AbwMode = 'day' | 'week' | 'month' | 'year';
+
+interface FlexPeriodTarget {
+  label:     string;
+  dates:     string[];
+  planTotal: number;
+  istTotal:  number;
+  year:      number;
+  month:     number;
+}
 
 function isoWeekLabel(iso: string): string {
   const d = new Date(iso + 'T00:00:00');
@@ -715,6 +725,155 @@ const AMPEL: Record<AmpelStatus, {
   red:     { dot: 'bg-red-500',                       border: 'border-red-400 dark:border-red-600',         bg: 'bg-red-50/60 dark:bg-red-950/20',         label: 'Über Plan',        text: 'text-red-700 dark:text-red-400'        },
   neutral: { dot: 'bg-gray-300 dark:bg-gray-600',     border: 'border-border',                              bg: '',                                        label: 'Kein Vergleich',   text: 'text-muted-foreground'                 },
 };
+
+// ── FlexPeriodPopup ────────────────────────────────────────────────────────────
+
+function FlexPeriodPopup({
+  target,
+  employees,
+  onClose,
+}: {
+  target:    FlexPeriodTarget | null;
+  employees: Array<{ id: string; name: string; hourlyWage: number; weeklyHours: number }>;
+  onClose:   () => void;
+}) {
+  if (!target) return null;
+  const { label, dates, planTotal, istTotal, year, month } = target;
+  const diff    = istTotal - planTotal;
+  const diffPct = planTotal > 0 ? (diff / planTotal) * 100 : null;
+  const st = ampelStatus(diff, planTotal);
+  const A  = AMPEL[st];
+
+  type EmpRow = {
+    id: string; name: string;
+    planWork: number; istWork: number;
+    planFer:  number; istFer:  number;
+    planTotal: number; istTotal: number;
+    diff: number;
+  };
+
+  const rows: EmpRow[] = employees.map(emp => {
+    const wage   = emp.hourlyWage;
+    const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+    const planW = loadDailyPlanDetails(emp.id, year, month, null, wage).filter(r => dates.includes(r.date));
+    const istW  = loadDailyIstDetails(emp.id, year, month, null, wage).filter(r => dates.includes(r.date));
+    const planF = loadFerienPlanDayDetails(emp.id, year, month, null, dailyH, wage).filter(r => dates.includes(r.date));
+    const istF  = loadFerienIstDayDetails(emp.id, year, month, null, dailyH, wage).filter(r => dates.includes(r.date));
+    const planWork = planW.reduce((s, r) => s + r.cost, 0);
+    const istWork  = istW.reduce((s, r)  => s + r.cost, 0);
+    const planFer  = planF.reduce((s, r) => s + r.cost, 0);
+    const istFer   = istF.reduce((s, r)  => s + r.cost, 0);
+    const pT = planWork + planFer;
+    const iT = istWork  + istFer;
+    return { id: emp.id, name: emp.name, planWork, istWork, planFer, istFer, planTotal: pT, istTotal: iT, diff: iT - pT };
+  }).filter(r => r.planTotal > 0 || r.istTotal > 0);
+
+  const sumPlan = rows.reduce((s, r) => s + r.planTotal, 0);
+  const sumIst  = rows.reduce((s, r) => s + r.istTotal,  0);
+  const sumDiff = sumIst - sumPlan;
+
+  console.log(`[FLEX] popup period: ${label}`);
+  console.log(`[FLEX] popup employee rows: ${rows.length}`);
+  if (Math.abs(sumPlan - planTotal) > 0.02) console.error(`[FLEX] popup plan mismatch: table=${sumPlan.toFixed(2)} header=${planTotal.toFixed(2)}`);
+  if (Math.abs(sumIst  - istTotal)  > 0.02) console.error(`[FLEX] popup ist  mismatch: table=${sumIst.toFixed(2)}  header=${istTotal.toFixed(2)}`);
+
+  const fmtD = (v: number) => {
+    const s = fmtCHF(Math.abs(v));
+    return v > 0.005 ? `+${s}` : v < -0.005 ? `−${s}` : s;
+  };
+  const diffCls = (v: number) =>
+    v > 0.005  ? 'text-red-600 dark:text-red-400' :
+    v < -0.005 ? 'text-emerald-600 dark:text-emerald-400' :
+                 'text-muted-foreground';
+  const thCls = 'sticky top-0 z-10 bg-muted/80 backdrop-blur-sm px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground border-b border-border';
+
+  return (
+    <Dialog open={!!target} onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent className="p-0 gap-0 max-w-none w-[min(960px,95vw)] flex flex-col max-h-[88vh] overflow-hidden">
+        {/* Sticky Header */}
+        <div className={cn('shrink-0 px-6 py-4 border-b', A.border, A.bg || 'bg-muted/20')}>
+          <div className="flex items-start gap-3 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-base font-bold leading-tight">Flex-Auswertung — {label}</h2>
+              <div className="flex flex-wrap gap-3 mt-2">
+                <span className="text-xs text-muted-foreground">Plan <span className="text-blue-700 dark:text-blue-400 font-mono font-semibold">{fmtCHF(planTotal)}</span></span>
+                <span className="text-xs text-muted-foreground">Ist <span className="text-orange-700 dark:text-orange-400 font-mono font-semibold">{fmtCHF(istTotal)}</span></span>
+                <span className={cn('text-xs font-bold font-mono', diffCls(diff))}>{fmtD(diff)}</span>
+                {diffPct !== null && <span className={cn('text-xs font-mono', diffCls(diff))}>({diffPct > 0.005 ? '+' : ''}{diffPct.toFixed(1)} %)</span>}
+              </div>
+            </div>
+            <div className={cn('flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold shrink-0', A.border, A.text)}>
+              <span className={cn('w-2.5 h-2.5 rounded-full inline-block', A.dot)} />
+              {A.label}
+            </div>
+          </div>
+        </div>
+
+        {/* Scrollable Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          {rows.length === 0 ? (
+            <div className="text-sm text-muted-foreground text-center py-8">
+              Keine Flex-Daten für diesen Zeitraum.
+            </div>
+          ) : (
+            <div className="rounded-md border border-border">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr>
+                    <th className={cn(thCls, 'text-left')}>Mitarbeiter</th>
+                    <th className={cn(thCls, 'text-right text-blue-600')}>Flex Arbeit Plan</th>
+                    <th className={cn(thCls, 'text-right text-orange-600')}>Flex Arbeit Ist</th>
+                    <th className={cn(thCls, 'text-right text-blue-500')}>Ferien Plan</th>
+                    <th className={cn(thCls, 'text-right text-orange-500')}>Ferien Ist</th>
+                    <th className={cn(thCls, 'text-right text-blue-700')}>Total Flex Plan</th>
+                    <th className={cn(thCls, 'text-right text-orange-700')}>Total Flex Ist</th>
+                    <th className={cn(thCls, 'text-right')}>Diff CHF</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={r.id} className={cn(i % 2 === 0 ? 'bg-background' : 'bg-muted/15')}>
+                      <td className="px-3 py-1.5 font-medium">{r.name}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-600">{r.planWork > 0 ? fmtCHF(r.planWork) : '–'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-600">{r.istWork > 0 ? fmtCHF(r.istWork) : '–'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-500">{r.planFer > 0 ? fmtCHF(r.planFer) : '–'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-500">{r.istFer > 0 ? fmtCHF(r.istFer) : '–'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-blue-700 dark:text-blue-400">{r.planTotal > 0 ? fmtCHF(r.planTotal) : '–'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-orange-700 dark:text-orange-400">{r.istTotal > 0 ? fmtCHF(r.istTotal) : '–'}</td>
+                      <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums font-bold', diffCls(r.diff))}>{fmtD(r.diff)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className={cn('border-t-2 border-border font-bold text-xs', A.bg)}>
+                    <td className="px-3 py-2">Total ({rows.length} MA)</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-blue-600">{fmtCHF(rows.reduce((s, r) => s + r.planWork, 0))}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-orange-600">{fmtCHF(rows.reduce((s, r) => s + r.istWork, 0))}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-blue-500">{fmtCHF(rows.reduce((s, r) => s + r.planFer, 0))}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-orange-500">{fmtCHF(rows.reduce((s, r) => s + r.istFer, 0))}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(sumPlan)}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(sumIst)}</td>
+                    <td className={cn('px-3 py-2 text-right font-mono tabular-nums', diffCls(sumDiff))}>{fmtD(sumDiff)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Sticky Footer */}
+        <div className={cn('shrink-0 border-t px-6 py-3 flex items-center justify-between gap-4', A.border, A.bg || 'bg-muted/40')}>
+          <span className="text-xs text-muted-foreground">bezieht sich auf: <strong>{label}</strong></span>
+          <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+            <span className="text-muted-foreground">Plan <span className="text-blue-700 dark:text-blue-400 font-bold">{fmtCHF(planTotal)}</span></span>
+            <span className="text-muted-foreground">Ist <span className="text-orange-700 dark:text-orange-400 font-bold">{fmtCHF(istTotal)}</span></span>
+            <span className={cn('font-bold text-sm', A.text)}>{fmtD(diff)}</span>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // ── FlexBreakdownModal ─────────────────────────────────────────────────────────
 
@@ -1060,6 +1219,8 @@ export default function PersonalFixPage() {
   // ── Flex-Breakdown-Popup ──────────────────────────────────────────────────
   const [breakdown, setBreakdown] = useState<BreakdownTarget | null>(null);
   const [abwMode,   setAbwMode]   = useState<AbwMode>('day');
+  const [flexPeriodPopup,  setFlexPeriodPopup]  = useState<FlexPeriodTarget | null>(null);
+  const [expandedFixDepts, setExpandedFixDepts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadEmployees().then(emps => {
@@ -1615,11 +1776,11 @@ export default function PersonalFixPage() {
         };
       });
 
-    const weekMap = new Map<string, { p: number; i: number }>();
+    const weekMap = new Map<string, { p: number; i: number; dates: string[] }>();
     for (const d of days) {
       const wk = isoWeekLabel(d.date);
-      const e  = weekMap.get(wk) ?? { p: 0, i: 0 };
-      e.p += d.planTotal; e.i += d.istTotal;
+      const e  = weekMap.get(wk) ?? { p: 0, i: 0, dates: [] };
+      e.p += d.planTotal; e.i += d.istTotal; e.dates.push(d.date);
       weekMap.set(wk, e);
     }
     const weeks: AbwRow[] = Array.from(weekMap.entries())
@@ -1630,6 +1791,7 @@ export default function PersonalFixPage() {
         istTotal:  v.i,
         diff:      v.i - v.p,
         diffPct:   v.p > 0 ? ((v.i - v.p) / v.p) * 100 : null,
+        dates:     v.dates,
       }));
 
     const monthPlan = days.reduce((s, d) => s + d.planTotal, 0);
@@ -1639,17 +1801,12 @@ export default function PersonalFixPage() {
     const monthStatus = ampelStatus(monthDiff, monthPlan);
     const monthPctVal = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : 0;
 
-    console.log(`[ABW] mode: ${abwMode}`);
-    console.log(`[ABW] plan flex total: ${monthPlan.toFixed(2)}`);
-    console.log(`[ABW] ist flex total: ${monthIst.toFixed(2)}`);
-    console.log(`[ABW] diff total: ${monthDiff.toFixed(2)}`);
-    console.log(`[ABW] popup daily rows: ${days.length}`);
-    console.log(`[AMPEL] mode: ${abwMode}`);
-    console.log(`[AMPEL] plan: ${monthPlan.toFixed(2)}`);
-    console.log(`[AMPEL] ist: ${monthIst.toFixed(2)}`);
-    console.log(`[AMPEL] diff chf: ${monthDiff.toFixed(2)}`);
-    console.log(`[AMPEL] diff pct: ${monthPctVal.toFixed(2)}`);
-    console.log(`[AMPEL] status: ${monthStatus}`);
+    console.log(`[FLEX] mode: ${abwMode}`);
+    console.log(`[FLEX] plan total: ${monthPlan.toFixed(2)}`);
+    console.log(`[FLEX] ist total: ${monthIst.toFixed(2)}`);
+    console.log(`[FLEX] diff: ${monthDiff.toFixed(2)}`);
+    console.log(`[FLEX] daily rows: ${days.length}, week rows: ${weeks.length}`);
+    console.log(`[AMPEL] status: ${monthStatus} | plan: ${monthPlan.toFixed(2)} | pct: ${monthPctVal.toFixed(2)}`);
 
     return { days, weeks, monthPlan, monthIst, monthDiff };
   }, [variableEmployees, selectedYear, selectedMonth, proRataDay, planHours, istHours, abwMode]);
@@ -2105,112 +2262,18 @@ export default function PersonalFixPage() {
           </div>
         </section>
 
-        {/* ── Variable Kosten Plan vs. Ist — pro Mitarbeiter ────────────────── */}
-        {pfixPerEmp.length > 0 && (
-          <section className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/30">
-              <Users className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-semibold">
-                Flex Kosten Plan vs. Ist — pro Mitarbeiter
-                {proRataDay !== null && ` (bis ${proRataDay}.)`}
-              </span>
-              <Badge variant="secondary" className="text-xs ml-auto">{pfixPerEmp.length} MA</Badge>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-muted/30 border-b border-border text-muted-foreground">
-                    <th className="px-3 py-2 text-left font-medium">Name</th>
-                    <th className="px-3 py-2 text-center font-medium">Abt.</th>
-                    <th className="px-3 py-2 text-right font-medium text-blue-600">Flex Arbeit Plan</th>
-                    <th className="px-3 py-2 text-right font-medium text-orange-600">Flex Arbeit Ist</th>
-                    <th className="px-3 py-2 text-right font-medium">Diff. Arbeit</th>
-                    <th className="px-3 py-2 text-right font-medium text-blue-500">Ferien Plan</th>
-                    <th className="px-3 py-2 text-right font-medium text-orange-500">Ferien Ist</th>
-                    <th className="px-3 py-2 text-right font-medium">Diff. Ferien</th>
-                    <th className="px-3 py-2 text-right font-medium text-blue-700">Total Var Plan</th>
-                    <th className="px-3 py-2 text-right font-medium text-orange-700">Total Var Ist</th>
-                    <th className="px-3 py-2 text-right font-medium">Diff. Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pfixPerEmp.map((row, i) => {
-                    const dc = (v: number) => v === 0 ? 'text-muted-foreground' : v > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
-                    const openBreakdown = (field: BreakdownField) => setBreakdown({
-                      empId:       row.id,
-                      empName:     row.name,
-                      field,
-                      hourlyWage:  row.hourlyWage,
-                      weeklyHours: row.weeklyHours,
-                      year:        selectedYear,
-                      month:       selectedMonth,
-                      cutoffDay:   proRataDay,
-                      factor:      proRataDay !== null ? proRataFactor : 1,
-                    });
-                    const clickCell = (field: BreakdownField, amount: number, colorClass: string, isSemibold = false) => (
-                      <td className="px-3 py-1.5 text-right">
-                        {amount > 0
-                          ? <button
-                              onClick={() => openBreakdown(field)}
-                              className={cn(
-                                'font-mono underline underline-offset-2 decoration-dotted hover:opacity-80 transition-opacity cursor-pointer',
-                                colorClass, isSemibold && 'font-semibold',
-                              )}
-                              title="Tagesdetails anzeigen"
-                            >
-                              {fmtCHF(amount)}
-                            </button>
-                          : <span className="text-muted-foreground font-mono">–</span>}
-                      </td>
-                    );
-                    return (
-                      <tr key={row.id} className={i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'}>
-                        <td className="px-3 py-1.5 font-medium">{row.name}</td>
-                        <td className="px-3 py-1.5 text-center text-muted-foreground capitalize">{row.dept}</td>
-                        {clickCell('planWork',     row.planWork,     'text-blue-700 dark:text-blue-400')}
-                        {clickCell('istWork',      row.istWork,      'text-orange-700 dark:text-orange-400')}
-                        <td className={cn('px-3 py-1.5 text-right font-mono', dc(row.diffWork))}>{row.diffWork === 0 ? '–' : `${row.diffWork > 0 ? '+' : ''}${fmtCHF(row.diffWork)}`}</td>
-                        {clickCell('planHoliday',  row.planHoliday,  'text-blue-500 dark:text-blue-400')}
-                        {clickCell('istHoliday',   row.istHoliday,   'text-orange-500 dark:text-orange-400')}
-                        <td className={cn('px-3 py-1.5 text-right font-mono', dc(row.diffHoliday))}>{row.diffHoliday === 0 ? '–' : `${row.diffHoliday > 0 ? '+' : ''}${fmtCHF(row.diffHoliday)}`}</td>
-                        {clickCell('planTotalVar', row.planTotalVar, 'text-blue-700 dark:text-blue-400', true)}
-                        {clickCell('istTotalVar',  row.istTotalVar,  'text-orange-700 dark:text-orange-400', true)}
-                        <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', dc(row.diffTotalVar))}>{row.diffTotalVar === 0 ? '–' : `${row.diffTotalVar > 0 ? '+' : ''}${fmtCHF(row.diffTotalVar)}`}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t-2 border-border bg-muted/30 font-bold text-xs">
-                    <td className="px-3 py-2" colSpan={2}>Total</td>
-                    <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.planWork, 0))}</td>
-                    <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.istWork, 0))}</td>
-                    <td className="px-3 py-2" />
-                    <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">{pfixPerEmp.reduce((s,r)=>s+r.planHoliday,0) > 0 ? fmtCHF(pfixPerEmp.reduce((s,r)=>s+r.planHoliday,0)) : '–'}</td>
-                    <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">{pfixPerEmp.reduce((s,r)=>s+r.istHoliday,0) > 0 ? fmtCHF(pfixPerEmp.reduce((s,r)=>s+r.istHoliday,0)) : '–'}</td>
-                    <td className="px-3 py-2" />
-                    <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.planTotalVar, 0))}</td>
-                    <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.istTotalVar, 0))}</td>
-                    <td className="px-3 py-2" />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </section>
-        )}
-
-        {/* ── Flex-Abweichungsanalyse Plan vs. Ist ───────────────────────────── */}
-        {pfixAbw.days.length > 0 && (() => {
+        {/* ── Einheitliche Flex-Auswertung ───────────────────────────────────── */}
+        {(pfixAbw.days.length > 0 || pfixPerEmp.length > 0) && (() => {
           const { days, weeks, monthPlan, monthIst, monthDiff } = pfixAbw;
-          const monthPct = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : null;
+          const monthPct    = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : null;
           const avgWeekDiff = weeks.length > 0 ? monthDiff / weeks.length : 0;
           const avgDayDiff  = days.length  > 0 ? monthDiff / days.length  : 0;
+          const monthStatus = ampelStatus(monthDiff, monthPlan);
+          const mA          = AMPEL[monthStatus];
 
           const fmtDiff = (v: number) => {
             const s = fmtCHF(Math.abs(v));
-            if (v > 0.005)  return `+${s}`;
-            if (v < -0.005) return `−${s}`;
-            return s;
+            return v > 0.005 ? `+${s}` : v < -0.005 ? `−${s}` : s;
           };
           const fmtPct = (v: number | null) => {
             if (v === null) return '–';
@@ -2218,48 +2281,63 @@ export default function PersonalFixPage() {
             return v > 0.05 ? `+${s}` : v < -0.05 ? `−${s}` : s;
           };
 
-          // Overall month Ampel (drives header border color)
-          const monthStatus = ampelStatus(monthDiff, monthPlan);
-          const mA = AMPEL[monthStatus];
+          const allDates = days.map(d => d.date);
+          const monthLabel = getMonthLabel(selectedYear, selectedMonth);
 
-          const tableRows: { period: string; plan: number; ist: number; diff: number; diffPct: number | null }[] =
-            abwMode === 'month'
-              ? [{ period: getMonthLabel(selectedYear, selectedMonth), plan: monthPlan, ist: monthIst, diff: monthDiff, diffPct: monthPct }]
-              : abwMode === 'week'
-                ? weeks.map(w => ({ period: w.period, plan: w.planTotal, ist: w.istTotal, diff: w.diff, diffPct: w.diffPct }))
-                : days.map(d => ({ period: fmtDate(d.date), plan: d.planTotal, ist: d.istTotal, diff: d.diff, diffPct: d.diffPct }));
+          type PeriodRow = { period: string; plan: number; ist: number; diff: number; diffPct: number | null; dates: string[] };
+          const tableRows: PeriodRow[] =
+            abwMode === 'year'  ? [{ period: monthLabel, plan: monthPlan, ist: monthIst, diff: monthDiff, diffPct: monthPct, dates: allDates }] :
+            abwMode === 'month' ? [{ period: monthLabel, plan: monthPlan, ist: monthIst, diff: monthDiff, diffPct: monthPct, dates: allDates }] :
+            abwMode === 'week'  ? weeks.map(w => ({ period: w.period, plan: w.planTotal, ist: w.istTotal, diff: w.diff, diffPct: w.diffPct, dates: w.dates })) :
+            days.map(d => ({ period: fmtDate(d.date), plan: d.planTotal, ist: d.istTotal, diff: d.diff, diffPct: d.diffPct, dates: [d.date] }));
 
           const kpiChips = [
-            { label: 'Abweichung Monat', val: monthDiff, plan: monthPlan,                                          pct: monthPct },
-            { label: 'Ø Abw./Woche',     val: avgWeekDiff, plan: weeks.length > 0 ? monthPlan / weeks.length : 0, pct: weeks.length > 0 ? (avgWeekDiff / (monthPlan / weeks.length)) * 100 : null },
-            { label: 'Ø Abw./Tag',        val: avgDayDiff,  plan: days.length  > 0 ? monthPlan / days.length  : 0, pct: days.length  > 0 ? (avgDayDiff  / (monthPlan / days.length))  * 100 : null },
+            { label: 'Abweichung Monat', val: monthDiff,   plan: monthPlan,                                          pct: monthPct },
+            { label: 'Ø Abw./Woche',     val: avgWeekDiff, plan: weeks.length > 0 ? monthPlan / weeks.length : 0,   pct: weeks.length > 0 ? (avgWeekDiff / (monthPlan / weeks.length)) * 100 : null },
+            { label: 'Ø Abw./Tag',        val: avgDayDiff,  plan: days.length  > 0 ? monthPlan / days.length  : 0,  pct: days.length  > 0 ? (avgDayDiff  / (monthPlan / days.length))  * 100 : null },
           ];
+
+          const empTotal = pfixPerEmp.reduce((s, r) => s + r.planTotalVar, 0);
+          const empIst   = pfixPerEmp.reduce((s, r) => s + r.istTotalVar, 0);
+          if (monthPlan > 0 && Math.abs(empTotal - monthPlan) > 0.10)
+            console.error(`[FLEX] plan cross-check: periodTable=${monthPlan.toFixed(2)} empTable=${empTotal.toFixed(2)}`);
+          if (monthIst > 0 && Math.abs(empIst - monthIst) > 0.10)
+            console.error(`[FLEX] ist cross-check: periodTable=${monthIst.toFixed(2)} empTable=${empIst.toFixed(2)}`);
 
           return (
             <section className={cn('rounded-xl border-2 bg-card shadow-sm overflow-hidden', mA.border)}>
-              {/* Header */}
+              {/* ── Header ────────────────────────────────────────────────────── */}
               <div className={cn('flex flex-wrap items-center gap-2 px-4 py-3 border-b border-border', mA.bg || 'bg-amber-50/60 dark:bg-amber-950/20')}>
                 <TrendingDown className="h-4 w-4 text-amber-600 dark:text-amber-400" />
                 <span className="text-sm font-bold text-amber-900 dark:text-amber-200">
-                  Flex-Abweichungsanalyse — Plan vs. Ist (Total Flex)
+                  Flex-Auswertung — Plan vs. Ist
                 </span>
-                {/* Monat-Ampel im Header */}
                 <div className={cn('flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold ml-1', mA.border, mA.bg, mA.text)}>
                   <span className={cn('inline-block w-2 h-2 rounded-full shrink-0', mA.dot)} />
                   {mA.label}
                 </div>
+                <div className="flex items-center gap-1 ml-auto">
+                  <Button size="sm" variant="ghost" onClick={() => handleVarExport('plan')}
+                    className="h-7 px-2 text-xs gap-1 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/30"
+                    title="Plan-Kostenvergleich exportieren">
+                    <Download className="h-3 w-3" />Plan
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => handleVarExport('ist')}
+                    className="h-7 px-2 text-xs gap-1 text-orange-600 hover:bg-orange-50 hover:text-orange-700 dark:text-orange-400 dark:hover:bg-orange-950/30"
+                    title="Ist-Kostenvergleich exportieren">
+                    <Download className="h-3 w-3" />Ist
+                  </Button>
+                </div>
                 {proRataDay !== null && (
-                  <Badge variant="secondary" className="text-xs ml-auto">
-                    bis {proRataDay}. · {Math.round(proRataFactor * 100)} %
-                  </Badge>
+                  <Badge variant="secondary" className="text-xs">bis {proRataDay}. · {Math.round(proRataFactor * 100)} %</Badge>
                 )}
               </div>
 
-              {/* KPI Chips */}
+              {/* ── KPI Chips ─────────────────────────────────────────────────── */}
               <div className="flex flex-wrap gap-3 px-4 py-3 border-b border-border bg-muted/10">
                 {kpiChips.map(({ label, val, plan: chipPlan, pct }) => {
-                  const st  = ampelStatus(val, chipPlan);
-                  const a   = AMPEL[st];
+                  const st = ampelStatus(val, chipPlan);
+                  const a  = AMPEL[st];
                   return (
                     <div key={label} className={cn('flex flex-col items-start rounded-lg border px-3 py-2 min-w-[148px]', a.border, a.bg || 'bg-background')}>
                       <div className="flex items-center gap-1.5 w-full">
@@ -2268,9 +2346,7 @@ export default function PersonalFixPage() {
                       </div>
                       <span className={cn('text-base font-bold font-mono tabular-nums mt-0.5', a.text)}>{fmtDiff(val)}</span>
                       <div className="flex items-center gap-2 mt-0.5">
-                        {pct !== null && (
-                          <span className={cn('text-xs font-mono tabular-nums', a.text)}>{fmtPct(pct)}</span>
-                        )}
+                        {pct !== null && <span className={cn('text-xs font-mono tabular-nums', a.text)}>{fmtPct(pct)}</span>}
                         <span className={cn('text-[9px] font-semibold uppercase', a.text)}>{a.label}</span>
                       </div>
                     </div>
@@ -2286,17 +2362,15 @@ export default function PersonalFixPage() {
                 </div>
               </div>
 
-              {/* Toggle + Legende */}
+              {/* ── Toggle + Legende ──────────────────────────────────────────── */}
               <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 border-b border-border bg-muted/5">
                 <span className="text-xs text-muted-foreground font-medium">Aggregation:</span>
                 <div className="flex gap-1 rounded-lg bg-muted p-0.5">
-                  {(['day', 'week', 'month'] as AbwMode[]).map(m => (
+                  {(['day', 'week', 'month', 'year'] as AbwMode[]).map(m => (
                     <button key={m} onClick={() => setAbwMode(m)}
                       className={cn('rounded px-3 py-1 text-xs font-medium transition-colors',
-                        abwMode === m
-                          ? 'bg-background shadow text-foreground'
-                          : 'text-muted-foreground hover:text-foreground')}>
-                      {m === 'day' ? 'Tag' : m === 'week' ? 'Woche' : 'Monat'}
+                        abwMode === m ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground')}>
+                      {m === 'day' ? 'Tag' : m === 'week' ? 'Woche' : m === 'month' ? 'Monat' : 'Jahr'}
                     </button>
                   ))}
                 </div>
@@ -2304,59 +2378,161 @@ export default function PersonalFixPage() {
                   <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> Im Plan</span>
                   <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-amber-400" /> Leicht über Plan (&le;5 %)</span>
                   <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-red-500" /> Über Plan (&gt;5 %)</span>
+                  <span className="text-[10px] italic text-muted-foreground/60 ml-2">Zeile anklicken → Details</span>
                 </div>
               </div>
 
-              {/* Tabelle */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
-                      <th className="text-center px-3 py-2 font-medium w-8">●</th>
-                      <th className="text-left px-4 py-2 font-medium">Zeitraum</th>
-                      <th className="text-right px-4 py-2 font-medium text-blue-600">Total Flex Plan</th>
-                      <th className="text-right px-4 py-2 font-medium text-orange-600">Total Flex Ist</th>
-                      <th className="text-right px-4 py-2 font-medium">Diff. CHF</th>
-                      <th className="text-right px-4 py-2 font-medium">Diff. %</th>
-                      <th className="text-left px-3 py-2 font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {tableRows.map((row, i) => {
-                      const st = ampelStatus(row.diff, row.plan);
-                      const a  = AMPEL[st];
-                      return (
-                        <tr key={i} className={cn('hover:bg-muted/20', a.bg)}>
-                          <td className="px-3 py-2 text-center">
-                            <span className={cn('inline-block w-2.5 h-2.5 rounded-full', a.dot)} />
-                          </td>
-                          <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{row.period}</td>
-                          <td className="px-4 py-2 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(row.plan)}</td>
-                          <td className="px-4 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(row.ist)}</td>
-                          <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold', a.text)}>{fmtDiff(row.diff)}</td>
-                          <td className={cn('px-4 py-2 text-right font-mono tabular-nums text-xs', a.text)}>{fmtPct(row.diffPct)}</td>
-                          <td className={cn('px-3 py-2 text-xs font-medium', a.text)}>{a.label}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  {tableRows.length > 1 && (
-                    <tfoot>
-                      <tr className={cn('border-t-2 border-border', mA.bg || 'bg-muted/20')}>
-                        <td className="px-3 py-2.5 text-center">
-                          <span className={cn('inline-block w-2.5 h-2.5 rounded-full', mA.dot)} />
-                        </td>
-                        <td className="px-4 py-2.5 font-bold text-xs">Total</td>
-                        <td className="px-4 py-2.5 text-right font-mono font-bold text-blue-700 dark:text-blue-400">{fmtCHF(monthPlan)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono font-bold text-orange-700 dark:text-orange-400">{fmtCHF(monthIst)}</td>
-                        <td className={cn('px-4 py-2.5 text-right font-mono font-bold', mA.text)}>{fmtDiff(monthDiff)}</td>
-                        <td className={cn('px-4 py-2.5 text-right font-mono text-xs', mA.text)}>{fmtPct(monthPct)}</td>
-                        <td className={cn('px-3 py-2.5 text-xs font-semibold', mA.text)}>{mA.label}</td>
+              {/* ── Periodenübersicht (clickable rows → FlexPeriodPopup) ──────── */}
+              {tableRows.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
+                        <th className="text-center px-3 py-2 font-medium w-8">●</th>
+                        <th className="text-left px-4 py-2 font-medium">Zeitraum</th>
+                        <th className="text-right px-4 py-2 font-medium text-blue-600">Total Flex Plan</th>
+                        <th className="text-right px-4 py-2 font-medium text-orange-600">Total Flex Ist</th>
+                        <th className="text-right px-4 py-2 font-medium">Diff. CHF</th>
+                        <th className="text-right px-4 py-2 font-medium">Diff. %</th>
+                        <th className="text-left px-3 py-2 font-medium">Status</th>
                       </tr>
-                    </tfoot>
-                  )}
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {tableRows.map((row, i) => {
+                        const st = ampelStatus(row.diff, row.plan);
+                        const a  = AMPEL[st];
+                        return (
+                          <tr
+                            key={i}
+                            className={cn('hover:bg-muted/30 cursor-pointer transition-colors', a.bg)}
+                            onClick={() => setFlexPeriodPopup({
+                              label:     row.period,
+                              dates:     row.dates,
+                              planTotal: row.plan,
+                              istTotal:  row.ist,
+                              year:      selectedYear,
+                              month:     selectedMonth,
+                            })}
+                            title="Klicken für MA-Aufschlüsselung"
+                          >
+                            <td className="px-3 py-2 text-center">
+                              <span className={cn('inline-block w-2.5 h-2.5 rounded-full', a.dot)} />
+                            </td>
+                            <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{row.period}</td>
+                            <td className="px-4 py-2 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(row.plan)}</td>
+                            <td className="px-4 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(row.ist)}</td>
+                            <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold', a.text)}>{fmtDiff(row.diff)}</td>
+                            <td className={cn('px-4 py-2 text-right font-mono tabular-nums text-xs', a.text)}>{fmtPct(row.diffPct)}</td>
+                            <td className={cn('px-3 py-2 text-xs font-medium', a.text)}>{a.label}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    {tableRows.length > 1 && (
+                      <tfoot>
+                        <tr className={cn('border-t-2 border-border', mA.bg || 'bg-muted/20')}>
+                          <td className="px-3 py-2.5 text-center"><span className={cn('inline-block w-2.5 h-2.5 rounded-full', mA.dot)} /></td>
+                          <td className="px-4 py-2.5 font-bold text-xs">Total</td>
+                          <td className="px-4 py-2.5 text-right font-mono font-bold text-blue-700 dark:text-blue-400">{fmtCHF(monthPlan)}</td>
+                          <td className="px-4 py-2.5 text-right font-mono font-bold text-orange-700 dark:text-orange-400">{fmtCHF(monthIst)}</td>
+                          <td className={cn('px-4 py-2.5 text-right font-mono font-bold', mA.text)}>{fmtDiff(monthDiff)}</td>
+                          <td className={cn('px-4 py-2.5 text-right font-mono text-xs', mA.text)}>{fmtPct(monthPct)}</td>
+                          <td className={cn('px-3 py-2.5 text-xs font-semibold', mA.text)}>{mA.label}</td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              )}
+
+              {/* ── Mitarbeiter-Vergleichstabelle ─────────────────────────────── */}
+              {pfixPerEmp.length > 0 && (
+                <>
+                  <div className="flex items-center gap-2 px-4 py-2.5 border-t border-border bg-muted/20">
+                    <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Flex Kosten pro Mitarbeiter
+                      {proRataDay !== null && ` — bis ${proRataDay}.`}
+                    </span>
+                    <Badge variant="secondary" className="text-xs ml-auto">{pfixPerEmp.length} MA</Badge>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border-t border-border">
+                      <thead>
+                        <tr className="bg-muted/30 border-b border-border text-muted-foreground">
+                          <th className="px-3 py-2 text-left font-medium">Name</th>
+                          <th className="px-3 py-2 text-center font-medium">Abt.</th>
+                          <th className="px-3 py-2 text-right font-medium text-blue-600">Flex Arbeit Plan</th>
+                          <th className="px-3 py-2 text-right font-medium text-orange-600">Flex Arbeit Ist</th>
+                          <th className="px-3 py-2 text-right font-medium">Diff. Arbeit</th>
+                          <th className="px-3 py-2 text-right font-medium text-blue-500">Ferien Plan</th>
+                          <th className="px-3 py-2 text-right font-medium text-orange-500">Ferien Ist</th>
+                          <th className="px-3 py-2 text-right font-medium">Diff. Ferien</th>
+                          <th className="px-3 py-2 text-right font-medium text-blue-700">Total Flex Plan</th>
+                          <th className="px-3 py-2 text-right font-medium text-orange-700">Total Flex Ist</th>
+                          <th className="px-3 py-2 text-right font-medium">Diff. Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pfixPerEmp.map((row, i) => {
+                          const dc = (v: number) => v === 0 ? 'text-muted-foreground' : v > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
+                          const openBreakdown = (field: BreakdownField) => setBreakdown({
+                            empId:       row.id,
+                            empName:     row.name,
+                            field,
+                            hourlyWage:  row.hourlyWage,
+                            weeklyHours: row.weeklyHours,
+                            year:        selectedYear,
+                            month:       selectedMonth,
+                            cutoffDay:   proRataDay,
+                            factor:      proRataDay !== null ? proRataFactor : 1,
+                          });
+                          const clickCell = (field: BreakdownField, amount: number, colorClass: string, isSemibold = false) => (
+                            <td className="px-3 py-1.5 text-right">
+                              {amount > 0
+                                ? <button onClick={() => openBreakdown(field)}
+                                    className={cn('font-mono underline underline-offset-2 decoration-dotted hover:opacity-80 transition-opacity cursor-pointer', colorClass, isSemibold && 'font-semibold')}
+                                    title="Tagesdetails anzeigen">
+                                    {fmtCHF(amount)}
+                                  </button>
+                                : <span className="text-muted-foreground font-mono">–</span>}
+                            </td>
+                          );
+                          return (
+                            <tr key={row.id} className={i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'}>
+                              <td className="px-3 py-1.5 font-medium">{row.name}</td>
+                              <td className="px-3 py-1.5 text-center text-muted-foreground capitalize">{row.dept}</td>
+                              {clickCell('planWork',     row.planWork,     'text-blue-700 dark:text-blue-400')}
+                              {clickCell('istWork',      row.istWork,      'text-orange-700 dark:text-orange-400')}
+                              <td className={cn('px-3 py-1.5 text-right font-mono', dc(row.diffWork))}>{row.diffWork === 0 ? '–' : `${row.diffWork > 0 ? '+' : ''}${fmtCHF(row.diffWork)}`}</td>
+                              {clickCell('planHoliday',  row.planHoliday,  'text-blue-500 dark:text-blue-400')}
+                              {clickCell('istHoliday',   row.istHoliday,   'text-orange-500 dark:text-orange-400')}
+                              <td className={cn('px-3 py-1.5 text-right font-mono', dc(row.diffHoliday))}>{row.diffHoliday === 0 ? '–' : `${row.diffHoliday > 0 ? '+' : ''}${fmtCHF(row.diffHoliday)}`}</td>
+                              {clickCell('planTotalVar', row.planTotalVar, 'text-blue-700 dark:text-blue-400', true)}
+                              {clickCell('istTotalVar',  row.istTotalVar,  'text-orange-700 dark:text-orange-400', true)}
+                              <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', dc(row.diffTotalVar))}>{row.diffTotalVar === 0 ? '–' : `${row.diffTotalVar > 0 ? '+' : ''}${fmtCHF(row.diffTotalVar)}`}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-border bg-muted/30 font-bold text-xs">
+                          <td className="px-3 py-2" colSpan={2}>Total</td>
+                          <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.planWork, 0))}</td>
+                          <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.istWork, 0))}</td>
+                          <td className="px-3 py-2" />
+                          <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">{pfixPerEmp.reduce((s,r)=>s+r.planHoliday,0) > 0 ? fmtCHF(pfixPerEmp.reduce((s,r)=>s+r.planHoliday,0)) : '–'}</td>
+                          <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">{pfixPerEmp.reduce((s,r)=>s+r.istHoliday,0) > 0 ? fmtCHF(pfixPerEmp.reduce((s,r)=>s+r.istHoliday,0)) : '–'}</td>
+                          <td className="px-3 py-2" />
+                          <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.planTotalVar, 0))}</td>
+                          <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.istTotalVar, 0))}</td>
+                          <td className="px-3 py-2" />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </>
+              )}
             </section>
           );
         })()}
@@ -2375,22 +2551,35 @@ export default function PersonalFixPage() {
 
         {/* ── FIX-Tabellen nach Abteilung ──────────────────────────────────── */}
         {Object.entries(byDept).map(([dept, rows]) => {
-          const deptTotal = rows.reduce((s, r) => s + r.cost, 0);
-          const deptBase  = rows.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
+          const deptTotal   = rows.reduce((s, r) => s + r.cost, 0);
+          const deptBase    = rows.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
+          const isCollapsed = expandedFixDepts.has(dept);
+          const toggleDept  = () => setExpandedFixDepts(prev => {
+            const next = new Set(prev);
+            if (next.has(dept)) next.delete(dept); else next.add(dept);
+            return next;
+          });
           return (
             <section key={dept} className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+              <button
+                onClick={toggleDept}
+                className="w-full flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+                aria-expanded={!isCollapsed}
+              >
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   {DEPT_ICON[dept]}
                   {DEPT_LABEL[dept] ?? dept} — FIX
                   <Badge variant="secondary" className="text-xs">{rows.length}</Badge>
+                  {isCollapsed && <span className="text-[10px] font-normal text-muted-foreground ml-1">(eingeklappt)</span>}
                 </div>
                 <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
                   <span className="whitespace-nowrap">Basis: <strong className="text-foreground font-mono">{fmtCHF(deptBase)}/Mt</strong></span>
                   <span className="whitespace-nowrap">FIX: <strong className="text-foreground font-mono">{fmtCHF(deptTotal)}/Mt</strong></span>
+                  <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', isCollapsed && '-rotate-90')} />
                 </div>
-              </div>
+              </button>
 
+              {!isCollapsed && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -2471,6 +2660,7 @@ export default function PersonalFixPage() {
                   </tfoot>
                 </table>
               </div>
+              )}
             </section>
           );
         })}
@@ -2489,354 +2679,6 @@ export default function PersonalFixPage() {
               <span className="text-muted-foreground">Jahr: <strong className="font-mono text-foreground">{fmtCHF(totalFixAnnual)}</strong></span>
             </div>
           </div>
-        )}
-
-        {/* ── Variable Mitarbeiter ─────────────────────────────────────────── */}
-        {variableEmployees.length > 0 && (
-          <section className="rounded-xl border border-orange-200 dark:border-orange-800 bg-card shadow-sm overflow-hidden">
-
-            {/* Abschnitts-Header + Toggle */}
-            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-orange-200 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20">
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-orange-600" />
-                <span className="text-sm font-semibold">Flex Mitarbeiter — Stunden-Hochrechnung</span>
-                <Badge variant="outline" className="text-xs">{variableEmployees.length}</Badge>
-              </div>
-
-              {/* Export-Buttons Plan / Ist */}
-              <div className="flex items-center gap-1 border-r border-orange-200 dark:border-orange-800 pr-2 mr-1">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => handleVarExport('plan')}
-                  className="h-7 px-2 text-xs gap-1 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/30"
-                  title="Plan-Kostenvergleich exportieren"
-                >
-                  <Download className="h-3 w-3" />Plan
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => handleVarExport('ist')}
-                  className="h-7 px-2 text-xs gap-1 text-orange-600 hover:bg-orange-50 hover:text-orange-700 dark:text-orange-400 dark:hover:bg-orange-950/30"
-                  title="Ist-Kostenvergleich exportieren"
-                >
-                  <Download className="h-3 w-3" />Ist
-                </Button>
-              </div>
-
-              {/* Plan / Ist / Manuell Schalter */}
-              <div className="flex items-center gap-1 bg-muted/60 rounded-lg p-0.5">
-                {(['plan', 'ist', 'manual'] as VarView[]).map(v => {
-                  const labels = { plan: 'Plan', ist: 'Ist', manual: 'Manuell' };
-                  const active = varView === v;
-                  const unavail = (v === 'plan' && !planHasDaten) || (v === 'ist' && !istHasDaten);
-                  return (
-                    <button
-                      key={v}
-                      onClick={() => setVarView(v)}
-                      className={cn(
-                        'px-3 py-1 text-xs font-semibold rounded-md transition-colors',
-                        active
-                          ? 'bg-white dark:bg-slate-800 shadow-sm text-foreground'
-                          : 'text-muted-foreground hover:text-foreground',
-                        unavail && !active && 'opacity-40',
-                      )}
-                    >
-                      {labels[v]}
-                      {unavail && !active && <span className="ml-1 text-[10px]">–</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* ── Restbudget Schnellinfo ─────────────────────────────────── */}
-            {personnelBudget > 0 && (
-              <div className={cn(
-                'px-4 py-2 border-b flex flex-wrap items-center justify-between gap-3 text-xs',
-                pfixIstVarOverrun
-                  ? 'border-red-200 dark:border-red-800 bg-red-50/40 dark:bg-red-950/15'
-                  : pfixIstVarDelta < pfixAvailableVar * 0.15
-                    ? 'border-yellow-200 dark:border-yellow-800 bg-yellow-50/40 dark:bg-yellow-950/15'
-                    : 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/15'
-              )}>
-                {/* Left: status text */}
-                <div className="flex items-center gap-2 flex-wrap">
-                  <div className="flex gap-1 items-center shrink-0">
-                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', pfixIstVarOverrun ? 'bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.6)]' : 'bg-red-200 dark:bg-red-900')} />
-                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', !pfixIstVarOverrun && pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'bg-yellow-500 shadow-[0_0_4px_rgba(234,179,8,0.6)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
-                    <div className={cn('h-2.5 w-2.5 rounded-full transition-all', !pfixIstVarOverrun && pfixIstVarDelta >= pfixAvailableVar * 0.15 ? 'bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.6)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
-                  </div>
-                  <span className="text-muted-foreground">Restbudget Flex (Ist):</span>
-                  <span className={cn('font-mono font-bold',
-                    pfixIstVarOverrun ? 'text-red-600 dark:text-red-400'
-                      : pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'text-yellow-600 dark:text-yellow-500'
-                      : 'text-emerald-600 dark:text-emerald-400'
-                  )}>
-                    {pfixIstVarOverrun
-                      ? `⚠ ${fmtCHF(Math.abs(pfixIstVarDelta))} überschritten`
-                      : `${fmtCHF(pfixIstVarDelta)} noch verfügbar`}
-                  </span>
-                  {avgHourlyWage > 0 && !pfixIstVarOverrun && maxVarHours > 0 && (
-                    <span className="text-muted-foreground">
-                      ≈ <strong className="text-foreground font-mono">
-                        {Math.max(0, maxVarHours - Math.round(totalVarHours))} h
-                      </strong> noch planbar
-                    </span>
-                  )}
-                  {pfixIstVarOverrun && avgHourlyWage > 0 && (
-                    <span className="text-red-600 dark:text-red-400">
-                      → ca. <strong className="font-mono">{Math.ceil(Math.abs(pfixIstVarDelta) / avgHourlyWage)} h</strong> reduzieren
-                    </span>
-                  )}
-                </div>
-                {/* Right: progress bar */}
-                {pfixAvailableVar > 0 && (
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-muted-foreground tabular-nums">
-                      {Math.min(100, Math.round((pfix.active.istTotalVar / pfixAvailableVar) * 100))} %
-                    </span>
-                    <div className="w-28 h-2 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className={cn('h-full rounded-full transition-all duration-300',
-                          pfixIstVarOverrun ? 'bg-red-500' : pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'bg-yellow-500' : 'bg-emerald-500'
-                        )}
-                        style={{ width: `${Math.min(100, (pfix.active.istTotalVar / pfixAvailableVar) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Quellenangabe */}
-            <div className="px-4 py-2 bg-orange-50/30 dark:bg-orange-950/10 border-b border-orange-100 dark:border-orange-900 text-xs text-orange-700 dark:text-orange-300 flex items-center gap-1.5">
-              <BarChart2 className="h-3.5 w-3.5 shrink-0" />
-              <strong>{varViewLabel[varView]}</strong>
-              {varView === 'plan' && !planHasDaten && (
-                <span className="ml-2 text-muted-foreground italic">— Keine Plan-Stunden für diesen Monat im Dienstplan gefunden</span>
-              )}
-              {varView === 'ist' && !istHasDaten && (
-                <span className="ml-2 text-muted-foreground italic">— Keine Ist-Stunden für {selectedYear}-{String(selectedMonth).padStart(2,'0')} im Dienstplan vorhanden</span>
-              )}
-              {varView === 'ist' && istHasDaten && (
-                <span className="ml-2 text-xs text-muted-foreground">
-                  Ist {selectedYear}-{String(selectedMonth).padStart(2,'0')}:&nbsp;
-                  {Object.keys(istHours).length} Mitarbeiter&nbsp;/&nbsp;
-                  {Math.round(Object.values(istHours).reduce((s,h) => s+h, 0) * 10) / 10} h&nbsp;
-                  <span className="opacity-60">(Dienstplan + Supabase)</span>
-                </span>
-              )}
-              {varView === 'manual' && (
-                <span className="ml-2 text-muted-foreground">— Klicke auf eine Stundenzahl zum Bearbeiten</span>
-              )}
-            </div>
-
-            {/* Tabellen pro Abteilung */}
-            {(['service', 'küche'] as const).map(dept => {
-              const deptEmps = varByDept[dept];
-              if (!deptEmps || deptEmps.length === 0) return null;
-              const deptHours = deptEmps.reduce((s, e) => {
-                if (varView === 'manual' && (varPricingMode[e.id] ?? 'hourly') === 'daily') return s;
-                return s + getVarHoursFor(e.id);
-              }, 0);
-              const deptCost  = deptEmps.reduce((s, e) => s + getVarMonthlyCostFor(e.id, e), 0);
-
-              return (
-                <div key={dept} className="border-b border-orange-100 dark:border-orange-900 last:border-b-0">
-                  {/* Abteilungs-Unterüberschrift */}
-                  <div className="flex items-center justify-between px-4 py-2 bg-muted/10 border-b border-orange-100 dark:border-orange-900">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      {DEPT_ICON[dept]}
-                      {DEPT_LABEL[dept]}
-                      <Badge variant="outline" className="text-xs normal-case font-normal">{deptEmps.length}</Badge>
-                    </div>
-                    {deptHours > 0 && (
-                      <span className="text-xs text-muted-foreground">
-                        <strong className="font-mono text-foreground">{Math.round(deptHours * 10) / 10} h</strong>
-                        {' → '}
-                        <strong className="font-mono text-orange-700 dark:text-orange-400">{fmtCHF(deptCost)}</strong>
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
-                          <th className="text-left px-4 py-2 font-medium">Name</th>
-                          <th className="text-left px-4 py-2 font-medium">Anstellung</th>
-                          {varView === 'manual'
-                            ? <th className="text-center px-3 py-2 font-medium">Modus</th>
-                            : <th className="text-right px-4 py-2 font-medium">Stundenlohn</th>}
-                          <th className="text-right px-4 py-2 font-medium">
-                            {varView === 'manual' ? 'Kalkulation' : varView === 'plan' ? 'Plan-Std./Mt' : 'Ist-Std./Mt'}
-                          </th>
-                          <th className="text-right px-4 py-2 font-medium">Kosten/Mt</th>
-                          <th className="text-right px-4 py-2 font-medium">Kosten/Jahr</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {deptEmps.map(emp => {
-                          const mode      = varPricingMode[emp.id] ?? 'hourly';
-                          const isDaily   = varView === 'manual' && mode === 'daily';
-                          const hours     = getVarHoursFor(emp.id);
-                          const projected = getVarMonthlyCostFor(emp.id, emp);
-                          const weekly    = varWeekly[emp.id] ?? {};
-                          const dr        = varDayRate[emp.id] ?? {} as DayRateData;
-                          const hasManualOverride = (varHours[emp.id] ?? 0) > 0;
-                          const hasWeeklyBaseline = (weekly.hours ?? 0) > 0;
-                          const isAutoCalcH = varView === 'manual' && !isDaily && !hasManualOverride && hasWeeklyBaseline;
-                          // Tagessatz: resolved monthly days
-                          const autoMonthlyDays = (dr.daysPerWeek ?? 0) > 0 && !(dr.daysPerMonth ?? 0)
-                            ? Math.round(dr.daysPerWeek! * WEEKS_PER_MONTH * 10) / 10 : 0;
-                          const resolvedDays = (dr.daysPerMonth ?? 0) > 0 ? dr.daysPerMonth! : autoMonthlyDays;
-                          return (
-                            <tr key={emp.id} className="hover:bg-muted/30 transition-colors">
-                              <td className="px-4 py-2.5 font-medium">{emp.name}</td>
-                              <td className="px-4 py-2.5">
-                                <Badge variant="outline" className="text-xs">{EMP_TYPE_LABEL[emp.employmentType]}</Badge>
-                              </td>
-
-                              {/* ── Modus-Spalte (manual) oder Stundenlohn (plan/ist) ── */}
-                              {varView === 'manual' ? (
-                                <td className="px-3 py-2.5 text-center">
-                                  <button
-                                    onClick={() => handlePricingModeToggle(emp.id)}
-                                    title={mode === 'hourly' ? 'Umschalten auf Tagessatz' : 'Umschalten auf Stundenlohn'}
-                                    className={cn(
-                                      'text-[10px] font-bold px-2 py-1 rounded border transition-colors',
-                                      mode === 'hourly'
-                                        ? 'border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 dark:border-blue-700 dark:text-blue-300 dark:bg-blue-950/40'
-                                        : 'border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 dark:border-emerald-700 dark:text-emerald-300 dark:bg-emerald-950/40'
-                                    )}
-                                  >
-                                    {mode === 'hourly' ? 'SL' : 'TS'}
-                                  </button>
-                                </td>
-                              ) : (
-                                <td className={cn('px-4 py-2.5 text-right', saving === emp.id && 'opacity-50')}>
-                                  {isAdmin ? (
-                                    <InlineHourlyWageEditor empId={emp.id} value={emp.hourlyWage} onSaved={handleHourlyWageSaved} />
-                                  ) : (
-                                    <span className="font-mono text-sm text-muted-foreground">
-                                      {emp.hourlyWage ? `${fmtCHFDec(emp.hourlyWage)}/h` : '–'}
-                                    </span>
-                                  )}
-                                </td>
-                              )}
-
-                              {/* ── Kalkulations-Spalte ── */}
-                              <td className="px-4 py-2.5 text-right">
-                                {varView === 'manual' ? (
-                                  isDaily ? (
-                                    /* ── Tagessatz-Modus ── */
-                                    <div className="flex items-center gap-1.5 justify-end flex-wrap">
-                                      <InlineWeeklyEditor
-                                        value={dr.ratePerDay || undefined}
-                                        unit="CHF/T"
-                                        max={5000}
-                                        onSave={val => handleDayRateChange(emp.id, 'ratePerDay', val)}
-                                      />
-                                      <span className="text-muted-foreground text-xs">·</span>
-                                      <InlineWeeklyEditor
-                                        value={dr.daysPerWeek || undefined}
-                                        unit="T/Wo"
-                                        max={7}
-                                        onSave={val => handleDayRateChange(emp.id, 'daysPerWeek', val ?? 0)}
-                                      />
-                                      <span className="text-muted-foreground text-[10px]">/</span>
-                                      <InlineWeeklyEditor
-                                        value={dr.daysPerMonth || undefined}
-                                        unit="T/Mt"
-                                        max={31}
-                                        onSave={val => handleDayRateChange(emp.id, 'daysPerMonth', val ?? 0)}
-                                      />
-                                      {resolvedDays > 0 && (
-                                        <span className="text-[9px] text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                                          → {resolvedDays}T/Mt{autoMonthlyDays > 0 && dr.daysPerMonth === undefined ? ' (auto)' : ''}
-                                        </span>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    /* ── Stundenlohn-Modus ── */
-                                    <div className="flex items-center gap-1.5 justify-end flex-wrap">
-                                      <span className={cn(saving === emp.id && 'opacity-50')}>
-                                        {isAdmin
-                                          ? <InlineHourlyWageEditor empId={emp.id} value={emp.hourlyWage} onSaved={handleHourlyWageSaved} />
-                                          : <span className="font-mono text-xs text-muted-foreground">{emp.hourlyWage ? `${fmtCHFDec(emp.hourlyWage)}/h` : '–'}</span>}
-                                      </span>
-                                      <span className="text-muted-foreground text-xs">·</span>
-                                      <InlineWeeklyEditor value={weekly.hours} unit="h/Wo" max={60}
-                                        onSave={val => handleVarWeeklyChange(emp.id, 'hours', val)} />
-                                      <span className="text-muted-foreground text-[10px]">/</span>
-                                      <InlineWeeklyEditor value={weekly.days} unit="T/Wo" max={7}
-                                        onSave={val => handleVarWeeklyChange(emp.id, 'days', val)} />
-                                      <span className="text-muted-foreground text-xs">·</span>
-                                      <div className="flex flex-col items-end gap-0">
-                                        <InlineHoursEditor
-                                          empId={emp.id}
-                                          value={hasManualOverride ? (varHours[emp.id] ?? 0) : 0}
-                                          onChange={handleVarHoursChange}
-                                        />
-                                        {isAutoCalcH && (
-                                          <span className="text-[9px] text-violet-500 dark:text-violet-400 whitespace-nowrap">
-                                            ↑ auto {Math.round(hours * 10) / 10}h
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )
-                                ) : (
-                                  /* ── Plan/Ist-Ansicht ── */
-                                  <span className={cn('font-mono text-sm', hours > 0 ? '' : 'text-muted-foreground italic text-xs')}>
-                                    {hours > 0 ? `${Math.round(hours * 10) / 10} h` : '–'}
-                                  </span>
-                                )}
-                              </td>
-
-                              <td className="px-4 py-2.5 text-right font-semibold font-mono">
-                                {projected > 0
-                                  ? <span className="text-orange-700 dark:text-orange-400">{fmtCHF(projected)}</span>
-                                  : <span className="text-muted-foreground italic text-xs">–</span>}
-                              </td>
-                              <td className="px-4 py-2.5 text-right font-mono text-muted-foreground text-sm">
-                                {projected > 0 ? fmtCHF(projected * 12) : '–'}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                      {deptCost > 0 && (
-                        <tfoot>
-                          <tr className="bg-orange-50/40 dark:bg-orange-950/20 font-semibold border-t-2 border-orange-200 dark:border-orange-800">
-                            <td className="px-4 py-2.5 text-sm" colSpan={3}>Total {DEPT_LABEL[dept]} Flex</td>
-                            <td className="px-4 py-2.5 text-right font-mono text-sm text-muted-foreground">
-                              {deptHours > 0 ? `${Math.round(deptHours * 10) / 10} h` : '–'}
-                            </td>
-                            <td className="px-4 py-2.5 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(deptCost)}</td>
-                            <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(deptCost * 12)}</td>
-                          </tr>
-                        </tfoot>
-                      )}
-                    </table>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Gesamt-Variabel-Footer — Ist-Werte aus pfix.active (identisch mit KPI oben) */}
-            {totalVarHours > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-orange-100/40 dark:bg-orange-950/30 border-t-2 border-orange-300 dark:border-orange-700">
-                <span className="text-sm font-bold text-orange-800 dark:text-orange-300">Total Flex Ist · alle Abteilungen</span>
-                <div className="flex items-center gap-4 text-sm">
-                  <span className="text-muted-foreground font-mono">{Math.round(totalVarHours * 10) / 10} h</span>
-                  <span className="font-bold font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfix.active.istWork)}/Mt</span>
-                </div>
-              </div>
-            )}
-          </section>
         )}
 
         {/* ── Variable Budget-Planung ──────────────────────────────────────── */}
@@ -3046,6 +2888,11 @@ export default function PersonalFixPage() {
 
       </main>
 
+      <FlexPeriodPopup
+        target={flexPeriodPopup}
+        employees={variableEmployees.map(e => ({ id: e.id, name: e.name, hourlyWage: e.hourlyWage ?? 0, weeklyHours: e.weeklyHours ?? 42 }))}
+        onClose={() => setFlexPeriodPopup(null)}
+      />
       <FlexBreakdownModal target={breakdown} onClose={() => setBreakdown(null)} />
     </div>
   );

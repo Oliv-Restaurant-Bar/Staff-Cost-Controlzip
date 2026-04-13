@@ -1,0 +1,262 @@
+Bitte die Flex-Auswertung in Personal FIX jetzt zusammenführen und in eine einzige klare Analyse umbauen.
+
+Ziel:
+Ich möchte nicht mehrere getrennte, verwirrende Ansichten haben, sondern eine EINHEITLICHE Flex-Kosten-Auswertung mit denselben Zahlen, derselben Logik und denselben Drilldowns.
+
+Wichtig:
+Die bestehende "Flex Mitarbeiter — Stunden-Hochrechnung" und die "Flex-Abweichungsanalyse — Plan vs. Ist" sollen fachlich zusammengeführt werden.
+
+--------------------------------------------------
+1. Eine zentrale Flex-Auswertung bauen
+--------------------------------------------------
+
+Bitte eine Hauptansicht bauen, die per Button umschaltbar ist auf:
+- Tag
+- Woche
+- Monat
+- Jahr
+
+Diese Umschaltung soll genauso funktionieren wie aktuell bei "Flex-Abweichungsanalyse — Plan vs. Ist (Total Flex)".
+
+Die Auswertung soll in ALLEN Modi dieselbe zentrale Master-Logik verwenden.
+
+--------------------------------------------------
+2. Hauptübersicht oben
+--------------------------------------------------
+
+Oben eine kompakte KPI-/Summary-Zeile mit:
+
+- Total Flex Plan
+- Total Flex Ist
+- Differenz CHF
+- Differenz %
+- Status / Ampel
+
+Wichtig:
+Diese Kennzahlen müssen sich direkt auf den gewählten Aggregationsmodus beziehen:
+- bei Tag = exakt der ausgewählte Tag
+- bei Woche = die gewählte Woche
+- bei Monat = der Monat
+- bei Jahr = das Jahr
+
+Wenn z.B. "Tag" gewählt ist, darf die Kennzahl "Abweichung Tag CHF 588" nur genau diesen einen Tag meinen und muss nachvollziehbar sein.
+
+--------------------------------------------------
+3. Tages-/Wochen-/Monats-/Jahrestabelle
+--------------------------------------------------
+
+Darunter eine Tabelle mit Zeilen je nach Modus:
+
+- Tag → pro Kalendertag
+- Woche → pro Kalenderwoche
+- Monat → pro Monat
+- Jahr → Jahresgesamt
+
+Spalten:
+- Zeitraum
+- Total Flex Plan
+- Total Flex Ist
+- Diff CHF
+- Diff %
+- Status
+
+Wichtig:
+Wenn ich auf eine Zeile klicke, soll ein Popup aufgehen.
+
+--------------------------------------------------
+4. Popup bei Klick auf Tag/Woche/Monat/Jahr
+--------------------------------------------------
+
+Wenn ich z.B. auf einen Tag klicke, will ich die Aufschlüsselung pro Mitarbeiter sehen.
+
+Popup-Inhalt:
+
+oben:
+- Zeitraum
+- Total Flex Plan
+- Total Flex Ist
+- Diff CHF
+- Diff %
+
+darunter pro Mitarbeiter:
+- Mitarbeiter
+- Flex Arbeit Plan
+- Flex Arbeit Ist
+- Ferien Plan
+- Ferien Ist
+- Total Flex Plan
+- Total Flex Ist
+- Diff CHF
+
+Wichtig:
+Dieses Popup muss scrollbar und gut lesbar sein.
+
+--------------------------------------------------
+5. Mitarbeiteransicht in derselben Auswertung
+--------------------------------------------------
+
+Unter oder innerhalb derselben Flex-Auswertung soll die bestehende "Flex Mitarbeiter — Stunden-Hochrechnung" integriert bleiben.
+
+Aber:
+Wenn ich dort auf "Vergleich" klicke, soll dieselbe Tabelle erweitert werden und nicht eine zweite, separate Welt entstehen.
+
+Gewünscht:
+
+Standardansicht:
+- Mitarbeiter
+- Abteilung
+- Stundenlohn
+- Plan-Stunden oder Ist-Stunden
+- Kosten
+
+Vergleichsansicht:
+- Mitarbeiter
+- Abteilung
+- Flex Arbeit Plan
+- Flex Arbeit Ist
+- Diff Arbeit
+- Ferien Plan
+- Ferien Ist
+- Diff Ferien
+- Total Flex Plan
+- Total Flex Ist
+- Diff Total
+
+Wichtig:
+Diese Tabelle muss dieselben Totale liefern wie die Hauptübersicht oben.
+
+--------------------------------------------------
+6. Popup pro Mitarbeiter
+--------------------------------------------------
+
+Wenn ich in der Mitarbeitertabelle auf einen Wert oder den Mitarbeiternamen klicke, soll ein Popup aufgehen.
+
+Popup zeigt die Aufschlüsselung dieses Mitarbeiters im gewählten Zeitraum:
+- pro Tag
+- oder pro Woche / Monat / Jahr je nach gewählter Aggregation
+
+Spalten im Popup:
+- Datum / Zeitraum
+- Plan Stunden
+- Ist Stunden
+- Diff Stunden
+- Plan CHF
+- Ist CHF
+- Diff CHF
+- Ferien Plan CHF
+- Ferien Ist CHF
+- Total Flex Plan
+- Total Flex Ist
+- Diff Total
+
+Wichtig:
+Dieses Popup muss exakt dieselbe Logik verwenden wie die Hauptseite.
+
+--------------------------------------------------
+7. Fixlohn-Aufstellung aufklappbar machen
+--------------------------------------------------
+
+Die Fixlohn-Aufstellung pro Mitarbeiter soll aufklappbar sein.
+
+Gewünscht:
+- pro Abteilung ein aufklappbarer Block
+- beim Öffnen:
+  - Mitarbeitername
+  - Basis-Lohn
+  - inkl. 13. Lohn
+  - Fix-Kosten Monat
+  - Fix-Kosten Jahr
+  - bei Bedarf Pro-Rata-Hinweis
+
+Wenn möglich zusätzlich:
+- Klick auf Mitarbeiter öffnet kleines Detail-Popup zur Zusammensetzung
+
+--------------------------------------------------
+8. Logik und Begriffe vereinheitlichen
+--------------------------------------------------
+
+Bitte überall dieselben Definitionen verwenden:
+
+- Flex Arbeit
+  = echte/geplante Arbeitsstunden * Stundenlohn
+
+- Ferien
+  = Ferienkosten separat
+
+- Total Flex
+  = Flex Arbeit + Ferien
+
+Keine Vermischung von:
+- Netto Flex
+- Variable Arbeit
+- Total Variabel
+- Flex Arbeit
+wenn diese nicht exakt gleich gemeint sind.
+
+Bitte überall den Begriff "Flex" verwenden.
+
+--------------------------------------------------
+9. Abweichung verständlich machen
+--------------------------------------------------
+
+Aktuell ist z.B. "Abweichung Tag CHF 588" nicht nachvollziehbar.
+
+Bitte deshalb:
+- immer den konkreten Zeitraum sichtbar machen
+- die Abweichung direkt in der Tabelle zeilenbezogen anzeigen
+- bei Klick auf die Zeile Detail-Popup öffnen
+- so muss jederzeit nachvollziehbar sein, woher der Wert kommt
+
+Optional:
+unter der KPI kurz anzeigen:
+"bezieht sich auf: 09.04.2026"
+oder
+"bezieht sich auf: KW 15"
+
+--------------------------------------------------
+10. Visuell
+--------------------------------------------------
+
+- eine einzige zusammenhängende Flex-Auswertung
+- nicht mehrere konkurrierende Ansichten
+- Popups gross genug und scrollbar
+- sticky Header im Popup
+- Totallinien klar hervorgehoben
+- rote Werte = Ist über Plan
+- grüne Werte = Ist unter Plan
+- neutrale Werte = 0 oder keine Vergleichsdaten
+
+--------------------------------------------------
+11. Debug / Validierung
+--------------------------------------------------
+
+Bitte loggen:
+[FLEX] aggregation mode: day|week|month|year
+[FLEX] summary total plan: ...
+[FLEX] summary total ist: ...
+[FLEX] summary diff: ...
+[FLEX] table total plan: ...
+[FLEX] table total ist: ...
+[FLEX] employee table total plan: ...
+[FLEX] employee table total ist: ...
+[FLEX] popup period rows: ...
+[FLEX] popup employee rows: ...
+
+Wenn Totale zwischen:
+- KPI
+- Periodentabelle
+- Mitarbeitertabelle
+nicht identisch sind:
+console.error mit Differenz ausgeben
+
+--------------------------------------------------
+12. Bitte danach kurz sagen:
+--------------------------------------------------
+
+- welche Datei(en) geändert wurden
+- wie die Flex-Auswertung jetzt aufgebaut ist
+- wie Tag/Woche/Monat/Jahr umgeschaltet wird
+- was beim Klick auf einen Zeitraum passiert
+- was beim Klick auf einen Mitarbeiter passiert
+- ob Fixlohn jetzt aufklappbar ist
+- ob Hauptübersicht, Zeitraumtabelle und Mitarbeitertabelle jetzt exakt dieselben Totale verwenden
