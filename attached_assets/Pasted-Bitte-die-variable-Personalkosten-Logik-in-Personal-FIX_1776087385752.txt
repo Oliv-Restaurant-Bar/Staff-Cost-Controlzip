@@ -1,0 +1,117 @@
+Bitte die variable Personalkosten-Logik in Personal FIX jetzt fachlich vereinheitlichen und korrigieren.
+
+Problem:
+Die Werte für variable Kosten stimmen aktuell nicht überall überein.
+Oben in den KPI-Karten und unten in der Tabelle werden offenbar unterschiedliche Berechnungslogiken verglichen.
+
+Beispiel:
+- Var. Arbeit Plan = CHF 11’478
+- Var. Arbeit Ist = CHF 5’357
+- in der Tabelle ist die Differenz korrekt CHF -6’121
+- in der KPI steht aber CHF -5’187
+Das ist inkonsistent und fachlich nicht sauber.
+
+Ziel:
+Überall in Personal FIX müssen dieselben Begriffe und dieselbe Rechenlogik verwendet werden.
+
+Bitte exakt so umsetzen:
+
+1. Begriffe sauber trennen
+Es braucht systemweit diese 3 Ebenen:
+
+- Variable Arbeit
+- Ferienabbau
+- Total Variabel
+
+Definitionen:
+- Variable Arbeit = echte Arbeitsstunden * Stundenlohn
+- Ferienabbau = Ferienkosten separat
+- Total Variabel = Variable Arbeit + Ferienabbau
+
+2. Für Plan und Ist jeweils separat berechnen
+Plan:
+- Variable Arbeit Plan
+- Ferienabbau Plan
+- Total Variabel Plan
+
+Ist:
+- Variable Arbeit Ist
+- Ferienabbau Ist
+- Total Variabel Ist
+
+3. Differenzen sauber berechnen
+- Diff Variable Arbeit = Ist Arbeit - Plan Arbeit
+- Diff Ferienabbau = Ist Ferien - Plan Ferien
+- Diff Total Variabel = Ist Total Variabel - Plan Total Variabel
+
+4. KPI-Karten oben korrigieren
+Die KPI-Karten müssen exakt dieselbe Logik verwenden wie die Tabelle darunter.
+Keine Vermischung von:
+- Variable Arbeit
+- Netto Variabel
+- Total Variabel
+
+Bitte klar beschriften:
+- Variable Arbeit Plan
+- Variable Arbeit Ist
+- Abweichung Arbeit Ist–Plan
+oder alternativ:
+- Total Variabel Plan
+- Total Variabel Ist
+- Abweichung Total Variabel Ist–Plan
+
+Aber nicht verschiedene Logiken mischen.
+
+5. Neue Übersicht pro Mitarbeiter ergänzen
+Ich möchte zusätzlich eine Tabelle sehen:
+"Variable Kosten Plan vs. Ist pro Mitarbeiter"
+
+Spalten:
+- Mitarbeiter
+- Variable Arbeit Plan CHF
+- Variable Arbeit Ist CHF
+- Differenz Arbeit CHF
+- Ferienabbau Plan CHF
+- Ferienabbau Ist CHF
+- Differenz Ferien CHF
+- Total Variabel Plan CHF
+- Total Variabel Ist CHF
+- Differenz Total CHF
+
+Damit ich pro Mitarbeiter sehe, wo die Unterschiede herkommen.
+
+6. Ferienabbau korrekt in die richtige Auswertung integrieren
+Ferienabbau darf nicht irgendwo halb abgezogen und halb separat dargestellt werden.
+Bitte sauber entscheiden und dann überall gleich anwenden:
+
+Entweder:
+- Ferienabbau ist Teil von Total Variabel
+
+oder:
+- Ferienabbau wird separat gezeigt, aber Total Variabel enthält ihn trotzdem sichtbar
+
+Wichtig:
+gleiche Logik in
+- KPI
+- Budget-Box
+- Abteilungsübersicht
+- Mitarbeitertabelle
+
+7. Debug Logs
+Bitte loggen:
+[VAR-KOSTEN] plan arbeit total: ...
+[VAR-KOSTEN] ist arbeit total: ...
+[VAR-KOSTEN] plan ferien total: ...
+[VAR-KOSTEN] ist ferien total: ...
+[VAR-KOSTEN] plan total variabel: ...
+[VAR-KOSTEN] ist total variabel: ...
+[VAR-KOSTEN] diff arbeit: ...
+[VAR-KOSTEN] diff ferien: ...
+[VAR-KOSTEN] diff total variabel: ...
+
+8. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- welche Logik vorher inkonsistent war
+- wie Variable Arbeit / Ferienabbau / Total Variabel jetzt definiert sind
+- ob KPI und Tabelle jetzt dieselbe Berechnung verwenden
+- wie ich die Abweichung pro Mitarbeiter am schnellsten prüfen kann

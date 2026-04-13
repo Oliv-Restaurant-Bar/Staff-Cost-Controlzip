@@ -885,9 +885,36 @@ export default function PersonalFixPage() {
     return total;
   }, [variableEmployees, getEmpFerienCHF, getEmpFerienPlanCHF, varView, totalVarCost]);
 
-  const totalVarArbeitCHF = totalVarCost;           // FE hat hours=0 → nicht in Var-Kosten
-  // Ferienabbau reduziert die variablen Kosten (Abzug, da Ferien keine Arbeitsstunden sind)
-  const totalVariabelCHF  = Math.max(0, totalVarCost - totalFerienabbauCHF);
+  // ── Kanonische 3-Ebenen-Definitionen (view-mode-unabhängig) ──────────────
+  // Ebene 1: Variable Arbeit  = echte Arbeitsstunden × Stundenlohn (FE = 0 h)
+  // Ebene 2: Ferienabbau       = FE-Tage × Tagessatz (separat)
+  // Ebene 3: Total Variabel    = Variable Arbeit + Ferienabbau  (Addition!)
+  //
+  // «View-mode»-abhängige Aggregate (Plan / Ist / Manuell Schalter oben):
+  const totalVarArbeitCHF = totalVarCost;                           // Ebene 1
+  // Ebene 3 (view-mode): Variable Arbeit + Ferienabbau
+  const totalVariabelCHF  = totalVarCost + totalFerienabbauCHF;
+
+  // Stichtag-unabhängige Plan- und Ist-Totale (für Stichtag-Controlling):
+  // Variable Arbeit Plan (immer Dienstplan-Plan-Stunden)
+  const varArbeitPlanMonat  = varPlanTotalCHF;
+  // Variable Arbeit Ist (immer Mirus-Ist-Stunden)
+  const varArbeitIstMonat   = varIstTotalCHF;
+  // Total Variabel Plan = Variable Arbeit Plan + Ferienabbau Plan
+  const totalVarPlanMonat   = varArbeitPlanMonat + ferienPlanTotalCHF;
+  // Total Variabel Ist  = Variable Arbeit Ist  + Ferienabbau Ist
+  const totalVarIstMonat    = varArbeitIstMonat  + ferienIstTotalCHF;
+
+  // ── Debug-Logging [VAR-KOSTEN] ─────────────────────────────────────────────
+  console.log(`[VAR-KOSTEN] plan arbeit total: ${varArbeitPlanMonat.toFixed(2)}`);
+  console.log(`[VAR-KOSTEN] ist arbeit total:  ${varArbeitIstMonat.toFixed(2)}`);
+  console.log(`[VAR-KOSTEN] plan ferien total: ${ferienPlanTotalCHF.toFixed(2)}`);
+  console.log(`[VAR-KOSTEN] ist ferien total:  ${ferienIstTotalCHF.toFixed(2)}`);
+  console.log(`[VAR-KOSTEN] plan total variabel: ${totalVarPlanMonat.toFixed(2)}`);
+  console.log(`[VAR-KOSTEN] ist total variabel:  ${totalVarIstMonat.toFixed(2)}`);
+  console.log(`[VAR-KOSTEN] diff arbeit:        ${(varArbeitIstMonat - varArbeitPlanMonat).toFixed(2)}`);
+  console.log(`[VAR-KOSTEN] diff ferien:        ${(ferienIstTotalCHF - ferienPlanTotalCHF).toFixed(2)}`);
+  console.log(`[VAR-KOSTEN] diff total variabel: ${(totalVarIstMonat - totalVarPlanMonat).toFixed(2)}`);
 
   // ── Pro-Rata-Berechnungen ──────────────────────────────────────────────────
   const daysInSelectedMonth = new Date(selectedYear, selectedMonth, 0).getDate();
@@ -910,16 +937,18 @@ export default function PersonalFixPage() {
   // ferienCHF: IST-Basis im Ist-Modus, PLAN-Basis im Plan/Manuell-Modus
   const proRataVarByEmp = useMemo(() => {
     return variableEmployees.map(emp => {
-      const monthlyCost = getVarMonthlyCostFor(emp.id, emp);
-      const ferienCHF   = varView === 'ist' ? getEmpFerienCHF(emp) : getEmpFerienPlanCHF(emp);
-      const netCost     = Math.max(0, monthlyCost - ferienCHF);
+      const varArbeit = getVarMonthlyCostFor(emp.id, emp);
+      const ferienCHF = varView === 'ist' ? getEmpFerienCHF(emp) : getEmpFerienPlanCHF(emp);
+      // Total Variabel = Variable Arbeit + Ferienabbau (Addition!)
+      const totalCost = varArbeit + ferienCHF;
       return {
-        name:         emp.name,
-        dept:         emp.department ?? '–',
-        hours:        getVarHoursFor(emp.id),
-        monthlyCost:  netCost,
-        proRataCost:  netCost * proRataFactor,
+        name:        emp.name,
+        dept:        emp.department ?? '–',
+        hours:       getVarHoursFor(emp.id),
+        varArbeit,
         ferienCHF,
+        monthlyCost: totalCost,
+        proRataCost: totalCost * proRataFactor,
       };
     }).filter(r => r.monthlyCost > 0 || r.proRataCost > 0);
   }, [variableEmployees, getVarMonthlyCostFor, getEmpFerienCHF, getEmpFerienPlanCHF, getVarHoursFor, proRataFactor, varView]);
@@ -936,7 +965,8 @@ export default function PersonalFixPage() {
       const ferienabbau = varView === 'ist'
         ? (ferienabbauByDept[dept] ?? 0)
         : (ferienabbauPlanByDept[dept] ?? 0);
-      const variabel    = Math.max(0, varArbeit - ferienabbau);
+      // Total Variabel = Variable Arbeit + Ferienabbau (Addition!)
+      const variabel    = varArbeit + ferienabbau;
       return { dept, fix, varArbeit, ferienabbau, variabel, total: fix + variabel };
     });
   }, [byDept, varByDept, getVarMonthlyCostFor, ferienabbauByDept, ferienabbauPlanByDept, varView]);
@@ -1257,7 +1287,9 @@ export default function PersonalFixPage() {
                         <th className="px-3 py-2 text-left font-medium text-muted-foreground">Name</th>
                         <th className="px-3 py-2 text-center font-medium text-muted-foreground">Abt.</th>
                         <th className="px-3 py-2 text-right font-medium text-muted-foreground">Stunden</th>
-                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Netto/Mt</th>
+                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Var. Arbeit/Mt</th>
+                        <th className="px-3 py-2 text-right font-medium text-muted-foreground text-blue-600">+ Ferien/Mt</th>
+                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Total Var/Mt</th>
                         <th className="px-3 py-2 text-right font-medium text-muted-foreground">bis {proRataDay}.</th>
                       </tr>
                     </thead>
@@ -1269,11 +1301,14 @@ export default function PersonalFixPage() {
                           <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">
                             {row.hours > 0 ? `${Math.round(row.hours * 10) / 10} h` : '–'}
                           </td>
-                          <td className="px-3 py-1.5 text-right font-mono">
+                          <td className="px-3 py-1.5 text-right font-mono text-orange-700 dark:text-orange-400">
+                            {fmtCHF(row.varArbeit)}
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-mono text-blue-600 dark:text-blue-400">
+                            {row.ferienCHF > 0 ? fmtCHF(row.ferienCHF) : <span className="text-muted-foreground">–</span>}
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-mono font-semibold">
                             {fmtCHF(row.monthlyCost)}
-                            {row.ferienCHF > 0 && (
-                              <span className="ml-1 text-blue-500 text-[10px]">−{fmtCHF(row.ferienCHF)} FE</span>
-                            )}
                           </td>
                           <td className="px-3 py-1.5 text-right font-mono font-semibold text-orange-700 dark:text-orange-400">
                             {fmtCHF(row.proRataCost)}
@@ -1283,7 +1318,13 @@ export default function PersonalFixPage() {
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20">
-                        <td className="px-3 py-2 font-bold text-orange-800 dark:text-orange-300" colSpan={3}>Total Variable</td>
+                        <td className="px-3 py-2 font-bold text-orange-800 dark:text-orange-300" colSpan={3}>Total Variabel</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-orange-700 dark:text-orange-400">
+                          {fmtCHF(totalVarArbeitCHF)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-blue-600 dark:text-blue-400">
+                          {totalFerienabbauCHF > 0 ? fmtCHF(totalFerienabbauCHF) : <span className="text-muted-foreground">–</span>}
+                        </td>
                         <td className="px-3 py-2 text-right font-mono font-bold text-orange-800 dark:text-orange-300">{fmtCHF(totalVariabelCHF)}</td>
                         <td className="px-3 py-2 text-right font-mono font-bold text-orange-700 dark:text-orange-400">{fmtCHF(proRataVarCost)}</td>
                       </tr>
@@ -1308,25 +1349,33 @@ export default function PersonalFixPage() {
           const umsatzIst = Object.entries(monthlyRevenues)
             .filter(([d]) => d <= stichtagDate)
             .reduce((s, [, v]) => s + (v.actualRevenue ?? 0) + (v.takeawayRevenue ?? 0), 0);
-          const ferienPlanS = ferienPlanTotalCHF * proRataFactor;
-          const ferienIstS  = ferienIstTotalCHF  * proRataFactor;
-          const varPlanS    = Math.max(0, varPlanTotalCHF * proRataFactor - ferienPlanS);
-          const varIstS     = Math.max(0, varIstTotalCHF  * proRataFactor - ferienIstS);
-          const totalPlanS  = proRataFixCost + varPlanS;
-          const totalIstS   = proRataFixCost + varIstS;
-          const budgetS     = personnelBudget * proRataFactor;
-          const abweichung  = totalIstS - totalPlanS;
-          const budgetAbw   = budgetS > 0 ? totalIstS - budgetS : null;
-          const budgetAbwPct = budgetS > 0 ? (totalIstS - budgetS) / budgetS * 100 : null;
-          const quotePlan   = umsatzIst > 0 ? totalPlanS / umsatzIst * 100 : null;
-          const quoteIst    = umsatzIst > 0 ? totalIstS  / umsatzIst * 100 : null;
-          const hasUmsatz   = umsatzIst > 0;
+          // ── Stichtag-Werte (alle view-mode-unabhängig: Plan = Dienstplan, Ist = Mirus) ──
+          const varArbeitPlanS  = varArbeitPlanMonat  * proRataFactor;
+          const varArbeitIstS   = varArbeitIstMonat   * proRataFactor;
+          const ferienPlanS     = ferienPlanTotalCHF  * proRataFactor;
+          const ferienIstS      = ferienIstTotalCHF   * proRataFactor;
+          // Total Variabel = Variable Arbeit + Ferienabbau  (Addition!)
+          const totalVarPlanS   = varArbeitPlanS + ferienPlanS;
+          const totalVarIstS    = varArbeitIstS  + ferienIstS;
+          const totalPlanS      = proRataFixCost + totalVarPlanS;
+          const totalIstS       = proRataFixCost + totalVarIstS;
+          const budgetS         = personnelBudget * proRataFactor;
+          // Abweichung: Total Personal Ist − Total Personal Plan (konsistent)
+          const abweichung      = totalIstS - totalPlanS;
+          // Abweichung Variable Arbeit (brutto, ohne Ferien) — für KPI-Karten
+          const abwVarArbeit    = varArbeitIstS - varArbeitPlanS;
+          const budgetAbw       = budgetS > 0 ? totalIstS - budgetS : null;
+          const budgetAbwPct    = budgetS > 0 ? (totalIstS - budgetS) / budgetS * 100 : null;
+          const quotePlan       = umsatzIst > 0 ? totalPlanS / umsatzIst * 100 : null;
+          const quoteIst        = umsatzIst > 0 ? totalIstS  / umsatzIst * 100 : null;
+          const hasUmsatz       = umsatzIst > 0;
+          // Vergleichstabelle — konsistente 3-Ebenen-Logik, exakt gleich wie KPIs
           const rows = [
-            { label: 'Personal FIX',    plan: proRataFixCost, ist: proRataFixCost, fixed: true },
-            { label: 'Variable Arbeit', plan: varPlanTotalCHF * proRataFactor, ist: varIstTotalCHF * proRataFactor },
-            { label: 'Ferienabbau',     plan: ferienPlanS,    ist: ferienIstS,    invert: true },
-            { label: 'Total Variabel',  plan: varPlanS,       ist: varIstS,       bold: true },
-            { label: 'Total Personal',  plan: totalPlanS,     ist: totalIstS,     bold: true, highlight: true },
+            { label: 'Personal FIX',    plan: proRataFixCost, ist: proRataFixCost,  fixed: true },
+            { label: 'Variable Arbeit', plan: varArbeitPlanS, ist: varArbeitIstS },
+            { label: 'Ferienabbau',     plan: ferienPlanS,    ist: ferienIstS },
+            { label: 'Total Variabel',  plan: totalVarPlanS,  ist: totalVarIstS,   bold: true },
+            { label: 'Total Personal',  plan: totalPlanS,     ist: totalIstS,      bold: true, highlight: true },
           ];
           return (
             <section className="rounded-xl border-2 border-primary/25 bg-card shadow-sm overflow-hidden">
@@ -1372,26 +1421,32 @@ export default function PersonalFixPage() {
                   )}
                   <div className="rounded-lg border border-orange-200 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20 p-3 space-y-0.5">
                     <p className="text-[11px] text-orange-600 dark:text-orange-400 font-medium uppercase tracking-wide">Var. Arbeit Plan</p>
-                    <p className="text-xl font-bold tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(varPlanTotalCHF * proRataFactor)}</p>
-                    <p className="text-[10px] text-muted-foreground">Netto {fmtCHF(varPlanS)}{ferienPlanS > 0 ? ` (−${fmtCHF(ferienPlanS)} FE)` : ''}</p>
+                    <p className="text-xl font-bold tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(varArbeitPlanS)}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {ferienPlanS > 0 ? `+${fmtCHF(ferienPlanS)} FE → Total ${fmtCHF(totalVarPlanS)}` : 'kein Ferienabbau Plan'}
+                    </p>
                   </div>
                   <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20 p-3 space-y-0.5">
                     <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium uppercase tracking-wide">Var. Arbeit Ist</p>
                     <p className="text-xl font-bold tabular-nums text-amber-700 dark:text-amber-400">
-                      {varIstTotalCHF > 0 ? fmtCHF(varIstTotalCHF * proRataFactor) : <span className="text-muted-foreground text-base">– kein Import</span>}
+                      {varArbeitIstMonat > 0 ? fmtCHF(varArbeitIstS) : <span className="text-muted-foreground text-base">– kein Import</span>}
                     </p>
-                    <p className="text-[10px] text-muted-foreground">Netto {varIstS > 0 ? fmtCHF(varIstS) : '–'}{ferienIstS > 0 ? ` (−${fmtCHF(ferienIstS)} FE)` : ''}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {ferienIstS > 0 ? `+${fmtCHF(ferienIstS)} FE → Total ${fmtCHF(totalVarIstS)}` : 'kein Ferienabbau Ist'}
+                    </p>
                   </div>
                   <div className={cn('rounded-lg border p-3 space-y-0.5',
-                    abweichung <= 0
+                    abwVarArbeit <= 0
                       ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20'
                       : 'border-red-200 dark:border-red-800 bg-red-50/40 dark:bg-red-950/20'
                   )}>
-                    <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Abweichung Ist−Plan</p>
-                    <p className={cn('text-xl font-bold tabular-nums', abweichung <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
-                      {abweichung >= 0 ? '+' : ''}{fmtCHF(abweichung)}
+                    <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Abweichung Var. Arbeit</p>
+                    <p className={cn('text-xl font-bold tabular-nums', abwVarArbeit <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
+                      {abwVarArbeit >= 0 ? '+' : ''}{fmtCHF(abwVarArbeit)}
                     </p>
-                    <p className="text-[10px] text-muted-foreground">{abweichung <= 0 ? '✓ unter Plan' : '↑ über Plan'}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {abwVarArbeit <= 0 ? '✓ unter Plan' : '↑ über Plan'} · Var. Arbeit Ist − Plan
+                    </p>
                   </div>
                   <div className="rounded-lg border bg-muted/30 p-3 space-y-0.5">
                     <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Personalquote Plan %</p>
@@ -1489,6 +1544,101 @@ export default function PersonalFixPage() {
             </section>
           );
         })()}
+
+        {/* ── Variable Kosten Plan vs. Ist pro Mitarbeiter ─────────────────── */}
+        {planHasDaten && istHasDaten && variableEmployees.length > 0 && (
+          <section className="rounded-xl border border-orange-200 dark:border-orange-800 bg-card shadow-sm overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-orange-200 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20">
+              <BarChart2 className="h-4 w-4 text-orange-600" />
+              <span className="text-sm font-bold">Variable Kosten Plan vs. Ist — pro Mitarbeiter</span>
+              <Badge variant="secondary" className="text-xs ml-auto">
+                {getMonthLabel(selectedYear, selectedMonth)}
+              </Badge>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-muted/20 border-b border-border text-muted-foreground">
+                    <th className="text-left px-3 py-2 font-medium">Mitarbeiter</th>
+                    <th className="text-right px-3 py-2 font-medium text-orange-600">Var. Arbeit Plan</th>
+                    <th className="text-right px-3 py-2 font-medium text-amber-600">Var. Arbeit Ist</th>
+                    <th className="text-right px-3 py-2 font-medium">Diff Arbeit</th>
+                    <th className="text-right px-3 py-2 font-medium text-blue-500">Ferien Plan</th>
+                    <th className="text-right px-3 py-2 font-medium text-blue-600">Ferien Ist</th>
+                    <th className="text-right px-3 py-2 font-medium">Diff Ferien</th>
+                    <th className="text-right px-3 py-2 font-medium text-orange-700">Total Var Plan</th>
+                    <th className="text-right px-3 py-2 font-medium text-amber-700">Total Var Ist</th>
+                    <th className="text-right px-3 py-2 font-medium font-semibold">Diff Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {variableEmployees.map((emp, i) => {
+                    const vaPlan   = (planHours[emp.id] ?? 0) * (emp.hourlyWage ?? 0);
+                    const vaIst    = (istHours[emp.id]  ?? 0) * (emp.hourlyWage ?? 0);
+                    const fePlan   = getEmpFerienPlanCHF(emp);
+                    const feIst    = getEmpFerienCHF(emp);
+                    const tvPlan   = vaPlan + fePlan;
+                    const tvIst    = vaIst  + feIst;
+                    const dArbeit  = vaIst  - vaPlan;
+                    const dFerien  = feIst  - fePlan;
+                    const dTotal   = tvIst  - tvPlan;
+                    if (vaPlan === 0 && vaIst === 0 && fePlan === 0 && feIst === 0) return null;
+                    const diffColor = (v: number) => v < 0 ? 'text-emerald-600 dark:text-emerald-400' : v > 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground';
+                    return (
+                      <tr key={emp.id} className={i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'}>
+                        <td className="px-3 py-1.5 font-medium">
+                          {emp.name}
+                          <span className="ml-1 text-[10px] text-muted-foreground capitalize">{emp.department}</span>
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-orange-700 dark:text-orange-400">{vaPlan > 0 ? fmtCHF(vaPlan) : <span className="text-muted-foreground">–</span>}</td>
+                        <td className="px-3 py-1.5 text-right font-mono text-amber-700 dark:text-amber-400">{vaIst  > 0 ? fmtCHF(vaIst)  : <span className="text-muted-foreground">–</span>}</td>
+                        <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', diffColor(dArbeit))}>
+                          {dArbeit !== 0 ? `${dArbeit >= 0 ? '+' : ''}${fmtCHF(dArbeit)}` : '–'}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-blue-500 dark:text-blue-400">{fePlan > 0 ? fmtCHF(fePlan) : <span className="text-muted-foreground">–</span>}</td>
+                        <td className="px-3 py-1.5 text-right font-mono text-blue-600 dark:text-blue-400">{feIst  > 0 ? fmtCHF(feIst)  : <span className="text-muted-foreground">–</span>}</td>
+                        <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', diffColor(dFerien))}>
+                          {dFerien !== 0 ? `${dFerien >= 0 ? '+' : ''}${fmtCHF(dFerien)}` : '–'}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono font-semibold text-orange-800 dark:text-orange-300">{tvPlan > 0 ? fmtCHF(tvPlan) : <span className="text-muted-foreground">–</span>}</td>
+                        <td className="px-3 py-1.5 text-right font-mono font-semibold text-amber-800 dark:text-amber-300">{tvIst  > 0 ? fmtCHF(tvIst)  : <span className="text-muted-foreground">–</span>}</td>
+                        <td className={cn('px-3 py-1.5 text-right font-mono font-bold text-sm', diffColor(dTotal))}>
+                          {dTotal !== 0 ? `${dTotal >= 0 ? '+' : ''}${fmtCHF(dTotal)}` : '–'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-orange-300 dark:border-orange-700 bg-orange-50/50 dark:bg-orange-950/20 font-semibold text-xs">
+                    <td className="px-3 py-2 font-bold text-orange-800 dark:text-orange-300">Total</td>
+                    <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(varArbeitPlanMonat)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-amber-700 dark:text-amber-400">{fmtCHF(varArbeitIstMonat)}</td>
+                    <td className={cn('px-3 py-2 text-right font-mono font-bold',
+                      (varArbeitIstMonat - varArbeitPlanMonat) <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'
+                    )}>
+                      {`${(varArbeitIstMonat - varArbeitPlanMonat) >= 0 ? '+' : ''}${fmtCHF(varArbeitIstMonat - varArbeitPlanMonat)}`}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">{ferienPlanTotalCHF > 0 ? fmtCHF(ferienPlanTotalCHF) : '–'}</td>
+                    <td className="px-3 py-2 text-right font-mono text-blue-600 dark:text-blue-400">{ferienIstTotalCHF > 0 ? fmtCHF(ferienIstTotalCHF) : '–'}</td>
+                    <td className={cn('px-3 py-2 text-right font-mono font-bold',
+                      (ferienIstTotalCHF - ferienPlanTotalCHF) <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'
+                    )}>
+                      {`${(ferienIstTotalCHF - ferienPlanTotalCHF) >= 0 ? '+' : ''}${fmtCHF(ferienIstTotalCHF - ferienPlanTotalCHF)}`}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-orange-800 dark:text-orange-300">{fmtCHF(totalVarPlanMonat)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-amber-800 dark:text-amber-300">{fmtCHF(totalVarIstMonat)}</td>
+                    <td className={cn('px-3 py-2 text-right font-mono font-bold text-sm',
+                      (totalVarIstMonat - totalVarPlanMonat) <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'
+                    )}>
+                      {`${(totalVarIstMonat - totalVarPlanMonat) >= 0 ? '+' : ''}${fmtCHF(totalVarIstMonat - totalVarPlanMonat)}`}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </section>
+        )}
 
         {/* ── Pro-Rata Vollansicht ──────────────────────────────────────────── */}
         {proRataDay !== null && (
@@ -1659,15 +1809,15 @@ export default function PersonalFixPage() {
                       {totalFerienabbauCHF > 0 && (
                         <tr className="hover:bg-muted/20 bg-blue-50/30 dark:bg-blue-950/10">
                           <td className="px-4 py-2.5 font-medium text-blue-600 dark:text-blue-400">
-                            − FERIENABBAU <span className="text-[10px] font-normal opacity-70">({varView === 'ist' ? 'Ist' : 'Plan'})</span>
+                            + FERIENABBAU <span className="text-[10px] font-normal opacity-70">({varView === 'ist' ? 'Ist' : 'Plan'})</span>
                           </td>
                           {deptSummary.map(ds => (
                             <td key={ds.dept} className="px-4 py-2.5 text-right font-mono text-blue-600 dark:text-blue-400">
-                              {ds.ferienabbau > 0 ? `− ${fmtCHF(ds.ferienabbau * proRataFactor)}` : <span className="text-muted-foreground">–</span>}
+                              {ds.ferienabbau > 0 ? fmtCHF(ds.ferienabbau * proRataFactor) : <span className="text-muted-foreground">–</span>}
                             </td>
                           ))}
                           <td className="px-4 py-2.5 text-right font-mono font-semibold text-blue-600 dark:text-blue-400">
-                            {proRataFerienabbau > 0 ? `− ${fmtCHF(proRataFerienabbau)}` : <span className="text-muted-foreground">–</span>}
+                            {proRataFerienabbau > 0 ? fmtCHF(proRataFerienabbau) : <span className="text-muted-foreground">–</span>}
                           </td>
                         </tr>
                       )}
