@@ -666,9 +666,10 @@ function FlexBreakdownModal({ target, onClose }: {
 
   const { empId, empName, field, hourlyWage, weeklyHours, year, month, cutoffDay, factor } = target;
   const dailyH    = weeklyHours ? weeklyHours / 5 : 8.4;
-  const modeLabel = cutoffDay !== null
-    ? `bis ${cutoffDay}. ${new Date(year, month - 1, 1).toLocaleString('de-CH', { month: 'long', year: 'numeric' })}`
-    : new Date(year, month - 1, 1).toLocaleString('de-CH', { month: 'long', year: 'numeric' });
+  const monthLabel = new Date(year, month - 1, 1).toLocaleString('de-CH', { month: 'long', year: 'numeric' });
+  const cutoffLabel = cutoffDay !== null
+    ? `${cutoffDay}.${String(month).padStart(2, '0')}.${year}`
+    : null;
 
   const fieldLabels: Record<BreakdownField, string> = {
     planWork:     'Flex Arbeit Plan',
@@ -679,28 +680,134 @@ function FlexBreakdownModal({ target, onClose }: {
     istTotalVar:  'Total Flex Ist',
   };
 
-  // Load daily data based on field
-  const planDays   = (field === 'planWork'  || field === 'planTotalVar')
-    ? loadDailyPlanDetails(empId, year, month, cutoffDay, hourlyWage)    : [];
-  const istDays    = (field === 'istWork'   || field === 'istTotalVar')
-    ? loadDailyIstDetails(empId, year, month, cutoffDay, hourlyWage)     : [];
-  const ferPlanDays = (field === 'planHoliday' || field === 'planTotalVar')
+  // ── Load data ──────────────────────────────────────────────────────────────
+  const planWorkDays  = (field === 'planWork'  || field === 'planTotalVar')
+    ? loadDailyPlanDetails(empId, year, month, cutoffDay, hourlyWage) : [];
+  const istWorkDays   = (field === 'istWork'   || field === 'istTotalVar')
+    ? loadDailyIstDetails(empId, year, month, cutoffDay, hourlyWage)  : [];
+  const ferPlanDays   = (field === 'planHoliday' || field === 'planTotalVar')
     ? loadFerienPlanDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage) : [];
-  const ferIstDays  = (field === 'istHoliday'  || field === 'istTotalVar')
+  const ferIstDays    = (field === 'istHoliday'  || field === 'istTotalVar')
     ? loadFerienIstDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage)  : [];
 
-  const totalWork    = [...planDays, ...istDays].reduce((s, r) => s + r.cost, 0);
-  const totalFerPlan = ferPlanDays.reduce((s, r) => s + r.cost, 0);
-  const totalFerIst  = ferIstDays.reduce((s, r) => s + r.cost, 0);
+  // For Total Flex Ist: also load plan for cross-comparison
+  const cmpPlanWorkDays = field === 'istTotalVar'
+    ? loadDailyPlanDetails(empId, year, month, cutoffDay, hourlyWage)             : planWorkDays;
+  const cmpFerPlanDays  = field === 'istTotalVar'
+    ? loadFerienPlanDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage) : ferPlanDays;
 
-  const renderDayTable = (rows: DayEntry[], label: string, color: string) => {
-    if (rows.length === 0) return (
-      <p className="text-xs text-muted-foreground italic py-2">Keine Tageseinträge gefunden — nur Monatstotal verfügbar.</p>
-    );
+  // ── KPI calculations ───────────────────────────────────────────────────────
+  const activeWorkDays = field.startsWith('plan') ? planWorkDays : istWorkDays;
+  const activeFerDays  = (field === 'planHoliday' || field === 'planTotalVar') ? ferPlanDays : ferIstDays;
+
+  const workCount   = activeWorkDays.length;
+  const ferCount    = activeFerDays.length;
+  const totalHours  = activeWorkDays.reduce((s, r) => s + r.hours, 0);
+  const workCost    = activeWorkDays.reduce((s, r) => s + r.cost, 0);
+  const ferCost     = activeFerDays.reduce((s, r) => s + r.cost, 0);
+  const totalFlex   = workCost + ferCost;
+  const ferSharePct = totalFlex > 0 ? (ferCost / totalFlex) * 100 : 0;
+  const avgDailyH   = workCount > 0 ? totalHours / workCount : 0;
+
+  const cmpPlanWork = cmpPlanWorkDays.reduce((s, r) => s + r.cost, 0);
+  const cmpFerPlan  = cmpFerPlanDays.reduce((s, r) => s + r.cost, 0);
+  const cmpTotal    = cmpPlanWork + cmpFerPlan;
+
+  // ── Interpretation hints ───────────────────────────────────────────────────
+  type HintType = 'info' | 'warn' | 'ok';
+  const hints: { text: string; type: HintType }[] = [];
+
+  if (field === 'planWork' || field === 'istWork') {
+    if (workCount === 0) {
+      hints.push({ type: 'info', text: field === 'planWork'
+        ? 'Keine geplanten Arbeitstage in diesem Zeitraum.'
+        : cutoffLabel ? `Keine Ist-Stunden bis Stichtag ${cutoffLabel} erfasst.` : 'Keine Ist-Stunden in diesem Monat erfasst.' });
+    } else {
+      if (avgDailyH > dailyH * 1.15) {
+        hints.push({ type: 'warn', text: `Ø ${avgDailyH.toFixed(1)} h/Tag liegt über dem Tagessoll (${dailyH.toFixed(1)} h) — erhöhte Flex-Kosten.` });
+      } else if (avgDailyH < dailyH * 0.85) {
+        hints.push({ type: 'ok', text: `Ø ${avgDailyH.toFixed(1)} h/Tag liegt unter dem Tagessoll (${dailyH.toFixed(1)} h) — tiefe Flex-Kosten.` });
+      } else {
+        hints.push({ type: 'ok', text: `Ø ${avgDailyH.toFixed(1)} h/Tag — im Bereich des Tagessolls (${dailyH.toFixed(1)} h).` });
+      }
+    }
+  }
+
+  if (field === 'planHoliday' || field === 'istHoliday') {
+    if (ferCount === 0) {
+      hints.push({ type: 'info', text: field === 'planHoliday'
+        ? 'Keine geplanten Ferien (FE) in diesem Zeitraum.'
+        : cutoffLabel ? `Keine Ist-Ferientage bis Stichtag ${cutoffLabel} erfasst.` : 'Kein Ferienabbau in diesem Monat erfasst.' });
+    } else {
+      hints.push({ type: 'info', text: `${ferCount} Ferientag${ferCount !== 1 ? 'e' : ''} × ${dailyH.toFixed(1)} h × ${fmtCHFDec(hourlyWage)}/h = ${fmtCHF(ferCost)}.` });
+      hints.push({ type: 'info', text: 'Ferienabbau erhöht die Flex-Gesamtkosten — kein direkt planbarer Arbeitseinsatz.' });
+    }
+  }
+
+  if (field === 'planTotalVar' || field === 'istTotalVar') {
+    if (totalFlex === 0) {
+      hints.push({ type: 'info', text: field === 'planTotalVar'
+        ? 'Keine geplanten Flex-Kosten in diesem Zeitraum.'
+        : 'Noch keine Ist-Flex-Kosten erfasst.' });
+    } else {
+      hints.push({ type: 'info', text: `Total Flex = Flex Arbeit (${fmtCHF(workCost)}) + Ferien (${fmtCHF(ferCost)}).` });
+      if (ferSharePct > 30) {
+        hints.push({ type: 'warn', text: `Ferienanteil ${ferSharePct.toFixed(0)} % — Ferien dominieren die Flex-Kosten in diesem Zeitraum.` });
+      } else if (ferCost === 0) {
+        hints.push({ type: 'ok', text: 'Kein Ferienabbau vorhanden — Flex-Kosten bestehen ausschliesslich aus Arbeitsstunden.' });
+      }
+      if (field === 'istTotalVar' && cmpTotal > 0) {
+        const dev    = totalFlex - cmpTotal;
+        const devPct = (dev / cmpTotal) * 100;
+        if (devPct < -20) {
+          hints.push({ type: 'ok', text: `Ist liegt ${Math.abs(devPct).toFixed(0)} % unter Plan (${fmtCHF(totalFlex)} vs. ${fmtCHF(cmpTotal)}).` });
+        } else if (devPct > 20) {
+          hints.push({ type: 'warn', text: `Ist liegt ${devPct.toFixed(0)} % über Plan (${fmtCHF(totalFlex)} vs. ${fmtCHF(cmpTotal)}) — Überprüfung empfohlen.` });
+        }
+        if (Math.abs(dev) > 10) {
+          const workDev = workCost - cmpPlanWork;
+          const ferDev  = ferCost  - cmpFerPlan;
+          if (Math.abs(workDev) >= Math.abs(ferDev)) {
+            hints.push({ type: 'info', text: `Abweichung kommt primär aus Flex Arbeit (${workDev >= 0 ? '+' : ''}${fmtCHF(workDev)}).` });
+          } else {
+            hints.push({ type: 'info', text: `Abweichung kommt primär aus Ferien (${ferDev >= 0 ? '+' : ''}${fmtCHF(ferDev)}).` });
+          }
+        }
+      }
+    }
+  }
+
+  // ── Sub-renderers ──────────────────────────────────────────────────────────
+  const renderEmptyWork = (isPlanField: boolean) => (
+    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-5 text-center">
+      <p className="text-sm text-muted-foreground">
+        {isPlanField
+          ? 'Keine geplanten Arbeitstage — Dienstplan für diesen Zeitraum leer.'
+          : cutoffLabel
+            ? `Keine Ist-Stunden bis Stichtag ${cutoffLabel} erfasst.`
+            : 'Keine Ist-Stunden in diesem Monat erfasst.'}
+      </p>
+    </div>
+  );
+
+  const renderEmptyFerien = (isPlanField: boolean) => (
+    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-5 text-center">
+      <p className="text-sm text-muted-foreground">
+        {isPlanField
+          ? 'Keine geplanten Ferien (FE) in diesem Zeitraum.'
+          : cutoffLabel
+            ? `Keine Ist-Ferientage bis Stichtag ${cutoffLabel} erfasst.`
+            : 'Kein Ferienabbau in diesem Monat erfasst.'}
+      </p>
+    </div>
+  );
+
+  const renderDayTable = (rows: DayEntry[], label: string, color: string, isPlanField: boolean) => {
+    if (rows.length === 0) return renderEmptyWork(isPlanField);
     const total = rows.reduce((s, r) => s + r.cost, 0);
     return (
       <div>
-        <p className={`text-xs font-semibold mb-1 ${color}`}>{label}</p>
+        <p className={`text-xs font-semibold mb-1.5 ${color}`}>{label}</p>
         <table className="w-full text-xs border rounded overflow-hidden">
           <thead>
             <tr className="bg-muted/30 text-muted-foreground">
@@ -731,14 +838,12 @@ function FlexBreakdownModal({ target, onClose }: {
     );
   };
 
-  const renderFerienTable = (rows: FerienDay[], label: string, color: string) => {
-    if (rows.length === 0) return (
-      <p className="text-xs text-muted-foreground italic py-2">Keine Ferientage gefunden.</p>
-    );
+  const renderFerienTable = (rows: FerienDay[], label: string, color: string, isPlanField: boolean) => {
+    if (rows.length === 0) return renderEmptyFerien(isPlanField);
     const total = rows.reduce((s, r) => s + r.cost, 0);
     return (
       <div>
-        <p className={`text-xs font-semibold mb-1 ${color}`}>{label}</p>
+        <p className={`text-xs font-semibold mb-1.5 ${color}`}>{label}</p>
         <table className="w-full text-xs border rounded overflow-hidden">
           <thead>
             <tr className="bg-muted/30 text-muted-foreground">
@@ -772,37 +877,44 @@ function FlexBreakdownModal({ target, onClose }: {
     );
   };
 
-  // For Total Flex: show combined breakdown
-  const renderTotalFlex = (workDays: DayEntry[], ferDays: FerienDay[], workLabel: string, ferLabel: string) => {
-    const workTotal = workDays.reduce((s, r) => s + r.cost, 0);
-    const ferTotal  = ferDays.reduce((s, r) => s + r.cost, 0);
-    const grandTotal = workTotal + ferTotal;
+  const renderTotalFlex = (wDays: DayEntry[], fDays: FerienDay[], workLabel: string, ferLabel: string, isPlan: boolean) => {
+    const wTotal = wDays.reduce((s, r) => s + r.cost, 0);
+    const fTotal = fDays.reduce((s, r) => s + r.cost, 0);
+    const grand  = wTotal + fTotal;
     return (
       <div className="space-y-3">
-        {renderDayTable(workDays, workLabel, 'text-blue-700 dark:text-blue-400')}
-        {renderFerienTable(ferDays, ferLabel, 'text-emerald-700 dark:text-emerald-400')}
-        <div className="rounded-lg border-2 border-primary/20 bg-primary/5 px-3 py-2 flex justify-between items-center">
-          <span className="text-sm font-bold">Total Flex</span>
-          <div className="flex items-center gap-4 text-xs font-mono">
-            <span className="text-muted-foreground">
-              Arbeit: <span className="text-foreground font-semibold">{fmtCHF(workTotal)}</span>
-            </span>
-            <span className="text-muted-foreground">+</span>
-            <span className="text-muted-foreground">
-              Ferien: <span className="text-foreground font-semibold">{fmtCHF(ferTotal)}</span>
-            </span>
-            <span className="text-muted-foreground">=</span>
-            <span className="text-lg font-bold text-foreground">{fmtCHF(grandTotal)}</span>
+        {renderDayTable(wDays, workLabel, isPlan ? 'text-blue-700 dark:text-blue-400' : 'text-orange-700 dark:text-orange-400', isPlan)}
+        {renderFerienTable(fDays, ferLabel, isPlan ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400', isPlan)}
+        {grand > 0 && (
+          <div className="rounded-lg border-2 border-primary/20 bg-primary/5 px-3 py-2 flex flex-wrap justify-between items-center gap-2">
+            <span className="text-sm font-bold">Total Flex</span>
+            <div className="flex items-center gap-3 text-xs font-mono flex-wrap">
+              <span className="text-muted-foreground">Arbeit: <span className="text-foreground font-semibold">{fmtCHF(wTotal)}</span></span>
+              <span className="text-muted-foreground">+</span>
+              <span className="text-muted-foreground">Ferien: <span className="text-foreground font-semibold">{fmtCHF(fTotal)}</span></span>
+              <span className="text-muted-foreground">=</span>
+              <span className="text-base font-bold text-foreground">{fmtCHF(grand)}</span>
+            </div>
           </div>
-        </div>
-        {factor < 1 && (
-          <p className="text-xs text-muted-foreground">
-            Stichtagsfaktor: {Math.round(factor * 100)} % — Beträge bereits anteilig berechnet.
-          </p>
         )}
       </div>
     );
   };
+
+  // ── KPI chip row ───────────────────────────────────────────────────────────
+  const kpiChips: { label: string; value: string }[] = [];
+  if (workCount > 0)   kpiChips.push({ label: 'Arbeitstage', value: `${workCount}` });
+  if (ferCount  > 0)   kpiChips.push({ label: 'Ferientage',  value: `${ferCount}`  });
+  if (totalHours > 0)  kpiChips.push({ label: 'Total Std.',  value: `${Math.round(totalHours * 10) / 10} h` });
+  if (hourlyWage > 0)  kpiChips.push({ label: 'Ø Lohn/h',   value: fmtCHFDec(hourlyWage) });
+  if (ferSharePct > 0) kpiChips.push({ label: 'Ferienanteil', value: `${ferSharePct.toFixed(0)} %` });
+
+  const hintStyles: Record<HintType, string> = {
+    info: 'border-blue-200 bg-blue-50/60 text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200',
+    warn: 'border-amber-200 bg-amber-50/60 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200',
+    ok:   'border-emerald-200 bg-emerald-50/60 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200',
+  };
+  const hintIcon: Record<HintType, string> = { info: 'ℹ', warn: '⚠', ok: '✓' };
 
   return (
     <Dialog open={!!target} onOpenChange={open => { if (!open) onClose(); }}>
@@ -810,18 +922,54 @@ function FlexBreakdownModal({ target, onClose }: {
         <DialogHeader>
           <DialogTitle className="flex flex-col gap-0.5">
             <span>{fieldLabels[field]} — {empName}</span>
-            <span className="text-sm font-normal text-muted-foreground">
-              {modeLabel} · {fmtCHFDec(hourlyWage)}/h
-            </span>
+            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+              <span className="text-sm font-normal text-muted-foreground">{monthLabel}</span>
+              {cutoffLabel && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 text-[11px] font-medium px-2 py-0.5 border border-violet-200 dark:border-violet-800">
+                  Stichtag {cutoffLabel} · {Math.round(factor * 100)} %
+                </span>
+              )}
+              {hourlyWage > 0 && (
+                <span className="text-xs text-muted-foreground font-mono">{fmtCHFDec(hourlyWage)}/h</span>
+              )}
+            </div>
           </DialogTitle>
         </DialogHeader>
+
         <div className="space-y-4 mt-1 text-sm">
-          {field === 'planWork'     && renderDayTable(planDays,   'Geplante Arbeitstage', 'text-blue-700 dark:text-blue-400')}
-          {field === 'istWork'      && renderDayTable(istDays,    'Effektive Arbeitstage (Ist)', 'text-orange-700 dark:text-orange-400')}
-          {field === 'planHoliday'  && renderFerienTable(ferPlanDays, 'Plan-Ferientage (FE)', 'text-blue-600 dark:text-blue-400')}
-          {field === 'istHoliday'   && renderFerienTable(ferIstDays,  'Ist-Ferientage (FE)',  'text-orange-600 dark:text-orange-400')}
-          {field === 'planTotalVar' && renderTotalFlex(planDays, ferPlanDays, 'Flex Arbeit Plan', 'Ferien Plan')}
-          {field === 'istTotalVar'  && renderTotalFlex(istDays,  ferIstDays,  'Flex Arbeit Ist',  'Ferien Ist')}
+
+          {/* KPI chips */}
+          {kpiChips.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {kpiChips.map(c => (
+                <div key={c.label} className="rounded-lg border border-border bg-muted/30 px-3 py-1.5 flex flex-col items-center min-w-[70px]">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{c.label}</span>
+                  <span className="font-mono font-semibold text-sm text-foreground">{c.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Interpretation hints */}
+          {hints.length > 0 && (
+            <div className="space-y-1.5">
+              {hints.map((h, i) => (
+                <div key={i} className={cn('flex items-start gap-2 rounded-md border px-3 py-2 text-xs', hintStyles[h.type])}>
+                  <span className="font-bold shrink-0 mt-px">{hintIcon[h.type]}</span>
+                  <span>{h.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Data tables */}
+          {field === 'planWork'     && renderDayTable(planWorkDays,  'Geplante Arbeitstage',       'text-blue-700 dark:text-blue-400',    true)}
+          {field === 'istWork'      && renderDayTable(istWorkDays,   'Effektive Arbeitstage (Ist)', 'text-orange-700 dark:text-orange-400', false)}
+          {field === 'planHoliday'  && renderFerienTable(ferPlanDays, 'Plan-Ferientage (FE)',       'text-blue-600 dark:text-blue-400',    true)}
+          {field === 'istHoliday'   && renderFerienTable(ferIstDays,  'Ist-Ferientage (FE)',        'text-orange-600 dark:text-orange-400', false)}
+          {field === 'planTotalVar' && renderTotalFlex(planWorkDays, ferPlanDays, 'Flex Arbeit Plan', 'Ferien Plan', true)}
+          {field === 'istTotalVar'  && renderTotalFlex(istWorkDays,  ferIstDays,  'Flex Arbeit Ist',  'Ferien Ist',  false)}
+
         </div>
       </DialogContent>
     </Dialog>
