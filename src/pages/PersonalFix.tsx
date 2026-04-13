@@ -777,131 +777,7 @@ function FlexBreakdownModal({ target, onClose }: {
     }
   }
 
-  // ── Sub-renderers ──────────────────────────────────────────────────────────
-  const renderEmptyWork = (isPlanField: boolean) => (
-    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-5 text-center">
-      <p className="text-sm text-muted-foreground">
-        {isPlanField
-          ? 'Keine geplanten Arbeitstage — Dienstplan für diesen Zeitraum leer.'
-          : cutoffLabel
-            ? `Keine Ist-Stunden bis Stichtag ${cutoffLabel} erfasst.`
-            : 'Keine Ist-Stunden in diesem Monat erfasst.'}
-      </p>
-    </div>
-  );
-
-  const renderEmptyFerien = (isPlanField: boolean) => (
-    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-5 text-center">
-      <p className="text-sm text-muted-foreground">
-        {isPlanField
-          ? 'Keine geplanten Ferien (FE) in diesem Zeitraum.'
-          : cutoffLabel
-            ? `Keine Ist-Ferientage bis Stichtag ${cutoffLabel} erfasst.`
-            : 'Kein Ferienabbau in diesem Monat erfasst.'}
-      </p>
-    </div>
-  );
-
-  const renderDayTable = (rows: DayEntry[], label: string, color: string, isPlanField: boolean) => {
-    if (rows.length === 0) return renderEmptyWork(isPlanField);
-    const total = rows.reduce((s, r) => s + r.cost, 0);
-    return (
-      <div>
-        <p className={`text-xs font-semibold mb-1.5 ${color}`}>{label}</p>
-        <table className="w-full text-xs border rounded overflow-hidden">
-          <thead>
-            <tr className="bg-muted/30 text-muted-foreground">
-              <th className="text-left px-2 py-1">Datum</th>
-              <th className="text-right px-2 py-1">Stunden</th>
-              <th className="text-right px-2 py-1">Lohn/h</th>
-              <th className="text-right px-2 py-1">Kosten</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
-                <td className="px-2 py-1">{fmtDate(r.date)}</td>
-                <td className="px-2 py-1 text-right font-mono">{r.hours.toFixed(2)} h</td>
-                <td className="px-2 py-1 text-right font-mono text-muted-foreground">{fmtCHFDec(hourlyWage)}</td>
-                <td className="px-2 py-1 text-right font-mono font-semibold">{fmtCHFDec(r.cost)}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-t border-border bg-muted/20 font-bold">
-              <td className="px-2 py-1.5" colSpan={3}>Total</td>
-              <td className="px-2 py-1.5 text-right font-mono">{fmtCHF(total)}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    );
-  };
-
-  const renderFerienTable = (rows: FerienDay[], label: string, color: string, isPlanField: boolean) => {
-    if (rows.length === 0) return renderEmptyFerien(isPlanField);
-    const total = rows.reduce((s, r) => s + r.cost, 0);
-    return (
-      <div>
-        <p className={`text-xs font-semibold mb-1.5 ${color}`}>{label}</p>
-        <table className="w-full text-xs border rounded overflow-hidden">
-          <thead>
-            <tr className="bg-muted/30 text-muted-foreground">
-              <th className="text-left px-2 py-1">Datum</th>
-              <th className="text-right px-2 py-1">Tagessatz</th>
-              <th className="text-right px-2 py-1">Std./Tag</th>
-              <th className="text-right px-2 py-1">Kosten</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
-                <td className="px-2 py-1">{fmtDate(r.date)}</td>
-                <td className="px-2 py-1 text-right font-mono text-muted-foreground">{fmtCHFDec(r.dailyH * hourlyWage)}/Tag</td>
-                <td className="px-2 py-1 text-right font-mono text-muted-foreground">{r.dailyH.toFixed(2)} h</td>
-                <td className="px-2 py-1 text-right font-mono font-semibold">{fmtCHFDec(r.cost)}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-t border-border bg-muted/20 font-bold">
-              <td className="px-2 py-1.5" colSpan={3}>Total Ferien</td>
-              <td className="px-2 py-1.5 text-right font-mono">{fmtCHF(total)}</td>
-            </tr>
-          </tfoot>
-        </table>
-        <p className="text-[10px] text-muted-foreground mt-1">
-          Basis: {hourlyWage > 0 ? `${fmtCHFDec(hourlyWage)}/h × ${dailyH.toFixed(2)} h/Tag` : '(kein Lohn hinterlegt)'}
-        </p>
-      </div>
-    );
-  };
-
-  const renderTotalFlex = (wDays: DayEntry[], fDays: FerienDay[], workLabel: string, ferLabel: string, isPlan: boolean) => {
-    const wTotal = wDays.reduce((s, r) => s + r.cost, 0);
-    const fTotal = fDays.reduce((s, r) => s + r.cost, 0);
-    const grand  = wTotal + fTotal;
-    return (
-      <div className="space-y-3">
-        {renderDayTable(wDays, workLabel, isPlan ? 'text-blue-700 dark:text-blue-400' : 'text-orange-700 dark:text-orange-400', isPlan)}
-        {renderFerienTable(fDays, ferLabel, isPlan ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400', isPlan)}
-        {grand > 0 && (
-          <div className="rounded-lg border-2 border-primary/20 bg-primary/5 px-3 py-2 flex flex-wrap justify-between items-center gap-2">
-            <span className="text-sm font-bold">Total Flex</span>
-            <div className="flex items-center gap-3 text-xs font-mono flex-wrap">
-              <span className="text-muted-foreground">Arbeit: <span className="text-foreground font-semibold">{fmtCHF(wTotal)}</span></span>
-              <span className="text-muted-foreground">+</span>
-              <span className="text-muted-foreground">Ferien: <span className="text-foreground font-semibold">{fmtCHF(fTotal)}</span></span>
-              <span className="text-muted-foreground">=</span>
-              <span className="text-base font-bold text-foreground">{fmtCHF(grand)}</span>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // ── KPI chip row ───────────────────────────────────────────────────────────
+  // ── KPI chips ──────────────────────────────────────────────────────────────
   const kpiChips: { label: string; value: string }[] = [];
   if (workCount > 0)   kpiChips.push({ label: 'Arbeitstage', value: `${workCount}` });
   if (ferCount  > 0)   kpiChips.push({ label: 'Ferientage',  value: `${ferCount}`  });
@@ -916,16 +792,173 @@ function FlexBreakdownModal({ target, onClose }: {
   };
   const hintIcon: Record<HintType, string> = { info: 'ℹ', warn: '⚠', ok: '✓' };
 
+  // ── Empty-state helpers ────────────────────────────────────────────────────
+  const emptyWork = (isPlan: boolean) => (
+    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-6 text-center text-sm text-muted-foreground">
+      {isPlan
+        ? 'Keine geplanten Arbeitstage — Dienstplan für diesen Zeitraum leer.'
+        : cutoffLabel
+          ? `Keine Ist-Stunden bis Stichtag ${cutoffLabel} erfasst.`
+          : 'Keine Ist-Stunden in diesem Monat erfasst.'}
+    </div>
+  );
+
+  const emptyFerien = (isPlan: boolean) => (
+    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-6 text-center text-sm text-muted-foreground">
+      {isPlan
+        ? 'Keine geplanten Ferien (FE) in diesem Zeitraum.'
+        : cutoffLabel
+          ? `Keine Ist-Ferientage bis Stichtag ${cutoffLabel} erfasst.`
+          : 'Kein Ferienabbau in diesem Monat erfasst.'}
+    </div>
+  );
+
+  // ── Table renderers ────────────────────────────────────────────────────────
+  // thead th base — sticky within the scrollable container
+  const thCls = 'sticky top-0 z-10 bg-muted/80 backdrop-blur-sm px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground border-b border-border';
+
+  const renderDayTable = (rows: DayEntry[], sectionLabel: string, accentCls: string, isPlan: boolean) => {
+    if (rows.length === 0) return emptyWork(isPlan);
+    const total     = rows.reduce((s, r) => s + r.cost,  0);
+    const totalH    = rows.reduce((s, r) => s + r.hours, 0);
+    return (
+      <div className="space-y-1.5">
+        <p className={cn('text-xs font-semibold', accentCls)}>{sectionLabel}</p>
+        <div className="rounded-md border border-border">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr>
+                <th className={cn(thCls, 'text-left')}>Datum</th>
+                <th className={cn(thCls, 'text-right')}>Stunden</th>
+                <th className={cn(thCls, 'text-right')}>Lohn/h</th>
+                <th className={cn(thCls, 'text-right')}>Kosten CHF</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
+                  <td className="px-3 py-1.5 tabular-nums">{fmtDate(r.date)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{r.hours.toFixed(2)} h</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{fmtCHFDec(hourlyWage)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold">{fmtCHFDec(r.cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-border bg-muted/40 font-bold text-xs">
+                <td className="px-3 py-2">Total ({rows.length} Tag{rows.length !== 1 ? 'e' : ''})</td>
+                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">{Math.round(totalH * 10) / 10} h</td>
+                <td className="px-3 py-2" />
+                <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtCHF(total)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderFerienTable = (rows: FerienDay[], sectionLabel: string, accentCls: string, isPlan: boolean) => {
+    if (rows.length === 0) return emptyFerien(isPlan);
+    const total = rows.reduce((s, r) => s + r.cost, 0);
+    return (
+      <div className="space-y-1.5">
+        <p className={cn('text-xs font-semibold', accentCls)}>{sectionLabel}</p>
+        <div className="rounded-md border border-border">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr>
+                <th className={cn(thCls, 'text-left')}>Datum</th>
+                <th className={cn(thCls, 'text-right')}>Std./Tag</th>
+                <th className={cn(thCls, 'text-right')}>Tagessatz CHF</th>
+                <th className={cn(thCls, 'text-right')}>Kosten CHF</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
+                  <td className="px-3 py-1.5 tabular-nums">{fmtDate(r.date)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{r.dailyH.toFixed(2)} h</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{fmtCHFDec(r.dailyH * hourlyWage)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold">{fmtCHFDec(r.cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-border bg-muted/40 font-bold text-xs">
+                <td className="px-3 py-2">Total ({rows.length} Ferientag{rows.length !== 1 ? 'e' : ''})</td>
+                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground text-[10px] font-normal">
+                  Basis: {fmtCHFDec(hourlyWage)}/h × {dailyH.toFixed(2)} h/Tag
+                </td>
+                <td className="px-3 py-2" />
+                <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtCHF(total)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderTotalFlex = (wDays: DayEntry[], fDays: FerienDay[], workLabel: string, ferLabel: string, isPlan: boolean) => {
+    const wTotal = wDays.reduce((s, r) => s + r.cost, 0);
+    const fTotal = fDays.reduce((s, r) => s + r.cost, 0);
+    const isPlanColor  = isPlan ? 'text-blue-700 dark:text-blue-400'    : 'text-orange-700 dark:text-orange-400';
+    const isFerColor   = isPlan ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400';
+    return (
+      <div className="space-y-4">
+        {renderDayTable(wDays, workLabel, isPlanColor, isPlan)}
+        {renderFerienTable(fDays, ferLabel, isFerColor, isPlan)}
+      </div>
+    );
+  };
+
+  // ── Grand total for sticky footer ──────────────────────────────────────────
+  const footerWorkCost = (() => {
+    if (field === 'planWork'  || field === 'planTotalVar') return planWorkDays.reduce((s, r) => s + r.cost, 0);
+    if (field === 'istWork'   || field === 'istTotalVar')  return istWorkDays.reduce((s, r) => s + r.cost, 0);
+    return 0;
+  })();
+  const footerFerCost = (() => {
+    if (field === 'planHoliday' || field === 'planTotalVar') return ferPlanDays.reduce((s, r) => s + r.cost, 0);
+    if (field === 'istHoliday'  || field === 'istTotalVar')  return ferIstDays.reduce((s, r) => s + r.cost, 0);
+    return 0;
+  })();
+  const footerHours    = (field === 'planWork' || field === 'planTotalVar')
+    ? planWorkDays.reduce((s, r) => s + r.hours, 0)
+    : istWorkDays.reduce((s, r) => s + r.hours, 0);
+  const footerTotal    = footerWorkCost + footerFerCost;
+  const showFooter     = footerTotal > 0;
+
+  const isIstField = field === 'istWork' || field === 'istHoliday' || field === 'istTotalVar';
+  const accentHeader = isIstField
+    ? 'bg-orange-50/60 dark:bg-orange-950/20 border-orange-200 dark:border-orange-800'
+    : 'bg-blue-50/60 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800';
+
   return (
     <Dialog open={!!target} onOpenChange={open => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex flex-col gap-0.5">
-            <span>{fieldLabels[field]} — {empName}</span>
-            <div className="flex items-center gap-2 flex-wrap mt-0.5">
-              <span className="text-sm font-normal text-muted-foreground">{monthLabel}</span>
+      {/*
+        p-0 gap-0           — remove default DialogContent padding/gap so we control layout
+        flex flex-col       — stack: sticky-header / scrollable-body / sticky-footer
+        max-h-[88vh]        — total modal height cap
+        overflow-hidden     — clip at max-h; only inner body scrolls
+        w-[min(960px,95vw)] — up to 960 px wide, shrinks on small screens
+      */}
+      <DialogContent className="p-0 gap-0 max-w-none w-[min(960px,95vw)] flex flex-col max-h-[88vh] overflow-hidden">
+
+        {/* ── Sticky Header ─────────────────────────────────────────────── */}
+        <div className={cn(
+          'shrink-0 flex items-start justify-between gap-4 px-6 py-4 border-b',
+          accentHeader,
+        )}>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-bold leading-tight truncate">
+              {fieldLabels[field]} — {empName}
+            </h2>
+            <div className="flex items-center gap-2 flex-wrap mt-1">
+              <span className="text-sm text-muted-foreground">{monthLabel}</span>
               {cutoffLabel && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 text-[11px] font-medium px-2 py-0.5 border border-violet-200 dark:border-violet-800">
+                <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 text-[11px] font-semibold px-2.5 py-0.5 border border-violet-300 dark:border-violet-700">
                   Stichtag {cutoffLabel} · {Math.round(factor * 100)} %
                 </span>
               )}
@@ -933,29 +966,32 @@ function FlexBreakdownModal({ target, onClose }: {
                 <span className="text-xs text-muted-foreground font-mono">{fmtCHFDec(hourlyWage)}/h</span>
               )}
             </div>
-          </DialogTitle>
-        </DialogHeader>
+          </div>
+          {/* shadcn injects its own close button; this is just extra visual space */}
+        </div>
 
-        <div className="space-y-4 mt-1 text-sm">
+        {/* ── Scrollable Body ───────────────────────────────────────────── */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 text-sm">
 
           {/* KPI chips */}
           {kpiChips.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {kpiChips.map(c => (
-                <div key={c.label} className="rounded-lg border border-border bg-muted/30 px-3 py-1.5 flex flex-col items-center min-w-[70px]">
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{c.label}</span>
-                  <span className="font-mono font-semibold text-sm text-foreground">{c.value}</span>
+                <div key={c.label} className="rounded-lg border border-border bg-muted/40 px-3 py-2 flex flex-col items-center min-w-[80px] shadow-sm">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">{c.label}</span>
+                  <span className="font-mono font-bold text-sm mt-0.5 text-foreground">{c.value}</span>
                 </div>
               ))}
             </div>
           )}
 
-          {/* Interpretation hints */}
+          {/* Interpretation */}
           {hints.length > 0 && (
-            <div className="space-y-1.5">
+            <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 space-y-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Einordnung</p>
               {hints.map((h, i) => (
                 <div key={i} className={cn('flex items-start gap-2 rounded-md border px-3 py-2 text-xs', hintStyles[h.type])}>
-                  <span className="font-bold shrink-0 mt-px">{hintIcon[h.type]}</span>
+                  <span className="font-bold shrink-0">{hintIcon[h.type]}</span>
                   <span>{h.text}</span>
                 </div>
               ))}
@@ -971,6 +1007,34 @@ function FlexBreakdownModal({ target, onClose }: {
           {field === 'istTotalVar'  && renderTotalFlex(istWorkDays,  ferIstDays,  'Flex Arbeit Ist',  'Ferien Ist',  false)}
 
         </div>
+
+        {/* ── Sticky Footer — Grand Totals ──────────────────────────────── */}
+        {showFooter && (
+          <div className="shrink-0 border-t border-border bg-muted/50 px-6 py-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Grand Total</span>
+            <div className="flex items-center gap-5 text-sm font-mono flex-wrap">
+              {footerHours > 0 && (
+                <span className="text-muted-foreground">
+                  {Math.round(footerHours * 10) / 10} h
+                </span>
+              )}
+              {footerFerCost > 0 && footerWorkCost > 0 && (
+                <>
+                  <span className="text-muted-foreground text-xs">
+                    Arbeit <span className="text-foreground font-semibold">{fmtCHF(footerWorkCost)}</span>
+                  </span>
+                  <span className="text-muted-foreground text-xs">+</span>
+                  <span className="text-muted-foreground text-xs">
+                    Ferien <span className="text-foreground font-semibold">{fmtCHF(footerFerCost)}</span>
+                  </span>
+                  <span className="text-muted-foreground text-xs">=</span>
+                </>
+              )}
+              <span className="text-base font-bold text-foreground">{fmtCHF(footerTotal)}</span>
+            </div>
+          </div>
+        )}
+
       </DialogContent>
     </Dialog>
   );
