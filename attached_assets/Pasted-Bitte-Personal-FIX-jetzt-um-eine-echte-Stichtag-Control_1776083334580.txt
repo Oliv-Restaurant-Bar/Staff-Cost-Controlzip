@@ -1,0 +1,84 @@
+Bitte Personal FIX jetzt um eine echte Stichtag-Controlling-Ansicht erweitern.
+
+Ziel:
+Ich möchte per Stichtag innerhalb des Monats sauber sehen, ob ich mit den Personalkosten im Plan oder über Plan bin.
+
+Wichtig:
+Wenn ich z.B. den 12.04.2026 als Stichtag setze, sollen alle Werte nur bis einschliesslich 12.04.2026 berechnet werden.
+
+Bitte exakt so umsetzen:
+
+1. Neue Übersicht in Personal FIX:
+Name z.B.:
+"Stichtag Controlling Personal"
+oder
+"Plan vs Ist bis Stichtag"
+
+2. Datengrundlage:
+Für den gewählten Monat + gewählten Stichtag nur Werte bis zu diesem Datum berücksichtigen.
+
+Das gilt für:
+- Umsatz Ist
+- Personal FIX
+- Variable Arbeit Plan
+- Variable Arbeit Ist
+- Ferienabbau
+- Total Variabel
+- Total Personal
+- Budget / pro-rata Budget
+
+3. Neue KPI-Karten oben:
+- Umsatz Ist bis Stichtag
+- Personal FIX bis Stichtag
+- Variable Kosten Plan bis Stichtag
+- Variable Kosten Ist bis Stichtag
+- Total Personal Plan bis Stichtag
+- Total Personal Ist bis Stichtag
+- Abweichung CHF
+- Personalquote Plan %
+- Personalquote Ist %
+
+4. Neue Vergleichstabelle darunter:
+Spalten:
+- Bereich
+- Plan bis Stichtag
+- Ist bis Stichtag
+- Differenz CHF
+- Differenz %
+
+Zeilen:
+- Personal FIX
+- Variable Arbeit
+- Ferienabbau
+- Total Variabel
+- Total Personal
+
+5. Prozentlogik:
+- Personalquote Plan % = Plan-Personalkosten bis Stichtag / Ist-Umsatz bis Stichtag
+- Personalquote Ist % = Ist-Personalkosten bis Stichtag / Ist-Umsatz bis Stichtag
+
+6. Budgetsicht:
+Ich möchte klar sehen, ob ich bis zum Stichtag im Budget bin.
+Bitte zusätzlich anzeigen:
+- Budget Personal bis Stichtag
+- Ist Personal bis Stichtag
+- Budget-Abweichung CHF
+- Budget-Abweichung %
+
+7. Visuell:
+- deutlich kompakter und übersichtlicher als die aktuelle Ansicht
+- klare Trennung zwischen Monatsgesamt und Stichtag-Sicht
+- positive Abweichung grün
+- negative Abweichung rot
+- Budgetwarnung gut sichtbar
+
+8. Wichtig:
+- gleiche Stichtagslogik überall verwenden
+- keine Monatsvollwerte mischen, wenn ein Stichtag gesetzt ist
+- Plan und Ist bis exakt denselben Stichtag vergleichen
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie der Stichtag technisch angewendet wird
+- wie Plan und Ist bis zum Stichtag berechnet werden
+- wie ich am schnellsten prüfen kann, ob ich am 12. eines Monats im Budget bin

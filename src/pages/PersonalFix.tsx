@@ -320,6 +320,21 @@ function saveVarDayRate(data: Record<string, DayRateData>) {
   localStorage.setItem(VAR_DAYRATE_KEY, JSON.stringify(data));
 }
 
+// ── Tagesumsätze aus localStorage (dailyBudgets) ──────────────────────────────
+
+function readDailyBudgetsLocal(year: number, month: number): Record<string, { actualRevenue?: number; takeawayRevenue?: number }> {
+  try {
+    const prefix = `${year}-${String(month).padStart(2, '0')}`;
+    const all: Record<string, { actualRevenue?: number; takeawayRevenue?: number }> =
+      JSON.parse(localStorage.getItem('dailyBudgets') || '{}');
+    const out: Record<string, { actualRevenue?: number; takeawayRevenue?: number }> = {};
+    for (const [date, val] of Object.entries(all)) {
+      if (date.startsWith(prefix)) out[date] = val;
+    }
+    return out;
+  } catch { return {}; }
+}
+
 // ── KPI-Card ──────────────────────────────────────────────────────────────────
 
 interface KpiProps {
@@ -535,6 +550,8 @@ export default function PersonalFixPage() {
   const [ferienIstDays, setFerienIstDays] = useState<Record<string, number>>({});
   // empId → Anzahl FE-Tage im PLAN (frühAbsence/spätAbsence='FE' in schedule-v2-* localStorage)
   const [ferienPlanDays, setFerienPlanDays] = useState<Record<string, number>>({});
+  // Tagesumsätze für den gewählten Monat (für Stichtag Controlling)
+  const [monthlyRevenues, setMonthlyRevenues] = useState<Record<string, { actualRevenue?: number; takeawayRevenue?: number }>>({});
 
   // ── Pro-Rata-Abgrenzung ────────────────────────────────────────────────────
   // null = aus; Zahl = Stichtag (1–letzter Tag des Monats)
@@ -546,6 +563,14 @@ export default function PersonalFixPage() {
       setLoading(false);
     });
   }, []);
+
+  // Tagesumsätze bei Monatswechsel neu laden
+  useEffect(() => {
+    setMonthlyRevenues(readDailyBudgetsLocal(selectedYear, selectedMonth));
+    const onSync = () => setMonthlyRevenues(readDailyBudgetsLocal(selectedYear, selectedMonth));
+    window.addEventListener('supabase-kv-synced', onSync);
+    return () => window.removeEventListener('supabase-kv-synced', onSync);
+  }, [selectedYear, selectedMonth]);
 
   // Reload Plan/Ist hours whenever month changes.
   // Ist-Stunden: read localStorage first (fast), then enrich with Supabase data.
@@ -783,6 +808,26 @@ export default function PersonalFixPage() {
     [variableEmployees, varView, varPricingMode, getVarHoursFor],
   );
   const totalCombined = totalFixCost + totalVarCost;
+
+  // ── Stichtag-Controlling: Plan + Ist getrennt (varView-unabhängig) ─────────
+  // Variable Kosten immer aus Plan-Stunden (Dienstplan) bzw. Ist-Stunden (Mirus)
+  const varPlanTotalCHF = useMemo(() =>
+    variableEmployees.reduce((s, e) => s + (planHours[e.id] ?? 0) * (e.hourlyWage ?? 0), 0),
+    [variableEmployees, planHours],
+  );
+  const varIstTotalCHF = useMemo(() =>
+    variableEmployees.reduce((s, e) => s + (istHours[e.id] ?? 0) * (e.hourlyWage ?? 0), 0),
+    [variableEmployees, istHours],
+  );
+  // Ferienabbau Plan + Ist gesamt (für Stichtag-Controlling)
+  const ferienIstTotalCHF = useMemo(() =>
+    variableEmployees.reduce((s, e) => s + getEmpFerienCHF(e), 0),
+    [variableEmployees, getEmpFerienCHF],
+  );
+  const ferienPlanTotalCHF = useMemo(() =>
+    variableEmployees.reduce((s, e) => s + getEmpFerienPlanCHF(e), 0),
+    [variableEmployees, getEmpFerienPlanCHF],
+  );
 
   // ── Ferienabbau-Berechnungen ───────────────────────────────────────────────
   // FE-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn
@@ -1255,6 +1300,194 @@ export default function PersonalFixPage() {
             </p>
           )}
         </div>
+
+        {/* ── Stichtag Controlling ─────────────────────────────────────────── */}
+        {proRataDay !== null && (() => {
+          const stichtagDate = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(proRataDay).padStart(2, '0')}`;
+          const umsatzIst = Object.entries(monthlyRevenues)
+            .filter(([d]) => d <= stichtagDate)
+            .reduce((s, [, v]) => s + (v.actualRevenue ?? 0) + (v.takeawayRevenue ?? 0), 0);
+          const ferienPlanS = ferienPlanTotalCHF * proRataFactor;
+          const ferienIstS  = ferienIstTotalCHF  * proRataFactor;
+          const varPlanS    = Math.max(0, varPlanTotalCHF * proRataFactor - ferienPlanS);
+          const varIstS     = Math.max(0, varIstTotalCHF  * proRataFactor - ferienIstS);
+          const totalPlanS  = proRataFixCost + varPlanS;
+          const totalIstS   = proRataFixCost + varIstS;
+          const budgetS     = personnelBudget * proRataFactor;
+          const abweichung  = totalIstS - totalPlanS;
+          const budgetAbw   = budgetS > 0 ? totalIstS - budgetS : null;
+          const budgetAbwPct = budgetS > 0 ? (totalIstS - budgetS) / budgetS * 100 : null;
+          const quotePlan   = umsatzIst > 0 ? totalPlanS / umsatzIst * 100 : null;
+          const quoteIst    = umsatzIst > 0 ? totalIstS  / umsatzIst * 100 : null;
+          const hasUmsatz   = umsatzIst > 0;
+          const rows = [
+            { label: 'Personal FIX',    plan: proRataFixCost, ist: proRataFixCost, fixed: true },
+            { label: 'Variable Arbeit', plan: varPlanTotalCHF * proRataFactor, ist: varIstTotalCHF * proRataFactor },
+            { label: 'Ferienabbau',     plan: ferienPlanS,    ist: ferienIstS,    invert: true },
+            { label: 'Total Variabel',  plan: varPlanS,       ist: varIstS,       bold: true },
+            { label: 'Total Personal',  plan: totalPlanS,     ist: totalIstS,     bold: true, highlight: true },
+          ];
+          return (
+            <section className="rounded-xl border-2 border-primary/25 bg-card shadow-sm overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-primary/5">
+                <Target className="h-4 w-4 text-primary" />
+                <span className="text-sm font-bold">
+                  Plan vs. Ist bis {proRataDay}. {getMonthLabel(selectedYear, selectedMonth)}
+                </span>
+                <Badge variant="secondary" className="text-xs tabular-nums ml-auto">
+                  {proRataDay}/{daysInSelectedMonth} Tage · {Math.round(proRataFactor * 100)} %
+                </Badge>
+              </div>
+              <div className="p-4 space-y-4">
+
+                {/* KPI-Karten */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <div className="rounded-lg border bg-muted/30 p-3 space-y-0.5">
+                    <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Umsatz Ist</p>
+                    <p className={cn('text-xl font-bold tabular-nums', hasUmsatz ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')}>
+                      {hasUmsatz ? fmtCHF(umsatzIst) : '– keine Daten'}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">{Object.entries(monthlyRevenues).filter(([d]) => d <= stichtagDate && (monthlyRevenues[d]?.actualRevenue ?? 0) > 0).length} Tage erfasst</p>
+                  </div>
+                  <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-950/20 p-3 space-y-0.5">
+                    <p className="text-[11px] text-blue-600 dark:text-blue-400 font-medium uppercase tracking-wide">Personal FIX</p>
+                    <p className="text-xl font-bold tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(proRataFixCost)}</p>
+                    <p className="text-[10px] text-muted-foreground">Plan = Ist (Fixlohn)</p>
+                  </div>
+                  {budgetS > 0 && (
+                    <div className={cn('rounded-lg border p-3 space-y-0.5',
+                      budgetAbw === null || budgetAbw <= 0
+                        ? 'border-violet-200 dark:border-violet-800 bg-violet-50/40 dark:bg-violet-950/20'
+                        : 'border-red-200 dark:border-red-800 bg-red-50/40 dark:bg-red-950/20'
+                    )}>
+                      <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Budget bis {proRataDay}.</p>
+                      <p className="text-xl font-bold tabular-nums">{fmtCHF(budgetS)}</p>
+                      {budgetAbw !== null && (
+                        <p className={cn('text-[10px] font-semibold', budgetAbw <= 0 ? 'text-emerald-600' : 'text-red-600')}>
+                          {budgetAbw <= 0 ? `✓ ${fmtCHF(Math.abs(budgetAbw))} unter Budget` : `↑ ${fmtCHF(budgetAbw)} über Budget`}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <div className="rounded-lg border border-orange-200 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20 p-3 space-y-0.5">
+                    <p className="text-[11px] text-orange-600 dark:text-orange-400 font-medium uppercase tracking-wide">Var. Arbeit Plan</p>
+                    <p className="text-xl font-bold tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(varPlanTotalCHF * proRataFactor)}</p>
+                    <p className="text-[10px] text-muted-foreground">Netto {fmtCHF(varPlanS)}{ferienPlanS > 0 ? ` (−${fmtCHF(ferienPlanS)} FE)` : ''}</p>
+                  </div>
+                  <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20 p-3 space-y-0.5">
+                    <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium uppercase tracking-wide">Var. Arbeit Ist</p>
+                    <p className="text-xl font-bold tabular-nums text-amber-700 dark:text-amber-400">
+                      {varIstTotalCHF > 0 ? fmtCHF(varIstTotalCHF * proRataFactor) : <span className="text-muted-foreground text-base">– kein Import</span>}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">Netto {varIstS > 0 ? fmtCHF(varIstS) : '–'}{ferienIstS > 0 ? ` (−${fmtCHF(ferienIstS)} FE)` : ''}</p>
+                  </div>
+                  <div className={cn('rounded-lg border p-3 space-y-0.5',
+                    abweichung <= 0
+                      ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20'
+                      : 'border-red-200 dark:border-red-800 bg-red-50/40 dark:bg-red-950/20'
+                  )}>
+                    <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Abweichung Ist−Plan</p>
+                    <p className={cn('text-xl font-bold tabular-nums', abweichung <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
+                      {abweichung >= 0 ? '+' : ''}{fmtCHF(abweichung)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">{abweichung <= 0 ? '✓ unter Plan' : '↑ über Plan'}</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/30 p-3 space-y-0.5">
+                    <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Personalquote Plan %</p>
+                    <p className="text-xl font-bold tabular-nums">
+                      {quotePlan !== null ? `${quotePlan.toFixed(1)} %` : <span className="text-muted-foreground text-base">– kein Umsatz</span>}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">Plan-Kosten / Ist-Umsatz</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/30 p-3 space-y-0.5">
+                    <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Personalquote Ist %</p>
+                    <p className="text-xl font-bold tabular-nums">
+                      {quoteIst !== null ? `${quoteIst.toFixed(1)} %` : <span className="text-muted-foreground text-base">– kein Umsatz</span>}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">Ist-Kosten / Ist-Umsatz</p>
+                  </div>
+                  <div className="rounded-lg border bg-primary/5 border-primary/20 p-3 space-y-0.5">
+                    <p className="text-[11px] text-primary font-medium uppercase tracking-wide">Total Personal Ist</p>
+                    <p className="text-xl font-bold tabular-nums text-primary">{fmtCHF(totalIstS)}</p>
+                    <p className="text-[10px] text-muted-foreground">FIX + Variabel Ist netto</p>
+                  </div>
+                </div>
+
+                {/* Vergleichstabelle Plan vs Ist */}
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <div className="px-3 py-2 bg-muted/30 border-b border-border">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Plan vs. Ist — bis {proRataDay}. {getMonthLabel(selectedYear, selectedMonth)}
+                    </p>
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
+                        <th className="text-left px-4 py-2 font-medium">Bereich</th>
+                        <th className="text-right px-4 py-2 font-medium">Plan bis {proRataDay}.</th>
+                        <th className="text-right px-4 py-2 font-medium">Ist bis {proRataDay}.</th>
+                        <th className="text-right px-4 py-2 font-medium">Diff. CHF</th>
+                        <th className="text-right px-4 py-2 font-medium">Diff. %</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {rows.map((row, i) => {
+                        const diff = row.ist - row.plan;
+                        const pct  = row.plan > 0 ? diff / row.plan * 100 : null;
+                        const good = row.invert ? diff >= 0 : diff <= 0;
+                        return (
+                          <tr key={i} className={cn(
+                            'hover:bg-muted/20',
+                            row.highlight && 'bg-primary/5 font-semibold',
+                          )}>
+                            <td className="px-4 py-2.5">{row.label}</td>
+                            <td className="px-4 py-2.5 text-right font-mono">{fmtCHF(row.plan)}</td>
+                            <td className="px-4 py-2.5 text-right font-mono">
+                              {row.ist > 0 || row.fixed ? fmtCHF(row.ist) : <span className="text-muted-foreground">– kein Import</span>}
+                            </td>
+                            <td className={cn('px-4 py-2.5 text-right font-mono', good ? 'text-emerald-600' : 'text-red-600')}>
+                              {(row.ist > 0 || row.fixed) ? `${diff >= 0 ? '+' : ''}${fmtCHF(diff)}` : '–'}
+                            </td>
+                            <td className={cn('px-4 py-2.5 text-right font-mono text-xs', good ? 'text-emerald-600' : 'text-red-600')}>
+                              {pct !== null && (row.ist > 0 || row.fixed) ? `${diff >= 0 ? '+' : ''}${pct.toFixed(1)} %` : '–'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    {budgetS > 0 && (
+                      <tfoot>
+                        <tr className={cn(
+                          'border-t-2 text-sm',
+                          budgetAbw === null || budgetAbw! <= 0
+                            ? 'border-violet-300 dark:border-violet-700 bg-violet-50/50 dark:bg-violet-950/20'
+                            : 'border-red-300 dark:border-red-700 bg-red-50/50 dark:bg-red-950/20',
+                        )}>
+                          <td className="px-4 py-2.5 font-bold">Budget Personal</td>
+                          <td className="px-4 py-2.5 text-right font-mono font-bold">{fmtCHF(budgetS)}</td>
+                          <td className="px-4 py-2.5 text-right font-mono font-bold">{fmtCHF(totalIstS)}</td>
+                          <td className={cn('px-4 py-2.5 text-right font-mono font-bold', budgetAbw !== null && budgetAbw! <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
+                            {budgetAbw !== null ? `${budgetAbw! >= 0 ? '+' : ''}${fmtCHF(budgetAbw!)}` : '–'}
+                          </td>
+                          <td className={cn('px-4 py-2.5 text-right font-mono font-bold text-xs', budgetAbwPct !== null && budgetAbwPct! <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
+                            {budgetAbwPct !== null ? `${budgetAbwPct! >= 0 ? '+' : ''}${budgetAbwPct!.toFixed(1)} %` : '–'}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+
+                {!hasUmsatz && (
+                  <p className="text-xs text-muted-foreground bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                    ⚠ Noch kein Umsatz Ist bis {proRataDay}. erfasst. Personalquote kann nicht berechnet werden.
+                    Umsatz bitte via Import Hub oder Tages-Controlling eingeben.
+                  </p>
+                )}
+              </div>
+            </section>
+          );
+        })()}
 
         {/* ── Pro-Rata Vollansicht ──────────────────────────────────────────── */}
         {proRataDay !== null && (
