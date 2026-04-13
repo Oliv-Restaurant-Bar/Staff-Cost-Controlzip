@@ -1481,11 +1481,28 @@ export default function PersonalFixPage() {
       totalFixCost, proRataDay, proRataFactor]);
 
   // ── pfix-derived budget comparison (always uses Ist actuals as "spend") ────
-  // These replace the old varView-dependent varBudgetDelta / varBudgetOverrun
-  // in all financial displays so every number on the page agrees with the KPI block.
-  const pfixAvailableVar    = personnelBudget > 0 ? Math.max(0, personnelBudget - pfix.active.fix) : 0;
-  const pfixIstVarDelta     = personnelBudget > 0 ? pfixAvailableVar - pfix.active.istTotalVar : 0;
-  const pfixIstVarOverrun   = pfixIstVarDelta < 0;
+  // When a cutoff (Stichtag) is active, scale the budget pro rata to that day
+  // so that "Ist bis Stichtag" is compared against "Budget bis Stichtag".
+  const pfixBudget       = personnelBudget > 0
+    ? personnelBudget * (proRataDay !== null ? proRataFactor : 1)
+    : 0;
+  const pfixAvailableVar  = pfixBudget > 0 ? Math.max(0, pfixBudget - pfix.active.fix) : 0;
+  const pfixIstVarDelta   = pfixBudget > 0 ? pfixAvailableVar - pfix.active.istTotalVar : 0;
+  const pfixIstVarOverrun = pfixIstVarDelta < 0;
+  // Max plannable Flex hours on the effective (pro-rata) budget — used in the budget block
+  // (separate from the general-purpose maxVarHours which uses the full month budget)
+  const pfixMaxVarHours   = pfixAvailableVar > 0 && avgHourlyWage > 0
+    ? Math.floor(pfixAvailableVar / avgHourlyWage) : 0;
+
+  // [PFIX-BUDGET] validation logs
+  if (personnelBudget > 0) {
+    console.log(`[PFIX-BUDGET] month budget: ${personnelBudget.toFixed(2)}`);
+    console.log(`[PFIX-BUDGET] cutoff day: ${proRataDay ?? 'none'}`);
+    console.log(`[PFIX-BUDGET] days in month: ${daysInSelectedMonth}`);
+    console.log(`[PFIX-BUDGET] pro rata budget: ${pfixBudget.toFixed(2)}`);
+    console.log(`[PFIX-BUDGET] flex available: ${pfixAvailableVar.toFixed(2)}`);
+    console.log(`[PFIX-BUDGET] remaining: ${pfixIstVarDelta.toFixed(2)}`);
+  }
 
   // Per-employee Plan vs Ist table — synchronized to pfix
   const pfixPerEmp = useMemo(() => {
@@ -2828,7 +2845,14 @@ export default function PersonalFixPage() {
           <section className="rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-card shadow-sm overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-violet-50/40 dark:bg-violet-950/20">
               <Target className="h-4 w-4 text-violet-600 dark:text-violet-400" />
-              <span className="text-sm font-bold">Budget-Planung Personal — {getMonthLabel(selectedYear, selectedMonth)}</span>
+              <span className="text-sm font-bold">
+                Budget-Planung Personal — {getMonthLabel(selectedYear, selectedMonth)}
+              </span>
+              {proRataDay !== null && (
+                <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 text-[11px] font-semibold px-2.5 py-0.5 border border-violet-300 dark:border-violet-700 shrink-0">
+                  {proRataDay}/{daysInSelectedMonth} Tage · {Math.round(proRataFactor * 100)} % Pro Rata
+                </span>
+              )}
             </div>
 
             {/* Budget-Rechnung */}
@@ -2836,8 +2860,19 @@ export default function PersonalFixPage() {
               <div className="space-y-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Budgetverteilung</p>
                 <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">Personalbudget gesamt</span>
-                  <span className="font-mono font-semibold">{fmtCHF(personnelBudget)}</span>
+                  <div className="flex flex-col">
+                    <span className="text-sm text-muted-foreground">
+                      {proRataDay !== null
+                        ? `Budget bis ${proRataDay}.${String(selectedMonth).padStart(2, '0')}.${selectedYear}`
+                        : 'Personalbudget gesamt'}
+                    </span>
+                    {proRataDay !== null && (
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        {fmtCHF(personnelBudget)} × {proRataDay}/{daysInSelectedMonth}
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-mono font-semibold">{fmtCHF(pfixBudget)}</span>
                 </div>
                 <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
                   <span className="text-sm text-muted-foreground">− Personal FIX{proRataDay !== null ? ` bis ${proRataDay}.` : ''}</span>
@@ -2925,16 +2960,16 @@ export default function PersonalFixPage() {
                   <div className="text-xs text-muted-foreground space-y-0.5">
                     <p>
                       Ø Stundenlohn Flex: <strong className="font-mono text-foreground">{fmtCHFDec(avgHourlyWage)}/h</strong>
-                      {maxVarHours > 0 && (
-                        <> · Budget reicht für max. <strong className="font-mono text-foreground">{maxVarHours} h</strong></>
+                      {pfixMaxVarHours > 0 && (
+                        <> · Budget reicht für max. <strong className="font-mono text-foreground">{pfixMaxVarHours} h</strong></>
                       )}
                     </p>
-                    {totalVarHours > 0 && maxVarHours > 0 && (
+                    {totalVarHours > 0 && pfixMaxVarHours > 0 && (
                       <p>
                         Aktuell geplant: <strong className="font-mono text-foreground">{Math.round(totalVarHours * 10) / 10} h</strong>
-                        {totalVarHours <= maxVarHours
-                          ? <span className="text-emerald-600 dark:text-emerald-400"> · Reserve: {Math.max(0, maxVarHours - Math.round(totalVarHours))} h (≈ {fmtCHF(pfixIstVarDelta)})</span>
-                          : <span className="text-red-600 dark:text-red-400"> · {Math.round(totalVarHours) - maxVarHours} h zu viel (≈ {fmtCHF(Math.abs(pfixIstVarDelta))})</span>}
+                        {totalVarHours <= pfixMaxVarHours
+                          ? <span className="text-emerald-600 dark:text-emerald-400"> · Reserve: {Math.max(0, pfixMaxVarHours - Math.round(totalVarHours))} h (≈ {fmtCHF(pfixIstVarDelta)})</span>
+                          : <span className="text-red-600 dark:text-red-400"> · {Math.round(totalVarHours) - pfixMaxVarHours} h zu viel (≈ {fmtCHF(Math.abs(pfixIstVarDelta))})</span>}
                       </p>
                     )}
                   </div>
@@ -2946,12 +2981,12 @@ export default function PersonalFixPage() {
                       : 'text-emerald-600 dark:text-emerald-400'
                   )}>
                     {pfix.active.istTotalVar === 0 && !pfixIstVarOverrun
-                      ? `→ Stunden planen: Noch ca. ${maxVarHours} h verfügbar — trage unten Stunden ein.`
+                      ? `→ Stunden planen: Noch ca. ${pfixMaxVarHours} h verfügbar — trage unten Stunden ein.`
                       : pfixIstVarOverrun
                         ? `→ Reduziere Flex Stunden um ca. ${Math.ceil(Math.abs(pfixIstVarDelta) / avgHourlyWage)} h, um das Budget einzuhalten.`
                         : pfixIstVarDelta < pfixAvailableVar * 0.15
-                          ? `→ Vorsicht: Noch ${Math.max(0, maxVarHours - Math.round(totalVarHours))} h Spielraum — zusätzliche Schichten könnten das Budget sprengen.`
-                          : `→ Kapazität vorhanden: Noch ca. ${Math.max(0, maxVarHours - Math.round(totalVarHours))} h planbar ohne Budgetüberschreitung.`}
+                          ? `→ Vorsicht: Noch ${Math.max(0, pfixMaxVarHours - Math.round(totalVarHours))} h Spielraum — zusätzliche Schichten könnten das Budget sprengen.`
+                          : `→ Kapazität vorhanden: Noch ca. ${Math.max(0, pfixMaxVarHours - Math.round(totalVarHours))} h planbar ohne Budgetüberschreitung.`}
                   </p>
                 </div>
 
