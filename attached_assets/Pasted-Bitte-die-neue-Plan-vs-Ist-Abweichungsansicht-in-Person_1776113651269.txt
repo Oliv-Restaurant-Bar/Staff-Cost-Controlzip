@@ -1,0 +1,98 @@
+Bitte die neue Plan-vs-Ist-Abweichungsansicht in Personal FIX zusätzlich um eine klare Ampel-Logik erweitern.
+
+Ziel:
+Ich möchte auf einen Blick sehen, ob ich bei den Flex-Kosten im Plan bin, leicht darüber liege oder deutlich darüber liege.
+
+Bitte exakt so umsetzen:
+
+1. Ampel-Logik für Abweichung
+Basis:
+Abweichung = Ist - Plan
+
+Farblogik:
+- Grün:
+  Ist <= Plan
+- Gelb:
+  Ist > Plan, aber nur leicht darüber
+- Rot:
+  Ist deutlich über Plan
+
+2. Schwellenwerte
+Bitte als erste Version diese Schwellen verwenden:
+
+Für CHF-Abweichung:
+- Grün: <= 0
+- Gelb: > 0 bis 5 % über Plan
+- Rot: > 5 % über Plan
+
+Bitte zusätzlich %-Abweichung berechnen:
+Diff % = (Ist - Plan) / Plan * 100
+wenn Plan > 0, sonst 0
+
+3. Wo die Ampel sichtbar sein soll
+
+A) In den KPI-Karten oben
+z.B.:
+- Abweichung Monat
+- Abweichung Woche
+- Abweichung Tag
+
+Jede Karte bekommt:
+- farbigen Rand / Badge / Punkt
+- klaren Status:
+  Im Plan
+  Leicht über Plan
+  Deutlich über Plan
+
+B) In der Übersichtstabelle Tag / Woche / Monat
+Jede Zeile bekommt eine kleine Ampelspalte oder farbigen Statuspunkt
+
+C) Im Mitarbeiter-Popup
+Oben:
+- Status für den Mitarbeiter gesamt
+Darunter:
+- optional pro Tag / Woche / Monat ein kleiner Status
+
+4. Neutrale Behandlung
+Wenn keine echten Vergleichsdaten vorhanden sind:
+- kein roter oder gelber Status
+- neutral / grau anzeigen
+
+Beispiele:
+- kein Planwert vorhanden
+- nur Abwesenheitstage
+- keine Ist-Werte vorhanden
+
+5. Ferien / Abwesenheiten
+Abwesenheitstage dürfen nicht fälschlich rot werden.
+Wenn die Abweichung nur aus Ferien oder neutralen Abwesenheiten stammt, bitte neutral oder separat gekennzeichnet behandeln.
+
+6. Textliche Hinweise
+Zusätzlich zum Farbstatus kurze Labels:
+- Grün = Im Plan
+- Gelb = Leicht über Plan
+- Rot = Über Plan
+
+Optional im Popup:
+- "Abweichung wird teilweise durch Ferien erklärt"
+- "Abweichung stammt primär aus Flex-Arbeit"
+
+7. Wichtig
+- gleiche zentrale Master-Logik verwenden wie für Plan/Ist/Flex
+- keine zweite Rechenlogik nur für die Ampel
+- KPI, Übersichtstabelle und Popup müssen dieselben Abweichungswerte nutzen
+
+8. Debug Logs
+Bitte loggen:
+[AMPEL] mode: day|week|month
+[AMPEL] plan: ...
+[AMPEL] ist: ...
+[AMPEL] diff chf: ...
+[AMPEL] diff pct: ...
+[AMPEL] status: green|yellow|red|neutral
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- welche Schwellenwerte verwendet werden
+- wo die Ampel sichtbar ist
+- ob Ferien/Abwesenheiten neutral behandelt werden

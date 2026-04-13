@@ -690,6 +690,32 @@ function isoWeekLabel(iso: string): string {
   return `KW ${String(weekNo).padStart(2, '0')} / ${d.getFullYear()}`;
 }
 
+// ── Ampel-Logik ────────────────────────────────────────────────────────────────
+
+type AmpelStatus = 'green' | 'yellow' | 'red' | 'neutral';
+
+/** Einheitliche Ampel-Logik: Grün ≤0%, Gelb 0–5%, Rot >5% über Plan. Neutral wenn kein Plan. */
+function ampelStatus(diff: number, plan: number): AmpelStatus {
+  if (plan <= 0) return 'neutral';
+  const pct = diff / plan;
+  if (diff <= 0.005) return 'green';
+  if (pct <= 0.05)   return 'yellow';
+  return 'red';
+}
+
+const AMPEL: Record<AmpelStatus, {
+  dot:    string;
+  border: string;
+  bg:     string;
+  label:  string;
+  text:   string;
+}> = {
+  green:   { dot: 'bg-emerald-500',                   border: 'border-emerald-400 dark:border-emerald-600', bg: 'bg-emerald-50/60 dark:bg-emerald-950/20', label: 'Im Plan',          text: 'text-emerald-700 dark:text-emerald-400' },
+  yellow:  { dot: 'bg-amber-400',                     border: 'border-amber-400 dark:border-amber-600',     bg: 'bg-amber-50/60 dark:bg-amber-950/20',     label: 'Leicht über Plan', text: 'text-amber-700 dark:text-amber-400'    },
+  red:     { dot: 'bg-red-500',                       border: 'border-red-400 dark:border-red-600',         bg: 'bg-red-50/60 dark:bg-red-950/20',         label: 'Über Plan',        text: 'text-red-700 dark:text-red-400'        },
+  neutral: { dot: 'bg-gray-300 dark:bg-gray-600',     border: 'border-border',                              bg: '',                                        label: 'Kein Vergleich',   text: 'text-muted-foreground'                 },
+};
+
 // ── FlexBreakdownModal ─────────────────────────────────────────────────────────
 
 function FlexBreakdownModal({ target, onClose }: {
@@ -1040,7 +1066,7 @@ function FlexBreakdownModal({ target, onClose }: {
           {field === 'planTotalVar' && renderTotalFlex(planWorkDays, ferPlanDays, 'Flex Arbeit Plan', 'Ferien Plan', true)}
           {field === 'istTotalVar'  && renderTotalFlex(istWorkDays,  ferIstDays,  'Flex Arbeit Ist',  'Ferien Ist',  false)}
 
-          {/* ── Plan vs. Ist Tagesvergleich (nur bei istTotalVar) ───────────── */}
+          {/* ── Plan vs. Ist Tagesvergleich + Ampel (nur bei istTotalVar) ──── */}
           {field === 'istTotalVar' && (() => {
             type CompRow = { date: string; pw: number; pf: number; iw: number; if_: number };
             const compMap = new Map<string, CompRow>();
@@ -1053,18 +1079,32 @@ function FlexBreakdownModal({ target, onClose }: {
             for (const r of istWorkDays)      ensure(r.date).iw += r.cost;
             for (const r of ferIstDays)       ensure(r.date).if_ += r.cost;
             const compRows = Array.from(compMap.values()).sort((a, b) => a.date.localeCompare(b.date));
-            const totalPlan = compRows.reduce((s, r) => s + r.pw + r.pf, 0);
-            const totalIst  = compRows.reduce((s, r) => s + r.iw + r.if_, 0);
-            const totalDiff = totalIst - totalPlan;
-            const diffCls = (v: number) =>
-              v > 0.005 ? 'text-red-600 dark:text-red-400' :
-              v < -0.005 ? 'text-emerald-600 dark:text-emerald-400' :
-              'text-muted-foreground';
+            const totalPlan    = compRows.reduce((s, r) => s + r.pw + r.pf, 0);
+            const totalIst     = compRows.reduce((s, r) => s + r.iw + r.if_, 0);
+            const totalDiff    = totalIst - totalPlan;
+            const totalFerDiff = compRows.reduce((s, r) => s + (r.if_ - r.pf), 0);
+            const totalWrkDiff = compRows.reduce((s, r) => s + (r.iw - r.pw), 0);
+            const overallSt    = ampelStatus(totalDiff, totalPlan);
+            const overallA     = AMPEL[overallSt];
+            const totalPct     = totalPlan > 0 ? (totalDiff / totalPlan) * 100 : 0;
+
+            // Ferien hint: wenn der Ferienanteil > 50% der Gesamtabweichung erklärt
+            const ferienDominant  = totalDiff > 0.01 && totalFerDiff > 0 && totalFerDiff / totalDiff > 0.5;
+            const arbeitDominant  = totalDiff > 0.01 && totalWrkDiff > 0 && totalWrkDiff / totalDiff > 0.5;
+
             const fmtD = (v: number) => {
               const s = fmtCHF(Math.abs(v));
               return v > 0.005 ? `+${s}` : v < -0.005 ? `−${s}` : s;
             };
+
             console.log(`[ABW] employee diff total: ${totalDiff.toFixed(2)}`);
+            console.log(`[AMPEL] mode: popup-employee`);
+            console.log(`[AMPEL] plan: ${totalPlan.toFixed(2)}`);
+            console.log(`[AMPEL] ist: ${totalIst.toFixed(2)}`);
+            console.log(`[AMPEL] diff chf: ${totalDiff.toFixed(2)}`);
+            console.log(`[AMPEL] diff pct: ${totalPct.toFixed(2)}`);
+            console.log(`[AMPEL] status: ${overallSt}`);
+
             if (compRows.length === 0) return null;
             return (
               <div className="space-y-1.5 mt-2">
@@ -1072,26 +1112,47 @@ function FlexBreakdownModal({ target, onClose }: {
                   Abweichungsanalyse — Plan vs. Ist pro Tag
                 </p>
 
+                {/* Overall Ampel badge */}
+                <div className={cn('flex items-center gap-2 rounded-lg border px-3 py-2', overallA.border, overallA.bg)}>
+                  <span className={cn('inline-block w-3 h-3 rounded-full shrink-0', overallA.dot)} />
+                  <span className={cn('text-sm font-bold', overallA.text)}>{overallA.label}</span>
+                  <span className={cn('text-xs font-mono ml-auto', overallA.text)}>
+                    {fmtD(totalDiff)}{totalPlan > 0 && ` (${totalPct > 0 ? '+' : totalPct < 0 ? '−' : ''}${Math.abs(totalPct).toFixed(1)} %)`}
+                  </span>
+                </div>
+
+                {/* Ferien/Arbeit hint */}
+                {ferienDominant && (
+                  <p className="text-[10px] text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded px-2.5 py-1.5">
+                    Abweichung wird teilweise durch Ferien erklärt ({fmtCHF(totalFerDiff)} Ferienabweichung von {fmtCHF(totalDiff)} gesamt).
+                  </p>
+                )}
+                {arbeitDominant && !ferienDominant && (
+                  <p className="text-[10px] text-orange-700 dark:text-orange-400 bg-orange-50/60 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 rounded px-2.5 py-1.5">
+                    Abweichung stammt primär aus Flex-Arbeit ({fmtCHF(totalWrkDiff)} Arbeitsabweichung von {fmtCHF(totalDiff)} gesamt).
+                  </p>
+                )}
+
                 {/* Summary KPI row */}
                 <div className="flex flex-wrap gap-2 pb-1">
                   {[
-                    { label: 'Total Plan',  val: totalPlan,  cls: 'text-blue-700 dark:text-blue-400' },
-                    { label: 'Total Ist',   val: totalIst,   cls: 'text-orange-700 dark:text-orange-400' },
+                    { label: 'Total Plan', val: totalPlan, cls: 'text-blue-700 dark:text-blue-400' },
+                    { label: 'Total Ist',  val: totalIst,  cls: 'text-orange-700 dark:text-orange-400' },
                   ].map(({ label, val, cls }) => (
                     <div key={label} className="rounded-md border border-border bg-muted/20 px-3 py-1.5 flex flex-col">
                       <span className="text-[9px] font-medium text-muted-foreground uppercase tracking-wide">{label}</span>
                       <span className={`text-sm font-bold font-mono tabular-nums ${cls}`}>{fmtCHF(val)}</span>
                     </div>
                   ))}
-                  <div className="rounded-md border border-border bg-muted/20 px-3 py-1.5 flex flex-col">
+                  <div className={cn('rounded-md border px-3 py-1.5 flex flex-col', overallA.border, overallA.bg)}>
                     <span className="text-[9px] font-medium text-muted-foreground uppercase tracking-wide">Differenz CHF</span>
-                    <span className={`text-sm font-bold font-mono tabular-nums ${diffCls(totalDiff)}`}>{fmtD(totalDiff)}</span>
+                    <span className={cn('text-sm font-bold font-mono tabular-nums', overallA.text)}>{fmtD(totalDiff)}</span>
                   </div>
                   {totalPlan > 0 && (
-                    <div className="rounded-md border border-border bg-muted/20 px-3 py-1.5 flex flex-col">
+                    <div className={cn('rounded-md border px-3 py-1.5 flex flex-col', overallA.border, overallA.bg)}>
                       <span className="text-[9px] font-medium text-muted-foreground uppercase tracking-wide">Differenz %</span>
-                      <span className={`text-sm font-bold font-mono tabular-nums ${diffCls(totalDiff)}`}>
-                        {totalDiff > 0.005 ? '+' : totalDiff < -0.005 ? '−' : ''}{Math.abs((totalDiff / totalPlan) * 100).toFixed(1)} %
+                      <span className={cn('text-sm font-bold font-mono tabular-nums', overallA.text)}>
+                        {totalPct > 0 ? '+' : totalPct < -0.005 ? '−' : ''}{Math.abs(totalPct).toFixed(1)} %
                       </span>
                     </div>
                   )}
@@ -1102,6 +1163,7 @@ function FlexBreakdownModal({ target, onClose }: {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
+                        <th className="sticky top-0 z-10 bg-muted/20 text-center px-2 py-1.5 font-medium w-6">●</th>
                         <th className="sticky top-0 z-10 bg-muted/20 text-left px-3 py-1.5 font-medium text-muted-foreground">Datum</th>
                         <th className="sticky top-0 z-10 bg-muted/20 text-right px-3 py-1.5 font-medium text-blue-600">Plan Arb.</th>
                         <th className="sticky top-0 z-10 bg-muted/20 text-right px-3 py-1.5 font-medium text-blue-400">Plan Fer.</th>
@@ -1114,11 +1176,17 @@ function FlexBreakdownModal({ target, onClose }: {
                     </thead>
                     <tbody className="divide-y divide-border">
                       {compRows.map(r => {
-                        const pT = r.pw + r.pf;
-                        const iT = r.iw + r.if_;
-                        const d  = iT - pT;
+                        const pT  = r.pw + r.pf;
+                        const iT  = r.iw + r.if_;
+                        const d   = iT - pT;
+                        // Neutral wenn kein Plan vorhanden
+                        const rSt = (pT === 0 && iT === 0) ? 'neutral' : ampelStatus(d, pT);
+                        const rA  = AMPEL[rSt];
                         return (
-                          <tr key={r.date} className="hover:bg-muted/20">
+                          <tr key={r.date} className={cn('hover:bg-muted/10', rA.bg)}>
+                            <td className="px-2 py-1.5 text-center">
+                              <span className={cn('inline-block w-2 h-2 rounded-full', rA.dot)} />
+                            </td>
                             <td className="px-3 py-1.5 font-mono text-muted-foreground">{fmtDate(r.date)}</td>
                             <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-600">{r.pw > 0 ? fmtCHF(r.pw) : '–'}</td>
                             <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-400">{r.pf > 0 ? fmtCHF(r.pf) : '–'}</td>
@@ -1126,7 +1194,7 @@ function FlexBreakdownModal({ target, onClose }: {
                             <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-600">{r.iw > 0 ? fmtCHF(r.iw) : '–'}</td>
                             <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-400">{r.if_ > 0 ? fmtCHF(r.if_) : '–'}</td>
                             <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-orange-700">{iT > 0 ? fmtCHF(iT) : '–'}</td>
-                            <td className={`px-3 py-1.5 text-right font-mono tabular-nums font-semibold ${diffCls(d)}`}>
+                            <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums font-semibold', rA.text)}>
                               {pT === 0 && iT === 0 ? '–' : fmtD(d)}
                             </td>
                           </tr>
@@ -1134,7 +1202,10 @@ function FlexBreakdownModal({ target, onClose }: {
                       })}
                     </tbody>
                     <tfoot>
-                      <tr className="border-t-2 border-border bg-muted/20 font-bold">
+                      <tr className={cn('border-t-2 border-border font-bold', overallA.bg)}>
+                        <td className="px-2 py-1.5 text-center">
+                          <span className={cn('inline-block w-2 h-2 rounded-full', overallA.dot)} />
+                        </td>
                         <td className="px-3 py-1.5 font-semibold text-muted-foreground">Total</td>
                         <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-600">{fmtCHF(compRows.reduce((s,r)=>s+r.pw,0))}</td>
                         <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-400">{fmtCHF(compRows.reduce((s,r)=>s+r.pf,0))}</td>
@@ -1142,7 +1213,7 @@ function FlexBreakdownModal({ target, onClose }: {
                         <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-600">{fmtCHF(compRows.reduce((s,r)=>s+r.iw,0))}</td>
                         <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-400">{fmtCHF(compRows.reduce((s,r)=>s+r.if_,0))}</td>
                         <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-700">{fmtCHF(totalIst)}</td>
-                        <td className={`px-3 py-1.5 text-right font-mono tabular-nums ${diffCls(totalDiff)}`}>{fmtD(totalDiff)}</td>
+                        <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums', overallA.text)}>{fmtD(totalDiff)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -1781,11 +1852,20 @@ export default function PersonalFixPage() {
     const monthIst  = days.reduce((s, d) => s + d.istTotal,  0);
     const monthDiff = monthIst - monthPlan;
 
+    const monthStatus = ampelStatus(monthDiff, monthPlan);
+    const monthPctVal = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : 0;
+
     console.log(`[ABW] mode: ${abwMode}`);
     console.log(`[ABW] plan flex total: ${monthPlan.toFixed(2)}`);
     console.log(`[ABW] ist flex total: ${monthIst.toFixed(2)}`);
     console.log(`[ABW] diff total: ${monthDiff.toFixed(2)}`);
     console.log(`[ABW] popup daily rows: ${days.length}`);
+    console.log(`[AMPEL] mode: ${abwMode}`);
+    console.log(`[AMPEL] plan: ${monthPlan.toFixed(2)}`);
+    console.log(`[AMPEL] ist: ${monthIst.toFixed(2)}`);
+    console.log(`[AMPEL] diff chf: ${monthDiff.toFixed(2)}`);
+    console.log(`[AMPEL] diff pct: ${monthPctVal.toFixed(2)}`);
+    console.log(`[AMPEL] status: ${monthStatus}`);
 
     return { days, weeks, monthPlan, monthIst, monthDiff };
   }, [variableEmployees, selectedYear, selectedMonth, proRataDay, planHours, istHours, abwMode]);
@@ -2339,11 +2419,6 @@ export default function PersonalFixPage() {
           const avgWeekDiff = weeks.length > 0 ? monthDiff / weeks.length : 0;
           const avgDayDiff  = days.length  > 0 ? monthDiff / days.length  : 0;
 
-          const diffCls = (v: number) =>
-            v > 0.005  ? 'text-red-600 dark:text-red-400' :
-            v < -0.005 ? 'text-emerald-600 dark:text-emerald-400' :
-                         'text-muted-foreground';
-
           const fmtDiff = (v: number) => {
             const s = fmtCHF(Math.abs(v));
             if (v > 0.005)  return `+${s}`;
@@ -2356,6 +2431,10 @@ export default function PersonalFixPage() {
             return v > 0.05 ? `+${s}` : v < -0.05 ? `−${s}` : s;
           };
 
+          // Overall month Ampel (drives header border color)
+          const monthStatus = ampelStatus(monthDiff, monthPlan);
+          const mA = AMPEL[monthStatus];
+
           const tableRows: { period: string; plan: number; ist: number; diff: number; diffPct: number | null }[] =
             abwMode === 'month'
               ? [{ period: getMonthLabel(selectedYear, selectedMonth), plan: monthPlan, ist: monthIst, diff: monthDiff, diffPct: monthPct }]
@@ -2363,14 +2442,25 @@ export default function PersonalFixPage() {
                 ? weeks.map(w => ({ period: w.period, plan: w.planTotal, ist: w.istTotal, diff: w.diff, diffPct: w.diffPct }))
                 : days.map(d => ({ period: fmtDate(d.date), plan: d.planTotal, ist: d.istTotal, diff: d.diff, diffPct: d.diffPct }));
 
+          const kpiChips = [
+            { label: 'Abweichung Monat', val: monthDiff, plan: monthPlan,                                          pct: monthPct },
+            { label: 'Ø Abw./Woche',     val: avgWeekDiff, plan: weeks.length > 0 ? monthPlan / weeks.length : 0, pct: weeks.length > 0 ? (avgWeekDiff / (monthPlan / weeks.length)) * 100 : null },
+            { label: 'Ø Abw./Tag',        val: avgDayDiff,  plan: days.length  > 0 ? monthPlan / days.length  : 0, pct: days.length  > 0 ? (avgDayDiff  / (monthPlan / days.length))  * 100 : null },
+          ];
+
           return (
-            <section className="rounded-xl border-2 border-amber-200 dark:border-amber-800 bg-card shadow-sm overflow-hidden">
+            <section className={cn('rounded-xl border-2 bg-card shadow-sm overflow-hidden', mA.border)}>
               {/* Header */}
-              <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-border bg-amber-50/60 dark:bg-amber-950/20">
+              <div className={cn('flex flex-wrap items-center gap-2 px-4 py-3 border-b border-border', mA.bg || 'bg-amber-50/60 dark:bg-amber-950/20')}>
                 <TrendingDown className="h-4 w-4 text-amber-600 dark:text-amber-400" />
                 <span className="text-sm font-bold text-amber-900 dark:text-amber-200">
                   Flex-Abweichungsanalyse — Plan vs. Ist (Total Flex)
                 </span>
+                {/* Monat-Ampel im Header */}
+                <div className={cn('flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold ml-1', mA.border, mA.bg, mA.text)}>
+                  <span className={cn('inline-block w-2 h-2 rounded-full shrink-0', mA.dot)} />
+                  {mA.label}
+                </div>
                 {proRataDay !== null && (
                   <Badge variant="secondary" className="text-xs ml-auto">
                     bis {proRataDay}. · {Math.round(proRataFactor * 100)} %
@@ -2380,19 +2470,25 @@ export default function PersonalFixPage() {
 
               {/* KPI Chips */}
               <div className="flex flex-wrap gap-3 px-4 py-3 border-b border-border bg-muted/10">
-                {[
-                  { label: 'Abweichung Monat', val: monthDiff, pct: monthPct },
-                  { label: 'Ø Abw./Woche',     val: avgWeekDiff, pct: weeks.length > 0 ? avgWeekDiff / (monthPlan / weeks.length) * 100 : null },
-                  { label: 'Ø Abw./Tag',        val: avgDayDiff,  pct: days.length  > 0 ? avgDayDiff  / (monthPlan / days.length)  * 100 : null },
-                ].map(({ label, val, pct }) => (
-                  <div key={label} className="flex flex-col items-start rounded-lg border border-border bg-background px-3 py-2 min-w-[140px]">
-                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{label}</span>
-                    <span className={`text-base font-bold font-mono tabular-nums mt-0.5 ${diffCls(val)}`}>{fmtDiff(val)}</span>
-                    {pct !== null && (
-                      <span className={`text-xs font-mono tabular-nums ${diffCls(val)}`}>{fmtPct(pct)}</span>
-                    )}
-                  </div>
-                ))}
+                {kpiChips.map(({ label, val, plan: chipPlan, pct }) => {
+                  const st  = ampelStatus(val, chipPlan);
+                  const a   = AMPEL[st];
+                  return (
+                    <div key={label} className={cn('flex flex-col items-start rounded-lg border px-3 py-2 min-w-[148px]', a.border, a.bg || 'bg-background')}>
+                      <div className="flex items-center gap-1.5 w-full">
+                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide flex-1">{label}</span>
+                        <span className={cn('inline-block w-2 h-2 rounded-full shrink-0', a.dot)} />
+                      </div>
+                      <span className={cn('text-base font-bold font-mono tabular-nums mt-0.5', a.text)}>{fmtDiff(val)}</span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {pct !== null && (
+                          <span className={cn('text-xs font-mono tabular-nums', a.text)}>{fmtPct(pct)}</span>
+                        )}
+                        <span className={cn('text-[9px] font-semibold uppercase', a.text)}>{a.label}</span>
+                      </div>
+                    </div>
+                  );
+                })}
                 <div className="flex flex-col items-start rounded-lg border border-border bg-background px-3 py-2 min-w-[140px]">
                   <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Total Plan</span>
                   <span className="text-base font-bold font-mono tabular-nums text-blue-700 dark:text-blue-400 mt-0.5">{fmtCHF(monthPlan)}</span>
@@ -2418,8 +2514,9 @@ export default function PersonalFixPage() {
                   ))}
                 </div>
                 <div className="flex items-center gap-3 ml-auto text-[10px] text-muted-foreground">
-                  <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-red-500" /> Ist &gt; Plan (Mehrkosten)</span>
-                  <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500" /> Ist &lt; Plan (Einsparung)</span>
+                  <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> Im Plan</span>
+                  <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-amber-400" /> Leicht über Plan (&le;5 %)</span>
+                  <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-red-500" /> Über Plan (&gt;5 %)</span>
                 </div>
               </div>
 
@@ -2428,32 +2525,46 @@ export default function PersonalFixPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
+                      <th className="text-center px-3 py-2 font-medium w-8">●</th>
                       <th className="text-left px-4 py-2 font-medium">Zeitraum</th>
                       <th className="text-right px-4 py-2 font-medium text-blue-600">Total Flex Plan</th>
                       <th className="text-right px-4 py-2 font-medium text-orange-600">Total Flex Ist</th>
                       <th className="text-right px-4 py-2 font-medium">Diff. CHF</th>
                       <th className="text-right px-4 py-2 font-medium">Diff. %</th>
+                      <th className="text-left px-3 py-2 font-medium">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {tableRows.map((row, i) => (
-                      <tr key={i} className="hover:bg-muted/20">
-                        <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{row.period}</td>
-                        <td className="px-4 py-2 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(row.plan)}</td>
-                        <td className="px-4 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(row.ist)}</td>
-                        <td className={`px-4 py-2 text-right font-mono tabular-nums font-semibold ${diffCls(row.diff)}`}>{fmtDiff(row.diff)}</td>
-                        <td className={`px-4 py-2 text-right font-mono tabular-nums text-xs ${diffCls(row.diff)}`}>{fmtPct(row.diffPct)}</td>
-                      </tr>
-                    ))}
+                    {tableRows.map((row, i) => {
+                      const st = ampelStatus(row.diff, row.plan);
+                      const a  = AMPEL[st];
+                      return (
+                        <tr key={i} className={cn('hover:bg-muted/20', a.bg)}>
+                          <td className="px-3 py-2 text-center">
+                            <span className={cn('inline-block w-2.5 h-2.5 rounded-full', a.dot)} />
+                          </td>
+                          <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{row.period}</td>
+                          <td className="px-4 py-2 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(row.plan)}</td>
+                          <td className="px-4 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(row.ist)}</td>
+                          <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold', a.text)}>{fmtDiff(row.diff)}</td>
+                          <td className={cn('px-4 py-2 text-right font-mono tabular-nums text-xs', a.text)}>{fmtPct(row.diffPct)}</td>
+                          <td className={cn('px-3 py-2 text-xs font-medium', a.text)}>{a.label}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                   {tableRows.length > 1 && (
                     <tfoot>
-                      <tr className="border-t-2 border-border bg-muted/20">
+                      <tr className={cn('border-t-2 border-border', mA.bg || 'bg-muted/20')}>
+                        <td className="px-3 py-2.5 text-center">
+                          <span className={cn('inline-block w-2.5 h-2.5 rounded-full', mA.dot)} />
+                        </td>
                         <td className="px-4 py-2.5 font-bold text-xs">Total</td>
                         <td className="px-4 py-2.5 text-right font-mono font-bold text-blue-700 dark:text-blue-400">{fmtCHF(monthPlan)}</td>
                         <td className="px-4 py-2.5 text-right font-mono font-bold text-orange-700 dark:text-orange-400">{fmtCHF(monthIst)}</td>
-                        <td className={`px-4 py-2.5 text-right font-mono font-bold ${diffCls(monthDiff)}`}>{fmtDiff(monthDiff)}</td>
-                        <td className={`px-4 py-2.5 text-right font-mono text-xs ${diffCls(monthDiff)}`}>{fmtPct(monthPct)}</td>
+                        <td className={cn('px-4 py-2.5 text-right font-mono font-bold', mA.text)}>{fmtDiff(monthDiff)}</td>
+                        <td className={cn('px-4 py-2.5 text-right font-mono text-xs', mA.text)}>{fmtPct(monthPct)}</td>
+                        <td className={cn('px-3 py-2.5 text-xs font-semibold', mA.text)}>{mA.label}</td>
                       </tr>
                     </tfoot>
                   )}
