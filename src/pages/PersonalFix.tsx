@@ -725,528 +725,299 @@ function FlexBreakdownModal({ target, onClose }: {
   if (!target) return null;
 
   const { empId, empName, field, hourlyWage, weeklyHours, year, month, cutoffDay, factor } = target;
-  const dailyH    = weeklyHours ? weeklyHours / 5 : 8.4;
-  const monthLabel = new Date(year, month - 1, 1).toLocaleString('de-CH', { month: 'long', year: 'numeric' });
+  const dailyH      = weeklyHours ? weeklyHours / 5 : 8.4;
+  const monthLabel  = new Date(year, month - 1, 1).toLocaleString('de-CH', { month: 'long', year: 'numeric' });
   const cutoffLabel = cutoffDay !== null
     ? `${cutoffDay}.${String(month).padStart(2, '0')}.${year}`
     : null;
 
-  const fieldLabels: Record<BreakdownField, string> = {
-    planWork:     'Flex Arbeit Plan',
-    istWork:      'Flex Arbeit Ist',
-    planHoliday:  'Ferien Plan',
-    istHoliday:   'Ferien Ist',
-    planTotalVar: 'Total Flex Plan',
-    istTotalVar:  'Total Flex Ist',
+  // ── Always load all 4 data sources ─────────────────────────────────────────
+  const planWorkDays = loadDailyPlanDetails(empId, year, month, cutoffDay, hourlyWage);
+  const istWorkDays  = loadDailyIstDetails(empId, year, month, cutoffDay, hourlyWage);
+  const ferPlanDays  = loadFerienPlanDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage);
+  const ferIstDays   = loadFerienIstDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage);
+
+  // ── Unified work day map ────────────────────────────────────────────────────
+  type WorkRow = { date: string; planH: number; planCHF: number; istH: number; istCHF: number };
+  const workMap = new Map<string, WorkRow>();
+  for (const r of planWorkDays) {
+    const e = workMap.get(r.date) ?? { date: r.date, planH: 0, planCHF: 0, istH: 0, istCHF: 0 };
+    e.planH += r.hours; e.planCHF += r.cost; workMap.set(r.date, e);
+  }
+  for (const r of istWorkDays) {
+    const e = workMap.get(r.date) ?? { date: r.date, planH: 0, planCHF: 0, istH: 0, istCHF: 0 };
+    e.istH += r.hours; e.istCHF += r.cost; workMap.set(r.date, e);
+  }
+  const workRows = Array.from(workMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+
+  // ── Unified ferien day map ──────────────────────────────────────────────────
+  type FerRow = { date: string; planCHF: number; istCHF: number };
+  const ferMap = new Map<string, FerRow>();
+  for (const r of ferPlanDays) {
+    const e = ferMap.get(r.date) ?? { date: r.date, planCHF: 0, istCHF: 0 };
+    e.planCHF += r.cost; ferMap.set(r.date, e);
+  }
+  for (const r of ferIstDays) {
+    const e = ferMap.get(r.date) ?? { date: r.date, planCHF: 0, istCHF: 0 };
+    e.istCHF += r.cost; ferMap.set(r.date, e);
+  }
+  const ferRows = Array.from(ferMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+
+  // ── Totals ─────────────────────────────────────────────────────────────────
+  const totalPlanWork = workRows.reduce((s, r) => s + r.planCHF, 0);
+  const totalIstWork  = workRows.reduce((s, r) => s + r.istCHF,  0);
+  const totalPlanH    = workRows.reduce((s, r) => s + r.planH,   0);
+  const totalIstH     = workRows.reduce((s, r) => s + r.istH,    0);
+  const totalPlanFer  = ferRows.reduce((s, r) => s + r.planCHF, 0);
+  const totalIstFer   = ferRows.reduce((s, r) => s + r.istCHF,  0);
+  const totalPlan     = totalPlanWork + totalPlanFer;
+  const totalIst      = totalIstWork  + totalIstFer;
+  const diffWork      = totalIstWork  - totalPlanWork;
+  const diffFer       = totalIstFer   - totalPlanFer;
+  const diffTotal     = totalIst - totalPlan;
+  const diffWorkPct   = totalPlanWork > 0 ? (diffWork / totalPlanWork) * 100 : 0;
+  const diffTotalPct  = totalPlan > 0 ? (diffTotal / totalPlan) * 100 : 0;
+  const noData        = totalPlan === 0 && totalIst === 0;
+
+  // ── Ampel ──────────────────────────────────────────────────────────────────
+  const overallSt = ampelStatus(diffTotal, totalPlan);
+  const overallA  = AMPEL[overallSt];
+
+  // ── Debug logs ─────────────────────────────────────────────────────────────
+  const popupMode = cutoffDay !== null ? `cutoff:${cutoffDay}` : 'month';
+  console.log(`[POPUP] employee: ${empName}`);
+  console.log(`[POPUP] mode: ${popupMode}`);
+  console.log(`[POPUP] plan work total: ${totalPlanWork.toFixed(2)}`);
+  console.log(`[POPUP] ist work total: ${totalIstWork.toFixed(2)}`);
+  console.log(`[POPUP] diff total chf: ${diffTotal.toFixed(2)}`);
+  console.log(`[POPUP] daily rows count: ${workRows.length}`);
+
+  // ── Inline helpers ─────────────────────────────────────────────────────────
+  const fmtD = (v: number) => {
+    const s = fmtCHF(Math.abs(v));
+    return v > 0.005 ? `+${s}` : v < -0.005 ? `−${s}` : s;
   };
-
-  // ── Load data ──────────────────────────────────────────────────────────────
-  const planWorkDays  = (field === 'planWork'  || field === 'planTotalVar')
-    ? loadDailyPlanDetails(empId, year, month, cutoffDay, hourlyWage) : [];
-  const istWorkDays   = (field === 'istWork'   || field === 'istTotalVar')
-    ? loadDailyIstDetails(empId, year, month, cutoffDay, hourlyWage)  : [];
-  const ferPlanDays   = (field === 'planHoliday' || field === 'planTotalVar')
-    ? loadFerienPlanDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage) : [];
-  const ferIstDays    = (field === 'istHoliday'  || field === 'istTotalVar')
-    ? loadFerienIstDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage)  : [];
-
-  // For Total Flex Ist: also load plan for cross-comparison
-  const cmpPlanWorkDays = field === 'istTotalVar'
-    ? loadDailyPlanDetails(empId, year, month, cutoffDay, hourlyWage)             : planWorkDays;
-  const cmpFerPlanDays  = field === 'istTotalVar'
-    ? loadFerienPlanDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage) : ferPlanDays;
-
-  // ── KPI calculations ───────────────────────────────────────────────────────
-  const activeWorkDays = field.startsWith('plan') ? planWorkDays : istWorkDays;
-  const activeFerDays  = (field === 'planHoliday' || field === 'planTotalVar') ? ferPlanDays : ferIstDays;
-
-  const workCount   = activeWorkDays.length;
-  const ferCount    = activeFerDays.length;
-  const totalHours  = activeWorkDays.reduce((s, r) => s + r.hours, 0);
-  const workCost    = activeWorkDays.reduce((s, r) => s + r.cost, 0);
-  const ferCost     = activeFerDays.reduce((s, r) => s + r.cost, 0);
-  const totalFlex   = workCost + ferCost;
-  const ferSharePct = totalFlex > 0 ? (ferCost / totalFlex) * 100 : 0;
-  const avgDailyH   = workCount > 0 ? totalHours / workCount : 0;
-
-  const cmpPlanWork = cmpPlanWorkDays.reduce((s, r) => s + r.cost, 0);
-  const cmpFerPlan  = cmpFerPlanDays.reduce((s, r) => s + r.cost, 0);
-  const cmpTotal    = cmpPlanWork + cmpFerPlan;
-
-  // ── Interpretation hints ───────────────────────────────────────────────────
-  type HintType = 'info' | 'warn' | 'ok';
-  const hints: { text: string; type: HintType }[] = [];
-
-  if (field === 'planWork' || field === 'istWork') {
-    if (workCount === 0) {
-      hints.push({ type: 'info', text: field === 'planWork'
-        ? 'Keine geplanten Arbeitstage in diesem Zeitraum.'
-        : cutoffLabel ? `Keine Ist-Stunden bis Stichtag ${cutoffLabel} erfasst.` : 'Keine Ist-Stunden in diesem Monat erfasst.' });
-    } else {
-      if (avgDailyH > dailyH * 1.15) {
-        hints.push({ type: 'warn', text: `Ø ${avgDailyH.toFixed(1)} h/Tag liegt über dem Tagessoll (${dailyH.toFixed(1)} h) — erhöhte Flex-Kosten.` });
-      } else if (avgDailyH < dailyH * 0.85) {
-        hints.push({ type: 'ok', text: `Ø ${avgDailyH.toFixed(1)} h/Tag liegt unter dem Tagessoll (${dailyH.toFixed(1)} h) — tiefe Flex-Kosten.` });
-      } else {
-        hints.push({ type: 'ok', text: `Ø ${avgDailyH.toFixed(1)} h/Tag — im Bereich des Tagessolls (${dailyH.toFixed(1)} h).` });
-      }
-    }
-  }
-
-  if (field === 'planHoliday' || field === 'istHoliday') {
-    if (ferCount === 0) {
-      hints.push({ type: 'info', text: field === 'planHoliday'
-        ? 'Keine geplanten Ferien (FE) in diesem Zeitraum.'
-        : cutoffLabel ? `Keine Ist-Ferientage bis Stichtag ${cutoffLabel} erfasst.` : 'Kein Ferienabbau in diesem Monat erfasst.' });
-    } else {
-      hints.push({ type: 'info', text: `${ferCount} Ferientag${ferCount !== 1 ? 'e' : ''} × ${dailyH.toFixed(1)} h × ${fmtCHFDec(hourlyWage)}/h = ${fmtCHF(ferCost)}.` });
-      hints.push({ type: 'info', text: 'Ferienabbau erhöht die Flex-Gesamtkosten — kein direkt planbarer Arbeitseinsatz.' });
-    }
-  }
-
-  if (field === 'planTotalVar' || field === 'istTotalVar') {
-    if (totalFlex === 0) {
-      hints.push({ type: 'info', text: field === 'planTotalVar'
-        ? 'Keine geplanten Flex-Kosten in diesem Zeitraum.'
-        : 'Noch keine Ist-Flex-Kosten erfasst.' });
-    } else {
-      hints.push({ type: 'info', text: `Total Flex = Flex Arbeit (${fmtCHF(workCost)}) + Ferien (${fmtCHF(ferCost)}).` });
-      if (ferSharePct > 30) {
-        hints.push({ type: 'warn', text: `Ferienanteil ${ferSharePct.toFixed(0)} % — Ferien dominieren die Flex-Kosten in diesem Zeitraum.` });
-      } else if (ferCost === 0) {
-        hints.push({ type: 'ok', text: 'Kein Ferienabbau vorhanden — Flex-Kosten bestehen ausschliesslich aus Arbeitsstunden.' });
-      }
-      if (field === 'istTotalVar' && cmpTotal > 0) {
-        const dev    = totalFlex - cmpTotal;
-        const devPct = (dev / cmpTotal) * 100;
-        if (devPct < -20) {
-          hints.push({ type: 'ok', text: `Ist liegt ${Math.abs(devPct).toFixed(0)} % unter Plan (${fmtCHF(totalFlex)} vs. ${fmtCHF(cmpTotal)}).` });
-        } else if (devPct > 20) {
-          hints.push({ type: 'warn', text: `Ist liegt ${devPct.toFixed(0)} % über Plan (${fmtCHF(totalFlex)} vs. ${fmtCHF(cmpTotal)}) — Überprüfung empfohlen.` });
-        }
-        if (Math.abs(dev) > 10) {
-          const workDev = workCost - cmpPlanWork;
-          const ferDev  = ferCost  - cmpFerPlan;
-          if (Math.abs(workDev) >= Math.abs(ferDev)) {
-            hints.push({ type: 'info', text: `Abweichung kommt primär aus Flex Arbeit (${workDev >= 0 ? '+' : ''}${fmtCHF(workDev)}).` });
-          } else {
-            hints.push({ type: 'info', text: `Abweichung kommt primär aus Ferien (${ferDev >= 0 ? '+' : ''}${fmtCHF(ferDev)}).` });
-          }
-        }
-      }
-    }
-  }
-
-  // ── KPI chips ──────────────────────────────────────────────────────────────
-  const kpiChips: { label: string; value: string }[] = [];
-  if (workCount > 0)   kpiChips.push({ label: 'Arbeitstage', value: `${workCount}` });
-  if (ferCount  > 0)   kpiChips.push({ label: 'Ferientage',  value: `${ferCount}`  });
-  if (totalHours > 0)  kpiChips.push({ label: 'Total Std.',  value: `${Math.round(totalHours * 10) / 10} h` });
-  if (hourlyWage > 0)  kpiChips.push({ label: 'Ø Lohn/h',   value: fmtCHFDec(hourlyWage) });
-  if (ferSharePct > 0) kpiChips.push({ label: 'Ferienanteil', value: `${ferSharePct.toFixed(0)} %` });
-
-  const hintStyles: Record<HintType, string> = {
-    info: 'border-blue-200 bg-blue-50/60 text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200',
-    warn: 'border-amber-200 bg-amber-50/60 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200',
-    ok:   'border-emerald-200 bg-emerald-50/60 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200',
+  const fmtDH = (v: number) => {
+    const s = `${Math.abs(v).toFixed(2)} h`;
+    return v > 0.005 ? `+${s}` : v < -0.005 ? `−${s}` : s;
   };
-  const hintIcon: Record<HintType, string> = { info: 'ℹ', warn: '⚠', ok: '✓' };
-
-  // ── Empty-state helpers ────────────────────────────────────────────────────
-  const emptyWork = (isPlan: boolean) => (
-    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-6 text-center text-sm text-muted-foreground">
-      {isPlan
-        ? 'Keine geplanten Arbeitstage — Dienstplan für diesen Zeitraum leer.'
-        : cutoffLabel
-          ? `Keine Ist-Stunden bis Stichtag ${cutoffLabel} erfasst.`
-          : 'Keine Ist-Stunden in diesem Monat erfasst.'}
-    </div>
-  );
-
-  const emptyFerien = (isPlan: boolean) => (
-    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-6 text-center text-sm text-muted-foreground">
-      {isPlan
-        ? 'Keine geplanten Ferien (FE) in diesem Zeitraum.'
-        : cutoffLabel
-          ? `Keine Ist-Ferientage bis Stichtag ${cutoffLabel} erfasst.`
-          : 'Kein Ferienabbau in diesem Monat erfasst.'}
-    </div>
-  );
-
-  // ── Table renderers ────────────────────────────────────────────────────────
-  // thead th base — sticky within the scrollable container
+  const diffCls = (v: number) =>
+    v > 0.005  ? 'text-red-600 dark:text-red-400' :
+    v < -0.005 ? 'text-emerald-600 dark:text-emerald-400' :
+                 'text-muted-foreground';
   const thCls = 'sticky top-0 z-10 bg-muted/80 backdrop-blur-sm px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground border-b border-border';
 
-  const renderDayTable = (rows: DayEntry[], sectionLabel: string, accentCls: string, isPlan: boolean) => {
-    if (rows.length === 0) return emptyWork(isPlan);
-    const total     = rows.reduce((s, r) => s + r.cost,  0);
-    const totalH    = rows.reduce((s, r) => s + r.hours, 0);
-    return (
-      <div className="space-y-1.5">
-        <p className={cn('text-xs font-semibold', accentCls)}>{sectionLabel}</p>
-        <div className="rounded-md border border-border">
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr>
-                <th className={cn(thCls, 'text-left')}>Datum</th>
-                <th className={cn(thCls, 'text-right')}>Stunden</th>
-                <th className={cn(thCls, 'text-right')}>Lohn/h</th>
-                <th className={cn(thCls, 'text-right')}>Kosten CHF</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
-                  <td className="px-3 py-1.5 tabular-nums">{fmtDate(r.date)}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{r.hours.toFixed(2)} h</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{fmtCHFDec(hourlyWage)}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold">{fmtCHFDec(r.cost)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t-2 border-border bg-muted/40 font-bold text-xs">
-                <td className="px-3 py-2">Total ({rows.length} Tag{rows.length !== 1 ? 'e' : ''})</td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">{Math.round(totalH * 10) / 10} h</td>
-                <td className="px-3 py-2" />
-                <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtCHF(total)}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </div>
-    );
+  const fieldLabels: Record<BreakdownField, string> = {
+    planWork: 'Flex Arbeit Plan', istWork: 'Flex Arbeit Ist',
+    planHoliday: 'Ferien Plan',   istHoliday: 'Ferien Ist',
+    planTotalVar: 'Total Flex Plan', istTotalVar: 'Total Flex Ist',
   };
-
-  const renderFerienTable = (rows: FerienDay[], sectionLabel: string, accentCls: string, isPlan: boolean) => {
-    if (rows.length === 0) return emptyFerien(isPlan);
-    const total = rows.reduce((s, r) => s + r.cost, 0);
-    return (
-      <div className="space-y-1.5">
-        <p className={cn('text-xs font-semibold', accentCls)}>{sectionLabel}</p>
-        <div className="rounded-md border border-border">
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr>
-                <th className={cn(thCls, 'text-left')}>Datum</th>
-                <th className={cn(thCls, 'text-right')}>Std./Tag</th>
-                <th className={cn(thCls, 'text-right')}>Tagessatz CHF</th>
-                <th className={cn(thCls, 'text-right')}>Kosten CHF</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
-                  <td className="px-3 py-1.5 tabular-nums">{fmtDate(r.date)}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{r.dailyH.toFixed(2)} h</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{fmtCHFDec(r.dailyH * hourlyWage)}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold">{fmtCHFDec(r.cost)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t-2 border-border bg-muted/40 font-bold text-xs">
-                <td className="px-3 py-2">Total ({rows.length} Ferientag{rows.length !== 1 ? 'e' : ''})</td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground text-[10px] font-normal">
-                  Basis: {fmtCHFDec(hourlyWage)}/h × {dailyH.toFixed(2)} h/Tag
-                </td>
-                <td className="px-3 py-2" />
-                <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtCHF(total)}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
-  const renderTotalFlex = (wDays: DayEntry[], fDays: FerienDay[], workLabel: string, ferLabel: string, isPlan: boolean) => {
-    const wTotal = wDays.reduce((s, r) => s + r.cost, 0);
-    const fTotal = fDays.reduce((s, r) => s + r.cost, 0);
-    const isPlanColor  = isPlan ? 'text-blue-700 dark:text-blue-400'    : 'text-orange-700 dark:text-orange-400';
-    const isFerColor   = isPlan ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400';
-    return (
-      <div className="space-y-4">
-        {renderDayTable(wDays, workLabel, isPlanColor, isPlan)}
-        {renderFerienTable(fDays, ferLabel, isFerColor, isPlan)}
-      </div>
-    );
-  };
-
-  // ── Grand total for sticky footer ──────────────────────────────────────────
-  const footerWorkCost = (() => {
-    if (field === 'planWork'  || field === 'planTotalVar') return planWorkDays.reduce((s, r) => s + r.cost, 0);
-    if (field === 'istWork'   || field === 'istTotalVar')  return istWorkDays.reduce((s, r) => s + r.cost, 0);
-    return 0;
-  })();
-  const footerFerCost = (() => {
-    if (field === 'planHoliday' || field === 'planTotalVar') return ferPlanDays.reduce((s, r) => s + r.cost, 0);
-    if (field === 'istHoliday'  || field === 'istTotalVar')  return ferIstDays.reduce((s, r) => s + r.cost, 0);
-    return 0;
-  })();
-  const footerHours    = (field === 'planWork' || field === 'planTotalVar')
-    ? planWorkDays.reduce((s, r) => s + r.hours, 0)
-    : istWorkDays.reduce((s, r) => s + r.hours, 0);
-  const footerTotal    = footerWorkCost + footerFerCost;
-  const showFooter     = footerTotal > 0;
-
-  const isIstField = field === 'istWork' || field === 'istHoliday' || field === 'istTotalVar';
-  const accentHeader = isIstField
-    ? 'bg-orange-50/60 dark:bg-orange-950/20 border-orange-200 dark:border-orange-800'
-    : 'bg-blue-50/60 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800';
 
   return (
     <Dialog open={!!target} onOpenChange={open => { if (!open) onClose(); }}>
-      {/*
-        p-0 gap-0           — remove default DialogContent padding/gap so we control layout
-        flex flex-col       — stack: sticky-header / scrollable-body / sticky-footer
-        max-h-[88vh]        — total modal height cap
-        overflow-hidden     — clip at max-h; only inner body scrolls
-        w-[min(960px,95vw)] — up to 960 px wide, shrinks on small screens
-      */}
-      <DialogContent className="p-0 gap-0 max-w-none w-[min(960px,95vw)] flex flex-col max-h-[88vh] overflow-hidden">
+      <DialogContent className="p-0 gap-0 max-w-none w-[min(1000px,95vw)] flex flex-col max-h-[88vh] overflow-hidden">
 
         {/* ── Sticky Header ─────────────────────────────────────────────── */}
-        <div className={cn(
-          'shrink-0 flex items-start justify-between gap-4 px-6 py-4 border-b',
-          accentHeader,
-        )}>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-base font-bold leading-tight truncate">
-              {fieldLabels[field]} — {empName}
-            </h2>
-            <div className="flex items-center gap-2 flex-wrap mt-1">
-              <span className="text-sm text-muted-foreground">{monthLabel}</span>
-              {cutoffLabel && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 text-[11px] font-semibold px-2.5 py-0.5 border border-violet-300 dark:border-violet-700">
-                  Stichtag {cutoffLabel} · {Math.round(factor * 100)} %
+        <div className={cn('shrink-0 px-6 py-4 border-b', overallA.border,
+          overallA.bg || 'bg-indigo-50/60 dark:bg-indigo-950/20')}>
+          {/* Row 1: Name + meta + Ampel badge */}
+          <div className="flex items-start gap-3 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-base font-bold leading-tight truncate">{empName}</h2>
+              <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                <span className="text-sm text-muted-foreground">{monthLabel}</span>
+                {cutoffLabel && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 text-[11px] font-semibold px-2.5 py-0.5 border border-violet-300 dark:border-violet-700">
+                    Stichtag {cutoffLabel} · {Math.round(factor * 100)} %
+                  </span>
+                )}
+                {hourlyWage > 0 && (
+                  <span className="rounded-full bg-muted border border-border px-2 py-0.5 text-[11px] font-mono text-muted-foreground">
+                    {fmtCHFDec(hourlyWage)}/h
+                  </span>
+                )}
+                <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                  ← {fieldLabels[field]}
                 </span>
-              )}
-              {hourlyWage > 0 && (
-                <span className="text-xs text-muted-foreground font-mono">{fmtCHFDec(hourlyWage)}/h</span>
-              )}
+              </div>
+            </div>
+            <div className={cn('flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold shrink-0', overallA.border, overallA.text)}>
+              <span className={cn('inline-block w-2.5 h-2.5 rounded-full', overallA.dot)} />
+              {overallA.label}
             </div>
           </div>
-          {/* shadcn injects its own close button; this is just extra visual space */}
+
+          {/* Row 2: KPI comparison chips */}
+          {!noData && (
+            <div className="flex flex-wrap gap-2 mt-3">
+              <div className="flex items-center gap-1.5 rounded-lg border border-border bg-background/80 px-3 py-1.5 text-xs">
+                <span className="text-muted-foreground font-medium">Flex Arbeit:</span>
+                <span className="font-mono font-semibold text-blue-700 dark:text-blue-400">{fmtCHF(totalPlanWork)}</span>
+                <span className="text-muted-foreground">→</span>
+                <span className="font-mono font-semibold text-orange-700 dark:text-orange-400">{fmtCHF(totalIstWork)}</span>
+                <span className={cn('font-mono font-bold ml-0.5', diffCls(diffWork))}>{fmtD(diffWork)}</span>
+                {totalPlanWork > 0 && <span className={cn('text-[10px]', diffCls(diffWork))}>({diffWorkPct > 0.005 ? '+' : ''}{diffWorkPct.toFixed(1)} %)</span>}
+              </div>
+              {(totalPlanFer > 0 || totalIstFer > 0) && (
+                <div className="flex items-center gap-1.5 rounded-lg border border-border bg-background/80 px-3 py-1.5 text-xs">
+                  <span className="text-muted-foreground font-medium">Ferien:</span>
+                  <span className="font-mono font-semibold text-blue-500 dark:text-blue-300">{fmtCHF(totalPlanFer)}</span>
+                  <span className="text-muted-foreground">→</span>
+                  <span className="font-mono font-semibold text-orange-500 dark:text-orange-300">{fmtCHF(totalIstFer)}</span>
+                  <span className={cn('font-mono font-bold ml-0.5', diffCls(diffFer))}>{fmtD(diffFer)}</span>
+                </div>
+              )}
+              <div className={cn('flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold', overallA.border, overallA.bg)}>
+                <span className="text-muted-foreground font-medium">Total Flex:</span>
+                <span className="font-mono font-semibold text-blue-700 dark:text-blue-400">{fmtCHF(totalPlan)}</span>
+                <span className="text-muted-foreground">→</span>
+                <span className="font-mono font-semibold text-orange-700 dark:text-orange-400">{fmtCHF(totalIst)}</span>
+                <span className={cn('font-mono font-bold ml-0.5', overallA.text)}>{fmtD(diffTotal)}</span>
+                {totalPlan > 0 && <span className={cn('text-[10px]', overallA.text)}>({diffTotalPct > 0.005 ? '+' : ''}{diffTotalPct.toFixed(1)} %)</span>}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Scrollable Body ───────────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 text-sm">
 
-          {/* KPI chips */}
-          {kpiChips.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {kpiChips.map(c => (
-                <div key={c.label} className="rounded-lg border border-border bg-muted/40 px-3 py-2 flex flex-col items-center min-w-[80px] shadow-sm">
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">{c.label}</span>
-                  <span className="font-mono font-bold text-sm mt-0.5 text-foreground">{c.value}</span>
-                </div>
-              ))}
+          {noData ? (
+            <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
+              Keine Plan- oder Ist-Daten für diesen Mitarbeiter im gewählten Zeitraum.
             </div>
-          )}
-
-          {/* Interpretation */}
-          {hints.length > 0 && (
-            <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 space-y-1.5">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Einordnung</p>
-              {hints.map((h, i) => (
-                <div key={i} className={cn('flex items-start gap-2 rounded-md border px-3 py-2 text-xs', hintStyles[h.type])}>
-                  <span className="font-bold shrink-0">{hintIcon[h.type]}</span>
-                  <span>{h.text}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Data tables */}
-          {field === 'planWork'     && renderDayTable(planWorkDays,  'Geplante Arbeitstage',       'text-blue-700 dark:text-blue-400',    true)}
-          {field === 'istWork'      && renderDayTable(istWorkDays,   'Effektive Arbeitstage (Ist)', 'text-orange-700 dark:text-orange-400', false)}
-          {field === 'planHoliday'  && renderFerienTable(ferPlanDays, 'Plan-Ferientage (FE)',       'text-blue-600 dark:text-blue-400',    true)}
-          {field === 'istHoliday'   && renderFerienTable(ferIstDays,  'Ist-Ferientage (FE)',        'text-orange-600 dark:text-orange-400', false)}
-          {field === 'planTotalVar' && renderTotalFlex(planWorkDays, ferPlanDays, 'Flex Arbeit Plan', 'Ferien Plan', true)}
-          {field === 'istTotalVar'  && renderTotalFlex(istWorkDays,  ferIstDays,  'Flex Arbeit Ist',  'Ferien Ist',  false)}
-
-          {/* ── Plan vs. Ist Tagesvergleich + Ampel (nur bei istTotalVar) ──── */}
-          {field === 'istTotalVar' && (() => {
-            type CompRow = { date: string; pw: number; pf: number; iw: number; if_: number };
-            const compMap = new Map<string, CompRow>();
-            const ensure = (d: string) => {
-              if (!compMap.has(d)) compMap.set(d, { date: d, pw: 0, pf: 0, iw: 0, if_: 0 });
-              return compMap.get(d)!;
-            };
-            for (const r of cmpPlanWorkDays) ensure(r.date).pw += r.cost;
-            for (const r of cmpFerPlanDays)  ensure(r.date).pf += r.cost;
-            for (const r of istWorkDays)      ensure(r.date).iw += r.cost;
-            for (const r of ferIstDays)       ensure(r.date).if_ += r.cost;
-            const compRows = Array.from(compMap.values()).sort((a, b) => a.date.localeCompare(b.date));
-            const totalPlan    = compRows.reduce((s, r) => s + r.pw + r.pf, 0);
-            const totalIst     = compRows.reduce((s, r) => s + r.iw + r.if_, 0);
-            const totalDiff    = totalIst - totalPlan;
-            const totalFerDiff = compRows.reduce((s, r) => s + (r.if_ - r.pf), 0);
-            const totalWrkDiff = compRows.reduce((s, r) => s + (r.iw - r.pw), 0);
-            const overallSt    = ampelStatus(totalDiff, totalPlan);
-            const overallA     = AMPEL[overallSt];
-            const totalPct     = totalPlan > 0 ? (totalDiff / totalPlan) * 100 : 0;
-
-            // Ferien hint: wenn der Ferienanteil > 50% der Gesamtabweichung erklärt
-            const ferienDominant  = totalDiff > 0.01 && totalFerDiff > 0 && totalFerDiff / totalDiff > 0.5;
-            const arbeitDominant  = totalDiff > 0.01 && totalWrkDiff > 0 && totalWrkDiff / totalDiff > 0.5;
-
-            const fmtD = (v: number) => {
-              const s = fmtCHF(Math.abs(v));
-              return v > 0.005 ? `+${s}` : v < -0.005 ? `−${s}` : s;
-            };
-
-            console.log(`[ABW] employee diff total: ${totalDiff.toFixed(2)}`);
-            console.log(`[AMPEL] mode: popup-employee`);
-            console.log(`[AMPEL] plan: ${totalPlan.toFixed(2)}`);
-            console.log(`[AMPEL] ist: ${totalIst.toFixed(2)}`);
-            console.log(`[AMPEL] diff chf: ${totalDiff.toFixed(2)}`);
-            console.log(`[AMPEL] diff pct: ${totalPct.toFixed(2)}`);
-            console.log(`[AMPEL] status: ${overallSt}`);
-
-            if (compRows.length === 0) return null;
-            return (
-              <div className="space-y-1.5 mt-2">
-                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide px-1">
-                  Abweichungsanalyse — Plan vs. Ist pro Tag
-                </p>
-
-                {/* Overall Ampel badge */}
-                <div className={cn('flex items-center gap-2 rounded-lg border px-3 py-2', overallA.border, overallA.bg)}>
-                  <span className={cn('inline-block w-3 h-3 rounded-full shrink-0', overallA.dot)} />
-                  <span className={cn('text-sm font-bold', overallA.text)}>{overallA.label}</span>
-                  <span className={cn('text-xs font-mono ml-auto', overallA.text)}>
-                    {fmtD(totalDiff)}{totalPlan > 0 && ` (${totalPct > 0 ? '+' : totalPct < 0 ? '−' : ''}${Math.abs(totalPct).toFixed(1)} %)`}
-                  </span>
-                </div>
-
-                {/* Ferien/Arbeit hint */}
-                {ferienDominant && (
-                  <p className="text-[10px] text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded px-2.5 py-1.5">
-                    Abweichung wird teilweise durch Ferien erklärt ({fmtCHF(totalFerDiff)} Ferienabweichung von {fmtCHF(totalDiff)} gesamt).
+          ) : (
+            <>
+              {/* ── Flex Arbeit Plan vs. Ist ──────────────────────────── */}
+              {workRows.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    Flex Arbeit — Plan vs. Ist
                   </p>
-                )}
-                {arbeitDominant && !ferienDominant && (
-                  <p className="text-[10px] text-orange-700 dark:text-orange-400 bg-orange-50/60 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 rounded px-2.5 py-1.5">
-                    Abweichung stammt primär aus Flex-Arbeit ({fmtCHF(totalWrkDiff)} Arbeitsabweichung von {fmtCHF(totalDiff)} gesamt).
-                  </p>
-                )}
-
-                {/* Summary KPI row */}
-                <div className="flex flex-wrap gap-2 pb-1">
-                  {[
-                    { label: 'Total Plan', val: totalPlan, cls: 'text-blue-700 dark:text-blue-400' },
-                    { label: 'Total Ist',  val: totalIst,  cls: 'text-orange-700 dark:text-orange-400' },
-                  ].map(({ label, val, cls }) => (
-                    <div key={label} className="rounded-md border border-border bg-muted/20 px-3 py-1.5 flex flex-col">
-                      <span className="text-[9px] font-medium text-muted-foreground uppercase tracking-wide">{label}</span>
-                      <span className={`text-sm font-bold font-mono tabular-nums ${cls}`}>{fmtCHF(val)}</span>
-                    </div>
-                  ))}
-                  <div className={cn('rounded-md border px-3 py-1.5 flex flex-col', overallA.border, overallA.bg)}>
-                    <span className="text-[9px] font-medium text-muted-foreground uppercase tracking-wide">Differenz CHF</span>
-                    <span className={cn('text-sm font-bold font-mono tabular-nums', overallA.text)}>{fmtD(totalDiff)}</span>
+                  <div className="rounded-md border border-border">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr>
+                          <th className={cn(thCls, 'text-center w-7')}>●</th>
+                          <th className={cn(thCls, 'text-left')}>Datum</th>
+                          <th className={cn(thCls, 'text-right text-blue-600')}>Plan Std.</th>
+                          <th className={cn(thCls, 'text-right text-orange-600')}>Ist Std.</th>
+                          <th className={cn(thCls, 'text-right')}>Diff Std.</th>
+                          <th className={cn(thCls, 'text-right text-blue-600')}>Plan CHF</th>
+                          <th className={cn(thCls, 'text-right text-orange-600')}>Ist CHF</th>
+                          <th className={cn(thCls, 'text-right')}>Diff CHF</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {workRows.map((r, i) => {
+                          const dH   = r.istH   - r.planH;
+                          const dCHF = r.istCHF - r.planCHF;
+                          const rSt  = (r.planCHF === 0 && r.istCHF === 0) ? 'neutral' as AmpelStatus : ampelStatus(dCHF, r.planCHF);
+                          const rA   = AMPEL[rSt];
+                          return (
+                            <tr key={i} className={cn(i % 2 === 0 ? 'bg-background' : 'bg-muted/15', rA.bg)}>
+                              <td className="px-2 py-1.5 text-center"><span className={cn('inline-block w-2 h-2 rounded-full', rA.dot)} /></td>
+                              <td className="px-3 py-1.5 font-mono">{fmtDate(r.date)}</td>
+                              <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-600">{r.planH > 0 ? `${r.planH.toFixed(2)} h` : '–'}</td>
+                              <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-600">{r.istH > 0 ? `${r.istH.toFixed(2)} h` : '–'}</td>
+                              <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums', diffCls(dH))}>{(r.planH === 0 && r.istH === 0) ? '–' : fmtDH(dH)}</td>
+                              <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{r.planCHF > 0 ? fmtCHFDec(r.planCHF) : '–'}</td>
+                              <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{r.istCHF > 0 ? fmtCHFDec(r.istCHF) : '–'}</td>
+                              <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums font-semibold', diffCls(dCHF))}>{(r.planCHF === 0 && r.istCHF === 0) ? '–' : fmtD(dCHF)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className={cn('border-t-2 border-border font-bold text-xs', overallA.bg)}>
+                          <td className="px-2 py-2 text-center"><span className={cn('inline-block w-2 h-2 rounded-full', overallA.dot)} /></td>
+                          <td className="px-3 py-2">Total ({workRows.length} T.)</td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums text-blue-600">{totalPlanH > 0 ? `${(Math.round(totalPlanH * 10) / 10).toFixed(1)} h` : '–'}</td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums text-orange-600">{totalIstH > 0 ? `${(Math.round(totalIstH * 10) / 10).toFixed(1)} h` : '–'}</td>
+                          <td className={cn('px-3 py-2 text-right font-mono tabular-nums', diffCls(totalIstH - totalPlanH))}>{fmtDH(totalIstH - totalPlanH)}</td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(totalPlanWork)}</td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(totalIstWork)}</td>
+                          <td className={cn('px-3 py-2 text-right font-mono tabular-nums', diffCls(diffWork))}>{fmtD(diffWork)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
                   </div>
-                  {totalPlan > 0 && (
-                    <div className={cn('rounded-md border px-3 py-1.5 flex flex-col', overallA.border, overallA.bg)}>
-                      <span className="text-[9px] font-medium text-muted-foreground uppercase tracking-wide">Differenz %</span>
-                      <span className={cn('text-sm font-bold font-mono tabular-nums', overallA.text)}>
-                        {totalPct > 0 ? '+' : totalPct < -0.005 ? '−' : ''}{Math.abs(totalPct).toFixed(1)} %
-                      </span>
-                    </div>
-                  )}
                 </div>
+              )}
 
-                {/* Day detail table */}
-                <div className="rounded-md border border-border">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b border-border bg-muted/20">
-                        <th className="sticky top-0 z-10 bg-muted/20 text-center px-2 py-1.5 font-medium w-6">●</th>
-                        <th className="sticky top-0 z-10 bg-muted/20 text-left px-3 py-1.5 font-medium text-muted-foreground">Datum</th>
-                        <th className="sticky top-0 z-10 bg-muted/20 text-right px-3 py-1.5 font-medium text-blue-600">Plan Arb.</th>
-                        <th className="sticky top-0 z-10 bg-muted/20 text-right px-3 py-1.5 font-medium text-blue-400">Plan Fer.</th>
-                        <th className="sticky top-0 z-10 bg-muted/20 text-right px-3 py-1.5 font-medium text-blue-700">Plan Total</th>
-                        <th className="sticky top-0 z-10 bg-muted/20 text-right px-3 py-1.5 font-medium text-orange-600">Ist Arb.</th>
-                        <th className="sticky top-0 z-10 bg-muted/20 text-right px-3 py-1.5 font-medium text-orange-400">Ist Fer.</th>
-                        <th className="sticky top-0 z-10 bg-muted/20 text-right px-3 py-1.5 font-medium text-orange-700">Ist Total</th>
-                        <th className="sticky top-0 z-10 bg-muted/20 text-right px-3 py-1.5 font-medium">Diff. CHF</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {compRows.map(r => {
-                        const pT  = r.pw + r.pf;
-                        const iT  = r.iw + r.if_;
-                        const d   = iT - pT;
-                        // Neutral wenn kein Plan vorhanden
-                        const rSt = (pT === 0 && iT === 0) ? 'neutral' : ampelStatus(d, pT);
-                        const rA  = AMPEL[rSt];
-                        return (
-                          <tr key={r.date} className={cn('hover:bg-muted/10', rA.bg)}>
-                            <td className="px-2 py-1.5 text-center">
-                              <span className={cn('inline-block w-2 h-2 rounded-full', rA.dot)} />
-                            </td>
-                            <td className="px-3 py-1.5 font-mono text-muted-foreground">{fmtDate(r.date)}</td>
-                            <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-600">{r.pw > 0 ? fmtCHF(r.pw) : '–'}</td>
-                            <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-400">{r.pf > 0 ? fmtCHF(r.pf) : '–'}</td>
-                            <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-blue-700">{pT > 0 ? fmtCHF(pT) : '–'}</td>
-                            <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-600">{r.iw > 0 ? fmtCHF(r.iw) : '–'}</td>
-                            <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-400">{r.if_ > 0 ? fmtCHF(r.if_) : '–'}</td>
-                            <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-orange-700">{iT > 0 ? fmtCHF(iT) : '–'}</td>
-                            <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums font-semibold', rA.text)}>
-                              {pT === 0 && iT === 0 ? '–' : fmtD(d)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr className={cn('border-t-2 border-border font-bold', overallA.bg)}>
-                        <td className="px-2 py-1.5 text-center">
-                          <span className={cn('inline-block w-2 h-2 rounded-full', overallA.dot)} />
-                        </td>
-                        <td className="px-3 py-1.5 font-semibold text-muted-foreground">Total</td>
-                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-600">{fmtCHF(compRows.reduce((s,r)=>s+r.pw,0))}</td>
-                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-400">{fmtCHF(compRows.reduce((s,r)=>s+r.pf,0))}</td>
-                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-700">{fmtCHF(totalPlan)}</td>
-                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-600">{fmtCHF(compRows.reduce((s,r)=>s+r.iw,0))}</td>
-                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-400">{fmtCHF(compRows.reduce((s,r)=>s+r.if_,0))}</td>
-                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-700">{fmtCHF(totalIst)}</td>
-                        <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums', overallA.text)}>{fmtD(totalDiff)}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
+              {/* ── Ferien Plan vs. Ist ─────────────────────────────── */}
+              {ferRows.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    Ferienabbau (FE) — Plan vs. Ist
+                  </p>
+                  <div className="rounded-md border border-border">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr>
+                          <th className={cn(thCls, 'text-center w-7')}>●</th>
+                          <th className={cn(thCls, 'text-left')}>Datum</th>
+                          <th className={cn(thCls, 'text-right text-blue-500')}>Plan Ferien CHF</th>
+                          <th className={cn(thCls, 'text-right text-orange-500')}>Ist Ferien CHF</th>
+                          <th className={cn(thCls, 'text-right')}>Diff CHF</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ferRows.map((r, i) => {
+                          const dCHF = r.istCHF - r.planCHF;
+                          const rSt  = (r.planCHF === 0 && r.istCHF === 0) ? 'neutral' as AmpelStatus : ampelStatus(dCHF, r.planCHF);
+                          const rA   = AMPEL[rSt];
+                          return (
+                            <tr key={i} className={cn(i % 2 === 0 ? 'bg-background' : 'bg-muted/15', rA.bg)}>
+                              <td className="px-2 py-1.5 text-center"><span className={cn('inline-block w-2 h-2 rounded-full', rA.dot)} /></td>
+                              <td className="px-3 py-1.5 font-mono">{fmtDate(r.date)}</td>
+                              <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-500 dark:text-blue-300">{r.planCHF > 0 ? fmtCHFDec(r.planCHF) : '–'}</td>
+                              <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-500 dark:text-orange-300">{r.istCHF > 0 ? fmtCHFDec(r.istCHF) : '–'}</td>
+                              <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums font-semibold', diffCls(dCHF))}>{fmtD(dCHF)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-border bg-muted/40 font-bold text-xs">
+                          <td className="px-2 py-2" />
+                          <td className="px-3 py-2 text-muted-foreground">Total ({ferRows.length} Tag{ferRows.length !== 1 ? 'e' : ''})</td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums text-blue-500 dark:text-blue-300">{fmtCHF(totalPlanFer)}</td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums text-orange-500 dark:text-orange-300">{fmtCHF(totalIstFer)}</td>
+                          <td className={cn('px-3 py-2 text-right font-mono tabular-nums', diffCls(diffFer))}>{fmtD(diffFer)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground px-1">
+                    Basis: {fmtCHFDec(hourlyWage)}/h × {dailyH.toFixed(2)} h/Tag = {fmtCHFDec(dailyH * hourlyWage)}/Ferientag
+                  </p>
                 </div>
-              </div>
-            );
-          })()}
-
+              )}
+            </>
+          )}
         </div>
 
-        {/* ── Sticky Footer — Grand Totals ──────────────────────────────── */}
-        {showFooter && (
-          <div className="shrink-0 border-t border-border bg-muted/50 px-6 py-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Grand Total</span>
-            <div className="flex items-center gap-5 text-sm font-mono flex-wrap">
-              {footerHours > 0 && (
-                <span className="text-muted-foreground">
-                  {Math.round(footerHours * 10) / 10} h
+        {/* ── Sticky Footer — Grand Total ───────────────────────────────── */}
+        {(totalPlan > 0 || totalIst > 0) && (
+          <div className={cn('shrink-0 border-t px-6 py-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-1',
+            overallA.bg || 'bg-muted/50', overallA.border)}>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Grand Total</span>
+              <span className={cn('inline-flex items-center gap-1 rounded-full text-[10px] font-semibold px-2 py-0.5 border', overallA.border, overallA.text)}>
+                <span className={cn('w-1.5 h-1.5 rounded-full inline-block', overallA.dot)} />
+                {overallA.label}
+              </span>
+            </div>
+            <div className="flex items-center gap-4 text-xs font-mono flex-wrap">
+              {(totalPlanH > 0 || totalIstH > 0) && (
+                <span className="text-muted-foreground text-[11px]">
+                  {(Math.round(totalPlanH * 10)/10).toFixed(1)} h Plan / {(Math.round(totalIstH * 10)/10).toFixed(1)} h Ist
                 </span>
               )}
-              {footerFerCost > 0 && footerWorkCost > 0 && (
-                <>
-                  <span className="text-muted-foreground text-xs">
-                    Arbeit <span className="text-foreground font-semibold">{fmtCHF(footerWorkCost)}</span>
-                  </span>
-                  <span className="text-muted-foreground text-xs">+</span>
-                  <span className="text-muted-foreground text-xs">
-                    Ferien <span className="text-foreground font-semibold">{fmtCHF(footerFerCost)}</span>
-                  </span>
-                  <span className="text-muted-foreground text-xs">=</span>
-                </>
-              )}
-              <span className="text-base font-bold text-foreground">{fmtCHF(footerTotal)}</span>
+              <span className="text-muted-foreground">Plan <span className="text-blue-700 dark:text-blue-400 font-semibold">{fmtCHF(totalPlan)}</span></span>
+              <span className="text-muted-foreground">Ist <span className="text-orange-700 dark:text-orange-400 font-semibold">{fmtCHF(totalIst)}</span></span>
+              <span className={cn('font-bold text-sm', overallA.text)}>{fmtD(diffTotal)}</span>
             </div>
           </div>
         )}

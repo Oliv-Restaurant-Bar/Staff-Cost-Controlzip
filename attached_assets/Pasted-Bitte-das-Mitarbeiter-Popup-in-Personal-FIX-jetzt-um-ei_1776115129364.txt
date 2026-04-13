@@ -1,0 +1,95 @@
+Bitte das Mitarbeiter-Popup in Personal FIX jetzt um einen echten Ist-vs-Plan-Vergleich erweitern.
+
+Ziel:
+Wenn ich im Popup z.B. "Flex Arbeit Ist" oder "Flex Arbeit Plan" eines Mitarbeiters öffne, möchte ich nicht nur die Zusammensetzung sehen, sondern direkt den Vergleich zwischen Plan und Ist für diesen Mitarbeiter.
+
+Bitte exakt so umsetzen:
+
+1. Popup Kopfbereich erweitern
+Oben im Popup zusätzlich anzeigen:
+- Mitarbeitername
+- Zeitraum
+- Modus: Monat oder bis Stichtag
+- Stundenlohn
+
+Direkt darunter als KPI-Zeile:
+- Flex Arbeit Plan CHF
+- Flex Arbeit Ist CHF
+- Differenz CHF
+- Differenz %
+- optional Status: im Plan / leicht drüber / deutlich drüber
+
+2. Tagesdetail-Tabelle im Popup
+Die Detail-Tabelle pro Mitarbeiter soll folgende Spalten enthalten:
+
+- Datum
+- Plan Stunden
+- Ist Stunden
+- Diff Stunden
+- Plan CHF
+- Ist CHF
+- Diff CHF
+
+Wenn relevant zusätzlich:
+- Ferien Plan CHF
+- Ferien Ist CHF
+
+3. Totallinie unten
+Am Tabellenende eine Totalzeile:
+- Total Plan Stunden
+- Total Ist Stunden
+- Total Diff Stunden
+- Total Plan CHF
+- Total Ist CHF
+- Total Diff CHF
+
+4. Fachliche Logik
+- Flex Arbeit Plan = geplante Arbeitsstunden * Stundenlohn
+- Flex Arbeit Ist = echte Ist-Arbeitsstunden * Stundenlohn
+- Differenz CHF = Ist CHF - Plan CHF
+- Differenz % = wenn Plan CHF > 0, dann (Ist - Plan) / Plan * 100, sonst 0
+
+5. Ferien sauber getrennt
+Falls Ferien beim Mitarbeiter vorkommen:
+- Ferien nicht mit Flex Arbeit vermischen
+- separat sichtbar machen
+- optional unterhalb der Haupttabelle als eigener kleiner Block:
+  "Ferien Plan / Ferien Ist / Differenz Ferien"
+
+6. Klicklogik
+Egal ob ich auf
+- Flex Arbeit Plan
+- Flex Arbeit Ist
+- Total Flex Plan
+- Total Flex Ist
+klicke:
+Das Popup soll immer die Vergleichssicht Plan vs. Ist für diesen Mitarbeiter zeigen, nicht nur eine Einzelsicht.
+
+7. Visuell
+- Kopfbereich sticky
+- Tabelle scrollbar
+- Totalzeile klar hervorgehoben
+- Diff positiv/negativ farblich markieren
+- grün wenn Ist unter Plan
+- rot wenn Ist über Plan
+- neutral wenn gleich
+
+8. Wichtig
+- dieselbe zentrale Master-Logik verwenden wie auf der Hauptseite
+- Popup-Totale müssen exakt zu den Werten in der Mitarbeitertabelle passen
+- keine zweite abweichende Berechnung im Popup
+
+9. Debug Logs
+Bitte loggen:
+[POPUP] employee: ...
+[POPUP] mode: month|cutoff
+[POPUP] plan work total: ...
+[POPUP] ist work total: ...
+[POPUP] diff total chf: ...
+[POPUP] daily rows count: ...
+
+10. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- ob das Popup jetzt Plan vs. Ist direkt vergleicht
+- welche Totale oben im Popup sichtbar sind
+- ob die Popup-Werte exakt mit der Mitarbeitertabelle synchron sind
