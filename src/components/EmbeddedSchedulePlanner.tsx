@@ -361,11 +361,16 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
       }
       localStorage.setItem(`actual-hours-${entryMonthKey}`, JSON.stringify(monthEntries));
 
-      // Also persist to Supabase (same as SchedulePlanner) so both planners
-      // share the same source of truth and neither can overwrite the other's data.
-      saveActualHourEntry(employeeId, date, entry).catch(err =>
-        console.error('[IST] Supabase saveActualHourEntry failed:', err)
-      );
+      // FE/K/F absences are localStorage-only — Supabase has no absenceType column.
+      // Sending hours=0 to Supabase would lose the absenceType on reload from a fresh
+      // session (different device / cleared localStorage), wiping the vacation entry.
+      if (entry && entry.absenceType) {
+        console.log(`[FERIEN-IST] EmbeddedSchedulePlanner: skipped Supabase for absence entry ${employeeId} ${date} type=${entry.absenceType}`);
+      } else {
+        saveActualHourEntry(employeeId, date, entry).catch(err =>
+          console.error('[IST] Supabase saveActualHourEntry failed:', err)
+        );
+      }
 
       console.log(
         `[IST] saved entry: empId=${employeeId} date=${date} monthKey=${entryMonthKey}`,

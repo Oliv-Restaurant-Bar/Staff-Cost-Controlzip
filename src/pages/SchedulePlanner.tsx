@@ -449,9 +449,37 @@ const SchedulePlanner = () => {
             console.log(`[FERIEN-IST] reload restored holiday entry: ${k} absenceType=${v.absenceType} hours=${v.hours}`);
           }
         });
-        setActualHoursData(merged);
+        // Use a functional updater so that FE/K/F entries set by the user WHILE the
+        // Supabase fetch was in-flight (they're already in `prev` but may not be in
+        // `localStored` yet due to React batching) survive the merge.
+        setActualHoursData(prev => {
+          const result = { ...merged };
+          for (const [key, val] of Object.entries(prev)) {
+            if (val.absenceType && !result[key]?.absenceType) {
+              // Keep FE/K/F from prev unless merged already has an absenceType entry
+              // (real-hours entries in merged have hours > 0, not absenceType, so they
+              // would already have overwritten via the merged computation above).
+              if (!result[key] || result[key].hours === 0) {
+                result[key] = val;
+                console.log(`[FERIEN-IST] race-condition guard: kept prev absenceType entry ${key} type=${val.absenceType}`);
+              }
+            }
+          }
+          return result;
+        });
         // Write merged back so PersonalFix and others always see the full dataset.
-        localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(merged));
+        // Re-read fresh localStorage here to include any FE entries written since the fetch started.
+        const freshLocal: Record<string, ActualHoursEntry> = (() => {
+          try { return JSON.parse(localStorage.getItem(`actual-hours-${monthKey}`) || '{}'); } catch { return {}; }
+        })();
+        const finalForStorage: Record<string, ActualHoursEntry> = { ...freshLocal };
+        for (const [key, val] of Object.entries(merged)) {
+          // Let Supabase real-hours win in storage too
+          if (val.hours > 0 || !freshLocal[key]?.absenceType) {
+            finalForStorage[key] = val;
+          }
+        }
+        localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(finalForStorage));
       } else {
         console.warn('[IST] Supabase error – using localStorage only');
         setActualHoursData(localStored);
