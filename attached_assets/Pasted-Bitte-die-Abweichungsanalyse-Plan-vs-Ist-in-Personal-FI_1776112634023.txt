@@ -1,0 +1,118 @@
+Bitte die Abweichungsanalyse Plan vs. Ist in Personal FIX jetzt klar und vollständig ergänzen.
+
+Ziel:
+Ich möchte die Abweichung zwischen Plan und Ist bei den Flex-Kosten sichtbar haben:
+- als Überblick über alle
+- und im Popup pro Mitarbeiter im Detail
+- auf Ebene Monat, Woche und Tag
+
+Bitte exakt so umsetzen:
+
+1. Neue Abweichungsübersicht oben
+In Personal FIX einen kompakten Überblick ergänzen mit:
+
+- Abweichung Monat CHF
+- Abweichung Woche CHF
+- Abweichung Tag CHF
+
+optional zusätzlich:
+- Abweichung Monat %
+- Abweichung Woche %
+- Abweichung Tag %
+
+Definition:
+Abweichung = Ist - Plan
+
+2. Neue Aggregationsumschaltung
+Ich möchte zwischen diesen 3 Ebenen umschalten können:
+
+- Tag
+- Woche
+- Monat
+
+3. Neue Übersichtstabelle
+Unterhalb der KPI / Übersicht eine Tabelle anzeigen mit:
+
+Spalten:
+- Zeitraum
+- Flex Plan
+- Flex Ist
+- Differenz CHF
+- Differenz %
+
+Je nach Modus:
+- Tag → pro Kalendertag eine Zeile
+- Woche → pro Kalenderwoche eine Zeile
+- Monat → Monatsübersicht
+
+4. Klare Definition
+Verwendet werden soll für die Abweichung:
+- Flex Arbeit Plan
+- Flex Arbeit Ist
+- optional Ferien separat sichtbar
+- Total Flex Plan
+- Total Flex Ist
+
+Bitte sauber entscheiden und dann überall gleich anwenden:
+a) Abweichung nur für Flex Arbeit
+oder
+b) Abweichung für Total Flex
+
+Wichtig:
+Die Bezeichnung muss exakt dazu passen.
+Keine gemischten Begriffe.
+
+5. Mitarbeiter-Popup erweitern
+Im Popup pro Mitarbeiter zusätzlich eine Detail-Abweichungsansicht einbauen.
+
+Ich möchte dort sehen:
+
+oben:
+- Flex Plan total
+- Flex Ist total
+- Differenz total CHF
+- Differenz total %
+
+darunter pro Tag:
+- Datum
+- Plan Arbeit
+- Ist Arbeit
+- Differenz Arbeit
+- Ferien Plan
+- Ferien Ist
+- Total Flex Plan
+- Total Flex Ist
+- Differenz Total
+
+6. Optional im Popup zusätzlich Umschaltung:
+- Tag
+- Woche
+- Monat
+
+damit ich die Abweichung pro Mitarbeiter auch aggregiert sehen kann
+
+7. Visuell
+- positive / negative Abweichung farblich klar
+- rote Werte = Ist höher als Plan
+- grüne Werte = Ist tiefer als Plan
+- neutral bei 0 oder bei Abwesenheit ohne echte Soll-Arbeit
+
+8. Wichtig
+- gleiche zentrale Master-Logik verwenden
+- KPI, Übersichtstabelle und Popup müssen dieselben Totale verwenden
+- keine unterschiedlichen Berechnungen an verschiedenen Orten
+
+9. Debug Logs
+Bitte loggen:
+[ABW] mode: day|week|month
+[ABW] plan flex total: ...
+[ABW] ist flex total: ...
+[ABW] diff total: ...
+[ABW] employee diff total: ...
+[ABW] popup daily rows: ...
+
+10. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- ob die Abweichung auf Tag/Woche/Monat sichtbar ist
+- ob das Popup jetzt die Abweichung pro Mitarbeiter pro Tag zeigt
+- welche Kostenbasis für die Abweichung verwendet wird
