@@ -1307,6 +1307,7 @@ export default function PersonalFixPage() {
   const [breakdown, setBreakdown] = useState<BreakdownTarget | null>(null);
   const [abwMode,   setAbwMode]   = useState<AbwMode>('day');
   const [forecastViewMode, setForecastViewMode] = useState<'actual' | 'forecast'>('actual');
+  const [forecastIstDay,   setForecastIstDay]   = useState<number | null>(null);
   const [flexPeriodPopup,  setFlexPeriodPopup]  = useState<FlexPeriodTarget | null>(null);
   const [expandedFixDepts, setExpandedFixDepts] = useState<Set<string>>(new Set());
 
@@ -1797,51 +1798,23 @@ export default function PersonalFixPage() {
         ? 'warning'
         : 'off_track';
 
-  // ── Last Ist-import day: highest calendar day with actual hours in the selected month ──
-  const lastIstImportDay = useMemo(() => {
-    const key = `actual-hours-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
-    const prefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
-    const varIds = new Set(variableEmployees.map(e => e.id));
-    try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return 0;
-      const data: Record<string, any> = JSON.parse(raw);
-      let maxDay = 0;
-      for (const [cellKey, val] of Object.entries(data)) {
-        const date = cellKey.slice(-10);
-        if (!date.startsWith(prefix)) continue;
-        const empId = cellKey.slice(0, cellKey.length - 11);
-        if (!varIds.has(empId)) continue;
-        const absenceType = typeof val === 'object' ? val?.absenceType : undefined;
-        if (absenceType === 'FE') continue;
-        const h = typeof val === 'number' ? val : (val?.hours ?? 0);
-        if (h > 0) {
-          const day = parseInt(date.slice(-2), 10);
-          if (day > maxDay) maxDay = day;
-        }
-      }
-      console.log(`[FLEX-FORECAST] lastIstImportDay: ${maxDay}`);
-      return maxDay;
-    } catch { return 0; }
-  }, [selectedYear, selectedMonth, variableEmployees]);
-
   // ── Effective cutoff for forecast ────────────────────────────────────────────
-  // Priority: Stichtag > lastIstImportDay > today (current month) > last day (past) > 0 (future)
+  // Priority: Stichtag > forecastIstDay (manual) > today (current month) > last day (past) > 0 (future)
   const isCurrentMonthForForecast = selectedYear === today.getFullYear() && selectedMonth === today.getMonth() + 1;
   const isPastMonth = selectedYear < today.getFullYear()
     || (selectedYear === today.getFullYear() && selectedMonth < today.getMonth() + 1);
   const effectiveForecastCutoff: number = proRataDay !== null
     ? proRataDay
     : isCurrentMonthForForecast
-      ? (lastIstImportDay > 0 ? lastIstImportDay : today.getDate())
+      ? (forecastIstDay !== null ? forecastIstDay : today.getDate())
       : isPastMonth
         ? daysInSelectedMonth  // past month: all days elapsed, no remaining plan
         : 0;                   // future month: no days elapsed, full plan is remaining
 
   const forecastIstLabel = proRataDay !== null
     ? `bis ${cutoffLabel}`
-    : lastIstImportDay > 0 && isCurrentMonthForForecast
-      ? `bis ${lastIstImportDay}. (letzter Import)`
+    : forecastIstDay !== null && isCurrentMonthForForecast
+      ? `bis ${forecastIstDay}.`
       : `bis ${effectiveForecastCutoff}.`;
 
   // ── Forecast Monatsende: geplante Restkosten ab Tag nach Stichtag/heute ─────
@@ -1855,13 +1828,13 @@ export default function PersonalFixPage() {
       const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, null, wage);
       remaining += planW.filter(r => r.date > cutoffStr).reduce((s, r) => s + r.cost, 0);
     }
-    console.log(`[FLEX-FORECAST] mode: ${proRataDay !== null ? 'stichtag' : lastIstImportDay > 0 ? 'last-import-as-cutoff' : 'today-as-cutoff'}`);
+    console.log(`[FLEX-FORECAST] mode: ${proRataDay !== null ? 'stichtag' : forecastIstDay !== null ? 'manual-ist-day' : 'today-as-cutoff'}`);
     console.log(`[FLEX-FORECAST] cutoff date: ${cutoffStr}`);
     console.log(`[FLEX-FORECAST] ist until cutoff: ${pfix.active.istWork.toFixed(2)}`);
     console.log(`[FLEX-FORECAST] remaining planned flex: ${remaining.toFixed(2)}`);
     return remaining;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variableEmployees, selectedYear, selectedMonth, effectiveForecastCutoff, lastIstImportDay, pfix.active.istWork]);
+  }, [variableEmployees, selectedYear, selectedMonth, effectiveForecastCutoff, forecastIstDay, pfix.active.istWork]);
 
   // Forecast Monatsende derived values
   // Gesamter Monat: Budget gesamt minus FIX gesamt (= pfix.month.fix)
@@ -3067,8 +3040,30 @@ export default function PersonalFixPage() {
                 </button>
               </div>
               {forecastViewMode === 'forecast' && (
-                <span className="text-[10px] text-violet-600 dark:text-violet-400 font-medium ml-1">
-                  Ist {forecastIstLabel} + geplante Restkosten ab Tag {effectiveForecastCutoff + 1}
+                <span className="flex items-center gap-1.5 ml-2 flex-wrap">
+                  <span className="text-[11px] text-muted-foreground">Ist bis Tag</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={daysInSelectedMonth}
+                    value={forecastIstDay ?? ''}
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10);
+                      if (!isNaN(v) && v >= 1 && v <= daysInSelectedMonth) setForecastIstDay(v);
+                      else if (e.target.value === '') setForecastIstDay(null);
+                    }}
+                    placeholder={String(today.getDate())}
+                    className="w-12 text-center rounded border border-violet-300 dark:border-violet-600 bg-background text-xs font-semibold px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
+                  />
+                  {forecastIstDay !== null && (
+                    <button
+                      onClick={() => setForecastIstDay(null)}
+                      className="text-[10px] text-muted-foreground/60 hover:text-muted-foreground leading-none"
+                      title="Zurücksetzen">×</button>
+                  )}
+                  <span className="text-[11px] text-violet-600 dark:text-violet-400 font-medium">
+                    → Restkosten ab Tag {effectiveForecastCutoff + 1}
+                  </span>
                 </span>
               )}
             </div>
