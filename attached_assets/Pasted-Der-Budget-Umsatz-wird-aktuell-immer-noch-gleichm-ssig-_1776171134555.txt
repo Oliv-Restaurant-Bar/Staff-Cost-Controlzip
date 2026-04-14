@@ -1,0 +1,94 @@
+Der Budget-Umsatz wird aktuell immer noch gleichmässig verteilt (Monatsbudget / Tage).
+Die Wochentagsverteilung aus den Einstellungen wird NICHT verwendet.
+
+Das ist falsch und muss jetzt vollständig korrigiert werden.
+
+==================================================
+FIX — Budgetverteilung nach Wochentag erzwingen
+==================================================
+
+1. ALLE Stellen finden, wo Tagesbudget berechnet wird
+
+Suche nach:
+- monthlyBudget / daysInMonth
+- dailyBudget = ...
+- Budget pro Tag Berechnung
+
+Diese Logik darf NICHT mehr verwendet werden.
+
+==================================================
+
+2. Neue zentrale Funktion erstellen (Single Source of Truth)
+
+Erstelle eine Funktion:
+
+getDailyBudgetMap(month, year)
+
+Diese Funktion muss:
+
+a) Monatsbudget laden
+b) Wochentagsverteilung aus Einstellungen laden
+c) Alle Tage des Monats durchlaufen
+d) Anzahl je Wochentag zählen
+
+Beispiel:
+Montag: 4x
+Freitag: 4x
+Samstag: 5x
+
+e) Budget pro Wochentag berechnen:
+weekdayBudget = monthlyBudget * weekdayPercentage
+
+f) Auf einzelne Tage verteilen:
+dailyBudget = weekdayBudget / numberOfThatWeekday
+
+==================================================
+
+3. Diese Funktion ÜBERALL verwenden
+
+Ersetze ALLE bisherigen Berechnungen durch:
+
+const dailyBudgets = getDailyBudgetMap(month, year)
+dailyBudget = dailyBudgets[date]
+
+In:
+
+- Tagesansicht
+- Tages-Controlling
+- Budgetvergleich
+- kumulierte Werte
+- Export
+- Personalplanung (Zielwerte / PK Plan)
+
+==================================================
+
+4. Debug einbauen (sehr wichtig)
+
+console.log:
+
+[BUDGET-FIX] weekday distribution: ...
+[BUDGET-FIX] weekday counts: ...
+[BUDGET-FIX] daily budget 01.04: ...
+[BUDGET-FIX] total: ...
+
+==================================================
+
+5. Validierung
+
+Nach Fix MUSS folgendes passieren:
+
+- Freitag und Samstag haben höhere Budgetwerte
+- Montag–Donnerstag deutlich tiefer
+- KEIN identischer Wert mehr pro Tag
+- Summe aller Tage = exakt Monatsbudget
+
+==================================================
+
+6. Wichtig für dich
+
+Die aktuelle Anzeige (6’784 pro Tag) beweist:
+→ die alte Logik läuft noch aktiv irgendwo
+
+Bitte ALLE Stellen ersetzen, nicht nur eine.
+
+==================================================

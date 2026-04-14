@@ -2,26 +2,21 @@
  * budgetDistribution – Tagesverteilung des Monatsbudgets
  * ========================================================
  * Verteilt den monatlichen Umsatz auf einzelne Tage nach Wochentag-Gewichtung.
- *
- * Gewichtung (pro Woche = 100 %):
- *   Mo 10 %  Di 10 %  Mi 10 %  Do 12.5 %  Fr 22.5 %  Sa 22.5 %  So 12.5 %
+ * Gewichte werden aus den Einstellungen (localStorage) geladen — KEINE Hardcode-Defaults.
  */
 
 import { format } from 'date-fns';
 import { loadBudgetWithPL, computePLCategoryTotals } from './budget-store';
+import { loadWeekdayWeights, getDailyBudgetMap } from './budget-day';
 
-// ─── Tages-Gewichtung ─────────────────────────────────────────────────────────
-// Index entspricht JavaScript getDay(): 0=So, 1=Mo, 2=Di, 3=Mi, 4=Do, 5=Fr, 6=Sa
-
-export const DAY_WEIGHTS: Record<number, number> = {
-  0: 12.5, // Sonntag
-  1: 10.0, // Montag
-  2: 10.0, // Dienstag
-  3: 10.0, // Mittwoch
-  4: 12.5, // Donnerstag
-  5: 22.5, // Freitag
-  6: 22.5, // Samstag
-};
+// ─── Für Abwärtskompatibilität: dynamische Gewichte aus Einstellungen ─────────
+/** @deprecated Bitte getDailyBudgetMap() aus budget-day.ts verwenden. */
+export function getDAY_WEIGHTS(): Record<number, number> {
+  const w = loadWeekdayWeights(); // normiert (Summe ≈ 1)
+  const out: Record<number, number> = {};
+  for (let d = 0; d <= 6; d++) out[d] = w[d] * 100;
+  return out;
+}
 
 /**
  * Liest den geplanten Monats-Umsatz aus dem Budget-Store (P&L-Format).
@@ -41,11 +36,11 @@ export function getMonthlyBudgetRevenue(year: number, monthIndex: number): numbe
 
 /**
  * Verteilt den Monats-Umsatz anteilig auf alle übergebenen Tage
- * nach Wochentag-Gewichtung. Die Summe über alle Tage ergibt exakt
- * den Monats-Umsatz (Rundungsfehler < 1 CHF werden dem letzten Tag zugeschlagen).
+ * nach Wochentag-Gewichtung aus den Einstellungen.
+ * Die Summe über alle Tage ergibt exakt den Monats-Umsatz.
  *
  * @param monthlyRevenue  Geplanter Monats-Umsatz in CHF
- * @param days            Alle Tage des Monats (Date-Objekte)
+ * @param days            Alle Tage des Monats (Date-Objekte, müssen alle im selben Monat sein)
  * @returns               Record { 'yyyy-MM-dd': { plannedRevenue: number } }
  */
 export function distributeBudgetByWeekday(
@@ -54,24 +49,18 @@ export function distributeBudgetByWeekday(
 ): Record<string, { plannedRevenue: number }> {
   if (!monthlyRevenue || days.length === 0) return {};
 
-  const totalWeight = days.reduce((sum, d) => sum + DAY_WEIGHTS[d.getDay()], 0);
-  if (totalWeight === 0) return {};
+  // Monat und Jahr aus dem ersten Tag ableiten (alle Tage müssen im selben Monat liegen)
+  const firstDay = days[0];
+  const year  = firstDay.getFullYear();
+  const month = firstDay.getMonth() + 1; // 1-basiert
+
+  // getDailyBudgetMap nutzt loadWeekdayWeights() intern (Single Source of Truth)
+  const dailyMap = getDailyBudgetMap(monthlyRevenue, year, month);
 
   const result: Record<string, { plannedRevenue: number }> = {};
-  let distributed = 0;
-
-  days.forEach((day, idx) => {
+  for (const day of days) {
     const dateStr = format(day, 'yyyy-MM-dd');
-    const weight  = DAY_WEIGHTS[day.getDay()];
-    const isLast  = idx === days.length - 1;
-
-    const amount = isLast
-      ? Math.round(monthlyRevenue - distributed)   // Restbetrag dem letzten Tag
-      : Math.round((monthlyRevenue * weight) / totalWeight);
-
-    distributed += amount;
-    result[dateStr] = { plannedRevenue: amount };
-  });
-
+    result[dateStr] = { plannedRevenue: dailyMap[dateStr] ?? 0 };
+  }
   return result;
 }

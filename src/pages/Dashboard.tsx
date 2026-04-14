@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/badge';
 import { usePermissions } from '@/hooks/usePermissions';
 import { GuestLinkGenerator } from '@/components/GuestLinkGenerator';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
+import { getDailyBudgetMap } from '@/lib/budget-day';
 import { loadMonth, loadYear } from '@/lib/reporting-store';
 import {
   loadEmployees,
@@ -472,13 +473,23 @@ const Dashboard = () => {
     ? revenuePrevYearDailyRaw
     : reportingPrevYearRevenue;
 
-  // Budget pro Periode: aus budget_v1 Monatsbudget anteilig berechnen
   const daysInRefMonth = getDaysInMonth(referenceDate);
+
+  // Weekday-gewichtete Tagesbudgets (Single Source of Truth: getDailyBudgetMap)
+  const revBudgetMap = useMemo(
+    () => getDailyBudgetMap(budgetData.revenueBudget, currentYear, currentMonth),
+    [budgetData.revenueBudget, currentYear, currentMonth],
+  );
+
+  // Budget pro Periode: weekday-gewichtet (NICHT mehr: revenueBudget / daysInRefMonth)
   const budgetActive = budgetData.revenueBudget > 0
-    ? period === 'month' ? budgetData.revenueBudget
-      : period === 'today' ? budgetData.revenueBudget / daysInRefMonth
-      : period === 'week'  ? budgetData.revenueBudget / daysInRefMonth * 7
-      : budgetData.revenueBudget * 12  // Jahr: Monatsbudget × 12
+    ? period === 'month'
+      ? budgetData.revenueBudget
+      : period === 'today'
+      ? (revBudgetMap[refDateStr] ?? 0)
+      : period === 'week'
+      ? weekDays.reduce((s, d) => s + (revBudgetMap[d] ?? 0), 0)
+      : budgetData.revenueBudget * 12   // Jahr: Monatsbudget × 12
     : 0;
 
   // ── Umsatzbasis-Konvertierung ─────────────────────────────────────────────────
@@ -679,9 +690,13 @@ const Dashboard = () => {
     ? monthDays.filter(d => d <= stichtagDateStr)
     : [];
 
-  // Budget pro-rata per Stichtag (= Anteil am Monatsbudget)
+  // Budget pro-rata per Stichtag — weekday-gewichtet (NICHT mehr linear × Tag/Monat)
   const budgetProRataStichtag = stichtagInMonth && stichtagDay && budgetData.revenueBudget > 0
-    ? Math.round(budgetData.revenueBudget * stichtagDay / daysInRefMonth)
+    ? Math.round(
+        Object.entries(revBudgetMap)
+          .filter(([k]) => parseInt(k.slice(8), 10) <= stichtagDay)
+          .reduce((s, [, v]) => s + v, 0)
+      )
     : null;
   const budgetProRataStichtagB = budgetProRataStichtag !== null ? toBase(budgetProRataStichtag) : null;
 
@@ -732,8 +747,13 @@ const Dashboard = () => {
   const effectiveDayNum = effectiveCutoff ? parseInt(effectiveCutoff.slice(-2), 10) : null;
   const effectiveDays   = effectiveCutoff ? monthDays.filter(d => d <= effectiveCutoff) : [];
 
+  // budgetEffective: weekday-gewichtet bis effectiveDayNum (NICHT mehr linear × Tag/Monat)
   const budgetEffective = effectiveDayNum && budgetData.revenueBudget > 0
-    ? Math.round(budgetData.revenueBudget * effectiveDayNum / daysInRefMonth)
+    ? Math.round(
+        Object.entries(revBudgetMap)
+          .filter(([k]) => parseInt(k.slice(8), 10) <= effectiveDayNum)
+          .reduce((s, [, v]) => s + v, 0)
+      )
     : null;
 
   const revenueIstEffective = effectiveCutoff

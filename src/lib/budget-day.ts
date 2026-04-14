@@ -136,6 +136,76 @@ export function computeProRataBudget(
 }
 
 /**
+ * Einzel-API: Tagesbudget-Map für einen Monat (inkl. Wochentagsgewichten aus Einstellungen).
+ * Single Source of Truth — ALLE Stellen sollen diese Funktion verwenden.
+ *
+ * @param monthlyBudget  Monatsbudget in CHF (Umsatz oder Personal)
+ * @param year           z.B. 2026
+ * @param month          1-basiert (1=Januar, 12=Dezember)
+ * @returns              Record<'YYYY-MM-DD', dailyBudget>
+ */
+export function getDailyBudgetMap(
+  monthlyBudget: number,
+  year: number,
+  month: number,
+): Record<string, number> {
+  if (monthlyBudget <= 0) return {};
+  const weights = loadWeekdayWeights();
+  const map     = computeMonthlyDailyBudgets(monthlyBudget, year, month, weights);
+
+  // ── [BUDGET-FIX] Debug-Ausgabe ──────────────────────────────────────────
+  const mm   = String(month).padStart(2, '0');
+  const wdNm = ['So','Mo','Di','Mi','Do','Fr','Sa'];
+
+  const wdCounts: Record<string, number> = {};
+  for (let d = 0; d <= 6; d++) wdCounts[wdNm[d]] = 0;
+  Object.keys(map).forEach(k => { wdCounts[wdNm[new Date(k).getDay()]]++; });
+
+  const wdWeights: Record<string, string> = {};
+  for (let d = 0; d <= 6; d++) wdWeights[wdNm[d]] = (weights[d] * 100).toFixed(1) + '%';
+
+  console.log(`[BUDGET-FIX] getDailyBudgetMap ${year}-${mm}: budget=${monthlyBudget.toFixed(0)}`);
+  console.log(`[BUDGET-FIX] weekday distribution: ${JSON.stringify(wdWeights)}`);
+  console.log(`[BUDGET-FIX] weekday counts: ${JSON.stringify(wdCounts)}`);
+  const sampleDays = Object.keys(map).sort().slice(0, 5);
+  sampleDays.forEach(k => {
+    const d = parseInt(k.slice(8), 10);
+    console.log(`[BUDGET-FIX] daily budget ${String(d).padStart(2,'0')}.${mm}: ${(map[k] ?? 0).toFixed(2)}`);
+  });
+  const total = Object.values(map).reduce((s, v) => s + v, 0);
+  console.log(`[BUDGET-FIX] total: ${total.toFixed(2)} (vs budget: ${monthlyBudget.toFixed(2)})`);
+  return map;
+}
+
+/**
+ * Weekday-gewichtetes Pro-Rata-Budget bis Stichtag (kumuliert).
+ * Entspricht der Summe der Tagesbudgets von Tag 1 bis Tag cutoffDay.
+ * Verwendet getDailyBudgetMap als Basis.
+ *
+ * @param monthlyBudget  Monatsbudget in CHF
+ * @param year           z.B. 2026
+ * @param month          1-basiert
+ * @param cutoffDay      Stichtag 1-basiert inklusiv. null → volles Monatsbudget.
+ * @returns CHF-Betrag
+ */
+export function getCumulativeBudget(
+  monthlyBudget: number,
+  year: number,
+  month: number,
+  cutoffDay: number | null,
+): number {
+  if (monthlyBudget <= 0) return 0;
+  if (cutoffDay === null) return monthlyBudget;
+  const map = getDailyBudgetMap(monthlyBudget, year, month);
+  const mm  = String(month).padStart(2, '0');
+  let total = 0;
+  for (let d = 1; d <= cutoffDay; d++) {
+    total += map[`${year}-${mm}-${String(d).padStart(2, '0')}`] ?? 0;
+  }
+  return Math.round(total * 100) / 100;
+}
+
+/**
  * Debug-Logs für die tagesweise Budgetverteilung.
  * Ausgabe nur wenn `personnelBudget > 0`.
  */

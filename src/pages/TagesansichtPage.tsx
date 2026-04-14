@@ -32,6 +32,7 @@ import { grossToNet } from '@/types/personnel';
 import { loadMonth } from '@/lib/reporting-store';
 import { useVj2025Import } from '@/hooks/useVj2025Import';
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
+import { getDailyBudgetMap } from '@/lib/budget-day';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -149,9 +150,12 @@ export default function TagesansichtPage() {
     eachDayOfInterval({ start: startOfMonth(refDate), end: endOfMonth(refDate) }),
   [refDate]);
 
-  const daysInMonth      = monthDays.length;
-  const dailyBudgetGross = hasBud ? budgetData.revenueBudget / daysInMonth : 0;
-  const dailyBudgetBase  = showNetRevenue ? grossToNet(dailyBudgetGross) : dailyBudgetGross;
+  // Weekday-gewichtete Tagesbudgets (Single Source of Truth: getDailyBudgetMap)
+  // NICHT mehr: revenueBudget / daysInMonth (flache Verteilung)
+  const dailyBudgetMap = useMemo(
+    () => hasBud ? getDailyBudgetMap(budgetData.revenueBudget, year, month) : {},
+    [hasBud, budgetData.revenueBudget, year, month],
+  );
 
   // ── Zeilenberechnung ──────────────────────────────────────────────────────
   const rows = useMemo(() => {
@@ -201,9 +205,13 @@ export default function TagesansichtPage() {
         );
       }
 
+      // Weekday-gewichtetes Tagesbudget (aus Map, nicht mehr flache Verteilung)
+      const budGross   = dailyBudgetMap[d] ?? 0;
+      const budBase    = showNetRevenue ? grossToNet(budGross) : budGross;
+
       cumIst += ist;
       cumVj  += vjBase;
-      cumBud += dailyBudgetBase;
+      cumBud += budBase;
 
       // Kumulierte Abweichung VJ in %
       const cumDevVj    = cumIst - cumVj;
@@ -215,9 +223,9 @@ export default function TagesansichtPage() {
         ist,
         vj:         vjBase,
         vjIsExact,              // true = Tages-Exaktwert, false = pro-rata aus reporting_v1
-        bud:        dailyBudgetBase,
+        bud:        budBase,
         devVj:      ist - vjBase,
-        devBud:     ist - dailyBudgetBase,
+        devBud:     ist - budBase,
         cumIst, cumVj, cumBud,
         cumDevVj,
         cumDevVjPct,
@@ -228,7 +236,7 @@ export default function TagesansichtPage() {
       };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthDays, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetBase, year, month, reportingTick]);
+  }, [monthDays, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetMap, year, month, reportingTick]);
 
   const lastRow = rows[rows.length - 1];
 
