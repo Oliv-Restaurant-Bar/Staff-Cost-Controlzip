@@ -252,3 +252,34 @@ export async function syncSupabaseToLocal(keys: string[]): Promise<boolean> {
   }
   return changed;
 }
+
+// ─── Absence (FE/K/F) Persistenz ─────────────────────────────────────────────
+// FE/K/F entries are not stored in actual_hours Supabase table (no absence_type column),
+// so they are persisted here in the app_settings KV store.
+// Key format: "absence-ist-YYYY-MM"
+// Value: Record<"empId-YYYY-MM-DD", "FE"|"K"|"F">
+
+const ABSENCE_KV_PREFIX = 'absence-ist-';
+
+/**
+ * Persist the full absence map for a month to Supabase KV store.
+ * Pass an empty object to clear all absences for that month.
+ */
+export async function saveMonthAbsences(
+  yearMonth: string,
+  entries: Record<string, string>,
+): Promise<void> {
+  await kvSet(`${ABSENCE_KV_PREFIX}${yearMonth}`, entries);
+}
+
+/**
+ * Load all persisted FE/K/F entries for a month from Supabase KV store.
+ * Returns an empty object if nothing is stored or on error.
+ */
+export async function loadMonthAbsences(
+  yearMonth: string,
+): Promise<Record<string, string>> {
+  const data = await kvGet(`${ABSENCE_KV_PREFIX}${yearMonth}`);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+  return data as Record<string, string>;
+}

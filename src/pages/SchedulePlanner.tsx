@@ -13,6 +13,7 @@ import {
   saveActualHourEntry,
 } from '@/lib/supabase-db';
 import { supabase } from '@/integrations/supabase/client';
+import { saveMonthAbsences, loadMonthAbsences } from '@/lib/supabase-kv';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -408,7 +409,14 @@ const SchedulePlanner = () => {
 
       // ── IST-Daten (actual_hours) ─────────────────────────────────────────────
       console.log('[IST] fetch start', { gen, monthKey });
-      const supabaseActual = await loadActualHoursForMonth(currentMonth);
+      const [supabaseActual, kvAbsences] = await Promise.all([
+        loadActualHoursForMonth(currentMonth),
+        loadMonthAbsences(monthKey),
+      ]);
+      const kvAbsenceCount = Object.keys(kvAbsences).length;
+      if (kvAbsenceCount > 0) {
+        console.log(`[FE-STABLE] load holiday entries: ${kvAbsenceCount} entries for ${monthKey}`, Object.keys(kvAbsences));
+      }
       const istKeys = supabaseActual !== null ? Object.keys(supabaseActual).length : 'error';
       console.log('[IST] fetch result', { gen, istKeys, isStale: fetchGenRef.current !== gen });
 
@@ -441,6 +449,32 @@ const SchedulePlanner = () => {
           }
           // else: keep localStorage entry which has absenceType (FE/K/F)
         }
+
+        // ── KV store restoration ─────────────────────────────────────────────
+        // FE/K/F entries saved to KV store survive browser cache clears and
+        // device switches. Merge them in: KV wins over 0-hour entries but
+        // never over real work hours.
+        let kvRestored = 0;
+        for (const [key, absType] of Object.entries(kvAbsences)) {
+          const existing = merged[key];
+          if (!existing) {
+            merged[key] = { hours: 0, absenceType: absType as ActualHoursEntry['absenceType'] };
+            kvRestored++;
+            console.log(`[FE-STABLE] holiday survived reload: ${key} type=${absType} (from KV – not in local/supabase)`);
+          } else if (existing.hours === 0 && !existing.absenceType) {
+            merged[key] = { hours: 0, absenceType: absType as ActualHoursEntry['absenceType'] };
+            kvRestored++;
+            console.log(`[FE-STABLE] holiday survived reload: ${key} type=${absType} (from KV – overwrote 0h entry)`);
+          } else if (existing.absenceType) {
+            console.log(`[FE-STABLE] merge kept existing holiday: ${key} type=${existing.absenceType} (KV has ${absType})`);
+          } else {
+            console.log(`[FE-STABLE] holiday replaced by working hours: ${key} hours=${existing.hours} – KV entry ignored`);
+          }
+        }
+        if (kvRestored > 0) {
+          console.log(`[FE-STABLE] ${kvRestored} holiday entries restored from KV store for ${monthKey}`);
+        }
+
         const feCount = Object.values(merged).filter(v => v.absenceType).length;
         console.log('[IST] state set (merged)', { gen, supabase: istKeys, local: Object.keys(localStored).length, merged: Object.keys(merged).length, feEntries: feCount });
         // Log every preserved FE/K/F entry so we can confirm reload survives
@@ -481,8 +515,16 @@ const SchedulePlanner = () => {
         }
         localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(finalForStorage));
       } else {
-        console.warn('[IST] Supabase error – using localStorage only');
-        setActualHoursData(localStored);
+        console.warn('[IST] Supabase error – using localStorage + KV absences');
+        const withKvAbsences: Record<string, ActualHoursEntry> = { ...localStored };
+        for (const [key, absType] of Object.entries(kvAbsences)) {
+          const existing = withKvAbsences[key];
+          if (!existing || (existing.hours === 0 && !existing.absenceType)) {
+            withKvAbsences[key] = { hours: 0, absenceType: absType as ActualHoursEntry['absenceType'] };
+            console.log(`[FE-STABLE] holiday survived reload (offline): ${key} type=${absType}`);
+          }
+        }
+        setActualHoursData(withKvAbsences);
       }
 
       // ── Tagesbudgets ─────────────────────────────────────────────────────────
@@ -542,6 +584,32 @@ const SchedulePlanner = () => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionVersion, currentMonth]);
+
+  // ── Auto-save absence map (FE/K/F) to KV store ───────────────────────────
+  // FE/K/F entries are not persisted in Supabase actual_hours (no absence_type
+  // column), so we save them to the app_settings KV store.  This ensures they
+  // survive localStorage clears, browser cache wipes, and device switches.
+  // We debounce by 800 ms to avoid a write on every individual hour change;
+  // only the final absence map for the month is saved (small payload, ~20 entries).
+  useEffect(() => {
+    const monthKey = format(currentMonth, 'yyyy-MM');
+    const absences: Record<string, string> = {};
+    for (const [k, v] of Object.entries(actualHoursData)) {
+      if (v.absenceType) absences[k] = v.absenceType;
+    }
+    const timer = setTimeout(() => {
+      saveMonthAbsences(monthKey, absences)
+        .then(() => {
+          const absenceKeys = Object.keys(absences);
+          if (absenceKeys.length > 0) {
+            console.log(`[FE-STABLE] save holiday entries: ${absenceKeys.length} entries for ${monthKey}`, absenceKeys);
+          }
+        })
+        .catch(console.error);
+    }, 800);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actualHoursData, currentMonth]);
 
   // ── Re-fetch on page-visibility regain ───────────────────────────────────
   // When the user switches browser tabs away and back (or the OS suspends the

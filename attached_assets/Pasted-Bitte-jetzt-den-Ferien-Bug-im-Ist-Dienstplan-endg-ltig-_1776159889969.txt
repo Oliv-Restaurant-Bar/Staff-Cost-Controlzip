@@ -1,0 +1,117 @@
+Bitte jetzt den Ferien Bug im Ist Dienstplan endgültig und robust stabilisieren.
+
+Problem:
+Ferien Einträge im Ist Dienstplan verschwinden weiterhin nach Reload, Navigation oder späteren Ladeprozessen.
+Sie sind danach nicht mehr aufgeführt, obwohl sie manuell erfasst wurden.
+
+Ziel:
+Ferien im Ist Dienstplan müssen genauso zuverlässig gespeichert und geladen werden wie normale Ist Einträge.
+Der Unterschied ist nur:
+- Ferien zählen 0 Stunden
+- Ferien zählen nicht als Arbeitszeit
+- Ferien bleiben aber persistent sichtbar
+
+Bitte exakt so umsetzen:
+
+1. Ferien im Ist persistent speichern
+Ferien Einträge dürfen nicht nur lokal im UI State oder nur temporär im localStorage leben.
+Sie müssen dauerhaft in derselben stabilen Datenhaltung gespeichert werden wie normale Ist Einträge.
+
+Bitte prüfen:
+- wo FE aktuell gespeichert wird
+- wo FE beim Laden verloren geht
+- ob FE beim Mergen mit Supabase / localStorage / state herausfällt
+- ob FE beim Cleanup als leere Zelle interpretiert und gelöscht wird
+
+2. Einheitliche Datenstruktur
+Ein Ferien Eintrag im Ist soll als echter Datensatz gespeichert werden, z.B. mit:
+- employeeId
+- date
+- type = holiday
+- absenceType = FE
+- hours = 0
+- source = manual_ist
+- plannedHours = 0
+- istHours = 0
+
+Wichtig:
+FE ist kein leerer Slot.
+FE ist ein gültiger Ist Eintrag mit 0 Stunden.
+
+3. Harte Regel
+Wenn ein FE Eintrag existiert:
+- Reload darf ihn nicht löschen
+- Navigation auf Personal FIX darf ihn nicht löschen
+- Monatswechsel und Rückkehr dürfen ihn nicht löschen
+- leere Importdaten dürfen ihn nicht löschen
+
+FE darf nur überschrieben werden, wenn:
+- für denselben Mitarbeiter
+- am selben Datum
+- echte Ist Arbeitsstunden > 0 importiert oder manuell gesetzt werden
+
+4. Merge Logik absichern
+Beim Laden und Mergen gilt:
+- bestehender FE Eintrag bleibt bestehen, wenn incoming record leer ist
+- bestehender FE Eintrag bleibt bestehen, wenn incoming record keine echten Stunden enthält
+- FE darf nicht als null, empty, undefined oder delete Kandidat behandelt werden
+
+5. Delete Logik absichern
+Wenn ein Benutzer nicht aktiv FE entfernt, darf FE nicht gelöscht werden.
+Bitte jede automatische Delete Logik prüfen:
+- clear cell
+- import merge
+- load normalization
+- month save
+- compare mode transforms
+
+6. Debug Logs einbauen
+Bitte sichtbar in der Browser Konsole loggen:
+[FE-STABLE] save holiday entry: ...
+[FE-STABLE] load holiday entry: ...
+[FE-STABLE] merge kept existing holiday: ...
+[FE-STABLE] ignored empty incoming data, holiday preserved
+[FE-STABLE] holiday replaced by working hours: ...
+[FE-STABLE] holiday survived reload
+[FE-STABLE] holiday survived navigation
+
+7. Sichtbarer Schnelltest einbauen
+Optional temporär oben im Ist Dienstplan kleine Debug Info:
+- FE Einträge im aktuellen Monat: X
+
+8. Bitte gezielt testen
+Nach Fix bitte genau diese Fälle prüfen:
+
+Test A
+- FE im Ist setzen
+- speichern
+- Seite neu laden
+- FE muss bleiben
+
+Test B
+- FE im Ist setzen
+- auf Personal FIX wechseln
+- zurück in Dienstplanung
+- FE muss bleiben
+
+Test C
+- FE im Ist setzen
+- Ist Import ohne echte Stunden für diesen Tag
+- FE muss bleiben
+
+Test D
+- FE im Ist setzen
+- Ist Import mit echten Stunden für denselben Tag
+- FE darf ersetzt werden
+
+9. Wichtig
+- keine neuen Features
+- keine UI Umbauten
+- nur Stabilität und Persistenz von FE im Ist Dienstplan
+
+10. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- warum FE bisher verloren ging
+- wo FE jetzt persistent gespeichert wird
+- warum FE jetzt Reload und Navigation überlebt
+- wie ich den Fix am schnellsten testen kann
