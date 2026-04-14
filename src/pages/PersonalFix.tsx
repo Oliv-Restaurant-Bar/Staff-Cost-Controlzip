@@ -1738,6 +1738,12 @@ export default function PersonalFixPage() {
   // ── pfix-derived budget comparison (always uses Ist actuals as "spend") ────
   // When a cutoff (Stichtag) is active, scale the budget pro rata to that day
   // so that "Ist bis Stichtag" is compared against "Budget bis Stichtag".
+  // ── Helper: format cutoff date label ──────────────────────────────────────
+  const cutoffLabel = proRataDay !== null
+    ? `${String(proRataDay).padStart(2, '0')}.${String(selectedMonth).padStart(2, '0')}.${selectedYear}`
+    : null;
+  const budgetLabel = cutoffLabel ? `bis ${cutoffLabel}` : 'gesamt';
+
   const pfixBudget       = personnelBudget > 0
     ? personnelBudget * (proRataDay !== null ? proRataFactor : 1)
     : 0;
@@ -1746,14 +1752,26 @@ export default function PersonalFixPage() {
   const pfixIstVarDelta   = pfixBudget > 0 ? pfixAvailableVar - pfix.active.istWork : 0;
   const pfixIstVarOverrun = pfixIstVarDelta < 0;
 
-  // [PFIX-BUDGET] validation logs
+  // Operative Status-Logik:
+  //   on_track  → Flex Arbeit Ist ≤ verfügbares Flex-Budget (delta ≥ 0)
+  //   warning   → leicht darüber: 0 – 5 % von pfixAvailableVar
+  //   off_track → deutlich darüber: > 5 % von pfixAvailableVar
+  const flexBudgetStatus: 'on_track' | 'warning' | 'off_track' =
+    pfixIstVarDelta >= 0
+      ? 'on_track'
+      : Math.abs(pfixIstVarDelta) <= pfixAvailableVar * 0.05
+        ? 'warning'
+        : 'off_track';
+
+  // [FLEX-BUDGET] debug logs
   if (personnelBudget > 0) {
-    console.log(`[PFIX-BUDGET] month budget: ${personnelBudget.toFixed(2)}`);
-    console.log(`[PFIX-BUDGET] cutoff day: ${proRataDay ?? 'none'}`);
-    console.log(`[PFIX-BUDGET] days in month: ${daysInSelectedMonth}`);
-    console.log(`[PFIX-BUDGET] pro rata budget: ${pfixBudget.toFixed(2)}`);
-    console.log(`[PFIX-BUDGET] flex available: ${pfixAvailableVar.toFixed(2)}`);
-    console.log(`[PFIX-BUDGET] remaining: ${pfixIstVarDelta.toFixed(2)}`);
+    const cd = cutoffLabel ?? 'full month';
+    console.log(`[FLEX-BUDGET] cutoff date: ${cd}`);
+    console.log(`[FLEX-BUDGET] budget until cutoff: ${pfixBudget.toFixed(2)}`);
+    console.log(`[FLEX-BUDGET] fix ist until cutoff: ${pfix.active.fix.toFixed(2)}`);
+    console.log(`[FLEX-BUDGET] flex work ist until cutoff: ${pfix.active.istWork.toFixed(2)}`);
+    console.log(`[FLEX-BUDGET] remaining flex budget: ${pfixIstVarDelta >= 0 ? '+' : ''}${pfixIstVarDelta.toFixed(2)}`);
+    console.log(`[FLEX-BUDGET] status: ${flexBudgetStatus}`);
   }
 
   // Per-employee Plan vs Ist table — synchronized to pfix and FlexPeriodPopup
@@ -2898,14 +2916,15 @@ export default function PersonalFixPage() {
 
             {/* Budget-Rechnung */}
             <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* LEFT: Budgetverteilung — wie viel ist für Flex verfügbar */}
               <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Budgetverteilung</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
+                  Budgetverteilung {cutoffLabel ? `bis ${cutoffLabel}` : ''}
+                </p>
                 <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
                   <div className="flex flex-col">
                     <span className="text-sm text-muted-foreground">
-                      {proRataDay !== null
-                        ? `Budget bis ${proRataDay}.${String(selectedMonth).padStart(2, '0')}.${selectedYear}`
-                        : 'Personalbudget gesamt'}
+                      Budget {budgetLabel}
                     </span>
                     {proRataDay !== null && (
                       <span className="text-[10px] text-muted-foreground font-mono">
@@ -2916,7 +2935,9 @@ export default function PersonalFixPage() {
                   <span className="font-mono font-semibold">{fmtCHF(pfixBudget)}</span>
                 </div>
                 <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">− Personal FIX{proRataDay !== null ? ` bis ${proRataDay}.` : ''}</span>
+                  <span className="text-sm text-muted-foreground">
+                    − Personal FIX Ist {budgetLabel}
+                  </span>
                   <span className="font-mono text-blue-700 dark:text-blue-400 shrink-0">− {fmtCHF(pfix.active.fix)}</span>
                 </div>
                 <div className={cn(
@@ -2930,71 +2951,87 @@ export default function PersonalFixPage() {
                 </div>
               </div>
 
-              {/* Vergleich: Schätzung vs. Verfügbar */}
+              {/* RIGHT: IST-Vergleich — was ist tatsächlich angefallen vs. verfügbar */}
               <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Schätzung vs. Budget</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
+                  IST-Vergleich {cutoffLabel ? `bis ${cutoffLabel}` : ''}
+                </p>
                 <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
                   <span className="text-sm text-muted-foreground">Verfügbar für Flex</span>
                   <span className="font-mono font-semibold">{fmtCHF(pfixAvailableVar)}</span>
                 </div>
                 <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
                   <div className="flex items-center gap-1.5 flex-wrap text-sm text-muted-foreground">
-                    <span className="whitespace-nowrap">− Flex Arbeit</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">Ist</span>
+                    <span className="whitespace-nowrap">− Flex Arbeit Ist {budgetLabel}</span>
                   </div>
                   <span className="font-mono text-orange-700 dark:text-orange-400 shrink-0">− {fmtCHF(pfix.active.istWork)}</span>
                 </div>
                 {pfix.active.istHoliday > 0 && (
                   <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border/60">
                     <div className="flex flex-col">
-                      <span className="text-xs text-muted-foreground/70 italic">Ferienabbau FE Ist (nur Information)</span>
-                      <span className="text-[10px] text-muted-foreground/50">nicht budgetwirksam</span>
+                      <span className="text-xs text-muted-foreground/60 italic">
+                        Ferienabbau FE Ist {budgetLabel}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground/50">nur Information — nicht budgetwirksam</span>
                     </div>
-                    <span className="font-mono text-xs text-muted-foreground/60 shrink-0">{fmtCHF(pfix.active.istHoliday)}</span>
+                    <span className="font-mono text-xs text-muted-foreground/50 shrink-0">{fmtCHF(pfix.active.istHoliday)}</span>
                   </div>
                 )}
+                {/* Status-Zeile */}
                 <div className={cn(
                   'flex justify-between items-center py-2 px-3 rounded-lg',
-                  !pfixIstVarOverrun
+                  flexBudgetStatus === 'on_track'
                     ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
-                    : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300'
+                    : flexBudgetStatus === 'warning'
+                      ? 'bg-yellow-50 dark:bg-yellow-950/30 text-yellow-800 dark:text-yellow-300'
+                      : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300'
                 )}>
                   <span className="text-sm font-bold">
-                    {pfixIstVarOverrun ? '⚠ Überziehung' : '✓ Verbleibend'}
+                    {flexBudgetStatus === 'on_track'
+                      ? `✓ Auf Kurs — Verbleibend`
+                      : flexBudgetStatus === 'warning'
+                        ? `⚠ Achtung — Leicht überzogen`
+                        : `✗ Nicht auf Kurs — Überzogen`}
                   </span>
                   <span className="font-mono font-bold text-base">
-                    {pfixIstVarOverrun ? '– ' : '+ '}{fmtCHF(Math.abs(pfixIstVarDelta))}
+                    {pfixIstVarDelta >= 0 ? '+ ' : '− '}{fmtCHF(Math.abs(pfixIstVarDelta))}
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* ── Planungsempfehlung ────────────────────────────────────── */}
-            {avgHourlyWage > 0 && (
-              <div className={cn(
-                'mx-4 mb-4 p-3 rounded-lg border flex flex-wrap items-start gap-3',
-                pfixIstVarOverrun
-                  ? 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
-                  : pfixIstVarDelta < pfixAvailableVar * 0.15
-                    ? 'border-yellow-200 dark:border-yellow-800 bg-yellow-50/60 dark:bg-yellow-950/20'
-                    : 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20'
-              )}>
-                <Lightbulb className={cn('h-4 w-4 mt-0.5 shrink-0',
-                  pfixIstVarOverrun ? 'text-red-600' : pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'text-yellow-600' : 'text-emerald-600'
-                )} />
-                <div className="flex-1 min-w-0 space-y-1.5">
-                  {/* Hauptstatus */}
-                  <p className="text-sm font-semibold">
-                    {pfix.active.istTotalVar === 0 && !pfixIstVarOverrun
-                      ? `Noch kein Flex erfasst — Budget: ${fmtCHF(pfixAvailableVar)} verfügbar`
-                      : pfixIstVarOverrun
-                        ? `⚠ Budgetüberschreitung: ${fmtCHF(Math.abs(pfixIstVarDelta))} zu viel`
-                        : pfixIstVarDelta < pfixAvailableVar * 0.15
-                          ? `Achtung: Budget fast ausgeschöpft — noch ${fmtCHF(pfixIstVarDelta)} Puffer`
-                          : `Budget im grünen Bereich — Puffer ${fmtCHF(pfixIstVarDelta)}`}
-                  </p>
+            {/* ── Operativer Status-Banner ─────────────────────────────── */}
+            <div className={cn(
+              'mx-4 mb-4 p-3 rounded-lg border flex flex-wrap items-start gap-3',
+              flexBudgetStatus === 'on_track'
+                ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20'
+                : flexBudgetStatus === 'warning'
+                  ? 'border-yellow-200 dark:border-yellow-800 bg-yellow-50/60 dark:bg-yellow-950/20'
+                  : 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
+            )}>
+              <Lightbulb className={cn('h-4 w-4 mt-0.5 shrink-0',
+                flexBudgetStatus === 'on_track' ? 'text-emerald-600'
+                  : flexBudgetStatus === 'warning' ? 'text-yellow-600'
+                  : 'text-red-600'
+              )} />
+              <div className="flex-1 min-w-0 space-y-1.5">
+                {/* Hauptstatus — Auf Kurs Satz */}
+                <p className={cn('text-sm font-semibold',
+                  flexBudgetStatus === 'on_track' ? 'text-emerald-800 dark:text-emerald-300'
+                    : flexBudgetStatus === 'warning' ? 'text-yellow-800 dark:text-yellow-300'
+                    : 'text-red-800 dark:text-red-300'
+                )}>
+                  {pfix.active.istWork === 0
+                    ? `Noch kein Flex Arbeit Ist erfasst — Budget ${budgetLabel}: ${fmtCHF(pfixAvailableVar)} verfügbar`
+                    : flexBudgetStatus === 'on_track'
+                      ? `Auf Kurs: Flex-Arbeit liegt ${fmtCHF(pfixIstVarDelta)} unter Budget ${budgetLabel}`
+                      : flexBudgetStatus === 'warning'
+                        ? `Achtung: Flex-Arbeit liegt ${fmtCHF(Math.abs(pfixIstVarDelta))} über Budget ${budgetLabel}`
+                        : `Nicht auf Kurs: Flex-Arbeit liegt ${fmtCHF(Math.abs(pfixIstVarDelta))} über Budget ${budgetLabel}`}
+                </p>
 
-                  {/* Stunden-Info */}
+                {/* Stunden-Info */}
+                {avgHourlyWage > 0 && (
                   <div className="text-xs text-muted-foreground space-y-0.5">
                     <p>
                       Ø Stundenlohn Flex: <strong className="font-mono text-foreground">{fmtCHFDec(avgHourlyWage)}/h</strong>
@@ -3002,40 +3039,32 @@ export default function PersonalFixPage() {
                         <> · Budget reicht für max. <strong className="font-mono text-foreground">{pfixMaxVarHours} h</strong></>
                       )}
                     </p>
-                    {totalVarHours > 0 && pfixMaxVarHours > 0 && (
-                      <p>
-                        Aktuell geplant: <strong className="font-mono text-foreground">{Math.round(totalVarHours * 10) / 10} h</strong>
-                        {totalVarHours <= pfixMaxVarHours
-                          ? <span className="text-emerald-600 dark:text-emerald-400"> · Reserve: {Math.max(0, pfixMaxVarHours - Math.round(totalVarHours))} h (≈ {fmtCHF(pfixIstVarDelta)})</span>
-                          : <span className="text-red-600 dark:text-red-400"> · {Math.round(totalVarHours) - pfixMaxVarHours} h zu viel (≈ {fmtCHF(Math.abs(pfixIstVarDelta))})</span>}
+                    {flexBudgetStatus !== 'on_track' && avgHourlyWage > 0 && (
+                      <p className={cn(
+                        flexBudgetStatus === 'warning' ? 'text-yellow-700 dark:text-yellow-500' : 'text-red-600 dark:text-red-400'
+                      )}>
+                        → Überschreitung entspricht ca. {Math.ceil(Math.abs(pfixIstVarDelta) / avgHourlyWage)} h zu viel
+                      </p>
+                    )}
+                    {flexBudgetStatus === 'on_track' && pfixMaxVarHours > 0 && totalVarHours > 0 && (
+                      <p className="text-emerald-600 dark:text-emerald-400">
+                        → Noch ca. {Math.max(0, pfixMaxVarHours - Math.round(pfix.active.istWork / avgHourlyWage))} h planbar ohne Budgetüberschreitung
                       </p>
                     )}
                   </div>
-
-                  {/* Regelbasierte Handlungsempfehlung */}
-                  <p className={cn('text-xs font-medium mt-0.5',
-                    pfixIstVarOverrun ? 'text-red-600 dark:text-red-400'
-                      : pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'text-yellow-600 dark:text-yellow-500'
-                      : 'text-emerald-600 dark:text-emerald-400'
-                  )}>
-                    {pfix.active.istTotalVar === 0 && !pfixIstVarOverrun
-                      ? `→ Stunden planen: Noch ca. ${pfixMaxVarHours} h verfügbar — trage unten Stunden ein.`
-                      : pfixIstVarOverrun
-                        ? `→ Reduziere Flex Stunden um ca. ${Math.ceil(Math.abs(pfixIstVarDelta) / avgHourlyWage)} h, um das Budget einzuhalten.`
-                        : pfixIstVarDelta < pfixAvailableVar * 0.15
-                          ? `→ Vorsicht: Noch ${Math.max(0, pfixMaxVarHours - Math.round(totalVarHours))} h Spielraum — zusätzliche Schichten könnten das Budget sprengen.`
-                          : `→ Kapazität vorhanden: Noch ca. ${Math.max(0, pfixMaxVarHours - Math.round(totalVarHours))} h planbar ohne Budgetüberschreitung.`}
-                  </p>
-                </div>
-
-                {/* Ampel */}
-                <div className="flex flex-col gap-1 items-center shrink-0 self-center">
-                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', pfixIstVarOverrun ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)]' : 'bg-red-200 dark:bg-red-900')} />
-                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', !pfixIstVarOverrun && pfixIstVarDelta < pfixAvailableVar * 0.15 ? 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.7)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
-                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all', !pfixIstVarOverrun && pfixIstVarDelta >= pfixAvailableVar * 0.15 ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
-                </div>
+                )}
               </div>
-            )}
+
+              {/* Ampel */}
+              <div className="flex flex-col gap-1 items-center shrink-0 self-center">
+                <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
+                  flexBudgetStatus === 'off_track' ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)]' : 'bg-red-200 dark:bg-red-900')} />
+                <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
+                  flexBudgetStatus === 'warning' ? 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.7)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
+                <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
+                  flexBudgetStatus === 'on_track' ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
+              </div>
+            </div>
           </section>
         )}
 
