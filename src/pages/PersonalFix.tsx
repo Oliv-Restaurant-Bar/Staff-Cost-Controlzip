@@ -3118,7 +3118,7 @@ export default function PersonalFixPage() {
             )}
 
             {/* Budget-Rechnung — FORECAST MONATSENDE */}
-            {forecastViewMode === 'forecast' && (
+            {forecastViewMode === 'forecast' && (<>
             <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* LEFT: Monatsbudget gesamt */}
               <div className="space-y-2">
@@ -3187,7 +3187,19 @@ export default function PersonalFixPage() {
                 </div>
               </div>
             </div>
-            )}
+
+            {/* ── Forecast Kernsatz ─────────────────────────────────────── */}
+            <div className={cn(
+              'mx-4 mb-4 py-3 px-4 rounded-lg text-center font-semibold text-sm',
+              forecastDelta >= 0
+                ? 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200'
+                : 'bg-red-100 dark:bg-red-950/40 text-red-800 dark:text-red-200'
+            )}>
+              {forecastDelta >= 0
+                ? `Voraussichtlich ${fmtCHF(forecastDelta)} unter Budget`
+                : `Voraussichtlich ${fmtCHF(Math.abs(forecastDelta))} über Budget`}
+            </div>
+            </>)}
 
             {/* ── Operativer Status-Banner ─────────────────────────────── */}
             {(() => {
