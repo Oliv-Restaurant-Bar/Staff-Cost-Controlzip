@@ -768,7 +768,26 @@ function FlexPeriodPopup({
     const planH    = planW.reduce((s, r) => s + r.hours, 0);
     const istH     = istW.reduce((s, r)  => s + r.hours, 0);
     return { id: emp.id, name: emp.name, planH, istH, planWork, istWork, diff: istWork - planWork };
-  }).filter(r => r.planWork > 0 || r.istWork > 0);
+  }).filter(r => r.planWork > 0 || r.istWork > 0)
+    .sort((a, b) => {
+      // 1) positive deviations first (Ist > Plan), largest first
+      // 2) then negative deviations (Ist < Plan), largest absolute first
+      // 3) zeros last
+      const aPos = a.diff > 0.005;
+      const bPos = b.diff > 0.005;
+      const aNeg = a.diff < -0.005;
+      const bNeg = b.diff < -0.005;
+      if (aPos && !bPos) return -1;
+      if (!aPos && bPos) return  1;
+      if (aNeg && !bNeg) return -1;
+      if (!aNeg && bNeg) return  1;
+      return Math.abs(b.diff) - Math.abs(a.diff);
+    });
+
+  // Top-3 rows by absolute deviation for visual highlight
+  const top3Ids = new Set(
+    [...rows].sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 3).map(r => r.id)
+  );
 
   const sumPlan = rows.reduce((s, r) => s + r.planWork, 0);
   const sumIst  = rows.reduce((s, r) => s + r.istWork,  0);
@@ -832,16 +851,25 @@ function FlexPeriodPopup({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={r.id} className={cn(i % 2 === 0 ? 'bg-background' : 'bg-muted/15')}>
-                      <td className="px-3 py-1.5 font-medium">{r.name}</td>
+                  {rows.map((r, i) => {
+                    const isTop = top3Ids.has(r.id) && Math.abs(r.diff) > 0.005;
+                    return (
+                    <tr key={r.id} className={cn(
+                      i % 2 === 0 ? 'bg-background' : 'bg-muted/15',
+                      isTop && 'outline outline-1 outline-amber-300 dark:outline-amber-600 bg-amber-50/50 dark:bg-amber-950/20',
+                    )}>
+                      <td className={cn('px-3 py-1.5', isTop ? 'font-bold' : 'font-medium')}>
+                        {r.name}
+                        {isTop && <span className="ml-1.5 inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-900/50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">Top</span>}
+                      </td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{r.planH > 0 ? `${r.planH.toFixed(1)} h` : '–'}</td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{r.istH > 0 ? `${r.istH.toFixed(1)} h` : '–'}</td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-blue-700 dark:text-blue-400">{r.planWork > 0 ? fmtCHF(r.planWork) : '–'}</td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-orange-700 dark:text-orange-400">{r.istWork > 0 ? fmtCHF(r.istWork) : '–'}</td>
                       <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums font-bold', diffCls(r.diff))}>{fmtD(r.diff)}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr className={cn('border-t-2 border-border font-bold text-xs', A.bg)}>
