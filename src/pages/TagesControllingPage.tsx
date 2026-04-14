@@ -338,6 +338,10 @@ export default function TagesControllingPage() {
   const [journalTick, setJournalTick] = useState(0);
   const loadGenRef = useRef(0);
 
+  // ── Pro-Rata (Monatsansicht) ───────────────────────────────────────────────
+  const [proRataMode, setProRataMode]       = useState<'off' | 'auto' | 'manual'>('off');
+  const [manualCutoffDay, setManualCutoffDay] = useState<number>(1);
+
   // ── Inline-Umsatz-Bearbeitung ─────────────────────────────────────────────
   const [editingDate, setEditingDate]   = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
@@ -487,6 +491,28 @@ export default function TagesControllingPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const wesMap    = useMemo(() => buildWesMap(dates), [dates, journalTick]);
 
+  // ── Pro-Rata: letzter Tag mit Umsatz im gewählten Monat (auto-Erkennung) ────
+  const lastRevenueDayInMonth = useMemo(() => {
+    if (period !== 'monat') return null;
+    const prefix = format(anchor, 'yyyy-MM');
+    let lastDay = 0;
+    for (const [date, entry] of Object.entries(dailyBudgets)) {
+      if (!date.startsWith(prefix)) continue;
+      if ((entry?.actualRevenue ?? 0) > 0) {
+        const day = parseInt(date.slice(8), 10);
+        if (day > lastDay) lastDay = day;
+      }
+    }
+    return lastDay > 0 ? lastDay : null;
+  }, [period, anchor, dailyBudgets]);
+
+  // ── Pro-Rata: effektiver Stichtag ─────────────────────────────────────────
+  const effectiveCutoffDay = useMemo(() => {
+    if (proRataMode === 'off')     return null;
+    if (proRataMode === 'manual')  return manualCutoffDay;
+    return lastRevenueDayInMonth;
+  }, [proRataMode, manualCutoffDay, lastRevenueDayInMonth]);
+
   // Zeilenberechnung
   const rows = useMemo((): ControllingRow[] => {
     return dates.map(day => {
@@ -501,23 +527,48 @@ export default function TagesControllingPage() {
     });
   }, [dates, dailyBudgets, planMap, actualMap, wesMap, showNetRevenue]);
 
-  // Total-Zeile (gewichtete Prozente)
+  // Total-Zeile (gewichtete Prozente; bei aktivem Pro-Rata nur bis Stichtag)
   const total = useMemo(() => {
-    const sumUmsatz  = rows.reduce((s, r) => s + r.umsatz, 0);
-    const sumPkPlan  = rows.reduce((s, r) => s + r.pkPlanChf, 0);
-    const sumPkIst   = rows.reduce((s, r) => s + r.pkIstChf, 0);
-    const sumWes     = rows.reduce((s, r) => s + r.wesChf, 0);
+    const baseRows = effectiveCutoffDay !== null
+      ? rows.filter(r => parseInt(r.date.slice(8), 10) <= effectiveCutoffDay)
+      : rows;
+    const sumUmsatz  = baseRows.reduce((s, r) => s + r.umsatz, 0);
+    const sumPkPlan  = baseRows.reduce((s, r) => s + r.pkPlanChf, 0);
+    const sumPkIst   = baseRows.reduce((s, r) => s + r.pkIstChf, 0);
+    const sumWes     = baseRows.reduce((s, r) => s + r.wesChf, 0);
     const pkPlanPct  = sumUmsatz > 0 ? (sumPkPlan / sumUmsatz) * 100 : 0;
     const pkIstPct   = sumUmsatz > 0 ? (sumPkIst  / sumUmsatz) * 100 : 0;
     const wesPct     = sumUmsatz > 0 ? (sumWes    / sumUmsatz) * 100 : 0;
     return { sumUmsatz, sumPkPlan, sumPkIst, sumWes, pkPlanPct, pkIstPct, wesPct };
-  }, [rows]);
+  }, [rows, effectiveCutoffDay]);
 
   // Monatszeilen für Jahresansicht
   const monthRows = useMemo((): MonthRow[] => {
     if (period !== 'jahr') return [];
     return buildMonthRows(rows);
   }, [period, rows]);
+
+  // ── Pro-Rata Debug-Logging ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (proRataMode === 'off' || period !== 'monat') return;
+    const monthLabel = format(anchor, 'MMMM yyyy', { locale: de });
+    console.log(`[PRO-RATA] mode: ${proRataMode}`);
+    console.log(`[PRO-RATA] Monat: ${monthLabel}`);
+    console.log(`[PRO-RATA] letzter Umsatz-Tag (auto): ${lastRevenueDayInMonth ?? 'nicht erkannt'}`);
+    console.log(`[PRO-RATA] effektiver Stichtag: ${effectiveCutoffDay ?? 'keiner'}`);
+    const cutoffRows = effectiveCutoffDay !== null
+      ? rows.filter(r => parseInt(r.date.slice(8), 10) <= effectiveCutoffDay)
+      : rows;
+    console.log(`[PRO-RATA] Zeilen eingeschlossen: ${cutoffRows.length} / ${rows.length}`);
+    const tRev  = cutoffRows.reduce((s, r) => s + r.umsatz, 0);
+    const tPlan = cutoffRows.reduce((s, r) => s + r.pkPlanChf, 0);
+    const tIst  = cutoffRows.reduce((s, r) => s + r.pkIstChf, 0);
+    const tWes  = cutoffRows.reduce((s, r) => s + r.wesChf, 0);
+    console.log(`[PRO-RATA] Total Umsatz (cutoff): ${tRev.toFixed(0)} CHF`);
+    console.log(`[PRO-RATA] Total PK Plan (cutoff): ${tPlan.toFixed(0)} CHF`);
+    console.log(`[PRO-RATA] Total PK Ist (cutoff): ${tIst.toFixed(0)} CHF`);
+    console.log(`[PRO-RATA] Total WES (cutoff): ${tWes.toFixed(0)} CHF`);
+  }, [proRataMode, period, anchor, lastRevenueDayInMonth, effectiveCutoffDay, rows]);
 
   const navigate = useCallback((dir: 1 | -1) => {
     setAnchor(a => navAnchor(period, a, dir));
@@ -713,6 +764,49 @@ export default function TagesControllingPage() {
             </Button>
           </div>
 
+          {/* ── Pro-Rata Stichtag (nur Monatsansicht) ─────────────────────── */}
+          {period === 'monat' && (
+            <div className="flex items-center gap-2 border-l border-border pl-3">
+              <span className="text-xs text-muted-foreground font-medium hidden sm:inline">Pro Rata</span>
+              <div className="flex rounded border border-border overflow-hidden text-xs">
+                {(['off', 'auto', 'manual'] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => setProRataMode(mode)}
+                    className={cn(
+                      'px-2.5 py-1 transition-colors',
+                      proRataMode === mode
+                        ? 'bg-amber-500 text-white font-semibold'
+                        : 'text-muted-foreground hover:bg-muted',
+                    )}
+                  >
+                    {mode === 'off' ? 'Aus' : mode === 'auto' ? 'Auto' : 'Manuell'}
+                  </button>
+                ))}
+              </div>
+              {proRataMode === 'manual' && (
+                <input
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={manualCutoffDay}
+                  onChange={e => setManualCutoffDay(Math.max(1, Math.min(31, parseInt(e.target.value) || 1)))}
+                  className="w-14 h-7 text-xs border border-border rounded px-2 bg-background tabular-nums"
+                  placeholder="Tag"
+                />
+              )}
+              {proRataMode !== 'off' && effectiveCutoffDay !== null && (
+                <span className="text-xs text-amber-600 dark:text-amber-400 font-medium whitespace-nowrap">
+                  bis {effectiveCutoffDay}. {format(anchor, 'MMMM', { locale: de })}
+                  {proRataMode === 'auto' ? ' (auto)' : ''}
+                </span>
+              )}
+              {proRataMode === 'auto' && lastRevenueDayInMonth === null && (
+                <span className="text-xs text-red-500 whitespace-nowrap">kein Umsatz erkannt</span>
+              )}
+            </div>
+          )}
+
           {/* Ladeanzeige PK */}
           {loadingPK && (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -777,9 +871,19 @@ export default function TagesControllingPage() {
                   </tr>
 
                   {/* ── Total-Zeile (sticky, direkt unter Header) ──────────── */}
-                  <tr className="bg-primary/5 dark:bg-primary/10 border-b-2 border-primary/20 font-semibold">
-                    <td className="px-3 py-2 text-left text-[11px] text-muted-foreground uppercase tracking-wide" colSpan={period === 'jahr' ? 1 : 2} style={period === 'jahr' ? colStyle('datum') : { width: (colWidths.datum ?? 110) + (colWidths.wt ?? 40) }}>
-                      Total
+                  <tr className={cn(
+                    'border-b-2 font-semibold',
+                    effectiveCutoffDay !== null
+                      ? 'bg-amber-50/60 dark:bg-amber-900/20 border-amber-300/50'
+                      : 'bg-primary/5 dark:bg-primary/10 border-primary/20',
+                  )}>
+                    <td className="px-3 py-2 text-left" colSpan={period === 'jahr' ? 1 : 2} style={period === 'jahr' ? colStyle('datum') : { width: (colWidths.datum ?? 110) + (colWidths.wt ?? 40) }}>
+                      <span className="text-[11px] text-muted-foreground uppercase tracking-wide">Total</span>
+                      {effectiveCutoffDay !== null && (
+                        <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                          bis {effectiveCutoffDay}.
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums" style={colStyle('umsatz')}>
                       {fmtN(total.sumUmsatz)}

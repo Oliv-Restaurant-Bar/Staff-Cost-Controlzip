@@ -1,0 +1,177 @@
+Bitte jetzt den letzten Feinschliff für die Flex-Auswertung UND für die Pro-Rata-Logik in der Monatsansicht umsetzen.
+
+Ziel:
+1. Die neue Flex-Auswertung soll sauber exportierbar sein.
+2. Der Export soll genau die aktuell gewählte Aggregation und denselben Zeitraum übernehmen.
+3. In der Monatsansicht soll ein Pro-Rata-Button vorhanden sein.
+4. Bei Pro Rata soll automatisch erkannt werden, bis zu welchem Datum Umsatz erfasst wurde.
+5. Optional soll ich das Datum manuell überschreiben können.
+6. Die Total-Zeile oben muss dann exakt auf derselben Pro-Rata-Basis rechnen.
+
+--------------------------------------------------
+TEIL A — Flex-Auswertung: letzter Feinschliff + Export
+--------------------------------------------------
+
+1. Export für die Flex-Auswertung ergänzen
+Bitte PDF und Excel Export für die Flex-Auswertung bauen.
+
+Wichtig:
+Der Export muss exakt die aktuell gewählte Ansicht übernehmen:
+- Tag
+- Woche
+- Monat
+- Jahr
+
+Und zusätzlich:
+- aktuell gewählter Zeitraum
+- aktueller Monat / Jahr
+- aktiver Stichtag / Pro-Rata ja oder nein
+- aktuell sichtbare Totale und Tabellen
+
+2. Export-Inhalt
+Der Export soll mindestens enthalten:
+
+A) Header
+- Restaurantname
+- Reportname: Flex-Auswertung
+- Aggregation: Tag / Woche / Monat / Jahr
+- Zeitraum
+- falls aktiv: Pro-Rata bis Datum
+- falls aktiv: Auto oder Manuell
+
+B) Summary Block
+- Total Flex Plan
+- Total Flex Ist
+- Differenz CHF
+- Differenz %
+- Status / Ampel
+
+C) Perioden-Tabelle
+Je nach Aggregation:
+- Tag
+- Woche
+- Monat
+- Jahr
+
+Spalten:
+- Zeitraum
+- Total Flex Plan
+- Total Flex Ist
+- Diff CHF
+- Diff %
+- Status
+
+D) Mitarbeitertabelle
+Wenn in der UI sichtbar:
+- Mitarbeiter
+- Flex Arbeit Plan
+- Flex Arbeit Ist
+- Ferien Plan
+- Ferien Ist
+- Total Flex Plan
+- Total Flex Ist
+- Diff Total
+
+3. Export-Logik
+Wichtig:
+- Export muss exakt dieselbe zentrale Master-Logik verwenden wie die UI
+- keine zweite Berechnung nur für PDF oder Excel
+- dieselben Totale wie in der Oberfläche
+
+4. Popup-Details später erweiterbar halten
+Jetzt reicht der Export der Hauptauswertung.
+Aber Struktur bitte so bauen, dass später Detail-Export pro Mitarbeiter oder Zeitraum möglich ist.
+
+5. Bitte danach kurz sagen:
+- welche Datei(en) den Flex-Export steuern
+- ob PDF und Excel exakt die aktuell gewählte Aggregation übernehmen
+- ob die Totale im Export exakt mit der UI übereinstimmen
+
+--------------------------------------------------
+TEIL B — Monatsansicht: Pro-Rata Button
+--------------------------------------------------
+
+6. Neuer Pro-Rata Button in der Monatsansicht
+Bitte in der Monatsansicht einen klar sichtbaren Pro-Rata Button / Toggle ergänzen:
+
+- Pro Rata aus
+- Pro Rata an
+
+7. Automatische Pro-Rata-Erkennung
+Wenn Pro Rata aktiv ist, soll automatisch erkannt werden:
+bis zu welchem Datum im gewählten Monat Ist-Umsatz wirklich vorhanden ist.
+
+Beispiel:
+- April 2026
+- letzter vorhandener Ist-Umsatz = 12.04.2026
+
+Dann gilt automatisch:
+- effektiver Cutoff = 12.04.2026
+- Auswertung nur bis 12.04.2026
+
+8. Manuelle Übersteuerung erlauben
+Zusätzlich zur Automatik möchte ich ein Datum manuell setzen können.
+
+Also zwei Modi:
+- Auto bis letzter Umsatz
+- Manuell bis Datum X
+
+Bitte UI so bauen:
+- Toggle oder Auswahl Auto / Manuell
+- bei Manuell Datumsfeld anzeigen
+- wenn Manuell gesetzt ist, überschreibt es die Auto-Erkennung
+
+9. Sichtbare Kennzeichnung
+Wenn Pro Rata aktiv ist, bitte klar anzeigen:
+- Pro Rata bis 12.04.2026 (automatisch)
+oder
+- Pro Rata bis 15.04.2026 (manuell)
+
+10. Total-Zeile oben korrigieren
+Die Total-Zeile oben in der Monatsansicht muss bei aktivem Pro Rata exakt dieselbe Abgrenzung verwenden.
+
+Das gilt für:
+- Ist-Umsatz
+- PK Plan CHF
+- PK Ist CHF
+- WES CHF
+- PK Plan %
+- PK Ist %
+- WES %
+- alle weiteren Totale oben
+
+11. Keine Mischlogik
+Wenn Pro Rata aktiv ist, darf NICHT:
+- voller Monatsplan
+mit
+- teilweisem Ist-Umsatz
+vermischt werden
+
+Alles muss auf denselben effektiven Cutoff begrenzt werden.
+
+12. Auto-Erkennung des letzten Umsatztags
+Bitte technisch sauber lösen:
+- suche im gewählten Monat den letzten Tag mit echtem Ist-Umsatz > 0
+- verwende diesen als Auto-Cutoff
+- wenn kein Umsatz vorhanden ist:
+  - Pro Rata deaktivieren oder
+  - klar anzeigen: kein Umsatzdatum erkannt
+
+13. Debug Logs
+Bitte loggen:
+[PRO-RATA] mode: auto|manual
+[PRO-RATA] selected month: ...
+[PRO-RATA] detected last revenue date: ...
+[PRO-RATA] effective cutoff date: ...
+[PRO-RATA] rows included: ...
+[PRO-RATA] total revenue cutoff: ...
+[PRO-RATA] total pk plan cutoff: ...
+[PRO-RATA] total pk ist cutoff: ...
+[PRO-RATA] total wes cutoff: ...
+
+14. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie das letzte Umsatzdatum automatisch erkannt wird
+- wie die manuelle Übersteuerung funktioniert
+- ob die Total-Zeile jetzt exakt auf derselben Pro-Rata-Basis läuft
+- wie ich schnell prüfen kann, ob April 2026 korrekt bis 12.04.2026 abgegrenzt wird

@@ -8,7 +8,12 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Calendar, BarChart2, Lightbulb, Target,
   Repeat, FileText, Download, TrendingDown,
 } from 'lucide-react';
-import { exportPersonalFixToPDF, exportVarKostenvergleich } from '@/lib/personalfix-export';
+import {
+  exportPersonalFixToPDF,
+  exportVarKostenvergleich,
+  exportFlexAuswertungToPDF,
+  exportFlexAuswertungToExcel,
+} from '@/lib/personalfix-export';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth } from '@/lib/supabase-db';
@@ -1996,6 +2001,80 @@ export default function PersonalFixPage() {
     }
   };
 
+  // ── Flex-Auswertung Export ─────────────────────────────────────────────────
+
+  function buildFlexExportData() {
+    const periodRows = abwMode === 'day'
+      ? pfixAbw.days.map(d => ({
+          period:    d.date,
+          planTotal: d.planTotal,
+          istTotal:  d.istTotal,
+          diff:      d.diff,
+          diffPct:   d.diffPct,
+        }))
+      : abwMode === 'week'
+      ? pfixAbw.weeks.map(w => ({
+          period:    w.period,
+          planTotal: w.planTotal,
+          istTotal:  w.istTotal,
+          diff:      w.diff,
+          diffPct:   w.diffPct,
+        }))
+      : [{
+          period:    `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`,
+          planTotal: pfixAbw.monthPlan,
+          istTotal:  pfixAbw.monthIst,
+          diff:      pfixAbw.monthDiff,
+          diffPct:   pfixAbw.monthPlan > 0 ? (pfixAbw.monthDiff / pfixAbw.monthPlan) * 100 : null,
+        }];
+
+    const empRows = pfixPerEmp.map(r => ({
+      name:        r.name,
+      dept:        r.dept,
+      planWork:    r.planWork,
+      istWork:     r.istWork,
+      planHoliday: r.planHoliday,
+      istHoliday:  r.istHoliday,
+      planTotal:   r.planTotalVar,
+      istTotal:    r.istTotalVar,
+      diffTotal:   r.diffTotalVar,
+    }));
+
+    return {
+      selectedYear,
+      selectedMonth,
+      abwMode,
+      periodRows,
+      empRows,
+      monthPlan:     pfixAbw.monthPlan,
+      monthIst:      pfixAbw.monthIst,
+      monthDiff:     pfixAbw.monthDiff,
+      proRataDay,
+      proRataFactor,
+      daysInMonth:   daysInSelectedMonth,
+    };
+  }
+
+  const handleFlexExportPDF = () => {
+    try {
+      exportFlexAuswertungToPDF(buildFlexExportData());
+      toast.success('Flex-Auswertung PDF exportiert');
+    } catch (err) {
+      console.error('[PersonalFix] Flex-PDF-Export Fehler:', err);
+      toast.error('Fehler beim PDF-Export');
+    }
+  };
+
+  const handleFlexExportExcel = async () => {
+    try {
+      await exportFlexAuswertungToExcel(buildFlexExportData());
+      toast.success('Flex-Auswertung Excel exportiert');
+    } catch (err) {
+      console.error('[PersonalFix] Flex-Excel-Export Fehler:', err);
+      toast.error('Fehler beim Excel-Export');
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -2317,15 +2396,15 @@ export default function PersonalFixPage() {
                   {mA.label}
                 </div>
                 <div className="flex items-center gap-1 ml-auto">
-                  <Button size="sm" variant="ghost" onClick={() => handleVarExport('plan')}
+                  <Button size="sm" variant="ghost" onClick={handleFlexExportPDF}
                     className="h-7 px-2 text-xs gap-1 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/30"
-                    title="Plan-Kostenvergleich exportieren">
-                    <Download className="h-3 w-3" />Plan
+                    title="Flex-Auswertung als PDF exportieren">
+                    <Download className="h-3 w-3" />PDF
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => handleVarExport('ist')}
-                    className="h-7 px-2 text-xs gap-1 text-orange-600 hover:bg-orange-50 hover:text-orange-700 dark:text-orange-400 dark:hover:bg-orange-950/30"
-                    title="Ist-Kostenvergleich exportieren">
-                    <Download className="h-3 w-3" />Ist
+                  <Button size="sm" variant="ghost" onClick={handleFlexExportExcel}
+                    className="h-7 px-2 text-xs gap-1 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                    title="Flex-Auswertung als Excel exportieren">
+                    <Download className="h-3 w-3" />Excel
                   </Button>
                 </div>
                 {proRataDay !== null && (

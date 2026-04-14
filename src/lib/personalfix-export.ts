@@ -1213,3 +1213,393 @@ export function exportVarKostenvergleich(data: VarKostenvergleichData): void {
   const mo  = String(selectedMonth).padStart(2, '0');
   pdf.save(`PersonalVariabel_${sourceLabel}_${yr}-${mo}.pdf`);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FLEX-AUSWERTUNG EXPORT (PDF + Excel)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface FlexPeriodRow {
+  period:    string;
+  planTotal: number;
+  istTotal:  number;
+  diff:      number;
+  diffPct:   number | null;
+}
+
+export interface FlexEmpRow {
+  name:       string;
+  dept:       string;
+  planWork:   number;
+  istWork:    number;
+  planHoliday: number;
+  istHoliday:  number;
+  planTotal:  number;
+  istTotal:   number;
+  diffTotal:  number;
+}
+
+export interface FlexAuswertungExportData {
+  selectedYear:  number;
+  selectedMonth: number;
+  abwMode:       'day' | 'week' | 'month' | 'year';
+  periodRows:    FlexPeriodRow[];
+  empRows:       FlexEmpRow[];
+  monthPlan:     number;
+  monthIst:      number;
+  monthDiff:     number;
+  proRataDay:    number | null;
+  proRataFactor: number;
+  daysInMonth:   number;
+}
+
+// Ampel-Logik lokal für Export
+function flexAmpelStatus(diff: number, plan: number): 'green' | 'yellow' | 'red' | 'neutral' {
+  if (plan <= 0) return 'neutral';
+  if (diff <= 0) return 'green';
+  const pct = (diff / plan) * 100;
+  return pct <= 5 ? 'yellow' : 'red';
+}
+
+function flexAmpelColor(st: 'green' | 'yellow' | 'red' | 'neutral'): [number, number, number] {
+  return st === 'green'   ? C.textGreen  :
+         st === 'yellow'  ? [180, 120, 0] as [number, number, number] :
+         st === 'red'     ? C.textRed    :
+         C.textMuted;
+}
+
+function flexAmpelBg(st: 'green' | 'yellow' | 'red' | 'neutral'): [number, number, number] {
+  return st === 'green'   ? C.lightGreen  :
+         st === 'yellow'  ? [255, 251, 230] as [number, number, number] :
+         st === 'red'     ? C.lightRed    :
+         C.rowGray;
+}
+
+function flexAmpelLabel(st: 'green' | 'yellow' | 'red' | 'neutral'): string {
+  return st === 'green' ? 'Im Plan' : st === 'yellow' ? 'Leicht über Plan' : st === 'red' ? 'Über Plan' : '–';
+}
+
+function flexFmtDiff(v: number): string {
+  const s = fmtCHF(Math.abs(v));
+  return v > 0.005 ? `+${s}` : v < -0.005 ? `−${s}` : s;
+}
+
+function flexFmtPct(v: number | null): string {
+  if (v === null) return '–';
+  const s = `${Math.abs(v).toFixed(1)} %`;
+  return v > 0.05 ? `+${s}` : v < -0.05 ? `−${s}` : s;
+}
+
+const ABW_MODE_LABEL: Record<string, string> = {
+  day: 'Tag', week: 'Woche', month: 'Monat', year: 'Jahr',
+};
+
+export function exportFlexAuswertungToPDF(data: FlexAuswertungExportData): void {
+  const {
+    selectedYear, selectedMonth, abwMode,
+    periodRows, empRows,
+    monthPlan, monthIst, monthDiff,
+    proRataDay, proRataFactor, daysInMonth,
+  } = data;
+
+  const monthLabel  = getMonthLabel(selectedYear, selectedMonth);
+  const modeLabel   = ABW_MODE_LABEL[abwMode] ?? abwMode;
+  const monthPct    = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : null;
+  const monthSt     = flexAmpelStatus(monthDiff, monthPlan);
+  const monthStCol  = flexAmpelColor(monthSt);
+  const monthStBg   = flexAmpelBg(monthSt);
+
+  const pdf   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pw    = pdf.internal.pageSize.getWidth();
+  const ph    = pdf.internal.pageSize.getHeight();
+  const M     = 14;
+  const W     = pw - M * 2;
+  const FOOT  = 18;
+  const BOTTOM = ph - FOOT;
+
+  let curY = 0;
+
+  function needsPage(space: number) {
+    if (curY + space > BOTTOM) { pdf.addPage(); curY = M; }
+  }
+
+  // ── Header ──────────────────────────────────────────────────────────────────
+  const HDR_H = 28;
+  pdf.setFillColor(...C.headerBlue);
+  pdf.rect(0, 0, pw, HDR_H, 'F');
+  pdf.setFillColor(37, 99, 235);
+  pdf.rect(0, HDR_H - 2, pw, 2, 'F');
+
+  setFont(pdf, 'bold', 15, C.white);
+  pdf.text('Flex-Auswertung — Plan vs. Ist', M, 12);
+  setFont(pdf, 'normal', 8, [186, 210, 255] as [number, number, number]);
+  pdf.text(`Oliv Gastro AG  ·  ${monthLabel}  ·  Aggregation: ${modeLabel}`, M, 20);
+
+  setFont(pdf, 'bold', 11, C.white);
+  pdf.text(monthLabel, pw - M, 12, { align: 'right' });
+
+  if (proRataDay !== null) {
+    const pillTxt = `Pro Rata bis ${proRataDay}. (${Math.round(proRataFactor * 100)} % von ${daysInMonth} Tagen)`;
+    const pillFS  = 6;
+    const pillW   = pdf.getStringUnitWidth(pillTxt) * pillFS / pdf.internal.scaleFactor + 10;
+    const pillX   = pw - M - pillW;
+    const pillY   = HDR_H - 10;
+    pdf.setFillColor(29, 78, 216);
+    pdf.roundedRect(pillX, pillY, pillW, 6, 1.5, 1.5, 'F');
+    setFont(pdf, 'bold', pillFS, C.white);
+    pdf.text(pillTxt, pillX + pillW / 2, pillY + 4, { align: 'center' });
+  }
+
+  curY = HDR_H + 7;
+
+  // ── Ampel-Status-Banner ──────────────────────────────────────────────────────
+  pdf.setFillColor(...monthStBg);
+  pdf.setDrawColor(...monthStCol);
+  pdf.setLineWidth(0.4);
+  pdf.roundedRect(M, curY, W, 10, 1.5, 1.5, 'FD');
+  pdf.setFillColor(...monthStCol);
+  pdf.rect(M, curY, 3, 10, 'F');
+  setFont(pdf, 'bold', 8.5, monthStCol);
+  pdf.text(`Status: ${flexAmpelLabel(monthSt)}`, M + 7, curY + 6.5);
+  setFont(pdf, 'normal', 8, monthStCol);
+  pdf.text(
+    `Diff: ${flexFmtDiff(monthDiff)}  ·  ${monthPct !== null ? flexFmtPct(monthPct) : ''}`,
+    pw - M - 3, curY + 6.5, { align: 'right' },
+  );
+  curY += 14;
+
+  // ── Summary KPI-Zeile ────────────────────────────────────────────────────────
+  const KH = 22;
+  const KW = (W - 3 * 4) / 4;
+  const kpiCards = [
+    { title: 'Total Flex Plan', val: fmtCHF(monthPlan),  col: C.sectionBlue,   bg: [239, 246, 255] as [number, number, number] },
+    { title: 'Total Flex Ist',  val: fmtCHF(monthIst),   col: C.sectionOrange, bg: [255, 247, 237] as [number, number, number] },
+    { title: 'Diff CHF',        val: flexFmtDiff(monthDiff), col: monthStCol,  bg: monthStBg },
+    { title: 'Diff %',          val: flexFmtPct(monthPct),   col: monthStCol,  bg: monthStBg },
+  ];
+  kpiCards.forEach(({ title, val, col, bg }, i) => {
+    const kx = M + i * (KW + 4);
+    pdf.setFillColor(...bg);
+    pdf.setDrawColor(...col);
+    pdf.setLineWidth(0.35);
+    pdf.roundedRect(kx, curY, KW, KH, 1.5, 1.5, 'FD');
+    pdf.setFillColor(...col);
+    pdf.rect(kx, curY + 2, 2, KH - 4, 'F');
+    setFont(pdf, 'normal', 6, C.textMuted);
+    pdf.text(title.toUpperCase(), kx + 6, curY + 6);
+    setFont(pdf, 'bold', 11, col);
+    pdf.text(val, kx + 6, curY + 16);
+  });
+  curY += KH + 8;
+
+  // ── Perioden-Tabelle ─────────────────────────────────────────────────────────
+  needsPage(30);
+  drawSectionTitle(pdf, M, curY, W, `Perioden-Übersicht (${modeLabel})`, C.sectionBlue);
+  curY += 8;
+
+  const periodBody = periodRows.map(r => {
+    const st = flexAmpelStatus(r.diff, r.planTotal);
+    return [
+      r.period,
+      fmtCHF(r.planTotal),
+      fmtCHF(r.istTotal),
+      flexFmtDiff(r.diff),
+      flexFmtPct(r.diffPct),
+      flexAmpelLabel(st),
+    ];
+  });
+
+  const sumPlan = periodRows.reduce((s, r) => s + r.planTotal, 0);
+  const sumIst  = periodRows.reduce((s, r) => s + r.istTotal,  0);
+
+  autoTable(pdf, {
+    startY: curY,
+    margin: { left: M, right: M },
+    head: [['Zeitraum', 'Flex Plan', 'Flex Ist', 'Diff CHF', 'Diff %', 'Status']],
+    body: periodBody,
+    foot: periodRows.length > 1 ? [[
+      'Total', fmtCHF(sumPlan), fmtCHF(sumIst), flexFmtDiff(monthDiff), flexFmtPct(monthPct), flexAmpelLabel(monthSt),
+    ]] : undefined,
+    headStyles: { fillColor: C.tableHead, textColor: C.headerGray, fontStyle: 'bold', fontSize: 7.5, cellPadding: 2.5 },
+    bodyStyles: { fontSize: 8, cellPadding: { vertical: 2.5, horizontal: 3 } },
+    footStyles: { fillColor: monthStBg, textColor: monthStCol, fontStyle: 'bold', fontSize: 8, cellPadding: 2.5 },
+    alternateRowStyles: { fillColor: C.rowGray },
+    showFoot: 'lastPage',
+    columnStyles: {
+      0: { cellWidth: 'auto' },
+      1: { halign: 'right', cellWidth: 35, textColor: C.textBlue,   fontStyle: 'bold' },
+      2: { halign: 'right', cellWidth: 35, textColor: C.textOrange, fontStyle: 'bold' },
+      3: { halign: 'right', cellWidth: 30 },
+      4: { halign: 'right', cellWidth: 22 },
+      5: { cellWidth: 30 },
+    },
+  });
+  curY = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+
+  // ── Mitarbeiter-Tabelle ──────────────────────────────────────────────────────
+  if (empRows.length > 0) {
+    needsPage(30);
+    drawSectionTitle(pdf, M, curY, W, 'Flex Kosten — pro Mitarbeiter', C.sectionOrange);
+    curY += 8;
+
+    const empBody = empRows.map(r => [
+      r.name,
+      r.dept,
+      r.planWork   > 0 ? fmtCHF(r.planWork)    : '–',
+      r.istWork    > 0 ? fmtCHF(r.istWork)     : '–',
+      r.planHoliday > 0 ? fmtCHF(r.planHoliday) : '–',
+      r.istHoliday  > 0 ? fmtCHF(r.istHoliday)  : '–',
+      r.planTotal  > 0 ? fmtCHF(r.planTotal)   : '–',
+      r.istTotal   > 0 ? fmtCHF(r.istTotal)    : '–',
+      flexFmtDiff(r.diffTotal),
+    ]);
+
+    autoTable(pdf, {
+      startY: curY,
+      margin: { left: M, right: M },
+      head: [['Name', 'Abt.', 'Arb Plan', 'Arb Ist', 'Fer Plan', 'Fer Ist', 'Total Plan', 'Total Ist', 'Diff']],
+      body: empBody,
+      foot: [[
+        `Total (${empRows.length} MA)`, '',
+        empRows.reduce((s, r) => s + r.planWork, 0)    > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.planWork, 0))    : '–',
+        empRows.reduce((s, r) => s + r.istWork, 0)     > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.istWork, 0))     : '–',
+        empRows.reduce((s, r) => s + r.planHoliday, 0) > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.planHoliday, 0)) : '–',
+        empRows.reduce((s, r) => s + r.istHoliday, 0)  > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.istHoliday, 0))  : '–',
+        fmtCHF(empRows.reduce((s, r) => s + r.planTotal, 0)),
+        fmtCHF(empRows.reduce((s, r) => s + r.istTotal, 0)),
+        flexFmtDiff(empRows.reduce((s, r) => s + r.diffTotal, 0)),
+      ]],
+      headStyles: { fillColor: C.tableHead, textColor: C.headerGray, fontStyle: 'bold', fontSize: 7, cellPadding: 2.5 },
+      bodyStyles: { fontSize: 7.5, cellPadding: { vertical: 2, horizontal: 2.5 } },
+      footStyles: { fillColor: C.lightOrange, textColor: C.textOrange, fontStyle: 'bold', fontSize: 7.5, cellPadding: 2.5 },
+      alternateRowStyles: { fillColor: C.rowGray },
+      showFoot: 'lastPage',
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 16 },
+        2: { halign: 'right', cellWidth: 22, textColor: C.textBlue   },
+        3: { halign: 'right', cellWidth: 22, textColor: C.textOrange },
+        4: { halign: 'right', cellWidth: 22, textColor: C.textBlue   },
+        5: { halign: 'right', cellWidth: 22, textColor: C.textOrange },
+        6: { halign: 'right', cellWidth: 24, fontStyle: 'bold', textColor: C.textBlue   },
+        7: { halign: 'right', cellWidth: 24, fontStyle: 'bold', textColor: C.textOrange },
+        8: { halign: 'right', cellWidth: 22 },
+      },
+    });
+  }
+
+  // ── Footer ───────────────────────────────────────────────────────────────────
+  const pages = pdf.getNumberOfPages();
+  const now   = new Date().toLocaleString('de-CH');
+  for (let i = 1; i <= pages; i++) {
+    pdf.setPage(i);
+    const pageH = pdf.internal.pageSize.getHeight();
+    pdf.setFillColor(...C.tableHead);
+    pdf.rect(0, pageH - 10, pw, 10, 'F');
+    pdf.setDrawColor(...C.borderGray);
+    pdf.setLineWidth(0.3);
+    pdf.line(M, pageH - 10, pw - M, pageH - 10);
+    setFont(pdf, 'normal', 6, C.textMuted);
+    pdf.text(`Flex-Auswertung — ${monthLabel} — ${modeLabel} — Oliv Gastro AG`, M, pageH - 4);
+    pdf.text(`Erstellt: ${now}`, pw / 2, pageH - 4, { align: 'center' });
+    setFont(pdf, 'bold', 6, C.textMuted);
+    pdf.text(`${i} / ${pages}`, pw - M, pageH - 4, { align: 'right' });
+  }
+
+  const yr = String(selectedYear);
+  const mo = String(selectedMonth).padStart(2, '0');
+  pdf.save(`FlexAuswertung_${yr}-${mo}_${abwMode}.pdf`);
+}
+
+export async function exportFlexAuswertungToExcel(data: FlexAuswertungExportData): Promise<void> {
+  const XLSX = await import('xlsx');
+  const {
+    selectedYear, selectedMonth, abwMode,
+    periodRows, empRows,
+    monthPlan, monthIst, monthDiff,
+    proRataDay, proRataFactor, daysInMonth,
+  } = data;
+
+  const monthLabel = getMonthLabel(selectedYear, selectedMonth);
+  const modeLabel  = ABW_MODE_LABEL[abwMode] ?? abwMode;
+  const monthPct   = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : null;
+
+  // ── Sheet 1: Überblick ────────────────────────────────────────────────────────
+  const sheet1: (string | number)[][] = [];
+  sheet1.push(['Flex-Auswertung — Plan vs. Ist', '', '', '', '', '']);
+  sheet1.push(['Restaurant', 'Oliv Gastro AG',     '', '', '', '']);
+  sheet1.push(['Monat',      monthLabel,            '', '', '', '']);
+  sheet1.push(['Aggregation', modeLabel,            '', '', '', '']);
+  if (proRataDay !== null) {
+    sheet1.push(['Pro Rata', `bis ${proRataDay}. (${Math.round(proRataFactor * 100)} % von ${daysInMonth} Tagen)`, '', '', '', '']);
+  }
+  sheet1.push([]);
+  sheet1.push(['ZUSAMMENFASSUNG', '', '', '', '', '']);
+  sheet1.push(['Total Flex Plan CHF', monthPlan,  '', '', '', '']);
+  sheet1.push(['Total Flex Ist CHF',  monthIst,   '', '', '', '']);
+  sheet1.push(['Diff CHF',            monthDiff,  '', '', '', '']);
+  sheet1.push(['Diff %',    monthPct !== null ? Math.round(monthPct * 10) / 10 : '', '', '', '', '']);
+  sheet1.push([]);
+  sheet1.push(['PERIODEN-ÜBERSICHT', '', '', '', '', '']);
+  sheet1.push(['Zeitraum', 'Flex Plan CHF', 'Flex Ist CHF', 'Diff CHF', 'Diff %', 'Status']);
+  for (const r of periodRows) {
+    const st = flexAmpelStatus(r.diff, r.planTotal);
+    sheet1.push([
+      r.period,
+      Math.round(r.planTotal),
+      Math.round(r.istTotal),
+      Math.round(r.diff * 100) / 100,
+      r.diffPct !== null ? Math.round(r.diffPct * 10) / 10 : '',
+      flexAmpelLabel(st),
+    ]);
+  }
+  sheet1.push([
+    'TOTAL',
+    Math.round(periodRows.reduce((s, r) => s + r.planTotal, 0)),
+    Math.round(periodRows.reduce((s, r) => s + r.istTotal,  0)),
+    Math.round(monthDiff * 100) / 100,
+    monthPct !== null ? Math.round(monthPct * 10) / 10 : '',
+    flexAmpelLabel(flexAmpelStatus(monthDiff, monthPlan)),
+  ]);
+
+  // ── Sheet 2: Mitarbeiter ─────────────────────────────────────────────────────
+  const sheet2: (string | number)[][] = [];
+  sheet2.push(['Flex Kosten — pro Mitarbeiter', '', '', '', '', '', '', '', '']);
+  sheet2.push(['Monat', monthLabel, '', '', '', '', '', '', '']);
+  sheet2.push([]);
+  sheet2.push(['Name', 'Abt.', 'Arb Plan CHF', 'Arb Ist CHF', 'Ferien Plan CHF', 'Ferien Ist CHF', 'Total Plan CHF', 'Total Ist CHF', 'Diff CHF']);
+  for (const r of empRows) {
+    sheet2.push([
+      r.name,
+      r.dept,
+      r.planWork    > 0 ? Math.round(r.planWork)    : 0,
+      r.istWork     > 0 ? Math.round(r.istWork)     : 0,
+      r.planHoliday > 0 ? Math.round(r.planHoliday) : 0,
+      r.istHoliday  > 0 ? Math.round(r.istHoliday)  : 0,
+      Math.round(r.planTotal),
+      Math.round(r.istTotal),
+      Math.round(r.diffTotal * 100) / 100,
+    ]);
+  }
+  if (empRows.length > 0) {
+    sheet2.push([
+      `Total (${empRows.length} MA)`, '',
+      Math.round(empRows.reduce((s, r) => s + r.planWork, 0)),
+      Math.round(empRows.reduce((s, r) => s + r.istWork, 0)),
+      Math.round(empRows.reduce((s, r) => s + r.planHoliday, 0)),
+      Math.round(empRows.reduce((s, r) => s + r.istHoliday, 0)),
+      Math.round(empRows.reduce((s, r) => s + r.planTotal, 0)),
+      Math.round(empRows.reduce((s, r) => s + r.istTotal, 0)),
+      Math.round(empRows.reduce((s, r) => s + r.diffTotal, 0) * 100) / 100,
+    ]);
+  }
+
+  const ws1 = XLSX.utils.aoa_to_sheet(sheet1);
+  const ws2 = XLSX.utils.aoa_to_sheet(sheet2);
+  const wb  = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws1, 'Überblick');
+  if (empRows.length > 0) XLSX.utils.book_append_sheet(wb, ws2, 'Mitarbeiter');
+
+  const yr = String(selectedYear);
+  const mo = String(selectedMonth).padStart(2, '0');
+  XLSX.writeFile(wb, `FlexAuswertung_${yr}-${mo}_${modeLabel}.xlsx`);
+}
