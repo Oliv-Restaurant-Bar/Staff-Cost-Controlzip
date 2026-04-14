@@ -1,0 +1,112 @@
+Bitte die Flex-/Budgetlogik in Personal FIX jetzt fachlich korrigieren und vollständig synchronisieren.
+
+Problem:
+Die Zahlen sind aktuell inkonsistent.
+Beispiel:
+- In der Mitarbeitertabelle steht bei Momand Sajed Flex Ist = CHF 400
+- Im Popup steht bei demselben Zeitraum Ist = CHF 1’000
+Das darf nicht sein.
+Popup und Tabelle müssen exakt dieselbe Datenbasis und dieselbe Filterung verwenden.
+
+Zusätzlich:
+Ferienabbau wird aktuell in die Flex-Budgetauswertung eingerechnet.
+Das ist fachlich nicht gewünscht.
+Ferien sollen in dieser Auswertung nur als Information sichtbar sein, aber NICHT budgetwirksam.
+
+Ziel:
+1. Popup und Tabelle müssen exakt dieselben Werte zeigen
+2. In der Flex-/Budgetauswertung dürfen nur echte Flex-Arbeitskosten budgetwirksam sein
+3. Ferienabbau nur separat als Info, nicht in Verfügbar/Puffer/Ampel/Budgetstatus
+
+Bitte exakt so umsetzen:
+
+1. Einheitliche Source of Truth
+Für Mitarbeitertabelle und Popup dieselbe zentrale Berechnung verwenden.
+
+Insbesondere bei:
+- Momand Sajed
+- Flex Ist CHF
+- Ist Stunden
+- Plan Stunden
+- Diff Arbeit
+
+Popup darf keine anderen oder ungefilterten Stunden laden als die Zeile in der Tabelle.
+
+2. Zeitraum / Filter synchronisieren
+Wenn die Tabelle z.B. "bis 12." oder "40 % Pro Rata" zeigt,
+muss das Popup exakt denselben Zeitraum verwenden.
+
+Also:
+- gleiche Aggregation
+- gleicher Cutoff
+- gleiche Stichtagslogik
+- gleiche Arbeitsstundenbasis
+
+3. Debug-Logs einbauen
+Bitte loggen:
+[FLEX-SYNC] employee: ...
+[FLEX-SYNC] mode: month|cutoff
+[FLEX-SYNC] cutoff date: ...
+[FLEX-SYNC] row ist hours: ...
+[FLEX-SYNC] popup ist hours: ...
+[FLEX-SYNC] row ist chf: ...
+[FLEX-SYNC] popup ist chf: ...
+
+Wenn Werte abweichen:
+console.error mit exakter Differenz
+
+4. Ferienabbau fachlich trennen
+In dieser Flex-/Budgetauswertung gilt:
+
+Budgetwirksam:
+- nur Flex Arbeit Plan
+- nur Flex Arbeit Ist
+- Diff Arbeit = Ist - Plan
+
+Nicht budgetwirksam:
+- Ferienabbau
+
+5. Budgetblock korrigieren
+Im Block Budget / Verfügbar für Flex / Verbleibend / Puffer / Ampel bitte nur noch rechnen mit:
+
+- Budget bis Stichtag
+minus
+- Personal FIX
+minus
+- Flex Arbeit Ist
+
+Nicht mehr:
+- Ferienabbau zu Total Flex Ist addieren
+
+6. Ferienabbau nur als Info anzeigen
+Ferienabbau darf weiterhin sichtbar bleiben, aber nur als:
+- separate Infozeile
+- separater Hinweis
+- nicht in Verfügbar / Verbleibend / Status / Puffer hineinrechnen
+
+Zum Beispiel:
+"Ferienabbau FE Ist: CHF 1’317 (nur Information, nicht budgetwirksam)"
+
+7. KPI / Tabelle / Popup vereinheitlichen
+Diese drei Bereiche müssen exakt dieselben Totale verwenden:
+- Summary / KPI oben
+- Mitarbeitertabelle
+- Popup pro Mitarbeiter
+
+8. Bezeichnungen klar machen
+Bitte klar beschriften:
+- Flex Arbeit Plan
+- Flex Arbeit Ist
+- Diff Arbeit
+
+Keine Begriffe wie:
+- Total Flex Ist
+- Netto Flex
+wenn dort Ferien in Wahrheit nicht budgetwirksam sind
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- warum Popup und Tabelle bisher unterschiedliche Werte gezeigt haben
+- welche zentrale Berechnung jetzt Source of Truth ist
+- ob Ferienabbau jetzt aus der Budgetauswertung ausgeschlossen wurde
+- wo Ferienabbau nur noch als Information sichtbar ist

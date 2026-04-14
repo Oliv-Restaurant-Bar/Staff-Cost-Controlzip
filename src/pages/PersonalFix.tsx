@@ -767,6 +767,13 @@ function FlexPeriodPopup({
     const istWork  = istW.reduce((s, r)  => s + r.cost, 0);
     const planH    = planW.reduce((s, r) => s + r.hours, 0);
     const istH     = istW.reduce((s, r)  => s + r.hours, 0);
+
+    // FLEX-SYNC log — these values must match pfixPerEmp row for the same employee & period
+    console.log(`[FLEX-SYNC] popup ist hours: ${istH.toFixed(2)} (${emp.name})`);
+    console.log(`[FLEX-SYNC] popup ist chf:   ${istWork.toFixed(2)} (${emp.name})`);
+    console.log(`[FLEX-SYNC] popup plan hours: ${planH.toFixed(2)} (${emp.name})`);
+    console.log(`[FLEX-SYNC] popup plan chf:   ${planWork.toFixed(2)} (${emp.name})`);
+
     return { id: emp.id, name: emp.name, planH, istH, planWork, istWork, diff: istWork - planWork };
   }).filter(r => r.planWork > 0 || r.istWork > 0)
     .sort((a, b) => {
@@ -1642,42 +1649,76 @@ export default function PersonalFixPage() {
   const proRataVarOverrun   = proRataVarDelta < 0;
 
   // ── PFIX Master Compute Object ─────────────────────────────────────────────
-  // Single source of truth for all KPIs, tables, and sections.
-  // .month  = full-month values
-  // .cutoff = pro-rated values (when proRataDay is set)
+  // Single source of truth for all KPIs, tables, budget block, and export.
+  // .month  = full-month values (always proportional, no cutoff)
+  // .cutoff = cutoff values using ACTUAL day filtering for work (same method as
+  //           FlexPeriodPopup + pfixAbw), proportional scaling for FIX + holiday
   // .active = cutoff ?? month  (always use .active in the UI)
+  //
+  // KEY: In cutoff mode, work costs are computed by filtering actual calendar
+  // days ≤ proRataDay, NOT by multiplying the full-month total by proRataFactor.
+  // This is the only method that produces consistent values across table, popup
+  // and pfixAbw (because employee hours are NOT uniformly distributed).
   const pfix = useMemo(() => {
-    const planWork     = varArbeitPlanMonat;
-    const istWork      = varArbeitIstMonat;
-    const planHol      = ferienPlanTotalCHF;
-    const istHol       = ferienIstTotalCHF;
-    const fix          = totalFixCost;
-    const planTotalVar = planWork + planHol;
-    const istTotalVar  = istWork  + istHol;
-    const planTotal    = fix + planTotalVar;
-    const istTotal     = fix + istTotalVar;
+    // Helper: build a cost slice from components
+    const buildSlice = (
+      fix: number, planWork: number, istWork: number,
+      planHol: number, istHol: number,
+    ) => {
+      const planTotalVar = planWork + planHol;
+      const istTotalVar  = istWork  + istHol;
+      return {
+        fix,
+        planWork,     istWork,
+        planHoliday:  planHol,   istHoliday: istHol,
+        planTotalVar, istTotalVar,
+        planTotal:    fix + planTotalVar,
+        istTotal:     fix + istTotalVar,
+        diffWork:     istWork     - planWork,
+        diffHoliday:  istHol      - planHol,
+        diffTotalVar: istTotalVar  - planTotalVar,
+        diffTotal:    (fix + istTotalVar) - (fix + planTotalVar),
+      };
+    };
 
-    const makeSlice = (f: number) => ({
-      fix:          fix          * f,
-      planWork:     planWork     * f,
-      istWork:      istWork      * f,
-      planHoliday:  planHol      * f,
-      istHoliday:   istHol       * f,
-      planTotalVar: planTotalVar * f,
-      istTotalVar:  istTotalVar  * f,
-      planTotal:    planTotal    * f,
-      istTotal:     istTotal     * f,
-      diffWork:      (istWork      - planWork)      * f,
-      diffHoliday:   (istHol       - planHol)        * f,
-      diffTotalVar:  (istTotalVar  - planTotalVar)   * f,
-      diffTotal:     (istTotal     - planTotal)      * f,
-    });
+    // Month slice — always full-month, no cutoff
+    const month = buildSlice(
+      totalFixCost, varArbeitPlanMonat, varArbeitIstMonat,
+      ferienPlanTotalCHF, ferienIstTotalCHF,
+    );
 
-    const month  = makeSlice(1);
-    const cutoff = proRataDay !== null ? makeSlice(proRataFactor) : null;
-    const active = cutoff ?? month;
+    // Cutoff slice — actual day filtering for work, proportional for rest
+    let active = month;
+    let cutoff: typeof month | null = null;
+    if (proRataDay !== null) {
+      // Work costs: sum actual hours up to proRataDay for each employee
+      // (identical method to FlexPeriodPopup rows + pfixAbw dayMap)
+      let cutoffPlanWork = 0;
+      let cutoffIstWork  = 0;
+      for (const emp of variableEmployees) {
+        const wage = emp.hourlyWage ?? 0;
+        if (!wage) continue;
+        const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage);
+        const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage);
+        cutoffPlanWork += planW.reduce((s, r) => s + r.cost, 0);
+        cutoffIstWork  += istW.reduce((s, r)  => s + r.cost, 0);
+      }
+      // Holiday + FIX: proportional (calendar-uniform costs)
+      const f = proRataFactor;
+      cutoff = buildSlice(
+        totalFixCost       * f,
+        cutoffPlanWork,
+        cutoffIstWork,
+        ferienPlanTotalCHF * f,
+        ferienIstTotalCHF  * f,
+      );
+      active = cutoff;
+    }
 
-    console.log(`[PFIX] mode: ${proRataDay !== null ? `cutoff day=${proRataDay} factor=${proRataFactor.toFixed(4)}` : 'month'}`);
+    const modeStr = proRataDay !== null
+      ? `cutoff day=${proRataDay} factor=${proRataFactor.toFixed(4)}`
+      : 'month';
+    console.log(`[PFIX] mode: ${modeStr}`);
     console.log(`[PFIX] fix:           ${active.fix.toFixed(2)}`);
     console.log(`[PFIX] plan work:     ${active.planWork.toFixed(2)}`);
     console.log(`[PFIX] ist work:      ${active.istWork.toFixed(2)}`);
@@ -1690,7 +1731,8 @@ export default function PersonalFixPage() {
     console.log(`[PFIX] diff total:    ${active.diffTotal.toFixed(2)}`);
 
     return { month, cutoff, active };
-  }, [varArbeitPlanMonat, varArbeitIstMonat, ferienPlanTotalCHF, ferienIstTotalCHF,
+  }, [variableEmployees, selectedYear, selectedMonth,
+      varArbeitPlanMonat, varArbeitIstMonat, ferienPlanTotalCHF, ferienIstTotalCHF,
       totalFixCost, proRataDay, proRataFactor]);
 
   // ── pfix-derived budget comparison (always uses Ist actuals as "spend") ────
@@ -1700,7 +1742,8 @@ export default function PersonalFixPage() {
     ? personnelBudget * (proRataDay !== null ? proRataFactor : 1)
     : 0;
   const pfixAvailableVar  = pfixBudget > 0 ? Math.max(0, pfixBudget - pfix.active.fix) : 0;
-  const pfixIstVarDelta   = pfixBudget > 0 ? pfixAvailableVar - pfix.active.istTotalVar : 0;
+  // Budget comparison uses only Flex Arbeit Ist — Ferienabbau is NOT budget-relevant
+  const pfixIstVarDelta   = pfixBudget > 0 ? pfixAvailableVar - pfix.active.istWork : 0;
   const pfixIstVarOverrun = pfixIstVarDelta < 0;
 
   // [PFIX-BUDGET] validation logs
@@ -1713,66 +1756,92 @@ export default function PersonalFixPage() {
     console.log(`[PFIX-BUDGET] remaining: ${pfixIstVarDelta.toFixed(2)}`);
   }
 
-  // Per-employee Plan vs Ist table — synchronized to pfix
+  // Per-employee Plan vs Ist table — synchronized to pfix and FlexPeriodPopup
+  // KEY FIX: In cutoff mode, hours are computed with ACTUAL day filtering
+  // (same loadDailyPlanDetails/loadDailyIstDetails as the popup), NOT by scaling
+  // full-month hours by proRataFactor. This eliminates the table ≠ popup discrepancy.
   const pfixPerEmp = useMemo(() => {
-    const factor = proRataDay !== null ? proRataFactor : 1;
+    const modeStr  = proRataDay !== null ? 'cutoff' : 'month';
+    const factor   = proRataDay !== null ? proRataFactor : 1;
+
     const rows = variableEmployees.map(emp => {
-      const rawPlanH     = planHours[emp.id]  ?? 0;
-      const rawIstH      = istHours[emp.id]   ?? 0;
-      const planWork     = rawPlanH * (emp.hourlyWage ?? 0);
-      const istWork      = rawIstH  * (emp.hourlyWage ?? 0);
-      const planHoliday  = getEmpFerienPlanCHF(emp);
-      const istHoliday   = getEmpFerienCHF(emp);
+      const wage = emp.hourlyWage ?? 0;
+      let planH: number, istH: number, planWork: number, istWork: number;
+
+      if (proRataDay !== null) {
+        // ── Cutoff mode: actual day filtering (identical to FlexPeriodPopup) ──
+        const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage);
+        const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage);
+        planH    = planW.reduce((s, r) => s + r.hours, 0);
+        istH     = istW.reduce((s, r) => s + r.hours, 0);
+        planWork = planW.reduce((s, r) => s + r.cost,  0);
+        istWork  = istW.reduce((s, r) => s + r.cost,   0);
+      } else {
+        // ── Full-month mode: pre-aggregated totals ─────────────────────────
+        planH    = planHours[emp.id] ?? 0;
+        istH     = istHours[emp.id]  ?? 0;
+        planWork = planH * wage;
+        istWork  = istH  * wage;
+      }
+
+      // Holiday: proportional scaling in both modes (calendar-uniform)
+      const planHoliday  = getEmpFerienPlanCHF(emp) * factor;
+      const istHoliday   = getEmpFerienCHF(emp)     * factor;
       const planTotalVar = planWork + planHoliday;
       const istTotalVar  = istWork  + istHoliday;
+
+      // FLEX-SYNC log (matches what FlexPeriodPopup shows per employee)
+      console.log(`[FLEX-SYNC] employee: ${emp.name}`);
+      console.log(`[FLEX-SYNC] mode: ${modeStr}`);
+      if (proRataDay !== null) {
+        console.log(`[FLEX-SYNC] cutoff date: ${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${proRataDay}`);
+      }
+      console.log(`[FLEX-SYNC] row plan hours: ${planH.toFixed(2)}`);
+      console.log(`[FLEX-SYNC] row ist hours: ${istH.toFixed(2)}`);
+      console.log(`[FLEX-SYNC] row plan chf: ${planWork.toFixed(2)}`);
+      console.log(`[FLEX-SYNC] row ist chf: ${istWork.toFixed(2)}`);
+
       return {
         id:           emp.id,
         name:         emp.name,
         dept:         emp.department ?? '–',
-        hourlyWage:   emp.hourlyWage ?? 0,
+        hourlyWage:   wage,
         weeklyHours:  emp.weeklyHours ?? 42,
-        planH:        rawPlanH * factor,
-        istH:         rawIstH  * factor,
-        planWork:     planWork     * factor,
-        istWork:      istWork      * factor,
-        planHoliday:  planHoliday  * factor,
-        istHoliday:   istHoliday   * factor,
-        planTotalVar: planTotalVar * factor,
-        istTotalVar:  istTotalVar  * factor,
-        diffWork:     (istWork     - planWork)     * factor,
-        diffHoliday:  (istHoliday  - planHoliday)  * factor,
-        diffTotalVar: (istTotalVar - planTotalVar)  * factor,
+        planH, istH,
+        planWork, istWork,
+        planHoliday, istHoliday,
+        planTotalVar, istTotalVar,
+        diffWork:     istWork     - planWork,
+        diffHoliday:  istHoliday  - planHoliday,
+        diffTotalVar: istTotalVar - planTotalVar,
       };
-    }).filter(r => r.planTotalVar > 0 || r.istTotalVar > 0);
+    }).filter(r => r.planWork > 0 || r.istWork > 0 || r.planHoliday > 0 || r.istHoliday > 0);
 
-    // [PFIX] Validate: per-employee sums must match pfix.active totals
-    const ref        = proRataDay !== null ? pfix.cutoff! : pfix.month;
-    const sumPlanWork = rows.reduce((s, r) => s + r.planWork,     0);
-    const sumIstWork  = rows.reduce((s, r) => s + r.istWork,      0);
-    const sumPlanHol  = rows.reduce((s, r) => s + r.planHoliday,  0);
-    const sumIstHol   = rows.reduce((s, r) => s + r.istHoliday,   0);
-    const sumPlanVar  = rows.reduce((s, r) => s + r.planTotalVar,  0);
-    const sumIstVar   = rows.reduce((s, r) => s + r.istTotalVar,   0);
+    // ── Cross-check: table sums must match pfix master ──────────────────────
+    const ref         = proRataDay !== null ? pfix.cutoff! : pfix.month;
+    const sumPlanWork = rows.reduce((s, r) => s + r.planWork,    0);
+    const sumIstWork  = rows.reduce((s, r) => s + r.istWork,     0);
+    const sumPlanHol  = rows.reduce((s, r) => s + r.planHoliday, 0);
+    const sumIstHol   = rows.reduce((s, r) => s + r.istHoliday,  0);
+    const sumPlanVar  = rows.reduce((s, r) => s + r.planTotalVar, 0);
+    const sumIstVar   = rows.reduce((s, r) => s + r.istTotalVar,  0);
 
-    const mode = proRataDay !== null ? `cutoff day=${proRataDay}` : 'month';
-    console.log(`[PFIX] mode: ${mode}`);
-    console.log(`[PFIX] plan work total: ${sumPlanWork.toFixed(2)}`);
-    console.log(`[PFIX] ist work total: ${sumIstWork.toFixed(2)}`);
-    console.log(`[PFIX] plan holiday total: ${sumPlanHol.toFixed(2)}`);
-    console.log(`[PFIX] ist holiday total: ${sumIstHol.toFixed(2)}`);
-    console.log(`[PFIX] employee table sum plan variable: ${sumPlanVar.toFixed(2)}`);
-    console.log(`[PFIX] employee table sum ist variable: ${sumIstVar.toFixed(2)}`);
-    console.log(`[PFIX] KPI plan totalVar: ${ref.planTotalVar.toFixed(2)}`);
-    console.log(`[PFIX] KPI ist totalVar: ${ref.istTotalVar.toFixed(2)}`);
+    console.log(`[FLEX-SYNC] === TABLE SUMMARY mode=${modeStr} ===`);
+    console.log(`[FLEX-SYNC] table sum planWork: ${sumPlanWork.toFixed(2)} | pfix: ${ref.planWork.toFixed(2)}`);
+    console.log(`[FLEX-SYNC] table sum istWork:  ${sumIstWork.toFixed(2)} | pfix: ${ref.istWork.toFixed(2)}`);
+    console.log(`[FLEX-SYNC] table sum planHol:  ${sumPlanHol.toFixed(2)} | pfix: ${ref.planHoliday.toFixed(2)}`);
+    console.log(`[FLEX-SYNC] table sum istHol:   ${sumIstHol.toFixed(2)} | pfix: ${ref.istHoliday.toFixed(2)}`);
+    console.log(`[FLEX-SYNC] table sum planVar:  ${sumPlanVar.toFixed(2)} | pfix: ${ref.planTotalVar.toFixed(2)}`);
+    console.log(`[FLEX-SYNC] table sum istVar:   ${sumIstVar.toFixed(2)} | pfix: ${ref.istTotalVar.toFixed(2)}`);
 
-    if (Math.abs(sumPlanVar - ref.planTotalVar) > 0.05)
-      console.error(`[PFIX] SYNC ERR planTotalVar: emp=${sumPlanVar.toFixed(2)} vs pfix=${ref.planTotalVar.toFixed(2)} diff=${(sumPlanVar - ref.planTotalVar).toFixed(2)}`);
-    if (Math.abs(sumIstVar - ref.istTotalVar) > 0.05)
-      console.error(`[PFIX] SYNC ERR istTotalVar: emp=${sumIstVar.toFixed(2)} vs pfix=${ref.istTotalVar.toFixed(2)} diff=${(sumIstVar - ref.istTotalVar).toFixed(2)}`);
+    if (Math.abs(sumPlanWork - ref.planWork) > 0.10)
+      console.error(`[FLEX-SYNC] MISMATCH planWork: table=${sumPlanWork.toFixed(2)} vs pfix=${ref.planWork.toFixed(2)} diff=${(sumPlanWork - ref.planWork).toFixed(2)}`);
+    if (Math.abs(sumIstWork - ref.istWork) > 0.10)
+      console.error(`[FLEX-SYNC] MISMATCH istWork: table=${sumIstWork.toFixed(2)} vs pfix=${ref.istWork.toFixed(2)} diff=${(sumIstWork - ref.istWork).toFixed(2)}`);
 
     return rows;
-  }, [variableEmployees, planHours, istHours, getEmpFerienPlanCHF, getEmpFerienCHF,
-      proRataDay, proRataFactor, pfix]);
+  }, [variableEmployees, selectedYear, selectedMonth, planHours, istHours,
+      getEmpFerienPlanCHF, getEmpFerienCHF, proRataDay, proRataFactor, pfix]);
 
   // ── Abweichungsanalyse: tägliche Aggregation aller Flex-Mitarbeiter ──────────
   const pfixAbw = useMemo((): {
@@ -2272,13 +2341,13 @@ export default function PersonalFixPage() {
             color={pfix.active.istTotalVar > 0 ? 'orange' : 'default'}
           />
           <KpiCard
-            title={proRataDay !== null ? `Diff. Flex bis ${proRataDay}.` : 'Diff. Flex'}
-            value={fmtCHF(Math.abs(pfix.active.diffTotalVar))}
-            sub={pfix.active.diffTotalVar === 0 ? 'Plan = Ist' : pfix.active.diffTotalVar > 0 ? '↑ Ist über Plan' : '✓ Ist unter Plan'}
+            title={proRataDay !== null ? `Diff. Arbeit bis ${proRataDay}.` : 'Diff. Arbeit'}
+            value={fmtCHF(Math.abs(pfix.active.diffWork))}
+            sub={pfix.active.diffWork === 0 ? 'Plan = Ist' : pfix.active.diffWork > 0 ? '↑ Ist über Plan' : '✓ Ist unter Plan'}
             icon={<BarChart2 className="h-5 w-5" />}
-            color={pfix.active.diffTotalVar > 0 ? 'red' : pfix.active.diffTotalVar < 0 ? 'green' : 'default'}
-            delta={pfix.active.diffTotalVar}
-            deltaLabel="Ist − Plan"
+            color={pfix.active.diffWork > 0 ? 'red' : pfix.active.diffWork < 0 ? 'green' : 'default'}
+            delta={pfix.active.diffWork}
+            deltaLabel="Ist − Plan (Arbeit)"
           />
           <KpiCard
             title={proRataDay !== null ? `Personal FIX bis ${proRataDay}.` : 'Personal FIX / Monat'}
@@ -2317,15 +2386,32 @@ export default function PersonalFixPage() {
               </thead>
               <tbody className="divide-y divide-border">
                 {([
-                  { label: 'Flex Arbeit',    plan: pfix.active.planWork,     ist: pfix.active.istWork,     diff: pfix.active.diffWork     },
-                  { label: 'Ferienabbau',    plan: pfix.active.planHoliday,  ist: pfix.active.istHoliday,  diff: pfix.active.diffHoliday  },
-                  { label: 'Total Flex',     plan: pfix.active.planTotalVar, ist: pfix.active.istTotalVar, diff: pfix.active.diffTotalVar, bold: true },
-                  { label: 'Personal FIX',   plan: pfix.active.fix,          ist: pfix.active.fix,         diff: 0,                       fixed: true },
-                  { label: 'Total Personal', plan: pfix.active.planTotal,    ist: pfix.active.istTotal,    diff: pfix.active.diffTotal,   bold: true, highlight: true },
-                ] as Array<{ label: string; plan: number; ist: number; diff: number; bold?: boolean; fixed?: boolean; highlight?: boolean }>)
+                  { label: 'Flex Arbeit Plan / Ist', plan: pfix.active.planWork,  ist: pfix.active.istWork,  diff: pfix.active.diffWork,  bold: true },
+                  { label: 'Ferienabbau (nur Info)', plan: pfix.active.planHoliday, ist: pfix.active.istHoliday, diff: pfix.active.diffHoliday, infoOnly: true },
+                  { label: 'Personal FIX',           plan: pfix.active.fix,        ist: pfix.active.fix,      diff: 0,                     fixed: true },
+                  { label: 'Total Personal',         plan: pfix.active.planTotal,  ist: pfix.active.istTotal, diff: pfix.active.diffTotal,  bold: true, highlight: true },
+                ] as Array<{ label: string; plan: number; ist: number; diff: number; bold?: boolean; fixed?: boolean; highlight?: boolean; infoOnly?: boolean }>)
                   .map((row, i) => {
                     const pct = row.plan > 0 ? (row.diff / row.plan) * 100 : null;
                     const over = row.diff > 0;
+                    if (row.infoOnly) {
+                      return (
+                        <tr key={i} className="bg-muted/5 opacity-70">
+                          <td className="px-4 py-1.5 text-xs text-muted-foreground italic">
+                            {row.label}
+                            <span className="ml-1.5 text-[10px] not-italic opacity-70">nicht budgetwirksam</span>
+                          </td>
+                          <td className="px-4 py-1.5 text-right font-mono text-xs text-muted-foreground">{fmtCHF(row.plan)}</td>
+                          <td className="px-4 py-1.5 text-right font-mono text-xs text-muted-foreground">{fmtCHF(row.ist)}</td>
+                          <td className="px-4 py-1.5 text-right font-mono text-xs text-muted-foreground">
+                            {row.diff === 0 ? '–' : `${over ? '+' : ''}${fmtCHF(row.diff)}`}
+                          </td>
+                          <td className="px-4 py-1.5 text-right font-mono text-xs text-muted-foreground">
+                            {pct === null || row.diff === 0 ? '–' : `${over ? '+' : ''}${pct.toFixed(1)} %`}
+                          </td>
+                        </tr>
+                      );
+                    }
                     return (
                       <tr key={i} className={cn('hover:bg-muted/20', row.highlight && 'bg-emerald-50/40 dark:bg-emerald-950/20')}>
                         <td className={cn('px-4 py-2.5', row.bold ? 'font-bold' : 'font-medium',
@@ -2859,15 +2945,12 @@ export default function PersonalFixPage() {
                   <span className="font-mono text-orange-700 dark:text-orange-400 shrink-0">− {fmtCHF(pfix.active.istWork)}</span>
                 </div>
                 {pfix.active.istHoliday > 0 && (
-                  <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
-                    <span className="text-sm text-muted-foreground">+ Ferienabbau (FE Ist)</span>
-                    <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">− {fmtCHF(pfix.active.istHoliday)}</span>
-                  </div>
-                )}
-                {pfix.active.istHoliday > 0 && (
-                  <div className="flex justify-between items-baseline gap-2 py-1 border-b border-dashed border-border">
-                    <span className="text-sm font-medium text-muted-foreground">= Total Flex Ist</span>
-                    <span className="font-mono font-semibold text-orange-800 dark:text-orange-300 shrink-0">{fmtCHF(pfix.active.istTotalVar)}</span>
+                  <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border/60">
+                    <div className="flex flex-col">
+                      <span className="text-xs text-muted-foreground/70 italic">Ferienabbau FE Ist (nur Information)</span>
+                      <span className="text-[10px] text-muted-foreground/50">nicht budgetwirksam</span>
+                    </div>
+                    <span className="font-mono text-xs text-muted-foreground/60 shrink-0">{fmtCHF(pfix.active.istHoliday)}</span>
                   </div>
                 )}
                 <div className={cn(

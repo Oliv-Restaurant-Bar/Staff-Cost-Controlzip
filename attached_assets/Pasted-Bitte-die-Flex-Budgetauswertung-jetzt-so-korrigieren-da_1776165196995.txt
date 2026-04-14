@@ -1,0 +1,104 @@
+Bitte die Flex-/Budgetauswertung jetzt so korrigieren, dass sie konsequent mit den IST-Werten arbeitet und klar zeigt, ob wir auf Kurs sind.
+
+Ziel:
+Ich möchte nicht eine theoretische oder gemischte Sicht, sondern eine operative Steuerung:
+- Was ist bis heute / bis Stichtag effektiv an Flex-Arbeit angefallen
+- Wie steht das im Verhältnis zum Budget bis heute / bis Stichtag
+- Sind wir auf Kurs oder nicht
+
+Bitte exakt so umsetzen:
+
+1. Budgetblock auf IST-Werte ausrichten
+Der Block "Budget / Verfügbar für Flex / Verbleibend / Puffer / Status" soll sich auf IST-Werte beziehen.
+
+Also:
+- Budget bis Stichtag
+- minus Personal FIX bis Stichtag
+- minus Flex Arbeit IST bis Stichtag
+= verfügbar / verbleibend
+
+Wichtig:
+Nur IST-Werte für die operative Steuerung verwenden.
+Keine gemischte Anzeige, die Plan und Ist durcheinanderbringt.
+
+2. Ferienabbau NICHT budgetwirksam rechnen
+Ferienabbau soll in diesem Budgetblock NICHT eingerechnet werden.
+
+Ferienabbau nur separat als Information anzeigen, z.B.:
+"Ferienabbau FE Ist: CHF X (nur Information, nicht budgetwirksam)"
+
+Nicht einrechnen in:
+- Verfügbar für Flex
+- Verbleibend
+- Puffer
+- Ampel
+- Budgetstatus
+
+3. "Auf Kurs" Logik klar definieren
+Bitte eine klare operative Statuslogik einbauen:
+
+- Auf Kurs:
+  wenn Flex Arbeit IST bis Stichtag <= verfügbares Flex-Budget bis Stichtag
+- Achtung:
+  wenn leicht darüber
+- Nicht auf Kurs:
+  wenn deutlich darüber
+
+Bitte Status im Budgetblock gut sichtbar anzeigen:
+- grün = Auf Kurs
+- gelb = Achtung
+- rot = Nicht auf Kurs
+
+4. Bezeichnungen klar machen
+Bitte im Budgetblock klar und verständlich beschriften:
+
+- Budget bis [Stichtag]
+- Personal FIX Ist bis [Stichtag]
+- Flex Arbeit Ist bis [Stichtag]
+- Verfügbar für Flex
+- Status: Auf Kurs / Achtung / Nicht auf Kurs
+
+Wichtig:
+Kein "Total Flex Ist", wenn dort Ferien oder andere nicht budgetwirksame Dinge vermischt werden.
+
+5. Stichtagslogik
+Wenn Pro Rata / Stichtag aktiv ist:
+- alle Budgetwerte auf denselben Stichtag begrenzen
+- alle IST-Werte auf denselben Stichtag begrenzen
+
+Wenn z.B. letzter Umsatztag = 12.04.2026:
+- Budget bis 12.04
+- FIX Ist bis 12.04
+- Flex Arbeit Ist bis 12.04
+- Status auf Basis genau dieser Werte
+
+6. Popup und Mitarbeitertabelle ebenfalls synchron
+Die Mitarbeitertabelle und das Mitarbeiter-Popup sollen dieselben IST-Werte verwenden wie der Budgetblock.
+
+Also:
+- gleiche Flex Arbeit Ist
+- gleiche Stundenbasis
+- gleicher Stichtag
+- gleiche Totale
+
+7. Zusätzlicher Hinweis
+Bitte im Budgetblock zusätzlich einen kurzen Satz anzeigen, z.B.:
+- "Auf Kurs: Flex-Arbeit liegt aktuell CHF X unter Budget bis Stichtag"
+oder
+- "Nicht auf Kurs: Flex-Arbeit liegt aktuell CHF X über Budget bis Stichtag"
+
+8. Debug Logs
+Bitte loggen:
+[FLEX-BUDGET] cutoff date: ...
+[FLEX-BUDGET] budget until cutoff: ...
+[FLEX-BUDGET] fix ist until cutoff: ...
+[FLEX-BUDGET] flex work ist until cutoff: ...
+[FLEX-BUDGET] remaining flex budget: ...
+[FLEX-BUDGET] status: on_track|warning|off_track
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- welche IST-Werte jetzt für den Budgetstatus verwendet werden
+- ob Ferienabbau jetzt nur noch als Information angezeigt wird
+- wie "Auf Kurs" / "Nicht auf Kurs" berechnet wird
+- wie ich das für den 12.04.2026 schnell prüfen kann
