@@ -1511,39 +1511,95 @@ export function exportFlexAuswertungToPDF(data: FlexAuswertungExportData): void 
 }
 
 export async function exportFlexAuswertungToExcel(data: FlexAuswertungExportData): Promise<void> {
-  const XLSX = await import('xlsx');
+  const ExcelJS = (await import('exceljs')).default;
   const {
     selectedYear, selectedMonth, abwMode,
     periodRows, empRows,
     monthPlan, monthIst, monthDiff,
-    proRataDay, proRataFactor, daysInMonth,
+    proRataDay,
   } = data;
 
   const monthLabel = getMonthLabel(selectedYear, selectedMonth);
   const modeLabel  = ABW_MODE_LABEL[abwMode] ?? abwMode;
   const monthPct   = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : null;
 
-  // ── Sheet 1: Überblick ────────────────────────────────────────────────────────
-  const sheet1: (string | number)[][] = [];
-  sheet1.push(['Flex-Auswertung — Plan vs. Ist', '', '', '', '', '']);
-  sheet1.push(['Restaurant', 'Oliv Gastro AG',     '', '', '', '']);
-  sheet1.push(['Monat',      monthLabel,            '', '', '', '']);
-  sheet1.push(['Aggregation', modeLabel,            '', '', '', '']);
-  if (proRataDay !== null) {
-    sheet1.push(['Pro Rata', `bis ${proRataDay}. (${Math.round(proRataFactor * 100)} % von ${daysInMonth} Tagen)`, '', '', '', '']);
+  const HEADER_BG = '1E293B';
+  const HEADER_FG = 'FFFFFF';
+  const TOTAL_BG  = 'F1F5F9';
+  const TOTAL_FG  = '0F172A';
+  const BLUE_FG   = '1D4ED8';
+  const GREEN_FG  = '047857';
+  const RED_FG    = 'B91C1C';
+  const MUTED_FG  = '64748B';
+  const ALT_BG    = 'FAFBFC';
+  const SECTION_BG = 'EDE9FE'; // violet for section headers
+
+  const numFmt = '#,##0';
+  const pctFmt = '0.0"%"';
+
+  function applyHeaderStyle(cell: import('exceljs').Cell) {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + HEADER_BG } };
+    cell.font = { bold: true, color: { argb: 'FF' + HEADER_FG }, size: 9 };
+    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    cell.border = { bottom: { style: 'thin', color: { argb: 'FF94A3B8' } } };
   }
-  sheet1.push([]);
-  sheet1.push(['ZUSAMMENFASSUNG', '', '', '', '', '']);
-  sheet1.push(['Total Flex Plan CHF', monthPlan,  '', '', '', '']);
-  sheet1.push(['Total Flex Ist CHF',  monthIst,   '', '', '', '']);
-  sheet1.push(['Diff CHF',            monthDiff,  '', '', '', '']);
-  sheet1.push(['Diff %',    monthPct !== null ? Math.round(monthPct * 10) / 10 : '', '', '', '', '']);
-  sheet1.push([]);
-  sheet1.push(['PERIODEN-ÜBERSICHT', '', '', '', '', '']);
-  sheet1.push(['Zeitraum', 'Flex Plan CHF', 'Flex Ist CHF', 'Diff CHF', 'Diff %', 'Status']);
-  for (const r of periodRows) {
+  function applyTotalStyle(cell: import('exceljs').Cell, bold = true) {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + TOTAL_BG } };
+    cell.font = { bold, color: { argb: 'FF' + TOTAL_FG }, size: 9 };
+    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+  }
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Oliv Gastro AG · Personalfix';
+  wb.created = new Date();
+
+  // ── Sheet 1: Überblick ────────────────────────────────────────────────────────
+  const ws1 = wb.addWorksheet('Überblick', { views: [{ state: 'frozen', ySplit: 2 }] });
+
+  // Titel
+  ws1.addRow(['Flex-Auswertung — Plan vs. Ist']);
+  const tr = ws1.getRow(1);
+  tr.height = 22;
+  tr.font = { bold: true, size: 13, color: { argb: 'FF' + HEADER_BG } };
+
+  ws1.addRow([`Oliv Gastro AG · ${monthLabel} · ${modeLabel}${proRataDay !== null ? ` · Pro Rata bis ${proRataDay}.` : ''}`]);
+  ws1.getRow(2).font = { italic: true, size: 9, color: { argb: 'FF' + MUTED_FG } };
+  ws1.addRow([]);
+
+  // KPI-Summary-Block
+  const kpiHeader = ws1.addRow(['KPI', 'Wert']);
+  kpiHeader.height = 14;
+  kpiHeader.eachCell(c => {
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + SECTION_BG } };
+    c.font = { bold: true, size: 8, color: { argb: 'FF6D28D9' } };
+    c.alignment = { horizontal: 'left' };
+  });
+  const kpiRows: [string, number | string][] = [
+    ['Total Flex Plan CHF',  Math.round(monthPlan)],
+    ['Total Flex Ist CHF',   Math.round(monthIst)],
+    ['Differenz CHF',        Math.round(monthDiff * 100) / 100],
+    ['Differenz %',          monthPct !== null ? Math.round(monthPct * 10) / 10 : '–'],
+  ];
+  kpiRows.forEach(([label, val]) => {
+    const r = ws1.addRow([label, val]);
+    r.getCell(1).font = { size: 9, color: { argb: 'FF' + MUTED_FG } };
+    r.getCell(2).numFmt = typeof val === 'number' && label.includes('%') ? pctFmt : numFmt;
+    const isNeg = typeof val === 'number' && val < 0;
+    const isPos = typeof val === 'number' && val > 0 && label.includes('Diff');
+    r.getCell(2).font = { bold: true, size: 9, color: { argb: 'FF' + (isNeg ? GREEN_FG : isPos ? RED_FG : HEADER_BG) } };
+    r.getCell(2).alignment = { horizontal: 'right' };
+  });
+  ws1.addRow([]);
+
+  // Perioden-Tabelle
+  const pHdr = ws1.addRow(['Zeitraum', 'Flex Plan CHF', 'Flex Ist CHF', 'Diff CHF', 'Diff %', 'Status']);
+  pHdr.height = 16;
+  pHdr.eachCell(applyHeaderStyle);
+  pHdr.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+
+  periodRows.forEach((r, idx) => {
     const st = flexAmpelStatus(r.diff, r.planTotal);
-    sheet1.push([
+    const eRow = ws1.addRow([
       r.period,
       Math.round(r.planTotal),
       Math.round(r.istTotal),
@@ -1551,8 +1607,22 @@ export async function exportFlexAuswertungToExcel(data: FlexAuswertungExportData
       r.diffPct !== null ? Math.round(r.diffPct * 10) / 10 : '',
       flexAmpelLabel(st),
     ]);
-  }
-  sheet1.push([
+    if (idx % 2 === 0) eRow.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + ALT_BG } }; });
+    eRow.getCell(1).alignment = { horizontal: 'left' };
+    eRow.getCell(2).numFmt = numFmt;
+    eRow.getCell(3).numFmt = numFmt;
+    eRow.getCell(4).numFmt = numFmt;
+    eRow.getCell(5).numFmt = pctFmt;
+    const diffColor = r.diff > 0 ? RED_FG : r.diff < 0 ? GREEN_FG : MUTED_FG;
+    eRow.getCell(4).font = { color: { argb: 'FF' + diffColor } };
+    eRow.getCell(5).font = { color: { argb: 'FF' + diffColor } };
+    const stColor = st === 'green' ? GREEN_FG : st === 'red' ? RED_FG : st === 'yellow' ? 'D97706' : MUTED_FG;
+    eRow.getCell(6).font = { bold: true, color: { argb: 'FF' + stColor } };
+    eRow.eachCell(c => { if (!c.alignment) c.alignment = { horizontal: 'right' }; });
+  });
+
+  // Total-Zeile
+  const tRow = ws1.addRow([
     'TOTAL',
     Math.round(periodRows.reduce((s, r) => s + r.planTotal, 0)),
     Math.round(periodRows.reduce((s, r) => s + r.istTotal,  0)),
@@ -1560,46 +1630,87 @@ export async function exportFlexAuswertungToExcel(data: FlexAuswertungExportData
     monthPct !== null ? Math.round(monthPct * 10) / 10 : '',
     flexAmpelLabel(flexAmpelStatus(monthDiff, monthPlan)),
   ]);
+  tRow.eachCell(applyTotalStyle);
+  tRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+  tRow.getCell(2).numFmt = numFmt;
+  tRow.getCell(3).numFmt = numFmt;
+  tRow.getCell(4).numFmt = numFmt;
+  tRow.getCell(5).numFmt = pctFmt;
+  tRow.height = 15;
+
+  ws1.columns = [{ width: 22 }, { width: 16 }, { width: 16 }, { width: 14 }, { width: 11 }, { width: 16 }];
 
   // ── Sheet 2: Mitarbeiter ─────────────────────────────────────────────────────
-  const sheet2: (string | number)[][] = [];
-  sheet2.push(['Flex Kosten — pro Mitarbeiter', '', '', '', '', '', '', '', '']);
-  sheet2.push(['Monat', monthLabel, '', '', '', '', '', '', '']);
-  sheet2.push([]);
-  sheet2.push(['Name', 'Abt.', 'Arb Plan CHF', 'Arb Ist CHF', 'Ferien Plan CHF', 'Ferien Ist CHF', 'Total Plan CHF', 'Total Ist CHF', 'Diff CHF']);
-  for (const r of empRows) {
-    sheet2.push([
-      r.name,
-      r.dept,
-      r.planWork    > 0 ? Math.round(r.planWork)    : 0,
-      r.istWork     > 0 ? Math.round(r.istWork)     : 0,
-      r.planHoliday > 0 ? Math.round(r.planHoliday) : 0,
-      r.istHoliday  > 0 ? Math.round(r.istHoliday)  : 0,
-      Math.round(r.planTotal),
-      Math.round(r.istTotal),
-      Math.round(r.diffTotal * 100) / 100,
-    ]);
-  }
   if (empRows.length > 0) {
-    sheet2.push([
-      `Total (${empRows.length} MA)`, '',
-      Math.round(empRows.reduce((s, r) => s + r.planWork, 0)),
-      Math.round(empRows.reduce((s, r) => s + r.istWork, 0)),
-      Math.round(empRows.reduce((s, r) => s + r.planHoliday, 0)),
-      Math.round(empRows.reduce((s, r) => s + r.istHoliday, 0)),
-      Math.round(empRows.reduce((s, r) => s + r.planTotal, 0)),
-      Math.round(empRows.reduce((s, r) => s + r.istTotal, 0)),
-      Math.round(empRows.reduce((s, r) => s + r.diffTotal, 0) * 100) / 100,
-    ]);
-  }
+    const ws2 = wb.addWorksheet('Mitarbeiter', { views: [{ state: 'frozen', ySplit: 3 }] });
 
-  const ws1 = XLSX.utils.aoa_to_sheet(sheet1);
-  const ws2 = XLSX.utils.aoa_to_sheet(sheet2);
-  const wb  = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws1, 'Überblick');
-  if (empRows.length > 0) XLSX.utils.book_append_sheet(wb, ws2, 'Mitarbeiter');
+    ws2.addRow(['Flex Kosten — pro Mitarbeiter']);
+    ws2.getRow(1).font = { bold: true, size: 13, color: { argb: 'FF' + HEADER_BG } };
+    ws2.getRow(1).height = 22;
+    ws2.addRow([`${monthLabel} · ${modeLabel}`]);
+    ws2.getRow(2).font = { italic: true, size: 9, color: { argb: 'FF' + MUTED_FG } };
+    ws2.addRow([]);
+
+    const hdr = ws2.addRow(['Name', 'Abt.', 'Arb Plan CHF', 'Arb Ist CHF', 'Ferien Plan CHF', 'Ferien Ist CHF', 'Total Plan CHF', 'Total Ist CHF', 'Diff CHF']);
+    hdr.height = 16;
+    hdr.eachCell(applyHeaderStyle);
+    hdr.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+    hdr.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+
+    empRows.forEach((r, idx) => {
+      const eRow = ws2.addRow([
+        r.name, r.dept,
+        r.planWork    > 0 ? Math.round(r.planWork)    : 0,
+        r.istWork     > 0 ? Math.round(r.istWork)     : 0,
+        r.planHoliday > 0 ? Math.round(r.planHoliday) : 0,
+        r.istHoliday  > 0 ? Math.round(r.istHoliday)  : 0,
+        Math.round(r.planTotal),
+        Math.round(r.istTotal),
+        Math.round(r.diffTotal * 100) / 100,
+      ]);
+      if (idx % 2 === 0) eRow.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + ALT_BG } }; });
+      for (let c = 3; c <= 9; c++) {
+        eRow.getCell(c).numFmt = numFmt;
+        eRow.getCell(c).alignment = { horizontal: 'right' };
+      }
+      eRow.getCell(1).alignment = { horizontal: 'left' };
+      eRow.getCell(2).alignment = { horizontal: 'center', font: { color: { argb: 'FF' + MUTED_FG } } } as never;
+      eRow.getCell(3).font = { color: { argb: 'FF' + BLUE_FG } };
+      eRow.getCell(4).font = { color: { argb: 'FF' + BLUE_FG } };
+      const diff = r.diffTotal;
+      eRow.getCell(9).font = { bold: true, color: { argb: 'FF' + (diff > 0 ? RED_FG : diff < 0 ? GREEN_FG : MUTED_FG) } };
+    });
+
+    // Total-Zeile
+    const tRow2 = ws2.addRow([
+      `Total (${empRows.length} MA)`, '',
+      Math.round(empRows.reduce((s, r) => s + r.planWork,    0)),
+      Math.round(empRows.reduce((s, r) => s + r.istWork,     0)),
+      Math.round(empRows.reduce((s, r) => s + r.planHoliday, 0)),
+      Math.round(empRows.reduce((s, r) => s + r.istHoliday,  0)),
+      Math.round(empRows.reduce((s, r) => s + r.planTotal,   0)),
+      Math.round(empRows.reduce((s, r) => s + r.istTotal,    0)),
+      Math.round(empRows.reduce((s, r) => s + r.diffTotal,   0) * 100) / 100,
+    ]);
+    tRow2.eachCell(applyTotalStyle);
+    tRow2.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+    for (let c = 3; c <= 9; c++) tRow2.getCell(c).numFmt = numFmt;
+    tRow2.height = 15;
+
+    ws2.columns = [
+      { width: 22 }, { width: 8 },
+      { width: 14 }, { width: 14 }, { width: 16 }, { width: 16 },
+      { width: 15 }, { width: 15 }, { width: 13 },
+    ];
+  }
 
   const yr = String(selectedYear);
   const mo = String(selectedMonth).padStart(2, '0');
-  XLSX.writeFile(wb, `FlexAuswertung_${yr}-${mo}_${modeLabel}.xlsx`);
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = `FlexAuswertung_${yr}-${mo}_${modeLabel}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
 }

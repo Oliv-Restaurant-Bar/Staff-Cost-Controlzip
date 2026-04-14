@@ -580,27 +580,83 @@ export default function TagesControllingPage() {
     const { default: jsPDF } = await import('jspdf');
     const { default: autoTable } = await import('jspdf-autotable');
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const W = 297; const M = 14;
 
-    doc.setFontSize(13);
-    doc.text('Tages-Controlling', 14, 14);
-    doc.setFontSize(9);
-    doc.text(getPeriodLabel(period, anchor), 14, 20);
-    doc.text(`Export: ${format(new Date(), 'dd.MM.yyyy HH:mm', { locale: de })}`, 14, 25);
+    // ── Farben (analog Webapp) ─────────────────────────────────────────────
+    const C_HEADER_BG: [number, number, number]  = [30, 41, 59];
+    const C_HEADER_TXT: [number, number, number] = [255, 255, 255];
+    const C_BLUE_TXT: [number, number, number]   = [29, 78, 216];
+    const C_KPI_BG: [number, number, number]     = [248, 250, 252];
+    const C_KPI_BORDER: [number, number, number] = [226, 232, 240];
+    const C_GREEN_TXT: [number, number, number]  = [4, 120, 87];
+    const C_RED_TXT: [number, number, number]    = [185, 28, 28];
+    const C_MUTED: [number, number, number]      = [100, 116, 139];
+    const C_TOTAL_BG: [number, number, number]   = [241, 245, 249];
+    const C_TOTAL_TXT: [number, number, number]  = [15, 23, 42];
 
-    const fmtV = (v: number) => v > 0 ? NUM.format(Math.round(v)) : '–';
-    const fmtP = (v: number, show: boolean) => show ? NUM1.format(v) + ' %' : '–';
-    const fmtD = (ist: number, plan: number) => {
+    const fmtV   = (v: number) => v > 0 ? NUM.format(Math.round(v)) : '–';
+    const fmtP   = (v: number, show: boolean) => show ? NUM1.format(v) + ' %' : '–';
+    const fmtD   = (ist: number, plan: number) => {
       if (ist === 0 || plan === 0) return '–';
       const d = ist - plan;
       return (d > 0 ? '+' : '') + NUM.format(Math.round(d));
     };
+    const fmtCHF = (v: number) => v.toLocaleString('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 });
 
+    // ── Header Banner ──────────────────────────────────────────────────────
+    doc.setFillColor(...C_HEADER_BG);
+    doc.rect(0, 0, W, 22, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.setTextColor(...C_HEADER_TXT);
+    doc.text('Tages-Controlling', M, 10);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text('Oliv Gastro AG', M, 16);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(getPeriodLabel(period, anchor), W / 2, 10, { align: 'center' });
+    doc.setTextColor(...C_MUTED);
+    doc.setFontSize(7);
+    doc.text(`Export: ${format(new Date(), 'dd.MM.yyyy HH:mm', { locale: de })}`, W - M, 10, { align: 'right' });
+
+    // ── KPI-Block ──────────────────────────────────────────────────────────
+    let y = 28;
+    const kpis = [
+      { label: 'Ist-Umsatz Total',  value: fmtCHF(total.sumUmsatz),  accent: C_BLUE_TXT },
+      { label: 'PK Plan Total',     value: fmtCHF(total.sumPkPlan),  accent: C_BLUE_TXT },
+      { label: 'PK Ist Total',      value: total.sumPkIst > 0 ? fmtCHF(total.sumPkIst) : '–', accent: total.sumPkIst > 0 ? C_BLUE_TXT : C_MUTED },
+      { label: 'PK Plan %',         value: fmtP(total.pkPlanPct, total.sumUmsatz > 0),  accent: C_MUTED },
+      { label: 'PK Ist %',          value: fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), accent: total.pkIstPct > total.pkPlanPct && total.sumPkIst > 0 ? C_RED_TXT : C_GREEN_TXT },
+    ];
+    const kW = (W - 2 * M - (kpis.length - 1) * 3) / kpis.length;
+    kpis.forEach((k, i) => {
+      const kx = M + i * (kW + 3);
+      doc.setFillColor(...C_KPI_BG);
+      doc.setDrawColor(...C_KPI_BORDER);
+      doc.setLineWidth(0.3);
+      doc.roundedRect(kx, y, kW, 18, 1.5, 1.5, 'FD');
+      doc.setFillColor(...k.accent);
+      doc.rect(kx, y + 2, 1.5, 14, 'F');
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6);
+      doc.setTextColor(...C_MUTED);
+      doc.text(k.label.toUpperCase(), kx + 4, y + 6);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(...k.accent);
+      doc.text(k.value, kx + 4, y + 13);
+    });
+
+    y += 24;
+
+    // ── Haupttabelle ──────────────────────────────────────────────────────
     if (period === 'jahr') {
-      const head = [['Monat', 'Ist-Umsatz', 'PK Plan', 'PK Ist', 'Δ PK', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %']];
+      const head = [['Monat', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %']];
       const totalPkPlanPct = total.sumUmsatz > 0 ? (total.sumPkPlan / total.sumUmsatz) * 100 : 0;
       const totalPkIstPct  = total.sumUmsatz > 0 && total.sumPkIst > 0 ? (total.sumPkIst / total.sumUmsatz) * 100 : 0;
       const totalWesPct    = total.sumUmsatz > 0 && total.sumWes > 0 ? (total.sumWes / total.sumUmsatz) * 100 : 0;
-      const body = [
+      const body: string[][] = [
         ['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), fmtD(total.sumPkIst, total.sumPkPlan), fmtP(totalPkPlanPct, total.sumUmsatz > 0), fmtP(totalPkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), fmtV(total.sumWes), fmtP(totalWesPct, total.sumWes > 0 && total.sumUmsatz > 0)],
         ...monthRows.map(mr => {
           const pp = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
@@ -609,10 +665,27 @@ export default function TagesControllingPage() {
           return [mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), fmtV(mr.pkIstChf), fmtD(mr.pkIstChf, mr.pkPlanChf), fmtP(pp, mr.umsatz > 0 && mr.pkPlanChf > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChf > 0), fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChf > 0)];
         }),
       ];
-      autoTable(doc, { head, body, startY: 30, styles: { fontSize: 7, cellPadding: 2 }, headStyles: { fillColor: [55, 65, 81] }, bodyStyles: { valign: 'middle' }, alternateRowStyles: { fillColor: [248, 248, 250] } });
+      autoTable(doc, {
+        head, body, startY: y,
+        styles: { fontSize: 7.5, cellPadding: { top: 2.5, right: 3, bottom: 2.5, left: 3 }, font: 'helvetica', valign: 'middle' },
+        headStyles: { fillColor: C_HEADER_BG, textColor: C_HEADER_TXT, fontStyle: 'bold', halign: 'right' },
+        columnStyles: { 0: { halign: 'left', fontStyle: 'normal' } },
+        alternateRowStyles: { fillColor: [250, 251, 252] },
+        didParseCell: (data) => {
+          if (data.row.index === 0) {
+            data.cell.styles.fillColor = C_TOTAL_BG;
+            data.cell.styles.textColor = C_TOTAL_TXT;
+            data.cell.styles.fontStyle = 'bold';
+          }
+          if (data.column.index === 4 && data.row.index > 0) {
+            const v = data.cell.raw as string;
+            if (v && v !== '–') data.cell.styles.textColor = v.startsWith('+') ? C_RED_TXT : C_GREEN_TXT;
+          }
+        },
+      });
     } else {
-      const head = [['Datum', 'WT', 'Ist-Umsatz', 'PK Plan', 'PK Ist', 'Δ PK', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %']];
-      const body = [
+      const head = [['Datum', 'WT', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %']];
+      const body: string[][] = [
         ['TOTAL', '', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), total.sumPkIst > 0 ? fmtV(total.sumPkIst) : '–', fmtD(total.sumPkIst, total.sumPkPlan), fmtP(total.pkPlanPct, total.sumUmsatz > 0), fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), total.sumWes > 0 ? fmtV(total.sumWes) : '–', fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)],
         ...rows.map(r => {
           const pp = r.umsatz > 0 ? (r.pkPlanChf / r.umsatz) * 100 : 0;
@@ -621,7 +694,43 @@ export default function TagesControllingPage() {
           return [format(r.day, 'dd.MM.yyyy'), WT_ABBR[r.day.getDay()], fmtV(r.umsatz), fmtV(r.pkPlanChf), r.pkIstChf > 0 ? fmtV(r.pkIstChf) : '–', fmtD(r.pkIstChf, r.pkPlanChf), r.umsatz > 0 && r.pkPlanChf > 0 ? fmtP(pp, true) : '–', r.umsatz > 0 && r.pkIstChf > 0 ? fmtP(pi, true) : '–', r.wesChf > 0 ? fmtV(r.wesChf) : '–', r.umsatz > 0 && r.wesChf > 0 ? fmtP(wp, true) : '–'];
         }),
       ];
-      autoTable(doc, { head, body, startY: 30, styles: { fontSize: 7, cellPadding: 2 }, headStyles: { fillColor: [55, 65, 81] }, bodyStyles: { valign: 'middle' }, alternateRowStyles: { fillColor: [248, 248, 250] } });
+      autoTable(doc, {
+        head, body, startY: y,
+        styles: { fontSize: 7.5, cellPadding: { top: 2.5, right: 3, bottom: 2.5, left: 3 }, font: 'helvetica', valign: 'middle' },
+        headStyles: { fillColor: C_HEADER_BG, textColor: C_HEADER_TXT, fontStyle: 'bold', halign: 'right' },
+        columnStyles: {
+          0: { halign: 'left' }, 1: { halign: 'center', textColor: C_MUTED },
+          2: { textColor: C_BLUE_TXT }, 3: { textColor: C_BLUE_TXT },
+        },
+        alternateRowStyles: { fillColor: [250, 251, 252] },
+        didParseCell: (data) => {
+          if (data.row.index === 0) {
+            data.cell.styles.fillColor = C_TOTAL_BG;
+            data.cell.styles.textColor = C_TOTAL_TXT;
+            data.cell.styles.fontStyle = 'bold';
+          }
+          if (data.column.index === 5 && data.row.index > 0) {
+            const v = data.cell.raw as string;
+            if (v && v !== '–') data.cell.styles.textColor = v.startsWith('+') ? C_RED_TXT : C_GREEN_TXT;
+          }
+          if (data.column.index === 4 && data.row.index > 0) {
+            data.cell.styles.textColor = C_BLUE_TXT;
+          }
+        },
+      });
+    }
+
+    // ── Footer ─────────────────────────────────────────────────────────────
+    const pageCount = (doc as jsPDF & { getNumberOfPages(): number }).getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFillColor(...C_HEADER_BG);
+      doc.rect(0, 200, W, 10, 'F');
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6);
+      doc.setTextColor(180, 190, 210);
+      doc.text('Oliv Gastro AG · Tages-Controlling · vertraulich', M, 206);
+      doc.text(`Seite ${i} / ${pageCount}`, W - M, 206, { align: 'right' });
     }
 
     doc.save(`tages-controlling-${format(anchor, 'yyyy-MM')}.pdf`);
@@ -630,38 +739,132 @@ export default function TagesControllingPage() {
   // ── Export Excel ─────────────────────────────────────────────────────────────
 
   const handleExportExcel = useCallback(async () => {
-    const XLSX = await import('xlsx');
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Oliv Gastro AG';
+    wb.created = new Date();
+
+    // ── Farben ────────────────────────────────────────────────────────────
+    const HEADER_BG  = '1E293B';
+    const HEADER_FG  = 'FFFFFF';
+    const TOTAL_BG   = 'F1F5F9';
+    const TOTAL_FG   = '0F172A';
+    const BLUE_FG    = '1D4ED8';
+    const GREEN_FG   = '047857';
+    const RED_FG     = 'B91C1C';
+    const ALT_BG     = 'FAFBFC';
 
     const fmtV = (v: number) => v > 0 ? Math.round(v) : 0;
     const fmtP = (v: number, show: boolean) => show ? Math.round(v * 10) / 10 : 0;
-    const fmtD = (ist: number, plan: number) => ist > 0 && plan > 0 ? Math.round(ist - plan) : 0;
 
-    const rows2d: (string | number)[][] = [];
+    const ws = wb.addWorksheet('Tages-Controlling', { views: [{ state: 'frozen', ySplit: 3 }] });
+
+    // ── Titel-Zeilen ─────────────────────────────────────────────────────
+    ws.addRow(['Tages-Controlling — Oliv Gastro AG']);
+    ws.addRow([getPeriodLabel(period, anchor), '', '', '', '', `Export: ${format(new Date(), 'dd.MM.yyyy HH:mm', { locale: de })}`]);
+    ws.addRow([]);
+
+    // Style Titelzeile
+    const titleRow = ws.getRow(1);
+    titleRow.height = 20;
+    titleRow.font = { bold: true, size: 13, color: { argb: 'FF' + HEADER_BG } };
 
     if (period === 'jahr') {
-      rows2d.push(['Monat', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %']);
-      rows2d.push(['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), fmtD(total.sumPkIst, total.sumPkPlan), fmtP(total.pkPlanPct, total.sumUmsatz > 0), fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), fmtV(total.sumWes), fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)]);
-      for (const mr of monthRows) {
+      const headers = ['Monat', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %'];
+      const hRow = ws.addRow(headers);
+      hRow.height = 16;
+      hRow.eachCell(cell => {
+        cell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + HEADER_BG } };
+        cell.font   = { bold: true, color: { argb: 'FF' + HEADER_FG }, size: 9 };
+        cell.border = { bottom: { style: 'thin', color: { argb: 'FF94A3B8' } } };
+        cell.alignment = { horizontal: 'right' };
+      });
+      hRow.getCell(1).alignment = { horizontal: 'left' };
+
+      const totalPkPlanPct = total.sumUmsatz > 0 ? (total.sumPkPlan / total.sumUmsatz) * 100 : 0;
+      const totalPkIstPct  = total.sumUmsatz > 0 && total.sumPkIst > 0 ? (total.sumPkIst / total.sumUmsatz) * 100 : 0;
+      const totalWesPct    = total.sumUmsatz > 0 && total.sumWes > 0 ? (total.sumWes / total.sumUmsatz) * 100 : 0;
+      const tRow = ws.addRow(['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), Math.round(total.sumPkIst - total.sumPkPlan), Math.round(totalPkPlanPct * 10) / 10, Math.round(totalPkIstPct * 10) / 10, fmtV(total.sumWes), Math.round(totalWesPct * 10) / 10]);
+      tRow.eachCell(cell => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + TOTAL_BG } };
+        cell.font = { bold: true, color: { argb: 'FF' + TOTAL_FG }, size: 9 };
+        cell.alignment = { horizontal: 'right' };
+      });
+      tRow.getCell(1).alignment = { horizontal: 'left' };
+
+      monthRows.forEach((mr, idx) => {
         const pp = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
         const pi = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
         const wp = mr.umsatz > 0 && mr.wesChf   > 0 ? (mr.wesChf   / mr.umsatz) * 100 : 0;
-        rows2d.push([mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), fmtV(mr.pkIstChf), fmtD(mr.pkIstChf, mr.pkPlanChf), fmtP(pp, mr.umsatz > 0 && mr.pkPlanChf > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChf > 0), fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChf > 0)]);
-      }
+        const delta = mr.pkIstChf > 0 && mr.pkPlanChf > 0 ? Math.round(mr.pkIstChf - mr.pkPlanChf) : 0;
+        const r = ws.addRow([mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), mr.pkIstChf > 0 ? fmtV(mr.pkIstChf) : 0, delta, fmtP(pp, mr.umsatz > 0 && mr.pkPlanChf > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChf > 0), fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChf > 0)]);
+        if (idx % 2 === 0) r.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + ALT_BG } }; });
+        r.getCell(5).font = { color: { argb: 'FF' + (delta > 0 ? RED_FG : delta < 0 ? GREEN_FG : TOTAL_FG) } };
+        r.eachCell(c => { c.alignment = { horizontal: 'right' }; });
+        r.getCell(1).alignment = { horizontal: 'left' };
+      });
+      ws.columns = [{ width: 18 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 12 }, { width: 11 }, { width: 11 }, { width: 13 }, { width: 10 }];
+
     } else {
-      rows2d.push(['Datum', 'WT', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %']);
-      rows2d.push(['TOTAL', '', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), fmtD(total.sumPkIst, total.sumPkPlan), fmtP(total.pkPlanPct, total.sumUmsatz > 0), fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), fmtV(total.sumWes), fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)]);
-      for (const r of rows) {
+      const headers = ['Datum', 'WT', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %'];
+      const hRow = ws.addRow(headers);
+      hRow.height = 16;
+      hRow.eachCell(cell => {
+        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + HEADER_BG } };
+        cell.font      = { bold: true, color: { argb: 'FF' + HEADER_FG }, size: 9 };
+        cell.border    = { bottom: { style: 'thin', color: { argb: 'FF94A3B8' } } };
+        cell.alignment = { horizontal: 'right' };
+      });
+      hRow.getCell(1).alignment = { horizontal: 'left' };
+      hRow.getCell(2).alignment = { horizontal: 'center' };
+
+      const tRow = ws.addRow(['TOTAL', '', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), Math.round(total.sumPkIst - total.sumPkPlan), Math.round(total.pkPlanPct * 10) / 10, Math.round(total.pkIstPct * 10) / 10, fmtV(total.sumWes), Math.round(total.wesPct * 10) / 10]);
+      tRow.eachCell(cell => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + TOTAL_BG } };
+        cell.font = { bold: true, color: { argb: 'FF' + TOTAL_FG }, size: 9 };
+        cell.alignment = { horizontal: 'right' };
+      });
+      tRow.getCell(1).alignment = { horizontal: 'left' };
+
+      rows.forEach((r, idx) => {
         const pp = r.umsatz > 0 ? (r.pkPlanChf / r.umsatz) * 100 : 0;
         const pi = r.umsatz > 0 && r.pkIstChf > 0 ? (r.pkIstChf / r.umsatz) * 100 : 0;
         const wp = r.umsatz > 0 && r.wesChf   > 0 ? (r.wesChf   / r.umsatz) * 100 : 0;
-        rows2d.push([format(r.day, 'dd.MM.yyyy'), WT_ABBR[r.day.getDay()], fmtV(r.umsatz), fmtV(r.pkPlanChf), fmtV(r.pkIstChf), fmtD(r.pkIstChf, r.pkPlanChf), fmtP(pp, r.umsatz > 0 && r.pkPlanChf > 0), fmtP(pi, r.umsatz > 0 && r.pkIstChf > 0), fmtV(r.wesChf), fmtP(wp, r.umsatz > 0 && r.wesChf > 0)]);
-      }
+        const delta = r.pkIstChf > 0 && r.pkPlanChf > 0 ? Math.round(r.pkIstChf - r.pkPlanChf) : 0;
+        const eRow = ws.addRow([format(r.day, 'dd.MM.yyyy'), WT_ABBR[r.day.getDay()], fmtV(r.umsatz), fmtV(r.pkPlanChf), r.pkIstChf > 0 ? fmtV(r.pkIstChf) : 0, delta, fmtP(pp, r.umsatz > 0 && r.pkPlanChf > 0), fmtP(pi, r.umsatz > 0 && r.pkIstChf > 0), r.wesChf > 0 ? fmtV(r.wesChf) : 0, fmtP(wp, r.umsatz > 0 && r.wesChf > 0)]);
+        if (idx % 2 === 0) eRow.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + ALT_BG } }; });
+        eRow.getCell(3).font = { color: { argb: 'FF' + BLUE_FG } };
+        eRow.getCell(4).font = { color: { argb: 'FF' + BLUE_FG } };
+        eRow.getCell(6).font = { color: { argb: 'FF' + (delta > 0 ? RED_FG : delta < 0 ? GREEN_FG : TOTAL_FG) } };
+        eRow.eachCell(c => { c.alignment = { horizontal: 'right' }; });
+        eRow.getCell(1).alignment = { horizontal: 'left' };
+        eRow.getCell(2).alignment = { horizontal: 'center' };
+      });
+      ws.columns = [{ width: 13 }, { width: 5 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 12 }, { width: 11 }, { width: 11 }, { width: 13 }, { width: 10 }];
     }
 
-    const ws = XLSX.utils.aoa_to_sheet(rows2d);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Tages-Controlling');
-    XLSX.writeFile(wb, `tages-controlling-${format(anchor, 'yyyy-MM')}.xlsx`);
+    // Format number cells
+    const numFmt = '#,##0';
+    const pctFmt = '0.0"%"';
+    ws.eachRow((row, rowNum) => {
+      if (rowNum < 4) return;
+      row.eachCell((cell, colNum) => {
+        if (typeof cell.value === 'number') {
+          const isCHF = period === 'jahr' ? [2, 3, 4, 5, 8].includes(colNum) : [3, 4, 5, 6, 9].includes(colNum);
+          const isPct = period === 'jahr' ? [6, 7, 9].includes(colNum) : [7, 8, 10].includes(colNum);
+          if (isCHF) cell.numFmt = numFmt;
+          if (isPct)  cell.numFmt = pctFmt;
+        }
+      });
+    });
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = `tages-controlling-${format(anchor, 'yyyy-MM')}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
   }, [period, anchor, rows, monthRows, total]);
 
   // ─── Render ─────────────────────────────────────────────────────────────────

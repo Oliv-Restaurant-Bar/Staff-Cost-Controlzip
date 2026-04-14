@@ -25,6 +25,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { usePermissions } from '@/hooks/usePermissions';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { loadWeekdayWeights, computeProRataBudget, logBudgetDayDebug } from '@/lib/budget-day';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -1636,10 +1637,15 @@ export default function PersonalFixPage() {
   const proRataFactor = proRataDay !== null
     ? Math.min(proRataDay, daysInSelectedMonth) / daysInSelectedMonth
     : 1;
+  // Wochentagsgewichte aus Einstellungen (einmalig geladen, überall verwendet)
+  const weekdayWeights = loadWeekdayWeights();
   const proRataFixCost      = totalFixCost          * proRataFactor;
   const proRataVarCost      = totalVariabelCHF      * proRataFactor;
   const proRataTotal        = (totalFixCost + totalVariabelCHF) * proRataFactor;
-  const proRataBudget       = personnelBudget        * proRataFactor;
+  // Weekday-gewichtetes Pro-Rata-Budget (ersetzt lineare Verteilung)
+  const proRataBudget       = personnelBudget > 0
+    ? computeProRataBudget(personnelBudget, selectedYear, selectedMonth, proRataDay, weekdayWeights)
+    : 0;
   const proRataAvailableVar = personnelBudget > 0
     ? Math.max(0, proRataBudget - proRataFixCost) : 0;
   const proRataVarArbeit    = totalVarArbeitCHF     * proRataFactor;
@@ -1744,9 +1750,9 @@ export default function PersonalFixPage() {
     : null;
   const budgetLabel = cutoffLabel ? `bis ${cutoffLabel}` : 'gesamt';
 
-  const pfixBudget       = personnelBudget > 0
-    ? personnelBudget * (proRataDay !== null ? proRataFactor : 1)
-    : 0;
+  // pfixBudget = proRataBudget (weekday-gewichtet, Stichtag = proRataDay)
+  const pfixBudget = proRataBudget;
+
   const pfixAvailableVar  = pfixBudget > 0 ? Math.max(0, pfixBudget - pfix.active.fix) : 0;
   // Budget comparison uses only Flex Arbeit Ist — Ferienabbau is NOT budget-relevant
   const pfixIstVarDelta   = pfixBudget > 0 ? pfixAvailableVar - pfix.active.istWork : 0;
@@ -1763,11 +1769,12 @@ export default function PersonalFixPage() {
         ? 'warning'
         : 'off_track';
 
-  // [FLEX-BUDGET] debug logs
+  // [FLEX-BUDGET] + [BUDGET-DAY] debug logs
   if (personnelBudget > 0) {
     const cd = cutoffLabel ?? 'full month';
+    logBudgetDayDebug(personnelBudget, selectedYear, selectedMonth, weekdayWeights, proRataDay);
     console.log(`[FLEX-BUDGET] cutoff date: ${cd}`);
-    console.log(`[FLEX-BUDGET] budget until cutoff: ${pfixBudget.toFixed(2)}`);
+    console.log(`[FLEX-BUDGET] budget until cutoff (weekday-weighted): ${pfixBudget.toFixed(2)}`);
     console.log(`[FLEX-BUDGET] fix ist until cutoff: ${pfix.active.fix.toFixed(2)}`);
     console.log(`[FLEX-BUDGET] flex work ist until cutoff: ${pfix.active.istWork.toFixed(2)}`);
     console.log(`[FLEX-BUDGET] remaining flex budget: ${pfixIstVarDelta >= 0 ? '+' : ''}${pfixIstVarDelta.toFixed(2)}`);
@@ -2928,7 +2935,7 @@ export default function PersonalFixPage() {
                     </span>
                     {proRataDay !== null && (
                       <span className="text-[10px] text-muted-foreground font-mono">
-                        {fmtCHF(personnelBudget)} × {proRataDay}/{daysInSelectedMonth}
+                        {fmtCHF(personnelBudget)} · wochentagsgewichtet bis Tag {proRataDay}
                       </span>
                     )}
                   </div>

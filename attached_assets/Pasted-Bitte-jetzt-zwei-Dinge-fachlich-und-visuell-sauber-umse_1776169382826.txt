@@ -1,0 +1,126 @@
+Bitte jetzt zwei Dinge fachlich und visuell sauber umsetzen:
+
+1. Der Export soll optisch deutlich näher an der Webapp sein
+2. Der Budget-Umsatz pro Tag soll gemäss der in den Einstellungen hinterlegten Wochentagsverteilung berechnet werden und diese Logik soll auch in der Personalplanung / Zielwertberechnung greifen
+
+==================================================
+TEIL A — Export visuell an Webapp anpassen
+==================================================
+
+Ziel:
+Der PDF- und Excel-Export soll nicht wie ein roher Tabellenexport aussehen, sondern sich visuell stark an der Webapp orientieren.
+
+Bitte umsetzen:
+
+1. PDF-Export visuell verbessern
+- gleiche oder sehr ähnliche Farbwelt wie in der Webapp
+- KPI-Karten / Summary-Blöcke optisch wie in der UI hervorheben
+- Total-Zeilen farblich klar absetzen
+- positive Werte grün
+- negative Werte rot
+- neutrale Werte grau / blau
+- Tabellenkopf klar und ruhig gestalten
+- bessere Abstände / Padding / Ränder
+- gleiche visuelle Hierarchie wie in der Webapp
+
+2. Exportstruktur beibehalten, aber schöner darstellen
+Für Tages-Controlling, Tagesansicht und Flex-Auswertung:
+- Titelblock oben
+- Zeitraum / Aggregation / Pro-Rata Info
+- KPI-Block
+- Haupttabelle
+- Total-Zeile
+- ggf. Hinweisblock / Legende
+
+3. Excel-Export ebenfalls verbessern
+- farbige Header
+- farbige Total-Zeile
+- sinnvolle Spaltenbreiten
+- CHF-Spalten sauber formatiert
+- Prozentspalten sauber formatiert
+- visuell lesbarer Aufbau
+
+4. Wichtig
+- Export muss dieselben Zahlen wie die UI verwenden
+- keine zweite Rechenlogik nur für PDF/Excel
+- nur Darstellung verbessern
+
+==================================================
+TEIL B — Budget-Umsatz pro Tag nach Wochentagsverteilung
+==================================================
+
+Ziel:
+Der Budget-Umsatz pro Tag soll nicht mehr gleichmässig auf alle Tage verteilt werden, sondern gemäss der in den Einstellungen hinterlegten Umsatzverteilung pro Wochentag.
+
+Ausgangslage:
+In den Einstellungen ist bereits eine Umsatzverteilung pro Wochentag hinterlegt, z.B.:
+- Sonntag 10%
+- Montag 10%
+- Dienstag 10%
+- Mittwoch 10%
+- Donnerstag 10%
+- Freitag 25%
+- Samstag 25%
+
+Diese Verteilung summiert sich auf 100%.
+
+Bitte exakt so umsetzen:
+
+1. Tagesbudgetverteilung umstellen
+Statt:
+- Monatsbudget / Anzahl Tage
+
+neu:
+- Monatsbudget anhand der Wochentagsgewichte auf die tatsächlichen Kalendertage des Monats verteilen
+
+2. Fachlich korrekte Verteilung
+Logik:
+- Monatsbudget nehmen
+- Wochentagsverteilung aus den Einstellungen laden
+- Anzahl der jeweiligen Wochentage im konkreten Monat bestimmen
+- Anteil je Wochentag auf die vorhandenen Tage dieses Wochentags verteilen
+
+Beispiel:
+Wenn Freitag 25% des Monatsbudgets erhält und der Monat 4 Freitage hat,
+dann erhält jeder Freitag 25% / 4 des Monatsbudgets.
+
+3. Diese Logik überall zentral verwenden
+Die neue Tagesbudgetlogik soll überall greifen, wo Budget pro Tag verwendet wird:
+
+- Tagesansicht
+- Tages-Controlling
+- Budgetvergleich
+- kumulierte Budgetverläufe
+- Exporte
+- Zielwertberechnung in der Personalplanung
+- PK Plan % / Sollwerte / Zielwerte, sofern dort Tagesbudget als Basis verwendet wird
+
+4. Wichtig für Personalplanung / Zielwerte
+Wenn Zielwerte oder Personalquoten gegen Umsatzbudget gerechnet werden,
+muss dort dieselbe neue wochentagsgewichtete Tagesbudgetlogik greifen.
+
+Also:
+- kein gleichmässig verteilter Budgetumsatz mehr
+- sondern budgetierter Tagesumsatz gemäss Wochentagsprofil aus den Einstellungen
+
+5. Validierung
+Bitte sicherstellen:
+- Summe aller Tagesbudgets im Monat = exakt Monatsbudget
+- eventuelle Rundungsdifferenz sauber auf den letzten Tag oder kontrolliert verteilen
+- dieselbe Logik in UI und Export
+
+6. Debug Logs
+Bitte loggen:
+[BUDGET-DAY] monthly budget: ...
+[BUDGET-DAY] weekday weights: ...
+[BUDGET-DAY] month weekday counts: ...
+[BUDGET-DAY] daily budget for 2026-04-01: ...
+[BUDGET-DAY] daily budget for 2026-04-02: ...
+[BUDGET-DAY] total distributed budget: ...
+
+7. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie der Export visuell verbessert wurde
+- wie die Tagesbudget-Verteilung jetzt berechnet wird
+- ob die Wochentagsverteilung aus den Einstellungen jetzt wirklich überall greift
+- ob Zielwerte / Personalplanung ebenfalls auf dieser neuen Budgetbasis rechnen
