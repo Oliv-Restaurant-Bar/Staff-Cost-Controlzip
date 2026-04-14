@@ -574,6 +574,8 @@ function loadDailyPlanDetails(
       if (cellKey.slice(0, cellKey.length - 11) !== empId) continue;
       const day = parseInt(date.slice(-2), 10);
       if (cutoffDay !== null && day > cutoffDay) continue;
+      // Skip vacation-tagged entries — these are counted in ferien, not work
+      if (ds?.frühAbsence === 'FE' || ds?.spätAbsence === 'FE') continue;
       const gross = calcSlotHours(ds?.früh) + calcSlotHours(ds?.spät);
       const net   = Math.max(0, gross - calculateBreakDeduction(gross));
       if (net > 0) entries.push({ date, hours: Math.round(net * 100) / 100, cost: Math.round(net * wage * 100) / 100 });
@@ -751,36 +753,32 @@ function FlexPeriodPopup({
 
   type EmpRow = {
     id: string; name: string;
+    planH: number; istH: number;
     planWork: number; istWork: number;
-    planFer:  number; istFer:  number;
-    planTotal: number; istTotal: number;
     diff: number;
   };
 
+  // Only Flex Arbeit (work) — same logic as pfixAbw (no ferien)
   const rows: EmpRow[] = employees.map(emp => {
-    const wage   = emp.hourlyWage;
-    const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+    const wage  = emp.hourlyWage;
     const planW = loadDailyPlanDetails(emp.id, year, month, null, wage).filter(r => dates.includes(r.date));
     const istW  = loadDailyIstDetails(emp.id, year, month, null, wage).filter(r => dates.includes(r.date));
-    const planF = loadFerienPlanDayDetails(emp.id, year, month, null, dailyH, wage).filter(r => dates.includes(r.date));
-    const istF  = loadFerienIstDayDetails(emp.id, year, month, null, dailyH, wage).filter(r => dates.includes(r.date));
     const planWork = planW.reduce((s, r) => s + r.cost, 0);
     const istWork  = istW.reduce((s, r)  => s + r.cost, 0);
-    const planFer  = planF.reduce((s, r) => s + r.cost, 0);
-    const istFer   = istF.reduce((s, r)  => s + r.cost, 0);
-    const pT = planWork + planFer;
-    const iT = istWork  + istFer;
-    return { id: emp.id, name: emp.name, planWork, istWork, planFer, istFer, planTotal: pT, istTotal: iT, diff: iT - pT };
-  }).filter(r => r.planTotal > 0 || r.istTotal > 0);
+    const planH    = planW.reduce((s, r) => s + r.hours, 0);
+    const istH     = istW.reduce((s, r)  => s + r.hours, 0);
+    return { id: emp.id, name: emp.name, planH, istH, planWork, istWork, diff: istWork - planWork };
+  }).filter(r => r.planWork > 0 || r.istWork > 0);
 
-  const sumPlan = rows.reduce((s, r) => s + r.planTotal, 0);
-  const sumIst  = rows.reduce((s, r) => s + r.istTotal,  0);
+  const sumPlan = rows.reduce((s, r) => s + r.planWork, 0);
+  const sumIst  = rows.reduce((s, r) => s + r.istWork,  0);
   const sumDiff = sumIst - sumPlan;
 
-  console.log(`[FLEX] popup period: ${label}`);
-  console.log(`[FLEX] popup employee rows: ${rows.length}`);
-  if (Math.abs(sumPlan - planTotal) > 0.02) console.error(`[FLEX] popup plan mismatch: table=${sumPlan.toFixed(2)} header=${planTotal.toFixed(2)}`);
-  if (Math.abs(sumIst  - istTotal)  > 0.02) console.error(`[FLEX] popup ist  mismatch: table=${sumIst.toFixed(2)}  header=${istTotal.toFixed(2)}`);
+  console.log(`[FLEX] day popup total plan: ${planTotal.toFixed(2)}`);
+  console.log(`[FLEX] day popup total ist: ${istTotal.toFixed(2)}`);
+  console.log(`[FLEX] day popup diff: ${diff.toFixed(2)}`);
+  if (Math.abs(sumPlan - planTotal) > 0.02) console.error(`[FLEX] popup plan mismatch: empTable=${sumPlan.toFixed(2)} header=${planTotal.toFixed(2)} Δ=${(sumPlan-planTotal).toFixed(2)}`);
+  if (Math.abs(sumIst  - istTotal)  > 0.02) console.error(`[FLEX] popup ist  mismatch: empTable=${sumIst.toFixed(2)} header=${istTotal.toFixed(2)} Δ=${(sumIst-istTotal).toFixed(2)}`);
 
   const fmtD = (v: number) => {
     const s = fmtCHF(Math.abs(v));
@@ -826,12 +824,10 @@ function FlexPeriodPopup({
                 <thead>
                   <tr>
                     <th className={cn(thCls, 'text-left')}>Mitarbeiter</th>
-                    <th className={cn(thCls, 'text-right text-blue-600')}>Flex Arbeit Plan</th>
-                    <th className={cn(thCls, 'text-right text-orange-600')}>Flex Arbeit Ist</th>
-                    <th className={cn(thCls, 'text-right text-blue-500')}>Ferien Plan</th>
-                    <th className={cn(thCls, 'text-right text-orange-500')}>Ferien Ist</th>
-                    <th className={cn(thCls, 'text-right text-blue-700')}>Total Flex Plan</th>
-                    <th className={cn(thCls, 'text-right text-orange-700')}>Total Flex Ist</th>
+                    <th className={cn(thCls, 'text-right text-muted-foreground')}>Plan Std</th>
+                    <th className={cn(thCls, 'text-right text-muted-foreground')}>Ist Std</th>
+                    <th className={cn(thCls, 'text-right text-blue-600')}>Flex Plan CHF</th>
+                    <th className={cn(thCls, 'text-right text-orange-600')}>Flex Ist CHF</th>
                     <th className={cn(thCls, 'text-right')}>Diff CHF</th>
                   </tr>
                 </thead>
@@ -839,12 +835,10 @@ function FlexPeriodPopup({
                   {rows.map((r, i) => (
                     <tr key={r.id} className={cn(i % 2 === 0 ? 'bg-background' : 'bg-muted/15')}>
                       <td className="px-3 py-1.5 font-medium">{r.name}</td>
-                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-600">{r.planWork > 0 ? fmtCHF(r.planWork) : '–'}</td>
-                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-600">{r.istWork > 0 ? fmtCHF(r.istWork) : '–'}</td>
-                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-500">{r.planFer > 0 ? fmtCHF(r.planFer) : '–'}</td>
-                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-500">{r.istFer > 0 ? fmtCHF(r.istFer) : '–'}</td>
-                      <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-blue-700 dark:text-blue-400">{r.planTotal > 0 ? fmtCHF(r.planTotal) : '–'}</td>
-                      <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-orange-700 dark:text-orange-400">{r.istTotal > 0 ? fmtCHF(r.istTotal) : '–'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{r.planH > 0 ? `${r.planH.toFixed(1)} h` : '–'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{r.istH > 0 ? `${r.istH.toFixed(1)} h` : '–'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-blue-700 dark:text-blue-400">{r.planWork > 0 ? fmtCHF(r.planWork) : '–'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-orange-700 dark:text-orange-400">{r.istWork > 0 ? fmtCHF(r.istWork) : '–'}</td>
                       <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums font-bold', diffCls(r.diff))}>{fmtD(r.diff)}</td>
                     </tr>
                   ))}
@@ -852,10 +846,8 @@ function FlexPeriodPopup({
                 <tfoot>
                   <tr className={cn('border-t-2 border-border font-bold text-xs', A.bg)}>
                     <td className="px-3 py-2">Total ({rows.length} MA)</td>
-                    <td className="px-3 py-2 text-right font-mono tabular-nums text-blue-600">{fmtCHF(rows.reduce((s, r) => s + r.planWork, 0))}</td>
-                    <td className="px-3 py-2 text-right font-mono tabular-nums text-orange-600">{fmtCHF(rows.reduce((s, r) => s + r.istWork, 0))}</td>
-                    <td className="px-3 py-2 text-right font-mono tabular-nums text-blue-500">{fmtCHF(rows.reduce((s, r) => s + r.planFer, 0))}</td>
-                    <td className="px-3 py-2 text-right font-mono tabular-nums text-orange-500">{fmtCHF(rows.reduce((s, r) => s + r.istFer, 0))}</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">{rows.reduce((s,r)=>s+r.planH,0).toFixed(1)} h</td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">{rows.reduce((s,r)=>s+r.istH,0).toFixed(1)} h</td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(sumPlan)}</td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(sumIst)}</td>
                     <td className={cn('px-3 py-2 text-right font-mono tabular-nums', diffCls(sumDiff))}>{fmtD(sumDiff)}</td>
@@ -1670,8 +1662,10 @@ export default function PersonalFixPage() {
   const pfixPerEmp = useMemo(() => {
     const factor = proRataDay !== null ? proRataFactor : 1;
     const rows = variableEmployees.map(emp => {
-      const planWork     = (planHours[emp.id]  ?? 0) * (emp.hourlyWage ?? 0);
-      const istWork      = (istHours[emp.id]   ?? 0) * (emp.hourlyWage ?? 0);
+      const rawPlanH     = planHours[emp.id]  ?? 0;
+      const rawIstH      = istHours[emp.id]   ?? 0;
+      const planWork     = rawPlanH * (emp.hourlyWage ?? 0);
+      const istWork      = rawIstH  * (emp.hourlyWage ?? 0);
       const planHoliday  = getEmpFerienPlanCHF(emp);
       const istHoliday   = getEmpFerienCHF(emp);
       const planTotalVar = planWork + planHoliday;
@@ -1682,6 +1676,8 @@ export default function PersonalFixPage() {
         dept:         emp.department ?? '–',
         hourlyWage:   emp.hourlyWage ?? 0,
         weeklyHours:  emp.weeklyHours ?? 42,
+        planH:        rawPlanH * factor,
+        istH:         rawIstH  * factor,
         planWork:     planWork     * factor,
         istWork:      istWork      * factor,
         planHoliday:  planHoliday  * factor,
@@ -1732,48 +1728,38 @@ export default function PersonalFixPage() {
     monthDiff: number;
   } => {
     const cutoff = proRataDay;
-    const dayMap = new Map<string, { pw: number; iw: number; pf: number; if_: number }>();
+    // Only Flex Arbeit (work hours × wage) — no ferien in this view
+    const dayMap = new Map<string, { pw: number; iw: number }>();
 
     for (const emp of variableEmployees) {
       const wage = emp.hourlyWage ?? 0;
       if (!wage) continue;
-      const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
 
       const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, cutoff, wage);
       const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, cutoff, wage);
-      const planF = loadFerienPlanDayDetails(emp.id, selectedYear, selectedMonth, cutoff, dailyH, wage);
-      const istF  = loadFerienIstDayDetails(emp.id, selectedYear, selectedMonth, cutoff, dailyH, wage);
 
       for (const r of planW) {
-        const e = dayMap.get(r.date) ?? { pw: 0, iw: 0, pf: 0, if_: 0 };
+        const e = dayMap.get(r.date) ?? { pw: 0, iw: 0 };
         e.pw += r.cost; dayMap.set(r.date, e);
       }
       for (const r of istW) {
-        const e = dayMap.get(r.date) ?? { pw: 0, iw: 0, pf: 0, if_: 0 };
+        const e = dayMap.get(r.date) ?? { pw: 0, iw: 0 };
         e.iw += r.cost; dayMap.set(r.date, e);
-      }
-      for (const r of planF) {
-        const e = dayMap.get(r.date) ?? { pw: 0, iw: 0, pf: 0, if_: 0 };
-        e.pf += r.cost; dayMap.set(r.date, e);
-      }
-      for (const r of istF) {
-        const e = dayMap.get(r.date) ?? { pw: 0, iw: 0, pf: 0, if_: 0 };
-        e.if_ += r.cost; dayMap.set(r.date, e);
       }
     }
 
     const days: AbwDay[] = Array.from(dayMap.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, v]) => {
-        const planTotal = v.pw + v.pf;
-        const istTotal  = v.iw + v.if_;
+        const planTotal = v.pw;
+        const istTotal  = v.iw;
         const diff      = istTotal - planTotal;
         return {
           date,
           planWork:   v.pw,
           istWork:    v.iw,
-          planFerien: v.pf,
-          istFerien:  v.if_,
+          planFerien: 0,
+          istFerien:  0,
           planTotal,
           istTotal,
           diff,
@@ -2376,12 +2362,16 @@ export default function PersonalFixPage() {
             { label: 'Ø Abw./Tag',        val: avgDayDiff,  plan: days.length  > 0 ? monthPlan / days.length  : 0,  pct: days.length  > 0 ? (avgDayDiff  / (monthPlan / days.length))  * 100 : null },
           ];
 
-          const empTotal = pfixPerEmp.reduce((s, r) => s + r.planTotalVar, 0);
-          const empIst   = pfixPerEmp.reduce((s, r) => s + r.istTotalVar, 0);
+          const empTotal = pfixPerEmp.reduce((s, r) => s + r.planWork, 0);
+          const empIst   = pfixPerEmp.reduce((s, r) => s + r.istWork, 0);
+          console.log(`[FLEX] summary total plan: ${monthPlan.toFixed(2)}`);
+          console.log(`[FLEX] summary total ist: ${monthIst.toFixed(2)}`);
+          console.log(`[FLEX] employee table total plan: ${empTotal.toFixed(2)}`);
+          console.log(`[FLEX] employee table total ist: ${empIst.toFixed(2)}`);
           if (monthPlan > 0 && Math.abs(empTotal - monthPlan) > 0.10)
-            console.error(`[FLEX] plan cross-check: periodTable=${monthPlan.toFixed(2)} empTable=${empTotal.toFixed(2)}`);
+            console.error(`[FLEX] plan cross-check MISMATCH: periodTable=${monthPlan.toFixed(2)} empTable=${empTotal.toFixed(2)} Δ=${(empTotal-monthPlan).toFixed(2)}`);
           if (monthIst > 0 && Math.abs(empIst - monthIst) > 0.10)
-            console.error(`[FLEX] ist cross-check: periodTable=${monthIst.toFixed(2)} empTable=${empIst.toFixed(2)}`);
+            console.error(`[FLEX] ist cross-check MISMATCH: periodTable=${monthIst.toFixed(2)} empTable=${empIst.toFixed(2)} Δ=${(empIst-monthIst).toFixed(2)}`);
 
           return (
             <section className={cn('rounded-xl border-2 bg-card shadow-sm overflow-hidden', mA.border)}>
@@ -2541,15 +2531,12 @@ export default function PersonalFixPage() {
                         <tr className="bg-muted/30 border-b border-border text-muted-foreground">
                           <th className="px-3 py-2 text-left font-medium">Name</th>
                           <th className="px-3 py-2 text-center font-medium">Abt.</th>
-                          <th className="px-3 py-2 text-right font-medium text-blue-600">Flex Arbeit Plan</th>
-                          <th className="px-3 py-2 text-right font-medium text-orange-600">Flex Arbeit Ist</th>
-                          <th className="px-3 py-2 text-right font-medium">Diff. Arbeit</th>
-                          <th className="px-3 py-2 text-right font-medium text-blue-500">Ferien Plan</th>
-                          <th className="px-3 py-2 text-right font-medium text-orange-500">Ferien Ist</th>
-                          <th className="px-3 py-2 text-right font-medium">Diff. Ferien</th>
-                          <th className="px-3 py-2 text-right font-medium text-blue-700">Total Flex Plan</th>
-                          <th className="px-3 py-2 text-right font-medium text-orange-700">Total Flex Ist</th>
-                          <th className="px-3 py-2 text-right font-medium">Diff. Total</th>
+                          <th className="px-3 py-2 text-right font-medium">CHF/h</th>
+                          <th className="px-3 py-2 text-right font-medium text-blue-500">Plan Std</th>
+                          <th className="px-3 py-2 text-right font-medium text-orange-500">Ist Std</th>
+                          <th className="px-3 py-2 text-right font-medium text-blue-700">Flex Plan</th>
+                          <th className="px-3 py-2 text-right font-medium text-orange-700">Flex Ist</th>
+                          <th className="px-3 py-2 text-right font-medium">Diff.</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2566,11 +2553,11 @@ export default function PersonalFixPage() {
                             cutoffDay:   proRataDay,
                             factor:      proRataDay !== null ? proRataFactor : 1,
                           });
-                          const clickCell = (field: BreakdownField, amount: number, colorClass: string, isSemibold = false) => (
+                          const clickCell = (field: BreakdownField, amount: number, colorClass: string) => (
                             <td className="px-3 py-1.5 text-right">
                               {amount > 0
                                 ? <button onClick={() => openBreakdown(field)}
-                                    className={cn('font-mono underline underline-offset-2 decoration-dotted hover:opacity-80 transition-opacity cursor-pointer', colorClass, isSemibold && 'font-semibold')}
+                                    className={cn('font-mono font-semibold underline underline-offset-2 decoration-dotted hover:opacity-80 transition-opacity cursor-pointer', colorClass)}
                                     title="Tagesdetails anzeigen">
                                     {fmtCHF(amount)}
                                   </button>
@@ -2581,30 +2568,23 @@ export default function PersonalFixPage() {
                             <tr key={row.id} className={i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'}>
                               <td className="px-3 py-1.5 font-medium">{row.name}</td>
                               <td className="px-3 py-1.5 text-center text-muted-foreground capitalize">{row.dept}</td>
-                              {clickCell('planWork',     row.planWork,     'text-blue-700 dark:text-blue-400')}
-                              {clickCell('istWork',      row.istWork,      'text-orange-700 dark:text-orange-400')}
-                              <td className={cn('px-3 py-1.5 text-right font-mono', dc(row.diffWork))}>{row.diffWork === 0 ? '–' : `${row.diffWork > 0 ? '+' : ''}${fmtCHF(row.diffWork)}`}</td>
-                              {clickCell('planHoliday',  row.planHoliday,  'text-blue-500 dark:text-blue-400')}
-                              {clickCell('istHoliday',   row.istHoliday,   'text-orange-500 dark:text-orange-400')}
-                              <td className={cn('px-3 py-1.5 text-right font-mono', dc(row.diffHoliday))}>{row.diffHoliday === 0 ? '–' : `${row.diffHoliday > 0 ? '+' : ''}${fmtCHF(row.diffHoliday)}`}</td>
-                              {clickCell('planTotalVar', row.planTotalVar, 'text-blue-700 dark:text-blue-400', true)}
-                              {clickCell('istTotalVar',  row.istTotalVar,  'text-orange-700 dark:text-orange-400', true)}
-                              <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', dc(row.diffTotalVar))}>{row.diffTotalVar === 0 ? '–' : `${row.diffTotalVar > 0 ? '+' : ''}${fmtCHF(row.diffTotalVar)}`}</td>
+                              <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{row.hourlyWage > 0 ? `${row.hourlyWage.toFixed(2)}` : '–'}</td>
+                              <td className="px-3 py-1.5 text-right font-mono text-blue-500 dark:text-blue-400">{row.planH > 0 ? `${row.planH.toFixed(1)} h` : '–'}</td>
+                              <td className="px-3 py-1.5 text-right font-mono text-orange-500 dark:text-orange-400">{row.istH > 0 ? `${row.istH.toFixed(1)} h` : '–'}</td>
+                              {clickCell('planWork', row.planWork, 'text-blue-700 dark:text-blue-400')}
+                              {clickCell('istWork',  row.istWork,  'text-orange-700 dark:text-orange-400')}
+                              <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', dc(row.diffWork))}>{row.diffWork === 0 ? '–' : `${row.diffWork > 0 ? '+' : ''}${fmtCHF(row.diffWork)}`}</td>
                             </tr>
                           );
                         })}
                       </tbody>
                       <tfoot>
                         <tr className="border-t-2 border-border bg-muted/30 font-bold text-xs">
-                          <td className="px-3 py-2" colSpan={2}>Total</td>
+                          <td className="px-3 py-2" colSpan={3}>Total</td>
+                          <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">{pfixPerEmp.reduce((s,r)=>s+r.planH,0).toFixed(1)} h</td>
+                          <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">{pfixPerEmp.reduce((s,r)=>s+r.istH,0).toFixed(1)} h</td>
                           <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.planWork, 0))}</td>
                           <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.istWork, 0))}</td>
-                          <td className="px-3 py-2" />
-                          <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">{pfixPerEmp.reduce((s,r)=>s+r.planHoliday,0) > 0 ? fmtCHF(pfixPerEmp.reduce((s,r)=>s+r.planHoliday,0)) : '–'}</td>
-                          <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">{pfixPerEmp.reduce((s,r)=>s+r.istHoliday,0) > 0 ? fmtCHF(pfixPerEmp.reduce((s,r)=>s+r.istHoliday,0)) : '–'}</td>
-                          <td className="px-3 py-2" />
-                          <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.planTotalVar, 0))}</td>
-                          <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.istTotalVar, 0))}</td>
                           <td className="px-3 py-2" />
                         </tr>
                       </tfoot>

@@ -1,0 +1,116 @@
+Bitte die Flex-Auswertung jetzt vereinfachen und die Drilldowns sauber machen.
+
+Ziel:
+Die Darstellung soll klarer und aussagekräftiger sein.
+Da Ferien bei flexiblen Mitarbeitern hier nicht gezählt werden sollen, möchte ich die ganze Ferien-Planungsaufstellung in dieser Flex-Mitarbeiter-Tabelle entfernen.
+
+Bitte exakt so umsetzen:
+
+1. Tabelle "Flex Kosten pro Mitarbeiter" vereinfachen
+Die Tabelle soll nur noch die Flex-Arbeit zeigen.
+
+Bitte diese Spalten ENTFERNEN:
+- Ferien Plan
+- Ferien Ist
+- Diff Ferien
+- Total Flex Plan
+- Total Flex Ist
+- Diff Total
+
+Bitte nur noch diese Spalten anzeigen:
+- Mitarbeiter
+- Abteilung
+- Flex Arbeit Plan
+- Flex Arbeit Ist
+- Diff Arbeit
+
+Optional zusätzlich:
+- Stundenlohn
+- Plan-Stunden
+- Ist-Stunden
+
+aber nur wenn es die Lesbarkeit nicht verschlechtert.
+
+2. Fachliche Logik
+Diese Mitarbeitertabelle soll genau dieselbe Logik verwenden wie die obere "Flex-Auswertung — Plan vs Ist".
+
+Das heisst:
+- Flex Arbeit Plan = geplante Arbeitsstunden * Stundenlohn
+- Flex Arbeit Ist = echte Ist-Arbeitsstunden * Stundenlohn
+- Diff Arbeit = Ist - Plan
+
+Keine Ferienlogik mehr in dieser Mitarbeitertabelle mischen.
+
+3. Totale unten
+Die Totalzeile unten in der Mitarbeitertabelle soll exakt dieselben Totale zeigen wie oben in der Flex-Auswertung:
+- Total Flex Plan
+- Total Flex Ist
+- Diff CHF
+
+Wenn dieselbe Aggregation aktiv ist, müssen die Totale identisch sein.
+
+4. Popup für Tageszeilen in "Flex-Auswertung — Plan vs Ist"
+Wenn ich oben in der Tabelle "Flex-Auswertung — Plan vs Ist" auf eine Tageszeile klicke,
+soll ein Popup aufgehen.
+
+Dieses Popup soll die Aufschlüsselung dieses Tages pro Mitarbeiter zeigen.
+
+Popup-Inhalt:
+- Datum / Zeitraum
+- Total Plan CHF
+- Total Ist CHF
+- Diff CHF
+- Status
+
+Darunter pro Mitarbeiter:
+- Mitarbeiter
+- Abteilung
+- Plan Stunden
+- Ist Stunden
+- Flex Arbeit Plan CHF
+- Flex Arbeit Ist CHF
+- Diff Arbeit CHF
+
+Optional:
+- Stundenlohn
+
+5. Popup-Logik
+Wichtig:
+Das Popup für den Tag muss dieselbe zentrale Master-Logik verwenden wie:
+- die Tageszeile oben
+- die Mitarbeitertabelle unten
+
+Also keine zweite separate Berechnung.
+
+6. Klickbarkeit
+- Tageszeilen oben klickbar machen
+- Mitarbeitertabelle unten weiterhin klickbar lassen für Mitarbeiter-Detailpopup
+- so gibt es zwei Drilldowns:
+  a) Klick auf Tag -> Mitarbeiter-Aufschlüsselung dieses Tages
+  b) Klick auf Mitarbeiter -> Detail dieses Mitarbeiters
+
+7. Visuell
+- Mitarbeitertabelle kompakter machen
+- weniger Spalten = bessere Lesbarkeit
+- Popup gross genug und scrollbar
+- Totalzeilen deutlich hervorheben
+
+8. Validierung / Debug Logs
+Bitte loggen:
+[FLEX] summary total plan: ...
+[FLEX] summary total ist: ...
+[FLEX] employee table total plan: ...
+[FLEX] employee table total ist: ...
+[FLEX] day popup total plan: ...
+[FLEX] day popup total ist: ...
+[FLEX] day popup diff: ...
+
+Wenn Totale nicht identisch sind:
+console.error mit Differenz
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- welche Spalten entfernt wurden
+- ob die Mitarbeitertabelle jetzt nur noch Flex Arbeit zeigt
+- ob die Totale oben und unten jetzt identisch sind
+- was im Tages-Popup genau angezeigt wird
