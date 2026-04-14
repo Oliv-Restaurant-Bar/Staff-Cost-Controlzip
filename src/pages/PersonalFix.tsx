@@ -1797,25 +1797,42 @@ export default function PersonalFixPage() {
         ? 'warning'
         : 'off_track';
 
-  // ── Forecast Monatsende: geplante Restkosten ab Tag nach Stichtag ───────────
-  // Nur relevant wenn proRataDay gesetzt ist; sonst ist alles = month
+  // ── Effective cutoff for forecast ────────────────────────────────────────────
+  // When Stichtag set: use proRataDay.
+  // When no Stichtag: use today (if current month), last day (if past month), 0 (if future).
+  const isCurrentMonthForForecast = selectedYear === today.getFullYear() && selectedMonth === today.getMonth() + 1;
+  const isPastMonth = selectedYear < today.getFullYear()
+    || (selectedYear === today.getFullYear() && selectedMonth < today.getMonth() + 1);
+  const effectiveForecastCutoff: number = proRataDay !== null
+    ? proRataDay
+    : isCurrentMonthForForecast
+      ? today.getDate()
+      : isPastMonth
+        ? daysInSelectedMonth  // past month: all days elapsed, no remaining plan
+        : 0;                   // future month: no days elapsed, full plan is remaining
+
+  const forecastIstLabel = proRataDay !== null
+    ? `bis ${cutoffLabel}`
+    : `bis heute (${effectiveForecastCutoff}.)`;
+
+  // ── Forecast Monatsende: geplante Restkosten ab Tag nach Stichtag/heute ─────
   const forecastRemainingPlanFlex = useMemo(() => {
-    if (proRataDay === null) return 0;
-    const cutoffStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(proRataDay).padStart(2, '0')}`;
+    const cutoffStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(effectiveForecastCutoff).padStart(2, '0')}`;
     let remaining = 0;
     for (const emp of variableEmployees) {
       const wage = emp.hourlyWage ?? 0;
       if (!wage) continue;
-      // Full month plan (no cutoff), dann filtern auf Tage NACH dem Stichtag
+      // Full month plan (no cutoff), dann filtern auf Tage NACH dem Stichtag/heute
       const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, null, wage);
       remaining += planW.filter(r => r.date > cutoffStr).reduce((s, r) => s + r.cost, 0);
     }
-    console.log(`[FLEX-FORECAST] mode: forecast`);
+    console.log(`[FLEX-FORECAST] mode: ${proRataDay !== null ? 'stichtag' : 'today-as-cutoff'}`);
     console.log(`[FLEX-FORECAST] cutoff date: ${cutoffStr}`);
     console.log(`[FLEX-FORECAST] ist until cutoff: ${pfix.active.istWork.toFixed(2)}`);
     console.log(`[FLEX-FORECAST] remaining planned flex: ${remaining.toFixed(2)}`);
     return remaining;
-  }, [variableEmployees, selectedYear, selectedMonth, proRataDay, pfix.active.istWork]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variableEmployees, selectedYear, selectedMonth, effectiveForecastCutoff, pfix.active.istWork]);
 
   // Forecast Monatsende derived values
   // Gesamter Monat: Budget gesamt minus FIX gesamt (= pfix.month.fix)
@@ -3003,34 +3020,32 @@ export default function PersonalFixPage() {
               )}
             </div>
 
-            {/* ── Aktuell / Forecast Toggle ─────────────────────────────── */}
-            {proRataDay !== null && (
-              <div className="flex items-center gap-2 px-4 pb-2 pt-3 border-b border-border">
-                <span className="text-xs text-muted-foreground font-medium">Ansicht:</span>
-                <div className="flex gap-1 rounded-lg bg-muted p-0.5">
-                  <button
-                    onClick={() => setForecastViewMode('actual')}
-                    className={cn('rounded px-3 py-1 text-xs font-medium transition-colors',
-                      forecastViewMode === 'actual' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground')}>
-                    Auf Kurs per Stichtag
-                  </button>
-                  <button
-                    onClick={() => setForecastViewMode('forecast')}
-                    className={cn('rounded px-3 py-1 text-xs font-medium transition-colors',
-                      forecastViewMode === 'forecast' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground')}>
-                    Prognose bis Monatsende
-                  </button>
-                </div>
-                {forecastViewMode === 'forecast' && (
-                  <span className="text-[10px] text-violet-600 dark:text-violet-400 font-medium ml-1">
-                    Ist bis {cutoffLabel} + geplante Restkosten ab Tag {proRataDay + 1}
-                  </span>
-                )}
+            {/* ── Aktuell / Forecast Toggle — immer sichtbar ───────────── */}
+            <div className="flex items-center gap-2 px-4 pb-2 pt-3 border-b border-border">
+              <span className="text-xs text-muted-foreground font-medium">Ansicht:</span>
+              <div className="flex gap-1 rounded-lg bg-muted p-0.5">
+                <button
+                  onClick={() => setForecastViewMode('actual')}
+                  className={cn('rounded px-3 py-1 text-xs font-medium transition-colors',
+                    forecastViewMode === 'actual' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground')}>
+                  {proRataDay !== null ? 'Auf Kurs per Stichtag' : 'Aktuell'}
+                </button>
+                <button
+                  onClick={() => setForecastViewMode('forecast')}
+                  className={cn('rounded px-3 py-1 text-xs font-medium transition-colors',
+                    forecastViewMode === 'forecast' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground')}>
+                  Prognose bis Monatsende
+                </button>
               </div>
-            )}
+              {forecastViewMode === 'forecast' && (
+                <span className="text-[10px] text-violet-600 dark:text-violet-400 font-medium ml-1">
+                  Ist {forecastIstLabel} + geplante Restkosten ab Tag {effectiveForecastCutoff + 1}
+                </span>
+              )}
+            </div>
 
             {/* Budget-Rechnung — AKTUELL */}
-            {(proRataDay === null || forecastViewMode === 'actual') && (
+            {forecastViewMode === 'actual' && (
             <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* LEFT: Budgetverteilung — wie viel ist für Flex verfügbar */}
               <div className="space-y-2">
@@ -3103,7 +3118,7 @@ export default function PersonalFixPage() {
             )}
 
             {/* Budget-Rechnung — FORECAST MONATSENDE */}
-            {proRataDay !== null && forecastViewMode === 'forecast' && (
+            {forecastViewMode === 'forecast' && (
             <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* LEFT: Monatsbudget gesamt */}
               <div className="space-y-2">
@@ -3133,12 +3148,12 @@ export default function PersonalFixPage() {
                   Prognose Flex bis Monatsende
                 </p>
                 <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">Flex Arbeit Ist bis {cutoffLabel}</span>
+                  <span className="text-sm text-muted-foreground">Flex Arbeit Ist {forecastIstLabel}</span>
                   <span className="font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfix.active.istWork)}</span>
                 </div>
                 <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
                   <div className="flex flex-col">
-                    <span className="text-sm text-muted-foreground">+ geplante Restkosten (Tag {proRataDay + 1}–{daysInSelectedMonth})</span>
+                    <span className="text-sm text-muted-foreground">+ geplante Restkosten (Tag {effectiveForecastCutoff + 1}–{daysInSelectedMonth})</span>
                     <span className="text-[10px] text-muted-foreground/60">aus Dienstplan, ohne Ferien</span>
                   </div>
                   <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">+ {fmtCHF(forecastRemainingPlanFlex)}</span>
@@ -3176,9 +3191,9 @@ export default function PersonalFixPage() {
 
             {/* ── Operativer Status-Banner ─────────────────────────────── */}
             {(() => {
-              const activeStatus = (proRataDay !== null && forecastViewMode === 'forecast') ? forecastStatus : flexBudgetStatus;
-              const activeDelta  = (proRataDay !== null && forecastViewMode === 'forecast') ? forecastDelta : pfixIstVarDelta;
-              const activeLabel  = (proRataDay !== null && forecastViewMode === 'forecast')
+              const activeStatus = forecastViewMode === 'forecast' ? forecastStatus : flexBudgetStatus;
+              const activeDelta  = forecastViewMode === 'forecast' ? forecastDelta : pfixIstVarDelta;
+              const activeLabel  = forecastViewMode === 'forecast'
                 ? (activeStatus === 'on_track' ? `Auf Kurs gemäss restlichem Plan — Puffer bis Monatsende`
                     : activeStatus === 'warning' ? `Achtung: Prognose leicht über Budget bis Monatsende`
                     : `Nicht auf Kurs: Forecast überschreitet Budget bis Monatsende`)
