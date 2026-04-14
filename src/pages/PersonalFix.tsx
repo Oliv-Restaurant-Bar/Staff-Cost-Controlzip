@@ -1797,23 +1797,52 @@ export default function PersonalFixPage() {
         ? 'warning'
         : 'off_track';
 
+  // ── Last Ist-import day: highest calendar day with actual hours in the selected month ──
+  const lastIstImportDay = useMemo(() => {
+    const key = `actual-hours-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+    const prefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+    const varIds = new Set(variableEmployees.map(e => e.id));
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return 0;
+      const data: Record<string, any> = JSON.parse(raw);
+      let maxDay = 0;
+      for (const [cellKey, val] of Object.entries(data)) {
+        const date = cellKey.slice(-10);
+        if (!date.startsWith(prefix)) continue;
+        const empId = cellKey.slice(0, cellKey.length - 11);
+        if (!varIds.has(empId)) continue;
+        const absenceType = typeof val === 'object' ? val?.absenceType : undefined;
+        if (absenceType === 'FE') continue;
+        const h = typeof val === 'number' ? val : (val?.hours ?? 0);
+        if (h > 0) {
+          const day = parseInt(date.slice(-2), 10);
+          if (day > maxDay) maxDay = day;
+        }
+      }
+      console.log(`[FLEX-FORECAST] lastIstImportDay: ${maxDay}`);
+      return maxDay;
+    } catch { return 0; }
+  }, [selectedYear, selectedMonth, variableEmployees]);
+
   // ── Effective cutoff for forecast ────────────────────────────────────────────
-  // When Stichtag set: use proRataDay.
-  // When no Stichtag: use today (if current month), last day (if past month), 0 (if future).
+  // Priority: Stichtag > lastIstImportDay > today (current month) > last day (past) > 0 (future)
   const isCurrentMonthForForecast = selectedYear === today.getFullYear() && selectedMonth === today.getMonth() + 1;
   const isPastMonth = selectedYear < today.getFullYear()
     || (selectedYear === today.getFullYear() && selectedMonth < today.getMonth() + 1);
   const effectiveForecastCutoff: number = proRataDay !== null
     ? proRataDay
     : isCurrentMonthForForecast
-      ? today.getDate()
+      ? (lastIstImportDay > 0 ? lastIstImportDay : today.getDate())
       : isPastMonth
         ? daysInSelectedMonth  // past month: all days elapsed, no remaining plan
         : 0;                   // future month: no days elapsed, full plan is remaining
 
   const forecastIstLabel = proRataDay !== null
     ? `bis ${cutoffLabel}`
-    : `bis heute (${effectiveForecastCutoff}.)`;
+    : lastIstImportDay > 0 && isCurrentMonthForForecast
+      ? `bis ${lastIstImportDay}. (letzter Import)`
+      : `bis ${effectiveForecastCutoff}.`;
 
   // ── Forecast Monatsende: geplante Restkosten ab Tag nach Stichtag/heute ─────
   const forecastRemainingPlanFlex = useMemo(() => {
@@ -1826,13 +1855,13 @@ export default function PersonalFixPage() {
       const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, null, wage);
       remaining += planW.filter(r => r.date > cutoffStr).reduce((s, r) => s + r.cost, 0);
     }
-    console.log(`[FLEX-FORECAST] mode: ${proRataDay !== null ? 'stichtag' : 'today-as-cutoff'}`);
+    console.log(`[FLEX-FORECAST] mode: ${proRataDay !== null ? 'stichtag' : lastIstImportDay > 0 ? 'last-import-as-cutoff' : 'today-as-cutoff'}`);
     console.log(`[FLEX-FORECAST] cutoff date: ${cutoffStr}`);
     console.log(`[FLEX-FORECAST] ist until cutoff: ${pfix.active.istWork.toFixed(2)}`);
     console.log(`[FLEX-FORECAST] remaining planned flex: ${remaining.toFixed(2)}`);
     return remaining;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variableEmployees, selectedYear, selectedMonth, effectiveForecastCutoff, pfix.active.istWork]);
+  }, [variableEmployees, selectedYear, selectedMonth, effectiveForecastCutoff, lastIstImportDay, pfix.active.istWork]);
 
   // Forecast Monatsende derived values
   // Gesamter Monat: Budget gesamt minus FIX gesamt (= pfix.month.fix)
