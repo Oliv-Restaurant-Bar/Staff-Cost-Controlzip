@@ -998,6 +998,18 @@ function FlexBreakdownModal({ target, onClose }: {
   const diffTotalPct  = totalPlan > 0 ? (diffTotal / totalPlan) * 100 : 0;
   const noData        = totalPlan === 0 && totalIst === 0;
 
+  // ── Kumulierte Abweichung über workRows ────────────────────────────────────
+  let _cumPopup = 0;
+  const workRowsWithCum = workRows.map(r => {
+    const dCHF = r.istCHF - r.planCHF;
+    _cumPopup += dCHF;
+    console.log(`[POPUP-CUM] employee: ${empName}`);
+    console.log(`[POPUP-CUM] row diff: ${dCHF.toFixed(2)} (${r.date})`);
+    console.log(`[POPUP-CUM] running diff total: ${_cumPopup.toFixed(2)}`);
+    return { ...r, dCHF, cumDiff: _cumPopup };
+  });
+  const cumDiffTotal = _cumPopup;
+
   // ── Ampel ──────────────────────────────────────────────────────────────────
   const overallSt = ampelStatus(diffTotal, totalPlan);
   const overallA  = AMPEL[overallSt];
@@ -1094,6 +1106,12 @@ function FlexBreakdownModal({ target, onClose }: {
                 <span className={cn('font-mono font-bold ml-0.5', overallA.text)}>{fmtD(diffTotal)}</span>
                 {totalPlan > 0 && <span className={cn('text-[10px]', overallA.text)}>({diffTotalPct > 0.005 ? '+' : ''}{diffTotalPct.toFixed(1)} %)</span>}
               </div>
+              <div className="flex items-center gap-1.5 rounded-lg border border-border bg-background/80 px-3 py-1.5 text-xs">
+                <span className="text-muted-foreground font-medium">Kum. Abw.:</span>
+                <span className={cn('font-mono font-bold', diffCls(cumDiffTotal))}>
+                  {cumDiffTotal > 0.005 ? '+' : cumDiffTotal < -0.005 ? '−' : ''}{fmtCHF(Math.abs(cumDiffTotal))}
+                </span>
+              </div>
             </div>
           )}
         </div>
@@ -1125,14 +1143,17 @@ function FlexBreakdownModal({ target, onClose }: {
                           <th className={cn(thCls, 'text-right text-blue-600')}>Plan CHF</th>
                           <th className={cn(thCls, 'text-right text-orange-600')}>Ist CHF</th>
                           <th className={cn(thCls, 'text-right')}>Diff CHF</th>
+                          <th className={cn(thCls, 'text-right')}>Kum. Diff</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {workRows.map((r, i) => {
+                        {workRowsWithCum.map((r, i) => {
                           const dH   = r.istH   - r.planH;
-                          const dCHF = r.istCHF - r.planCHF;
-                          const rSt  = (r.planCHF === 0 && r.istCHF === 0) ? 'neutral' as AmpelStatus : ampelStatus(dCHF, r.planCHF);
+                          const rSt  = (r.planCHF === 0 && r.istCHF === 0) ? 'neutral' as AmpelStatus : ampelStatus(r.dCHF, r.planCHF);
                           const rA   = AMPEL[rSt];
+                          const cumCls = r.cumDiff > 0.005 ? 'text-red-600 dark:text-red-400'
+                            : r.cumDiff < -0.005 ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-muted-foreground';
                           return (
                             <tr key={i} className={cn(i % 2 === 0 ? 'bg-background' : 'bg-muted/15', rA.bg)}>
                               <td className="px-2 py-1.5 text-center"><span className={cn('inline-block w-2 h-2 rounded-full', rA.dot)} /></td>
@@ -1142,7 +1163,10 @@ function FlexBreakdownModal({ target, onClose }: {
                               <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums', diffCls(dH))}>{(r.planH === 0 && r.istH === 0) ? '–' : fmtDH(dH)}</td>
                               <td className="px-3 py-1.5 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{r.planCHF > 0 ? fmtCHFDec(r.planCHF) : '–'}</td>
                               <td className="px-3 py-1.5 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{r.istCHF > 0 ? fmtCHFDec(r.istCHF) : '–'}</td>
-                              <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums font-semibold', diffCls(dCHF))}>{(r.planCHF === 0 && r.istCHF === 0) ? '–' : fmtD(dCHF)}</td>
+                              <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums font-semibold', diffCls(r.dCHF))}>{(r.planCHF === 0 && r.istCHF === 0) ? '–' : fmtD(r.dCHF)}</td>
+                              <td className={cn('px-3 py-1.5 text-right font-mono tabular-nums font-semibold text-[11px]', cumCls)}>
+                                {r.cumDiff > 0.005 ? '+' : r.cumDiff < -0.005 ? '−' : ''}{fmtCHF(Math.abs(r.cumDiff))}
+                              </td>
                             </tr>
                           );
                         })}
@@ -1157,6 +1181,9 @@ function FlexBreakdownModal({ target, onClose }: {
                           <td className="px-3 py-2 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(totalPlanWork)}</td>
                           <td className="px-3 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(totalIstWork)}</td>
                           <td className={cn('px-3 py-2 text-right font-mono tabular-nums', diffCls(diffWork))}>{fmtD(diffWork)}</td>
+                          <td className={cn('px-3 py-2 text-right font-mono tabular-nums', diffCls(cumDiffTotal))}>
+                            {cumDiffTotal > 0.005 ? '+' : cumDiffTotal < -0.005 ? '−' : ''}{fmtCHF(Math.abs(cumDiffTotal))}
+                          </td>
                         </tr>
                       </tfoot>
                     </table>
@@ -1279,6 +1306,7 @@ export default function PersonalFixPage() {
   // ── Flex-Breakdown-Popup ──────────────────────────────────────────────────
   const [breakdown, setBreakdown] = useState<BreakdownTarget | null>(null);
   const [abwMode,   setAbwMode]   = useState<AbwMode>('day');
+  const [forecastViewMode, setForecastViewMode] = useState<'actual' | 'forecast'>('actual');
   const [flexPeriodPopup,  setFlexPeriodPopup]  = useState<FlexPeriodTarget | null>(null);
   const [expandedFixDepts, setExpandedFixDepts] = useState<Set<string>>(new Set());
 
@@ -1768,6 +1796,43 @@ export default function PersonalFixPage() {
       : Math.abs(pfixIstVarDelta) <= pfixAvailableVar * 0.05
         ? 'warning'
         : 'off_track';
+
+  // ── Forecast Monatsende: geplante Restkosten ab Tag nach Stichtag ───────────
+  // Nur relevant wenn proRataDay gesetzt ist; sonst ist alles = month
+  const forecastRemainingPlanFlex = useMemo(() => {
+    if (proRataDay === null) return 0;
+    const cutoffStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(proRataDay).padStart(2, '0')}`;
+    let remaining = 0;
+    for (const emp of variableEmployees) {
+      const wage = emp.hourlyWage ?? 0;
+      if (!wage) continue;
+      // Full month plan (no cutoff), dann filtern auf Tage NACH dem Stichtag
+      const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, null, wage);
+      remaining += planW.filter(r => r.date > cutoffStr).reduce((s, r) => s + r.cost, 0);
+    }
+    console.log(`[FLEX-FORECAST] mode: forecast`);
+    console.log(`[FLEX-FORECAST] cutoff date: ${cutoffStr}`);
+    console.log(`[FLEX-FORECAST] ist until cutoff: ${pfix.active.istWork.toFixed(2)}`);
+    console.log(`[FLEX-FORECAST] remaining planned flex: ${remaining.toFixed(2)}`);
+    return remaining;
+  }, [variableEmployees, selectedYear, selectedMonth, proRataDay, pfix.active.istWork]);
+
+  // Forecast Monatsende derived values
+  // Gesamter Monat: Budget gesamt minus FIX gesamt (= pfix.month.fix)
+  const forecastAvailableVar  = personnelBudget > 0 ? Math.max(0, personnelBudget - pfix.month.fix) : 0;
+  const forecastFlexTotal     = pfix.active.istWork + forecastRemainingPlanFlex;
+  const forecastDelta         = forecastAvailableVar > 0 ? forecastAvailableVar - forecastFlexTotal : 0;
+  const forecastStatus: 'on_track' | 'warning' | 'off_track' =
+    forecastDelta >= 0
+      ? 'on_track'
+      : Math.abs(forecastDelta) <= forecastAvailableVar * 0.05
+        ? 'warning'
+        : 'off_track';
+
+  if (personnelBudget > 0 && proRataDay !== null) {
+    console.log(`[FLEX-FORECAST] forecast month total: ${forecastFlexTotal.toFixed(2)}`);
+    console.log(`[FLEX-FORECAST] budget remaining / status: ${forecastDelta.toFixed(2)} / ${forecastStatus}`);
+  }
 
   // [FLEX-BUDGET] + [BUDGET-DAY] debug logs
   if (personnelBudget > 0) {
@@ -2630,38 +2695,52 @@ export default function PersonalFixPage() {
                         <th className="text-right px-4 py-2 font-medium">Diff. CHF</th>
                         <th className="text-right px-4 py-2 font-medium">Diff. %</th>
                         <th className="text-left px-3 py-2 font-medium">Status</th>
+                        <th className="text-right px-4 py-2 font-medium">Kum. Abw. CHF</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {tableRows.map((row, i) => {
-                        const st = ampelStatus(row.diff, row.plan);
-                        const a  = AMPEL[st];
-                        return (
-                          <tr
-                            key={i}
-                            className={cn('hover:bg-muted/30 cursor-pointer transition-colors', a.bg)}
-                            onClick={() => setFlexPeriodPopup({
-                              label:     row.period,
-                              dates:     row.dates,
-                              planTotal: row.plan,
-                              istTotal:  row.ist,
-                              year:      selectedYear,
-                              month:     selectedMonth,
-                            })}
-                            title="Klicken für MA-Aufschlüsselung"
-                          >
-                            <td className="px-3 py-2 text-center">
-                              <span className={cn('inline-block w-2.5 h-2.5 rounded-full', a.dot)} />
-                            </td>
-                            <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{row.period}</td>
-                            <td className="px-4 py-2 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(row.plan)}</td>
-                            <td className="px-4 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(row.ist)}</td>
-                            <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold', a.text)}>{fmtDiff(row.diff)}</td>
-                            <td className={cn('px-4 py-2 text-right font-mono tabular-nums text-xs', a.text)}>{fmtPct(row.diffPct)}</td>
-                            <td className={cn('px-3 py-2 text-xs font-medium', a.text)}>{a.label}</td>
-                          </tr>
-                        );
-                      })}
+                      {(() => {
+                        let cumDiff = 0;
+                        return tableRows.map((row, i) => {
+                          cumDiff += row.diff;
+                          console.log(`[FLEX-CUM] aggregation: ${abwMode}`);
+                          console.log(`[FLEX-CUM] row diff: ${row.diff.toFixed(2)}`);
+                          console.log(`[FLEX-CUM] running diff total: ${cumDiff.toFixed(2)}`);
+                          const st = ampelStatus(row.diff, row.plan);
+                          const a  = AMPEL[st];
+                          const cumCls = cumDiff > 0.005 ? 'text-red-600 dark:text-red-400'
+                            : cumDiff < -0.005 ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-muted-foreground';
+                          return (
+                            <tr
+                              key={i}
+                              className={cn('hover:bg-muted/30 cursor-pointer transition-colors', a.bg)}
+                              onClick={() => setFlexPeriodPopup({
+                                label:     row.period,
+                                dates:     row.dates,
+                                planTotal: row.plan,
+                                istTotal:  row.ist,
+                                year:      selectedYear,
+                                month:     selectedMonth,
+                              })}
+                              title="Klicken für MA-Aufschlüsselung"
+                            >
+                              <td className="px-3 py-2 text-center">
+                                <span className={cn('inline-block w-2.5 h-2.5 rounded-full', a.dot)} />
+                              </td>
+                              <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{row.period}</td>
+                              <td className="px-4 py-2 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(row.plan)}</td>
+                              <td className="px-4 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(row.ist)}</td>
+                              <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold', a.text)}>{fmtDiff(row.diff)}</td>
+                              <td className={cn('px-4 py-2 text-right font-mono tabular-nums text-xs', a.text)}>{fmtPct(row.diffPct)}</td>
+                              <td className={cn('px-3 py-2 text-xs font-medium', a.text)}>{a.label}</td>
+                              <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold text-xs', cumCls)}>
+                                {cumDiff > 0.005 ? '+' : cumDiff < -0.005 ? '−' : ''}{fmtCHF(Math.abs(cumDiff))}
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })()}
                     </tbody>
                     {tableRows.length > 1 && (
                       <tfoot>
@@ -2673,6 +2752,9 @@ export default function PersonalFixPage() {
                           <td className={cn('px-4 py-2.5 text-right font-mono font-bold', mA.text)}>{fmtDiff(monthDiff)}</td>
                           <td className={cn('px-4 py-2.5 text-right font-mono text-xs', mA.text)}>{fmtPct(monthPct)}</td>
                           <td className={cn('px-3 py-2.5 text-xs font-semibold', mA.text)}>{mA.label}</td>
+                          <td className={cn('px-4 py-2.5 text-right font-mono font-bold text-xs', mA.text)}>
+                            {monthDiff > 0.005 ? '+' : monthDiff < -0.005 ? '−' : ''}{fmtCHF(Math.abs(monthDiff))}
+                          </td>
                         </tr>
                       </tfoot>
                     )}
@@ -2921,7 +3003,34 @@ export default function PersonalFixPage() {
               )}
             </div>
 
-            {/* Budget-Rechnung */}
+            {/* ── Aktuell / Forecast Toggle ─────────────────────────────── */}
+            {proRataDay !== null && (
+              <div className="flex items-center gap-2 px-4 pb-2 pt-3 border-b border-border">
+                <span className="text-xs text-muted-foreground font-medium">Ansicht:</span>
+                <div className="flex gap-1 rounded-lg bg-muted p-0.5">
+                  <button
+                    onClick={() => setForecastViewMode('actual')}
+                    className={cn('rounded px-3 py-1 text-xs font-medium transition-colors',
+                      forecastViewMode === 'actual' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground')}>
+                    Auf Kurs per Stichtag
+                  </button>
+                  <button
+                    onClick={() => setForecastViewMode('forecast')}
+                    className={cn('rounded px-3 py-1 text-xs font-medium transition-colors',
+                      forecastViewMode === 'forecast' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground')}>
+                    Prognose bis Monatsende
+                  </button>
+                </div>
+                {forecastViewMode === 'forecast' && (
+                  <span className="text-[10px] text-violet-600 dark:text-violet-400 font-medium ml-1">
+                    Ist bis {cutoffLabel} + geplante Restkosten ab Tag {proRataDay + 1}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Budget-Rechnung — AKTUELL */}
+            {(proRataDay === null || forecastViewMode === 'actual') && (
             <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* LEFT: Budgetverteilung — wie viel ist für Flex verfügbar */}
               <div className="space-y-2">
@@ -2930,9 +3039,7 @@ export default function PersonalFixPage() {
                 </p>
                 <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
                   <div className="flex flex-col">
-                    <span className="text-sm text-muted-foreground">
-                      Budget {budgetLabel}
-                    </span>
+                    <span className="text-sm text-muted-foreground">Budget {budgetLabel}</span>
                     {proRataDay !== null && (
                       <span className="text-[10px] text-muted-foreground font-mono">
                         {fmtCHF(personnelBudget)} · wochentagsgewichtet bis Tag {proRataDay}
@@ -2942,23 +3049,19 @@ export default function PersonalFixPage() {
                   <span className="font-mono font-semibold">{fmtCHF(pfixBudget)}</span>
                 </div>
                 <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">
-                    − Personal FIX Ist {budgetLabel}
-                  </span>
+                  <span className="text-sm text-muted-foreground">− Personal FIX Ist {budgetLabel}</span>
                   <span className="font-mono text-blue-700 dark:text-blue-400 shrink-0">− {fmtCHF(pfix.active.fix)}</span>
                 </div>
-                <div className={cn(
-                  'flex justify-between items-center py-2 px-3 rounded-lg',
+                <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg',
                   pfixAvailableVar > 0
                     ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
-                    : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300'
-                )}>
+                    : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
                   <span className="text-sm font-bold">= Verfügbar für Flex</span>
                   <span className="font-mono font-bold text-base">{fmtCHF(pfixAvailableVar)}</span>
                 </div>
               </div>
 
-              {/* RIGHT: IST-Vergleich — was ist tatsächlich angefallen vs. verfügbar */}
+              {/* RIGHT: IST-Vergleich */}
               <div className="space-y-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
                   IST-Vergleich {cutoffLabel ? `bis ${cutoffLabel}` : ''}
@@ -2968,37 +3071,28 @@ export default function PersonalFixPage() {
                   <span className="font-mono font-semibold">{fmtCHF(pfixAvailableVar)}</span>
                 </div>
                 <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
-                  <div className="flex items-center gap-1.5 flex-wrap text-sm text-muted-foreground">
-                    <span className="whitespace-nowrap">− Flex Arbeit Ist {budgetLabel}</span>
-                  </div>
+                  <span className="text-sm text-muted-foreground whitespace-nowrap">− Flex Arbeit Ist {budgetLabel}</span>
                   <span className="font-mono text-orange-700 dark:text-orange-400 shrink-0">− {fmtCHF(pfix.active.istWork)}</span>
                 </div>
                 {pfix.active.istHoliday > 0 && (
                   <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border/60">
                     <div className="flex flex-col">
-                      <span className="text-xs text-muted-foreground/60 italic">
-                        Ferienabbau FE Ist {budgetLabel}
-                      </span>
+                      <span className="text-xs text-muted-foreground/60 italic">Ferienabbau FE Ist {budgetLabel}</span>
                       <span className="text-[10px] text-muted-foreground/50">nur Information — nicht budgetwirksam</span>
                     </div>
                     <span className="font-mono text-xs text-muted-foreground/50 shrink-0">{fmtCHF(pfix.active.istHoliday)}</span>
                   </div>
                 )}
-                {/* Status-Zeile */}
-                <div className={cn(
-                  'flex justify-between items-center py-2 px-3 rounded-lg',
+                <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg',
                   flexBudgetStatus === 'on_track'
                     ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
                     : flexBudgetStatus === 'warning'
                       ? 'bg-yellow-50 dark:bg-yellow-950/30 text-yellow-800 dark:text-yellow-300'
-                      : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300'
-                )}>
+                      : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
                   <span className="text-sm font-bold">
-                    {flexBudgetStatus === 'on_track'
-                      ? `✓ Auf Kurs — Verbleibend`
-                      : flexBudgetStatus === 'warning'
-                        ? `⚠ Achtung — Leicht überzogen`
-                        : `✗ Nicht auf Kurs — Überzogen`}
+                    {flexBudgetStatus === 'on_track' ? '✓ Auf Kurs — Verbleibend'
+                      : flexBudgetStatus === 'warning' ? '⚠ Achtung — Leicht überzogen'
+                      : '✗ Nicht auf Kurs — Überzogen'}
                   </span>
                   <span className="font-mono font-bold text-base">
                     {pfixIstVarDelta >= 0 ? '+ ' : '− '}{fmtCHF(Math.abs(pfixIstVarDelta))}
@@ -3006,72 +3100,150 @@ export default function PersonalFixPage() {
                 </div>
               </div>
             </div>
+            )}
 
-            {/* ── Operativer Status-Banner ─────────────────────────────── */}
-            <div className={cn(
-              'mx-4 mb-4 p-3 rounded-lg border flex flex-wrap items-start gap-3',
-              flexBudgetStatus === 'on_track'
-                ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20'
-                : flexBudgetStatus === 'warning'
-                  ? 'border-yellow-200 dark:border-yellow-800 bg-yellow-50/60 dark:bg-yellow-950/20'
-                  : 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
-            )}>
-              <Lightbulb className={cn('h-4 w-4 mt-0.5 shrink-0',
-                flexBudgetStatus === 'on_track' ? 'text-emerald-600'
-                  : flexBudgetStatus === 'warning' ? 'text-yellow-600'
-                  : 'text-red-600'
-              )} />
-              <div className="flex-1 min-w-0 space-y-1.5">
-                {/* Hauptstatus — Auf Kurs Satz */}
-                <p className={cn('text-sm font-semibold',
-                  flexBudgetStatus === 'on_track' ? 'text-emerald-800 dark:text-emerald-300'
-                    : flexBudgetStatus === 'warning' ? 'text-yellow-800 dark:text-yellow-300'
-                    : 'text-red-800 dark:text-red-300'
-                )}>
-                  {pfix.active.istWork === 0
-                    ? `Noch kein Flex Arbeit Ist erfasst — Budget ${budgetLabel}: ${fmtCHF(pfixAvailableVar)} verfügbar`
-                    : flexBudgetStatus === 'on_track'
-                      ? `Auf Kurs: Flex-Arbeit liegt ${fmtCHF(pfixIstVarDelta)} unter Budget ${budgetLabel}`
-                      : flexBudgetStatus === 'warning'
-                        ? `Achtung: Flex-Arbeit liegt ${fmtCHF(Math.abs(pfixIstVarDelta))} über Budget ${budgetLabel}`
-                        : `Nicht auf Kurs: Flex-Arbeit liegt ${fmtCHF(Math.abs(pfixIstVarDelta))} über Budget ${budgetLabel}`}
+            {/* Budget-Rechnung — FORECAST MONATSENDE */}
+            {proRataDay !== null && forecastViewMode === 'forecast' && (
+            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* LEFT: Monatsbudget gesamt */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-3">
+                  Budget gesamt Monat
                 </p>
+                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
+                  <span className="text-sm text-muted-foreground">Budget gesamt Monat</span>
+                  <span className="font-mono font-semibold">{fmtCHF(personnelBudget)}</span>
+                </div>
+                <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
+                  <span className="text-sm text-muted-foreground">− Personal FIX gesamt Monat</span>
+                  <span className="font-mono text-blue-700 dark:text-blue-400 shrink-0">− {fmtCHF(pfix.month.fix)}</span>
+                </div>
+                <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg',
+                  forecastAvailableVar > 0
+                    ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
+                    : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
+                  <span className="text-sm font-bold">= Verfügbar für Flex (Monat)</span>
+                  <span className="font-mono font-bold text-base">{fmtCHF(forecastAvailableVar)}</span>
+                </div>
+              </div>
 
-                {/* Stunden-Info */}
-                {avgHourlyWage > 0 && (
-                  <div className="text-xs text-muted-foreground space-y-0.5">
-                    <p>
-                      Ø Stundenlohn Flex: <strong className="font-mono text-foreground">{fmtCHFDec(avgHourlyWage)}/h</strong>
-                      {pfixMaxVarHours > 0 && (
-                        <> · Budget reicht für max. <strong className="font-mono text-foreground">{pfixMaxVarHours} h</strong></>
-                      )}
-                    </p>
-                    {flexBudgetStatus !== 'on_track' && avgHourlyWage > 0 && (
-                      <p className={cn(
-                        flexBudgetStatus === 'warning' ? 'text-yellow-700 dark:text-yellow-500' : 'text-red-600 dark:text-red-400'
-                      )}>
-                        → Überschreitung entspricht ca. {Math.ceil(Math.abs(pfixIstVarDelta) / avgHourlyWage)} h zu viel
-                      </p>
-                    )}
-                    {flexBudgetStatus === 'on_track' && pfixMaxVarHours > 0 && totalVarHours > 0 && (
-                      <p className="text-emerald-600 dark:text-emerald-400">
-                        → Noch ca. {Math.max(0, pfixMaxVarHours - Math.round(pfix.active.istWork / avgHourlyWage))} h planbar ohne Budgetüberschreitung
-                      </p>
-                    )}
+              {/* RIGHT: Forecast Flex gesamt */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-3">
+                  Prognose Flex bis Monatsende
+                </p>
+                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
+                  <span className="text-sm text-muted-foreground">Flex Arbeit Ist bis {cutoffLabel}</span>
+                  <span className="font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfix.active.istWork)}</span>
+                </div>
+                <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
+                  <div className="flex flex-col">
+                    <span className="text-sm text-muted-foreground">+ geplante Restkosten (Tag {proRataDay + 1}–{daysInSelectedMonth})</span>
+                    <span className="text-[10px] text-muted-foreground/60">aus Dienstplan, ohne Ferien</span>
+                  </div>
+                  <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">+ {fmtCHF(forecastRemainingPlanFlex)}</span>
+                </div>
+                {(pfix.active.istHoliday > 0 || pfix.month.planHoliday > 0) && (
+                  <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border/60">
+                    <div className="flex flex-col">
+                      <span className="text-xs text-muted-foreground/60 italic">Ferienabbau (nur Information)</span>
+                      <span className="text-[10px] text-muted-foreground/50">nicht budgetwirksam</span>
+                    </div>
+                    <span className="font-mono text-xs text-muted-foreground/50 shrink-0">{fmtCHF(pfix.month.planHoliday)}</span>
                   </div>
                 )}
-              </div>
-
-              {/* Ampel */}
-              <div className="flex flex-col gap-1 items-center shrink-0 self-center">
-                <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
-                  flexBudgetStatus === 'off_track' ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)]' : 'bg-red-200 dark:bg-red-900')} />
-                <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
-                  flexBudgetStatus === 'warning' ? 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.7)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
-                <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
-                  flexBudgetStatus === 'on_track' ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
+                <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg',
+                  forecastStatus === 'on_track'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
+                    : forecastStatus === 'warning'
+                      ? 'bg-yellow-50 dark:bg-yellow-950/30 text-yellow-800 dark:text-yellow-300'
+                      : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold">
+                      {forecastStatus === 'on_track' ? '✓ Prognose: Auf Kurs'
+                        : forecastStatus === 'warning' ? '⚠ Prognose: Leicht überzogen'
+                        : '✗ Prognose: Nicht auf Kurs'}
+                    </span>
+                    <span className="text-[10px] font-normal opacity-70">Forecast Flex Monat: {fmtCHF(forecastFlexTotal)}</span>
+                  </div>
+                  <span className="font-mono font-bold text-base">
+                    {forecastDelta >= 0 ? '+ ' : '− '}{fmtCHF(Math.abs(forecastDelta))}
+                  </span>
+                </div>
               </div>
             </div>
+            )}
+
+            {/* ── Operativer Status-Banner ─────────────────────────────── */}
+            {(() => {
+              const activeStatus = (proRataDay !== null && forecastViewMode === 'forecast') ? forecastStatus : flexBudgetStatus;
+              const activeDelta  = (proRataDay !== null && forecastViewMode === 'forecast') ? forecastDelta : pfixIstVarDelta;
+              const activeLabel  = (proRataDay !== null && forecastViewMode === 'forecast')
+                ? (activeStatus === 'on_track' ? `Auf Kurs gemäss restlichem Plan — Puffer bis Monatsende`
+                    : activeStatus === 'warning' ? `Achtung: Prognose leicht über Budget bis Monatsende`
+                    : `Nicht auf Kurs: Forecast überschreitet Budget bis Monatsende`)
+                : (pfix.active.istWork === 0
+                    ? `Noch kein Flex Arbeit Ist erfasst — Budget ${budgetLabel}: ${fmtCHF(pfixAvailableVar)} verfügbar`
+                    : activeStatus === 'on_track'
+                      ? `Auf Kurs per Stichtag: Flex-Arbeit liegt ${fmtCHF(activeDelta)} unter Budget ${budgetLabel}`
+                      : activeStatus === 'warning'
+                        ? `Achtung: Flex-Arbeit liegt ${fmtCHF(Math.abs(activeDelta))} über Budget ${budgetLabel}`
+                        : `Nicht auf Kurs: Flex-Arbeit liegt ${fmtCHF(Math.abs(activeDelta))} über Budget ${budgetLabel}`);
+              return (
+              <div className={cn(
+                'mx-4 mb-4 p-3 rounded-lg border flex flex-wrap items-start gap-3',
+                activeStatus === 'on_track'
+                  ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20'
+                  : activeStatus === 'warning'
+                    ? 'border-yellow-200 dark:border-yellow-800 bg-yellow-50/60 dark:bg-yellow-950/20'
+                    : 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
+              )}>
+                <Lightbulb className={cn('h-4 w-4 mt-0.5 shrink-0',
+                  activeStatus === 'on_track' ? 'text-emerald-600'
+                    : activeStatus === 'warning' ? 'text-yellow-600'
+                    : 'text-red-600'
+                )} />
+                <div className="flex-1 min-w-0 space-y-1.5">
+                  <p className={cn('text-sm font-semibold',
+                    activeStatus === 'on_track' ? 'text-emerald-800 dark:text-emerald-300'
+                      : activeStatus === 'warning' ? 'text-yellow-800 dark:text-yellow-300'
+                      : 'text-red-800 dark:text-red-300'
+                  )}>
+                    {activeLabel}
+                  </p>
+                  {avgHourlyWage > 0 && (
+                    <div className="text-xs text-muted-foreground space-y-0.5">
+                      <p>
+                        Ø Stundenlohn Flex: <strong className="font-mono text-foreground">{fmtCHFDec(avgHourlyWage)}/h</strong>
+                        {pfixMaxVarHours > 0 && (
+                          <> · Budget reicht für max. <strong className="font-mono text-foreground">{pfixMaxVarHours} h</strong></>
+                        )}
+                      </p>
+                      {activeStatus !== 'on_track' && (
+                        <p className={cn(activeStatus === 'warning' ? 'text-yellow-700 dark:text-yellow-500' : 'text-red-600 dark:text-red-400')}>
+                          → Überschreitung entspricht ca. {Math.ceil(Math.abs(activeDelta) / avgHourlyWage)} h zu viel
+                        </p>
+                      )}
+                      {activeStatus === 'on_track' && pfixMaxVarHours > 0 && totalVarHours > 0 && (
+                        <p className="text-emerald-600 dark:text-emerald-400">
+                          → Noch ca. {Math.max(0, pfixMaxVarHours - Math.round(pfix.active.istWork / avgHourlyWage))} h planbar ohne Budgetüberschreitung
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {/* Ampel */}
+                <div className="flex flex-col gap-1 items-center shrink-0 self-center">
+                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
+                    activeStatus === 'off_track' ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)]' : 'bg-red-200 dark:bg-red-900')} />
+                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
+                    activeStatus === 'warning' ? 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.7)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
+                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
+                    activeStatus === 'on_track' ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
+                </div>
+              </div>
+              );
+            })()}
           </section>
         )}
 

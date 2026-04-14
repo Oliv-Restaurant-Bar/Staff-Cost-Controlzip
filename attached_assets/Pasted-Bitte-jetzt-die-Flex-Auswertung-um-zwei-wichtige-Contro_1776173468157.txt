@@ -1,0 +1,136 @@
+Bitte jetzt die Flex Auswertung um zwei wichtige Controlling Funktionen erweitern.
+
+Ziel:
+1. Ich möchte nicht nur sehen, ob wir per heute / per Stichtag auf Kurs sind, sondern auch ob wir gemäss noch geplanter Restkosten bis Monatsende immer noch auf Kurs wären.
+2. Ich möchte die kumulierte Abweichung in CHF sichtbar haben, sowohl in der Flex Auswertung als auch im Mitarbeiter Popup.
+
+Bitte exakt so umsetzen:
+
+1. Neuer Umschalter im Budgetblock / Auf Kurs Block
+Bitte einen klaren auswählbaren Button oder Toggle ergänzen mit zwei Modi:
+
+A) Aktuell
+zeigt:
+- Budget bis Stichtag
+- Flex Arbeit Ist bis Stichtag
+- Verbleibend bis Stichtag
+- Status aktuell auf Kurs / nicht auf Kurs
+
+B) Forecast Monatsende
+zeigt:
+- Budget gesamt Monat
+- Personal FIX gesamt Monat
+- Flex Arbeit Ist bis Stichtag
+- plus noch geplante restliche Flex Kosten der verbleibenden Tage
+- daraus Forecast Monatsende
+- Status ob wir gemäss aktuellem Ist plus verbleibendem Plan bis Monatsende auf Kurs wären
+
+2. Forecast Logik
+Bitte für Forecast Monatsende so rechnen:
+
+Forecast Flex Monatsende =
+Flex Arbeit Ist bis Stichtag
+plus
+geplante Flex Arbeit der restlichen Tage des Monats ab dem nächsten Tag nach dem Stichtag
+
+Dann:
+Verfügbar / Rest / Status auf Basis des Monatsbudgets berechnen
+
+Wichtig:
+Diese Forecast Sicht soll klar getrennt sein von der aktuellen Ist Sicht.
+
+3. Anzeige klar beschriften
+Im UI klar sichtbar machen:
+
+Wenn Modus "Aktuell":
+- "Auf Kurs per Stichtag"
+
+Wenn Modus "Forecast Monatsende":
+- "Prognose bis Monatsende"
+oder
+- "Auf Kurs gemäss restlichem Plan"
+
+Ich möchte sofort verstehen, ob die Aussage nur bis heute gilt oder bereits die restlichen geplanten Kosten mitberücksichtigt.
+
+4. Ferien weiterhin nicht budgetwirksam
+Auch in dieser neuen Forecast Sicht gilt:
+- Ferienabbau nicht budgetwirksam einrechnen
+- Ferien nur separat als Information anzeigen
+- keine Einrechnung in Verbleibend, Puffer, Status, Forecast
+
+5. Kumulierte Abweichung in Flex Auswertung
+In der Tabelle "Flex Auswertung Plan vs Ist" bitte ganz rechts nach "Status" eine neue Spalte ergänzen:
+
+- Kum. Abweichung CHF
+
+Logik:
+laufende kumulierte Summe der Differenz CHF über die Zeilen im aktuell gewählten Modus
+
+Beispiel Tag Modus:
+Tag 1 Diff = -200
+Tag 2 Diff = +100
+Tag 3 Diff = -50
+
+Dann:
+Tag 1 kum. = -200
+Tag 2 kum. = -100
+Tag 3 kum. = -150
+
+Das gleiche für Woche, Monat, Jahr je nach Aggregation.
+
+6. Kumulierte Abweichung im Mitarbeiter Popup
+Im Popup pro Mitarbeiter ebenfalls zusätzlich anzeigen:
+
+oben als KPI:
+- Plan total
+- Ist total
+- Diff total
+- kumulierte Abweichung CHF
+
+und in der Detailtabelle pro Tag eine zusätzliche Spalte:
+- Kum. Diff CHF
+
+also laufend aufsummiert über die Tage des gewählten Zeitraums
+
+7. Wichtig für Popup
+Popup muss dieselbe Datenbasis wie die Mitarbeitertabelle verwenden:
+- gleicher Stichtag
+- gleicher Zeitraum
+- gleiche Planstunden
+- gleiche Iststunden
+- gleiche Diff CHF
+
+8. Visuell
+- die neue kumulierte Abweichung farblich wie Diff behandeln
+- grün wenn unter Plan
+- rot wenn über Plan
+- neutral bei 0
+
+Beim Auf Kurs Block:
+- klarer Toggle zwischen "Aktuell" und "Forecast Monatsende"
+- beide Ansichten nicht gleichzeitig vermischen
+
+9. Debug Logs
+Bitte loggen:
+[FLEX-FORECAST] mode: actual|forecast
+[FLEX-FORECAST] cutoff date: ...
+[FLEX-FORECAST] ist until cutoff: ...
+[FLEX-FORECAST] remaining planned flex: ...
+[FLEX-FORECAST] forecast month total: ...
+[FLEX-FORECAST] budget remaining / status: ...
+
+[FLEX-CUM] aggregation: day|week|month|year
+[FLEX-CUM] row diff: ...
+[FLEX-CUM] running diff total: ...
+
+[POPUP-CUM] employee: ...
+[POPUP-CUM] row diff: ...
+[POPUP-CUM] running diff total: ...
+
+10. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie der Toggle "Aktuell / Forecast Monatsende" funktioniert
+- wie der Forecast Monatsende berechnet wird
+- ob Ferien weiterhin nur Info bleiben
+- wo die neue Spalte "Kum. Abweichung CHF" sichtbar ist
+- ob das Mitarbeiter Popup jetzt ebenfalls die kumulierte Abweichung zeigt
