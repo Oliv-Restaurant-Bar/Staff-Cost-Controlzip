@@ -82,6 +82,7 @@ export default function TagesansichtPage() {
   );
   const year  = refDate.getFullYear();
   const month = refDate.getMonth() + 1;
+  const daysInMonth = new Date(year, month, 0).getDate();
 
   // Vergleichs-Modus
   const [mode, setMode] = useState<ViewMode>('vs-vorjahr');
