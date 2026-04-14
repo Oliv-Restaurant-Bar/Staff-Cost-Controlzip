@@ -886,6 +886,33 @@ function FlexPeriodPopup({
           )}
         </div>
 
+        {/* ── Haupttreiber-Zusammenfassung ────────────────────────────────── */}
+        {(() => {
+          const drivers = [...rows]
+            .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff))
+            .slice(0, 3)
+            .filter(r => Math.abs(r.diff) > 0.005);
+          console.log('[FLEX POPUP] drivers:', drivers.map(r => ({ name: r.name, diffCHF: r.diff })));
+          return (
+            <div className="shrink-0 border-t border-border bg-muted/25 px-6 py-3">
+              <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-xs">
+                <span className="font-semibold text-muted-foreground shrink-0">Haupttreiber:</span>
+                {drivers.length === 0 ? (
+                  <span className="text-muted-foreground italic">Keine relevanten Abweichungen</span>
+                ) : drivers.map((r, i) => (
+                  <span key={r.id} className="flex items-baseline gap-x-1">
+                    {i > 0 && <span className="text-muted-foreground">·</span>}
+                    <span className="font-medium text-foreground">{r.name}</span>
+                    <span className={cn('font-mono font-semibold', r.diff > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')}>
+                      {r.diff > 0 ? '+' : '−'}CHF {fmtCHF(Math.abs(r.diff)).replace('CHF\u00a0', '')}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Sticky Footer */}
         <div className={cn('shrink-0 border-t px-6 py-3 flex items-center justify-between gap-4', A.border, A.bg || 'bg-muted/40')}>
           <span className="text-xs text-muted-foreground">bezieht sich auf: <strong>{label}</strong></span>
