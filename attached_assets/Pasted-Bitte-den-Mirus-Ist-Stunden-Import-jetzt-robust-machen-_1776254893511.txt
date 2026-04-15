@@ -1,0 +1,123 @@
+Bitte den Mirus-Ist-Stunden-Import jetzt robust machen, damit er mit den realen Mirus-Exporten zuverlässig funktioniert und nicht nur mit einem Idealformat.
+
+Problem:
+Der aktuelle Import ist zu strikt und erkennt reale Mirus-Excel-Dateien nicht mehr zuverlässig.
+Die Datei ist oft kein flacher Rohdatenexport, sondern ein formatierter Bericht mit:
+- Titelzeile
+- Datumsbereich in der Kopfzeile
+- Standort / Adresse
+- Blöcken wie "1 Küche", "2 Service"
+- Mitarbeitenden unterhalb der Blocktitel
+- Tages-Spalten
+- Summenzeilen wie "Total Stunden"
+
+Ziel:
+Der Import soll robust sein und die üblichen Mirus-Dateien zuverlässig lesen, auch wenn das Layout nicht perfekt tabellarisch ist.
+
+Bitte exakt so umsetzen:
+
+1. Parser robuster machen
+Der Importer soll nicht nur eine einzige Tabellenstruktur erwarten.
+Er soll auch diese Mirus-Berichtsstruktur erkennen:
+- Kopfzeile mit "Tägliche Stunden von ... bis ..."
+- danach Metadatenzeilen
+- dann Datumstage in einer Zeile
+- dann Abteilungsblöcke wie Küche / Service
+- darunter Mitarbeiterzeilen mit Stundenwerten
+- Summenzeilen ignorieren
+
+2. Datumsbereich oben erkennen
+Aus der Zeile
+"Tägliche Stunden von 13.04.2026 bis Datum: ..."
+bzw. ähnlichen Varianten
+soll das Datum bzw. der Datumsbereich erkannt werden.
+
+Wenn nur ein einzelner Tag vorhanden ist:
+- diesen Tag korrekt als Importdatum verwenden
+
+Wenn mehrere Tage vorhanden sind:
+- die Tages-Spalten korrekt zuordnen
+
+3. Abteilungsblöcke erkennen
+Zeilen wie:
+- 1 Küche
+- 2 Service
+sollen als Abschnittsüberschriften erkannt werden
+und nicht als Mitarbeiter importiert werden.
+
+4. Mitarbeiterzeilen erkennen
+Mitarbeiterzeilen sollen robust erkannt werden, auch wenn:
+- Vorname/Nachname unterschiedlich formatiert sind
+- führende Leerzeichen vorhanden sind
+- mehrere leere Spalten davor sind
+- Stunden in mehreren Tages-Spalten stehen
+
+5. Summenzeilen ignorieren
+Zeilen wie:
+- Total Stunden
+- 1 Küche Total Stunden
+- 2 Service Total Stunden
+dürfen nie als Mitarbeitereintrag importiert werden.
+
+6. Einzel-Tag und Mehrtag-Export unterstützen
+Der Importer soll beides unterstützen:
+- Einzel-Tag-Export
+- Tagesbereich / Monatsbereich
+
+7. Flexible Header-Erkennung
+Nicht nur starre Spaltennamen verwenden.
+Der Importer soll anhand von Mustern erkennen:
+- Datumszeile
+- Tages-Spalten
+- Mitarbeiterzeilen
+- Stundenzellen
+
+8. Robuste Stunden-Erkennung
+Stundenwerte wie
+- 7.98
+- 8.40
+- 0.00
+- leere Zelle
+müssen sauber erkannt werden.
+
+Leere Zellen = kein Eintrag
+0.00 nur dann übernehmen, wenn es fachlich sinnvoll ist, sonst ignorieren.
+
+9. Merge-Logik beibehalten
+Die bestehende Logik für:
+- Aktualisieren
+- Ersetzen
+soll erhalten bleiben.
+Nur die Dateierkennung und das Parsen robuster machen.
+
+10. Debug-Logs einbauen
+Bitte loggen:
+[MIRUS] detected report type: ...
+[MIRUS] detected date range: ...
+[MIRUS] detected day columns: ...
+[MIRUS] detected department block: ...
+[MIRUS] detected employee row: ...
+[MIRUS] parsed entry: employee / date / hours
+[MIRUS] ignored summary row: ...
+[MIRUS] total parsed entries: ...
+
+11. Rückwärtskompatibel bleiben
+Wichtig:
+Wenn eine ältere, bereits funktionierende Mirus-Datei importiert wird,
+darf diese durch den neuen Parser nicht kaputtgehen.
+Der neue Importer soll also:
+- altes funktionierendes Format weiter unterstützen
+- zusätzlich die Berichts-/Druckansicht verstehen
+
+12. Optional sinnvoll
+Falls mehrere Parser sinnvoll sind:
+- zuerst versuchen: tabellarischer Standardparser
+- wenn nichts gefunden: Bericht-/Layoutparser
+- dann bestes Ergebnis verwenden
+
+13. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- welche Mirus-Layouts jetzt unterstützt werden
+- wie Einzel-Tag und Mehrtag-Dateien erkannt werden
+- wie Summenzeilen ausgeschlossen werden
+- wie ich den robusten Import am schnellsten testen soll

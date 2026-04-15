@@ -473,9 +473,11 @@ export const parseMirusDailyPDF = async (
   return { entries, dateRange: dateColumns };
 };
 
-// Parse Mirus "Tägliche Stunden" Excel format with daily columns
-// Returns entries with individual dates and hours per day
-export const parseMirusDailyExcel = async (file: File): Promise<{ entries: MirusDailyImportEntry[]; dateRange: string[] }> => {
+// Parse Mirus "Tägliche Stunden" Excel format – delegated to dedicated parser
+export { parseMirusDailyExcel } from '@/lib/mirus-parser';
+
+// Legacy stub kept for type-checking only (never called – tree-shaken)
+const _parseMirusDailyExcelLegacy = async (file: File): Promise<{ entries: MirusDailyImportEntry[]; dateRange: string[] }> => {
   try {
     const arrayBuffer = await file.arrayBuffer();
     // cellDates=true helps when Excel stores dates as actual date cells
