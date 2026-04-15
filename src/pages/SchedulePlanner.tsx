@@ -26,6 +26,7 @@ import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-plann
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
 import { MobileDayView } from '@/components/schedule-planner/MobileDayView';
 import { PlanVsIstGrid } from '@/components/schedule-planner/PlanVsIstGrid';
+import { PlanVsIstTable } from '@/components/schedule-planner/PlanVsIstTable';
 import { EmployeeHoursSummary } from '@/components/schedule-planner/EmployeeHoursSummary';
 import { ShiftLegend } from '@/components/schedule-planner/ShiftLegend';
 import { AddAushilfeDialog } from '@/components/schedule-planner/AddAushilfeDialog';
@@ -2544,12 +2545,22 @@ const SchedulePlanner = () => {
                 />
               ) : scheduleMode === 'compare' ? (
                 // ── Plan/Ist-Vergleich ─────────────────────────────────────
-                <PlanVsIstGrid
-                  employees={filteredEmployees}
-                  days={displayDays}
-                  scheduleData={scheduleData}
-                  actualHoursData={actualHoursData}
-                />
+                <>
+                  <PlanVsIstGrid
+                    employees={filteredEmployees}
+                    days={displayDays}
+                    scheduleData={scheduleData}
+                    actualHoursData={actualHoursData}
+                  />
+                  <PlanVsIstTable
+                    employees={filteredEmployees}
+                    days={displayDays}
+                    scheduleData={scheduleData}
+                    actualHoursData={actualHoursData}
+                    laborCostThreshold={gridLaborCostThreshold}
+                    activeDepartment={activeDepartment === 'service' || activeDepartment === 'küche' ? activeDepartment : 'all'}
+                  />
+                </>
               ) : scheduleMode === 'plan' ? (
                 // Plan-Dienstplan (existing schedule grid)
                 <>
