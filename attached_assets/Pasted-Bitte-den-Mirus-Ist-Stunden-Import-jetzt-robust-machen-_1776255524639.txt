@@ -1,0 +1,105 @@
+Bitte den Mirus-Ist-Stunden-Import jetzt robust machen UND das Matching für Momand Sajed und Sadete Domi endgültig reparieren.
+
+Es gibt aktuell zwei Probleme:
+
+1. Der Mirus-Import ist zu fragil und scheitert an realen Bericht-/Layoutdateien
+2. Momand Sajed und Sadete Domi werden weiterhin nicht korrekt eingelesen bzw. nicht korrekt gematcht
+
+Ziel:
+Der Import soll mit den echten Mirus-Dateien zuverlässig funktionieren und die beiden Mitarbeitenden sicher erkennen.
+
+==================================================
+TEIL A — Robuster Mirus-Import
+==================================================
+
+Bitte den Importer so erweitern, dass er nicht nur ein Idealformat erkennt, sondern auch reale Mirus-Berichte mit:
+
+- Kopfzeile "Tägliche Stunden von ..."
+- Metadaten / Adresse oben
+- Abteilungsblöcken wie "1 Küche", "2 Service"
+- Datumsspalten oben
+- Mitarbeiterzeilen darunter
+- Summenzeilen wie "Total Stunden"
+
+unterstützt.
+
+Bitte:
+- Datumsbereich oben erkennen
+- Tages-Spalten robust erkennen
+- Mitarbeiterzeilen robust erkennen
+- Summenzeilen ignorieren
+- Einzel-Tag und Mehrtag-Dateien unterstützen
+- bestehende Modi "Aktualisieren" und "Ersetzen" beibehalten
+
+Debug Logs:
+[MIRUS] detected report type: ...
+[MIRUS] detected date range: ...
+[MIRUS] detected day columns: ...
+[MIRUS] detected department block: ...
+[MIRUS] detected employee row: ...
+[MIRUS] parsed entry: employee / date / hours
+[MIRUS] ignored summary row: ...
+[MIRUS] total parsed entries: ...
+
+==================================================
+TEIL B — Matching für Momand Sajed und Sadete Domi endgültig fixen
+==================================================
+
+Problem:
+Momand Sajed und Sadete Domi werden weiterhin nicht korrekt importiert.
+Das ist kritisch und muss jetzt explizit gelöst werden.
+
+Bitte exakt prüfen:
+- wie die Namen in der Mirus-Datei geschrieben sind
+- wie sie im Personalstamm geschrieben sind
+- an welcher Matching-Stufe sie aktuell scheitern
+- ob Punkte, Leerzeichen, Reihenfolge oder Zusatznamen das Matching verhindern
+
+Wichtig:
+Diese beiden Namen müssen zuverlässig erkannt werden, auch wenn Mirus leicht anders schreibt.
+
+Bitte robuste Matching-Regeln ergänzen:
+
+1. Case-insensitive
+2. Trim + Mehrfach-Leerzeichen normalisieren
+3. Reversed-order Match
+   - Momand Sajed ↔ Sajed Momand
+4. Token-Match mit voller Namensmenge
+5. Präfix-/Teilwort-Match nur als letzter Fallback
+6. Zusätze wie Domi / Dominique / Mittelnamen robust behandeln, wenn der Rest eindeutig ist
+7. Wenn genau ein plausibler Treffer existiert, diesen automatisch wählen
+8. Wenn mehrere Kandidaten möglich sind, klar loggen statt falsch zuzuordnen
+
+Bitte gezielt Debug Logs für diese zwei Namen einbauen:
+[MATCH] raw import name: ...
+[MATCH] normalized import name: ...
+[MATCH] candidate employee: ...
+[MATCH] reversed-order match: ...
+[MATCH] token match: ...
+[MATCH] final resolved employee: ...
+[MATCH] import row saved: yes/no
+
+Bitte zusätzlich absichern:
+- Momand Sajed muss nicht auf einen falschen Teilnamen matchen
+- Sadete Domi darf nicht wegen Zusatz-/Kurzname scheitern
+- nach erfolgreichem Match muss immer der Personalstamm-Name gespeichert werden
+
+==================================================
+TEIL C — Rückwärtskompatibilität
+==================================================
+
+Wichtig:
+- alte funktionierende Importdateien dürfen nicht kaputtgehen
+- bestehende erfolgreiche Matches dürfen nicht schlechter werden
+- nur Robustheit erhöhen
+
+==================================================
+TEIL D — Bitte danach kurz sagen
+==================================================
+
+- welche Datei(en) geändert wurden
+- welche Mirus-Layouts jetzt unterstützt werden
+- warum Momand Sajed bisher nicht importiert wurde
+- warum Sadete Domi bisher nicht importiert wurde
+- welche Matching-Regeln jetzt für diese beiden greifen
+- wie ich den Import am schnellsten mit genau diesen zwei Namen testen soll

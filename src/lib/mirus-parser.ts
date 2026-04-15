@@ -135,16 +135,47 @@ function detectDepartment(row: unknown[]): DetectedDept | null {
 
 const SKIP_NAME_WORDS = /^(Mo|Di|Mi|Do|Fr|Sa|So|Total|Datum|Tägliche|Küche|Service|Restaurant|Standort|Adresse|Bericht|Auswertung)\b/i;
 
-function extractName(row: unknown[], maxCol = 6): string | null {
+/** True if a cell value looks like a name part (not a number, not a keyword, has letters) */
+function isNameLike(raw: unknown): boolean {
+  const s = String(raw || '').trim();
+  if (!s || s.length < 2) return false;
+  if (!/[a-zA-ZäöüÄÖÜàáâèéêùúûß]/.test(s)) return false;
+  if (SKIP_NAME_WORDS.test(s)) return false;
+  if (/^\d{1,2}[.\-/]/.test(s)) return false;
+  if (/^\d+$/.test(s)) return false;
+  if (DEPT_RE.test(s)) return false;
+  return true;
+}
+
+/**
+ * Extract employee name from a row.
+ * Handles three common Mirus layouts:
+ *   A) Full name in one cell:  | | Momand Sajed | 8.0 | ...
+ *   B) Name in two cells:      | | Momand | Sajed | 8.0 | ...
+ *   C) "Last, First" in one:   | | Momand, Sajed | 8.0 | ...  (comma format)
+ */
+function extractName(row: unknown[], maxCol = 8): string | null {
   for (let i = 0; i < Math.min(row.length, maxCol); i++) {
     const s = String(row[i] || '').trim();
-    if (!s || s.length < 2) continue;
-    if (!/[a-zA-ZäöüÄÖÜàáâèéêùúûß]/.test(s)) continue;
-    if (SKIP_NAME_WORDS.test(s)) continue;
-    if (/^\d{1,2}\.\d{1,2}/.test(s)) continue;
-    if (/^\d+$/.test(s)) continue;
-    if (DEPT_RE.test(s)) continue;
-    return s;
+    if (!isNameLike(s)) continue;
+
+    // Layout C: "Nachname, Vorname" — remove comma, keep as single name token
+    // We do NOT reorder here; the matcher will handle both orders.
+    const cleanedCell = s.replace(/,\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
+
+    // Layout B: check if the very next non-empty cell is also name-like
+    // (distinct from a number = hours column)
+    let fullName = cleanedCell;
+    const nextIdx = i + 1;
+    if (nextIdx < Math.min(row.length, maxCol + 1)) {
+      const nextRaw = String(row[nextIdx] || '').trim();
+      if (isNameLike(nextRaw)) {
+        const nextClean = nextRaw.replace(/,\s*/g, ' ').trim();
+        fullName = `${cleanedCell} ${nextClean}`;
+      }
+    }
+
+    return fullName;
   }
   return null;
 }
