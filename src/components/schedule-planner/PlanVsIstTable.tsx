@@ -5,7 +5,7 @@ import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
 import { calculateBreakDeduction, useShiftConfig } from '@/hooks/useShiftConfig';
 import { cn } from '@/lib/utils';
-import { ChevronDown, ChevronUp, FileText, FileSpreadsheet } from 'lucide-react';
+import { ChevronDown, ChevronUp, FileText, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown, Search, X } from 'lucide-react';
 import { exportPlanVsIstPDF, exportPlanVsIstExcel, PlanVsIstExportRow } from '@/lib/plan-ist-export';
 
 interface IstEntry {
@@ -25,6 +25,8 @@ interface PlanVsIstTableProps {
 }
 
 type RowFilter = 'all' | 'deviation' | 'over' | 'under';
+type SortKey = 'name' | 'date' | 'diffHours' | 'diffCost' | 'planHours' | 'istHours';
+type SortDir = 'asc' | 'desc';
 
 const ABSENCE_CODES = new Set(['FE', 'K', 'F']);
 
@@ -54,6 +56,18 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
   const { shiftMap } = useShiftConfig();
   const [filter, setFilter] = useState<RowFilter>('all');
   const [open, setOpen] = useState(true);
+  const [sortKey, setSortKey] = useState<SortKey>('date');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [empSearch, setEmpSearch] = useState('');
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
 
   const getPlanHours = (empId: string, dateStr: string): number => {
     const ds = scheduleData[`${empId}-${dateStr}`];
@@ -127,14 +141,34 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
   }, [employees, days, scheduleData, actualHoursData]);
 
   const filteredRows = useMemo(() => {
-    return allRows.filter(r => {
-      if (!r.hasIst) return filter === 'all'; // rows with no IST only shown in "Alle"
+    const search = empSearch.trim().toLowerCase();
+
+    const base = allRows.filter(r => {
+      // Employee name search
+      if (search && !r.emp.name.toLowerCase().includes(search)) return false;
+      // Row filter
+      if (!r.hasIst) return filter === 'all';
       if (filter === 'deviation') return Math.abs(r.diffHours) > 0.05 || Math.abs(r.diffCost) > 5;
       if (filter === 'over')      return r.diffHours > 0.05 || r.diffCost > 5;
       if (filter === 'under')     return r.diffHours < -0.05 || r.diffCost < -5;
       return true;
     });
-  }, [allRows, filter]);
+
+    const dir = sortDir === 'asc' ? 1 : -1;
+    base.sort((a, b) => {
+      switch (sortKey) {
+        case 'name':      return dir * a.emp.name.localeCompare(b.emp.name, 'de');
+        case 'date':      return dir * (a.day.getTime() - b.day.getTime());
+        case 'diffHours': return dir * (a.diffHours - b.diffHours);
+        case 'diffCost':  return dir * (a.diffCost  - b.diffCost);
+        case 'planHours': return dir * (a.planHours - b.planHours);
+        case 'istHours':  return dir * (a.istHours  - b.istHours);
+        default:          return 0;
+      }
+    });
+
+    return base;
+  }, [allRows, filter, sortKey, sortDir, empSearch]);
 
   // Summary totals (from ALL rows regardless of filter)
   const totals = useMemo(() => {
@@ -253,14 +287,14 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
             ))}
           </div>
 
-          {/* Filter bar */}
-          <div className="flex items-center gap-1 px-3 py-1.5 border-b bg-background flex-wrap">
+          {/* Filter + Search bar */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-background flex-wrap">
             {FILTERS.map(({ key, label }) => (
               <button
                 key={key}
                 onClick={() => setFilter(key)}
                 className={cn(
-                  'text-[10px] px-2 py-0.5 rounded-full border transition-colors',
+                  'text-[10px] px-2 py-0.5 rounded-full border transition-colors shrink-0',
                   filter === key
                     ? 'bg-primary text-primary-foreground border-primary'
                     : 'text-muted-foreground border-border hover:bg-muted',
@@ -269,7 +303,26 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
                 {label}
               </button>
             ))}
-            <span className="ml-auto text-[10px] text-muted-foreground">
+            {/* Employee name search */}
+            <div className="relative ml-2 flex items-center">
+              <Search className="absolute left-1.5 h-3 w-3 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Mitarbeiter suchen…"
+                value={empSearch}
+                onChange={e => setEmpSearch(e.target.value)}
+                className="h-6 pl-5 pr-5 text-[10px] rounded border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-36"
+              />
+              {empSearch && (
+                <button
+                  onClick={() => setEmpSearch('')}
+                  className="absolute right-1 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+            <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
               {filteredRows.length} Einträge
             </span>
           </div>
@@ -278,16 +331,42 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
           <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
             <table className="w-full text-xs min-w-[580px]">
               <thead className="sticky top-0 z-10 bg-background border-b">
-                <tr className="text-muted-foreground">
-                  <th className="text-left py-2 pl-3 pr-2 font-semibold">Mitarbeiter</th>
-                  <th className="text-left py-2 px-1 font-semibold">Abt.</th>
-                  <th className="text-left py-2 px-1 font-semibold">Datum</th>
-                  <th className="text-right py-2 px-1 font-semibold">Plan Std.</th>
-                  <th className="text-right py-2 px-1 font-semibold">IST Std.</th>
-                  <th className="text-right py-2 px-1 font-semibold">Diff Std.</th>
-                  <th className="text-right py-2 px-1 font-semibold">Plan CHF</th>
-                  <th className="text-right py-2 px-1 font-semibold">IST CHF</th>
-                  <th className="text-right py-2 pr-3 font-semibold">Diff CHF</th>
+                <tr className="text-muted-foreground select-none">
+                  {/* Sortable: Mitarbeiter */}
+                  {([
+                    { key: 'name' as SortKey,      label: 'Mitarbeiter', align: 'left',  cls: 'pl-3 pr-2' },
+                    { key: null,                   label: 'Abt.',        align: 'left',  cls: 'px-1' },
+                    { key: 'date' as SortKey,      label: 'Datum',       align: 'left',  cls: 'px-1' },
+                    { key: 'planHours' as SortKey, label: 'Plan Std.',   align: 'right', cls: 'px-1' },
+                    { key: 'istHours' as SortKey,  label: 'IST Std.',    align: 'right', cls: 'px-1' },
+                    { key: 'diffHours' as SortKey, label: 'Diff Std.',   align: 'right', cls: 'px-1' },
+                    { key: null,                   label: 'Plan CHF',    align: 'right', cls: 'px-1' },
+                    { key: null,                   label: 'IST CHF',     align: 'right', cls: 'px-1' },
+                    { key: 'diffCost' as SortKey,  label: 'Diff CHF',    align: 'right', cls: 'pr-3 px-1' },
+                  ] as { key: SortKey | null; label: string; align: string; cls: string }[]).map(col => (
+                    <th
+                      key={col.label}
+                      className={cn(
+                        'py-2 font-semibold',
+                        col.cls,
+                        col.align === 'right' ? 'text-right' : 'text-left',
+                        col.key ? 'cursor-pointer hover:text-foreground hover:bg-muted/40 transition-colors' : '',
+                        col.key && sortKey === col.key ? 'text-foreground' : '',
+                      )}
+                      onClick={() => col.key && toggleSort(col.key)}
+                    >
+                      <span className="inline-flex items-center gap-0.5">
+                        {col.label}
+                        {col.key && (
+                          sortKey === col.key
+                            ? sortDir === 'asc'
+                              ? <ArrowUp className="h-3 w-3 text-primary" />
+                              : <ArrowDown className="h-3 w-3 text-primary" />
+                            : <ArrowUpDown className="h-3 w-3 opacity-30" />
+                        )}
+                      </span>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
