@@ -14,6 +14,8 @@ import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import {
   isFixedEmployee, isVariableEmployee, absenceKind, SKIP_CODES, netHoursFromSchedule,
 } from '@/lib/absence-utils';
+import { exportPlanVsIstPDF, exportPlanVsIstExcel, PlanVsIstExportRow } from '@/lib/plan-ist-export';
+import { FileText, FileSpreadsheet } from 'lucide-react';
 
 interface DayDetailDialogProps {
   open: boolean;
@@ -762,19 +764,81 @@ export const DayDetailDialog = ({
             const fmt = (n: number) => n.toLocaleString('de-CH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
             const sign = (n: number, thr = 0.05) => (n > thr ? '+' : '');
 
+            const FILTER_LABELS: Record<PvIstFilter, string> = {
+              all: 'Alle', deviation: 'Abweichungen', over: 'Über Plan', under: 'Unter Plan',
+            };
+
+            const buildExportRows = (sourceRows: typeof filteredRows): PlanVsIstExportRow[] =>
+              sourceRows.map(r => ({
+                empName: r.emp.name,
+                department: r.emp.department === 'küche' ? 'Küche' : 'Service',
+                dateLabel: format(date, 'dd.MM.yy'),
+                planHours: r.planHours,
+                istHours: r.istHours,
+                diffHours: r.istHours - r.planHours,
+                planCost: r.planCost,
+                istCost: r.istCost,
+                diffCost: r.istCost - r.planCost,
+              }));
+
+            const exportOpts = (exportRows: PlanVsIstExportRow[]) => ({
+              rows: exportRows,
+              title: 'Plan vs. IST Personal',
+              periodLabel: format(date, 'EEEE, d. MMMM yyyy', { locale: de }),
+              filterLabel: FILTER_LABELS[pvIstFilter],
+              departmentLabel:
+                activeDepartment === 'küche' ? 'Küche'
+                : activeDepartment === 'service' ? 'Service'
+                : 'Alle',
+              fileBaseName: `plan-ist-personal-${format(date, 'yyyy-MM-dd')}`,
+            });
+
+            const handleExportPDF = (e: React.MouseEvent) => {
+              e.stopPropagation();
+              exportPlanVsIstPDF(exportOpts(buildExportRows(filteredRows)));
+            };
+
+            const handleExportExcel = (e: React.MouseEvent) => {
+              e.stopPropagation();
+              exportPlanVsIstExcel(exportOpts(buildExportRows(filteredRows)));
+            };
+
             return (
               <div className="rounded-lg border overflow-hidden">
 
-                {/* Collapsible header */}
-                <button
-                  className="w-full flex items-center justify-between px-3 py-2.5 bg-muted/30 hover:bg-muted/50 transition-colors border-b"
-                  onClick={() => setPvIstOpen(v => !v)}
-                >
-                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                    Plan vs. IST pro Mitarbeiter
-                  </span>
-                  {pvIstOpen ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
-                </button>
+                {/* Collapsible header with export buttons */}
+                <div className="flex items-center border-b bg-muted/30">
+                  <button
+                    className="flex-1 flex items-center gap-2 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left"
+                    onClick={() => setPvIstOpen(v => !v)}
+                  >
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Plan vs. IST pro Mitarbeiter
+                    </span>
+                    {pvIstOpen
+                      ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                      : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                  </button>
+                  {/* Export buttons — always visible, stopPropagation keeps toggle intact */}
+                  <div className="flex items-center gap-1 pr-2 shrink-0">
+                    <button
+                      onClick={handleExportPDF}
+                      title="Als PDF exportieren"
+                      className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-border text-muted-foreground hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-700 transition-colors"
+                    >
+                      <FileText className="h-3 w-3" />
+                      PDF
+                    </button>
+                    <button
+                      onClick={handleExportExcel}
+                      title="Als Excel exportieren"
+                      className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-border text-muted-foreground hover:bg-green-50 dark:hover:bg-green-900/20 hover:text-green-700 dark:hover:text-green-400 hover:border-green-400 dark:hover:border-green-700 transition-colors"
+                    >
+                      <FileSpreadsheet className="h-3 w-3" />
+                      Excel
+                    </button>
+                  </div>
+                </div>
 
                 {pvIstOpen && (
                   <>
