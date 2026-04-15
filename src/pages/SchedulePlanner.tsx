@@ -2702,6 +2702,7 @@ const SchedulePlanner = () => {
                           showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
                           laborCostThreshold={gridLaborCostThreshold}
+                          onDayClick={handleDayClick}
                         />
                       </div>
                       
@@ -2721,6 +2722,7 @@ const SchedulePlanner = () => {
                           showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
                           laborCostThreshold={gridLaborCostThreshold}
+                          onDayClick={handleDayClick}
                         />
                       </div>
                     </div>
@@ -2735,6 +2737,7 @@ const SchedulePlanner = () => {
                       showCosts={effectiveShowCosts}
                       dailyBudgets={dailyBudgets}
                       laborCostThreshold={gridLaborCostThreshold}
+                      onDayClick={handleDayClick}
                     />
                   )}
                 </>
@@ -3374,6 +3377,8 @@ const SchedulePlanner = () => {
         onUpdatePlannedRevenue={handleUpdatePlannedRevenue}
         laborCostThreshold={gridLaborCostThreshold}
         actualHoursData={actualHoursData}
+        actualRevenue={selectedDay ? dailyBudgets[format(selectedDay, 'yyyy-MM-dd')]?.actualRevenue : undefined}
+        activeDepartment={activeDepartment === 'service' || activeDepartment === 'küche' ? activeDepartment : 'all'}
       />
 
       {/* Shift Config Dialog */}

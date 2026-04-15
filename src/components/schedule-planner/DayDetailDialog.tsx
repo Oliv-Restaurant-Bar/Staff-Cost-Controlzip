@@ -26,6 +26,10 @@ interface DayDetailDialogProps {
   onUpdatePlannedRevenue?: (dateStr: string, value: number | null) => void;
   laborCostThreshold?: number;
   actualHoursData?: Record<string, { hours: number; start?: string; end?: string }>;
+  /** IST-Umsatz for this day (from VJ/actual import) */
+  actualRevenue?: number;
+  /** Which department tab is active: 'all' | 'service' | 'küche' */
+  activeDepartment?: 'all' | 'service' | 'küche';
 }
 
 // Calculate hours from a time slot
@@ -58,6 +62,8 @@ export const DayDetailDialog = ({
   onUpdatePlannedRevenue,
   laborCostThreshold = 40,
   actualHoursData,
+  actualRevenue,
+  activeDepartment,
 }: DayDetailDialogProps) => {
   const { shiftMap } = useShiftConfig();
   const [editingRevenue, setEditingRevenue] = useState(false);
@@ -194,6 +200,42 @@ export const DayDetailDialog = ({
     ? employees.reduce((sum, emp) => sum + (actualHoursData[`${emp.id}-${dateStr}`]?.hours ?? 0), 0)
     : null;
   const hasActualHours = totalActualHours !== null && totalActualHours > 0;
+
+  // ── IST-Auswertung ──────────────────────────────────────────────────────────
+  const totalIstHours = actualHoursData
+    ? employees.reduce((sum, emp) => sum + (actualHoursData[`${emp.id}-${dateStr}`]?.hours ?? 0), 0)
+    : 0;
+  const totalIstCost = actualHoursData
+    ? employees.reduce((sum, emp) => {
+        const h = actualHoursData[`${emp.id}-${dateStr}`]?.hours ?? 0;
+        return sum + h * (emp.hourlyWage || 0);
+      }, 0)
+    : 0;
+  const istRevenue = (actualRevenue !== undefined && actualRevenue > 0) ? actualRevenue : null;
+  const istPkq = istRevenue && istRevenue > 0 ? (totalIstCost / istRevenue) * 100 : null;
+  const istTargetCost = istRevenue ? istRevenue * (laborCostThreshold / 100) : null;
+  const istDevCHF = istTargetCost !== null ? totalIstCost - istTargetCost : null;
+  const istOverTarget = istDevCHF !== null && istDevCHF > 0;
+  const avgWage = (() => {
+    const waged = employees.filter(e => (e.hourlyWage || 0) > 0);
+    if (waged.length === 0) return 0;
+    return waged.reduce((s, e) => s + (e.hourlyWage || 0), 0) / waged.length;
+  })();
+  const istDevHours = (istOverTarget && avgWage > 0 && istDevCHF !== null)
+    ? istDevCHF / avgWage
+    : 0;
+  const hasIstData = totalIstHours > 0 && totalIstCost > 0;
+
+  // Per-employee Plan vs IST data (only employees with plan or IST hours)
+  const planVsIstRows = employees
+    .map(emp => {
+      const planHours  = calculateDayHours(scheduleData[`${emp.id}-${dateStr}`] ?? {});
+      const istHours   = actualHoursData?.[`${emp.id}-${dateStr}`]?.hours ?? 0;
+      const planCost   = planHours * (emp.hourlyWage || 0);
+      const istCost    = istHours  * (emp.hourlyWage || 0);
+      return { emp, planHours, istHours, planCost, istCost };
+    })
+    .filter(r => r.planHours > 0 || r.istHours > 0);
 
   // Recommendation text — now slot-aware
   const recommendation: { type: 'ok' | 'warning' | 'error'; text: string } | null = (() => {
@@ -625,14 +667,217 @@ export const DayDetailDialog = ({
             </div>
           )}
 
-          {/* Service */}
-          {serviceEmployees.length > 0 && (
-            renderEmployeeList(serviceEmployees, 'Service', 'bg-blue-500')
+          {/* IST-Auswertung */}
+          {hasIstData && (
+            <div className="rounded-lg border p-3 space-y-1.5">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                IST-Auswertung
+              </div>
+              {istRevenue && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">IST-Umsatz</span>
+                  <span className="font-semibold">CHF {istRevenue.toFixed(0)}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">IST-Stunden</span>
+                <span className="font-semibold">{totalIstHours.toFixed(1)} h</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">IST-Kosten</span>
+                <span className="font-semibold">CHF {totalIstCost.toFixed(0)}</span>
+              </div>
+              {istPkq !== null && (
+                <>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">IST-PKQ</span>
+                    <span className={cn(
+                      "font-semibold",
+                      istOverTarget ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"
+                    )}>
+                      {istPkq.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Ziel-PKQ</span>
+                    <span className="font-semibold">{laborCostThreshold}%</span>
+                  </div>
+                  {istDevCHF !== null && (
+                    <div className={cn(
+                      "flex justify-between text-sm border-t pt-1.5",
+                      istOverTarget
+                        ? "text-red-600 dark:text-red-400"
+                        : "text-green-600 dark:text-green-400"
+                    )}>
+                      <span className="font-semibold">{istOverTarget ? 'Zu viel' : 'Spielraum'}</span>
+                      <span className="font-bold">
+                        {istOverTarget ? '+' : ''}CHF {Math.abs(istDevCHF).toFixed(0)}
+                      </span>
+                    </div>
+                  )}
+                  {istOverTarget && istDevHours > 0 && (
+                    <div className="flex justify-between text-xs text-red-600 dark:text-red-400">
+                      <span>Überschuss (ca.)</span>
+                      <span className="font-bold">+{istDevHours.toFixed(1)} h</span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           )}
 
-          {/* Küche */}
-          {kücheEmployees.length > 0 && (
-            renderEmployeeList(kücheEmployees, 'Küche', 'bg-orange-500')
+          {/* Plan vs. IST Tabelle per Mitarbeiter */}
+          {planVsIstRows.length > 0 && actualHoursData && (
+            <div className="rounded-lg border p-3">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Plan vs. IST pro Mitarbeiter
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-[360px]">
+                  <thead>
+                    <tr className="border-b text-muted-foreground">
+                      <th className="text-left py-1 pr-2">Mitarbeiter</th>
+                      <th className="text-right py-1 px-1">Plan h</th>
+                      <th className="text-right py-1 px-1">IST h</th>
+                      <th className="text-right py-1 px-1">Δ h</th>
+                      <th className="text-right py-1 px-1">Plan CHF</th>
+                      <th className="text-right py-1 px-1">IST CHF</th>
+                      <th className="text-right py-1 pl-1">Δ CHF</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planVsIstRows.map(({ emp, planHours, istHours, planCost, istCost }) => {
+                      const diffH   = istHours - planHours;
+                      const diffCHF = istCost  - planCost;
+                      return (
+                        <tr key={emp.id} className="border-b last:border-0">
+                          <td className="py-1 pr-2 font-medium truncate max-w-[100px]">{emp.name}</td>
+                          <td className="py-1 px-1 text-right">{planHours.toFixed(1)}</td>
+                          <td className="py-1 px-1 text-right">{istHours.toFixed(1)}</td>
+                          <td className={cn(
+                            "py-1 px-1 text-right font-semibold",
+                            diffH > 0.05 ? "text-red-600 dark:text-red-400"
+                              : diffH < -0.05 ? "text-green-600 dark:text-green-400" : ""
+                          )}>
+                            {diffH > 0.05 ? '+' : ''}{diffH.toFixed(1)}
+                          </td>
+                          <td className="py-1 px-1 text-right">{planCost.toFixed(0)}</td>
+                          <td className="py-1 px-1 text-right">{istCost.toFixed(0)}</td>
+                          <td className={cn(
+                            "py-1 pl-1 text-right font-semibold",
+                            diffCHF > 5 ? "text-red-600 dark:text-red-400"
+                              : diffCHF < -5 ? "text-green-600 dark:text-green-400" : ""
+                          )}>
+                            {diffCHF > 5 ? '+' : ''}{diffCHF.toFixed(0)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {/* Totals row */}
+                    {planVsIstRows.length > 1 && (
+                      <tr className="border-t-2 font-semibold">
+                        <td className="py-1 pr-2 text-xs text-muted-foreground">Total</td>
+                        <td className="py-1 px-1 text-right">
+                          {planVsIstRows.reduce((s, r) => s + r.planHours, 0).toFixed(1)}
+                        </td>
+                        <td className="py-1 px-1 text-right">
+                          {planVsIstRows.reduce((s, r) => s + r.istHours, 0).toFixed(1)}
+                        </td>
+                        <td className={cn(
+                          "py-1 px-1 text-right",
+                          planVsIstRows.reduce((s, r) => s + r.istHours - r.planHours, 0) > 0.05
+                            ? "text-red-600 dark:text-red-400"
+                            : "text-green-600 dark:text-green-400"
+                        )}>
+                          {(() => {
+                            const d = planVsIstRows.reduce((s, r) => s + r.istHours - r.planHours, 0);
+                            return (d > 0.05 ? '+' : '') + d.toFixed(1);
+                          })()}
+                        </td>
+                        <td className="py-1 px-1 text-right">
+                          {planVsIstRows.reduce((s, r) => s + r.planCost, 0).toFixed(0)}
+                        </td>
+                        <td className="py-1 px-1 text-right">
+                          {planVsIstRows.reduce((s, r) => s + r.istCost, 0).toFixed(0)}
+                        </td>
+                        <td className={cn(
+                          "py-1 pl-1 text-right",
+                          planVsIstRows.reduce((s, r) => s + r.istCost - r.planCost, 0) > 5
+                            ? "text-red-600 dark:text-red-400"
+                            : "text-green-600 dark:text-green-400"
+                        )}>
+                          {(() => {
+                            const d = planVsIstRows.reduce((s, r) => s + r.istCost - r.planCost, 0);
+                            return (d > 5 ? '+' : '') + d.toFixed(0);
+                          })()}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Employee lists: combined for "Alle", split for single dept */}
+          {activeDepartment === 'all' ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-violet-500" />
+                <h4 className="font-semibold text-sm">Alle Mitarbeiter</h4>
+                <Badge variant="secondary" className="text-xs">
+                  {employees.filter(e => getEmployeeShiftInfo(e.id).hasShift).length}/{employees.length}
+                </Badge>
+              </div>
+              {[...serviceEmployees, ...kücheEmployees]
+                .filter(e => getEmployeeShiftInfo(e.id).hasShift)
+                .map(emp => {
+                  const info = getEmployeeShiftInfo(emp.id);
+                  const deptColor = emp.department === 'küche' ? 'bg-orange-500' : 'bg-blue-500';
+                  return (
+                    <div key={emp.id} className="flex items-center justify-between text-sm ml-4">
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("w-2 h-2 rounded-full shrink-0", deptColor)} />
+                        <span className="font-medium">{emp.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {info.früh && (
+                          <span className={cn("px-2 py-0.5 rounded text-xs border", info.früh.color)}>
+                            {info.früh.display}
+                          </span>
+                        )}
+                        {info.spät && (
+                          <span className={cn("px-2 py-0.5 rounded text-xs border", info.spät.color)}>
+                            {info.spät.display}
+                          </span>
+                        )}
+                        <span className="text-muted-foreground text-xs w-12 text-right">
+                          {info.totalHours.toFixed(1)}h
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              {[...serviceEmployees, ...kücheEmployees].filter(e => !getEmployeeShiftInfo(e.id).hasShift).length > 0 && (
+                <div className="ml-4 text-xs text-muted-foreground">
+                  Frei: {[...serviceEmployees, ...kücheEmployees]
+                    .filter(e => !getEmployeeShiftInfo(e.id).hasShift)
+                    .map(e => e.name).join(', ')}
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {/* Service */}
+              {serviceEmployees.length > 0 && (
+                renderEmployeeList(serviceEmployees, 'Service', 'bg-blue-500')
+              )}
+
+              {/* Küche */}
+              {kücheEmployees.length > 0 && (
+                renderEmployeeList(kücheEmployees, 'Küche', 'bg-orange-500')
+              )}
+            </>
           )}
         </div>
         </div>

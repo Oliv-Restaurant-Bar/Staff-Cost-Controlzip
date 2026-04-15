@@ -30,6 +30,8 @@ interface ActualHoursGridProps {
   showCosts?: boolean;
   dailyBudgets?: Record<string, { plannedRevenue?: number; actualRevenue?: number }>;
   laborCostThreshold?: number;
+  /** External day-click handler: opens the day detail popup for ANY day */
+  onDayClick?: (day: Date) => void;
 }
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -450,6 +452,7 @@ export const ActualHoursGrid = ({
   showCosts = false,
   dailyBudgets = {},
   laborCostThreshold: laborCostThresholdProp,
+  onDayClick,
 }: ActualHoursGridProps) => {
   const isWeekView = days.length <= 7;
 
@@ -483,14 +486,17 @@ export const ActualHoursGrid = ({
     });
 
     const plannedRevenue = dailyBudgets[dateStr]?.plannedRevenue || 0;
-    const laborCostPct = plannedRevenue > 0 ? (totalCosts / plannedRevenue * 100) : null;
-    const maxAllowedCosts = plannedRevenue * (LABOR_COST_THRESHOLD / 100);
+    // Use actual revenue for red marking when available; fall back to planned revenue
+    const actualRevenue  = dailyBudgets[dateStr]?.actualRevenue;
+    const revenueForMark = (actualRevenue !== undefined && actualRevenue > 0) ? actualRevenue : plannedRevenue;
+    const laborCostPct = revenueForMark > 0 ? (totalCosts / revenueForMark * 100) : null;
+    const maxAllowedCosts = revenueForMark * (LABOR_COST_THRESHOLD / 100);
     const excessCosts = Math.max(0, totalCosts - maxAllowedCosts);
-    const isOverBudget = plannedRevenue > 0 && totalCosts > maxAllowedCosts;
+    const isOverBudget = revenueForMark > 0 && totalCosts > maxAllowedCosts;
     const avgWage = employees.filter(e => e.hourlyWage).reduce((s, e) => s + e.hourlyWage, 0) / Math.max(1, employees.filter(e => e.hourlyWage).length);
     const excessHours = avgWage > 0 ? excessCosts / avgWage : 0;
 
-    return { totalHours, totalCosts, plannedRevenue, laborCostPct, isOverBudget, excessCosts, excessHours };
+    return { totalHours, totalCosts, plannedRevenue, actualRevenue, laborCostPct, isOverBudget, excessCosts, excessHours };
   };
 
   // Per-employee breakdown for a specific day
@@ -633,23 +639,29 @@ export const ActualHoursGrid = ({
                   <th
                     key={day.toISOString()}
                     className={cn(
-                      "px-1 py-1 text-center font-medium border-b transition-colors",
+                      "px-1 py-1 text-center font-medium border-b transition-colors cursor-pointer",
                       "border-r border-border/50",
                       stats.isOverBudget && showCosts
-                        ? "bg-red-100 dark:bg-red-900/30 cursor-pointer hover:bg-red-200 dark:hover:bg-red-900/40"
+                        ? "bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/40"
                         : isWeekendDay
-                          ? "bg-amber-100 dark:bg-amber-900/30"
-                          : "",
+                          ? "bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200/70 dark:hover:bg-amber-900/50"
+                          : "hover:bg-muted/50",
                       isSundayDay && !stats.isOverBudget && "bg-amber-200/70 dark:bg-amber-900/50 border-r-2 border-r-primary/30",
                       isWeekView ? "min-w-[80px] text-xs" : "min-w-[60px] text-[10px]"
                     )}
                     onClick={() => {
-                      if (stats.isOverBudget && showCosts) {
+                      if (onDayClick) {
+                        onDayClick(day);
+                      } else if (stats.isOverBudget && showCosts) {
                         setShowIdealPlan(false);
                         setOpenDialogDay(dateStr);
                       }
                     }}
-                    title={stats.isOverBudget && showCosts ? "⚠️ Ziel überschritten – Klicken für Details" : undefined}
+                    title={
+                      stats.isOverBudget && showCosts
+                        ? "⚠️ Ziel überschritten – Klicken für Details"
+                        : "Klicken für Tagesdetails"
+                    }
                   >
                     <div className={cn(
                       "text-muted-foreground text-[9px]",

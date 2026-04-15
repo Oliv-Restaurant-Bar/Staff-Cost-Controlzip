@@ -1,0 +1,121 @@
+Bitte die Ist-/Vergleichslogik in der Dienstplanung jetzt erweitern und fachlich sauber machen.
+
+Ziel:
+Ich möchte pro Tag eine echte operative Auswertung sehen, basierend auf Ist-Umsatz, Ist-Stunden und Ist-Kosten. Zusätzlich möchte ich bei Abteilung "Alle" eine gemeinsame Mitarbeiterübersicht und eine tabellarische Plan-vs-Ist-Arbeitszeiten-Auswertung.
+
+Bitte exakt so umsetzen:
+
+1. Tages-Popup für IST für jeden Tag verfügbar machen
+Aktuell scheint das Popup nur bei rot markierten Tagen oder auffälligen Tagen verfügbar zu sein.
+Ich möchte das Tages-Popup für JEDEN Tag öffnen können.
+
+Bitte:
+- jeder Tag im Ist-Modus klickbar machen
+- Popup für alle Tage öffnen können
+- nicht nur rote / auffällige Tage
+
+2. Im IST-Popup den tatsächlichen Ist-Umsatz anzeigen
+Im Popup soll zusätzlich klar sichtbar sein:
+- Ist-Umsatz des Tages
+- Ist-Stunden total
+- Ist-Kosten total
+- Personalkostenquote auf Basis IST-Kosten / IST-Umsatz
+- Zielwert %
+- Abweichung in CHF
+- Abweichung in Stunden ca.
+
+Wichtig:
+Nicht budgetierter Umsatz, sondern tatsächlicher Ist-Umsatz des Tages.
+
+3. Rote Markierung fachlich korrekt machen
+Die rote Markierung der Tage soll nicht nur optisch, sondern fachlich sauber auf Basis der Zielwerte erfolgen.
+
+Bitte Logik so machen:
+- Ist-Kosten des Tages gegen Ist-Umsatz des Tages prüfen
+- daraus Ist-PKQ berechnen
+- mit dem aktiven Zielwert vergleichen
+- wenn über Zielwert -> rot markieren
+- wenn leicht drüber -> gelb
+- wenn im Ziel -> grün / neutral
+
+Zusätzlich im Popup klar zeigen:
+- Zielwert %
+- effektive PKQ %
+- zu viel Kosten CHF
+- zu viel Stunden ca.
+
+4. Bei Abteilung "Alle" nur eine gemeinsame Mitarbeiterübersicht
+Wenn oben "Alle" gewählt ist, möchte ich nicht Service und Küche getrennt sehen.
+Ich möchte dann eine einzige gemeinsame Mitarbeiterübersicht.
+
+Bitte:
+- bei Filter "Alle" eine Gesamtliste aller Mitarbeiter anzeigen
+- keine Trennung mehr in Service/Küche Blöcke
+- sauber sortiert, z.B. nach Name oder Kosten
+
+5. Neue tabellarische Plan-vs-Ist-Arbeitszeiten-Auswertung
+Ich möchte zusätzlich eine Tabelle, die pro Mitarbeiter und pro Tag Plan vs Ist zeigt.
+
+Bitte eine eigene tabellarische Ansicht oder einen aufklappbaren Bereich ergänzen mit:
+- Mitarbeiter
+- Datum
+- Plan Stunden
+- Ist Stunden
+- Differenz Stunden
+- Plan Kosten
+- Ist Kosten
+- Differenz CHF
+
+Wenn Aggregation sinnvoll ist:
+- pro Tag
+- optional pro Woche / Monat später erweiterbar
+
+6. Im Mitarbeiter-Popup ebenfalls Plan vs Ist pro Tag
+Wenn ich auf einen Mitarbeiter klicke, möchte ich im Popup zusätzlich pro Tag sehen:
+- Plan Stunden
+- Ist Stunden
+- Differenz Stunden
+- Plan CHF
+- Ist CHF
+- Differenz CHF
+- kumulierte Differenz CHF
+
+7. Einheitliche Datenbasis
+Wichtig:
+Alle diese Ansichten müssen dieselbe zentrale Logik verwenden:
+- Ist-Umsatz Tageswert
+- Ist-Stunden
+- Ist-Kosten
+- Zielwert
+- Planstunden / Plankosten
+
+Keine separaten Sonderberechnungen pro Popup oder Tabelle.
+
+8. Debug Logs
+Bitte loggen:
+[DAY-POPUP] date: ...
+[DAY-POPUP] ist revenue: ...
+[DAY-POPUP] ist hours: ...
+[DAY-POPUP] ist cost: ...
+[DAY-POPUP] pkq ist: ...
+[DAY-POPUP] target pct: ...
+[DAY-POPUP] over cost chf: ...
+[DAY-POPUP] over hours approx: ...
+
+[ALL-DEPT] mode enabled
+[ALL-DEPT] employee count: ...
+
+[PLAN-IST-TABLE] rows: ...
+[PLAN-IST-TABLE] employee: ...
+[PLAN-IST-TABLE] date: ...
+[PLAN-IST-TABLE] plan hours: ...
+[PLAN-IST-TABLE] ist hours: ...
+[PLAN-IST-TABLE] diff hours: ...
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- ob das Tages-Popup jetzt für alle Tage verfügbar ist
+- ob dort jetzt der tatsächliche Ist-Umsatz angezeigt wird
+- wie die rote Markierung jetzt berechnet wird
+- ob "Alle" jetzt eine gemeinsame Mitarbeiterübersicht zeigt
+- wo die neue Plan-vs-Ist-Tabelle pro Mitarbeiter und Tag sichtbar ist
