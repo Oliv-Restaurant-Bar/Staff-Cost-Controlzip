@@ -1,11 +1,14 @@
-import React, { useState, useMemo } from 'react';
-import { format, isWeekend, isSunday } from 'date-fns';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { format, isWeekend } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
 import { calculateBreakDeduction, useShiftConfig } from '@/hooks/useShiftConfig';
 import { cn } from '@/lib/utils';
-import { ChevronDown, ChevronUp, FileText, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown, Search, X } from 'lucide-react';
+import {
+  ChevronDown, ChevronUp, FileText, FileSpreadsheet,
+  ArrowUpDown, ArrowUp, ArrowDown, Search, X, Users, Check,
+} from 'lucide-react';
 import { exportPlanVsIstPDF, exportPlanVsIstExcel, PlanVsIstExportRow } from '@/lib/plan-ist-export';
 
 interface IstEntry {
@@ -58,7 +61,23 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
   const [open, setOpen] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
-  const [empSearch, setEmpSearch] = useState('');
+
+  // Multi-select employee filter
+  const [selectedEmpIds, setSelectedEmpIds] = useState<Set<string>>(new Set());
+  const [dropOpen, setDropOpen] = useState(false);
+  const [dropSearch, setDropSearch] = useState('');
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node)) {
+        setDropOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -111,12 +130,12 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
       days.forEach(day => {
         const dateStr = format(day, 'yyyy-MM-dd');
         const ds = scheduleData[`${emp.id}-${dateStr}`];
-        if (isPlanAbsence(ds)) return; // skip absence-marked days
+        if (isPlanAbsence(ds)) return;
 
         const plan = getPlanHours(emp.id, dateStr);
         const hasIst_ = hasRealIst(emp.id, dateStr);
         const ist = hasIst_ ? getIstHours(emp.id, dateStr) : 0;
-        if (plan === 0 && !hasIst_) return; // nothing to show
+        if (plan === 0 && !hasIst_) return;
 
         const wage = emp.hourlyWage || 0;
         const planCost = plan * wage;
@@ -140,12 +159,22 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
     return rows;
   }, [employees, days, scheduleData, actualHoursData]);
 
-  const filteredRows = useMemo(() => {
-    const search = empSearch.trim().toLowerCase();
+  // Unique employees that appear in allRows (for the dropdown list)
+  const uniqueEmps = useMemo(() => {
+    const seen = new Map<string, Employee>();
+    allRows.forEach(r => { if (!seen.has(r.emp.id)) seen.set(r.emp.id, r.emp); });
+    return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  }, [allRows]);
 
+  const dropFilteredEmps = useMemo(() => {
+    const s = dropSearch.trim().toLowerCase();
+    return s ? uniqueEmps.filter(e => e.name.toLowerCase().includes(s)) : uniqueEmps;
+  }, [uniqueEmps, dropSearch]);
+
+  const filteredRows = useMemo(() => {
     const base = allRows.filter(r => {
-      // Employee name search
-      if (search && !r.emp.name.toLowerCase().includes(search)) return false;
+      // Employee multi-select
+      if (selectedEmpIds.size > 0 && !selectedEmpIds.has(r.emp.id)) return false;
       // Row filter
       if (!r.hasIst) return filter === 'all';
       if (filter === 'deviation') return Math.abs(r.diffHours) > 0.05 || Math.abs(r.diffCost) > 5;
@@ -168,20 +197,20 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
     });
 
     return base;
-  }, [allRows, filter, sortKey, sortDir, empSearch]);
+  }, [allRows, filter, sortKey, sortDir, selectedEmpIds]);
 
-  // Summary totals (from ALL rows regardless of filter)
+  // Summary totals — reflect the current filteredRows selection
   const totals = useMemo(() => {
-    const withIst = allRows.filter(r => r.hasIst);
+    const withIst = filteredRows.filter(r => r.hasIst);
     return {
-      planH: allRows.reduce((s, r) => s + r.planHours, 0),
+      planH: filteredRows.reduce((s, r) => s + r.planHours, 0),
       istH:  withIst.reduce((s, r) => s + r.istHours,  0),
       diffH: withIst.reduce((s, r) => s + r.diffHours, 0),
-      planC: allRows.reduce((s, r) => s + r.planCost,  0),
+      planC: filteredRows.reduce((s, r) => s + r.planCost,  0),
       istC:  withIst.reduce((s, r) => s + r.istCost,   0),
       diffC: withIst.reduce((s, r) => s + r.diffCost,  0),
     };
-  }, [allRows]);
+  }, [filteredRows]);
 
   const fmtC = (n: number) =>
     n.toLocaleString('de-CH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -234,6 +263,20 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
     );
   }
 
+  const allSelected = selectedEmpIds.size === 0;
+  const selCount    = selectedEmpIds.size;
+
+  const toggleEmp = (id: string) => {
+    setSelectedEmpIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll  = () => setSelectedEmpIds(new Set());
+  const selectOnly = (id: string) => setSelectedEmpIds(new Set([id]));
+
   return (
     <div className="mt-6 rounded-lg border overflow-hidden">
 
@@ -270,7 +313,7 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
 
       {open && (
         <>
-          {/* Summary bar */}
+          {/* Summary bar — reflects current selection */}
           <div className="grid grid-cols-6 gap-0 border-b bg-muted/20 text-center divide-x">
             {[
               { label: 'Plan Std.',  val: totals.planH.toFixed(1), cls: '' },
@@ -287,8 +330,9 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
             ))}
           </div>
 
-          {/* Filter + Search bar */}
+          {/* Filter + Employee-picker bar */}
           <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-background flex-wrap">
+            {/* Row-filter pills */}
             {FILTERS.map(({ key, label }) => (
               <button
                 key={key}
@@ -303,25 +347,125 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
                 {label}
               </button>
             ))}
-            {/* Employee name search */}
-            <div className="relative ml-2 flex items-center">
-              <Search className="absolute left-1.5 h-3 w-3 text-muted-foreground pointer-events-none" />
-              <input
-                type="text"
-                placeholder="Mitarbeiter suchen…"
-                value={empSearch}
-                onChange={e => setEmpSearch(e.target.value)}
-                className="h-6 pl-5 pr-5 text-[10px] rounded border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-36"
-              />
-              {empSearch && (
-                <button
-                  onClick={() => setEmpSearch('')}
-                  className="absolute right-1 text-muted-foreground hover:text-foreground"
-                >
-                  <X className="h-3 w-3" />
-                </button>
+
+            {/* Multi-select employee picker */}
+            <div className="relative ml-2" ref={dropRef}>
+              <button
+                onClick={() => setDropOpen(v => !v)}
+                className={cn(
+                  'flex items-center gap-1 h-6 pl-2 pr-1.5 text-[10px] rounded border transition-colors',
+                  selCount > 0
+                    ? 'bg-primary/10 border-primary text-primary font-semibold'
+                    : 'border-border text-muted-foreground hover:bg-muted',
+                )}
+              >
+                <Users className="h-3 w-3 shrink-0" />
+                {selCount === 0
+                  ? 'Alle Mitarbeiter'
+                  : selCount === 1
+                    ? uniqueEmps.find(e => selectedEmpIds.has(e.id))?.name ?? '1 Person'
+                    : `${selCount} Mitarbeiter`}
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </button>
+
+              {dropOpen && (
+                <div className="absolute left-0 top-7 z-50 w-56 rounded-md border border-border bg-background shadow-lg">
+                  {/* Search within dropdown */}
+                  <div className="flex items-center gap-1 px-2 py-1.5 border-b">
+                    <Search className="h-3 w-3 text-muted-foreground shrink-0" />
+                    <input
+                      autoFocus
+                      type="text"
+                      placeholder="Suchen…"
+                      value={dropSearch}
+                      onChange={e => setDropSearch(e.target.value)}
+                      className="flex-1 text-[11px] bg-transparent outline-none placeholder:text-muted-foreground"
+                    />
+                    {dropSearch && (
+                      <button onClick={() => setDropSearch('')}>
+                        <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* "Alle" option */}
+                  <button
+                    onClick={() => { selectAll(); setDropOpen(false); }}
+                    className={cn(
+                      'w-full flex items-center gap-2 px-2.5 py-1.5 text-[11px] hover:bg-muted transition-colors',
+                      allSelected ? 'font-semibold text-foreground' : 'text-muted-foreground',
+                    )}
+                  >
+                    <span className={cn(
+                      'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border',
+                      allSelected ? 'bg-primary border-primary text-primary-foreground' : 'border-border',
+                    )}>
+                      {allSelected && <Check className="h-2.5 w-2.5" />}
+                    </span>
+                    Alle Mitarbeiter
+                  </button>
+
+                  <div className="max-h-48 overflow-y-auto border-t">
+                    {dropFilteredEmps.map(emp => {
+                      const checked = selectedEmpIds.has(emp.id);
+                      return (
+                        <div
+                          key={emp.id}
+                          className="flex items-center gap-2 px-2.5 py-1 hover:bg-muted transition-colors group"
+                        >
+                          {/* Checkbox */}
+                          <button
+                            onClick={() => toggleEmp(emp.id)}
+                            className={cn(
+                              'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors',
+                              checked ? 'bg-primary border-primary text-primary-foreground' : 'border-border',
+                            )}
+                          >
+                            {checked && <Check className="h-2.5 w-2.5" />}
+                          </button>
+
+                          {/* Name — click selects only this person */}
+                          <button
+                            onClick={() => { selectOnly(emp.id); setDropOpen(false); }}
+                            className="flex-1 text-left text-[11px] truncate"
+                            title={`Nur ${emp.name} anzeigen`}
+                          >
+                            {emp.name}
+                          </button>
+
+                          {/* Dept badge */}
+                          <span className={cn(
+                            'text-[9px] px-1 py-0.5 rounded-full font-semibold shrink-0',
+                            emp.department === 'küche'
+                              ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
+                              : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
+                          )}>
+                            {emp.department === 'küche' ? 'K' : 'S'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {dropFilteredEmps.length === 0 && (
+                      <p className="py-3 text-center text-[11px] text-muted-foreground">Kein Treffer</p>
+                    )}
+                  </div>
+
+                  {/* Footer: apply / clear */}
+                  {selCount > 0 && (
+                    <div className="border-t px-2 py-1.5 flex items-center justify-between">
+                      <span className="text-[10px] text-muted-foreground">{selCount} ausgewählt</span>
+                      <button
+                        onClick={() => { selectAll(); setDropOpen(false); }}
+                        className="text-[10px] text-primary hover:underline"
+                      >
+                        Auswahl zurücksetzen
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
+
             <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
               {filteredRows.length} Einträge
             </span>
@@ -332,7 +476,6 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
             <table className="w-full text-xs min-w-[580px]">
               <thead className="sticky top-0 z-10 bg-background border-b">
                 <tr className="text-muted-foreground select-none">
-                  {/* Sortable: Mitarbeiter */}
                   {([
                     { key: 'name' as SortKey,      label: 'Mitarbeiter', align: 'left',  cls: 'pl-3 pr-2' },
                     { key: null,                   label: 'Abt.',        align: 'left',  cls: 'px-1' },
@@ -426,11 +569,18 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
                   );
                 })}
               </tbody>
-              {/* Total row */}
+              {/* Total row for visible rows */}
               {filteredRows.length > 1 && (
                 <tfoot className="border-t-2 bg-muted/40 sticky bottom-0">
                   <tr className="font-bold">
-                    <td className="py-2 pl-3 pr-2 text-xs">Total ({filteredRows.filter(r => r.hasIst).length} mit IST)</td>
+                    <td className="py-2 pl-3 pr-2 text-xs">
+                      Total
+                      {selCount > 0 && (
+                        <span className="ml-1 font-normal text-muted-foreground text-[10px]">
+                          ({selCount} {selCount === 1 ? 'Person' : 'Personen'})
+                        </span>
+                      )}
+                    </td>
                     <td colSpan={2} className="py-2 px-1" />
                     <td className="py-2 px-1 text-right tabular-nums">
                       {filteredRows.reduce((s, r) => s + r.planHours, 0).toFixed(1)}
