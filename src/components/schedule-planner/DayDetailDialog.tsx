@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Clock, Users, TrendingUp, Pencil, RotateCcw, Check, X, AlertTriangle, Lightbulb, Palmtree, Stethoscope } from 'lucide-react';
+import { Clock, Users, TrendingUp, Pencil, RotateCcw, Check, X, AlertTriangle, Lightbulb, Palmtree, Stethoscope, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
@@ -68,6 +68,9 @@ export const DayDetailDialog = ({
   const { shiftMap } = useShiftConfig();
   const [editingRevenue, setEditingRevenue] = useState(false);
   const [revenueInput, setRevenueInput] = useState('');
+  type PvIstFilter = 'all' | 'deviation' | 'over' | 'under';
+  const [pvIstFilter, setPvIstFilter] = useState<PvIstFilter>('all');
+  const [pvIstOpen, setPvIstOpen] = useState(true);
 
   if (!date) return null;
 
@@ -726,98 +729,182 @@ export const DayDetailDialog = ({
             </div>
           )}
 
-          {/* Plan vs. IST Tabelle per Mitarbeiter */}
-          {planVsIstRows.length > 0 && actualHoursData && (
-            <div className="rounded-lg border p-3">
-              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                Plan vs. IST pro Mitarbeiter
+          {/* Plan vs. IST — Controlling-Tabelle */}
+          {planVsIstRows.length > 0 && actualHoursData && (() => {
+            const totPlanH = planVsIstRows.reduce((s, r) => s + r.planHours, 0);
+            const totIstH  = planVsIstRows.reduce((s, r) => s + r.istHours, 0);
+            const totDiffH = totIstH - totPlanH;
+            const totPlanC = planVsIstRows.reduce((s, r) => s + r.planCost, 0);
+            const totIstC  = planVsIstRows.reduce((s, r) => s + r.istCost, 0);
+            const totDiffC = totIstC - totPlanC;
+
+            const FILTERS: { key: PvIstFilter; label: string }[] = [
+              { key: 'all',       label: 'Alle' },
+              { key: 'deviation', label: 'Abweichungen' },
+              { key: 'over',      label: 'Über Plan' },
+              { key: 'under',     label: 'Unter Plan' },
+            ];
+
+            const filteredRows = planVsIstRows.filter(r => {
+              const dH = r.istHours - r.planHours;
+              const dC = r.istCost  - r.planCost;
+              if (pvIstFilter === 'deviation') return Math.abs(dH) > 0.05 || Math.abs(dC) > 5;
+              if (pvIstFilter === 'over')      return dH > 0.05 || dC > 5;
+              if (pvIstFilter === 'under')     return dH < -0.05 || dC < -5;
+              return true;
+            });
+
+            const diffColor = (val: number, threshold = 0.05) =>
+              val > threshold  ? 'text-red-600 dark:text-red-400'
+              : val < -threshold ? 'text-green-600 dark:text-green-400'
+              : 'text-muted-foreground';
+
+            const fmt = (n: number) => n.toLocaleString('de-CH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+            const sign = (n: number, thr = 0.05) => (n > thr ? '+' : '');
+
+            return (
+              <div className="rounded-lg border overflow-hidden">
+
+                {/* Collapsible header */}
+                <button
+                  className="w-full flex items-center justify-between px-3 py-2.5 bg-muted/30 hover:bg-muted/50 transition-colors border-b"
+                  onClick={() => setPvIstOpen(v => !v)}
+                >
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Plan vs. IST pro Mitarbeiter
+                  </span>
+                  {pvIstOpen ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                </button>
+
+                {pvIstOpen && (
+                  <>
+                    {/* Summary row */}
+                    <div className="grid grid-cols-6 gap-0 border-b bg-muted/20 text-center divide-x">
+                      {[
+                        { label: 'Plan Std.', val: totPlanH.toFixed(1),    cls: '' },
+                        { label: 'IST Std.',  val: totIstH.toFixed(1),     cls: '' },
+                        { label: 'Diff Std.', val: `${sign(totDiffH)}${totDiffH.toFixed(1)}`, cls: diffColor(totDiffH) },
+                        { label: 'Plan CHF',  val: fmt(totPlanC),           cls: '' },
+                        { label: 'IST CHF',   val: fmt(totIstC),            cls: '' },
+                        { label: 'Diff CHF',  val: `${sign(totDiffC, 5)}${fmt(totDiffC)}`, cls: diffColor(totDiffC, 5) },
+                      ].map(({ label, val, cls }) => (
+                        <div key={label} className="py-2 px-1">
+                          <div className="text-[9px] text-muted-foreground uppercase tracking-wide leading-none mb-0.5">{label}</div>
+                          <div className={cn("text-xs font-bold", cls)}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Filter bar */}
+                    <div className="flex items-center gap-1 px-3 py-1.5 border-b bg-background flex-wrap">
+                      {FILTERS.map(({ key, label }) => (
+                        <button
+                          key={key}
+                          onClick={() => setPvIstFilter(key)}
+                          className={cn(
+                            "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
+                            pvIstFilter === key
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "text-muted-foreground border-border hover:bg-muted"
+                          )}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                      <span className="ml-auto text-[10px] text-muted-foreground">
+                        {filteredRows.length} Einträge
+                      </span>
+                    </div>
+
+                    {/* Table */}
+                    <div className="overflow-x-auto max-h-[260px] overflow-y-auto">
+                      <table className="w-full text-xs min-w-[480px]">
+                        <thead className="sticky top-0 z-10 bg-background border-b">
+                          <tr className="text-muted-foreground">
+                            <th className="text-left py-2 pl-3 pr-2 font-semibold">Mitarbeiter</th>
+                            <th className="text-left py-2 px-1 font-semibold">Abt.</th>
+                            <th className="text-left py-2 px-1 font-semibold">Datum</th>
+                            <th className="text-right py-2 px-1 font-semibold">Plan Std.</th>
+                            <th className="text-right py-2 px-1 font-semibold">IST Std.</th>
+                            <th className="text-right py-2 px-1 font-semibold">Diff Std.</th>
+                            <th className="text-right py-2 px-1 font-semibold">Plan CHF</th>
+                            <th className="text-right py-2 px-1 font-semibold">IST CHF</th>
+                            <th className="text-right py-2 pr-3 font-semibold">Diff CHF</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={9} className="py-4 text-center text-muted-foreground text-xs">
+                                Keine Einträge für diesen Filter.
+                              </td>
+                            </tr>
+                          ) : filteredRows.map(({ emp, planHours, istHours, planCost, istCost }, idx) => {
+                            const dH = istHours - planHours;
+                            const dC = istCost  - planCost;
+                            const isKüche = emp.department === 'küche';
+                            return (
+                              <tr
+                                key={emp.id}
+                                className={cn(
+                                  "border-b last:border-0 transition-colors",
+                                  idx % 2 === 0 ? "bg-background" : "bg-muted/20"
+                                )}
+                              >
+                                <td className="py-1.5 pl-3 pr-2 font-medium whitespace-nowrap">{emp.name}</td>
+                                <td className="py-1.5 px-1">
+                                  <span className={cn(
+                                    "text-[10px] font-semibold px-1.5 py-0.5 rounded-full",
+                                    isKüche
+                                      ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300"
+                                      : "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                                  )}>
+                                    {isKüche ? 'Küche' : 'Service'}
+                                  </span>
+                                </td>
+                                <td className="py-1.5 px-1 text-muted-foreground whitespace-nowrap">
+                                  {format(date, 'dd.MM.yy')}
+                                </td>
+                                <td className="py-1.5 px-1 text-right tabular-nums">{planHours.toFixed(1)}</td>
+                                <td className="py-1.5 px-1 text-right tabular-nums">{istHours.toFixed(1)}</td>
+                                <td className={cn("py-1.5 px-1 text-right font-semibold tabular-nums", diffColor(dH))}>
+                                  {sign(dH)}{dH.toFixed(1)}
+                                </td>
+                                <td className="py-1.5 px-1 text-right tabular-nums">{fmt(planCost)}</td>
+                                <td className="py-1.5 px-1 text-right tabular-nums">{fmt(istCost)}</td>
+                                <td className={cn("py-1.5 pr-3 text-right font-semibold tabular-nums", diffColor(dC, 5))}>
+                                  {sign(dC, 5)}{fmt(dC)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        {/* Total footer — always shown when >1 row */}
+                        {planVsIstRows.length > 1 && (
+                          <tfoot className="border-t-2 bg-muted/40">
+                            <tr className="font-bold">
+                              <td className="py-2 pl-3 pr-2 text-xs">Total</td>
+                              <td className="py-2 px-1" colSpan={2} />
+                              <td className="py-2 px-1 text-right tabular-nums">{totPlanH.toFixed(1)}</td>
+                              <td className="py-2 px-1 text-right tabular-nums">{totIstH.toFixed(1)}</td>
+                              <td className={cn("py-2 px-1 text-right tabular-nums", diffColor(totDiffH))}>
+                                {sign(totDiffH)}{totDiffH.toFixed(1)}
+                              </td>
+                              <td className="py-2 px-1 text-right tabular-nums">{fmt(totPlanC)}</td>
+                              <td className="py-2 px-1 text-right tabular-nums">{fmt(totIstC)}</td>
+                              <td className={cn("py-2 pr-3 text-right tabular-nums", diffColor(totDiffC, 5))}>
+                                {sign(totDiffC, 5)}{fmt(totDiffC)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
+                  </>
+                )}
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs min-w-[360px]">
-                  <thead>
-                    <tr className="border-b text-muted-foreground">
-                      <th className="text-left py-1 pr-2">Mitarbeiter</th>
-                      <th className="text-right py-1 px-1">Plan h</th>
-                      <th className="text-right py-1 px-1">IST h</th>
-                      <th className="text-right py-1 px-1">Δ h</th>
-                      <th className="text-right py-1 px-1">Plan CHF</th>
-                      <th className="text-right py-1 px-1">IST CHF</th>
-                      <th className="text-right py-1 pl-1">Δ CHF</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {planVsIstRows.map(({ emp, planHours, istHours, planCost, istCost }) => {
-                      const diffH   = istHours - planHours;
-                      const diffCHF = istCost  - planCost;
-                      return (
-                        <tr key={emp.id} className="border-b last:border-0">
-                          <td className="py-1 pr-2 font-medium truncate max-w-[100px]">{emp.name}</td>
-                          <td className="py-1 px-1 text-right">{planHours.toFixed(1)}</td>
-                          <td className="py-1 px-1 text-right">{istHours.toFixed(1)}</td>
-                          <td className={cn(
-                            "py-1 px-1 text-right font-semibold",
-                            diffH > 0.05 ? "text-red-600 dark:text-red-400"
-                              : diffH < -0.05 ? "text-green-600 dark:text-green-400" : ""
-                          )}>
-                            {diffH > 0.05 ? '+' : ''}{diffH.toFixed(1)}
-                          </td>
-                          <td className="py-1 px-1 text-right">{planCost.toFixed(0)}</td>
-                          <td className="py-1 px-1 text-right">{istCost.toFixed(0)}</td>
-                          <td className={cn(
-                            "py-1 pl-1 text-right font-semibold",
-                            diffCHF > 5 ? "text-red-600 dark:text-red-400"
-                              : diffCHF < -5 ? "text-green-600 dark:text-green-400" : ""
-                          )}>
-                            {diffCHF > 5 ? '+' : ''}{diffCHF.toFixed(0)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {/* Totals row */}
-                    {planVsIstRows.length > 1 && (
-                      <tr className="border-t-2 font-semibold">
-                        <td className="py-1 pr-2 text-xs text-muted-foreground">Total</td>
-                        <td className="py-1 px-1 text-right">
-                          {planVsIstRows.reduce((s, r) => s + r.planHours, 0).toFixed(1)}
-                        </td>
-                        <td className="py-1 px-1 text-right">
-                          {planVsIstRows.reduce((s, r) => s + r.istHours, 0).toFixed(1)}
-                        </td>
-                        <td className={cn(
-                          "py-1 px-1 text-right",
-                          planVsIstRows.reduce((s, r) => s + r.istHours - r.planHours, 0) > 0.05
-                            ? "text-red-600 dark:text-red-400"
-                            : "text-green-600 dark:text-green-400"
-                        )}>
-                          {(() => {
-                            const d = planVsIstRows.reduce((s, r) => s + r.istHours - r.planHours, 0);
-                            return (d > 0.05 ? '+' : '') + d.toFixed(1);
-                          })()}
-                        </td>
-                        <td className="py-1 px-1 text-right">
-                          {planVsIstRows.reduce((s, r) => s + r.planCost, 0).toFixed(0)}
-                        </td>
-                        <td className="py-1 px-1 text-right">
-                          {planVsIstRows.reduce((s, r) => s + r.istCost, 0).toFixed(0)}
-                        </td>
-                        <td className={cn(
-                          "py-1 pl-1 text-right",
-                          planVsIstRows.reduce((s, r) => s + r.istCost - r.planCost, 0) > 5
-                            ? "text-red-600 dark:text-red-400"
-                            : "text-green-600 dark:text-green-400"
-                        )}>
-                          {(() => {
-                            const d = planVsIstRows.reduce((s, r) => s + r.istCost - r.planCost, 0);
-                            return (d > 5 ? '+' : '') + d.toFixed(0);
-                          })()}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Employee lists: combined for "Alle", split for single dept */}
           {activeDepartment === 'all' ? (
