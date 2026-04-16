@@ -1,0 +1,126 @@
+Bitte den PDF-Export (Tages-Controlling / Personal-FIX / Flex-Auswertung) komplett überarbeiten.
+
+Ziel:
+Der PDF-Export soll sauber, ausgerichtet und benutzerfreundlich sein – ähnlich wie die Webapp.
+Aktuell ist der Export versetzt, unruhig und visuell nicht klar strukturiert.
+
+Bitte exakt so umsetzen:
+
+==================================================
+1. Layout korrigieren (wichtigster Punkt)
+==================================================
+
+- Alle Inhalte müssen sauber linksbündig und in klaren Spalten stehen
+- Keine verschobenen Blöcke oder überlappenden Texte
+- Einheitliche Seitenränder (oben/unten/links/rechts)
+- Keine abgeschnittenen Inhalte
+
+==================================================
+2. Struktur wie in der Webapp
+==================================================
+
+PDF soll logisch aufgebaut sein:
+
+1. Titelbereich
+- Titel (z.B. "Tages-Controlling")
+- Datum / Zeitraum
+- optional Logo
+
+2. KPI-Block (oben)
+- Ist-Umsatz
+- Ist-Kosten
+- Personalquote
+- Zielwert
+- Abweichung
+
+→ als kompakte Boxen nebeneinander (gleich breit)
+
+3. Haupttabelle
+- Plan vs Ist / Flex-Auswertung
+- klare Spaltenstruktur
+- gleiche Reihenfolge wie Webapp
+
+4. optional: Details / Mitarbeiter
+
+==================================================
+3. WES-Analyse entfernen (wichtig)
+==================================================
+
+- Der rechte WES-Block soll standardmässig NICHT mehr im PDF erscheinen
+
+Stattdessen:
+- optionaler Toggle / Button im UI:
+  "WES im Export anzeigen"
+
+Nur wenn aktiv:
+→ WES Block im PDF einbauen
+
+==================================================
+4. Tabellen sauber darstellen
+==================================================
+
+- Spalten exakt ausrichten
+- Zahlen rechtsbündig
+- CHF sauber formatiert
+- Stunden einheitlich (z.B. 1 Dezimalstelle)
+- Zebra-Streifen für bessere Lesbarkeit
+- Kopfzeile fix und fett
+
+==================================================
+5. Farben wie in Webapp übernehmen
+==================================================
+
+- Grün = im Ziel / unter Plan
+- Rot = über Plan
+- Gelb = leicht drüber
+
+Aber:
+→ dezent, nicht zu knallig
+→ gute Lesbarkeit im Druck
+
+==================================================
+6. Abstände & Lesbarkeit
+==================================================
+
+- klare Abstände zwischen:
+  - KPI Block
+  - Tabelle
+  - optionalen Bereichen
+
+- keine gedrängten Inhalte
+
+==================================================
+7. Seitenumbruch sauber lösen
+==================================================
+
+- Tabellen dürfen nicht mitten in Zeilen umbrechen
+- Kopfzeile auf neuer Seite wiederholen
+- keine abgeschnittenen Daten
+
+==================================================
+8. Export identisch zur aktuellen Ansicht
+==================================================
+
+Der PDF-Export soll berücksichtigen:
+- gewählte Periode (Tag / Woche / Monat)
+- aktive Filter
+- Abteilung (Alle / Service / Küche)
+
+==================================================
+9. Debug Logs
+==================================================
+
+[PDF] layout initialized
+[PDF] rows rendered: ...
+[PDF] wes included: true/false
+[PDF] page count: ...
+
+==================================================
+10. Bitte danach kurz sagen:
+==================================================
+
+- welche Datei(en) angepasst wurden
+- ob WES jetzt optional ist
+- wie das Layout strukturiert wurde
+- ob Tabellen jetzt sauber ausgerichtet sind
+- ob Seitenumbrüche korrekt funktionieren

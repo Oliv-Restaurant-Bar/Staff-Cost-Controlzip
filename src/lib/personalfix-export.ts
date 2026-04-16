@@ -349,6 +349,7 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
   } = data;
 
   const monthLabel = getMonthLabel(selectedYear, selectedMonth);
+  console.log('[PERSONALFIX-PDF] Start | Monat:', monthLabel, '| varView:', varView, '| Budget:', personnelBudget, '| FIX:', totalFixCost, '| Variabel:', totalVariabelCHF);
 
   // ── Seitenraster-Konstanten ────────────────────────────────────────────────
   const pdf  = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -1303,6 +1304,7 @@ export function exportFlexAuswertungToPDF(data: FlexAuswertungExportData): void 
 
   const monthLabel  = getMonthLabel(selectedYear, selectedMonth);
   const modeLabel   = ABW_MODE_LABEL[abwMode] ?? abwMode;
+  console.log('[FLEX-PDF] Start | Monat:', monthLabel, '| Modus:', modeLabel, '| Perioden:', periodRows.length, '| MA:', empRows.length, '| Plan:', monthPlan, '| Ist:', monthIst);
   const monthPct    = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : null;
   const monthSt     = flexAmpelStatus(monthDiff, monthPlan);
   const monthStCol  = flexAmpelColor(monthSt);
@@ -1474,15 +1476,16 @@ export function exportFlexAuswertungToPDF(data: FlexAuswertungExportData): void 
       alternateRowStyles: { fillColor: C.rowGray },
       showFoot: 'lastPage',
       columnStyles: {
+        // Fixed cols total: 14+19+19+19+19+22+22+20 = 154 mm → Name auto = 182−154 = 28 mm ✓
         0: { cellWidth: 'auto' },
-        1: { cellWidth: 16 },
-        2: { halign: 'right', cellWidth: 22, textColor: C.textBlue   },
-        3: { halign: 'right', cellWidth: 22, textColor: C.textOrange },
-        4: { halign: 'right', cellWidth: 22, textColor: C.textBlue   },
-        5: { halign: 'right', cellWidth: 22, textColor: C.textOrange },
-        6: { halign: 'right', cellWidth: 24, fontStyle: 'bold', textColor: C.textBlue   },
-        7: { halign: 'right', cellWidth: 24, fontStyle: 'bold', textColor: C.textOrange },
-        8: { halign: 'right', cellWidth: 22 },
+        1: { cellWidth: 14 },
+        2: { halign: 'right', cellWidth: 19, textColor: C.textBlue   },
+        3: { halign: 'right', cellWidth: 19, textColor: C.textOrange },
+        4: { halign: 'right', cellWidth: 19, textColor: C.textBlue   },
+        5: { halign: 'right', cellWidth: 19, textColor: C.textOrange },
+        6: { halign: 'right', cellWidth: 22, fontStyle: 'bold', textColor: C.textBlue   },
+        7: { halign: 'right', cellWidth: 22, fontStyle: 'bold', textColor: C.textOrange },
+        8: { halign: 'right', cellWidth: 20 },
       },
     });
   }

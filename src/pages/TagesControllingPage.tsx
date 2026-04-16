@@ -342,6 +342,9 @@ export default function TagesControllingPage() {
   const [proRataMode, setProRataMode]       = useState<'off' | 'auto' | 'manual'>('off');
   const [manualCutoffDay, setManualCutoffDay] = useState<number>(1);
 
+  // ── PDF-Export-Einstellungen ───────────────────────────────────────────────
+  const [showWesInExport, setShowWesInExport] = useState(false);
+
   // ── Inline-Umsatz-Bearbeitung ─────────────────────────────────────────────
   const [editingDate, setEditingDate]   = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
@@ -577,6 +580,7 @@ export default function TagesControllingPage() {
   // ── Export PDF ───────────────────────────────────────────────────────────────
 
   const handleExportPDF = useCallback(async () => {
+    console.log('[PDF-EXPORT] Start | period:', period, '| anchor:', format(anchor, 'yyyy-MM-dd'), '| WES:', showWesInExport);
     const { default: jsPDF } = await import('jspdf');
     const { default: autoTable } = await import('jspdf-autotable');
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -593,6 +597,7 @@ export default function TagesControllingPage() {
     const C_MUTED: [number, number, number]      = [100, 116, 139];
     const C_TOTAL_BG: [number, number, number]   = [241, 245, 249];
     const C_TOTAL_TXT: [number, number, number]  = [15, 23, 42];
+    const C_TEAL_TXT: [number, number, number]   = [15, 118, 110];
 
     const fmtV   = (v: number) => v > 0 ? NUM.format(Math.round(v)) : '–';
     const fmtP   = (v: number, show: boolean) => show ? NUM1.format(v) + ' %' : '–';
@@ -613,21 +618,30 @@ export default function TagesControllingPage() {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.text('Oliv Gastro AG', M, 16);
-    doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
+    doc.setTextColor(...C_HEADER_TXT);
     doc.text(getPeriodLabel(period, anchor), W / 2, 10, { align: 'center' });
+    if (showWesInExport) {
+      doc.setFontSize(6.5);
+      doc.setTextColor(180, 210, 180);
+      doc.text('inkl. WES', W / 2, 16, { align: 'center' });
+    }
     doc.setTextColor(...C_MUTED);
     doc.setFontSize(7);
     doc.text(`Export: ${format(new Date(), 'dd.MM.yyyy HH:mm', { locale: de })}`, W - M, 10, { align: 'right' });
 
     // ── KPI-Block ──────────────────────────────────────────────────────────
     let y = 28;
-    const kpis = [
+    const kpis: { label: string; value: string; accent: [number, number, number] }[] = [
       { label: 'Ist-Umsatz Total',  value: fmtCHF(total.sumUmsatz),  accent: C_BLUE_TXT },
       { label: 'PK Plan Total',     value: fmtCHF(total.sumPkPlan),  accent: C_BLUE_TXT },
       { label: 'PK Ist Total',      value: total.sumPkIst > 0 ? fmtCHF(total.sumPkIst) : '–', accent: total.sumPkIst > 0 ? C_BLUE_TXT : C_MUTED },
       { label: 'PK Plan %',         value: fmtP(total.pkPlanPct, total.sumUmsatz > 0),  accent: C_MUTED },
       { label: 'PK Ist %',          value: fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), accent: total.pkIstPct > total.pkPlanPct && total.sumPkIst > 0 ? C_RED_TXT : C_GREEN_TXT },
+      ...(showWesInExport ? [
+        { label: 'WES Total',       value: total.sumWes > 0 ? fmtCHF(total.sumWes) : '–', accent: C_TEAL_TXT },
+        { label: 'WES %',           value: fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0), accent: C_TEAL_TXT },
+      ] : []),
     ];
     const kW = (W - 2 * M - (kpis.length - 1) * 3) / kpis.length;
     kpis.forEach((k, i) => {
@@ -651,18 +665,20 @@ export default function TagesControllingPage() {
     y += 24;
 
     // ── Haupttabelle ──────────────────────────────────────────────────────
+    console.log('[PDF-EXPORT] Tabelle | Zeilen:', period === 'jahr' ? monthRows.length : rows.length, '| WES-Spalten:', showWesInExport);
+
     if (period === 'jahr') {
-      const head = [['Monat', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %']];
+      const head = [['Monat', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', ...(showWesInExport ? ['WES CHF', 'WES %'] : [])]];
       const totalPkPlanPct = total.sumUmsatz > 0 ? (total.sumPkPlan / total.sumUmsatz) * 100 : 0;
       const totalPkIstPct  = total.sumUmsatz > 0 && total.sumPkIst > 0 ? (total.sumPkIst / total.sumUmsatz) * 100 : 0;
       const totalWesPct    = total.sumUmsatz > 0 && total.sumWes > 0 ? (total.sumWes / total.sumUmsatz) * 100 : 0;
       const body: string[][] = [
-        ['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), fmtD(total.sumPkIst, total.sumPkPlan), fmtP(totalPkPlanPct, total.sumUmsatz > 0), fmtP(totalPkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), fmtV(total.sumWes), fmtP(totalWesPct, total.sumWes > 0 && total.sumUmsatz > 0)],
+        ['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), fmtD(total.sumPkIst, total.sumPkPlan), fmtP(totalPkPlanPct, total.sumUmsatz > 0), fmtP(totalPkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), ...(showWesInExport ? [fmtV(total.sumWes), fmtP(totalWesPct, total.sumWes > 0 && total.sumUmsatz > 0)] : [])],
         ...monthRows.map(mr => {
           const pp = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
           const pi = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
           const wp = mr.umsatz > 0 && mr.wesChf   > 0 ? (mr.wesChf   / mr.umsatz) * 100 : 0;
-          return [mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), fmtV(mr.pkIstChf), fmtD(mr.pkIstChf, mr.pkPlanChf), fmtP(pp, mr.umsatz > 0 && mr.pkPlanChf > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChf > 0), fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChf > 0)];
+          return [mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), fmtV(mr.pkIstChf), fmtD(mr.pkIstChf, mr.pkPlanChf), fmtP(pp, mr.umsatz > 0 && mr.pkPlanChf > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChf > 0), ...(showWesInExport ? [fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChf > 0)] : [])];
         }),
       ];
       autoTable(doc, {
@@ -681,17 +697,20 @@ export default function TagesControllingPage() {
             const v = data.cell.raw as string;
             if (v && v !== '–') data.cell.styles.textColor = v.startsWith('+') ? C_RED_TXT : C_GREEN_TXT;
           }
+          if (showWesInExport && data.column.index >= 7 && data.row.index > 0) {
+            data.cell.styles.textColor = C_TEAL_TXT;
+          }
         },
       });
     } else {
-      const head = [['Datum', 'WT', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %']];
+      const head = [['Datum', 'WT', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', ...(showWesInExport ? ['WES CHF', 'WES %'] : [])]];
       const body: string[][] = [
-        ['TOTAL', '', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), total.sumPkIst > 0 ? fmtV(total.sumPkIst) : '–', fmtD(total.sumPkIst, total.sumPkPlan), fmtP(total.pkPlanPct, total.sumUmsatz > 0), fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), total.sumWes > 0 ? fmtV(total.sumWes) : '–', fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)],
+        ['TOTAL', '', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), total.sumPkIst > 0 ? fmtV(total.sumPkIst) : '–', fmtD(total.sumPkIst, total.sumPkPlan), fmtP(total.pkPlanPct, total.sumUmsatz > 0), fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), ...(showWesInExport ? [total.sumWes > 0 ? fmtV(total.sumWes) : '–', fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)] : [])],
         ...rows.map(r => {
           const pp = r.umsatz > 0 ? (r.pkPlanChf / r.umsatz) * 100 : 0;
           const pi = r.umsatz > 0 && r.pkIstChf > 0 ? (r.pkIstChf / r.umsatz) * 100 : 0;
           const wp = r.umsatz > 0 && r.wesChf   > 0 ? (r.wesChf   / r.umsatz) * 100 : 0;
-          return [format(r.day, 'dd.MM.yyyy'), WT_ABBR[r.day.getDay()], fmtV(r.umsatz), fmtV(r.pkPlanChf), r.pkIstChf > 0 ? fmtV(r.pkIstChf) : '–', fmtD(r.pkIstChf, r.pkPlanChf), r.umsatz > 0 && r.pkPlanChf > 0 ? fmtP(pp, true) : '–', r.umsatz > 0 && r.pkIstChf > 0 ? fmtP(pi, true) : '–', r.wesChf > 0 ? fmtV(r.wesChf) : '–', r.umsatz > 0 && r.wesChf > 0 ? fmtP(wp, true) : '–'];
+          return [format(r.day, 'dd.MM.yyyy'), WT_ABBR[r.day.getDay()], fmtV(r.umsatz), fmtV(r.pkPlanChf), r.pkIstChf > 0 ? fmtV(r.pkIstChf) : '–', fmtD(r.pkIstChf, r.pkPlanChf), r.umsatz > 0 && r.pkPlanChf > 0 ? fmtP(pp, true) : '–', r.umsatz > 0 && r.pkIstChf > 0 ? fmtP(pi, true) : '–', ...(showWesInExport ? [r.wesChf > 0 ? fmtV(r.wesChf) : '–', r.umsatz > 0 && r.wesChf > 0 ? fmtP(wp, true) : '–'] : [])];
         }),
       ];
       autoTable(doc, {
@@ -716,25 +735,31 @@ export default function TagesControllingPage() {
           if (data.column.index === 4 && data.row.index > 0) {
             data.cell.styles.textColor = C_BLUE_TXT;
           }
+          if (showWesInExport && data.column.index >= 8 && data.row.index > 0) {
+            data.cell.styles.textColor = C_TEAL_TXT;
+          }
         },
       });
     }
 
     // ── Footer ─────────────────────────────────────────────────────────────
     const pageCount = (doc as jsPDF & { getNumberOfPages(): number }).getNumberOfPages();
+    const PH = doc.internal.pageSize.getHeight();
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
       doc.setFillColor(...C_HEADER_BG);
-      doc.rect(0, 200, W, 10, 'F');
+      doc.rect(0, PH - 10, W, 10, 'F');
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6);
       doc.setTextColor(180, 190, 210);
-      doc.text('Oliv Gastro AG · Tages-Controlling · vertraulich', M, 206);
-      doc.text(`Seite ${i} / ${pageCount}`, W - M, 206, { align: 'right' });
+      doc.text('Oliv Gastro AG · Tages-Controlling · vertraulich', M, PH - 4);
+      doc.text(`Seite ${i} / ${pageCount}`, W - M, PH - 4, { align: 'right' });
     }
 
-    doc.save(`tages-controlling-${format(anchor, 'yyyy-MM')}.pdf`);
-  }, [period, anchor, rows, monthRows, total]);
+    const filename = `tages-controlling-${format(anchor, 'yyyy-MM')}${showWesInExport ? '-mit-WES' : ''}.pdf`;
+    console.log('[PDF-EXPORT] Speichern:', filename, '| Seiten:', pageCount);
+    doc.save(filename);
+  }, [period, anchor, rows, monthRows, total, showWesInExport]);
 
   // ── Export Excel ─────────────────────────────────────────────────────────────
 
@@ -947,6 +972,18 @@ export default function TagesControllingPage() {
 
           {/* Export-Buttons */}
           <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setShowWesInExport(v => !v)}
+              title="WES-Spalten im Export ein-/ausblenden"
+              className={cn(
+                'h-8 px-2.5 text-xs rounded border transition-colors font-medium',
+                showWesInExport
+                  ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700'
+                  : 'border-border text-muted-foreground hover:bg-muted',
+              )}
+            >
+              WES
+            </button>
             <Button
               variant="outline"
               size="sm"
