@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Upload, DollarSign, Check, AlertCircle, TestTube2 } from 'lucide-react';
+import { Upload, DollarSign, Check, AlertCircle, TestTube2, Minus } from 'lucide-react';
 import { RevenueImportEntry } from '@/types/personnel';
 import { parseRevenueExcel, RevenueEntry } from '@/lib/revenue-parser';
 import { toast } from 'sonner';
@@ -21,6 +21,7 @@ export const RevenueImportButton = ({ onImport }: RevenueImportButtonProps) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [detectedDates, setDetectedDates] = useState<string[]>([]);
   const [detectedCurrency, setDetectedCurrency] = useState<'CHF' | 'EUR'>('CHF');
+  const [checkedDates, setCheckedDates] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -33,6 +34,7 @@ export const RevenueImportButton = ({ onImport }: RevenueImportButtonProps) => {
       setParsedEntries(result.entries);
       setDetectedCurrency(result.currency);
       setDetectedDates(result.dateRange);
+      setCheckedDates(new Set(result.entries.map(e => e.date)));
 
       if (result.entries.length === 0) {
         toast.error('Keine Umsatzdaten gefunden');
@@ -63,6 +65,7 @@ export const RevenueImportButton = ({ onImport }: RevenueImportButtonProps) => {
       setParsedEntries(result.entries);
       setDetectedCurrency(result.currency);
       setDetectedDates(result.dateRange);
+      setCheckedDates(new Set(result.entries.map(e => e.date)));
 
       if (result.entries.length > 0) {
         toast.success(`${result.entries.length} Umsatzeinträge aus Testdatei geladen`);
@@ -75,19 +78,38 @@ export const RevenueImportButton = ({ onImport }: RevenueImportButtonProps) => {
   };
 
   const handleImport = () => {
-    if (parsedEntries.length > 0) {
-      onImport(parsedEntries.map(e => ({ date: e.date, revenue: e.revenue, type: revenueType })));
+    const toImport = parsedEntries.filter(e => checkedDates.has(e.date));
+    if (toImport.length > 0) {
+      onImport(toImport.map(e => ({ date: e.date, revenue: e.revenue, type: revenueType })));
       setParsedEntries([]);
+      setCheckedDates(new Set());
       setIsOpen(false);
       const typeLabel = revenueType === 'planned' ? 'Plan-' : revenueType === 'actual' ? 'Ist-' : 'Vorjahres-';
-      toast.success(`${parsedEntries.length} ${typeLabel}Umsatzeinträge importiert`);
+      toast.success(`${toImport.length} ${typeLabel}Umsatzeinträge importiert`);
     }
   };
 
   const resetState = () => {
     setParsedEntries([]);
     setDetectedDates([]);
+    setCheckedDates(new Set());
     if (inputRef.current) inputRef.current.value = '';
+  };
+
+  const toggleDate = (date: string) => {
+    setCheckedDates(prev => {
+      const next = new Set(prev);
+      if (next.has(date)) next.delete(date); else next.add(date);
+      return next;
+    });
+  };
+
+  const allChecked  = parsedEntries.length > 0 && checkedDates.size === parsedEntries.length;
+  const someChecked = checkedDates.size > 0 && !allChecked;
+
+  const toggleAll = () => {
+    if (allChecked) setCheckedDates(new Set());
+    else setCheckedDates(new Set(parsedEntries.map(e => e.date)));
   };
 
   const formatDateRange = (dates: string[]) => {

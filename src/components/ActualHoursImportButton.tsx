@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/table';
 import {
   Upload, FileSpreadsheet, Check, AlertCircle, AlertTriangle, TestTube2,
-  RefreshCw, GitMerge, ChevronRight, ArrowLeft,
+  RefreshCw, GitMerge, ChevronRight, ArrowLeft, Trash2, ChevronDown, ChevronUp as ChevUp,
 } from 'lucide-react';
 import { MirusDailyImportEntry, MirusImportMode, Employee, TimeEntry, Department } from '@/types/personnel';
 import { parseMirusDailyExcel } from '@/lib/personnel-utils';
@@ -104,6 +104,9 @@ export const ActualHoursImportButton = ({
   const [showSummaryDialog, setShowSummaryDialog] = useState(false);
   const [importSummary, setImportSummary]         = useState<ImportSummaryData | null>(null);
 
+  const [editableEntries, setEditableEntries] = useState<MirusDailyImportEntry[]>([]);
+  const [showDetail, setShowDetail]           = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
 
   // ── Unresolved Namen (nach Matching) ─────────────────────────────────────
@@ -135,7 +138,6 @@ export const ActualHoursImportButton = ({
       selectedEmployeeId: m.matchedEmployee?.id || 'skip',
     }));
 
-    // Mappings für zukünftige Importe speichern
     saveNameMappingsBatch(
       overrides
         .filter(o => o.selectedEmployeeId !== 'new')
@@ -159,14 +161,18 @@ export const ActualHoursImportButton = ({
         return entry;
       });
 
-    setParsedEntries(updatedEntries);
-    onImport(updatedEntries, importMode);
+    // Build previewRows for the summary table
+    const originalToResolved = new Map<string, string>();
+    matches.forEach(m => {
+      if (m.matchedEmployee) originalToResolved.set(m.matchedEmployee.name, m.importedName);
+    });
+    const rows = buildPreviewRows(updatedEntries, overrides, originalToResolved, matches);
 
-    const uniqueEmps = new Set(updatedEntries.map(e => e.name)).size;
-    const totalHours = updatedEntries.reduce((s, e) => s + e.hours, 0);
-    toast.success(
-      `${updatedEntries.length} Ist-Stunden importiert: ${uniqueEmps} Mitarbeiter, ${totalHours.toFixed(1)} Std.`,
-    );
+    setParsedEntries(updatedEntries);
+    setEditableEntries([...updatedEntries]);
+    setNameMatches(matches);
+    setPreviewRows(rows);
+    setShowPreview(true);
   };
 
   // ── Datei-Upload ──────────────────────────────────────────────────────────
@@ -251,6 +257,7 @@ export const ActualHoursImportButton = ({
     updatedEntries: MirusDailyImportEntry[],
     overrides: NameMatchOverride[],
     originalNames: Map<string, string>,
+    currentMatches: NameMatchInfo[] = nameMatches,
   ): PreviewRow[] {
     const byName = new Map<string, { entries: MirusDailyImportEntry[]; override: NameMatchOverride }>();
 
@@ -278,7 +285,7 @@ export const ActualHoursImportButton = ({
       const totalHours = entries.reduce((s, e) => s + e.hours, 0);
       const dept      = entries[0]?.department ?? 'service';
       const originalName = originalNames.get(name) ?? name;
-      const matchInfo = nameMatches.find(m => m.importedName === originalName);
+      const matchInfo = currentMatches.find(m => m.importedName === originalName);
 
       let matchStatus: PreviewRow['matchStatus'] = 'unresolved';
       if (override.selectedEmployeeId === override.importedName || override.selectedEmployeeId === '') {
@@ -371,6 +378,7 @@ export const ActualHoursImportButton = ({
     const rows = buildPreviewRows(updatedEntries, overrides, originalToResolved);
 
     setParsedEntries(updatedEntries);
+    setEditableEntries([...updatedEntries]);
     setPreviewRows(rows);
     setShowMatchDialog(false);
     setNameMatches([]);
@@ -386,17 +394,18 @@ export const ActualHoursImportButton = ({
   // ── Import ausführen ──────────────────────────────────────────────────────
 
   const handleImport = () => {
-    if (parsedEntries.length === 0) return;
+    const finalEntries = editableEntries.length > 0 ? editableEntries : parsedEntries;
+    if (finalEntries.length === 0) return;
 
-    onImport(parsedEntries, importMode);
+    onImport(finalEntries, importMode);
 
-    const uniqueEmployees = new Set(parsedEntries.map(e => e.name));
-    const dates           = parsedEntries.map(e => e.date).sort();
-    const totalHours      = parsedEntries.reduce((s, e) => s + e.hours, 0);
+    const uniqueEmployees = new Set(finalEntries.map(e => e.name));
+    const dates           = finalEntries.map(e => e.date).sort();
+    const totalHours      = finalEntries.reduce((s, e) => s + e.hours, 0);
 
     setImportSummary({
       type:          'actual',
-      totalEntries:  parsedEntries.length,
+      totalEntries:  finalEntries.length,
       employeeCount: uniqueEmployees.size,
       dateRange:     dates.length > 0 ? { start: dates[0], end: dates[dates.length - 1] } : null,
       totalHours,
@@ -418,7 +427,23 @@ export const ActualHoursImportButton = ({
     setShowMatchDialog(false);
     setShowPreview(false);
     setPreviewRows([]);
+    setEditableEntries([]);
+    setShowDetail(false);
     if (inputRef.current) inputRef.current.value = '';
+  };
+
+  // ── Editierbare Einträge helpers ──────────────────────────────────────────
+
+  const updateEntryHours = (idx: number, hours: number) => {
+    setEditableEntries(prev => prev.map((e, i) => i === idx ? { ...e, hours } : e));
+  };
+
+  const deleteEntry = (idx: number) => {
+    setEditableEntries(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const deleteAllForEmployee = (name: string) => {
+    setEditableEntries(prev => prev.filter(e => e.name !== name));
   };
 
   const formatDateRange = (dates: string[]) => {
@@ -660,6 +685,130 @@ export const ActualHoursImportButton = ({
                 </Table>
               </div>
 
+              {/* ── Editable per-day detail table ── */}
+              <div className="rounded-lg border overflow-hidden">
+                <button
+                  onClick={() => setShowDetail(v => !v)}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-muted/30 hover:bg-muted/50 transition-colors text-sm font-medium"
+                >
+                  <span className="flex items-center gap-2">
+                    {showDetail
+                      ? <ChevUp className="h-3.5 w-3.5 text-muted-foreground" />
+                      : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                    Einträge einzeln bearbeiten
+                    <span className="text-xs font-normal text-muted-foreground">
+                      ({editableEntries.length} Tage · {editableEntries.reduce((s,e)=>s+e.hours,0).toFixed(1)} Std.)
+                    </span>
+                  </span>
+                  {editableEntries.length !== parsedEntries.length && (
+                    <span className="text-xs text-amber-600 font-semibold">
+                      {parsedEntries.length - editableEntries.length} gelöscht
+                    </span>
+                  )}
+                </button>
+
+                {showDetail && (
+                  <div className="max-h-72 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted border-b">
+                        <tr className="text-muted-foreground">
+                          <th className="text-left py-1.5 pl-3 pr-1 font-semibold">Mitarbeiter</th>
+                          <th className="text-left py-1.5 px-1 font-semibold">Abt.</th>
+                          <th className="text-left py-1.5 px-1 font-semibold">Datum</th>
+                          <th className="text-right py-1.5 px-1 font-semibold">Stunden</th>
+                          <th className="py-1.5 pr-2 w-8" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {editableEntries.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="py-4 text-center text-muted-foreground">
+                              Alle Einträge gelöscht
+                            </td>
+                          </tr>
+                        ) : (() => {
+                          const sorted = [...editableEntries]
+                            .map((e, origIdx) => ({ ...e, origIdx }))
+                            .sort((a, b) => a.name.localeCompare(b.name, 'de') || a.date.localeCompare(b.date));
+
+                          let lastEmp = '';
+                          return sorted.map(({ origIdx, ...entry }) => {
+                            const empChanged = entry.name !== lastEmp;
+                            lastEmp = entry.name;
+                            const isKüche = entry.department === 'küche';
+                            return (
+                              <tr key={origIdx} className="border-b last:border-0 hover:bg-muted/30">
+                                <td className="py-1 pl-3 pr-1 font-medium whitespace-nowrap">
+                                  {empChanged ? (
+                                    <span className="flex items-center gap-1">
+                                      {entry.name}
+                                      <button
+                                        onClick={() => deleteAllForEmployee(entry.name)}
+                                        title={`Alle Einträge von ${entry.name} löschen`}
+                                        className="text-muted-foreground hover:text-red-500 transition-colors ml-0.5"
+                                      >
+                                        <Trash2 className="h-2.5 w-2.5" />
+                                      </button>
+                                    </span>
+                                  ) : (
+                                    <span className="text-muted-foreground text-[10px] pl-1">↳</span>
+                                  )}
+                                </td>
+                                <td className="py-1 px-1">
+                                  <span className={`text-[10px] px-1 py-0.5 rounded-full font-semibold ${
+                                    isKüche
+                                      ? 'bg-orange-100 text-orange-700'
+                                      : 'bg-blue-100 text-blue-700'
+                                  }`}>
+                                    {isKüche ? 'K' : 'S'}
+                                  </span>
+                                </td>
+                                <td className="py-1 px-1 text-muted-foreground whitespace-nowrap">
+                                  {format(new Date(entry.date), 'EE dd.MM.', { locale: de })}
+                                </td>
+                                <td className="py-1 px-1 text-right">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={24}
+                                    step={0.25}
+                                    value={entry.hours}
+                                    onChange={e => {
+                                      const v = parseFloat(e.target.value);
+                                      if (!isNaN(v) && v >= 0) updateEntryHours(origIdx, v);
+                                    }}
+                                    className="w-14 text-right tabular-nums border border-border rounded px-1 py-0.5 text-xs bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                                  />
+                                </td>
+                                <td className="py-1 pr-2 text-center">
+                                  <button
+                                    onClick={() => deleteEntry(origIdx)}
+                                    title="Diesen Tag löschen"
+                                    className="text-muted-foreground hover:text-red-500 transition-colors"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          });
+                        })()}
+                      </tbody>
+                    </table>
+                    {editableEntries.length !== parsedEntries.length && (
+                      <div className="border-t px-3 py-1.5 flex justify-end">
+                        <button
+                          onClick={() => setEditableEntries([...parsedEntries])}
+                          className="text-[10px] text-primary hover:underline"
+                        >
+                          Alle Löschungen zurücksetzen
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Legende */}
               <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1">
@@ -717,7 +866,7 @@ export const ActualHoursImportButton = ({
               <>
                 <Button
                   variant="outline"
-                  onClick={() => { setShowPreview(false); setParsedEntries([]); setPreviewRows([]); }}
+                  onClick={() => { setShowPreview(false); setParsedEntries([]); setPreviewRows([]); setEditableEntries([]); setShowDetail(false); }}
                   className="gap-1"
                 >
                   <ArrowLeft className="h-4 w-4" />
@@ -725,7 +874,7 @@ export const ActualHoursImportButton = ({
                 </Button>
                 <Button
                   onClick={handleImport}
-                  disabled={parsedEntries.length === 0}
+                  disabled={editableEntries.length === 0}
                   className={importMode === 'replace'
                     ? 'bg-orange-600 hover:bg-orange-700 gap-1'
                     : 'bg-green-600 hover:bg-green-700 gap-1'}
