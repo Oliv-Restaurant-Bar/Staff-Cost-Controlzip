@@ -1624,11 +1624,12 @@ const SchedulePlanner = () => {
     setSelectedEmployeeForEdit(null);
   };
 
-  // Filter out employees who have already left before the start of the displayed month
+  // Filter out employees who have already left before the start of the displayed month.
+  // Append T00:00:00 so the date is parsed as LOCAL midnight (not UTC) — avoids timezone shift.
   const monthStartDate = startOfMonth(currentMonth);
   const activeEmployees = employees.filter(e => {
     if (!e.employmentEndDate) return true;
-    const exitDate = new Date(e.employmentEndDate);
+    const exitDate = new Date(e.employmentEndDate + 'T00:00:00');
     // Keep if exit date is >= first day of current month (they were still active this month)
     return exitDate >= monthStartDate;
   });

@@ -127,9 +127,8 @@ export const RevenueImportButton = ({ onImport }: RevenueImportButtonProps) => {
     }).format(amount);
   };
 
-  const getTotalRevenue = () => {
-    return parsedEntries.reduce((sum, entry) => sum + entry.revenue, 0);
-  };
+  const getTotalRevenue = () =>
+    parsedEntries.filter(e => checkedDates.has(e.date)).reduce((sum, e) => sum + e.revenue, 0);
 
   return (
     <>
@@ -215,32 +214,74 @@ export const RevenueImportButton = ({ onImport }: RevenueImportButtonProps) => {
                   </Select>
                 </div>
 
-                <div className="max-h-[200px] overflow-auto rounded-lg border">
+                {/* Select-all info line */}
+                <div className="flex items-center justify-between text-xs text-muted-foreground px-0.5">
+                  <span>
+                    <span className="font-medium text-foreground">{checkedDates.size}</span> von {parsedEntries.length} Einträgen ausgewählt
+                  </span>
+                  <button onClick={toggleAll} className="text-primary hover:underline">
+                    {allChecked ? 'Alle abwählen' : 'Alle auswählen'}
+                  </button>
+                </div>
+
+                <div className="max-h-[240px] overflow-auto rounded-lg border">
                   <table className="w-full text-sm">
                     <thead className="bg-muted sticky top-0">
                       <tr>
+                        <th className="p-2 w-8">
+                          {/* Header checkbox */}
+                          <button
+                            onClick={toggleAll}
+                            className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+                              allChecked
+                                ? 'bg-primary border-primary text-primary-foreground'
+                                : someChecked
+                                  ? 'bg-primary/30 border-primary'
+                                  : 'border-border'
+                            }`}
+                          >
+                            {allChecked
+                              ? <Check className="h-3 w-3" />
+                              : someChecked
+                                ? <Minus className="h-3 w-3 text-primary" />
+                                : null}
+                          </button>
+                        </th>
                         <th className="text-left p-2">Datum</th>
                         <th className="text-right p-2">Umsatz</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {parsedEntries.slice(0, 10).map((entry, idx) => (
-                        <tr key={idx} className="border-t">
-                          <td className="p-2">{format(new Date(entry.date), 'dd.MM.yyyy', { locale: de })}</td>
-                          <td className="p-2 text-right font-mono">{detectedCurrency} {formatRevenue(entry.revenue)}</td>
-                        </tr>
-                      ))}
-                      {parsedEntries.length > 10 && (
-                        <tr className="border-t bg-muted/50">
-                          <td className="p-2 text-muted-foreground" colSpan={2}>
-                            ... und {parsedEntries.length - 10} weitere Einträge
-                          </td>
-                        </tr>
-                      )}
+                      {parsedEntries.map((entry, idx) => {
+                        const checked = checkedDates.has(entry.date);
+                        return (
+                          <tr
+                            key={idx}
+                            className={`border-t cursor-pointer transition-colors ${
+                              checked ? 'bg-background hover:bg-muted/40' : 'bg-muted/20 opacity-50 hover:opacity-70'
+                            }`}
+                            onClick={() => toggleDate(entry.date)}
+                          >
+                            <td className="p-2">
+                              <span className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+                                checked ? 'bg-primary border-primary text-primary-foreground' : 'border-border'
+                              }`}>
+                                {checked && <Check className="h-3 w-3" />}
+                              </span>
+                            </td>
+                            <td className="p-2">{format(new Date(entry.date + 'T00:00:00'), 'EE dd.MM.yyyy', { locale: de })}</td>
+                            <td className={`p-2 text-right font-mono ${!checked ? 'line-through text-muted-foreground' : ''}`}>
+                              {detectedCurrency} {formatRevenue(entry.revenue)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
-                    <tfoot className="bg-muted font-medium">
+                    <tfoot className="bg-muted font-medium border-t-2">
                       <tr>
-                        <td className="p-2">Gesamt</td>
+                        <td className="p-2" colSpan={2}>
+                          Total ({checkedDates.size} Tage)
+                        </td>
                         <td className="p-2 text-right font-mono">{detectedCurrency} {formatRevenue(getTotalRevenue())}</td>
                       </tr>
                     </tfoot>
@@ -258,7 +299,7 @@ export const RevenueImportButton = ({ onImport }: RevenueImportButtonProps) => {
 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setIsOpen(false)}>Abbrechen</Button>
-              <Button onClick={handleImport} disabled={parsedEntries.length === 0} className="bg-amber-600 hover:bg-amber-700">
+              <Button onClick={handleImport} disabled={checkedDates.size === 0} className="bg-amber-600 hover:bg-amber-700">
                 Importieren
               </Button>
             </div>
