@@ -1,0 +1,85 @@
+Bitte jetzt die Zielwert-/Überbesetzungslogik auch im IST-Dienstplan einbauen.
+
+Ziel:
+Im Ist-Dienstplan soll oben bzw. im Kalenderraster sofort sichtbar sein, wenn an einem Tag gemäss IST-Umsatz zu viel gearbeitet wurde.
+Die Logik soll ähnlich funktionieren wie im Plan-Dienstplan, aber auf echter IST-Basis.
+
+Bitte exakt so umsetzen:
+
+1. Rote Markierung im IST-Dienstplan
+Tage im Ist-Dienstplan sollen rot markiert werden, wenn die effektiven Ist-Kosten des Tages gemessen am Ist-Umsatz über dem aktiven Zielwert liegen.
+
+Logik:
+- Ist-Umsatz Tageswert laden
+- Ist-Stunden total des Tages laden
+- Ist-Kosten total des Tages berechnen
+- aktive Zielquote des Tages laden
+- erlaubte Kosten = Ist-Umsatz * Zielquote
+- wenn Ist-Kosten > erlaubte Kosten -> rot markieren
+- wenn leicht drüber -> gelb
+- wenn im Ziel -> grün / neutral
+
+2. Klick auf jeden Tag im IST-Dienstplan
+Jeder Tag im Ist-Dienstplan soll klickbar sein, nicht nur rot markierte Tage.
+
+Beim Klick:
+- Tages-Popup öffnen
+
+3. Inhalt des Tages-Popups im IST-Modus
+Popup soll enthalten:
+
+A) Tageszusammenfassung
+- Datum
+- Ist-Umsatz
+- Ist-Stunden total
+- Ist-Kosten total
+- Ist-Personalquote %
+- Zielquote %
+- erlaubte Kosten CHF
+- Abweichung CHF
+- ca. zu viel gearbeitete Stunden
+
+B) Mitarbeiterübersicht
+- Mitarbeiter
+- Ist-Stunden
+- Stundenlohn
+- Ist-Kosten
+- optional Anteil an Tageskosten
+
+4. Rote Markierung logisch aus Popup ableiten
+Die Markierung im Kalender und die Zahlen im Popup müssen dieselbe Berechnungsbasis verwenden.
+Keine getrennte Logik.
+
+5. "Alle" Abteilungen
+Wenn oben "Alle" gewählt ist:
+- gemeinsame Mitarbeiterliste im Popup
+- keine Trennung in Küche / Service Blöcke
+- Abteilung nur als kleine Spalte oder Badge
+
+6. Vergleich mit Plan optional sichtbar
+Wenn möglich im Popup zusätzlich klein anzeigen:
+- Plan-Stunden des Tages
+- Ist-Stunden des Tages
+- Differenz Stunden
+
+Aber Hauptfokus bleibt:
+IST-Umsatz vs IST-Kosten vs Zielwert
+
+7. Debug Logs
+Bitte loggen:
+[IST-DAY] date: ...
+[IST-DAY] ist revenue: ...
+[IST-DAY] ist hours: ...
+[IST-DAY] ist cost: ...
+[IST-DAY] target pct: ...
+[IST-DAY] allowed cost: ...
+[IST-DAY] cost diff: ...
+[IST-DAY] approx extra hours: ...
+[IST-DAY] marker status: green|yellow|red
+
+8. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie die rote Markierung im Ist-Dienstplan berechnet wird
+- ob jetzt jeder Tag einen Popup öffnen kann
+- was im Popup genau angezeigt wird
+- ob Kalender-Markierung und Popup dieselbe Logik verwenden

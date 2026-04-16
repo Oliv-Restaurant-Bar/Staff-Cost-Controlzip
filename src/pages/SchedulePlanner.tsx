@@ -33,6 +33,7 @@ import { AddAushilfeDialog } from '@/components/schedule-planner/AddAushilfeDial
 import { CopyWeekDialog } from '@/components/schedule-planner/CopyWeekDialog';
 import { PrintScheduleDialog } from '@/components/schedule-planner/PrintScheduleDialog';
 import { DayDetailDialog } from '@/components/schedule-planner/DayDetailDialog';
+import { IstDayDetailDialog } from '@/components/schedule-planner/IstDayDetailDialog';
 import { ShiftConfigDialog } from '@/components/schedule-planner/ShiftConfigDialog';
 import { DaysOffConfigDialog } from '@/components/schedule-planner/DaysOffConfigDialog';
 import { Apply8HoursDialog, getPreferredWeekdaysFromDates } from '@/components/schedule-planner/Apply8HoursDialog';
@@ -185,6 +186,8 @@ const SchedulePlanner = () => {
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [dayDetailDialogOpen, setDayDetailDialogOpen] = useState(false);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  const [istDayDetailDialogOpen, setIstDayDetailDialogOpen] = useState(false);
+  const [selectedIstDay, setSelectedIstDay] = useState<Date | null>(null);
   const [shiftConfigDialogOpen, setShiftConfigDialogOpen] = useState(false);
   const [daysOffDialogOpen, setDaysOffDialogOpen] = useState(false);
   const [selectedEmployeeForDaysOff, setSelectedEmployeeForDaysOff] = useState<Employee | null>(null);
@@ -1512,6 +1515,11 @@ const SchedulePlanner = () => {
     setDayDetailDialogOpen(true);
   };
 
+  const handleIstDayClick = (day: Date) => {
+    setSelectedIstDay(day);
+    setIstDayDetailDialogOpen(true);
+  };
+
   // Manuellen Umsatz-Override für einen Tag setzen oder löschen
   const handleUpdatePlannedRevenue = (dateStr: string, value: number | null) => {
     const overrides: Record<string, number> =
@@ -2714,7 +2722,7 @@ const SchedulePlanner = () => {
                           showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
                           laborCostThreshold={gridLaborCostThreshold}
-                          onDayClick={handleDayClick}
+                          onDayClick={handleIstDayClick}
                         />
                       </div>
                       
@@ -2734,7 +2742,7 @@ const SchedulePlanner = () => {
                           showCosts={effectiveShowCosts}
                           dailyBudgets={dailyBudgets}
                           laborCostThreshold={gridLaborCostThreshold}
-                          onDayClick={handleDayClick}
+                          onDayClick={handleIstDayClick}
                         />
                       </div>
                     </div>
@@ -2749,7 +2757,7 @@ const SchedulePlanner = () => {
                       showCosts={effectiveShowCosts}
                       dailyBudgets={dailyBudgets}
                       laborCostThreshold={gridLaborCostThreshold}
-                      onDayClick={handleDayClick}
+                      onDayClick={handleIstDayClick}
                     />
                   )}
                 </>
@@ -3377,7 +3385,7 @@ const SchedulePlanner = () => {
         department={activeDepartment}
       />
 
-      {/* Day Detail Dialog */}
+      {/* Day Detail Dialog (Plan view) */}
       <DayDetailDialog
         open={dayDetailDialogOpen}
         onOpenChange={setDayDetailDialogOpen}
@@ -3390,6 +3398,20 @@ const SchedulePlanner = () => {
         laborCostThreshold={gridLaborCostThreshold}
         actualHoursData={actualHoursData}
         actualRevenue={selectedDay ? dailyBudgets[format(selectedDay, 'yyyy-MM-dd')]?.actualRevenue : undefined}
+        activeDepartment={activeDepartment === 'service' || activeDepartment === 'küche' ? activeDepartment : 'all'}
+      />
+
+      {/* IST Day Detail Dialog */}
+      <IstDayDetailDialog
+        open={istDayDetailDialogOpen}
+        onOpenChange={setIstDayDetailDialogOpen}
+        date={selectedIstDay}
+        employees={employees}
+        actualHoursData={actualHoursData}
+        actualRevenue={selectedIstDay ? dailyBudgets[format(selectedIstDay, 'yyyy-MM-dd')]?.actualRevenue : undefined}
+        plannedRevenue={selectedIstDay ? dailyBudgets[format(selectedIstDay, 'yyyy-MM-dd')]?.plannedRevenue : undefined}
+        laborCostThreshold={gridLaborCostThreshold}
+        scheduleData={scheduleData}
         activeDepartment={activeDepartment === 'service' || activeDepartment === 'küche' ? activeDepartment : 'all'}
       />
 

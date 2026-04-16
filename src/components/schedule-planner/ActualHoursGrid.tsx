@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb, Zap } from 'lucide-react';
+import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb, Zap, CheckCircle2, Minus as MinusIcon } from 'lucide-react';
 
 export interface ActualHoursEntry {
   hours: number;
@@ -470,7 +470,7 @@ export const ActualHoursGrid = ({
   // Use prop if provided (allows per-department threshold), else fall back to localStorage
   const LABOR_COST_THRESHOLD = laborCostThresholdProp ?? parseFloat(localStorage.getItem('labor_cost_threshold') || '40');
 
-  // Calculate daily totals with budget awareness
+  // Calculate daily totals with budget awareness + Ampel marker
   const getDailyStats = (day: Date) => {
     const dateStr = format(day, 'yyyy-MM-dd');
     let totalHours = 0;
@@ -486,17 +486,40 @@ export const ActualHoursGrid = ({
     });
 
     const plannedRevenue = dailyBudgets[dateStr]?.plannedRevenue || 0;
-    // Use actual revenue for red marking when available; fall back to planned revenue
     const actualRevenue  = dailyBudgets[dateStr]?.actualRevenue;
+    // IST revenue preferred; fall back to planned revenue
     const revenueForMark = (actualRevenue !== undefined && actualRevenue > 0) ? actualRevenue : plannedRevenue;
     const laborCostPct = revenueForMark > 0 ? (totalCosts / revenueForMark * 100) : null;
-    const maxAllowedCosts = revenueForMark * (LABOR_COST_THRESHOLD / 100);
+    const maxAllowedCosts = revenueForMark > 0 ? revenueForMark * (LABOR_COST_THRESHOLD / 100) : 0;
     const excessCosts = Math.max(0, totalCosts - maxAllowedCosts);
     const isOverBudget = revenueForMark > 0 && totalCosts > maxAllowedCosts;
     const avgWage = employees.filter(e => e.hourlyWage).reduce((s, e) => s + e.hourlyWage, 0) / Math.max(1, employees.filter(e => e.hourlyWage).length);
     const excessHours = avgWage > 0 ? excessCosts / avgWage : 0;
 
-    return { totalHours, totalCosts, plannedRevenue, actualRevenue, laborCostPct, isOverBudget, excessCosts, excessHours };
+    // Ampel: excessPct = how much over the allowed budget in %
+    const excessPct = revenueForMark > 0 && maxAllowedCosts > 0
+      ? ((totalCosts - maxAllowedCosts) / maxAllowedCosts) * 100
+      : null;
+    const markerStatus: 'none' | 'green' | 'yellow' | 'red' =
+      excessPct === null ? 'none'
+      : excessPct <= 0   ? 'green'
+      : excessPct <= 5   ? 'yellow'
+      : 'red';
+
+    // Debug logs (only when there is IST data for the day)
+    if (totalHours > 0 || revenueForMark > 0) {
+      console.log(`[IST-DAY] date: ${dateStr}`);
+      console.log(`[IST-DAY] ist revenue: ${revenueForMark}`);
+      console.log(`[IST-DAY] ist hours: ${totalHours.toFixed(2)}`);
+      console.log(`[IST-DAY] ist cost: ${totalCosts.toFixed(2)}`);
+      console.log(`[IST-DAY] target pct: ${LABOR_COST_THRESHOLD}`);
+      console.log(`[IST-DAY] allowed cost: ${maxAllowedCosts.toFixed(2)}`);
+      console.log(`[IST-DAY] cost diff: ${(totalCosts - maxAllowedCosts).toFixed(2)}`);
+      console.log(`[IST-DAY] approx extra hours: ${excessHours.toFixed(2)}`);
+      console.log(`[IST-DAY] marker status: ${markerStatus}`);
+    }
+
+    return { totalHours, totalCosts, plannedRevenue, actualRevenue, laborCostPct, isOverBudget, excessCosts, excessHours, markerStatus, revenueForMark };
   };
 
   // Per-employee breakdown for a specific day
@@ -635,54 +658,72 @@ export const ActualHoursGrid = ({
                 const isSundayDay = isSunday(day);
                 const stats = getDailyStats(day);
                 const dateStr = format(day, 'yyyy-MM-dd');
+                const ms = stats.markerStatus;
+
+                // Background based on Ampel status (takes priority over weekend colors)
+                const headerBg =
+                  ms === 'red'    ? "bg-red-100 dark:bg-red-900/30 hover:bg-red-200/80 dark:hover:bg-red-900/40"
+                  : ms === 'yellow' ? "bg-amber-100 dark:bg-amber-900/20 hover:bg-amber-200/70 dark:hover:bg-amber-900/40"
+                  : ms === 'green'  ? "bg-green-50 dark:bg-green-900/10 hover:bg-green-100/70 dark:hover:bg-green-900/20"
+                  : isWeekendDay    ? "bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200/70 dark:hover:bg-amber-900/50"
+                  : "hover:bg-muted/50";
+
+                const textColor =
+                  ms === 'red'    ? "text-red-700 dark:text-red-400"
+                  : ms === 'yellow' ? "text-amber-700 dark:text-amber-500"
+                  : ms === 'green'  ? "text-green-700 dark:text-green-400"
+                  : isWeekendDay    ? "text-amber-700 dark:text-amber-400"
+                  : "text-muted-foreground";
+
                 return (
                   <th
                     key={day.toISOString()}
                     className={cn(
                       "px-1 py-1 text-center font-medium border-b transition-colors cursor-pointer",
                       "border-r border-border/50",
-                      stats.isOverBudget && showCosts
-                        ? "bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/40"
-                        : isWeekendDay
-                          ? "bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200/70 dark:hover:bg-amber-900/50"
-                          : "hover:bg-muted/50",
-                      isSundayDay && !stats.isOverBudget && "bg-amber-200/70 dark:bg-amber-900/50 border-r-2 border-r-primary/30",
+                      headerBg,
+                      isSundayDay && ms === 'none' && "bg-amber-200/70 dark:bg-amber-900/50 border-r-2 border-r-primary/30",
                       isWeekView ? "min-w-[80px] text-xs" : "min-w-[60px] text-[10px]"
                     )}
                     onClick={() => {
                       if (onDayClick) {
                         onDayClick(day);
-                      } else if (stats.isOverBudget && showCosts) {
+                      } else {
                         setShowIdealPlan(false);
                         setOpenDialogDay(dateStr);
                       }
                     }}
                     title={
-                      stats.isOverBudget && showCosts
-                        ? "⚠️ Ziel überschritten – Klicken für Details"
-                        : "Klicken für Tagesdetails"
+                      ms === 'red'    ? "🔴 Ziel überschritten – Klicken für Details"
+                      : ms === 'yellow' ? "🟡 Leicht über Ziel – Klicken für Details"
+                      : ms === 'green'  ? "🟢 Im Ziel – Klicken für Details"
+                      : "Klicken für Tagesdetails"
                     }
                   >
-                    <div className={cn(
-                      "text-muted-foreground text-[9px]",
-                      isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400 font-semibold",
-                      stats.isOverBudget && showCosts && "text-red-700 dark:text-red-400 font-semibold"
-                    )}>
+                    <div className={cn("text-[9px] font-semibold", textColor)}>
                       {WEEKDAY_NAMES[day.getDay()]}
                     </div>
-                    <div className={cn(
-                      "font-semibold text-[10px]",
-                      isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400",
-                      stats.isOverBudget && showCosts && "text-red-700 dark:text-red-400"
-                    )}>
+                    <div className={cn("font-semibold text-[10px]", textColor)}>
                       {format(day, 'd.M.')}
                     </div>
-                    {showCosts && stats.isOverBudget ? (
+                    {/* Ampel badge – always shown when there is revenue data */}
+                    {ms === 'red' ? (
                       <div className="flex items-center justify-center gap-0.5 bg-red-200 dark:bg-red-900/60 border border-red-400 dark:border-red-700 rounded px-1 py-0.5 mt-0.5">
                         <AlertTriangle className="h-2.5 w-2.5 text-red-700 dark:text-red-400 shrink-0" />
                         <span className="text-[8px] font-bold text-red-700 dark:text-red-400">
-                          +{stats.excessCosts.toFixed(0)} CHF
+                          +{stats.excessCosts.toFixed(0)}
                         </span>
+                      </div>
+                    ) : ms === 'yellow' ? (
+                      <div className="flex items-center justify-center gap-0.5 bg-amber-200 dark:bg-amber-900/60 border border-amber-400 dark:border-amber-700 rounded px-1 py-0.5 mt-0.5">
+                        <MinusIcon className="h-2.5 w-2.5 text-amber-700 dark:text-amber-400 shrink-0" />
+                        <span className="text-[8px] font-bold text-amber-700 dark:text-amber-400">
+                          +{stats.excessCosts.toFixed(0)}
+                        </span>
+                      </div>
+                    ) : ms === 'green' ? (
+                      <div className="flex items-center justify-center mt-0.5">
+                        <CheckCircle2 className="h-2.5 w-2.5 text-green-600 dark:text-green-400" />
                       </div>
                     ) : stats.totalHours > 0 ? (
                       <div className="flex flex-col items-center mt-0.5">
