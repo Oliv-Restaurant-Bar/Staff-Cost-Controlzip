@@ -321,6 +321,8 @@ const SchedulePlanner = () => {
     }
 
     setDataLoading(true);
+    const roleAtLoad = isAdmin ? 'admin' : isServiceManager ? 'service_manager' : 'kueche_manager';
+    console.log(`[SCHEDULE-LAUNCH] loadMonthData gen=${gen} – month=${monthKey} role=${roleAtLoad} userId=${freshUserId?.slice(0, 8)}…`);
 
     try {
       // ── Mitarbeiter ──────────────────────────────────────────────────────────
@@ -560,6 +562,7 @@ const SchedulePlanner = () => {
       }
 
       console.log('[ROUTE] loadMonthData gen=' + gen + ' complete', { monthKey, planKeys, istKeys });
+      console.log(`[SCHEDULE-LAUNCH] sync complete – gen=${gen} month=${monthKey} plan=${planKeys} ist=${istKeys} source=${scheduleSource}`);
     } catch (err) {
       console.error('[ROUTE] loadMonthData gen=' + gen + ' error', err);
     } finally {
@@ -1099,7 +1102,8 @@ const SchedulePlanner = () => {
     const monthKey = format(currentMonth, 'yyyy-MM');
     const entryCount = Object.keys(scheduleData).length;
 
-    console.log(`[SCHEDULE] handleSave – month=${monthKey} entries=${entryCount}`);
+    const roleLabel = isAdmin ? 'admin' : isServiceManager ? 'service_manager' : 'kueche_manager';
+    console.log(`[SCHEDULE-LAUNCH] handleSave – month=${monthKey} entries=${entryCount} role=${roleLabel} dept=${activeDepartment}`);
 
     if (entryCount === 0) {
       const confirmed = window.confirm(
@@ -1128,12 +1132,12 @@ const SchedulePlanner = () => {
       setSaveError(null);
       window.dispatchEvent(new CustomEvent('schedule-updated'));
       toast.success(`Dienstplan für ${format(currentMonth, 'MMMM yyyy', { locale: de })} gespeichert (${entryCount} Einträge)`);
-      console.log(`[SCHEDULE] handleSave success – ${entryCount} entries`);
+      console.log(`[SCHEDULE-LAUNCH] handleSave success – ${entryCount} entries persisted to Supabase`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setSaveError(msg);
       toast.error(`Speichern fehlgeschlagen: ${msg}`);
-      console.error('[SCHEDULE] handleSave failed:', err);
+      console.error('[SCHEDULE-LAUNCH] handleSave failed:', err);
     } finally {
       setIsSaving(false);
     }
@@ -1342,6 +1346,7 @@ const SchedulePlanner = () => {
           showCosts: options.includeCosts,
           includeWeeklyPages: true,
           specificDays,
+          employeeFriendly: options.employeeFriendly ?? false,
         });
         toast.success(`PDF (${rangeLabel}) erfolgreich exportiert`);
       } else {

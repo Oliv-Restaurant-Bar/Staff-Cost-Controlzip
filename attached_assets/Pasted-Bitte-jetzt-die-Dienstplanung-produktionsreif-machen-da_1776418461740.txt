@@ -1,0 +1,201 @@
+Bitte jetzt die Dienstplanung produktionsreif machen, damit Service und Küche den Dienstplan zuverlässig im Alltag nutzen können.
+
+Ziel:
+Ich möchte den Dienstplan jetzt scharf stellen.
+Service und Küche sollen ihre Planung direkt in der App erfassen können, ohne dass Daten verloren gehen oder Änderungen nur lokal sichtbar sind.
+Alle Änderungen müssen für alle Beteiligten synchron und stabil sichtbar sein, inkl. Admin.
+
+Bitte exakt so umsetzen:
+
+==================================================
+1. Dienstplanung produktionsreif und stabil machen
+==================================================
+
+Wichtig:
+Der Dienstplan darf im Alltag keine Daten verlieren.
+Änderungen müssen zuverlässig gespeichert werden.
+
+Bitte sicherstellen:
+
+- jede Änderung im Dienstplan wird stabil persistiert
+- kein stilles Überschreiben mit leerem State
+- keine Race Conditions zwischen lokalem Cache und Supabase
+- kein Verlust bei Reload, Navigation oder Benutzerwechsel
+- Speichern muss wirklich bestätigen, dass Daten serverseitig angekommen sind
+
+Bitte Save-Logik besonders prüfen bei:
+- Einzelzellen ändern
+- Schnellbearbeitung
+- Monatswechsel
+- Wechsel zwischen Plan / Ist / Vergleich
+- Wechsel zwischen Abteilungen
+- gleichzeitiger Nutzung durch mehrere Benutzer
+
+==================================================
+2. Synchronisierung für alle Benutzer
+==================================================
+
+Ziel:
+Wenn Service, Küche oder Admin Änderungen machen, sollen alle dieselben aktuellen Daten sehen.
+
+Bitte umsetzen:
+
+- Supabase als klare Source of Truth
+- lokale Caches nur als Hilfscache, nicht als Hauptquelle
+- nach Änderungen automatische Synchronisierung
+- andere Benutzer sehen Änderungen nach Reload sofort
+- wenn möglich Auto-Refresh / Revalidate beim Öffnen des Monats
+- bei Konflikten keine stillen Datenverluste
+
+Bitte prüfen:
+- Service ändert Eintrag
+- Küche öffnet denselben Monat
+- Admin sieht denselben Stand
+- Änderungen sind für alle gleich
+
+==================================================
+3. Rollen und Zugriff absichern
+==================================================
+
+Bitte die Nutzung für Service und Küche so absichern, dass sie den Dienstplan gut verwenden können.
+
+Ziel:
+- Service-Manager soll Service planen können
+- Küchen-Manager soll Küche planen können
+- Admin sieht alles
+- niemand soll versehentlich fremde Bereiche kaputt editieren
+
+Bitte prüfen / umsetzen:
+- Rechte sauber pro Rolle
+- bei gesperrter Abteilung klare UI
+- keine verwirrenden Zustände
+- wenn "Alle" nicht erlaubt ist für gewisse Rollen, dann sauber einschränken
+- Speichern trotzdem voll funktionsfähig
+
+==================================================
+4. Speichern sichtbar und vertrauenswürdig machen
+==================================================
+
+Der Benutzer muss merken:
+- ob gespeichert wird
+- ob gespeichert wurde
+- ob Fehler aufgetreten sind
+
+Bitte umsetzen:
+- klarer Save-Status
+- "Speichert..."
+- "Gespeichert um xx:xx"
+- Fehler sichtbar, nicht still
+- wenn Speichern fehlschlägt, klare Meldung
+- keine falsche Sicherheit durch grünes UI ohne echten Save
+
+==================================================
+5. Multi-User Stabilität testen
+==================================================
+
+Bitte gezielt absichern / testen:
+
+Test A:
+- Admin ändert Dienstplan
+- Reload
+- Daten bleiben
+
+Test B:
+- Service plant seinen Bereich
+- Küche öffnet danach App
+- Admin öffnet danach App
+- alle sehen denselben Stand
+
+Test C:
+- Monatswechsel hin und zurück
+- Daten bleiben erhalten
+
+Test D:
+- Browser neu laden
+- Daten bleiben erhalten
+
+Test E:
+- zwei Benutzer bearbeiten nacheinander
+- keine stillen Überschreibungen
+
+==================================================
+6. PDF-Export mitarbeiterfreundlich machen
+==================================================
+
+Der PDF-Export soll nicht nur technisch korrekt sein, sondern für Mitarbeiter gut lesbar und verteilbar.
+
+Bitte umsetzen:
+
+- sauberes, ruhiges Layout
+- gut lesbare Namen
+- klare Tages- und Datumsstruktur
+- Schichten / Zeiten deutlich erkennbar
+- Ferien / Frei / Krank klar sichtbar
+- keine überladene Controlling-Sicht im Mitarbeiter-PDF
+- eher wie ein echter ausdruckbarer Dienstplan
+
+Ziel:
+Der PDF-Export soll für Mitarbeitende geeignet sein, also:
+- übersichtlich
+- klar
+- verständlich
+- gut auf Handy oder ausgedruckt lesbar
+
+Bitte optional zwei PDF-Typen prüfen:
+A) Mitarbeiter-PDF / Aushang-PDF
+- Fokus auf Einsatzplan
+- ohne zu viele Kosten-/Controllinginfos
+
+B) Admin-PDF / Controlling-PDF
+- falls sinnvoll separat
+- mit mehr Details
+
+Wenn nicht direkt zwei Versionen:
+Dann bitte den bestehenden PDF-Export primär mitarbeiterfreundlich gestalten.
+
+==================================================
+7. Layout des Mitarbeiter-PDF
+==================================================
+
+Bitte für den mitarbeiterfreundlichen PDF-Export:
+- Monatsübersicht sauber darstellen
+- Namen links gut lesbar
+- Tage sauber als Raster
+- Wochenenden leicht markiert
+- Farben dezent
+- keine verschobenen Inhalte
+- keine abgeschnittenen Spalten
+- gute Seitenumbrüche
+- Titel / Zeitraum klar oben
+
+==================================================
+8. Debug / Logging
+==================================================
+
+Bitte loggen:
+[SCHEDULE-LAUNCH] save started
+[SCHEDULE-LAUNCH] save success
+[SCHEDULE-LAUNCH] save failed
+[SCHEDULE-LAUNCH] rows persisted: ...
+[SCHEDULE-LAUNCH] source of truth: supabase
+[SCHEDULE-LAUNCH] sync reload complete
+[SCHEDULE-LAUNCH] user role: ...
+[SCHEDULE-LAUNCH] department scope: ...
+
+Für PDF:
+[PDF-SCHEDULE] export started
+[PDF-SCHEDULE] layout type: employee|admin
+[PDF-SCHEDULE] rows rendered: ...
+[PDF-SCHEDULE] export success
+
+==================================================
+9. Bitte danach kurz sagen:
+==================================================
+
+- welche Datei(en) geändert wurden
+- wie die Save-Logik stabilisiert wurde
+- wie Supabase / Cache jetzt zusammenspielen
+- wie Service / Küche / Admin synchron dieselben Daten sehen
+- wie die Rollen abgesichert wurden
+- wie ich den Dienstplan jetzt am schnellsten produktiv testen kann
+- wie der PDF-Export für Mitarbeitende verbessert wurde

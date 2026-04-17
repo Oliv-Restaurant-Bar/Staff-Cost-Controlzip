@@ -32,6 +32,7 @@ interface ExportOptionsV2 {
   showCosts?: boolean;
   includeWeeklyPages?: boolean;
   specificDays?: Date[];
+  employeeFriendly?: boolean;
 }
 
 export interface NameMatchInfo {
@@ -1526,7 +1527,8 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
 }
 
 export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<void> {
-  const { employees, scheduleData, currentMonth, department = 'all', dailyBudgets = {}, showCosts = false, specificDays } = options;
+  const { employees, scheduleData, currentMonth, department = 'all', dailyBudgets = {}, showCosts = false, specificDays, employeeFriendly = false } = options;
+  console.log(`[PDF-SCHEDULE] exportScheduleToPDF – dept=${department} employeeFriendly=${employeeFriendly} showCosts=${showCosts} specificDays=${specificDays?.length ?? 'none'} employees=${employees.length}`);
   
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
@@ -1741,8 +1743,8 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     }
     
     // Calculate column widths
-    const nameColWidth = 22;
-    const summaryColWidth = 10;
+    const nameColWidth = employeeFriendly ? 28 : 22;
+    const summaryColWidth = employeeFriendly ? 12 : 10;
     const numSummaryCols = showCosts ? 4 : 3;
     const availableWidth = pageWidth - 20 - nameColWidth - (summaryColWidth * numSummaryCols);
     const dayColWidth = availableWidth / days.length;
@@ -1763,8 +1765,8 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
       startY: 22,
       theme: 'grid',
       styles: {
-        fontSize: 6,
-        cellPadding: 1,
+        fontSize: employeeFriendly ? 7 : 6,
+        cellPadding: employeeFriendly ? 1.5 : 1,
         lineWidth: 0.1,
         lineColor: [200, 200, 200],
         overflow: 'linebreak'
@@ -1773,7 +1775,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
         fillColor: [30, 64, 175],
         textColor: [255, 255, 255],
         fontStyle: 'bold',
-        fontSize: 6,
+        fontSize: employeeFriendly ? 7 : 6,
         halign: 'center'
       },
       columnStyles: columnStyles,
@@ -1990,9 +1992,11 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
   addLegendPage(pdf, shifts, shiftMap, monthName);
 
   // Save PDF
+  const aushangSuffix = employeeFriendly ? '_Aushang' : '';
   const fileName = isPartial
-    ? `Dienstplan_${format(days[0], 'dd-MM', { locale: de })}_bis_${format(days[days.length - 1], 'dd-MM-yyyy', { locale: de })}.pdf`
-    : `Dienstplan_${format(currentMonth, 'MMMM_yyyy', { locale: de })}.pdf`;
+    ? `Dienstplan_${format(days[0], 'dd-MM', { locale: de })}_bis_${format(days[days.length - 1], 'dd-MM-yyyy', { locale: de })}${aushangSuffix}.pdf`
+    : `Dienstplan_${format(currentMonth, 'MMMM_yyyy', { locale: de })}${aushangSuffix}.pdf`;
+  console.log(`[PDF-SCHEDULE] saving PDF – filename=${fileName}`);
   pdf.save(fileName);
 }
 

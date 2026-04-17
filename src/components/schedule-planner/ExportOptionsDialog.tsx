@@ -25,6 +25,7 @@ export interface ExportOptions {
   includeCosts: boolean;
   format: ExportFormat;
   department: ExportDepartment;
+  employeeFriendly?: boolean;
 }
 
 interface ExportOptionsDialogProps {
@@ -53,6 +54,7 @@ export const ExportOptionsDialog = ({
   const [includeCosts, setIncludeCosts] = useState(true);
   const [exportFormat, setExportFormat] = useState<ExportFormat>(initialFormat);
   const [department, setDepartment] = useState<ExportDepartment>('all');
+  const [employeeFriendly, setEmployeeFriendly] = useState(false);
 
   const handleExport = () => {
     const options: ExportOptions = {
@@ -60,9 +62,10 @@ export const ExportOptionsDialog = ({
       customStartDate,
       customEndDate,
       hoursType,
-      includeCosts,
+      includeCosts: employeeFriendly ? false : includeCosts,
       format: exportFormat,
       department,
+      employeeFriendly,
     };
     onExport(options);
     onOpenChange(false);
@@ -337,7 +340,7 @@ export const ExportOptionsDialog = ({
         )}
 
         {/* Costs Option */}
-        <div className="flex items-center justify-between p-3 rounded-lg border">
+        <div className={cn("flex items-center justify-between p-3 rounded-lg border", employeeFriendly && "opacity-40 pointer-events-none")}>
           <div className="flex items-center gap-3">
             <Euro className="h-5 w-5 text-muted-foreground" />
             <div>
@@ -351,10 +354,32 @@ export const ExportOptionsDialog = ({
           </div>
           <Checkbox
             id="includeCosts"
-            checked={includeCosts}
+            checked={employeeFriendly ? false : includeCosts}
             onCheckedChange={(checked) => setIncludeCosts(checked === true)}
           />
         </div>
+
+        {/* Employee-Friendly PDF Option — nur für PDF relevant */}
+        {exportFormat === 'pdf' && (
+          <div className="flex items-center justify-between p-3 rounded-lg border border-blue-200 bg-blue-50/40">
+            <div className="flex items-center gap-3">
+              <Users className="h-5 w-5 text-blue-600" />
+              <div>
+                <Label htmlFor="employeeFriendly" className="font-medium text-sm cursor-pointer text-blue-900">
+                  Mitarbeiter-Aushang
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Grössere Schrift, ohne Kostenspalte – ideal zum Aushängen
+                </p>
+              </div>
+            </div>
+            <Checkbox
+              id="employeeFriendly"
+              checked={employeeFriendly}
+              onCheckedChange={(checked) => setEmployeeFriendly(checked === true)}
+            />
+          </div>
+        )}
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
