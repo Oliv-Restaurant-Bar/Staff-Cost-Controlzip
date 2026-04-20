@@ -27,6 +27,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
+import { useTenant } from '@/contexts/TenantContext';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { grossToNet } from '@/types/personnel';
 import { loadMonth } from '@/lib/reporting-store';
@@ -62,8 +63,8 @@ const devCls  = (v: number, active = true) =>
   : v < 0       ? 'text-red-600    dark:text-red-400    font-medium'
   :               'text-muted-foreground';
 
-function readDailyBudgets(): Record<string, DailyEntry> {
-  try { return JSON.parse(localStorage.getItem('dailyBudgets') || '{}'); }
+function readDailyBudgets(keyFn: (k: string) => string = k => k): Record<string, DailyEntry> {
+  try { return JSON.parse(localStorage.getItem(keyFn('dailyBudgets')) || '{}'); }
   catch { return {}; }
 }
 
@@ -71,6 +72,7 @@ function readDailyBudgets(): Record<string, DailyEntry> {
 
 export default function TagesansichtPage() {
   const { showNetRevenue } = useRevenueDisplay();
+  const { tenantId, tenantKey } = useTenant();
   const today = useMemo(() => new Date(), []);
 
   // Einmaliger Import der VJ-2025-Tagesdaten (löst 'supabase-kv-synced' aus wenn fertig)
@@ -87,8 +89,8 @@ export default function TagesansichtPage() {
   // Vergleichs-Modus
   const [mode, setMode] = useState<ViewMode>('vs-vorjahr');
 
-  // dailyBudgets: localStorage sofort + KV nachladen
-  const [dailyBudgets, setDailyBudgets] = useState<Record<string, DailyEntry>>(readDailyBudgets);
+  // dailyBudgets: localStorage sofort + KV nachladen (mandantenfähig)
+  const [dailyBudgets, setDailyBudgets] = useState<Record<string, DailyEntry>>(() => readDailyBudgets(tenantKey));
 
   // vjSupabaseData: VJ-Tagesumsätze aus Supabase (primäre Quelle)
   const [vjSupabaseData, setVjSupabaseData] = useState<Record<string, VjDayRecord>>({});
@@ -111,36 +113,36 @@ export default function TagesansichtPage() {
   }, [year, month]);
 
   useEffect(() => {
-    const local = readDailyBudgets();
+    const local = readDailyBudgets(tenantKey);
     const localKeys = Object.keys(local).filter(k => (local[k]?.actualRevenue ?? 0) > 0).sort();
-    console.log(`[UMSATZ] TagesansichtPage localStorage: ${localKeys.length} Tage, latest=${localKeys.at(-1) ?? '–'}`);
+    console.log(`[UMSATZ][${tenantId}] TagesansichtPage localStorage: ${localKeys.length} Tage, latest=${localKeys.at(-1) ?? '–'}`);
     setDailyBudgets(local);
     import('@/lib/supabase-kv').then(({ kvGet }) =>
-      kvGet('dailyBudgets')
+      kvGet(tenantKey('dailyBudgets'))
         .then(r => {
           if (r && typeof r === 'object') {
             const kvKeys = Object.keys(r as object).filter(k => ((r as Record<string, { actualRevenue?: number }>)[k]?.actualRevenue ?? 0) > 0).sort();
             const latestLocal = localKeys.at(-1) ?? '–';
             const latestKV    = kvKeys.at(-1) ?? '–';
             if (latestKV < latestLocal) {
-              console.warn(`[UMSATZ] TagesansichtPage: KV stale (${latestKV}) < local (${latestLocal}) — keeping localStorage`);
+              console.warn(`[UMSATZ][${tenantId}] TagesansichtPage: KV stale (${latestKV}) < local (${latestLocal}) — keeping localStorage`);
               return;
             }
-            console.log(`[UMSATZ] TagesansichtPage KV: ${kvKeys.length} Tage, latest=${latestKV}`);
+            console.log(`[UMSATZ][${tenantId}] TagesansichtPage KV: ${kvKeys.length} Tage, latest=${latestKV}`);
             setDailyBudgets(r as Record<string, DailyEntry>);
           }
         })
         .catch(() => {}),
     );
     const onSync = () => {
-      setDailyBudgets(readDailyBudgets());
-      setReportingTick(t => t + 1); // reporting_v1 neu einlesen
-      // VJ aus Supabase neu laden nach Import
+      setDailyBudgets(readDailyBudgets(tenantKey));
+      setReportingTick(t => t + 1);
       loadVjDailyMonth(year - 1, month).then(setVjSupabaseData);
     };
     window.addEventListener('supabase-kv-synced', onSync);
     return () => window.removeEventListener('supabase-kv-synced', onSync);
-  }, [year, month]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month, tenantId]);
 
   // Budget
   const budgetData = useBudgetMonth(year, month);
@@ -314,15 +316,16 @@ export default function TagesansichtPage() {
     if (isNaN(parsed) || parsed < 0) { setEditingDate(null); return; }
     // Immer als Brutto speichern (gleich wie Import)
     const grossValue = parsed;
-    const updated = { ...readDailyBudgets(), [dateKey]: { ...readDailyBudgets()[dateKey], actualRevenue: grossValue } };
-    localStorage.setItem('dailyBudgets', JSON.stringify(updated));
+    const updated = { ...readDailyBudgets(tenantKey), [dateKey]: { ...readDailyBudgets(tenantKey)[dateKey], actualRevenue: grossValue } };
+    localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(updated));
     setDailyBudgets(updated);
     setEditingDate(null);
     try {
       const { kvSet } = await import('@/lib/supabase-kv');
-      await kvSet('dailyBudgets', updated);
+      await kvSet(tenantKey('dailyBudgets'), updated);
     } catch { /* lokaler Stand bleibt */ }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   const openEdit = useCallback((dateKey: string, currentGross: number) => {
     setEditingDate(dateKey);

@@ -33,6 +33,8 @@ interface ExportOptionsV2 {
   includeWeeklyPages?: boolean;
   specificDays?: Date[];
   employeeFriendly?: boolean;
+  /** Optionaler Restaurantname für Dateinamen (Mandantenfähigkeit) */
+  restaurantName?: string;
 }
 
 export interface NameMatchInfo {
@@ -820,6 +822,8 @@ interface TemplateExportOptions {
   includeCosts?: boolean;
   /** Actual hours data for Ist export */
   actualHoursData?: Record<string, ActualHoursEntry>;
+  /** Optionaler Restaurantname für Dateinamen (Mandantenfähigkeit) */
+  restaurantName?: string;
 }
 
 const WEEKDAY_NAMES_FULL = ['SONNTAG', 'MONTAG', 'DIENSTAG', 'MITTWOCH', 'DONNERSTAG', 'FREITAG', 'SAMSTAG'];
@@ -834,7 +838,8 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
     specificDays,
     hoursType = 'plan',
     includeCosts = true,
-    actualHoursData = {}
+    actualHoursData = {},
+    restaurantName,
   } = options;
   
   const year = currentMonth.getFullYear();
@@ -1510,9 +1515,10 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
   
   // Download the file
   const hoursLabel = hoursType === 'ist' ? 'Ist' : hoursType === 'both' ? 'Plan-Ist' : '';
+  const restPrefix = restaurantName ? `${restaurantName}_` : '';
   const fileName = isWeekExport 
-    ? `Dienstplan_KW${format(days[0], 'w', { locale: de })}_${format(currentMonth, 'MMMM_yyyy', { locale: de })}${hoursLabel ? `_${hoursLabel}` : ''}.xlsx`
-    : `Dienstplan_${format(currentMonth, 'MMMM_yyyy', { locale: de })}${hoursLabel ? `_${hoursLabel}` : ''}.xlsx`;
+    ? `${restPrefix}Dienstplan_KW${format(days[0], 'w', { locale: de })}_${format(currentMonth, 'MMMM_yyyy', { locale: de })}${hoursLabel ? `_${hoursLabel}` : ''}.xlsx`
+    : `${restPrefix}Dienstplan_${format(currentMonth, 'MMMM_yyyy', { locale: de })}${hoursLabel ? `_${hoursLabel}` : ''}.xlsx`;
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
@@ -1527,7 +1533,7 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
 }
 
 export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<void> {
-  const { employees, scheduleData, currentMonth, department = 'all', dailyBudgets = {}, showCosts = false, specificDays, employeeFriendly = false } = options;
+  const { employees, scheduleData, currentMonth, department = 'all', dailyBudgets = {}, showCosts = false, specificDays, employeeFriendly = false, restaurantName } = options;
   console.log(`[PDF-SCHEDULE] exportScheduleToPDF – dept=${department} employeeFriendly=${employeeFriendly} showCosts=${showCosts} specificDays=${specificDays?.length ?? 'none'} employees=${employees.length}`);
   
   const year = currentMonth.getFullYear();
@@ -1993,9 +1999,10 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
 
   // Save PDF
   const aushangSuffix = employeeFriendly ? '_Aushang' : '';
+  const restPrefix = restaurantName ? `${restaurantName}_` : '';
   const fileName = isPartial
-    ? `Dienstplan_${format(days[0], 'dd-MM', { locale: de })}_bis_${format(days[days.length - 1], 'dd-MM-yyyy', { locale: de })}${aushangSuffix}.pdf`
-    : `Dienstplan_${format(currentMonth, 'MMMM_yyyy', { locale: de })}${aushangSuffix}.pdf`;
+    ? `${restPrefix}Dienstplan_${format(days[0], 'dd-MM', { locale: de })}_bis_${format(days[days.length - 1], 'dd-MM-yyyy', { locale: de })}${aushangSuffix}.pdf`
+    : `${restPrefix}Dienstplan_${format(currentMonth, 'MMMM_yyyy', { locale: de })}${aushangSuffix}.pdf`;
   console.log(`[PDF-SCHEDULE] saving PDF – filename=${fileName}`);
   pdf.save(fileName);
 }

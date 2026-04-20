@@ -140,20 +140,31 @@ function mergeReportingV1(
  * Für alle anderen Schlüssel: nur hochladen wenn Supabase leer ist
  *   (verhindert Überschreiben mit veralteten Daten).
  */
-export async function syncLocalToSupabase(keys: string[]): Promise<void> {
+/** Berechnet den mandantenspezifischen KV-/localStorage-Key für Sync-Operationen. */
+function syncKey(baseKey: string, tenantId: TenantId): string {
+  return tenantId === 'oliv' ? baseKey : `${tenantId}:${baseKey}`;
+}
+
+/**
+ * Sync bekannte localStorage-Schlüssel zu Supabase (mandantenfähig).
+ * `keys` enthält die BASE-Schlüssel (ohne Mandanten-Präfix).
+ * `tenantId` bestimmt das Präfix für localStorage und KV-Store.
+ * Oliv = kein Präfix (Rückwärtskompatibel), Beaulieu = "beaulieu:".
+ */
+export async function syncLocalToSupabase(keys: string[], tenantId: TenantId = 'oliv'): Promise<void> {
   for (const key of keys) {
-    const raw = localStorage.getItem(key);
+    const pKey = syncKey(key, tenantId);
+    const raw = localStorage.getItem(pKey);
     if (!raw) continue;
     try {
       const local = JSON.parse(raw);
-      const remote = await kvGet(key);
+      const remote = await kvGet(pKey);
       const remoteIsEmpty = remote === null
         || remote === undefined
         || JSON.stringify(remote) === '{}'
         || JSON.stringify(remote) === '[]';
 
       if (key === 'reporting_v1' && !remoteIsEmpty) {
-        // Smart merge: vereinige local + remote auf Feldebene
         const merged = mergeReportingV1(
           local as Record<string, Record<string, unknown>>,
           remote as Record<string, Record<string, unknown>>,
@@ -161,19 +172,16 @@ export async function syncLocalToSupabase(keys: string[]): Promise<void> {
         const mergedStr = JSON.stringify(merged);
         const remoteStr = JSON.stringify(remote);
         if (mergedStr !== remoteStr) {
-          await kvSet(key, merged);
-          localStorage.setItem(key, mergedStr);
-          console.log(`[KV] syncLocalToSupabase: 'reporting_v1' → Merge hochgeladen`);
+          await kvSet(pKey, merged);
+          localStorage.setItem(pKey, mergedStr);
+          console.log(`[KV][${tenantId}] syncLocalToSupabase: 'reporting_v1' → Merge hochgeladen`);
         } else {
-          console.log(`[KV] syncLocalToSupabase: 'reporting_v1' – kein Merge-Unterschied`);
+          console.log(`[KV][${tenantId}] syncLocalToSupabase: 'reporting_v1' – kein Merge-Unterschied`);
         }
         continue;
       }
 
       if (key === 'dailyBudgets' && !remoteIsEmpty) {
-        // Tages-Merge: neue Import-Daten dürfen Supabase ergänzen (nicht ersetzen).
-        // Ohne diesen Merge würden neu importierte Tage beim Startup-Sync verloren gehen,
-        // da syncLocalToSupabase sonst den Key bei vorhandenem Supabase-Eintrag überspringt.
         const merged = mergeDailyBudgets(
           local as Record<string, Record<string, unknown>>,
           remote as Record<string, Record<string, unknown>>,
@@ -184,24 +192,24 @@ export async function syncLocalToSupabase(keys: string[]): Promise<void> {
         const remoteDates = Object.keys(remote as object);
         const newDates = localDates.filter(d => !remoteDates.includes(d));
         if (mergedStr !== remoteStr) {
-          await kvSet(key, merged);
-          localStorage.setItem(key, mergedStr);
-          console.log(`[UMSATZ] syncLocalToSupabase: 'dailyBudgets' → Merge: ${newDates.length} neue Tage, gesamt ${Object.keys(merged).length}`);
+          await kvSet(pKey, merged);
+          localStorage.setItem(pKey, mergedStr);
+          console.log(`[UMSATZ][${tenantId}] syncLocalToSupabase: 'dailyBudgets' → Merge: ${newDates.length} neue Tage, gesamt ${Object.keys(merged).length}`);
           if (newDates.length > 0) {
             console.log(`[UMSATZ] neue Tage: [${newDates.sort().join(', ')}]`);
           }
         } else {
-          console.log(`[UMSATZ] syncLocalToSupabase: 'dailyBudgets' – kein Merge-Unterschied`);
+          console.log(`[UMSATZ][${tenantId}] syncLocalToSupabase: 'dailyBudgets' – kein Merge-Unterschied`);
         }
         continue;
       }
 
       if (!remoteIsEmpty) {
-        console.log(`[KV] syncLocalToSupabase: überspringe '${key}' – Supabase hat bereits Daten`);
+        console.log(`[KV][${tenantId}] syncLocalToSupabase: überspringe '${key}' – Supabase hat bereits Daten`);
         continue;
       }
-      await kvSet(key, local);
-      console.log(`[KV] syncLocalToSupabase: '${key}' → Supabase (Erstmigration)`);
+      await kvSet(pKey, local);
+      console.log(`[KV][${tenantId}] syncLocalToSupabase: '${key}' → Supabase (Erstmigration)`);
     } catch {
       // skip if not valid JSON
     }
@@ -209,47 +217,45 @@ export async function syncLocalToSupabase(keys: string[]): Promise<void> {
 }
 
 /**
- * Lädt alle bekannten Schlüssel aus Supabase in localStorage.
- * Supabase ist der Master-Speicher – lokale Daten werden IMMER
- * mit dem Supabase-Stand überschrieben, wenn Supabase Daten hat.
- * So landen neue PY-Daten (aus Preview importiert) auch in der
- * Published-App, selbst wenn deren localStorage schon (alten) Stand hat.
+ * Lädt alle bekannten Schlüssel aus Supabase in localStorage (mandantenfähig).
+ * `keys` enthält BASE-Schlüssel, `tenantId` bestimmt das Präfix.
+ * Supabase ist der Master-Speicher.
  * Gibt true zurück wenn mindestens ein Schlüssel aktualisiert wurde.
  */
-export async function syncSupabaseToLocal(keys: string[]): Promise<boolean> {
+export async function syncSupabaseToLocal(keys: string[], tenantId: TenantId = 'oliv'): Promise<boolean> {
   let changed = false;
   for (const key of keys) {
-    const remote = await kvGet(key);
+    const pKey = syncKey(key, tenantId);
+    const remote = await kvGet(pKey);
     if (remote === null || remote === undefined) {
-      console.log(`[KV] syncSupabaseToLocal: '${key}' – kein Eintrag in Supabase`);
+      console.log(`[KV][${tenantId}] syncSupabaseToLocal: '${key}' – kein Eintrag in Supabase`);
       continue;
     }
     const remoteStr = JSON.stringify(remote);
     if (remoteStr === '{}' || remoteStr === '[]' || remoteStr === 'null') {
-      console.log(`[KV] syncSupabaseToLocal: '${key}' – Supabase leer, überspringe`);
+      console.log(`[KV][${tenantId}] syncSupabaseToLocal: '${key}' – Supabase leer, überspringe`);
       continue;
     }
 
-    const localStr = localStorage.getItem(key) ?? '';
+    const localStr = localStorage.getItem(pKey) ?? '';
     if (localStr === remoteStr) {
-      console.log(`[KV] syncSupabaseToLocal: '${key}' – identisch, kein Update nötig`);
+      console.log(`[KV][${tenantId}] syncSupabaseToLocal: '${key}' – identisch, kein Update nötig`);
       continue;
     }
 
-    // Vorjahr-Diagnose: Einträge mit revenuePreviousYear zählen
     if (key === 'reporting_v1') {
       try {
         const obj = remote as Record<string, { revenuePreviousYear?: number }>;
         const pyCount = Object.values(obj).filter(m => m?.revenuePreviousYear !== undefined && m.revenuePreviousYear > 0).length;
         const totalCount = Object.keys(obj).length;
-        console.log(`[KV] syncSupabaseToLocal: 'reporting_v1' – ${totalCount} Monate total, ${pyCount} mit revenuePreviousYear > 0`);
+        console.log(`[KV][${tenantId}] syncSupabaseToLocal: 'reporting_v1' – ${totalCount} Monate total, ${pyCount} mit revenuePreviousYear > 0`);
       } catch { /* ignore */ }
     }
 
-    localStorage.setItem(key, remoteStr);
-    notifyKV(key);
+    localStorage.setItem(pKey, remoteStr);
+    notifyKV(pKey);
     changed = true;
-    console.log(`[KV] syncSupabaseToLocal: '${key}' → localStorage (${remoteStr.length} Zeichen)`);
+    console.log(`[KV][${tenantId}] syncSupabaseToLocal: '${key}' → localStorage (${remoteStr.length} Zeichen)`);
   }
   return changed;
 }

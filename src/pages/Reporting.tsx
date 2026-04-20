@@ -61,6 +61,7 @@ import {
   exportReportingToPDF, exportReportingToExcel, calcEffectiveTotals,
 } from '@/lib/reporting-export';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/contexts/TenantContext';
 import { Navigate } from 'react-router-dom';
 import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue-import';
 import { useStichtag } from '@/contexts/StichtagContext';
@@ -530,24 +531,27 @@ const NumberField = ({
 // ─── Absenzen-Controlling-Block ───────────────────────────────────────────────
 
 const AbsenzMonatsBlock = ({ year }: { year: number }) => {
+  const { tenantId, tenantKey } = useTenant();
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [scheduleData, setScheduleData] = useState<Record<string, DaySchedule>>({});
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('schedule-employees');
+      const raw = localStorage.getItem(tenantKey('schedule-employees'));
       if (raw) setEmployees(JSON.parse(raw));
     } catch { setEmployees([]); }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   useEffect(() => {
-    const key = `schedule-v2-${year}-${String(selectedMonth).padStart(2, '0')}`;
+    const key = tenantKey(`schedule-v2-${year}-${String(selectedMonth).padStart(2, '0')}`);
     try {
       const raw = localStorage.getItem(key);
       setScheduleData(raw ? JSON.parse(raw) : {});
     } catch { setScheduleData({}); }
-  }, [year, selectedMonth]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, selectedMonth, tenantId]);
 
   const summary = useMemo(() => {
     if (employees.length === 0) return null;
@@ -691,6 +695,7 @@ const AbsenzMonatsBlock = ({ year }: { year: number }) => {
 
 const Reporting = () => {
   const { isAdmin, canAccessSettings } = usePermissions();
+  const { tenantId, tenantKey } = useTenant();
 
   // Route-Schutz
   if (!isAdmin) return <Navigate to="/" replace />;
@@ -711,7 +716,7 @@ const Reporting = () => {
 
   // Gastronovi-Tagesdaten aus localStorage (gleiche Logik wie Erfolgsrechnung)
   const dailyBudgetsData = useMemo<Record<string, Record<string, number>>>(() => {
-    try { return JSON.parse(localStorage.getItem('dailyBudgets') || '{}'); }
+    try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
     catch { return {}; }
   }, [year, months]);
 
@@ -783,7 +788,7 @@ const Reporting = () => {
   const summary = useMemo(() => calcAnnualSummary(year), [year, months]);
   const chartData = useMemo(() => buildChartData(effectiveMonths), [effectiveMonths]);
   const threshold = useMemo(
-    () => parseInt(localStorage.getItem('labor_cost_threshold') || '40'),
+    () => parseInt(localStorage.getItem(tenantKey('labor_cost_threshold')) || '40'),
     [],
   );
 

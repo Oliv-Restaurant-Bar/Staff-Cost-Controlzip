@@ -117,9 +117,9 @@ function dayNetHours(ds: DaySchedule): number {
 /**
  * Liest Mitarbeiter — zuerst aus 'schedule-employees' localStorage, dann Fallback.
  */
-function loadLocalEmployees(): EmployeeLite[] {
+function loadLocalEmployees(keyFn: (k: string) => string = k => k): EmployeeLite[] {
   try {
-    const raw = localStorage.getItem('schedule-employees');
+    const raw = localStorage.getItem(keyFn('schedule-employees'));
     if (raw) {
       const parsed = JSON.parse(raw) as Array<{ id: string; hourlyWage?: number; hourly_wage?: number }>;
       return parsed.map(e => ({ id: e.id, hourlyWage: Number(e.hourlyWage ?? e.hourly_wage) || 0 }));
@@ -141,8 +141,8 @@ function loadLocalEmployees(): EmployeeLite[] {
   ];
 }
 
-function readDailyBudgets(): Record<string, { actualRevenue?: number; takeawayRevenue?: number }> {
-  try { return JSON.parse(localStorage.getItem('dailyBudgets') || '{}'); }
+function readDailyBudgets(keyFn: (k: string) => string = k => k): Record<string, { actualRevenue?: number; takeawayRevenue?: number }> {
+  try { return JSON.parse(localStorage.getItem(keyFn('dailyBudgets')) || '{}'); }
   catch { return {}; }
 }
 
@@ -325,12 +325,13 @@ const pctCls = (pct: number) =>
 // ── Hauptkomponente ───────────────────────────────────────────────────────────
 
 export default function TagesControllingPage() {
+  const { tenantId, tenantKey } = useTenant();
   const { showNetRevenue } = useRevenueDisplay();
   const today = useMemo(() => new Date(), []);
 
   const [period, setPeriod]   = useState<Period>('monat');
   const [anchor, setAnchor]   = useState(today);
-  const [dailyBudgets, setDailyBudgets] = useState(readDailyBudgets);
+  const [dailyBudgets, setDailyBudgets] = useState(() => readDailyBudgets(tenantKey));
   const [employees, setEmployees]     = useState<EmployeeLite[]>([]);
   const [scheduleMap, setScheduleMap] = useState<Record<string, DaySchedule>>({});
   const [actualHoursMap, setActualHoursMap] = useState<Record<string, ActualHourEntry>>({});
@@ -365,8 +366,8 @@ export default function TagesControllingPage() {
         [date]: { ...dailyBudgets[date], actualRevenue: gross },
       };
       setDailyBudgets(updated);
-      localStorage.setItem('dailyBudgets', JSON.stringify(updated));
-      kvSet('dailyBudgets', updated).catch(() => {});
+      localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(updated));
+      kvSet(tenantKey('dailyBudgets'), updated).catch(() => {});
     }
     setEditingDate(null);
   };
@@ -394,48 +395,48 @@ export default function TagesControllingPage() {
     e.preventDefault();
   }
 
-  // Employees: zuerst localStorage, dann Supabase
+  // Employees: zuerst localStorage, dann Supabase (mandantenfähig)
   useEffect(() => {
-    setEmployees(loadLocalEmployees());
+    setEmployees(loadLocalEmployees(tenantKey));
     loadEmployeesFromSupabase().then(emps => {
       if (emps && emps.length > 0) {
         setEmployees(emps.map(e => ({ id: e.id, hourlyWage: e.hourlyWage })));
       }
     }).catch(() => {});
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
-  // dailyBudgets: sofort + bei Sync neu laden
+  // dailyBudgets: sofort + bei Sync/Mandantenwechsel neu laden
   useEffect(() => {
-    const local = readDailyBudgets();
+    const local = readDailyBudgets(tenantKey);
     const localKeys = Object.keys(local).filter(k => (local[k]?.actualRevenue ?? 0) > 0).sort();
-    console.log(`[UMSATZ] localStorage keys with actualRevenue: [${localKeys.slice(-10).join(', ')}]`);
+    console.log(`[UMSATZ][${tenantId}] localStorage keys with actualRevenue: [${localKeys.slice(-10).join(', ')}]`);
     setDailyBudgets(local);
     import('@/lib/supabase-kv').then(({ kvGet }) =>
-      kvGet('dailyBudgets').then(r => {
+      kvGet(tenantKey('dailyBudgets')).then(r => {
         if (r && typeof r === 'object') {
           const kvKeys = Object.keys(r as object).filter(k => ((r as Record<string, { actualRevenue?: number }>)[k]?.actualRevenue ?? 0) > 0).sort();
-          console.log(`[UMSATZ] Supabase KV keys with actualRevenue: [${kvKeys.slice(-10).join(', ')}]`);
+          console.log(`[UMSATZ][${tenantId}] Supabase KV keys: [${kvKeys.slice(-10).join(', ')}]`);
           const latestLocal = localKeys.at(-1) ?? '–';
           const latestKV    = kvKeys.at(-1) ?? '–';
           if (latestKV < latestLocal) {
-            console.warn(`[UMSATZ] Supabase KV is STALE (latest: ${latestKV}) vs localStorage (latest: ${latestLocal}) — using localStorage`);
-            // Don't override state with stale KV data: localStorage is more current
+            console.warn(`[UMSATZ][${tenantId}] Supabase KV STALE (${latestKV}) < localStorage (${latestLocal}) — using localStorage`);
             return;
           }
-          console.log(`[UMSATZ] Supabase KV loaded: ${kvKeys.length} Tage, latest=${latestKV}`);
           setDailyBudgets(r as Record<string, { actualRevenue?: number; takeawayRevenue?: number }>);
         }
       }).catch(() => {}),
     );
     const onSync = () => {
-      const synced = readDailyBudgets();
+      const synced = readDailyBudgets(tenantKey);
       const syncedKeys = Object.keys(synced).filter(k => (synced[k]?.actualRevenue ?? 0) > 0).sort();
-      console.log(`[UMSATZ] supabase-kv-synced: ${syncedKeys.length} Tage verfügbar, latest=${syncedKeys.at(-1) ?? '–'}`);
+      console.log(`[UMSATZ][${tenantId}] supabase-kv-synced: ${syncedKeys.length} Tage, latest=${syncedKeys.at(-1) ?? '–'}`);
       setDailyBudgets(synced);
     };
     window.addEventListener('supabase-kv-synced', onSync);
     return () => window.removeEventListener('supabase-kv-synced', onSync);
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   // Tage der Periode
   const dates = useMemo(() => getPeriodDates(period, anchor), [period, anchor]);

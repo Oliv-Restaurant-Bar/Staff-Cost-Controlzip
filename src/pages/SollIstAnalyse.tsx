@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/contexts/TenantContext';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import {
   loadEmployees,
@@ -283,6 +284,7 @@ const SollIstAnalyse = () => {
     canSeePersonnelCostTotals, canSeeFullFinancials,
     canSwitchDepartment,
   } = usePermissions();
+  const { tenantId, tenantKey } = useTenant();
 
   // ── Filter-Zustände ─────────────────────────────────────────────────────────
   const [period, setPeriod]   = useState<Period>('monat');
@@ -330,11 +332,11 @@ const SollIstAnalyse = () => {
 
   // dailyBudgets aus localStorage
   const dailyBudgets = useMemo<Record<string, DailyBudget>>(() => {
-    try { return JSON.parse(localStorage.getItem('dailyBudgets') || '{}'); }
+    try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
     catch { return {}; }
   }, []);
 
-  const laborCostThreshold = Number(localStorage.getItem('labor_cost_threshold') || 40);
+  const laborCostThreshold = Number(localStorage.getItem(tenantKey('labor_cost_threshold')) || 40);
 
   // ── Budget-Daten für den gewählten Monat ─────────────────────────────────────
   const budgetYear  = selDate.getFullYear();

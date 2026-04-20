@@ -23,6 +23,7 @@ import { DepartmentTokenManager } from '@/components/DepartmentTokenManager';
 import { CronJobOverview } from '@/components/CronJobOverview';
 import { migrateLocalStorageToSupabase } from '@/hooks/useSupabaseSchedule';
 import { saveSetting } from '@/lib/supabase-db';
+import { useTenant } from '@/contexts/TenantContext';
 import { CapacitySettingsCard } from '@/components/CapacitySettingsCard';
 import { UserManagementCard } from '@/components/UserManagementCard';
 import { ZielwerteCard } from '@/components/ZielwerteCard';
@@ -46,6 +47,7 @@ const LABOR_COST_THRESHOLD_KEY = 'labor_cost_threshold';
 const DEFAULT_LABOR_COST_THRESHOLD = 40;
 
 const Settings = () => {
+  const { tenantId, tenantKey } = useTenant();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -65,13 +67,13 @@ const Settings = () => {
   
   // Weekday percentages state
   const [weekdayPercentages, setWeekdayPercentages] = useState<Record<number, number>>(() => {
-    const saved = localStorage.getItem(WEEKDAY_PERCENTAGES_KEY);
+    const saved = localStorage.getItem(tenantKey(WEEKDAY_PERCENTAGES_KEY));
     return saved ? JSON.parse(saved) : DEFAULT_WEEKDAY_PERCENTAGES;
   });
   
   // Labor cost threshold state
   const [laborCostThreshold, setLaborCostThreshold] = useState<number>(() => {
-    const saved = localStorage.getItem(LABOR_COST_THRESHOLD_KEY);
+    const saved = localStorage.getItem(tenantKey(LABOR_COST_THRESHOLD_KEY));
     return saved ? parseFloat(saved) : DEFAULT_LABOR_COST_THRESHOLD;
   });
 
@@ -136,6 +138,16 @@ const Settings = () => {
     setStorageInfo(getStorageInfo());
     setSavedBackups(getSavedBackupVersions());
   }, []);
+
+  // Mandantenwechsel: tenant-spezifische Einstellungen neu laden
+  useEffect(() => {
+    const savedWD = localStorage.getItem(tenantKey(WEEKDAY_PERCENTAGES_KEY));
+    setWeekdayPercentages(savedWD ? JSON.parse(savedWD) : DEFAULT_WEEKDAY_PERCENTAGES);
+    const savedLC = localStorage.getItem(tenantKey(LABOR_COST_THRESHOLD_KEY));
+    setLaborCostThreshold(savedLC ? parseFloat(savedLC) : DEFAULT_LABOR_COST_THRESHOLD);
+    console.log(`[TENANT] Settings: Mandant "${tenantId}" – Einstellungen neu geladen`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   // Backup handlers
   const handleShowExportPreview = () => {
@@ -577,15 +589,15 @@ const Settings = () => {
       toast.error(`Summe muss 100% ergeben (aktuell: ${totalPercentage}%)`);
       return;
     }
-    localStorage.setItem(WEEKDAY_PERCENTAGES_KEY, JSON.stringify(weekdayPercentages));
-    saveSetting(WEEKDAY_PERCENTAGES_KEY, weekdayPercentages);
+    localStorage.setItem(tenantKey(WEEKDAY_PERCENTAGES_KEY), JSON.stringify(weekdayPercentages));
+    saveSetting(tenantKey(WEEKDAY_PERCENTAGES_KEY), weekdayPercentages);
     toast.success('Umsatzverteilung gespeichert');
   };
 
   const resetPercentages = () => {
     setWeekdayPercentages(DEFAULT_WEEKDAY_PERCENTAGES);
-    localStorage.setItem(WEEKDAY_PERCENTAGES_KEY, JSON.stringify(DEFAULT_WEEKDAY_PERCENTAGES));
-    saveSetting(WEEKDAY_PERCENTAGES_KEY, DEFAULT_WEEKDAY_PERCENTAGES);
+    localStorage.setItem(tenantKey(WEEKDAY_PERCENTAGES_KEY), JSON.stringify(DEFAULT_WEEKDAY_PERCENTAGES));
+    saveSetting(tenantKey(WEEKDAY_PERCENTAGES_KEY), DEFAULT_WEEKDAY_PERCENTAGES);
     toast.success('Umsatzverteilung auf Standard zurückgesetzt');
   };
 
@@ -594,8 +606,8 @@ const Settings = () => {
       toast.error('Schwellenwert muss zwischen 1 und 100% liegen');
       return;
     }
-    localStorage.setItem(LABOR_COST_THRESHOLD_KEY, laborCostThreshold.toString());
-    saveSetting(LABOR_COST_THRESHOLD_KEY, laborCostThreshold);
+    localStorage.setItem(tenantKey(LABOR_COST_THRESHOLD_KEY), laborCostThreshold.toString());
+    saveSetting(tenantKey(LABOR_COST_THRESHOLD_KEY), laborCostThreshold);
     toast.success('Personalkostenquote-Schwellenwert gespeichert');
   };
 

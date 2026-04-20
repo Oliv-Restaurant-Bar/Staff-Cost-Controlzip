@@ -1,0 +1,224 @@
+Bitte die App jetzt vollständig mandantenfähig machen und das zweite Restaurant "Beaulieu" zusätzlich zu "Oliv" sauber in Supabase aufbauen.
+
+Ziel:
+Die bestehende App für Oliv soll erweitert werden, damit auch das zweite Restaurant "Beaulieu" in derselben App geführt werden kann.
+Beide Restaurants sollen dieselben Module, dieselbe Logik und dieselben Imports nutzen.
+Der Hauptunterschied sind die mandantenspezifischen Daten wie Mitarbeiter, Dienstplanung, Umsätze, Budgets, Erfolgsrechnung, WES und Exporte.
+
+Wichtig:
+Die Lösung soll sauber über Supabase laufen, genau wie bei Oliv.
+Keine doppelte App, sondern eine echte mandantenfähige Struktur.
+
+==================================================
+1. Mandantenfähigkeit als Grundstruktur
+==================================================
+
+Bitte eine saubere Multi-Tenant-Struktur einführen mit mindestens diesen zwei Mandanten:
+
+- Oliv
+- Beaulieu
+
+Jeder relevante Datensatz soll künftig eindeutig einem Mandanten zugeordnet sein, z.B. über:
+- tenant_id
+oder
+- restaurant_id
+
+Bitte überall konsistent dieselbe Kennung verwenden.
+
+==================================================
+2. Supabase mandantenfähig machen
+==================================================
+
+Bitte alle relevanten Supabase-Datenstrukturen für Multi-Tenant erweitern.
+
+Das betrifft insbesondere:
+- employees / Personalstamm
+- schedule_entries / Dienstplanung
+- actual_hours / Ist-Stunden
+- daily revenues / Tagesumsatz
+- budgets
+- app_settings / KV-Store
+- product / WES / cost related tables
+- imports / mapping tables / Zielwerte
+
+Wichtig:
+Alle Daten von Oliv und Beaulieu müssen in Supabase sauber getrennt bleiben.
+
+Bestehende Oliv-Daten:
+- dürfen nicht verloren gehen
+- sollen automatisch dem Mandanten "Oliv" zugeordnet werden
+
+==================================================
+3. Mandantenumschaltung in der App
+==================================================
+
+Bitte eine sichtbare Mandantenauswahl einbauen:
+
+- Oliv
+- Beaulieu
+
+Diese Auswahl soll die ganze App auf den gewählten Mandanten umschalten.
+
+Alle Module müssen auf den aktiven Mandanten reagieren:
+- Dashboard
+- Dienstplanung
+- Personal FIX
+- Tagesansicht
+- Tages-Controlling
+- WES
+- Budget
+- Erfolgsrechnung
+- Import-Zentrale
+- Exporte
+
+==================================================
+4. Mitarbeiterliste für Beaulieu
+==================================================
+
+Beaulieu soll eine eigene Mitarbeiterliste erhalten und sauber von Oliv getrennt sein.
+
+Bitte:
+- Beaulieu-Mitarbeiter nur im Beaulieu-Mandanten sichtbar machen
+- Oliv-Mitarbeiter nur im Oliv-Mandanten sichtbar machen
+- Abteilungen pro Mitarbeiter übernehmen
+
+Wichtig:
+Wenn die exakte Mitarbeiterliste noch nicht verfügbar / lesbar ist, bitte die Importstruktur bereits vollständig vorbereiten, damit die Liste nachträglich direkt importiert werden kann.
+
+==================================================
+5. Gleiche Logik wie Oliv
+==================================================
+
+Für Beaulieu soll grundsätzlich alles gleich funktionieren wie bei Oliv:
+
+- Umsatzimport aus gastronovi
+- Ist-Stundenimport aus Mirus
+- Dienstplanung Plan / Ist / Vergleich
+- Personal FIX
+- Zielwerte
+- Budget
+- Erfolgsrechnung
+- WES
+- Tages-Controlling
+- PDF / Excel Exporte
+
+Die Logik bleibt gleich.
+Nur die Datenbasis ist mandantenspezifisch.
+
+==================================================
+6. Import-Zentrale mandantenfähig
+==================================================
+
+Alle Importpfade müssen mandantenbezogen sein.
+
+Bitte beim Import immer klar machen:
+- für welchen Mandanten importiert wird
+- Datenziel = Oliv oder Beaulieu
+
+Das betrifft:
+- Umsatzimport
+- Ist-Stundenimport
+- Mitarbeiterimport
+- Budgetimport
+- Buchhaltungsimport
+- WES / Lieferanten / PDFs
+
+Wichtig:
+Es darf keine Vermischung geben.
+
+==================================================
+7. Dienstplanung mandantenfähig
+==================================================
+
+Die Dienstplanung für Beaulieu soll genauso funktionieren wie bei Oliv:
+- Speichern
+- Laden
+- Rollen / Rechte
+- PDF
+- Plan / Ist / Vergleich
+- Tages-Popup
+- Zielwert-Logik
+- Synchronisierung
+
+Wichtig:
+- im Beaulieu-Dienstplan nur Beaulieu-Mitarbeiter
+- im Oliv-Dienstplan nur Oliv-Mitarbeiter
+
+==================================================
+8. Personal FIX / Zielwerte / Budget mandantenfähig
+==================================================
+
+Bitte diese Bereiche ebenfalls mandantenbezogen machen:
+- Personal FIX
+- Flex / variable Arbeit
+- Zielwerte
+- Budget
+- Erfolgsrechnung
+- Tagesbudget
+- Umsatzverteilung pro Wochentag
+- App Settings
+
+Wichtig:
+Alle diese Einstellungen und Berechnungen müssen pro Mandant separat gespeichert werden.
+
+==================================================
+9. Exporte mandantenbezogen
+==================================================
+
+Bitte PDF- und Excel-Exporte mandantenbezogen machen.
+
+Beispiel:
+- dienstplan-oliv-2026-04.pdf
+- dienstplan-beaulieu-2026-04.pdf
+- personal-fix-beaulieu-2026-04.pdf
+
+Mandantenname bitte im Export sichtbar machen.
+
+==================================================
+10. Rückwärtskompatibilität / Migration
+==================================================
+
+Bitte bestehende Oliv-Daten sauber migrieren, ohne etwas zu verlieren.
+
+Wichtig:
+- bestehende Datensätze automatisch "Oliv" zuordnen
+- nichts löschen
+- keine leeren Überschreibungen
+- Beaulieu neu anlegen
+
+Wenn nötig:
+- Default tenant = Oliv
+
+==================================================
+11. Saubere Architektur
+==================================================
+
+Bitte NICHT alles doppelt bauen.
+Sondern:
+- gemeinsame Logik behalten
+- nur Mandantenfilterung und tenant_id sauber durchziehen
+- Supabase als Source of Truth verwenden
+
+==================================================
+12. Debug / Validierung
+==================================================
+
+Bitte loggen:
+[TENANT] active tenant: ...
+[TENANT] module loaded: ...
+[TENANT] employees loaded: ...
+[TENANT] schedule loaded: ...
+[TENANT] revenue loaded: ...
+[TENANT] budget loaded: ...
+[TENANT] import target: ...
+[TENANT] export target: ...
+
+==================================================
+13. Bitte danach kurz sagen:
+==================================================
+
+- welche Datei(en) geändert wurden
+- welche Supabase-Tabellen / Datenstrukturen tenant-fähig gemacht wurden
+- wie die Migration von Oliv gelöst wurde
+- wie Oliv und Beaulieu jetzt getrennt werden
+- wie ich Beaulieu am schnellsten testen kann

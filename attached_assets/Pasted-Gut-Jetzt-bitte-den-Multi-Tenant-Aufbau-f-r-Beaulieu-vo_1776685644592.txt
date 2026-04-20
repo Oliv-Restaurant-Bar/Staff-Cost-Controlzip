@@ -1,0 +1,54 @@
+Gut. Jetzt bitte den Multi-Tenant-Aufbau für Beaulieu vollständig abschliessen und produktionsreif machen.
+
+Wichtig:
+Der aktuelle Stand ist nur die Basis. Jetzt muss sichergestellt werden, dass wirklich ALLE Module tenant-sicher funktionieren und Beaulieu nicht nur Platzhalter hat.
+
+Bitte exakt so umsetzen:
+
+1. Supabase Migration final absichern
+- Prüfen, dass restaurant_id / tenant_id überall sauber verwendet wird
+- nicht nur in employees, sondern überall dort, wo mandantenbezogene Daten gespeichert oder geladen werden
+- bitte kurz auflisten, welche Tabellen tenant-fähig sind und welche noch fehlen
+
+2. Beaulieu Mitarbeiterliste vorbereiten
+- die aktuellen Platzhalter-Mitarbeiter nicht als final behandeln
+- bitte einen sauberen Importpfad für die echte Beaulieu-Mitarbeiterliste bauen
+- sobald Datei verfügbar ist, sollen Name, Abteilung, Rolle und relevante Stammdaten importiert werden
+
+3. Alle Kernmodule tenant-sicher machen
+Bitte prüfen und fertig ziehen für:
+- Dienstplanung
+- Ist-Stunden
+- Personal FIX
+- Tagesansicht
+- Tages-Controlling
+- Budget
+- Erfolgsrechnung
+- WES
+- Export PDF / Excel
+- Import-Zentrale
+
+Wichtig:
+Jedes Modul darf nur die Daten des aktiven Mandanten laden und speichern.
+
+4. Exporte tenant-sicher machen
+- Mandantenname im PDF / Excel anzeigen
+- Dateiname tenant-bezogen
+- keine Vermischung von Oliv / Beaulieu im Export
+
+5. UI-Kontrolle
+- im Header oder an zentraler Stelle sichtbar anzeigen, welcher Mandant aktiv ist
+- damit kein Benutzer versehentlich im falschen Restaurant arbeitet
+
+6. Schnelltest einbauen
+Bitte kurz testen und bestätigen:
+- Oliv zeigt nur Oliv-Daten
+- Beaulieu zeigt nur Beaulieu-Daten
+- Wechsel zwischen beiden funktioniert ohne Vermischung
+- Speichern / Laden funktioniert in beiden Mandanten
+
+7. Bitte danach kurz sagen:
+- welche Tabellen jetzt tenant-sicher sind
+- welche Module jetzt vollständig tenant-aware sind
+- was für Beaulieu noch fehlt ausser der echten Mitarbeiterliste
+- wie ich Beaulieu am schnellsten mit echten Daten aktivieren kann

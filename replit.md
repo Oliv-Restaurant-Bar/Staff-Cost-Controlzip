@@ -27,11 +27,19 @@ Zwei Mandanten: **Oliv** (Standard, alle bestehenden Daten) und **Beaulieu** (ne
 
 ### Geänderte Dateien
 - `src/lib/supabase-db.ts` — `loadEmployees(restaurantId?)`, `upsertEmployee(emp, restaurantId)`, `upsertAllEmployees(employees, restaurantId)`
-- `src/lib/supabase-kv.ts` — `saveMonthAbsences(yearMonth, entries, tenantId)`, `loadMonthAbsences(yearMonth, tenantId)`
+- `src/lib/supabase-kv.ts` — `syncLocalToSupabase`/`syncSupabaseToLocal` mit `tenantId`; `saveMonthAbsences(yearMonth, entries, tenantId)`, `loadMonthAbsences(yearMonth, tenantId)`
+- `src/hooks/useSyncStore.ts` — tenant-aware mit `syncedTenants` Set; alle SYNC_KEYS tenant-scoped
 - `src/App.tsx` — `<TenantProvider>` in Provider-Baum
 - `src/components/AppNav.tsx` — Dynamischer Markenname + TenantSwitcher in Sidebar
-- `src/pages/SchedulePlanner.tsx` — alle localStorage/KV/Supabase-Calls tenant-aware (37 Ersetzungen + useTenant)
-- `src/pages/ImportHub.tsx` — Tenant-Badge im Header, IstStundenSection tenant-aware
+- `src/pages/SchedulePlanner.tsx` — alle localStorage/KV/Supabase-Calls tenant-aware; `restaurantName` an PDF/Excel-Export übergeben
+- `src/pages/ImportHub.tsx` — Tenant-Badge im Header, IstStundenSection + DatenstandCard tenant-aware; `readTagesumsatzDate`, `readIstStundenDate`, `readBuchhaltungDate` mit `keyFn` Parameter
+- `src/pages/Dashboard.tsx` — tenant-aware (useTenant + Reload-Effekt bei Mandantenwechsel)
+- `src/pages/TagesansichtPage.tsx` — `readDailyBudgets` mit `keyFn` param
+- `src/pages/TagesControllingPage.tsx` — `loadLocalEmployees` + `readDailyBudgets` tenant-aware
+- `src/pages/SollIstAnalyse.tsx` — tenant-aware
+- `src/pages/Reporting.tsx` — Haupt- und `AbsenzMonatsBlock`-Sub-Komponente tenant-aware
+- `src/pages/PersonalFix.tsx` — VOLLSTÄNDIG tenant-aware: alle Modul-Level-Funktionen (`loadDailyPlanDetails`, `loadDailyIstDetails`, `loadFerienPlanDayDetails`, `loadFerienIstDayDetails`, `loadVar*`, `saveVar*` etc.) mit `keyFn`; Sub-Komponenten `FlexPeriodPopup` + `FlexBreakdownModal` nutzen `useTenant()` direkt; alle Call-Sites mit `tenantKey` aktualisiert
+- `src/pages/Settings.tsx` — `WEEKDAY_PERCENTAGES_KEY` + `LABOR_COST_THRESHOLD_KEY` tenant-spezifisch; Reload-Effekt bei Mandantenwechsel; PASSWORD/GLOBAL-Keys bleiben app-weit
 
 ### Debug-Logs: `[TENANT]`
 

@@ -26,6 +26,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/contexts/TenantContext';
 import { GuestLinkGenerator } from '@/components/GuestLinkGenerator';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { getDailyBudgetMap } from '@/lib/budget-day';
@@ -232,6 +233,7 @@ const Dashboard = () => {
     stichtag, formatted: stichtagFormatted,
   } = useStichtag();
   const { showNetRevenue } = useRevenueDisplay();
+  const { tenantId, tenantKey } = useTenant();
 
   const deptLabel = allowedDepartment === 'service' ? 'Service'
     : allowedDepartment === 'küche' ? 'Küche'
@@ -267,7 +269,7 @@ const Dashboard = () => {
 
   // DailyBudgets aus localStorage (Umsatz-Daten) — schreibbar für Schnelleingabe
   const [dailyBudgets, setDailyBudgets] = useState<Record<string, DailyBudget>>(() => {
-    try { return JSON.parse(localStorage.getItem('dailyBudgets') || '{}'); }
+    try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
     catch { return {}; }
   });
 
@@ -275,18 +277,27 @@ const Dashboard = () => {
   // Dadurch re-berechnen alle useMemos die loadMonth/loadYear nutzen – auch nach dem Sync.
   const [reportingTick, setReportingTick] = useState(0);
 
+  // Mandantenwechsel: dailyBudgets + reportingTick neu laden
+  useEffect(() => {
+    console.log(`[TENANT] Dashboard: Mandant gewechselt → "${tenantId}", dailyBudgets neu laden`);
+    try {
+      const data = JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}');
+      setDailyBudgets(data);
+    } catch { /* ignore */ }
+    setReportingTick(t => t + 1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
   // Nach Supabase-Sync dailyBudgets + reporting_v1 neu laden
   useEffect(() => {
     const handler = () => {
-      // dailyBudgets neu einlesen
       try {
-        const data = JSON.parse(localStorage.getItem('dailyBudgets') || '{}');
+        const data = JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}');
         setDailyBudgets(data);
       } catch { /* ignore */ }
 
-      // reporting_v1 Diagnose-Log + Tick auslösen damit useMemos neu laufen
       try {
-        const raw = localStorage.getItem('reporting_v1') ?? '{}';
+        const raw = localStorage.getItem(tenantKey('reporting_v1')) ?? '{}';
         const obj = JSON.parse(raw) as Record<string, { revenuePreviousYear?: number; revenueActual?: number }>;
         const months = Object.keys(obj);
         const pyMonths = Object.values(obj).filter(m => (m?.revenuePreviousYear ?? 0) > 0).length;
@@ -298,7 +309,8 @@ const Dashboard = () => {
     };
     window.addEventListener('store-synced', handler);
     return () => window.removeEventListener('store-synced', handler);
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   // Schnelleingabe-State
   const [editingRevenue, setEditingRevenue] = useState(false);
@@ -363,8 +375,8 @@ const Dashboard = () => {
         actualRevenue: amount,
       },
     };
-    localStorage.setItem('dailyBudgets', JSON.stringify(updated));
-    import('@/lib/supabase-kv').then(({ kvSet }) => kvSet('dailyBudgets', updated).catch(() => {}));
+    localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(updated));
+    import('@/lib/supabase-kv').then(({ kvSet }) => kvSet(tenantKey('dailyBudgets'), updated).catch(() => {}));
     setDailyBudgets(updated);
     setEditingRevenue(false);
     setPendingRevenue('');

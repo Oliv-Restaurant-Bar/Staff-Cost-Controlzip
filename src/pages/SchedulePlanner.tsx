@@ -1354,6 +1354,7 @@ const SchedulePlanner = () => {
           ? 'Zeitraum'
           : 'Monat';
 
+      const restaurantName = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
       if (options.format === 'pdf') {
         await exportScheduleToPDF({
           employees,
@@ -1365,6 +1366,7 @@ const SchedulePlanner = () => {
           includeWeeklyPages: true,
           specificDays,
           employeeFriendly: options.employeeFriendly ?? false,
+          restaurantName,
         });
         toast.success(`PDF (${rangeLabel}) erfolgreich exportiert`);
       } else {
@@ -1378,6 +1380,7 @@ const SchedulePlanner = () => {
           hoursType: options.hoursType,
           includeCosts: options.includeCosts,
           actualHoursData,
+          restaurantName,
         });
         toast.success(`Excel (${rangeLabel}) erfolgreich exportiert`);
       }

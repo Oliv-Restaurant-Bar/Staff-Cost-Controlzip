@@ -89,9 +89,9 @@ const STALENESS_TEXT: Record<string, string> = {
   none:  'text-muted-foreground',
 };
 
-function readTagesumsatzDate(): string | null {
+function readTagesumsatzDate(keyFn: (k: string) => string = k => k): string | null {
   try {
-    const db = JSON.parse(localStorage.getItem('dailyBudgets') || '{}') as Record<string, { actualRevenue?: number }>;
+    const db = JSON.parse(localStorage.getItem(keyFn('dailyBudgets')) || '{}') as Record<string, { actualRevenue?: number }>;
     const dates = Object.entries(db)
       .filter(([, v]) => (v?.actualRevenue ?? 0) > 0)
       .map(([k]) => k)
@@ -100,9 +100,14 @@ function readTagesumsatzDate(): string | null {
   } catch { return null; }
 }
 
-function readIstStundenDate(): string | null {
+function readIstStundenDate(keyFn: (k: string) => string = k => k): string | null {
   try {
-    const keys = Object.keys(localStorage).filter(k => /^actual-hours-\d{4}-\d{2}$/.test(k));
+    // Match both plain keys (Oliv) and prefixed keys (Beaulieu: beaulieu:actual-hours-*)
+    const prefix = keyFn('').replace(/\.$/, '');
+    const keys = Object.keys(localStorage).filter(k => {
+      const plain = prefix ? k.replace(new RegExp(`^${prefix}\\:`), '') : k;
+      return /^actual-hours-\d{4}-\d{2}$/.test(plain);
+    });
     let latestDate: string | null = null;
     for (const key of keys) {
       try {
@@ -120,9 +125,9 @@ function readIstStundenDate(): string | null {
   } catch { return null; }
 }
 
-function readBuchhaltungDate(): string | null {
+function readBuchhaltungDate(keyFn: (k: string) => string = k => k): string | null {
   try {
-    const rep = JSON.parse(localStorage.getItem('reporting_v1') || '{}') as Record<string, { expenseCategories?: unknown[] }>;
+    const rep = JSON.parse(localStorage.getItem(keyFn('reporting_v1')) || '{}') as Record<string, { expenseCategories?: unknown[] }>;
     const months = Object.entries(rep)
       .filter(([k, v]) => /^\d{4}-\d{2}$/.test(k) && Array.isArray(v?.expenseCategories) && (v.expenseCategories.length ?? 0) > 0)
       .map(([k]) => k)
@@ -143,17 +148,20 @@ async function fetchVerkaufsdatenDate(): Promise<string | null> {
 }
 
 const DatenstandCard = () => {
+  const { tenantId, tenantKey } = useTenant();
   const [verkaufDate, setVerkaufDate]   = useState<string | null | 'loading'>('loading');
   const [refreshKey, setRefreshKey]     = useState(0);
 
-  const tagesumsatzDate  = readTagesumsatzDate();
-  const istStundenDate   = readIstStundenDate();
-  const buchhaltungDate  = readBuchhaltungDate();
+  const tagesumsatzDate  = readTagesumsatzDate(tenantKey);
+  const istStundenDate   = readIstStundenDate(tenantKey);
+  const buchhaltungDate  = readBuchhaltungDate(tenantKey);
 
   useEffect(() => {
     setVerkaufDate('loading');
     fetchVerkaufsdatenDate().then(d => setVerkaufDate(d));
-  }, [refreshKey]);
+    console.log(`[TENANT] DatenstandCard: Mandant "${tenantId}" geladen`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey, tenantId]);
 
   const entries: DatenstandEntry[] = [
     {

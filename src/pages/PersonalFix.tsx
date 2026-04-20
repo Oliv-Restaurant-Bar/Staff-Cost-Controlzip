@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/contexts/TenantContext';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { loadWeekdayWeights, computeProRataBudget, logBudgetDayDebug } from '@/lib/budget-day';
@@ -149,8 +150,8 @@ function calcSlotHours(slot: { start: string; end: string } | null | undefined):
  * Liest Plan-Stunden aus localStorage (schedule-v2-YYYY-MM).
  * Gibt eine Map empId → Gesamtstunden im Monat zurück.
  */
-function loadPlanHoursFromStorage(year: number, month: number): Record<string, number> {
-  const key = `schedule-v2-${year}-${String(month).padStart(2, '0')}`;
+function loadPlanHoursFromStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, number> {
+  const key = keyFn(`schedule-v2-${year}-${String(month).padStart(2, '0')}`);
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return {};
@@ -175,8 +176,8 @@ function loadPlanHoursFromStorage(year: number, month: number): Record<string, n
  * Gibt eine Map empId → Anzahl FE-Einträge im Monat zurück.
  * FE-Einträge haben hours=0 und absenceType='FE' — werden hier gezählt.
  */
-function loadFerienDaysFromStorage(year: number, month: number): Record<string, number> {
-  const key = `actual-hours-${year}-${String(month).padStart(2, '0')}`;
+function loadFerienDaysFromStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, number> {
+  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
   const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
   try {
     const raw = localStorage.getItem(key);
@@ -202,8 +203,8 @@ function loadFerienDaysFromStorage(year: number, month: number): Record<string, 
  * Gibt eine Map empId → Anzahl Plan-FE-Tage im Monat zurück.
  * Ein Plan-FE-Tag liegt vor, wenn frühAbsence === 'FE' ODER spätAbsence === 'FE'.
  */
-function loadFerienDaysFromPlanStorage(year: number, month: number): Record<string, number> {
-  const key = `schedule-v2-${year}-${String(month).padStart(2, '0')}`;
+function loadFerienDaysFromPlanStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, number> {
+  const key = keyFn(`schedule-v2-${year}-${String(month).padStart(2, '0')}`);
   const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
   try {
     const raw = localStorage.getItem(key);
@@ -229,8 +230,8 @@ function loadFerienDaysFromPlanStorage(year: number, month: number): Record<stri
  * Liest Ist-Stunden aus localStorage (actual-hours-YYYY-MM = Mirus-Import).
  * Gibt eine Map empId → Gesamtstunden im Monat zurück.
  */
-function loadIstHoursFromStorage(year: number, month: number): Record<string, number> {
-  const key = `actual-hours-${year}-${String(month).padStart(2, '0')}`;
+function loadIstHoursFromStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, number> {
+  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
   const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
   console.log(`[IST] month selected: ${monthPrefix} (key: ${key})`);
   try {
@@ -281,12 +282,12 @@ const EMP_TYPE_LABEL: Record<string, string> = {
 type VarView = 'plan' | 'ist' | 'manual';
 
 const VAR_HOURS_KEY = 'personal_fix_var_hours_v1';
-function loadVarHours(): Record<string, number> {
-  try { return JSON.parse(localStorage.getItem(VAR_HOURS_KEY) ?? '{}'); }
+function loadVarHours(keyFn: (k: string) => string = k => k): Record<string, number> {
+  try { return JSON.parse(localStorage.getItem(keyFn(VAR_HOURS_KEY)) ?? '{}'); }
   catch { return {}; }
 }
-function saveVarHours(data: Record<string, number>) {
-  localStorage.setItem(VAR_HOURS_KEY, JSON.stringify(data));
+function saveVarHours(data: Record<string, number>, keyFn: (k: string) => string = k => k) {
+  localStorage.setItem(keyFn(VAR_HOURS_KEY), JSON.stringify(data));
 }
 
 // ── Wöchentliches Basismodell (Std/Wo, Tage/Wo) ───────────────────────────────
@@ -294,12 +295,12 @@ function saveVarHours(data: Record<string, number>) {
 interface WeeklyBaseline { hours?: number; days?: number; }
 const VAR_WEEKLY_KEY = 'personal_fix_weekly_v1';
 
-function loadVarWeekly(): Record<string, WeeklyBaseline> {
-  try { return JSON.parse(localStorage.getItem(VAR_WEEKLY_KEY) ?? '{}'); }
+function loadVarWeekly(keyFn: (k: string) => string = k => k): Record<string, WeeklyBaseline> {
+  try { return JSON.parse(localStorage.getItem(keyFn(VAR_WEEKLY_KEY)) ?? '{}'); }
   catch { return {}; }
 }
-function saveVarWeekly(data: Record<string, WeeklyBaseline>) {
-  localStorage.setItem(VAR_WEEKLY_KEY, JSON.stringify(data));
+function saveVarWeekly(data: Record<string, WeeklyBaseline>, keyFn: (k: string) => string = k => k) {
+  localStorage.setItem(keyFn(VAR_WEEKLY_KEY), JSON.stringify(data));
 }
 
 /** Durchschnittliche Wochen pro Monat */
@@ -312,30 +313,30 @@ type PricingMode = 'hourly' | 'daily';
 interface DayRateData { ratePerDay: number; daysPerWeek?: number; daysPerMonth?: number; }
 
 const VAR_PRICING_MODE_KEY = 'personal_fix_pricing_mode_v1';
-function loadVarPricingMode(): Record<string, PricingMode> {
-  try { return JSON.parse(localStorage.getItem(VAR_PRICING_MODE_KEY) ?? '{}'); }
+function loadVarPricingMode(keyFn: (k: string) => string = k => k): Record<string, PricingMode> {
+  try { return JSON.parse(localStorage.getItem(keyFn(VAR_PRICING_MODE_KEY)) ?? '{}'); }
   catch { return {}; }
 }
-function saveVarPricingMode(data: Record<string, PricingMode>) {
-  localStorage.setItem(VAR_PRICING_MODE_KEY, JSON.stringify(data));
+function saveVarPricingMode(data: Record<string, PricingMode>, keyFn: (k: string) => string = k => k) {
+  localStorage.setItem(keyFn(VAR_PRICING_MODE_KEY), JSON.stringify(data));
 }
 
 const VAR_DAYRATE_KEY = 'personal_fix_dayrate_v1';
-function loadVarDayRate(): Record<string, DayRateData> {
-  try { return JSON.parse(localStorage.getItem(VAR_DAYRATE_KEY) ?? '{}'); }
+function loadVarDayRate(keyFn: (k: string) => string = k => k): Record<string, DayRateData> {
+  try { return JSON.parse(localStorage.getItem(keyFn(VAR_DAYRATE_KEY)) ?? '{}'); }
   catch { return {}; }
 }
-function saveVarDayRate(data: Record<string, DayRateData>) {
-  localStorage.setItem(VAR_DAYRATE_KEY, JSON.stringify(data));
+function saveVarDayRate(data: Record<string, DayRateData>, keyFn: (k: string) => string = k => k) {
+  localStorage.setItem(keyFn(VAR_DAYRATE_KEY), JSON.stringify(data));
 }
 
 // ── Tagesumsätze aus localStorage (dailyBudgets) ──────────────────────────────
 
-function readDailyBudgetsLocal(year: number, month: number): Record<string, { actualRevenue?: number; takeawayRevenue?: number }> {
+function readDailyBudgetsLocal(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, { actualRevenue?: number; takeawayRevenue?: number }> {
   try {
     const prefix = `${year}-${String(month).padStart(2, '0')}`;
     const all: Record<string, { actualRevenue?: number; takeawayRevenue?: number }> =
-      JSON.parse(localStorage.getItem('dailyBudgets') || '{}');
+      JSON.parse(localStorage.getItem(keyFn('dailyBudgets')) || '{}');
     const out: Record<string, { actualRevenue?: number; takeawayRevenue?: number }> = {};
     for (const [date, val] of Object.entries(all)) {
       if (date.startsWith(prefix)) out[date] = val;
@@ -561,8 +562,9 @@ interface FerienDay { date: string; dailyH: number; cost: number; }
 /** Daily plan hours for one employee from schedule-v2-YYYY-MM */
 function loadDailyPlanDetails(
   empId: string, year: number, month: number, cutoffDay: number | null, wage: number,
+  keyFn: (k: string) => string = k => k,
 ): DayEntry[] {
-  const key = `schedule-v2-${year}-${String(month).padStart(2, '0')}`;
+  const key = keyFn(`schedule-v2-${year}-${String(month).padStart(2, '0')}`);
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return [];
@@ -588,8 +590,9 @@ function loadDailyPlanDetails(
 /** Daily ist hours for one employee from actual-hours-YYYY-MM */
 function loadDailyIstDetails(
   empId: string, year: number, month: number, cutoffDay: number | null, wage: number,
+  keyFn: (k: string) => string = k => k,
 ): DayEntry[] {
-  const key = `actual-hours-${year}-${String(month).padStart(2, '0')}`;
+  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
   try {
     const raw = localStorage.getItem(key);
@@ -614,8 +617,9 @@ function loadDailyIstDetails(
 /** FE vacation days from actual-hours-YYYY-MM (Ist) */
 function loadFerienIstDayDetails(
   empId: string, year: number, month: number, cutoffDay: number | null, dailyH: number, wage: number,
+  keyFn: (k: string) => string = k => k,
 ): FerienDay[] {
-  const key = `actual-hours-${year}-${String(month).padStart(2, '0')}`;
+  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
   try {
     const raw = localStorage.getItem(key);
@@ -638,8 +642,9 @@ function loadFerienIstDayDetails(
 /** FE vacation days from schedule-v2-YYYY-MM (Plan) */
 function loadFerienPlanDayDetails(
   empId: string, year: number, month: number, cutoffDay: number | null, dailyH: number, wage: number,
+  keyFn: (k: string) => string = k => k,
 ): FerienDay[] {
-  const key = `schedule-v2-${year}-${String(month).padStart(2, '0')}`;
+  const key = keyFn(`schedule-v2-${year}-${String(month).padStart(2, '0')}`);
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
   try {
     const raw = localStorage.getItem(key);
@@ -745,6 +750,7 @@ function FlexPeriodPopup({
   employees: Array<{ id: string; name: string; hourlyWage: number; weeklyHours: number }>;
   onClose:   () => void;
 }) {
+  const { tenantKey } = useTenant();
   if (!target) return null;
   const { label, dates, planTotal, istTotal, year, month } = target;
   const diff    = istTotal - planTotal;
@@ -762,8 +768,8 @@ function FlexPeriodPopup({
   // Only Flex Arbeit (work) — same logic as pfixAbw (no ferien)
   const rows: EmpRow[] = employees.map(emp => {
     const wage  = emp.hourlyWage;
-    const planW = loadDailyPlanDetails(emp.id, year, month, null, wage).filter(r => dates.includes(r.date));
-    const istW  = loadDailyIstDetails(emp.id, year, month, null, wage).filter(r => dates.includes(r.date));
+    const planW = loadDailyPlanDetails(emp.id, year, month, null, wage, tenantKey).filter(r => dates.includes(r.date));
+    const istW  = loadDailyIstDetails(emp.id, year, month, null, wage, tenantKey).filter(r => dates.includes(r.date));
     const planWork = planW.reduce((s, r) => s + r.cost, 0);
     const istWork  = istW.reduce((s, r)  => s + r.cost, 0);
     const planH    = planW.reduce((s, r) => s + r.hours, 0);
@@ -941,6 +947,7 @@ function FlexBreakdownModal({ target, onClose }: {
   target: BreakdownTarget | null;
   onClose: () => void;
 }) {
+  const { tenantKey } = useTenant();
   if (!target) return null;
 
   const { empId, empName, field, hourlyWage, weeklyHours, year, month, cutoffDay, factor } = target;
@@ -951,10 +958,10 @@ function FlexBreakdownModal({ target, onClose }: {
     : null;
 
   // ── Always load all 4 data sources ─────────────────────────────────────────
-  const planWorkDays = loadDailyPlanDetails(empId, year, month, cutoffDay, hourlyWage);
-  const istWorkDays  = loadDailyIstDetails(empId, year, month, cutoffDay, hourlyWage);
-  const ferPlanDays  = loadFerienPlanDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage);
-  const ferIstDays   = loadFerienIstDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage);
+  const planWorkDays = loadDailyPlanDetails(empId, year, month, cutoffDay, hourlyWage, tenantKey);
+  const istWorkDays  = loadDailyIstDetails(empId, year, month, cutoffDay, hourlyWage, tenantKey);
+  const ferPlanDays  = loadFerienPlanDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage, tenantKey);
+  const ferIstDays   = loadFerienIstDayDetails(empId, year, month, cutoffDay, dailyH, hourlyWage, tenantKey);
 
   // ── Unified work day map ────────────────────────────────────────────────────
   type WorkRow = { date: string; planH: number; planCHF: number; istH: number; istCHF: number };
@@ -1277,6 +1284,7 @@ function FlexBreakdownModal({ target, onClose }: {
 
 export default function PersonalFixPage() {
   const { isAdmin } = usePermissions();
+  const { tenantId, tenantKey } = useTenant();
   if (!isAdmin) return <Navigate to="/personal" replace />;
 
   const today = new Date();
@@ -1285,10 +1293,10 @@ export default function PersonalFixPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
-  const [varHours, setVarHours] = useState<Record<string, number>>(() => loadVarHours());
-  const [varWeekly, setVarWeekly] = useState<Record<string, WeeklyBaseline>>(() => loadVarWeekly());
-  const [varPricingMode, setVarPricingMode] = useState<Record<string, PricingMode>>(() => loadVarPricingMode());
-  const [varDayRate, setVarDayRate] = useState<Record<string, DayRateData>>(() => loadVarDayRate());
+  const [varHours, setVarHours] = useState<Record<string, number>>(() => loadVarHours(tenantKey));
+  const [varWeekly, setVarWeekly] = useState<Record<string, WeeklyBaseline>>(() => loadVarWeekly(tenantKey));
+  const [varPricingMode, setVarPricingMode] = useState<Record<string, PricingMode>>(() => loadVarPricingMode(tenantKey));
+  const [varDayRate, setVarDayRate] = useState<Record<string, DayRateData>>(() => loadVarDayRate(tenantKey));
   const [varView, setVarView] = useState<VarView>('plan');
   const [planHours, setPlanHours] = useState<Record<string, number>>({});
   const [istHours, setIstHours] = useState<Record<string, number>>({});
@@ -1320,27 +1328,28 @@ export default function PersonalFixPage() {
 
   // Tagesumsätze bei Monatswechsel neu laden
   useEffect(() => {
-    setMonthlyRevenues(readDailyBudgetsLocal(selectedYear, selectedMonth));
-    const onSync = () => setMonthlyRevenues(readDailyBudgetsLocal(selectedYear, selectedMonth));
+    setMonthlyRevenues(readDailyBudgetsLocal(selectedYear, selectedMonth, tenantKey));
+    const onSync = () => setMonthlyRevenues(readDailyBudgetsLocal(selectedYear, selectedMonth, tenantKey));
     window.addEventListener('supabase-kv-synced', onSync);
     return () => window.removeEventListener('supabase-kv-synced', onSync);
-  }, [selectedYear, selectedMonth]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedYear, selectedMonth, tenantId]);
 
   // Reload Plan/Ist hours whenever month changes.
   // Ist-Stunden: read localStorage first (fast), then enrich with Supabase data.
   // Supabase is the canonical source when both planners write there; localStorage
   // is the fallback/cache for entries that haven't round-tripped through Supabase.
   useEffect(() => {
-    setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth));
+    setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth, tenantKey));
     // FE-Ferientage immer aus localStorage (Supabase speichert kein absenceType)
-    const istFE = loadFerienDaysFromStorage(selectedYear, selectedMonth);
+    const istFE = loadFerienDaysFromStorage(selectedYear, selectedMonth, tenantKey);
     setFerienIstDays(istFE);
-    const planFE = loadFerienDaysFromPlanStorage(selectedYear, selectedMonth);
+    const planFE = loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey);
     setFerienPlanDays(planFE);
     console.log(`[FERIEN] preserved on reload: ist=${Object.values(istFE).reduce((s, v) => s + v, 0)} plan=${Object.values(planFE).reduce((s, v) => s + v, 0)} FE-Tage gesamt`);
 
     // Fast local read first
-    const localIst = loadIstHoursFromStorage(selectedYear, selectedMonth);
+    const localIst = loadIstHoursFromStorage(selectedYear, selectedMonth, tenantKey);
     setIstHours(localIst);
 
     // Then enrich with Supabase (async)
@@ -1367,7 +1376,7 @@ export default function PersonalFixPage() {
       // Write merged back to localStorage — smart merge: FE/K/F absenceType entries must NEVER be
       // overwritten by Supabase data (Supabase has no absenceType column; FE are localStorage-only).
       if (Object.keys(supabaseRaw).length > 0) {
-        const monthKey = `actual-hours-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+        const monthKey = tenantKey(`actual-hours-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
         const existingLocal: Record<string, unknown> = (() => {
           try { return JSON.parse(localStorage.getItem(monthKey) || '{}'); } catch { return {}; }
         })();
@@ -1388,11 +1397,22 @@ export default function PersonalFixPage() {
         if (fePreserved > 0) {
           console.log(`[FERIEN] PersonalFix load: preserved ${fePreserved} FE/K/F entries`);
         }
-        localStorage.setItem(monthKey, JSON.stringify(mergedRaw));
+        localStorage.setItem(tenantKey(`actual-hours-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`), JSON.stringify(mergedRaw));
         console.log(`[FERIEN] saved persistently: source=supabase+local merged=${Object.keys(mergedRaw).length}`);
       }
     }).catch(err => console.error('[IST] Supabase load failed in PersonalFix:', err));
-  }, [selectedYear, selectedMonth]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedYear, selectedMonth, tenantId]);
+
+  // Mandantenwechsel: varHours/varWeekly/etc. neu laden
+  useEffect(() => {
+    console.log(`[TENANT] PersonalFix: Mandant gewechselt → "${tenantId}", Var-Daten neu laden`);
+    setVarHours(loadVarHours(tenantKey));
+    setVarWeekly(loadVarWeekly(tenantKey));
+    setVarPricingMode(loadVarPricingMode(tenantKey));
+    setVarDayRate(loadVarDayRate(tenantKey));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   const budgetData = useBudgetMonth(selectedYear, selectedMonth);
   const personnelBudget = budgetData.personnelBudget;
@@ -1400,7 +1420,7 @@ export default function PersonalFixPage() {
   const handleVarHoursChange = useCallback((empId: string, hours: number) => {
     setVarHours(prev => {
       const next = { ...prev, [empId]: hours };
-      saveVarHours(next);
+      saveVarHours(next, tenantKey);
       return next;
     });
   }, []);
@@ -1412,7 +1432,7 @@ export default function PersonalFixPage() {
         ? { ...existing, [field]: val }
         : { ...existing, [field]: undefined };
       const next = { ...prev, [empId]: updated };
-      saveVarWeekly(next);
+      saveVarWeekly(next, tenantKey);
       return next;
     });
   }, []);
@@ -1421,7 +1441,7 @@ export default function PersonalFixPage() {
     setVarPricingMode(prev => {
       const current = prev[empId] ?? 'hourly';
       const next = { ...prev, [empId]: current === 'hourly' ? 'daily' : 'hourly' as PricingMode };
-      saveVarPricingMode(next);
+      saveVarPricingMode(next, tenantKey);
       return next;
     });
   }, []);
@@ -1430,7 +1450,7 @@ export default function PersonalFixPage() {
     setVarDayRate(prev => {
       const existing = prev[empId] ?? { ratePerDay: 0 };
       const next = { ...prev, [empId]: { ...existing, [field]: val ?? 0 } };
-      saveVarDayRate(next);
+      saveVarDayRate(next, tenantKey);
       return next;
     });
   }, []);
@@ -1733,8 +1753,8 @@ export default function PersonalFixPage() {
       for (const emp of variableEmployees) {
         const wage = emp.hourlyWage ?? 0;
         if (!wage) continue;
-        const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage);
-        const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage);
+        const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
+        const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
         cutoffPlanWork += planW.reduce((s, r) => s + r.cost, 0);
         cutoffIstWork  += istW.reduce((s, r)  => s + r.cost, 0);
       }
@@ -1825,7 +1845,7 @@ export default function PersonalFixPage() {
       const wage = emp.hourlyWage ?? 0;
       if (!wage) continue;
       // Full month plan (no cutoff), dann filtern auf Tage NACH dem Stichtag/heute
-      const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, null, wage);
+      const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, null, wage, tenantKey);
       remaining += planW.filter(r => r.date > cutoffStr).reduce((s, r) => s + r.cost, 0);
     }
     console.log(`[FLEX-FORECAST] mode: ${proRataDay !== null ? 'stichtag' : forecastIstDay !== null ? 'manual-ist-day' : 'today-as-cutoff'}`);
@@ -1879,8 +1899,8 @@ export default function PersonalFixPage() {
 
       if (proRataDay !== null) {
         // ── Cutoff mode: actual day filtering (identical to FlexPeriodPopup) ──
-        const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage);
-        const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage);
+        const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
+        const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
         planH    = planW.reduce((s, r) => s + r.hours, 0);
         istH     = istW.reduce((s, r) => s + r.hours, 0);
         planWork = planW.reduce((s, r) => s + r.cost,  0);
@@ -1968,8 +1988,8 @@ export default function PersonalFixPage() {
       const wage = emp.hourlyWage ?? 0;
       if (!wage) continue;
 
-      const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, cutoff, wage);
-      const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, cutoff, wage);
+      const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, cutoff, wage, tenantKey);
+      const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, cutoff, wage, tenantKey);
 
       for (const r of planW) {
         const e = dayMap.get(r.date) ?? { pw: 0, iw: 0 };
