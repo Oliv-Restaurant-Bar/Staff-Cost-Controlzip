@@ -13,6 +13,7 @@
  *   - «+» in der linken Spalte jeder Kategorie → Unterkonto hinzufügen
  */
 
+import { useTenant } from '@/contexts/TenantContext';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Navigate } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -34,6 +35,7 @@ import {
   savePLLineItem, addCustomPLLineItem, removeCustomPLLineItem,
   computePLCategoryTotals, computePLResultTotals,
   restoreMissingDefaultPLItems, resetPLToDefaults,
+  STORAGE_KEY as BUDGET_STORAGE_KEY,
 } from '@/lib/budget-store';
 
 import { Button }  from '@/components/ui/button';
@@ -159,10 +161,11 @@ export default function BudgetPage() {
 // ─── Haupt-Inhalt ─────────────────────────────────────────────────────────────
 
 function BudgetContent() {
+  const { tenantId, tenantKey } = useTenant();
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState(currentYear);
-  const [budget, setBudget]             = useState<BudgetYear>(() => loadBudgetWithPL(currentYear));
-  const [savedYears, setSavedYears]     = useState<number[]>(() => availableBudgetYears());
+  const [budget, setBudget]             = useState<BudgetYear>(() => loadBudgetWithPL(currentYear, tenantKey(BUDGET_STORAGE_KEY)));
+  const [savedYears, setSavedYears]     = useState<number[]>(() => availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY)));
   const [activeTab, setActiveTab]       = useState<'pl' | 'rules'>('pl');
 
   // Ausgeklappte / eingeklappte Kategorien (default: alles ausgeklappt)
@@ -182,11 +185,19 @@ function BudgetContent() {
   const [resetPLDialog,  setResetPLDialog] = useState(false);
 
   const reload = useCallback((year: number) => {
-    setBudget(loadBudgetWithPL(year));
-    setSavedYears(availableBudgetYears());
-  }, []);
+    setBudget(loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)));
+    setSavedYears(availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   useEffect(() => { reload(selectedYear); }, [selectedYear, reload]);
+
+  // Mandantenwechsel: Daten neu laden
+  useEffect(() => {
+    reload(selectedYear);
+    console.log(`[TENANT] Budget: Mandant "${tenantId}" – Budget neu geladen`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   // Nach Supabase-Sync Budget neu laden
   useEffect(() => {
@@ -227,7 +238,7 @@ function BudgetContent() {
     if (!item) return;
     const vals = [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'];
     vals[month] = newVal;
-    setBudget(savePLLineItem(selectedYear, { ...item, monthlyValues: vals }));
+    setBudget(savePLLineItem(selectedYear, { ...item, monthlyValues: vals }, tenantKey(BUDGET_STORAGE_KEY)));
     setEditCell(null);
   };
 
@@ -250,7 +261,7 @@ function BudgetContent() {
       action: {
         label: 'Gleichmässig verteilen',
         onClick: () => {
-          setBudget(savePLLineItem(selectedYear, { ...item, monthlyValues: distributed }));
+          setBudget(savePLLineItem(selectedYear, { ...item, monthlyValues: distributed }, tenantKey(BUDGET_STORAGE_KEY)));
           toast.success(`CHF ${CHF(yearly)} auf alle Monate verteilt`);
         },
       },
@@ -262,7 +273,7 @@ function BudgetContent() {
   const handleApplyRules = () => {
     if (budget.rules.length === 0) { toast.info('Keine Regeln definiert.'); return; }
     const upd = applyRulesToBudget(budget);
-    saveBudgetYear(upd);
+    saveBudgetYear(upd, tenantKey(BUDGET_STORAGE_KEY));
     setBudget(upd);
     toast.success(`${budget.rules.length} Regel(n) angewendet`);
   };
@@ -719,7 +730,7 @@ function BudgetContent() {
         currentYear={selectedYear} savedYears={savedYears}
         onCopy={(from, to, ar) => {
           copyBudgetYear(from, to, ar);
-          setSavedYears(availableBudgetYears());
+          setSavedYears(availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY)));
           setSelectedYear(to); reload(to);
           setCopyDialog(false);
           toast.success(`Budget ${from} → ${to} kopiert`);
@@ -738,7 +749,7 @@ function BudgetContent() {
           categories={categories}
           onClose={() => setAddItemDialog(null)}
           onAdd={item => {
-            setBudget(addCustomPLLineItem(selectedYear, item));
+            setBudget(addCustomPLLineItem(selectedYear, item, tenantKey(BUDGET_STORAGE_KEY)));
             setAddItemDialog(null);
             toast.success('Unterkonto hinzugefügt');
           }}
@@ -758,7 +769,7 @@ function BudgetContent() {
             <Button variant="outline" onClick={() => setDeleteDialog(false)}>Abbrechen</Button>
             <Button variant="destructive" onClick={() => {
               deleteBudgetYear(selectedYear);
-              setSavedYears(availableBudgetYears());
+              setSavedYears(availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY)));
               reload(selectedYear);
               setDeleteDialog(false);
               toast.success(`Budget ${selectedYear} gelöscht`);

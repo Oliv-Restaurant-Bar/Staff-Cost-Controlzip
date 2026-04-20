@@ -14,6 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LoginPage } from "@/components/LoginPage";
 import { GuestBanner } from "@/components/GuestBanner";
+import { TenantBanner } from "@/components/TenantBanner";
 import { Loader2 } from "lucide-react";
 import { AppNav } from "@/components/AppNav";
 import Dashboard from "./pages/Dashboard";
@@ -104,6 +105,7 @@ const AppContent = () => {
 
         {/* Haupt-Inhaltsbereich */}
         <div className="flex-1 min-w-0 pb-16 md:pb-0">
+          <TenantBanner />
           <Routes>
             {/* Routen mit Rollenprüfung */}
             <Route path="/"

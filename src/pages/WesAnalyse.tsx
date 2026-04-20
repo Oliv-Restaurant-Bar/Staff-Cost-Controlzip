@@ -20,7 +20,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-import { loadYear, loadMonth } from '@/lib/reporting-store';
+import { loadYear, loadMonth, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
+import { useTenant } from '@/contexts/TenantContext';
 import { getMonthSummary }     from '@/lib/supplier-documents-store';
 import { loadProductCosts, loadProdukteData } from '@/lib/produkte-store';
 import { MONTH_NAMES_DE }      from '@/types/reporting';
@@ -84,11 +85,11 @@ interface WesMonthRow {
 
 // ─── Datenaufbereitung ────────────────────────────────────────────────────────
 
-function buildMonthRow(year: number, monthIdx: number): WesMonthRow {
+function buildMonthRow(year: number, monthIdx: number, storeKey: string = REPORTING_STORAGE_KEY): WesMonthRow {
   const month = monthIdx + 1; // 1-12
 
   // Umsatz
-  const reporting = loadMonth(year, month);
+  const reporting = loadMonth(year, month, storeKey);
   const revenue   = reporting.revenueActual ?? 0;
 
   // ── Rezeptur ────────────────────────────────────────────────────────────────
@@ -201,6 +202,7 @@ function diffBadge(val: number) {
 type Tab = 'uebersicht' | 'konto' | 'erklaerung';
 
 export default function WesAnalyse() {
+  const { tenantId, tenantKey } = useTenant();
   const currentYear = new Date().getFullYear();
   const [year, setYear]         = useState(currentYear);
   const [activeTab, setActiveTab] = useState<Tab>('uebersicht');
@@ -210,9 +212,11 @@ export default function WesAnalyse() {
   const years = [currentYear, currentYear - 1, currentYear - 2];
 
   useEffect(() => {
-    const built = Array.from({ length: 12 }, (_, i) => buildMonthRow(year, i));
+    const sk = tenantKey(REPORTING_STORAGE_KEY);
+    const built = Array.from({ length: 12 }, (_, i) => buildMonthRow(year, i, sk));
     setRows(built);
-  }, [year]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, tenantId]);
 
   // Jahressumme
   const totals = useMemo(() => ({

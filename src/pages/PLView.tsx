@@ -33,7 +33,8 @@ import {
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { usePermissions } from '@/hooks/usePermissions';
-import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB } from '@/lib/reporting-store';
+import { useTenant } from '@/contexts/TenantContext';
+import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
 import type { SageJournalEntry } from '@/types/reporting';
 import { lookupAccount, saveMappingCustom } from '@/lib/account-mapping-store';
 import { AccountMapping } from '@/types/account-mapping';
@@ -41,7 +42,7 @@ import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMont
 import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
-import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem } from '@/lib/budget-store';
+import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem, STORAGE_KEY as BUDGET_STORAGE_KEY } from '@/lib/budget-store';
 import { BudgetYear, BudgetPLCategory } from '@/types/budget';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
@@ -900,9 +901,9 @@ const InlineIstCell = ({
 
     const account = row.itemAccountNumber;
     if (row.catId === 'pl_revenue') {
-      saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' });
+      saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, tenantKey(REPORTING_STORAGE_KEY));
     } else if (row.catId === 'pl_wages' && row.isCategory) {
-      saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' });
+      saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, tenantKey(REPORTING_STORAGE_KEY));
     } else if (!row.isCategory && account) {
       const existing = loadYear(year)[month - 1];
       const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
@@ -945,7 +946,7 @@ const InlineRevenueEntry = ({
     const num = parseFloat(raw);
     if (isNaN(num) || num <= 0) return;
     setSaving(true);
-    saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Schnelleingabe Ist-Umsatz' });
+    saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Schnelleingabe Ist-Umsatz' }, tenantKey(REPORTING_STORAGE_KEY));
     setSaving(false);
     onSaved();
     setInput('');
@@ -1283,9 +1284,9 @@ const BudgetPLDrilldownDialog = ({
     if (isNaN(num)) return;
 
     if (row.catId === 'pl_revenue') {
-      saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' });
+      saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, tenantKey(REPORTING_STORAGE_KEY));
     } else if (row.catId === 'pl_wages' && row.isCategory) {
-      saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' });
+      saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, tenantKey(REPORTING_STORAGE_KEY));
     } else if (!row.isCategory && account) {
       const existing = loadYear(year)[month - 1];
       const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
@@ -1303,7 +1304,7 @@ const BudgetPLDrilldownDialog = ({
     const raw = vjInput.replace(/['\s]/g, '').replace(',', '.');
     const num = parseFloat(raw);
     if (isNaN(num)) return;
-    saveMonth({ year, month, revenuePreviousYear: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe Vorjahr-Umsatz' });
+    saveMonth({ year, month, revenuePreviousYear: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe Vorjahr-Umsatz' }, tenantKey(REPORTING_STORAGE_KEY));
     setVjSaved(true);
     setTimeout(() => { onSaved(); }, 600);
   };
@@ -1535,7 +1536,7 @@ const AccountActionDialog = ({
 
   const handleDelete = () => {
     if (isBudgetItem && row.itemId) {
-      deletePLLineItem(year, row.itemId);
+      deletePLLineItem(year, row.itemId, tenantKey(BUDGET_STORAGE_KEY));
     }
     onRefresh();
     onClose();
@@ -1727,7 +1728,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, onSaved }: AddKontoDi
       monthlyValues: zeroMonths,
       sortOrder: 9999,
       isInternal,
-    });
+    }, tenantKey(BUDGET_STORAGE_KEY));
     onSaved();
     reset();
     onClose();
@@ -1836,6 +1837,7 @@ function sumDailyBudgetField(
 }
 
 const PLViewPage = () => {
+  const { tenantId, tenantKey } = useTenant();
   const { isAdmin } = usePermissions();
   if (!isAdmin) return <Navigate to="/" replace />;
 
@@ -1868,23 +1870,30 @@ const PLViewPage = () => {
     return () => window.removeEventListener('store-synced', handler);
   }, []);
 
+  // Mandantenwechsel: Daten neu laden
+  useEffect(() => {
+    setRefreshKey(k => k + 1);
+    console.log(`[TENANT] PLView: Mandant "${tenantId}" – neu geladen`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
   // Sage Journal für das gewählte Jahr aus Supabase laden (auto-migration)
   useEffect(() => {
     syncJournalYearFromDB(year).then(() => setRefreshKey(k => k + 1));
   }, [year]);
 
   // Daten laden & P&L berechnen
-  const records = useMemo(() => loadYear(year), [year, month, refreshKey]);
-  const prevYearRecords = useMemo(() => loadYear(year - 1), [year]);
+  const records = useMemo(() => loadYear(year, tenantKey(REPORTING_STORAGE_KEY)), [year, month, refreshKey, tenantId]);
+  const prevYearRecords = useMemo(() => loadYear(year - 1, tenantKey(REPORTING_STORAGE_KEY)), [year, tenantId]);
 
   // Gastronovi-Tagesdaten aus localStorage laden (gecacht für alle Berechnungen)
   const dailyBudgetsData = useMemo<Record<string, Record<string, number>>>(() => {
-    try { return JSON.parse(localStorage.getItem('dailyBudgets') || '{}'); }
+    try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
     catch { return {}; }
   }, [refreshKey]);
 
   // Budget P&L laden (vor den Overrides benötigt)
-  const budgetData = useMemo(() => loadBudgetWithPL(year), [year, refreshKey]);
+  const budgetData = useMemo(() => loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)), [year, refreshKey, tenantId]);
 
   // Effektive Records für alle 12 Monate: wendet Gastronovi-Tagesdaten-Fallback an
   // (revenueActual + revenuePreviousYear) – damit auch Jahresansicht korrekte Werte zeigt
@@ -2396,7 +2405,7 @@ const PLViewPage = () => {
                 }}
                 compact={compact}
                 onDeleteItem={itemId => {
-                  deletePLLineItem(year, itemId);
+                  deletePLLineItem(year, itemId, tenantKey(BUDGET_STORAGE_KEY));
                   setRefreshKey(k => k + 1);
                 }}
                 month={month}

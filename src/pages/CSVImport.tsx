@@ -46,7 +46,8 @@ import {
   saveMappingCustom, PL_CATEGORIES, getCategoryLabel, getSectionLabel,
 } from '@/lib/account-mapping-store';
 import { PLCategory } from '@/types/account-mapping';
-import { saveMonth, saveJournalEntries, syncJournalYearFromDB } from '@/lib/reporting-store';
+import { saveMonth, saveJournalEntries, syncJournalYearFromDB, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
+import { useTenant } from '@/contexts/TenantContext';
 import { toast } from 'sonner';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
@@ -366,6 +367,7 @@ function UnresolvedTable({ rows, onAssign }: UnresolvedTableProps) {
 // ─── Haupt-Komponente ─────────────────────────────────────────────────────────
 
 export default function CSVImportPage() {
+  const { tenantKey } = useTenant();
   const navigate    = useNavigate();
   const { isAdmin } = usePermissions();
 
@@ -563,6 +565,7 @@ export default function CSVImportPage() {
           fileName,
           note: `${fileKind.toUpperCase()}-Import: ${parseResult.matchedCount} zugeordnet, ${parseResult.unresolvedCount} unbekannt`,
         },
+        tenantKey(REPORTING_STORAGE_KEY),
       );
 
       // Einzelbuchungen speichern (falls vorhanden)

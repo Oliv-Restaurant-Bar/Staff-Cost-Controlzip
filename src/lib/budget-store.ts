@@ -6,7 +6,7 @@
  * Format: Record<year, BudgetYear>
  *
  * Wichtigste Funktionen:
- *   loadBudgetYear(year)            → Budgetjahr laden oder neu erstellen
+ *   loadBudgetYear(year, storeKey)            → Budgetjahr laden oder neu erstellen
  *   saveBudgetYear(data)            → Budgetjahr speichern
  *   copyBudgetYear(from, to)        → Jahr kopieren (optionale Regeln anwenden)
  *   applyRulesToBudget(data)        → Regeln auf alle Positionen anwenden
@@ -38,19 +38,19 @@ export const STORAGE_KEY = 'budget_v1';
 
 // ─── Interne Hilfsfunktionen ──────────────────────────────────────────────────
 
-function loadAll(): Record<number, BudgetYear> {
+function loadAll(storeKey: string = STORAGE_KEY): Record<number, BudgetYear> {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    return JSON.parse(localStorage.getItem(storeKey) || '{}');
   } catch {
     return {};
   }
 }
 
-function saveAll(data: Record<number, BudgetYear>): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+function saveAll(data: Record<number, BudgetYear>, storeKey: string = STORAGE_KEY): void {
+  localStorage.setItem(storeKey, JSON.stringify(data));
   // Asynchron zu Supabase synchronisieren (fire-and-forget)
   import('./supabase-kv').then(({ kvSet }) => {
-    kvSet(STORAGE_KEY, data).catch(() => { /* silently ignore */ });
+    kvSet(storeKey, data).catch(() => { /* silently ignore */ });
   });
 }
 
@@ -75,8 +75,8 @@ function createEmptyBudgetYear(year: number): BudgetYear {
  * sofern noch keine plLineItems vorhanden sind.
  * Für andere Jahre: Gibt ein leeres Budgetjahr zurück.
  */
-export function loadBudgetYear(year: number): BudgetYear {
-  const all = loadAll();
+export function loadBudgetYear(year: number, storeKey: string = STORAGE_KEY): BudgetYear {
+  const all = loadAll(storeKey);
   if (year === 2026) {
     const existing = all[2026];
     // Nur seeden wenn noch keine echten Werte vorhanden (alle 0 oder keine Items)
@@ -86,7 +86,7 @@ export function loadBudgetYear(year: number): BudgetYear {
     if (!hasRealValues) {
       const seeded = createSeededBudget2026();
       all[2026] = seeded;
-      saveAll(all);
+      saveAll(all, storeKey);
       return seeded;
     }
     return existing;
@@ -97,11 +97,11 @@ export function loadBudgetYear(year: number): BudgetYear {
 /**
  * Budget 2026 auf Excel-Seed zurücksetzen (alle bestehenden Daten werden überschrieben).
  */
-export function resetBudget2026ToSeed(): BudgetYear {
+export function resetBudget2026ToSeed(storeKey: string = STORAGE_KEY): BudgetYear {
   const seeded = createSeededBudget2026();
-  const all = loadAll();
+  const all = loadAll(storeKey);
   all[2026] = seeded;
-  saveAll(all);
+  saveAll(all, storeKey);
   return seeded;
 }
 
@@ -109,21 +109,21 @@ export function resetBudget2026ToSeed(): BudgetYear {
  * Budgetjahr speichern.
  * Überschreibt das bestehende Jahr komplett.
  */
-export function saveBudgetYear(data: BudgetYear): void {
-  const all = loadAll();
+export function saveBudgetYear(data: BudgetYear, storeKey: string = STORAGE_KEY): void {
+  const all = loadAll(storeKey);
   all[data.year] = {
     ...data,
     updatedAt: new Date().toISOString(),
   };
-  saveAll(all);
+  saveAll(all, storeKey);
 }
 
 /**
  * Alle Jahre mit gespeicherten Budgets.
  * Sortiert absteigend (neuestes Jahr zuerst).
  */
-export function availableBudgetYears(): number[] {
-  const all = loadAll();
+export function availableBudgetYears(storeKey: string = STORAGE_KEY): number[] {
+  const all = loadAll(storeKey);
   return Object.keys(all)
     .map(Number)
     .sort((a, b) => b - a);
@@ -132,10 +132,10 @@ export function availableBudgetYears(): number[] {
 /**
  * Budgetjahr löschen.
  */
-export function deleteBudgetYear(year: number): void {
-  const all = loadAll();
+export function deleteBudgetYear(year: number, storeKey: string = STORAGE_KEY): void {
+  const all = loadAll(storeKey);
   delete all[year];
-  saveAll(all);
+  saveAll(all, storeKey);
 }
 
 // ─── Jahr-Kopie ───────────────────────────────────────────────────────────────
@@ -162,8 +162,9 @@ export function copyBudgetYear(
   fromYear: number,
   toYear: number,
   applyRules: boolean = true,
+  storeKey: string = STORAGE_KEY,
 ): BudgetYear {
-  const source = loadBudgetYear(fromYear);
+  const source = loadBudgetYear(fromYear, storeKey);
   const now    = new Date().toISOString();
 
   // Positionen tief kopieren (damit Änderungen das Quell-Budget nicht betreffen)
@@ -193,7 +194,7 @@ export function copyBudgetYear(
     newBudget = applyRulesToBudget(newBudget);
   }
 
-  saveBudgetYear(newBudget);
+  saveBudgetYear(newBudget, storeKey);
   return newBudget;
 }
 
@@ -352,13 +353,14 @@ export function resolveBudgetYear(budget: BudgetYear): BudgetYearResolved {
 export function updateBudgetPosition(
   year: number,
   updatedPosition: BudgetPosition,
+  storeKey: string = STORAGE_KEY,
 ): BudgetYear {
-  const budget = loadBudgetYear(year);
+  const budget = loadBudgetYear(year, storeKey);
   const positions = budget.positions.map(p =>
     p.id === updatedPosition.id ? updatedPosition : p,
   );
   const updated = { ...budget, positions, updatedAt: new Date().toISOString() };
-  saveBudgetYear(updated);
+  saveBudgetYear(updated, storeKey);
   return updated;
 }
 
@@ -367,8 +369,8 @@ export function updateBudgetPosition(
 /**
  * Fügt eine neue Regel zum Budgetjahr hinzu und speichert.
  */
-export function addBudgetRule(year: number, rule: Omit<BudgetRule, 'id' | 'createdAt'>): BudgetYear {
-  const budget = loadBudgetYear(year);
+export function addBudgetRule(year: number, rule: Omit<BudgetRule, 'id' | 'createdAt'>, storeKey: string = STORAGE_KEY): BudgetYear {
+  const budget = loadBudgetYear(year, storeKey);
   const newRule: BudgetRule = {
     ...rule,
     id: uuidv4(),
@@ -379,21 +381,21 @@ export function addBudgetRule(year: number, rule: Omit<BudgetRule, 'id' | 'creat
     rules:     [...budget.rules, newRule],
     updatedAt: new Date().toISOString(),
   };
-  saveBudgetYear(updated);
+  saveBudgetYear(updated, storeKey);
   return updated;
 }
 
 /**
  * Entfernt eine Regel aus dem Budgetjahr und speichert.
  */
-export function removeBudgetRule(year: number, ruleId: string): BudgetYear {
-  const budget = loadBudgetYear(year);
+export function removeBudgetRule(year: number, ruleId: string, storeKey: string = STORAGE_KEY): BudgetYear {
+  const budget = loadBudgetYear(year, storeKey);
   const updated = {
     ...budget,
     rules:     budget.rules.filter(r => r.id !== ruleId),
     updatedAt: new Date().toISOString(),
   };
-  saveBudgetYear(updated);
+  saveBudgetYear(updated, storeKey);
   return updated;
 }
 
@@ -561,8 +563,8 @@ function migrateSeedZeroValues2026(budget: BudgetYear): BudgetYear {
 /**
  * Budgetjahr laden und P&L-Struktur sicherstellen.
  */
-export function loadBudgetWithPL(year: number): BudgetYear {
-  let budget = loadBudgetYear(year);
+export function loadBudgetWithPL(year: number, storeKey: string = STORAGE_KEY): BudgetYear {
+  let budget = loadBudgetYear(year, storeKey);
   if (!budget.plCategories || !budget.plLineItems) {
     budget = initPLStructure(budget);
   }
@@ -573,7 +575,7 @@ export function loadBudgetWithPL(year: number): BudgetYear {
   budget = migrateSeedZeroValues2026(budget);
   // Immer Sync: plLineItems → legacy positions (damit Dashboard/SollIst budget_revenue findet)
   budget = syncPLToLegacyPositions(budget);
-  saveBudgetYear(budget);
+  saveBudgetYear(budget, storeKey);
   return budget;
 }
 
@@ -582,8 +584,8 @@ export function loadBudgetWithPL(year: number): BudgetYear {
  * expliziten "Standardkonten sicherstellen"-Button im Budget).
  * Gibt die Anzahl der hinzugefügten Positionen zurück.
  */
-export function restoreMissingDefaultPLItems(year: number): { budget: BudgetYear; added: number } {
-  const budget = loadBudgetWithPL(year);
+export function restoreMissingDefaultPLItems(year: number, storeKey: string = STORAGE_KEY): { budget: BudgetYear; added: number } {
+  const budget = loadBudgetWithPL(year, storeKey);
   const items = budget.plLineItems ?? [];
   const existingIds = new Set(items.map(i => i.id));
   const missing = DEFAULT_PL_LINE_ITEMS.filter(d => !existingIds.has(d.id));
@@ -592,7 +594,7 @@ export function restoreMissingDefaultPLItems(year: number): { budget: BudgetYear
     ...budget,
     plLineItems: [...items, ...missing.map(createDefaultPLLineItem)],
   };
-  saveBudgetYear(updated);
+  saveBudgetYear(updated, storeKey);
   return { budget: updated, added: missing.length };
 }
 
@@ -601,27 +603,27 @@ export function restoreMissingDefaultPLItems(year: number): { budget: BudgetYear
  * und DEFAULT_PL_LINE_ITEMS. Alle bestehenden Budgetwerte der P&L-Positionen
  * gehen verloren; Budgetpositionen, Regeln und Jahr bleiben erhalten.
  */
-export function resetPLToDefaults(year: number): BudgetYear {
-  const budget = loadBudgetYear(year);
+export function resetPLToDefaults(year: number, storeKey: string = STORAGE_KEY): BudgetYear {
+  const budget = loadBudgetYear(year, storeKey);
   const reset: BudgetYear = {
     ...budget,
     plCategories: DEFAULT_PL_CATEGORIES.map(c => ({ ...c })),
     plLineItems: DEFAULT_PL_LINE_ITEMS.map(createDefaultPLLineItem),
   };
-  saveBudgetYear(reset);
+  saveBudgetYear(reset, storeKey);
   return reset;
 }
 
 /**
  * Löscht eine P&L-Zeile (auch Standard-Positionen).
  */
-export function deletePLLineItem(year: number, itemId: string): BudgetYear {
-  const budget = loadBudgetWithPL(year);
+export function deletePLLineItem(year: number, itemId: string, storeKey: string = STORAGE_KEY): BudgetYear {
+  const budget = loadBudgetWithPL(year, storeKey);
   const updated = syncPLToLegacyPositions({
     ...budget,
     plLineItems: budget.plLineItems!.filter(i => i.id !== itemId),
   });
-  saveBudgetYear(updated);
+  saveBudgetYear(updated, storeKey);
   return updated;
 }
 
@@ -695,15 +697,15 @@ export function computePLResultTotals(
 /**
  * Speichert eine einzelne P&L-Zeile (update oder insert).
  */
-export function savePLLineItem(year: number, item: BudgetPLLineItem): BudgetYear {
-  const budget = loadBudgetWithPL(year);
+export function savePLLineItem(year: number, item: BudgetPLLineItem, storeKey: string = STORAGE_KEY): BudgetYear {
+  const budget = loadBudgetWithPL(year, storeKey);
   const exists = budget.plLineItems!.some(i => i.id === item.id);
   const lineItems = exists
     ? budget.plLineItems!.map(i => i.id === item.id ? item : i)
     : [...budget.plLineItems!, item];
 
   const updated = syncPLToLegacyPositions({ ...budget, plLineItems: lineItems });
-  saveBudgetYear(updated);
+  saveBudgetYear(updated, storeKey);
   return updated;
 }
 
@@ -713,8 +715,9 @@ export function savePLLineItem(year: number, item: BudgetPLLineItem): BudgetYear
 export function addCustomPLLineItem(
   year: number,
   item: Omit<BudgetPLLineItem, 'id' | 'isDefault'>,
+  storeKey: string = STORAGE_KEY,
 ): BudgetYear {
-  const budget = loadBudgetWithPL(year);
+  const budget = loadBudgetWithPL(year, storeKey);
   const newItem: BudgetPLLineItem = {
     ...item,
     monthlyValues: [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'],
@@ -725,15 +728,15 @@ export function addCustomPLLineItem(
     ...budget,
     plLineItems: [...budget.plLineItems!, newItem],
   });
-  saveBudgetYear(updated);
+  saveBudgetYear(updated, storeKey);
   return updated;
 }
 
 /**
  * Entfernt eine benutzerdefinierte P&L-Zeile (nur nicht-Standard-Zeilen).
  */
-export function removeCustomPLLineItem(year: number, itemId: string): BudgetYear {
-  const budget = loadBudgetWithPL(year);
+export function removeCustomPLLineItem(year: number, itemId: string, storeKey: string = STORAGE_KEY): BudgetYear {
+  const budget = loadBudgetWithPL(year, storeKey);
   const item   = budget.plLineItems!.find(i => i.id === itemId);
   if (item?.isDefault) {
     throw new Error('Standard-Positionen können nicht gelöscht werden.');
@@ -742,7 +745,7 @@ export function removeCustomPLLineItem(year: number, itemId: string): BudgetYear
     ...budget,
     plLineItems: budget.plLineItems!.filter(i => i.id !== itemId),
   });
-  saveBudgetYear(updated);
+  saveBudgetYear(updated, storeKey);
   return updated;
 }
 

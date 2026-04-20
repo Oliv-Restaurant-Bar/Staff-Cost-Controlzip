@@ -47,18 +47,18 @@ export const STORAGE_KEY = 'reporting_v1';
 
 // ─── Interne Hilfsfunktionen ──────────────────────────────────────────────────
 
-function loadAll(): Record<string, MonthlyFinancialRecord> {
+function loadAll(storeKey: string = STORAGE_KEY): Record<string, MonthlyFinancialRecord> {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    return JSON.parse(localStorage.getItem(storeKey) || '{}');
   } catch {
     return {};
   }
 }
 
-function saveAll(data: Record<string, MonthlyFinancialRecord>): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  // Asynchron zu Supabase synchronisieren (fire-and-forget)
-  kvSet(STORAGE_KEY, data).catch(() => { /* silently ignore */ });
+function saveAll(data: Record<string, MonthlyFinancialRecord>, storeKey: string = STORAGE_KEY): void {
+  localStorage.setItem(storeKey, JSON.stringify(data));
+  // Asynchron zu Supabase synchronisieren (fire-and-forget) — nutzt storeKey damit Beaulieu unter beaulieu:reporting_v1 landet
+  kvSet(storeKey, data).catch(() => { /* silently ignore */ });
 }
 
 // ─── Öffentliche API ──────────────────────────────────────────────────────────
@@ -67,8 +67,8 @@ function saveAll(data: Record<string, MonthlyFinancialRecord>): void {
  * Alle Monate eines bestimmten Jahres laden.
  * Gibt 12 Einträge zurück – leere Monate ohne Daten sind enthalten.
  */
-export function loadYear(year: number): MonthlyFinancialRecord[] {
-  const all = loadAll();
+export function loadYear(year: number, storeKey: string = STORAGE_KEY): MonthlyFinancialRecord[] {
+  const all = loadAll(storeKey);
   return Array.from({ length: 12 }, (_, i) => {
     const id = monthId(year, i + 1);
     return all[id] ?? createEmptyMonth(year, i + 1);
@@ -79,8 +79,8 @@ export function loadYear(year: number): MonthlyFinancialRecord[] {
  * Einzelnen Monat laden.
  * Gibt einen leeren Datensatz zurück, wenn noch keine Daten vorhanden.
  */
-export function loadMonth(year: number, month: number): MonthlyFinancialRecord {
-  const all = loadAll();
+export function loadMonth(year: number, month: number, storeKey: string = STORAGE_KEY): MonthlyFinancialRecord {
+  const all = loadAll(storeKey);
   const id  = monthId(year, month);
   return all[id] ?? createEmptyMonth(year, month);
 }
@@ -101,8 +101,9 @@ export function saveMonth(
   source: ImportSource,
   mode: ImportMode,
   opts?: { fileName?: string; note?: string },
+  storeKey: string = STORAGE_KEY,
 ): MonthlyFinancialRecord {
-  const all      = loadAll();
+  const all      = loadAll(storeKey);
   const id       = monthId(incoming.year, incoming.month);
   const existing = all[id] ?? createEmptyMonth(incoming.year, incoming.month);
   const now      = new Date().toISOString();
@@ -174,25 +175,25 @@ export function saveMonth(
   }
 
   all[id] = saved;
-  saveAll(all);
+  saveAll(all, storeKey);
   return saved;
 }
 
 /**
  * Monat löschen (Admin-Funktion, z.B. Testdaten entfernen).
  */
-export function deleteMonth(year: number, month: number): void {
-  const all = loadAll();
+export function deleteMonth(year: number, month: number, storeKey: string = STORAGE_KEY): void {
+  const all = loadAll(storeKey);
   delete all[monthId(year, month)];
-  saveAll(all);
+  saveAll(all, storeKey);
 }
 
 /**
  * Gibt an, welche Jahre Daten enthalten.
  * Nützlich für den Jahr-Selector in der UI.
  */
-export function availableYears(): number[] {
-  const all = loadAll();
+export function availableYears(storeKey: string = STORAGE_KEY): number[] {
+  const all = loadAll(storeKey);
   const years = new Set<number>();
   Object.keys(all).forEach(id => {
     const y = parseInt(id.split('-')[0]);
@@ -209,7 +210,7 @@ export function availableYears(): number[] {
  * Berechnet die Jahresübersicht aus den Monatsdaten.
  * Nur Monate mit tatsächlichen Daten werden einbezogen.
  */
-export function calcAnnualSummary(year: number): AnnualSummary {
+export function calcAnnualSummary(year: number, storeKey: string = STORAGE_KEY): AnnualSummary {
   const months = loadYear(year);
   let totalRevenueActual      = 0;
   let totalRevenueBudget      = 0;

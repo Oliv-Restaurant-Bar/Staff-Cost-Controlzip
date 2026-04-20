@@ -44,6 +44,7 @@ import {
   Download, RefreshCw,
 } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/contexts/TenantContext';
 import {
   loadEmployees, upsertEmployee, deleteEmployee, activateEmployee,
   loadOnboardingSubmissions, deleteOnboardingSubmission, activateSubmissionAsEmployee,
@@ -316,6 +317,7 @@ function emptyEmployee(id: string): Employee {
 // ─── Haupt-Komponente ─────────────────────────────────────────────────────────
 
 const Personalstamm = () => {
+  const { tenantId } = useTenant();
   const {
     isAdmin, isManager, allowedDepartment, canEditEmployees,
   } = usePermissions();
@@ -378,7 +380,7 @@ const Personalstamm = () => {
     const load = async () => {
       console.log('[Personalstamm] load() start — isAdmin:', isAdminRef.current);
       try {
-      const emps = await loadEmployees();
+      const emps = await loadEmployees(tenantId);
       console.log('[Personalstamm] loadEmployees result:', {
         isNull: emps === null,
         count: emps?.length ?? 'n/a',
@@ -445,7 +447,7 @@ const Personalstamm = () => {
             };
           }
 
-          await upsertEmployee(updated);
+          await upsertEmployee(updated, tenantId);
           migrated.push(updated);
 
           // Alte Felder aus localStorage entfernen
@@ -610,7 +612,7 @@ const Personalstamm = () => {
     if (!editData) return;
     if (!editData.name.trim()) { toast.error('Name ist erforderlich'); return; }
     setSaving(true);
-    const ok = await upsertEmployee(editData);
+    const ok = await upsertEmployee(editData, tenantId);
     if (ok) {
       // Mitarbeiter-Liste aktualisieren
       setEmployees(prev => {

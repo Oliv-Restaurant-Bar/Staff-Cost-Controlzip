@@ -21,6 +21,8 @@ import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
 import { loadEmployees, saveActualHourEntry, upsertEmployee } from '@/lib/supabase-db';
 import { Employee, MirusDailyImportEntry, MirusImportMode, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
+import { importEmployeesFromExcel, downloadEmployeeTemplate } from '@/lib/employee-excel-export-import';
+import { Users, FileDown } from 'lucide-react';
 import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue-import';
 import { parseAnnualSageKontoblattByMonth, AnnualKostenResult } from '@/lib/pdf-import-engine';
 import { matchCSVRows, buildMonthRecord } from '@/lib/csv-import-engine';
@@ -826,6 +828,89 @@ const IstStundenSection = () => {
   );
 };
 
+// ─── Beaulieu Mitarbeiter-Import ─────────────────────────────────────────────
+
+const BeaulieuMitarbeiterSection = () => {
+  const { tenantKey } = useTenant();
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ count: number; names: string[] } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (file: File) => {
+    setLoading(true);
+    setResult(null);
+    try {
+      const existing: Employee[] = (() => {
+        try { return JSON.parse(localStorage.getItem(tenantKey('schedule-employees')) || '[]'); }
+        catch { return []; }
+      })();
+      const res = await importEmployeesFromExcel(file, existing);
+      if (res.errors.length > 0 && res.employees.length === 0) {
+        toast.error(res.errors[0] || 'Import fehlgeschlagen');
+        return;
+      }
+      // Assign b-* IDs for Beaulieu (preserve existing IDs where possible)
+      const existingIds = new Set(existing.map(e => e.id));
+      let counter = existing.filter(e => String(e.id).startsWith('b-')).length + 1;
+      const merged: Employee[] = res.employees.map(emp => {
+        if (existingIds.has(emp.id)) return emp;
+        if (String(emp.id).startsWith('b-')) return emp;
+        const newId = `b-${counter++}`;
+        return { ...emp, id: newId };
+      });
+      localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(merged));
+      setResult({ count: merged.length, names: merged.slice(0, 5).map(e => e.name) });
+      toast.success(`${merged.length} Mitarbeiter für Beaulieu importiert`);
+    } catch (e) {
+      console.error(e);
+      toast.error('Fehler beim Import – bitte Dateiformat prüfen');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        Importiere die echte Beaulieu-Mitarbeiterliste aus Excel (.xlsx).
+        Spalten: <strong>Name</strong>, Abteilung, Anstellungsverhältnis, Wochenstunden, Stundenlohn.
+      </p>
+      <div className="rounded border border-violet-200 bg-violet-50/50 dark:bg-violet-950/10 p-3 text-xs space-y-1">
+        <p className="font-medium text-violet-800 dark:text-violet-300">Beaulieu-IDs:</p>
+        <p className="text-muted-foreground">Neue Mitarbeiter erhalten automatisch IDs mit Präfix <code>b-</code> (z.B. b-1, b-2, …)</p>
+        <p className="text-muted-foreground">Bestehende Mitarbeiter werden per Name abgeglichen und aktualisiert.</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" className="h-8 text-xs gap-1.5" variant="outline"
+          onClick={() => downloadEmployeeTemplate()}>
+          <FileDown className="h-3.5 w-3.5" />
+          Excel-Vorlage herunterladen
+        </Button>
+        <Button size="sm" className="h-8 text-xs gap-1.5"
+          onClick={() => fileRef.current?.click()} disabled={loading}>
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
+          Mitarbeiterliste importieren
+        </Button>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+      </div>
+      {result && (
+        <div className="rounded-md border border-green-200 bg-green-50 dark:bg-green-950/20 p-3 text-xs space-y-1">
+          <p className="font-semibold text-green-800 dark:text-green-300">
+            ✓ {result.count} Mitarbeiter gespeichert
+          </p>
+          <p className="text-muted-foreground">
+            {result.names.join(', ')}{result.count > 5 ? ` … +${result.count - 5} weitere` : ''}
+          </p>
+          <p className="text-muted-foreground mt-1">
+            Bitte jetzt zum <Link to="/personal-stamm" className="underline text-green-700">Personalstamm</Link> wechseln, um Stammdaten zu prüfen und zu ergänzen.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── Platzhalter-Karte ────────────────────────────────────────────────────────
 
 const PlaceholderSection = ({ label }: { label: string }) => (
@@ -974,6 +1059,21 @@ const ImportHub = () => {
         >
           <AnnualCostImportSection />
         </Section>
+
+        {/* ── Beaulieu: Mitarbeiter-Import ──────────────────────────────── */}
+        {tenant.id === 'beaulieu' && (
+          <Section
+            id="beaulieu-mitarbeiter"
+            title="Beaulieu Mitarbeiter"
+            subtitle="Echte Mitarbeiterliste für Beaulieu importieren (Excel / CSV)"
+            icon={<Users className="h-4 w-4" />}
+            color="border-violet-400 dark:border-violet-600"
+            badge="Beaulieu"
+            badgeColor="border-violet-300 text-violet-700 bg-violet-50 dark:bg-violet-950/20"
+          >
+            <BeaulieuMitarbeiterSection />
+          </Section>
+        )}
 
       </main>
     </div>

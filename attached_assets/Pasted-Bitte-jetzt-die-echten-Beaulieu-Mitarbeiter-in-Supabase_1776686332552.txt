@@ -1,0 +1,84 @@
+Bitte jetzt die echten Beaulieu-Mitarbeiter in Supabase integrieren und die aktuellen Platzhalter ersetzen.
+
+Ziel:
+Beaulieu soll ab jetzt mit den echten Mitarbeitenden arbeiten.
+Die Mitarbeiter sollen sauber in Supabase gespeichert werden und dem Mandanten "beaulieu" zugeordnet sein.
+
+Wichtig:
+Nur zwei Abteilungen verwenden:
+- Küche
+- Service
+
+Abteilungslogik:
+- Alle Mitarbeitenden aus "1 Küche" = Küche
+- Alle Mitarbeitenden aus "3 Hilfsarbeiter" = Küche
+- Alle Mitarbeitenden aus "2 Service" = Service
+- Marcel Krebs aus "4 Geschäftsleitung" = Service
+
+Bitte exakt so umsetzen:
+
+1. Beaulieu Mitarbeiterstamm finalisieren
+Die aktuellen Platzhalter-Mitarbeiter für Beaulieu bitte nicht mehr verwenden.
+Stattdessen die echten Mitarbeitenden aus der gelieferten Liste in Supabase anlegen.
+
+2. Mandantenzuordnung
+Alle diese Mitarbeitenden eindeutig auf den Mandanten "beaulieu" setzen, z.B.:
+- restaurant_id = 'beaulieu'
+
+3. Abteilungen setzen
+Bitte nur diese zwei finalen Abteilungen speichern:
+- kitchen / Küche
+- service / Service
+
+Mapping:
+- 1 Küche -> Küche
+- 3 Hilfsarbeiter -> Küche
+- 2 Service -> Service
+- Marcel Krebs -> Service
+
+4. Namen aus der Liste übernehmen
+Bitte die Mitarbeitenden aus der gelieferten Beaulieu-Liste sauber übernehmen, ohne Platzhalter.
+Namen exakt so speichern, dass sie später auch für den Mirus-Import matchbar sind.
+
+5. Platzhalter entfernen / deaktivieren
+Die bisherigen defaultEmployeesBeaulieu Platzhalter bitte nicht mehr aktiv verwenden.
+Wenn sinnvoll:
+- entweder löschen
+- oder nur als Fallback deaktivieren
+Wichtig ist, dass im echten Beaulieu-Betrieb nur die realen Mitarbeitenden erscheinen.
+
+6. Supabase Import / Seed sauber machen
+Bitte die Beaulieu-Mitarbeitenden entweder:
+- direkt per Seed/Insert in Supabase anlegen
+oder
+- eine saubere Importfunktion schreiben, die diese Liste einmalig korrekt in employees schreibt
+
+Wichtig:
+- keine Duplikate erzeugen
+- bei erneutem Ausführen upsert / merge verwenden
+- bestehende Oliv-Mitarbeitenden nicht verändern
+
+7. Tenant-Sicherheit
+Bitte sicherstellen:
+- im Mandanten "beaulieu" nur diese Beaulieu-Mitarbeitenden sichtbar
+- im Mandanten "oliv" weiterhin nur Oliv-Mitarbeitende sichtbar
+
+8. Für spätere Mirus-Imports vorbereiten
+Bitte zusätzlich sicherstellen:
+- die Namen so gespeichert werden, dass spätere Mirus-Dateien für Beaulieu sauber matchen
+- insbesondere Normalize/Trim/Case-insensitive Matching weiter verwenden
+
+9. Debug Logs
+Bitte loggen:
+[BEAULIEU] employee import started
+[BEAULIEU] employee inserted: ...
+[BEAULIEU] department mapped: ...
+[BEAULIEU] restaurant_id set: beaulieu
+[BEAULIEU] total employees imported: ...
+
+10. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie die Beaulieu-Mitarbeitenden in Supabase angelegt wurden
+- wie viele Mitarbeitende importiert wurden
+- welche Mitarbeitenden Küche und welche Service sind
+- ob die Platzhalter jetzt deaktiviert/ersetzt wurden

@@ -23,6 +23,7 @@ import type { Employee } from '@/types/personnel';
 import { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { loadActualHoursForMonth } from '@/lib/supabase-db';
+import { useTenant } from '@/contexts/TenantContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -112,29 +113,29 @@ function actualKey(d: Date): string {
   return `actual-hours-${format(d, 'yyyy-MM')}`;
 }
 
-function loadEmployees(): Employee[] {
+function loadEmployees(keyFn: (k: string) => string = k => k): Employee[] {
   try {
-    const raw = localStorage.getItem('schedule-employees');
+    const raw = localStorage.getItem(keyFn('schedule-employees'));
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
 
-function loadSchedule(month: Date): Record<string, DaySchedule> {
+function loadSchedule(month: Date, keyFn: (k: string) => string = k => k): Record<string, DaySchedule> {
   try {
-    const raw = localStorage.getItem(scheduleKey(month));
+    const raw = localStorage.getItem(keyFn(scheduleKey(month)));
     return raw ? JSON.parse(raw) : {};
   } catch { return {}; }
 }
 
-function loadOverrides(): Record<string, Override> {
+function loadOverrides(keyFn: (k: string) => string = k => k): Record<string, Override> {
   try {
-    const raw = localStorage.getItem(LS_OVERRIDES);
+    const raw = localStorage.getItem(keyFn(LS_OVERRIDES));
     return raw ? JSON.parse(raw) : {};
   } catch { return {}; }
 }
 
-function saveOverrides(o: Record<string, Override>): void {
-  localStorage.setItem(LS_OVERRIDES, JSON.stringify(o));
+function saveOverrides(o: Record<string, Override>, keyFn: (k: string) => string = k => k): void {
+  localStorage.setItem(keyFn(LS_OVERRIDES), JSON.stringify(o));
 }
 
 function plannedHoursFor(emp: Employee, code: string): number {
@@ -150,22 +151,23 @@ function plannedHoursFor(emp: Employee, code: string): number {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function AbsenzKosten() {
+  const { tenantId, tenantKey } = useTenant();
   const [month, setMonth] = useState<Date>(startOfMonth(new Date()));
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [scheduleData, setScheduleData] = useState<Record<string, DaySchedule>>({});
   const [actualHours, setActualHours] = useState<Record<string, { hours: number }>>({});
-  const [overrides, setOverrides] = useState<Record<string, Override>>(loadOverrides);
+  const [overrides, setOverrides] = useState<Record<string, Override>>(() => loadOverrides(tenantKey));
   const [editEvent, setEditEvent] = useState<AbsenceEvent | null>(null);
   const [editOverride, setEditOverride] = useState<Override>({ addedEmpIds: [], removedAutoEmpIds: [] });
   const [editPlannedHours, setEditPlannedHours] = useState<string>('');
 
   // ── Load data on month change ──────────────────────────────────────────────
   useEffect(() => {
-    const emps = loadEmployees();
+    const emps = loadEmployees(tenantKey);
     setEmployees(emps);
-    setScheduleData(loadSchedule(month));
+    setScheduleData(loadSchedule(month, tenantKey));
     // Load actual hours: try localStorage first, then Supabase
-    const localActual = localStorage.getItem(actualKey(month));
+    const localActual = localStorage.getItem(tenantKey(actualKey(month)));
     if (localActual) {
       try { setActualHours(JSON.parse(localActual)); } catch { setActualHours({}); }
     } else {
@@ -173,7 +175,8 @@ export default function AbsenzKosten() {
         if (res) setActualHours(res as Record<string, { hours: number }>);
       }).catch(() => {});
     }
-  }, [month]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month, tenantId]);
 
   // ── Days in month ─────────────────────────────────────────────────────────
   const daysInMonth = useMemo(
@@ -335,7 +338,7 @@ export default function AbsenzKosten() {
     };
     const next = { ...overrides, [editEvent.id]: newOvr };
     setOverrides(next);
-    saveOverrides(next);
+    saveOverrides(next, tenantKey);
     setEditEvent(null);
     toast.success('Manuelle Anpassung gespeichert');
   };
@@ -344,7 +347,7 @@ export default function AbsenzKosten() {
     const next = { ...overrides };
     delete next[id];
     setOverrides(next);
-    saveOverrides(next);
+    saveOverrides(next, tenantKey);
     toast.success('Zurückgesetzt');
   };
 
