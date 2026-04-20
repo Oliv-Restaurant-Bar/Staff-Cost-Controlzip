@@ -2351,7 +2351,7 @@ const SchedulePlanner = () => {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 flex flex-col overflow-hidden max-w-[1800px] mx-auto w-full px-4 pt-2 pb-2 gap-2">
+      <main className="flex-1 min-h-0 overflow-auto max-w-[1800px] mx-auto w-full px-4 pt-2 pb-4 flex flex-col gap-2">
 
         {/* ── Aktiver-Zielwert Info-Banner ─────────────────────────────── */}
         {(() => {
@@ -2541,7 +2541,7 @@ const SchedulePlanner = () => {
         </div>
 
         {/* Schedule Grid with Plan/Ist Tabs */}
-        <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <Card className="flex flex-col overflow-hidden min-h-[560px]">
           <CardHeader className="pb-2 shrink-0">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-4">
@@ -2581,7 +2581,7 @@ const SchedulePlanner = () => {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="flex-1 min-h-0 overflow-hidden p-0">
+          <CardContent className="flex-1 overflow-hidden p-0 min-h-0">
             {/* Beaulieu: Keine Mitarbeitenden importiert */}
             {tenantId === 'beaulieu' && employees.length === 0 && !dataLoading && (
               <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-8">
