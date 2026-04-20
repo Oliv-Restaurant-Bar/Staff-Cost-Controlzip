@@ -1,0 +1,220 @@
+Bitte die App jetzt mandantenfähig für ein zweites Restaurant "Beaulieu" erweitern.
+
+Ziel:
+Neben dem bestehenden Restaurant Oliv soll ein zweiter Mandant "Beaulieu" in derselben App geführt werden.
+Die Logik, Module, Imports, Auswertungen und Darstellungen sollen grundsätzlich identisch sein.
+Der wesentliche Unterschied sind die Mitarbeiterdaten und die mandantenspezifischen Stammdaten.
+Oliv muss vollständig weiter funktionieren.
+Beaulieu soll parallel sauber nutzbar sein.
+
+Bitte exakt so umsetzen:
+
+==================================================
+1. Mandantenfähigkeit als Grundstruktur
+==================================================
+
+Bitte eine saubere Multi-Tenant-Struktur einführen mit mindestens diesen zwei Mandanten:
+
+- Oliv
+- Beaulieu
+
+Jeder Datensatz muss künftig einem Mandanten zugeordnet sein.
+
+Bitte dafür überall eine tenant_id / restaurant_id / mandant Kennung einführen, sauber und konsistent.
+
+Wichtig:
+- bestehende Oliv-Daten dürfen nicht kaputtgehen
+- Oliv soll als bestehender Default-Mandant erhalten bleiben
+- Beaulieu soll neu sauber dazu kommen
+
+==================================================
+2. Mandantenumschaltung in der App
+==================================================
+
+Bitte eine klare Auswahl einbauen, z.B.:
+- Restaurant / Mandant wählen
+- Oliv
+- Beaulieu
+
+Diese Auswahl soll dann die ganze App auf den gewählten Mandanten filtern.
+
+Wichtig:
+Alle Module sollen mandantenabhängig laden:
+- Dashboard
+- Dienstplanung
+- Personal FIX
+- Tagesansicht
+- Tages-Controlling
+- WES
+- Budget
+- Erfolgsrechnung
+- Imports
+- PDF / Export
+
+==================================================
+3. Mitarbeiterdaten für Beaulieu
+==================================================
+
+Beaulieu soll eine eigene Mitarbeiterliste haben.
+Diese Mitarbeiter dürfen nicht mit Oliv vermischt werden.
+
+Bitte umsetzen:
+- separater Mitarbeiterstamm pro Mandant
+- Abteilungen pro Mitarbeiter übernehmen
+- dieselbe Rollen-/Abteilungslogik wie bei Oliv nutzen
+
+Wichtig:
+Wenn die Beaulieu-Mitarbeiterliste bereits als Datei im Projekt vorhanden ist, bitte diese importieren.
+Wenn sie noch nicht lesbar / nicht vorhanden ist, bitte einen klaren Importpfad vorbereiten, damit die Liste nachträglich exakt eingespielt werden kann.
+
+==================================================
+4. Gleiches System für Umsatz, Budget, Erfolgsrechnung
+==================================================
+
+Für Beaulieu sollen dieselben Module und dieselbe Logik gelten wie für Oliv:
+
+- Umsatzimport aus gastronovi
+- Ist-Stundenimport aus Mirus
+- Budgetstruktur
+- Erfolgsrechnung
+- Kontierung / Buchhaltung
+- WES-Auswertungen
+- Tages-Controlling
+- Personalplanung
+
+Wichtig:
+Die Logik ist dieselbe, aber die Daten müssen mandantenspezifisch getrennt bleiben.
+
+==================================================
+5. Imports mandantenfähig machen
+==================================================
+
+Alle Importpfade müssen mandantenbezogen werden.
+
+Das betrifft:
+- Umsatzimport
+- Ist-Stundenimport
+- Mitarbeiterimport
+- Buchhaltungsimport
+- Budgetimport
+- WES / Lieferanten / PDFs
+
+Wichtig:
+Beim Import muss klar sein, für welchen Mandanten importiert wird.
+Daten von Beaulieu dürfen nie bei Oliv landen und umgekehrt.
+
+Bitte in der Import-Zentrale klar anzeigen:
+- aktueller Mandant
+- Importziel = Oliv oder Beaulieu
+
+==================================================
+6. Dienstplanung mandantenfähig
+==================================================
+
+Die Dienstplanung für Beaulieu soll genauso funktionieren wie für Oliv:
+- Plan
+- Ist
+- Vergleich
+- Rollen
+- Speichern
+- PDF Export
+- Popups
+- Tageslogik
+- Zielwerte
+- Personal FIX Anbindung
+
+Wichtig:
+Nur Beaulieu-Mitarbeiter sollen im Beaulieu-Dienstplan erscheinen.
+Oliv-Mitarbeiter dürfen dort nicht auftauchen.
+
+==================================================
+7. Personal FIX / Flex / Zielwerte mandantenfähig
+==================================================
+
+Die gesamte Personal-FIX- und Flex-Logik soll pro Mandant getrennt laufen.
+
+Bitte:
+- Zielwerte pro Mandant speichern
+- Budgets pro Mandant speichern
+- Fixkosten / Mitarbeiter pro Mandant
+- Flex Arbeit / Ist / Plan pro Mandant
+
+Wichtig:
+Es darf keine Vermischung zwischen Oliv und Beaulieu geben.
+
+==================================================
+8. Erfolgsrechnung / Budget / WES mandantenfähig
+==================================================
+
+Bitte auch diese Module mandantenfähig machen:
+- Erfolgsrechnung
+- Budget
+- WES Analyse
+- Tagesansicht
+- Tages-Controlling
+
+Die Darstellungslogik bleibt gleich.
+Nur die Datenbasis ist mandantenspezifisch.
+
+==================================================
+9. PDF- und Exporte mandantenbezogen
+==================================================
+
+Alle PDF- und Excel-Exporte sollen den aktiven Mandanten berücksichtigen.
+
+Bitte:
+- Mandantenname im Export anzeigen
+- Daten nur aus dem gewählten Mandanten verwenden
+- Dateinamen mandantenbezogen machen
+
+Beispiel:
+- dienstplan-beaulieu-2026-04.pdf
+- personal-fix-beaulieu-2026-04.pdf
+
+==================================================
+10. Datenmigration / Rückwärtskompatibilität
+==================================================
+
+Bitte bestehende Oliv-Daten sauber auf den Mandanten Oliv mappen, ohne etwas zu verlieren.
+
+Beaulieu wird neu dazu angelegt.
+
+Wichtig:
+- keine bestehenden Oliv-Daten beschädigen
+- keine Null-Migration, die etwas löscht
+- wenn nötig Default tenant = oliv setzen
+
+==================================================
+11. Technische Empfehlung
+==================================================
+
+Bitte nicht einfach alles duplizieren.
+
+Sondern:
+- gemeinsame Logik beibehalten
+- überall mandantenfähige Filterung einbauen
+- Stammdaten / Imports / Mitarbeiter / Budgets / Stunden / Umsätze pro Mandant trennen
+
+==================================================
+12. Debug / Validierung
+==================================================
+
+Bitte loggen:
+[TENANT] active tenant: ...
+[TENANT] data loaded for module: ...
+[TENANT] employees count: ...
+[TENANT] budget loaded: ...
+[TENANT] revenue loaded: ...
+[TENANT] schedule rows loaded: ...
+[TENANT] import target: ...
+
+==================================================
+13. Bitte danach kurz sagen:
+==================================================
+
+- welche Datei(en) geändert wurden
+- wie die Mandantenfähigkeit umgesetzt wurde
+- wie Oliv und Beaulieu getrennt werden
+- welche Datenbereiche jetzt mandantenfähig sind
+- wie Beaulieu-Mitarbeiter importiert oder vorbereitet wurden
+- wie ich Beaulieu am schnellsten testen kann
