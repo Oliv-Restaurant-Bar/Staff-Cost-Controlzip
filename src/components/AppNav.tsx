@@ -37,6 +37,8 @@ import { useStichtag } from '@/contexts/StichtagContext';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { Button } from '@/components/ui/button';
+import { useTenant } from '@/contexts/TenantContext';
+import { TenantSwitcher } from '@/components/TenantSwitcher';
 
 // ─── Typen ───────────────────────────────────────────────────────────────────
 
@@ -279,6 +281,7 @@ export const AppSidebar = () => {
   const { role, isAdmin, isManager, allowedDepartment, canAccessModule } = usePermissions();
   const { isGuest, guestMinutesLeft, clearGuestSession } = useGuestSession();
   const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
+  const { tenant } = useTenant();
 
   const roleConfig = ROLE_CONFIG[role as keyof typeof ROLE_CONFIG] ?? ROLE_CONFIG.admin;
   const RoleIcon = isGuest ? Eye : roleConfig.Icon;
@@ -306,8 +309,13 @@ export const AppSidebar = () => {
 
       {/* Marke */}
       <div className="px-4 pt-5 pb-4 border-b border-border">
-        <p className="text-xs font-bold tracking-widest uppercase text-muted-foreground/70 mb-0.5">oLiv</p>
-        <p className="text-sm font-bold leading-tight">Restaurant & Bar</p>
+        <p
+          className="text-xs font-bold tracking-widest uppercase mb-0.5"
+          style={{ color: tenant.color }}
+        >
+          {tenant.shortName}
+        </p>
+        <p className="text-sm font-bold leading-tight">{tenant.name.replace(tenant.shortName, '').trim() || tenant.name}</p>
         <p className="text-[10px] text-muted-foreground mt-0.5">Personalkostentracker</p>
       </div>
 
@@ -409,6 +417,9 @@ export const AppSidebar = () => {
           }
         </p>
       </div>
+
+      {/* Mandantenauswahl */}
+      <TenantSwitcher compact />
 
       {/* Rolle + Abmelden */}
       <div className="border-t border-border px-3 py-3 space-y-2">

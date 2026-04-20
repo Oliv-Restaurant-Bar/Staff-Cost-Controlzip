@@ -10,6 +10,7 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
+import type { TenantId } from '@/contexts/TenantContext';
 
 type Listener = () => void;
 
@@ -261,25 +262,35 @@ export async function syncSupabaseToLocal(keys: string[]): Promise<boolean> {
 
 const ABSENCE_KV_PREFIX = 'absence-ist-';
 
+/** Berechnet den mandantenspezifischen Absence-KV-Key. Oliv = kein Präfix. */
+function absenceKey(yearMonth: string, tenantId: TenantId = 'oliv'): string {
+  const base = `${ABSENCE_KV_PREFIX}${yearMonth}`;
+  return tenantId === 'oliv' ? base : `${tenantId}:${base}`;
+}
+
 /**
  * Persist the full absence map for a month to Supabase KV store.
  * Pass an empty object to clear all absences for that month.
+ * Pass tenantId to isolate data per mandant (default: 'oliv' = backward compatible).
  */
 export async function saveMonthAbsences(
   yearMonth: string,
   entries: Record<string, string>,
+  tenantId: TenantId = 'oliv',
 ): Promise<void> {
-  await kvSet(`${ABSENCE_KV_PREFIX}${yearMonth}`, entries);
+  await kvSet(absenceKey(yearMonth, tenantId), entries);
 }
 
 /**
  * Load all persisted FE/K/F entries for a month from Supabase KV store.
  * Returns an empty object if nothing is stored or on error.
+ * Pass tenantId to isolate data per mandant (default: 'oliv' = backward compatible).
  */
 export async function loadMonthAbsences(
   yearMonth: string,
+  tenantId: TenantId = 'oliv',
 ): Promise<Record<string, string>> {
-  const data = await kvGet(`${ABSENCE_KV_PREFIX}${yearMonth}`);
+  const data = await kvGet(absenceKey(yearMonth, tenantId));
   if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
   return data as Record<string, string>;
 }

@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useTenant } from '@/contexts/TenantContext';
+import { defaultEmployeesBeaulieu } from '@/data/defaultEmployeesBeaulieu';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/hooks/useAuth';
 import {
@@ -148,6 +150,9 @@ type ViewMode = Department | 'all';
 type CalendarView = 'month' | 'week' | 'day';
 
 const SchedulePlanner = () => {
+  // ── Mandant (Tenant) ──────────────────────────────────────────────────────
+  const { tenantId, tenantKey } = useTenant();
+
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
 
   // Auth: user + loading + sessionVersion needed to gate data fetches correctly.
@@ -175,7 +180,9 @@ const SchedulePlanner = () => {
   } = usePermissions();
   
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [employees, setEmployees] = useState<Employee[]>(defaultEmployees);
+  const [employees, setEmployees] = useState<Employee[]>(
+    tenantId === 'beaulieu' ? defaultEmployeesBeaulieu : defaultEmployees
+  );
   const [scheduleData, setScheduleData] = useState<{[key: string]: DaySchedule}>({});
   const [activeDepartment, setActiveDepartment] = useState<ViewMode>('service');
   const [calendarView, setCalendarView] = useState<CalendarView>('month');
@@ -326,7 +333,7 @@ const SchedulePlanner = () => {
 
     try {
       // ── Mitarbeiter ──────────────────────────────────────────────────────────
-      const supabaseEmployees = await loadEmployees();
+      const supabaseEmployees = await loadEmployees(tenantId);
       if (fetchGenRef.current !== gen) { console.log('[ROUTE] gen=' + gen + ' superseded after employees – aborting'); return; }
       if (supabaseEmployees && supabaseEmployees.length > 0) {
         // ID-Migration: wenn Supabase andere IDs zurückgibt als der lokale Fallback,
@@ -345,7 +352,7 @@ const SchedulePlanner = () => {
             d.setMonth(d.getMonth() - offset);
             const mk = format(d, 'yyyy-MM');
             const sk = `actual-hours-${mk}`;
-            const stored = localStorage.getItem(sk);
+            const stored = localStorage.getItem(tenantKey(sk));
             if (!stored) continue;
             try {
               const data: Record<string, unknown> = JSON.parse(stored);
@@ -363,7 +370,7 @@ const SchedulePlanner = () => {
                 }
               }
               if (changed) {
-                localStorage.setItem(sk, JSON.stringify(migrated));
+                localStorage.setItem(tenantKey(sk), JSON.stringify(migrated));
                 console.log('[ID-Migration] Migriert:', sk, Object.keys(migrated).length, 'Einträge');
               }
             } catch { /* ignore */ }
@@ -371,7 +378,7 @@ const SchedulePlanner = () => {
         }
         setEmployees(supabaseEmployees);
       } else if (supabaseEmployees === null) {
-        const saved = localStorage.getItem('schedule-employees');
+        const saved = localStorage.getItem(tenantKey('schedule-employees'));
         if (saved) { try { setEmployees(JSON.parse(saved)); } catch { /* ignore */ } }
       }
 
@@ -406,7 +413,7 @@ const SchedulePlanner = () => {
         });
       } else {
         console.warn('[PLAN] Supabase error – using localStorage fallback');
-        const saved = localStorage.getItem(`schedule-v2-${monthKey}`);
+        const saved = localStorage.getItem(tenantKey(`schedule-v2-${monthKey}`));
         const fallback = saved ? JSON.parse(saved) : {};
         setScheduleSource('cache');
         setLoadedEntryCount(Object.keys(fallback).length);
@@ -417,7 +424,7 @@ const SchedulePlanner = () => {
       console.log('[IST] fetch start', { gen, monthKey });
       const [supabaseActual, kvAbsences] = await Promise.all([
         loadActualHoursForMonth(currentMonth),
-        loadMonthAbsences(monthKey),
+        loadMonthAbsences(monthKey, tenantId),
       ]);
       const kvAbsenceCount = Object.keys(kvAbsences).length;
       if (kvAbsenceCount > 0) {
@@ -434,7 +441,7 @@ const SchedulePlanner = () => {
       // Always read localStorage too — it may contain entries saved by the
       // EmbeddedSchedulePlanner that haven't been flushed to Supabase yet.
       const localStored = (() => {
-        try { return JSON.parse(localStorage.getItem(`actual-hours-${monthKey}`) || '{}'); }
+        try { return JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${monthKey}`)) || '{}'); }
         catch { return {}; }
       })();
 
@@ -510,7 +517,7 @@ const SchedulePlanner = () => {
         // Write merged back so PersonalFix and others always see the full dataset.
         // Re-read fresh localStorage here to include any FE entries written since the fetch started.
         const freshLocal: Record<string, ActualHoursEntry> = (() => {
-          try { return JSON.parse(localStorage.getItem(`actual-hours-${monthKey}`) || '{}'); } catch { return {}; }
+          try { return JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${monthKey}`)) || '{}'); } catch { return {}; }
         })();
         const finalForStorage: Record<string, ActualHoursEntry> = { ...freshLocal };
         for (const [key, val] of Object.entries(merged)) {
@@ -519,7 +526,7 @@ const SchedulePlanner = () => {
             finalForStorage[key] = val;
           }
         }
-        localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(finalForStorage));
+        localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(finalForStorage));
       } else {
         console.warn('[IST] Supabase error – using localStorage + KV absences');
         const withKvAbsences: Record<string, ActualHoursEntry> = { ...localStored };
@@ -539,11 +546,11 @@ const SchedulePlanner = () => {
       const monthlyRevenue = getMonthlyBudgetRevenue(year, monthIdx);
       const allDays        = eachDayOfInterval({ start: startOfMonth(currentMonth), end: endOfMonth(currentMonth) });
 
-      const savedBudgets    = localStorage.getItem('dailyBudgets');
+      const savedBudgets    = localStorage.getItem(tenantKey('dailyBudgets'));
       const manualBudgets: Record<string, { plannedRevenue?: number; actualRevenue?: number }> =
         savedBudgets ? JSON.parse(savedBudgets) : {};
       const revenueOverrides: Record<string, number> =
-        JSON.parse(localStorage.getItem('dailyRevenueOverrides') || '{}');
+        JSON.parse(localStorage.getItem(tenantKey('dailyRevenueOverrides')) || '{}');
 
       if (fetchGenRef.current !== gen) return;
 
@@ -568,10 +575,10 @@ const SchedulePlanner = () => {
     } finally {
       if (fetchGenRef.current === gen) setDataLoading(false);
     }
-  // Only depends on currentMonth — sessionVersion controls re-runs via the
+  // Depends on currentMonth + tenantId — sessionVersion controls re-runs via the
   // effect below, and the internal getSession() call guarantees a fresh token.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentMonth]);
+  }, [currentMonth, tenantId]);
 
   // ── Route enter / leave logging ──────────────────────────────────────────
   useEffect(() => {
@@ -580,17 +587,28 @@ const SchedulePlanner = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Mandantenwechsel: Mitarbeiter zurücksetzen ─────────────────────────────
+  // Wenn der Mandant wechselt, sofort auf Default-Mitarbeiter zurückfallen,
+  // damit kein Mitarbeiter des anderen Mandanten kurz sichtbar ist.
+  useEffect(() => {
+    console.log(`[TENANT] SchedulePlanner reset für ${tenantId}`);
+    setEmployees(tenantId === 'beaulieu' ? defaultEmployeesBeaulieu : defaultEmployees);
+    setScheduleData({});
+    setActualHoursData({});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
   // ── Trigger load when session is ready OR when the token is refreshed ───────
   // sessionVersion is 0 until boot is complete.
   // It increments on TOKEN_REFRESHED and SIGNED_IN, so a background token
   // renewal automatically re-fetches data even when user?.id stays the same.
-  // currentMonth in deps ensures re-fetch when the user navigates to another month.
+  // currentMonth + tenantId in deps ensures re-fetch when month or tenant changes.
   useEffect(() => {
     if (sessionVersion > 0) {
       loadMonthData();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionVersion, currentMonth]);
+  }, [sessionVersion, currentMonth, tenantId]);
 
   // ── Auto-save absence map (FE/K/F) to KV store ───────────────────────────
   // FE/K/F entries are not persisted in Supabase actual_hours (no absence_type
@@ -605,7 +623,7 @@ const SchedulePlanner = () => {
       if (v.absenceType) absences[k] = v.absenceType;
     }
     const timer = setTimeout(() => {
-      saveMonthAbsences(monthKey, absences)
+      saveMonthAbsences(monthKey, absences, tenantId)
         .then(() => {
           const absenceKeys = Object.keys(absences);
           if (absenceKeys.length > 0) {
@@ -1003,7 +1021,7 @@ const SchedulePlanner = () => {
         );
 
         const monthKey = format(currentMonth, 'yyyy-MM');
-        localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(newState));
+        localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(newState));
         console.log(`[SCHEDULE] cell cleared – key=${cellKey}`);
 
         window.dispatchEvent(new CustomEvent('schedule-updated'));
@@ -1020,7 +1038,7 @@ const SchedulePlanner = () => {
       });
 
       const monthKey = format(currentMonth, 'yyyy-MM');
-      localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(newState));
+      localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(newState));
       setLastSaveTime(new Date());
       setSaveError(null);
       console.log(`[SCHEDULE] cell saved – key=${cellKey}`);
@@ -1063,10 +1081,10 @@ const SchedulePlanner = () => {
           }
           const mk = format(currentMonth, 'yyyy-MM');
           const stored: Record<string, unknown> = (() => {
-            try { return JSON.parse(localStorage.getItem(`actual-hours-${mk}`) || '{}'); }
+            try { return JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${mk}`)) || '{}'); }
             catch { return {}; }
           })();
-          localStorage.setItem(`actual-hours-${mk}`, JSON.stringify({ ...stored, [cellKey]: newEntry }));
+          localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify({ ...stored, [cellKey]: newEntry }));
           return { ...prevActual, [cellKey]: newEntry };
         });
       }
@@ -1082,7 +1100,7 @@ const SchedulePlanner = () => {
     const updatedEmployees = [...employees, newEmployee];
     setEmployees(updatedEmployees);
     upsertEmployee(newEmployee);
-    localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
+    localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
     toast.success(`${employee.name} hinzugefügt`);
   };
 
@@ -1091,7 +1109,7 @@ const SchedulePlanner = () => {
     const updatedEmployees = employees.filter(e => e.id !== employeeId);
     setEmployees(updatedEmployees);
     dbDeleteEmployee(employeeId);
-    localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
+    localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
     if (emp) {
       toast.success(`${emp.name} entfernt`);
     }
@@ -1118,14 +1136,14 @@ const SchedulePlanner = () => {
     try {
       // Safe upsert-only save (no delete-all)
       await saveFullScheduleForMonth(currentMonth, scheduleData);
-      await upsertAllEmployees(employees);
+      await upsertAllEmployees(employees, tenantId);
 
       // localStorage backup
-      localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(scheduleData));
-      localStorage.setItem('schedule-employees', JSON.stringify(employees));
-      localStorage.setItem('dailyBudgets', JSON.stringify(dailyBudgets));
+      localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(scheduleData));
+      localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(employees));
+      localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(dailyBudgets));
       import('@/lib/supabase-kv').then(({ kvSet }) => kvSet('dailyBudgets', dailyBudgets).catch(() => {}));
-      localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(actualHoursData));
+      localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(actualHoursData));
 
       setLastSaveTime(new Date());
       setIsDirty(false);
@@ -1177,7 +1195,7 @@ const SchedulePlanner = () => {
         }
 
         const monthKey = format(currentMonth, 'yyyy-MM');
-        localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(newState));
+        localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(newState));
         window.dispatchEvent(new CustomEvent('schedule-updated'));
         return newState;
       }
@@ -1197,7 +1215,7 @@ const SchedulePlanner = () => {
       }
 
       const monthKey = format(currentMonth, 'yyyy-MM');
-      localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(newState));
+      localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(newState));
       window.dispatchEvent(new CustomEvent('schedule-updated'));
       return newState;
     });
@@ -1275,7 +1293,7 @@ const SchedulePlanner = () => {
 
       for (const m of affectedMonths) {
         const sk = `actual-hours-${m}`;
-        const ex = (() => { try { return JSON.parse(localStorage.getItem(sk) || '{}'); } catch { return {}; } })();
+        const ex = (() => { try { return JSON.parse(localStorage.getItem(tenantKey(sk)) || '{}'); } catch { return {}; } })();
         // Merge: start from existing localStorage (preserves FE entries not in `updated`),
         // then overlay with updated (which itself preserved FE via the delete loop fix above).
         const data = { ...ex };
@@ -1283,7 +1301,7 @@ const SchedulePlanner = () => {
           const dateFromKey = k.slice(-10);
           if (dateFromKey.slice(0, 7) === m) data[k] = v;
         }
-        localStorage.setItem(sk, JSON.stringify(data));
+        localStorage.setItem(tenantKey(sk), JSON.stringify(data));
       }
 
       window.dispatchEvent(new CustomEvent('schedule-updated'));
@@ -1417,8 +1435,8 @@ const SchedulePlanner = () => {
     if (newEmployees && newEmployees.length > 0) {
       const updatedEmployees = [...employees, ...newEmployees];
       setEmployees(updatedEmployees);
-      newEmployees.forEach(emp => upsertEmployee(emp));
-      localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
+      newEmployees.forEach(emp => upsertEmployee(emp, tenantId));
+      localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
       toast.success(`${newEmployees.length} neue Mitarbeiter hinzugefügt: ${newEmployees.map(e => e.name).join(', ')}`);
     } else {
       toast.success('Dienstplan erfolgreich importiert');
@@ -1437,7 +1455,7 @@ const SchedulePlanner = () => {
         saveScheduleEntry(empId, date, merged[key]);
       }
       const monthKey = format(currentMonth, 'yyyy-MM');
-      localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(merged));
+      localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(merged));
       window.dispatchEvent(new CustomEvent('schedule-updated'));
       return merged;
     });
@@ -1528,13 +1546,13 @@ const SchedulePlanner = () => {
   // Manuellen Umsatz-Override für einen Tag setzen oder löschen
   const handleUpdatePlannedRevenue = (dateStr: string, value: number | null) => {
     const overrides: Record<string, number> =
-      JSON.parse(localStorage.getItem('dailyRevenueOverrides') || '{}');
+      JSON.parse(localStorage.getItem(tenantKey('dailyRevenueOverrides')) || '{}');
     if (value === null) {
       delete overrides[dateStr];
     } else {
       overrides[dateStr] = value;
     }
-    localStorage.setItem('dailyRevenueOverrides', JSON.stringify(overrides));
+    localStorage.setItem(tenantKey('dailyRevenueOverrides'), JSON.stringify(overrides));
     import('@/lib/supabase-kv').then(({ kvSet }) => kvSet('dailyRevenueOverrides', overrides).catch(() => {}));
     // State aktualisieren
     setDailyBudgets(prev => {
@@ -1568,7 +1586,7 @@ const SchedulePlanner = () => {
     setEmployees(updatedEmployees);
     const updated = updatedEmployees.find(e => e.id === employeeId);
     if (updated) upsertEmployee(updated);
-    localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
+    localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
     toast.success('Freie Tage gespeichert');
   };
 
@@ -1597,7 +1615,7 @@ const SchedulePlanner = () => {
       setEmployees(updatedEmployees);
       const updated = updatedEmployees.find(e => e.id === selectedEmployeeFor8Hours.id);
       if (updated) upsertEmployee(updated);
-      localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
+      localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
       toast.success(`8.5h für ${selectedEmployeeFor8Hours.name} eingetragen (${selectedDays.length} Tage) - Bevorzugte Tage gespeichert`);
     } else {
       toast.success(`8.5h für ${selectedEmployeeFor8Hours.name} eingetragen (${selectedDays.length} Tage)`);
@@ -1620,7 +1638,7 @@ const SchedulePlanner = () => {
       );
       setEmployees(updatedEmployees);
       upsertEmployee(merged);
-      localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
+      localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
       toast.success(`${employeeData.name} aktualisiert`);
     } else {
       // Add new employee
@@ -1631,7 +1649,7 @@ const SchedulePlanner = () => {
       const updatedEmployees = [...employees, newEmployee];
       setEmployees(updatedEmployees);
       upsertEmployee(newEmployee);
-      localStorage.setItem('schedule-employees', JSON.stringify(updatedEmployees));
+      localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
       toast.success(`${employeeData.name} hinzugefügt`);
     }
     setSelectedEmployeeForEdit(null);
@@ -1692,7 +1710,7 @@ const SchedulePlanner = () => {
 
   // Estimated hours for variable employees from Personal FIX page
   const varEstimatedHours: Record<string, number> = (() => {
-    try { return JSON.parse(localStorage.getItem('personal_fix_var_hours_v1') ?? '{}'); }
+    try { return JSON.parse(localStorage.getItem(tenantKey('personal_fix_var_hours_v1')) ?? '{}'); }
     catch { return {}; }
   })();
 
@@ -1996,7 +2014,7 @@ const SchedulePlanner = () => {
     setActualHoursData(prev => {
       const next = { ...prev, ...delta };
       const monthKey = format(currentMonth, 'yyyy-MM');
-      localStorage.setItem(`actual-hours-${monthKey}`, JSON.stringify(next));
+      localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(next));
       // Persist each entry to Supabase
       Object.entries(delta).forEach(([key, entry]) => {
         const date = key.slice(-10);
@@ -3374,7 +3392,7 @@ const SchedulePlanner = () => {
           setScheduleData(newScheduleData);
           saveFullScheduleForMonth(currentMonth, newScheduleData);
           const monthKey = format(currentMonth, 'yyyy-MM');
-          localStorage.setItem(`schedule-v2-${monthKey}`, JSON.stringify(newScheduleData));
+          localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(newScheduleData));
           toast.success('Woche erfolgreich kopiert und gespeichert!');
         }}
       />

@@ -1,6 +1,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { Employee } from '@/types/personnel';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
+import type { TenantId } from '@/contexts/TenantContext';
 
 // ─── Typen ──────────────────────────────────────────────────────────────────
 
@@ -125,25 +126,50 @@ const dbToEmployee = (row: any): Employee => ({
 
 // ─── Mitarbeiter ─────────────────────────────────────────────────────────────
 
-export async function loadEmployees(): Promise<Employee[] | null> {
+/**
+ * Mitarbeiter laden, optional gefiltert nach Mandant.
+ * Wenn restaurantId angegeben, wird `.eq('restaurant_id', restaurantId)` verwendet.
+ * Falls die Spalte noch nicht existiert (Migration noch nicht ausgeführt),
+ * wird graceful auf Laden aller Mitarbeiter zurückgefallen.
+ */
+export async function loadEmployees(restaurantId?: TenantId): Promise<Employee[] | null> {
   try {
-    const { data, error } = await supabase
-      .from('employees')
-      .select('*')
-      .order('name');
-    if (error) { console.error('[supabase-db] loadEmployees:', error); return null; }
-    return (data ?? []).map(dbToEmployee);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query = (supabase as any).from('employees').select('*').order('name');
+    if (restaurantId) {
+      query = query.eq('restaurant_id', restaurantId);
+    }
+    const { data, error } = await query;
+
+    if (error) {
+      if (restaurantId && (String(error.message ?? '').includes('restaurant_id') || String(error.code ?? '') === '42703')) {
+        console.warn('[TENANT] restaurant_id column not found – Migration noch nicht ausgeführt. Lade alle Mitarbeiter als Fallback.');
+        const { data: fallback, error: fbErr } = await supabase.from('employees').select('*').order('name');
+        if (fbErr) { console.error('[supabase-db] loadEmployees fallback:', fbErr); return null; }
+        console.log(`[TENANT] employees count (fallback, no tenant filter): ${(fallback ?? []).length}`);
+        return (fallback ?? []).map(dbToEmployee);
+      }
+      console.error('[supabase-db] loadEmployees:', error);
+      return null;
+    }
+
+    const result = (data ?? []).map(dbToEmployee);
+    if (restaurantId) {
+      console.log(`[TENANT] employees count for ${restaurantId}: ${result.length}`);
+    }
+    return result;
   } catch (e) {
     console.error('[supabase-db] loadEmployees exception:', e);
     return null;
   }
 }
 
-export async function upsertEmployee(emp: Employee): Promise<boolean> {
+export async function upsertEmployee(emp: Employee, restaurantId: TenantId = 'oliv'): Promise<boolean> {
   try {
-    const { error } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any)
       .from('employees')
-      .upsert(employeeToDb(emp), { onConflict: 'id' });
+      .upsert({ ...employeeToDb(emp), restaurant_id: restaurantId }, { onConflict: 'id' });
     if (error) { console.error('[supabase-db] upsertEmployee:', error); return false; }
     return true;
   } catch (e) {
@@ -214,11 +240,12 @@ export async function deleteEmployee(id: string): Promise<boolean> {
   }
 }
 
-export async function upsertAllEmployees(employees: Employee[]): Promise<boolean> {
+export async function upsertAllEmployees(employees: Employee[], restaurantId: TenantId = 'oliv'): Promise<boolean> {
   try {
-    const { error } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any)
       .from('employees')
-      .upsert(employees.map(employeeToDb), { onConflict: 'id' });
+      .upsert(employees.map(e => ({ ...employeeToDb(e), restaurant_id: restaurantId })), { onConflict: 'id' });
     if (error) { console.error('[supabase-db] upsertAllEmployees:', error); return false; }
     return true;
   } catch (e) {

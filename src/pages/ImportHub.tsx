@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/contexts/TenantContext';
 import {
   Upload, TrendingUp, Clock, BookOpen, ArrowLeft,
   CheckCircle2, AlertCircle, Loader2, ChevronDown,
@@ -672,16 +673,18 @@ const AnnualCostImportSection = () => {
 // ─── Ist-Stunden Import ───────────────────────────────────────────────────────
 
 const IstStundenSection = () => {
+  const { tenantId, tenantKey } = useTenant();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const today = new Date();
 
   useEffect(() => {
-    loadEmployees().then(emps => {
+    loadEmployees(tenantId).then(emps => {
       if (emps) setEmployees(emps);
       setLoading(false);
     });
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   const handleCreateEmployee = (name: string, department: Department): Employee => {
     const newEmp: Employee = {
@@ -692,7 +695,7 @@ const IstStundenSection = () => {
       hourlyWage:     0,
     };
     setEmployees(prev => [...prev, newEmp]);
-    upsertEmployee(newEmp).catch(e => console.error('[ImportHub] upsertEmployee failed:', e));
+    upsertEmployee(newEmp, tenantId).catch(e => console.error('[ImportHub] upsertEmployee failed:', e));
     toast.success(`Mitarbeiter "${name}" neu angelegt – Stundenlohn bitte im Personalstamm ergänzen.`);
     return newEmp;
   };
@@ -702,7 +705,7 @@ const IstStundenSection = () => {
     const saves: Array<{ empId: string; date: string; hours: number }> = [];
 
     const loadMonthData = (month: string): Record<string, { hours: number; absenceType?: string }> => {
-      try { return JSON.parse(localStorage.getItem(`actual-hours-${month}`) || '{}'); } catch { return {}; }
+      try { return JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${month}`)) || '{}'); } catch { return {}; }
     };
 
     // Helper: returns only FE/K/F absence entries from a month's data.
@@ -764,7 +767,7 @@ const IstStundenSection = () => {
     }
 
     for (const [month, data] of Object.entries(monthData)) {
-      localStorage.setItem(`actual-hours-${month}`, JSON.stringify(data));
+      localStorage.setItem(tenantKey(`actual-hours-${month}`), JSON.stringify(data));
     }
     window.dispatchEvent(new CustomEvent('schedule-updated'));
 
@@ -834,6 +837,7 @@ const PlaceholderSection = ({ label }: { label: string }) => (
 
 const ImportHub = () => {
   const { isAdmin } = usePermissions();
+  const { tenant } = useTenant();
   if (!isAdmin) return <Navigate to="/personal" replace />;
 
   return (
@@ -847,6 +851,12 @@ const ImportHub = () => {
                 <h1 className="text-base font-bold leading-tight">Import-Zentrale</h1>
                 <p className="text-xs text-muted-foreground">Alle Datenimporte an einem Ort</p>
               </div>
+              <span
+                className="hidden sm:inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1"
+                style={{ backgroundColor: `${tenant.color}18`, color: tenant.color, ringColor: `${tenant.color}40` }}
+              >
+                {tenant.shortName}
+              </span>
             </div>
             <Link to="/">
               <Button variant="outline" size="sm" className="h-8">

@@ -1,6 +1,39 @@
-# Personalkostentracker – oLiv Restaurant & Bar
+# Personalkostentracker – Oliv Gastro AG
 
-Internes Reporting-Tool für Umsatz, Personalkosten, Dienstplan und KPIs. 2–3 interne Nutzer.
+Internes Reporting-Tool für Umsatz, Personalkosten, Dienstplan und KPIs. Mandantenfähig (Oliv + Beaulieu). 2–3 interne Nutzer.
+
+## Mandantenfähigkeit (Multi-Tenant)
+
+Zwei Mandanten: **Oliv** (Standard, alle bestehenden Daten) und **Beaulieu** (neues Restaurant).
+
+### Architektur
+- `src/contexts/TenantContext.tsx` — TenantProvider + `useTenant()` Hook; Auswahl persistent in localStorage (`active_tenant`)
+- `src/components/TenantSwitcher.tsx` — Compact-Switcher in der Sidebar (über Rollen/Abmelden-Bereich)
+- `src/lib/tenant-utils.ts` — `tenantKey()` Helper + `tlsGet/tlsSet/tkvGet/tkvSet` Wrapper
+- `src/data/defaultEmployeesBeaulieu.ts` — Default-Mitarbeiter für Beaulieu (12 Platzhalter, IDs `b-*`)
+
+### Datentrennung
+| Datenspeicher | Oliv | Beaulieu |
+|---|---|---|
+| localStorage-Keys | unveraendert (Rückwärtskompatibel) | `beaulieu:{key}` Präfix |
+| Supabase KV (`app_settings`) | unveraendert | `beaulieu:{key}` Präfix |
+| Supabase `employees` | `restaurant_id = 'oliv'` | `restaurant_id = 'beaulieu'` |
+| `schedule_entries` / `actual_hours` | implizit via Employee-IDs | implizit via `b-*` Employee-IDs |
+
+### DB-Migration
+- `migrations/20260420_multi_tenant.sql` — fügt `restaurant_id TEXT DEFAULT 'oliv'` zu `employees` hinzu
+- **Muss einmalig im Supabase SQL Editor ausgeführt werden!**
+- Bis zur Migration: graceful Fallback (lädt alle Mitarbeiter ohne Tenant-Filter)
+
+### Geänderte Dateien
+- `src/lib/supabase-db.ts` — `loadEmployees(restaurantId?)`, `upsertEmployee(emp, restaurantId)`, `upsertAllEmployees(employees, restaurantId)`
+- `src/lib/supabase-kv.ts` — `saveMonthAbsences(yearMonth, entries, tenantId)`, `loadMonthAbsences(yearMonth, tenantId)`
+- `src/App.tsx` — `<TenantProvider>` in Provider-Baum
+- `src/components/AppNav.tsx` — Dynamischer Markenname + TenantSwitcher in Sidebar
+- `src/pages/SchedulePlanner.tsx` — alle localStorage/KV/Supabase-Calls tenant-aware (37 Ersetzungen + useTenant)
+- `src/pages/ImportHub.tsx` — Tenant-Badge im Header, IstStundenSection tenant-aware
+
+### Debug-Logs: `[TENANT]`
 
 ## Tech Stack
 - React + TypeScript + Vite

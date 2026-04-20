@@ -9,6 +9,7 @@ import { PlanDisplayProvider } from "@/contexts/PlanDisplayContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { StichtagProvider } from "@/contexts/StichtagContext";
 import { GuestSessionProvider, GUEST_SESSION_KEY } from "@/contexts/GuestSessionContext";
+import { TenantProvider } from "@/contexts/TenantContext";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LoginPage } from "@/components/LoginPage";
@@ -174,6 +175,7 @@ const AppContent = () => {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
+      <TenantProvider>
       <StichtagProvider>
       <RevenueDisplayProvider>
         <PlanDisplayProvider>
@@ -195,6 +197,7 @@ const App = () => (
         </PlanDisplayProvider>
       </RevenueDisplayProvider>
       </StichtagProvider>
+      </TenantProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );
