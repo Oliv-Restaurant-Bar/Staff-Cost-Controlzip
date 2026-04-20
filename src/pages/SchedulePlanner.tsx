@@ -2080,7 +2080,7 @@ const SchedulePlanner = () => {
   return (
     <div className="bg-background">
       {/* Header */}
-      <header className="shrink-0 z-50 bg-card border-b border-border shadow-sm">
+      <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
         <div className="max-w-[1800px] mx-auto px-4">
 
           {/* ── Row 1: Titel + primäre Aktionen ────────────────────────────── */}
