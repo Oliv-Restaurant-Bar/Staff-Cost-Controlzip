@@ -2058,9 +2058,9 @@ const SchedulePlanner = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="h-full bg-background flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
+      <header className="shrink-0 z-50 bg-card border-b border-border shadow-sm">
         <div className="max-w-[1800px] mx-auto px-4">
 
           {/* ── Row 1: Titel + primäre Aktionen ────────────────────────────── */}
@@ -2331,7 +2331,7 @@ const SchedulePlanner = () => {
         </div>
       </header>
 
-      <main className="max-w-[1800px] mx-auto px-4 py-6 space-y-6">
+      <main className="flex-1 min-h-0 flex flex-col overflow-hidden max-w-[1800px] mx-auto w-full px-4 pt-2 pb-2 gap-2">
 
         {/* ── Aktiver-Zielwert Info-Banner ─────────────────────────────── */}
         {(() => {
@@ -2358,7 +2358,7 @@ const SchedulePlanner = () => {
           }
 
           return (
-            <div className="flex flex-wrap gap-2 items-center py-1">
+            <div className="shrink-0 flex flex-wrap gap-2 items-center py-1">
               <span className="text-xs text-muted-foreground font-medium shrink-0">Aktiver Zielwert:</span>
               {items.map(({ label, pct, src, color }) => (
                 <span key={label} className={cn(
@@ -2376,50 +2376,50 @@ const SchedulePlanner = () => {
         })()}
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="shrink-0 grid grid-cols-2 md:grid-cols-4 gap-2">
           <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-center gap-3">
-                <Users className="h-6 w-6 text-primary" />
+            <CardContent className="py-2 px-3">
+              <div className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-primary shrink-0" />
                 <div>
-                  <p className="text-xl font-bold">{departmentEmployeeCount}</p>
-                  <p className="text-xs text-muted-foreground">Mitarbeiter</p>
+                  <p className="text-lg font-bold leading-tight">{departmentEmployeeCount}</p>
+                  <p className="text-xs text-muted-foreground leading-tight">Mitarbeiter</p>
                 </div>
               </div>
             </CardContent>
           </Card>
           
           <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-center gap-3">
-                <Clock className="h-6 w-6 text-blue-500" />
+            <CardContent className="py-2 px-3">
+              <div className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-blue-500 shrink-0" />
                 <div>
-                  <p className="text-xl font-bold">{departmentPlannedHours.toFixed(1)}h</p>
-                  <p className="text-xs text-muted-foreground">Geplant</p>
+                  <p className="text-lg font-bold leading-tight">{departmentPlannedHours.toFixed(1)}h</p>
+                  <p className="text-xs text-muted-foreground leading-tight">Geplant</p>
                 </div>
               </div>
             </CardContent>
           </Card>
           
           <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-center gap-3">
-                <CheckCircle className="h-6 w-6 text-success" />
+            <CardContent className="py-2 px-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-5 w-5 text-success shrink-0" />
                 <div>
-                  <p className="text-xl font-bold">{departmentOkCount}</p>
-                  <p className="text-xs text-muted-foreground">Im Ziel</p>
+                  <p className="text-lg font-bold leading-tight">{departmentOkCount}</p>
+                  <p className="text-xs text-muted-foreground leading-tight">Im Ziel</p>
                 </div>
               </div>
             </CardContent>
           </Card>
           
           <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-center gap-3">
-                <AlertTriangle className="h-6 w-6 text-warning" />
+            <CardContent className="py-2 px-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-warning shrink-0" />
                 <div>
-                  <p className="text-xl font-bold">{departmentWarningCount}</p>
-                  <p className="text-xs text-muted-foreground">Warnung</p>
+                  <p className="text-lg font-bold leading-tight">{departmentWarningCount}</p>
+                  <p className="text-xs text-muted-foreground leading-tight">Warnung</p>
                 </div>
               </div>
             </CardContent>
@@ -2430,7 +2430,7 @@ const SchedulePlanner = () => {
             PERSONALKOSTENQUOTE BANNER (nach Summary Cards)
             ════════════════════════════════════════════════════════════ */}
         <div className={cn(
-          "rounded-xl border-2 p-4 flex flex-col gap-3",
+          "shrink-0 rounded-xl border-2 px-4 py-2 flex flex-col gap-1.5",
           costRatioStatus === 'good'    && "border-green-500 bg-green-50 dark:bg-green-950/30",
           costRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
           costRatioStatus === 'high'    && "border-red-500 bg-red-50 dark:bg-red-950/30",
@@ -2443,11 +2443,11 @@ const SchedulePlanner = () => {
             <p className="text-xs text-muted-foreground">{pkqPeriodLabel}</p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex flex-row items-center justify-between gap-4">
             {/* Left: icon + big % (clickable) */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <div className={cn(
-                "w-14 h-14 rounded-full flex items-center justify-center text-white text-2xl font-black shrink-0",
+                "w-9 h-9 rounded-full flex items-center justify-center text-white text-base font-black shrink-0",
                 costRatioStatus === 'good'    && "bg-green-500",
                 costRatioStatus === 'ok'      && "bg-yellow-400",
                 costRatioStatus === 'high'    && "bg-red-500",
@@ -2462,7 +2462,7 @@ const SchedulePlanner = () => {
                 <button
                   onClick={() => setPkDetailOpen(true)}
                   className={cn(
-                    "text-4xl font-black leading-none underline-offset-4 hover:underline cursor-pointer",
+                    "text-2xl font-black leading-none underline-offset-4 hover:underline cursor-pointer",
                     costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
                     costRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
                     costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
@@ -2472,7 +2472,7 @@ const SchedulePlanner = () => {
                 >
                   {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '– %'}
                 </button>
-                <p className="text-sm mt-1">
+                <p className="text-xs mt-0.5">
                   {costRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {effectiveLaborCostThreshold}% erreicht</span>}
                   {costRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({effectiveLaborCostThreshold}%)</span>}
                   {costRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {effectiveLaborCostThreshold}% überschritten <span className="text-xs font-normal cursor-pointer underline" onClick={() => setPkDetailOpen(true)}>→ Details</span></span>}
@@ -2481,31 +2481,29 @@ const SchedulePlanner = () => {
               </div>
             </div>
             {/* Right: three key numbers */}
-            <div className="flex gap-5 flex-wrap sm:flex-nowrap">
+            <div className="flex gap-4 flex-wrap sm:flex-nowrap">
               <div className="text-center">
-                <p className="text-xl font-bold tabular-nums">
+                <p className="text-base font-bold tabular-nums leading-tight">
                   {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
                 </p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
+                <p className="text-[10px] text-muted-foreground leading-tight">
                   Personalkosten / {pkqPeriodName}
                 </p>
-                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
               </div>
               <div className="text-center">
-                <p className="text-xl font-bold tabular-nums">
+                <p className="text-base font-bold tabular-nums leading-tight">
                   {activeRevenue > 0
                     ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue)
-                    : <span className="text-muted-foreground text-base">{scheduleMode === 'ist' ? 'kein Ist-Umsatz' : 'kein Budget'}</span>}
+                    : <span className="text-muted-foreground text-sm">{scheduleMode === 'ist' ? 'kein Ist-Umsatz' : 'kein Budget'}</span>}
                 </p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
+                <p className="text-[10px] text-muted-foreground leading-tight">
                   {scheduleMode === 'ist' ? 'Ist-Umsatz' : 'Budget'} / {pkqPeriodName}
                 </p>
-                <p className="text-[10px] text-muted-foreground/70 mt-0">{pkqPeriodLabel}</p>
               </div>
               <div className="text-center">
-                <p className="text-xl font-bold tabular-nums">{effectiveLaborCostThreshold} %</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Zielwert{activeDepartment !== 'all' && <span className="block text-[10px] text-muted-foreground/70">(pro Abteilung)</span>}
+                <p className="text-base font-bold tabular-nums leading-tight">{effectiveLaborCostThreshold} %</p>
+                <p className="text-[10px] text-muted-foreground leading-tight">
+                  Zielwert{activeDepartment !== 'all' && <span className="block text-[10px] text-muted-foreground/70">(pro Abt.)</span>}
                 </p>
               </div>
             </div>
@@ -2513,16 +2511,18 @@ const SchedulePlanner = () => {
         </div>
 
         {/* Shift Legend */}
-        <ShiftLegend 
-          onEditClick={() => setShiftConfigDialogOpen(true)}
-          department={activeDepartment === 'all' ? 'all' : activeDepartment as 'service' | 'küche'}
-          activeTool={paintTool}
-          onToolSelect={setPaintTool}
-        />
+        <div className="shrink-0">
+          <ShiftLegend 
+            onEditClick={() => setShiftConfigDialogOpen(true)}
+            department={activeDepartment === 'all' ? 'all' : activeDepartment as 'service' | 'küche'}
+            activeTool={paintTool}
+            onToolSelect={setPaintTool}
+          />
+        </div>
 
         {/* Schedule Grid with Plan/Ist Tabs */}
-        <Card>
-          <CardHeader className="pb-3">
+        <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <CardHeader className="pb-2 shrink-0">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-4">
                 <CardTitle className="flex items-center gap-2">
@@ -2561,8 +2561,8 @@ const SchedulePlanner = () => {
               </div>
             </div>
           </CardHeader>
-          <CardContent>
-            <div ref={scheduleGridRef}>
+          <CardContent className="flex-1 min-h-0 overflow-hidden p-0">
+            <div ref={scheduleGridRef} className="h-full overflow-auto px-6 pb-4">
               {calendarView === 'day' && displayDays[0] ? (
                 // ── Mobile Tagesansicht ────────────────────────────────────
                 <MobileDayView

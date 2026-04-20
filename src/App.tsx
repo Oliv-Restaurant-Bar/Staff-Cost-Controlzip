@@ -98,14 +98,15 @@ const AppContent = () => {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-background">
+    <div className="flex flex-col h-screen overflow-hidden bg-background">
       <GuestBanner />
       <div className="flex flex-1 min-h-0">
         <AppNav />
 
         {/* Haupt-Inhaltsbereich */}
-        <div className="flex-1 min-w-0 pb-16 md:pb-0">
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col pb-16 md:pb-0">
           <TenantBanner />
+          <div className="flex-1 min-h-0 overflow-auto">
           <Routes>
             {/* Routen mit Rollenprüfung */}
             <Route path="/"
@@ -166,6 +167,7 @@ const AppContent = () => {
 
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </div>
         </div>
       </div>
     </div>
