@@ -181,7 +181,7 @@ const SchedulePlanner = () => {
   
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [employees, setEmployees] = useState<Employee[]>(
-    tenantId === 'beaulieu' ? defaultEmployeesBeaulieu : defaultEmployees
+    tenantId === 'beaulieu' ? [] : defaultEmployees
   );
   const [scheduleData, setScheduleData] = useState<{[key: string]: DaySchedule}>({});
   const [activeDepartment, setActiveDepartment] = useState<ViewMode>('service');
@@ -333,9 +333,21 @@ const SchedulePlanner = () => {
 
     try {
       // ── Mitarbeiter ──────────────────────────────────────────────────────────
+      if (tenantId === 'beaulieu') console.log('[BEAULIEU-TEST] employee load started for tenant: beaulieu');
       const supabaseEmployees = await loadEmployees(tenantId);
       if (fetchGenRef.current !== gen) { console.log('[ROUTE] gen=' + gen + ' superseded after employees – aborting'); return; }
+
+      // Beaulieu: wenn Supabase leer zurückgibt → leere Liste (keine Platzhalter!)
+      if (tenantId === 'beaulieu' && supabaseEmployees !== null && supabaseEmployees.length === 0) {
+        console.log('[BEAULIEU-TEST] employees loaded: 0 – keine echten Mitarbeitenden in Supabase. Importiere zuerst die Beaulieu-Mitarbeiterliste.');
+        setEmployees([]);
+      }
+
       if (supabaseEmployees && supabaseEmployees.length > 0) {
+        if (tenantId === 'beaulieu') {
+          console.log(`[BEAULIEU-TEST] employees loaded: ${supabaseEmployees.length}`);
+          supabaseEmployees.forEach(e => console.log(`[BEAULIEU-TEST] employee: "${e.name}" dept=${e.department} id=${e.id}`));
+        }
         // ID-Migration: wenn Supabase andere IDs zurückgibt als der lokale Fallback,
         // localStorage-Keys für actual-hours migrieren (verhindert Anzeige-Mismatch).
         const idMap = new Map<string, string>(); // oldId → newId
@@ -590,9 +602,15 @@ const SchedulePlanner = () => {
   // ── Mandantenwechsel: Mitarbeiter zurücksetzen ─────────────────────────────
   // Wenn der Mandant wechselt, sofort auf Default-Mitarbeiter zurückfallen,
   // damit kein Mitarbeiter des anderen Mandanten kurz sichtbar ist.
+  // Beaulieu: kein Placeholder-Fallback – echte Mitarbeitende kommen aus Supabase.
   useEffect(() => {
     console.log(`[TENANT] SchedulePlanner reset für ${tenantId}`);
-    setEmployees(tenantId === 'beaulieu' ? defaultEmployeesBeaulieu : defaultEmployees);
+    if (tenantId === 'beaulieu') {
+      console.log('[BEAULIEU-TEST] tenant active: beaulieu – clearing to empty until Supabase loads');
+      setEmployees([]);
+    } else {
+      setEmployees(defaultEmployees);
+    }
     setScheduleData({});
     setActualHoursData({});
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1122,6 +1140,7 @@ const SchedulePlanner = () => {
 
     const roleLabel = isAdmin ? 'admin' : isServiceManager ? 'service_manager' : 'kueche_manager';
     console.log(`[SCHEDULE-LAUNCH] handleSave – month=${monthKey} entries=${entryCount} role=${roleLabel} dept=${activeDepartment}`);
+    if (tenantId === 'beaulieu') console.log(`[BEAULIEU-TEST] schedule save started – month=${monthKey} entries=${entryCount} tenant=beaulieu`);
 
     if (entryCount === 0) {
       const confirmed = window.confirm(
@@ -1151,6 +1170,7 @@ const SchedulePlanner = () => {
       window.dispatchEvent(new CustomEvent('schedule-updated'));
       toast.success(`Dienstplan für ${format(currentMonth, 'MMMM yyyy', { locale: de })} gespeichert (${entryCount} Einträge)`);
       console.log(`[SCHEDULE-LAUNCH] handleSave success – ${entryCount} entries persisted to Supabase`);
+      if (tenantId === 'beaulieu') console.log(`[BEAULIEU-TEST] schedule save success – ${entryCount} entries, tenant=beaulieu isolated`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setSaveError(msg);
@@ -2562,6 +2582,23 @@ const SchedulePlanner = () => {
             </div>
           </CardHeader>
           <CardContent className="flex-1 min-h-0 overflow-hidden p-0">
+            {/* Beaulieu: Keine Mitarbeitenden importiert */}
+            {tenantId === 'beaulieu' && employees.length === 0 && !dataLoading && (
+              <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-8">
+                <div className="w-16 h-16 rounded-full bg-violet-100 dark:bg-violet-950/40 flex items-center justify-center">
+                  <Users className="h-8 w-8 text-violet-500" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-foreground mb-1">Keine Beaulieu-Mitarbeitenden gefunden</h3>
+                  <p className="text-sm text-muted-foreground max-w-sm">
+                    Die echten Beaulieu-Mitarbeitenden sind noch nicht in Supabase importiert. Bitte zuerst die Mitarbeiterliste importieren.
+                  </p>
+                </div>
+                <a href="/import-hub" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium transition-colors">
+                  Zum Import-Hub → Beaulieu Mitarbeiter
+                </a>
+              </div>
+            )}
             <div ref={scheduleGridRef} className="h-full overflow-auto px-6 pb-4">
               {calendarView === 'day' && displayDays[0] ? (
                 // ── Mobile Tagesansicht ────────────────────────────────────

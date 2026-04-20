@@ -254,6 +254,58 @@ export async function upsertAllEmployees(employees: Employee[], restaurantId: Te
   }
 }
 
+// ─── Beaulieu Mitarbeiter-Seed ───────────────────────────────────────────────
+
+/**
+ * Einmalige Seed-Funktion für die echten Beaulieu-Mitarbeitenden.
+ * Ruft upsert auf – keine Duplikate, bestehende Oliv-Daten bleiben unberührt.
+ *
+ * Mapping:
+ *   1 Küche       → department: 'küche'
+ *   3 Hilfsarbeiter → department: 'küche'
+ *   2 Service     → department: 'service'
+ *   Marcel Krebs (4 Geschäftsleitung) → department: 'service'
+ *
+ * Aufruf: await seedBeaulieuEmployees(realEmployeeList)
+ */
+export async function seedBeaulieuEmployees(
+  employees: Pick<Employee, 'id' | 'name' | 'department' | 'employmentType' | 'hourlyWage' | 'weeklyHours' | 'monthlySalary' | 'monthlySalaryWith13th'>[]
+): Promise<{ success: boolean; count: number; errors: string[] }> {
+  console.log('[BEAULIEU] employee import started');
+  console.log(`[BEAULIEU] restaurant_id set: beaulieu`);
+
+  const errors: string[] = [];
+  let count = 0;
+
+  for (const emp of employees) {
+    const dept = emp.department === 'küche' ? 'kueche' : 'service';
+    console.log(`[BEAULIEU] department mapped: "${emp.name}" → ${dept}`);
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await (supabase as any)
+        .from('employees')
+        .upsert(
+          { ...employeeToDb(emp as Employee), restaurant_id: 'beaulieu' },
+          { onConflict: 'id' }
+        );
+      if (error) {
+        console.error(`[BEAULIEU] failed to upsert "${emp.name}":`, error);
+        errors.push(`${emp.name}: ${error.message}`);
+      } else {
+        console.log(`[BEAULIEU] employee inserted: "${emp.name}" dept=${dept} id=${emp.id}`);
+        count++;
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`${emp.name}: ${msg}`);
+    }
+  }
+
+  console.log(`[BEAULIEU] total employees imported: ${count} / ${employees.length}`);
+  return { success: errors.length === 0, count, errors };
+}
+
 // ─── Dienstplan (schedule_entries) ───────────────────────────────────────────
 
 export async function loadScheduleForMonth(month: Date): Promise<Record<string, DaySchedule> | null> {

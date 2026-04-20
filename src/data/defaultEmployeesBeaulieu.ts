@@ -1,15 +1,17 @@
 /**
- * Default-Mitarbeiter für Mandant Beaulieu
- * ==========================================
- * Wird als Fallback genutzt, wenn keine Mitarbeiter in Supabase vorhanden sind.
- * IDs haben das Präfix "b-" um Kollisionen mit Oliv-IDs (1-24) zu vermeiden.
+ * DEAKTIVIERT — Platzhalter-Mitarbeiter für Mandant Beaulieu
+ * ===========================================================
+ * NICHT MEHR AKTIV VERWENDET. Echte Beaulieu-Mitarbeitende werden
+ * ausschliesslich aus Supabase (employees WHERE restaurant_id = 'beaulieu')
+ * geladen. Diese Datei bleibt nur als Referenz für die ID-Struktur erhalten.
  *
- * HINWEIS: Diese Liste kann über den Import-Hub durch eine Excel-Datei
- * ersetzt werden (Abteilung + Stundenlohn werden dann aus Supabase geladen).
+ * Import-Weg: Import-Hub → "Beaulieu Mitarbeiter" oder seedBeaulieuEmployees()
+ * in src/lib/supabase-db.ts aufrufen mit der echten Mitarbeiterliste.
  */
 
 import { Employee } from '@/types/personnel';
 
+/** @deprecated Nicht mehr verwenden — nur noch Supabase-Daten sind gültig */
 export const defaultEmployeesBeaulieu: Employee[] = [
   // === SERVICE ===
   {

@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { useTenant } from '@/contexts/TenantContext';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -51,6 +52,7 @@ interface ScheduleImportProps {
 }
 
 export const ScheduleImport = ({ onMirusDailyImport, onScheduleImport, onRevenueImport, employees = [] }: ScheduleImportProps) => {
+  const { tenantId } = useTenant();
   const [isOpen, setIsOpen] = useState(false);
   const [revenueType, setRevenueType] = useState<'planned' | 'actual' | 'previousYear'>('actual');
   const [activeTab, setActiveTab] = useState<'schedule-excel' | 'mirus-daily' | 'revenue'>('schedule-excel');
@@ -233,6 +235,10 @@ export const ScheduleImport = ({ onMirusDailyImport, onScheduleImport, onRevenue
     const file = event.target.files?.[0];
     if (!file) return;
     setIsProcessing(true);
+    if (tenantId === 'beaulieu') {
+      console.log('[BEAULIEU-TEST] mirus import target: beaulieu');
+      console.log(`[BEAULIEU-TEST] mirus import – file: ${file.name}, employees available: ${employees.length}`);
+    }
     try {
       const result = await parseMirusDailyExcel(file);
       setParsedDailyEntries(result.entries);
@@ -240,6 +246,11 @@ export const ScheduleImport = ({ onMirusDailyImport, onScheduleImport, onRevenue
       if (result.entries.length === 0) {
         toast.error('Keine Ist-Stunden gefunden');
       } else {
+        if (tenantId === 'beaulieu') {
+          console.log(`[BEAULIEU-TEST] mirus import – ${result.entries.length} entries parsed`);
+          const uniqueNames = [...new Set(result.entries.map(e => e.employeeName))];
+          uniqueNames.forEach(name => console.log(`[BEAULIEU-TEST] mirus name to match: "${name}"`));
+        }
         // Generate name matches and show dialog
         const matches = generateMirusNameMatches(result.entries);
         setNameMatches(matches);

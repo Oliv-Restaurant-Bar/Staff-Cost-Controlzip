@@ -1320,11 +1320,22 @@ export default function PersonalFixPage() {
   const [expandedFixDepts, setExpandedFixDepts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    loadEmployees().then(emps => {
-      if (emps) setEmployees(emps);
+    setLoading(true);
+    if (tenantId === 'beaulieu') console.log('[BEAULIEU-TEST] personal fix loaded – tenant: beaulieu');
+    loadEmployees(tenantId).then(emps => {
+      if (emps) {
+        setEmployees(emps);
+        if (tenantId === 'beaulieu') {
+          console.log(`[BEAULIEU-TEST] personal fix employees loaded: ${emps.length}`);
+          emps.forEach(e => console.log(`[BEAULIEU-TEST] personal fix employee: "${e.name}" dept=${e.department}`));
+        }
+      } else {
+        setEmployees([]);
+      }
       setLoading(false);
     });
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   // Tagesumsätze bei Monatswechsel neu laden
   useEffect(() => {
