@@ -10,7 +10,7 @@ Zwei Mandanten: **Oliv** (Standard, alle bestehenden Daten) und **Beaulieu** (ne
 - `src/contexts/TenantContext.tsx` — TenantProvider + `useTenant()` Hook; Auswahl persistent in localStorage (`active_tenant`)
 - `src/components/TenantSwitcher.tsx` — Compact-Switcher in der Sidebar (über Rollen/Abmelden-Bereich)
 - `src/lib/tenant-utils.ts` — `tenantKey()` Helper + `tlsGet/tlsSet/tkvGet/tkvSet` Wrapper
-- `src/data/defaultEmployeesBeaulieu.ts` — Default-Mitarbeiter für Beaulieu (12 Platzhalter, IDs `b-*`)
+- `src/data/defaultEmployeesBeaulieu.ts` — **Echte** 10 Beaulieu-Mitarbeitende aus Mirus-Datei (IDs `b-1`–`b-10`; Lohn = 0, nachpflegen im Personalstamm)
 
 ### Datentrennung
 | Datenspeicher | Oliv | Beaulieu |
@@ -20,10 +20,12 @@ Zwei Mandanten: **Oliv** (Standard, alle bestehenden Daten) und **Beaulieu** (ne
 | Supabase `employees` | `restaurant_id = 'oliv'` | `restaurant_id = 'beaulieu'` |
 | `schedule_entries` / `actual_hours` | implizit via Employee-IDs | implizit via `b-*` Employee-IDs |
 
-### DB-Migration
-- `migrations/20260420_multi_tenant.sql` — fügt `restaurant_id TEXT DEFAULT 'oliv'` zu `employees` hinzu
-- **Muss einmalig im Supabase SQL Editor ausgeführt werden!**
-- Bis zur Migration: graceful Fallback (lädt alle Mitarbeiter ohne Tenant-Filter)
+### DB-Migration & Seed
+1. `migrations/20260420_multi_tenant.sql` — fügt `restaurant_id TEXT DEFAULT 'oliv'` zu `employees` hinzu
+   - **Einmalig im Supabase SQL Editor ausführen**; graceful Fallback bis dahin
+2. `migrations/seed_beaulieu_employees.sql` — Upsert der 10 echten Beaulieu-Mitarbeitenden
+   - Alternativ: Import-Hub → Beaulieu Mitarbeiter → **„In Supabase importieren"** klicken (ein Knopfdruck, kein SQL nötig)
+   - Lohn/Gehalt ist überall auf 0 gesetzt → im Personalstamm nachpflegen
 
 ### Geänderte Dateien
 - `src/lib/supabase-db.ts` — `loadEmployees(restaurantId?)`, `upsertEmployee(emp, restaurantId)`, `upsertAllEmployees(employees, restaurantId)`

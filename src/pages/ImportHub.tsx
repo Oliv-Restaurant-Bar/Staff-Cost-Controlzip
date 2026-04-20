@@ -18,7 +18,8 @@ import { GastronoviImportSection } from '@/components/GastronoviImportSection';
 import { VjDailyImportSection } from '@/components/VjDailyImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
-import { loadEmployees, saveActualHourEntry, upsertEmployee } from '@/lib/supabase-db';
+import { loadEmployees, saveActualHourEntry, upsertEmployee, seedBeaulieuEmployees } from '@/lib/supabase-db';
+import { defaultEmployeesBeaulieu } from '@/data/defaultEmployeesBeaulieu';
 import { Employee, MirusDailyImportEntry, MirusImportMode, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { importEmployeesFromExcel, downloadEmployeeTemplate } from '@/lib/employee-excel-export-import';
@@ -830,83 +831,161 @@ const IstStundenSection = () => {
 
 // ─── Beaulieu Mitarbeiter-Import ─────────────────────────────────────────────
 
+const BEAULIEU_REAL_EMPLOYEES = defaultEmployeesBeaulieu;
+
 const BeaulieuMitarbeiterSection = () => {
-  const { tenantKey } = useTenant();
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ count: number; names: string[] } | null>(null);
+  const [seeding, setSeeding] = useState(false);
+  const [seedResult, setSeedResult] = useState<{ count: number; errors: string[] } | null>(null);
+  const [supabaseCount, setSupabaseCount] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = async (file: File) => {
-    setLoading(true);
-    setResult(null);
+  // Aktuellen Supabase-Stand laden
+  useEffect(() => {
+    loadEmployees('beaulieu').then(emps => {
+      if (emps !== null) setSupabaseCount(emps.length);
+    });
+  }, [seedResult]);
+
+  // ── Seed: echte Liste direkt in Supabase schreiben ─────────────────────────
+  const handleSeedSupabase = async () => {
+    setSeeding(true);
+    setSeedResult(null);
     try {
-      const existing: Employee[] = (() => {
-        try { return JSON.parse(localStorage.getItem(tenantKey('schedule-employees')) || '[]'); }
-        catch { return []; }
-      })();
-      const res = await importEmployeesFromExcel(file, existing);
-      if (res.errors.length > 0 && res.employees.length === 0) {
-        toast.error(res.errors[0] || 'Import fehlgeschlagen');
-        return;
+      const result = await seedBeaulieuEmployees(BEAULIEU_REAL_EMPLOYEES);
+      setSeedResult({ count: result.count, errors: result.errors });
+      if (result.success) {
+        toast.success(`${result.count} Beaulieu-Mitarbeitende in Supabase gespeichert`);
+      } else {
+        toast.error(`${result.errors.length} Fehler beim Import – Details im Log`);
       }
-      // Assign b-* IDs for Beaulieu (preserve existing IDs where possible)
-      const existingIds = new Set(existing.map(e => e.id));
-      let counter = existing.filter(e => String(e.id).startsWith('b-')).length + 1;
-      const merged: Employee[] = res.employees.map(emp => {
-        if (existingIds.has(emp.id)) return emp;
-        if (String(emp.id).startsWith('b-')) return emp;
-        const newId = `b-${counter++}`;
-        return { ...emp, id: newId };
-      });
-      localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(merged));
-      setResult({ count: merged.length, names: merged.slice(0, 5).map(e => e.name) });
-      toast.success(`${merged.length} Mitarbeiter für Beaulieu importiert`);
     } catch (e) {
-      console.error(e);
-      toast.error('Fehler beim Import – bitte Dateiformat prüfen');
+      console.error('[BEAULIEU] seed exception:', e);
+      toast.error('Unerwarteter Fehler beim Import');
     } finally {
-      setLoading(false);
+      setSeeding(false);
     }
   };
 
+  const küche = BEAULIEU_REAL_EMPLOYEES.filter(e => e.department === 'küche');
+  const service = BEAULIEU_REAL_EMPLOYEES.filter(e => e.department === 'service');
+  const alreadyImported = supabaseCount !== null && supabaseCount >= BEAULIEU_REAL_EMPLOYEES.length;
+
   return (
-    <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
-        Importiere die echte Beaulieu-Mitarbeiterliste aus Excel (.xlsx).
-        Spalten: <strong>Name</strong>, Abteilung, Anstellungsverhältnis, Wochenstunden, Stundenlohn.
-      </p>
-      <div className="rounded border border-violet-200 bg-violet-50/50 dark:bg-violet-950/10 p-3 text-xs space-y-1">
-        <p className="font-medium text-violet-800 dark:text-violet-300">Beaulieu-IDs:</p>
-        <p className="text-muted-foreground">Neue Mitarbeiter erhalten automatisch IDs mit Präfix <code>b-</code> (z.B. b-1, b-2, …)</p>
-        <p className="text-muted-foreground">Bestehende Mitarbeiter werden per Name abgeglichen und aktualisiert.</p>
+    <div className="space-y-4">
+
+      {/* Status: was ist aktuell in Supabase */}
+      <div className={`rounded-lg border p-3 text-xs space-y-1 ${
+        alreadyImported
+          ? 'border-green-200 bg-green-50 dark:bg-green-950/20'
+          : 'border-amber-200 bg-amber-50 dark:bg-amber-950/20'
+      }`}>
+        <p className={`font-semibold ${alreadyImported ? 'text-green-800 dark:text-green-300' : 'text-amber-800 dark:text-amber-300'}`}>
+          {supabaseCount === null
+            ? '⏳ Supabase-Stand wird geladen…'
+            : alreadyImported
+              ? `✓ ${supabaseCount} Mitarbeitende bereits in Supabase (restaurant_id = 'beaulieu')`
+              : `⚠ Aktuell ${supabaseCount} Mitarbeitende in Supabase – ${BEAULIEU_REAL_EMPLOYEES.length} erwartet`}
+        </p>
+        {!alreadyImported && supabaseCount !== null && (
+          <p className="text-muted-foreground">Bitte unten „In Supabase importieren" klicken.</p>
+        )}
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" className="h-8 text-xs gap-1.5" variant="outline"
-          onClick={() => downloadEmployeeTemplate()}>
-          <FileDown className="h-3.5 w-3.5" />
-          Excel-Vorlage herunterladen
-        </Button>
-        <Button size="sm" className="h-8 text-xs gap-1.5"
-          onClick={() => fileRef.current?.click()} disabled={loading}>
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
-          Mitarbeiterliste importieren
-        </Button>
-        <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
-          onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+
+      {/* Vorschau der echten Mitarbeitenden */}
+      <div className="rounded border border-violet-200 bg-violet-50/30 dark:bg-violet-950/10 p-3 text-xs space-y-2">
+        <p className="font-medium text-violet-800 dark:text-violet-300">
+          {BEAULIEU_REAL_EMPLOYEES.length} echte Beaulieu-Mitarbeitende (Quelle: Mirus)
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <p className="font-medium text-muted-foreground mb-1">Küche ({küche.length})</p>
+            {küche.map(e => <p key={e.id} className="text-muted-foreground truncate">{e.name}</p>)}
+          </div>
+          <div>
+            <p className="font-medium text-muted-foreground mb-1">Service ({service.length})</p>
+            {service.map(e => <p key={e.id} className="text-muted-foreground truncate">{e.name}</p>)}
+          </div>
+        </div>
+        <p className="text-[10px] text-muted-foreground/70 pt-1">
+          IDs: b-1 bis b-{BEAULIEU_REAL_EMPLOYEES.length} • restaurant_id = 'beaulieu' • Lohn nachpflegen im Personalstamm
+        </p>
       </div>
-      {result && (
-        <div className="rounded-md border border-green-200 bg-green-50 dark:bg-green-950/20 p-3 text-xs space-y-1">
-          <p className="font-semibold text-green-800 dark:text-green-300">
-            ✓ {result.count} Mitarbeiter gespeichert
-          </p>
-          <p className="text-muted-foreground">
-            {result.names.join(', ')}{result.count > 5 ? ` … +${result.count - 5} weitere` : ''}
-          </p>
-          <p className="text-muted-foreground mt-1">
-            Bitte jetzt zum <Link to="/personal-stamm" className="underline text-green-700">Personalstamm</Link> wechseln, um Stammdaten zu prüfen und zu ergänzen.
-          </p>
+
+      {/* Haupt-Aktion: in Supabase importieren */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <Button
+          size="sm"
+          className="h-8 text-xs gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
+          onClick={handleSeedSupabase}
+          disabled={seeding}
+        >
+          {seeding
+            ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Importiere…</>
+            : <><Users className="h-3.5 w-3.5" />In Supabase importieren ({BEAULIEU_REAL_EMPLOYEES.length} Mitarbeitende)</>}
+        </Button>
+        {alreadyImported && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs gap-1.5"
+            onClick={handleSeedSupabase}
+            disabled={seeding}
+          >
+            Erneut synchronisieren (Upsert)
+          </Button>
+        )}
+      </div>
+
+      {/* Ergebnis */}
+      {seedResult && (
+        <div className={`rounded-md border p-3 text-xs space-y-1 ${
+          seedResult.errors.length === 0
+            ? 'border-green-200 bg-green-50 dark:bg-green-950/20'
+            : 'border-red-200 bg-red-50 dark:bg-red-950/20'
+        }`}>
+          {seedResult.errors.length === 0 ? (
+            <>
+              <p className="font-semibold text-green-800 dark:text-green-300">
+                ✓ {seedResult.count} Mitarbeitende erfolgreich in Supabase gespeichert
+              </p>
+              <p className="text-muted-foreground">
+                Mandant: beaulieu • Upsert (keine Duplikate) • Oliv unberührt
+              </p>
+              <p className="text-muted-foreground mt-1">
+                Bitte zum <Link to="/personal-stamm" className="underline text-green-700">Personalstamm</Link> wechseln um Löhne/Stammdaten zu ergänzen.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="font-semibold text-red-800 dark:text-red-300">
+                {seedResult.count} importiert, {seedResult.errors.length} Fehler
+              </p>
+              {seedResult.errors.map((err, i) => (
+                <p key={i} className="text-red-600">{err}</p>
+              ))}
+            </>
+          )}
         </div>
       )}
+
+      {/* Trennlinie + Excel-Alternativ-Import */}
+      <div className="border-t pt-3">
+        <p className="text-[11px] text-muted-foreground mb-2 font-medium">Alternative: Excel-Datei hochladen</p>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5"
+            onClick={() => downloadEmployeeTemplate()}>
+            <FileDown className="h-3.5 w-3.5" />
+            Excel-Vorlage
+          </Button>
+          <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5"
+            onClick={() => fileRef.current?.click()}>
+            <Users className="h-3.5 w-3.5" />
+            Excel hochladen
+          </Button>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
+            onChange={e => { e.target.value = ''; }} />
+        </div>
+      </div>
     </div>
   );
 };
