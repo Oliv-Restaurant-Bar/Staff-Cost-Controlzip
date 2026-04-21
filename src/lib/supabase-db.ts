@@ -156,6 +156,18 @@ export async function loadEmployees(restaurantId?: TenantId): Promise<Employee[]
     const result = (data ?? []).map(dbToEmployee);
     if (restaurantId) {
       console.log(`[TENANT] employees count for ${restaurantId}: ${result.length}`);
+      if (restaurantId === 'beaulieu') {
+        // [CHECK] Beaulieu data validation
+        const dupIds = result.filter((e, i) => result.findIndex(x => x.id === e.id) !== i);
+        const wrongTenant = result.filter(e => !String(e.id).startsWith('b-'));
+        const küche  = result.filter(e => e.department === 'küche');
+        const service = result.filter(e => e.department === 'service');
+        console.log(`[CHECK] beaulieu employees count: ${result.length}`);
+        console.log(`[CHECK] duplicate entries: ${dupIds.length === 0 ? 'none (OK)' : dupIds.map(e => e.id).join(', ')}`);
+        console.log(`[CHECK] restaurant_id validation: ${wrongTenant.length === 0 ? 'OK – alle IDs starten mit b-' : 'ERROR – unerwartete IDs: ' + wrongTenant.map(e => e.id).join(', ')}`);
+        console.log(`[CHECK] departments: Küche=${küche.length}, Service=${service.length}`);
+        result.forEach(e => console.log(`[CHECK] employee: id=${e.id} name="${e.name}" dept=${e.department}`));
+      }
     }
     return result;
   } catch (e) {
@@ -306,6 +318,45 @@ export async function seedBeaulieuEmployees(
   return { success: errors.length === 0, count, errors };
 }
 
+/**
+ * Mirus-Matching Selbsttest für Beaulieu-Mitarbeitende.
+ * Prüft, ob alle 10 echten Namen aus Mirus korrekt gematcht werden.
+ * Aufruf: runBeaulieuMatchTest(employees) im Browser-Konsolen-Log sichtbar.
+ */
+export function runBeaulieuMatchTest(employees: Employee[]): void {
+  // Namen wie sie im Mirus-Export typischerweise erscheinen
+  const mirusTestNames = [
+    'Barrera Hinestroza Jonathan Filipe',
+    'Elmazi Fatmire',
+    'Hadzija Hatidze',
+    'Horvath Robert Stefan',
+    'Ramadani Naip',
+    'Santana Cristo Barreto',
+    'Burkhalter Nadica',
+    'Filipovic Maja',
+    'Syvrydovych Varvara',
+    'Krebs Marcel',
+    'Marcel Krebs',  // Test: umgekehrte Reihenfolge
+  ];
+
+  // Lazy import to avoid circular deps
+  import('@/lib/mirus-name-mapping-store').then(({ matchEmployeeByName }) => {
+    console.log('[MATCH TEST] === Beaulieu Mirus-Name-Matching Selbsttest ===');
+    let ok = 0; let fail = 0;
+    for (const name of mirusTestNames) {
+      const res = matchEmployeeByName(name, employees, false);
+      const success = res.employee !== null;
+      if (success) ok++;
+      else fail++;
+      console.log(
+        `[MATCH TEST] import name: "${name}" → resolved: ${res.employee ? `"${res.employee.name}" (${res.matchStep})` : 'NOT FOUND'} | success: ${success ? 'yes' : 'NO'}`
+      );
+    }
+    console.log(`[MATCH TEST] Ergebnis: ${ok}/${mirusTestNames.length} erfolgreich, ${fail} nicht gefunden`);
+    console.log(`[MATCH TEST] ${fail === 0 ? 'OK – alle Namen matchen' : 'WARN – einige Namen fehlen (manuelles Mapping nötig)'}`);
+  });
+}
+
 // ─── Dienstplan (schedule_entries) ───────────────────────────────────────────
 
 export async function loadScheduleForMonth(month: Date): Promise<Record<string, DaySchedule> | null> {
@@ -322,6 +373,10 @@ export async function loadScheduleForMonth(month: Date): Promise<Record<string, 
     if (error) { console.error('[supabase-db] loadScheduleForMonth:', error); return null; }
 
     const result: Record<string, DaySchedule> = {};
+    const beaulieuEntries = (data ?? []).filter(r => String(r.employee_id).startsWith('b-'));
+    const olivEntries     = (data ?? []).filter(r => !String(r.employee_id).startsWith('b-'));
+    console.log(`[CHECK] schedule load: total=${(data ?? []).length} (beaulieu-entries=${beaulieuEntries.length}, oliv-entries=${olivEntries.length})`);
+
     for (const row of data ?? []) {
       const key = `${row.employee_id}-${row.date}`;
       result[key] = {

@@ -1,0 +1,118 @@
+Bitte nach dem Beaulieu-Mitarbeiter-Import jetzt einen vollständigen Funktions- und Stabilitätscheck durchführen.
+
+Ziel:
+Sicherstellen, dass die Beaulieu-Mitarbeitenden korrekt in Supabase gespeichert sind und in der gesamten App sauber funktionieren, ohne Vermischung mit Oliv.
+
+Bitte exakt so prüfen:
+
+==================================================
+1. Supabase Datenprüfung
+==================================================
+
+Bitte direkt prüfen:
+- employees Tabelle enthält Beaulieu-Mitarbeitende
+- restaurant_id = 'beaulieu' ist korrekt gesetzt
+- keine Duplikate vorhanden
+- keine Oliv-Mitarbeitenden unter Beaulieu gespeichert
+
+Logs:
+[CHECK] beaulieu employees count: ...
+[CHECK] duplicate entries: ...
+[CHECK] restaurant_id validation: OK/ERROR
+
+==================================================
+2. Webapp Anzeige prüfen
+==================================================
+
+Im Mandanten "Beaulieu":
+
+- Mitarbeiter erscheinen vollständig
+- nur diese Mitarbeitenden sichtbar
+- keine Oliv-Namen sichtbar
+
+Im Mandanten "Oliv":
+- weiterhin nur Oliv-Mitarbeitende sichtbar
+
+Logs:
+[CHECK] ui employees beaulieu: ...
+[CHECK] ui employees oliv: ...
+
+==================================================
+3. Dienstplanung prüfen
+==================================================
+
+Im Beaulieu Dienstplan:
+
+- Mitarbeitende erscheinen korrekt
+- Zellen können bearbeitet werden
+- Speichern funktioniert
+- Reload zeigt dieselben Daten
+
+Logs:
+[CHECK] schedule load beaulieu: OK
+[CHECK] schedule save beaulieu: OK
+[CHECK] schedule reload match: OK
+
+==================================================
+4. Personal FIX prüfen
+==================================================
+
+- Beaulieu Mitarbeitende werden geladen
+- nur Küche / Service vorhanden
+- keine Oliv-Daten sichtbar
+
+Logs:
+[CHECK] personal fix employees: ...
+[CHECK] departments valid: OK
+
+==================================================
+5. Ist-Stunden (Mirus Matching) vorbereiten
+==================================================
+
+- Matching gegen Beaulieu Namen testen
+- insbesondere prüfen:
+  - Elmazi Fatmire
+  - Ramadani Naip
+  - Marcel Krebs
+  - alle Service-Mitarbeitenden
+
+Logs:
+[MATCH TEST] import name: ...
+[MATCH TEST] resolved employee: ...
+[MATCH TEST] success: yes/no
+
+==================================================
+6. Tenant-Trennung final prüfen
+==================================================
+
+Bitte sicherstellen:
+
+- Oliv Änderungen beeinflussen Beaulieu nicht
+- Beaulieu Änderungen beeinflussen Oliv nicht
+- gleiche Module, aber getrennte Daten
+
+Logs:
+[CHECK] tenant isolation: OK
+
+==================================================
+7. Fehlerfälle testen
+==================================================
+
+- Reload während Bearbeitung
+- Monatswechsel
+- Wechsel zwischen Oliv ↔ Beaulieu
+- gleichzeitige Nutzung simulieren
+
+Logs:
+[CHECK] edge cases passed: OK/ERROR
+
+==================================================
+8. Bitte danach kurz sagen:
+==================================================
+
+- wie viele Beaulieu-Mitarbeitende final vorhanden sind
+- ob Supabase korrekt befüllt ist
+- ob Dienstplanung stabil läuft
+- ob Personal FIX korrekt funktioniert
+- ob Mirus Matching bereit ist
+- ob die Tenant-Trennung vollständig sicher ist

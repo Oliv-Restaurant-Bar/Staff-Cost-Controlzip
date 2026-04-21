@@ -43,7 +43,25 @@ Zwei Mandanten: **Oliv** (Standard, alle bestehenden Daten) und **Beaulieu** (ne
 - `src/pages/PersonalFix.tsx` — VOLLSTÄNDIG tenant-aware: alle Modul-Level-Funktionen (`loadDailyPlanDetails`, `loadDailyIstDetails`, `loadFerienPlanDayDetails`, `loadFerienIstDayDetails`, `loadVar*`, `saveVar*` etc.) mit `keyFn`; Sub-Komponenten `FlexPeriodPopup` + `FlexBreakdownModal` nutzen `useTenant()` direkt; alle Call-Sites mit `tenantKey` aktualisiert
 - `src/pages/Settings.tsx` — `WEEKDAY_PERCENTAGES_KEY` + `LABOR_COST_THRESHOLD_KEY` tenant-spezifisch; Reload-Effekt bei Mandantenwechsel; PASSWORD/GLOBAL-Keys bleiben app-weit
 
-### Debug-Logs: `[TENANT]`
+### Debug-Logs: `[TENANT]` / `[CHECK]`
+
+Beim Laden von Beaulieu werden folgende Browser-Konsolen-Logs ausgegeben:
+
+| Präfix | Quelle | Inhalt |
+|---|---|---|
+| `[TENANT]` | `supabase-db.ts` | Anzahl geladener Mitarbeiter (mit/ohne Fallback) |
+| `[CHECK]` | `supabase-db.ts` / `SchedulePlanner` / `PersonalFix` | Doppelte IDs, Tenant-Leak-Prüfung, Department-Zählung, vollständige Mitarbeiterliste |
+| `[MATCH TEST]` | `supabase-db.ts` / `mirus-name-mapping-store.ts` | Mirus-Name-Matching-Selbsttest: alle 10 echten Namen vs. geladene Employees |
+
+`runBeaulieuMatchTest(employees)` wird automatisch nach dem Laden der Beaulieu-Mitarbeitenden im SchedulePlanner ausgeführt.
+
+### Tenant-Isolation `schedule_entries`
+
+`loadScheduleForMonth` filtert **nicht** nach `restaurant_id` — dies ist **by design** sicher:
+- Beaulieu-Einträge haben `employee_id` mit Präfix `b-*`
+- Oliv-Einträge haben Integer-IDs
+- Das UI rendert nur Zeilen für die aktuellen Employees → kein gegenseitiger Datenzugriff
+- Der `[CHECK] schedule load`-Log zeigt die Aufteilung bei jedem Monatsladen
 
 ## Tech Stack
 - React + TypeScript + Vite

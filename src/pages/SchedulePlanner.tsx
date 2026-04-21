@@ -14,6 +14,7 @@ import {
   loadActualHoursForMonth,
   saveActualHourEntry,
   seedBeaulieuEmployees,
+  runBeaulieuMatchTest,
 } from '@/lib/supabase-db';
 import { supabase } from '@/integrations/supabase/client';
 import { saveMonthAbsences, loadMonthAbsences } from '@/lib/supabase-kv';
@@ -367,8 +368,18 @@ const SchedulePlanner = () => {
 
       if (supabaseEmployees && supabaseEmployees.length > 0) {
         if (tenantId === 'beaulieu') {
-          console.log(`[BEAULIEU-TEST] employees loaded: ${supabaseEmployees.length}`);
-          supabaseEmployees.forEach(e => console.log(`[BEAULIEU-TEST] employee: "${e.name}" dept=${e.department} id=${e.id}`));
+          const bKüche   = supabaseEmployees.filter(e => e.department === 'küche');
+          const bService = supabaseEmployees.filter(e => e.department === 'service');
+          const olivLeak = supabaseEmployees.filter(e => !String(e.id).startsWith('b-'));
+          console.log(`[CHECK] ui employees beaulieu: ${supabaseEmployees.length} (Küche=${bKüche.length}, Service=${bService.length})`);
+          console.log(`[CHECK] tenant isolation: ${olivLeak.length === 0 ? 'OK – keine Oliv-Daten sichtbar' : 'ERROR – Oliv-Leak: ' + olivLeak.map(e => e.name).join(', ')}`);
+          console.log(`[CHECK] departments valid: ${bKüche.length > 0 && bService.length > 0 ? 'OK' : 'WARN – eine Abteilung leer'}`);
+          // Mirus-Name-Matching-Selbsttest
+          runBeaulieuMatchTest(supabaseEmployees);
+        } else {
+          const beaulieuLeak = supabaseEmployees.filter(e => String(e.id).startsWith('b-'));
+          console.log(`[CHECK] ui employees oliv: ${supabaseEmployees.length}`);
+          console.log(`[CHECK] tenant isolation: ${beaulieuLeak.length === 0 ? 'OK – keine Beaulieu-Daten bei Oliv' : 'ERROR – Beaulieu-Leak: ' + beaulieuLeak.map(e => e.name).join(', ')}`);
         }
         // ID-Migration: wenn Supabase andere IDs zurückgibt als der lokale Fallback,
         // localStorage-Keys für actual-hours migrieren (verhindert Anzeige-Mismatch).

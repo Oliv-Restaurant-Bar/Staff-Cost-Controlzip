@@ -1321,13 +1321,21 @@ export default function PersonalFixPage() {
 
   useEffect(() => {
     setLoading(true);
-    if (tenantId === 'beaulieu') console.log('[BEAULIEU-TEST] personal fix loaded – tenant: beaulieu');
     loadEmployees(tenantId).then(emps => {
       if (emps) {
         setEmployees(emps);
         if (tenantId === 'beaulieu') {
-          console.log(`[BEAULIEU-TEST] personal fix employees loaded: ${emps.length}`);
-          emps.forEach(e => console.log(`[BEAULIEU-TEST] personal fix employee: "${e.name}" dept=${e.department}`));
+          const küche   = emps.filter(e => e.department === 'küche');
+          const service = emps.filter(e => e.department === 'service');
+          const others  = emps.filter(e => e.department !== 'küche' && e.department !== 'service');
+          const olivLeak = emps.filter(e => !String(e.id).startsWith('b-'));
+          console.log(`[CHECK] personal fix employees: ${emps.length} (Küche=${küche.length}, Service=${service.length})`);
+          console.log(`[CHECK] departments valid: ${others.length === 0 ? 'OK – nur Küche/Service' : 'WARN – weitere Abteilung: ' + others.map(e => e.department).join(', ')}`);
+          console.log(`[CHECK] tenant isolation: ${olivLeak.length === 0 ? 'OK – keine Oliv-Daten' : 'ERROR – Oliv-Leak: ' + olivLeak.map(e => e.name).join(', ')}`);
+        } else {
+          const beaulieuLeak = emps.filter(e => String(e.id).startsWith('b-'));
+          console.log(`[CHECK] personal fix employees oliv: ${emps.length}`);
+          if (beaulieuLeak.length > 0) console.warn('[CHECK] personal fix tenant isolation: ERROR – Beaulieu-Leak:', beaulieuLeak.map(e => e.name));
         }
       } else {
         setEmployees([]);
