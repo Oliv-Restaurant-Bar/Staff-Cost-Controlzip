@@ -13,6 +13,7 @@ import {
   saveFullScheduleForMonth,
   loadActualHoursForMonth,
   saveActualHourEntry,
+  seedBeaulieuEmployees,
 } from '@/lib/supabase-db';
 import { supabase } from '@/integrations/supabase/client';
 import { saveMonthAbsences, loadMonthAbsences } from '@/lib/supabase-kv';
@@ -167,6 +168,7 @@ const SchedulePlanner = () => {
   // newer call has already started.  If so, the older call's results are
   // discarded — avoiding stale-empty overwrites of good data.
   const fetchGenRef = useRef(0);
+  const hasAutoSeededBeaulieu = useRef(false);
   const {
     isAdmin,
     isServiceManager,
@@ -337,9 +339,29 @@ const SchedulePlanner = () => {
       const supabaseEmployees = await loadEmployees(tenantId);
       if (fetchGenRef.current !== gen) { console.log('[ROUTE] gen=' + gen + ' superseded after employees – aborting'); return; }
 
-      // Beaulieu: wenn Supabase leer zurückgibt → leere Liste (keine Platzhalter!)
+      // Beaulieu: wenn Supabase leer → automatisch seeden (einmalig pro Session)
       if (tenantId === 'beaulieu' && supabaseEmployees !== null && supabaseEmployees.length === 0) {
-        console.log('[BEAULIEU-TEST] employees loaded: 0 – keine echten Mitarbeitenden in Supabase. Importiere zuerst die Beaulieu-Mitarbeiterliste.');
+        if (!hasAutoSeededBeaulieu.current) {
+          hasAutoSeededBeaulieu.current = true;
+          console.log('[BEAULIEU] import started – auto-seeding 10 Mitarbeitende aus defaultEmployeesBeaulieu');
+          console.log('[BEAULIEU] restaurant_id: beaulieu');
+          const seedResult = await seedBeaulieuEmployees(defaultEmployeesBeaulieu);
+          console.log(`[BEAULIEU] total imported: ${seedResult.count} / ${defaultEmployeesBeaulieu.length}`);
+          if (seedResult.errors.length > 0) {
+            seedResult.errors.forEach(e => console.warn('[BEAULIEU] seed error:', e));
+          }
+          // Nach Seed: Mitarbeitende erneut laden
+          if (seedResult.count > 0) {
+            const freshEmps = await loadEmployees('beaulieu');
+            if (freshEmps && freshEmps.length > 0) {
+              console.log(`[BEAULIEU] visible in app: ${freshEmps.length}`);
+              freshEmps.forEach(e => console.log(`[BEAULIEU] employee upserted: "${e.name}" dept=${e.department} id=${e.id}`));
+              setEmployees(freshEmps);
+              return;
+            }
+          }
+        }
+        console.log('[BEAULIEU] employees loaded: 0 – Migration noch nicht ausgeführt oder Seed fehlgeschlagen');
         setEmployees([]);
       }
 
@@ -605,8 +627,9 @@ const SchedulePlanner = () => {
   // Beaulieu: kein Placeholder-Fallback – echte Mitarbeitende kommen aus Supabase.
   useEffect(() => {
     console.log(`[TENANT] SchedulePlanner reset für ${tenantId}`);
+    hasAutoSeededBeaulieu.current = false; // reset so auto-seed can run again for new tenant
     if (tenantId === 'beaulieu') {
-      console.log('[BEAULIEU-TEST] tenant active: beaulieu – clearing to empty until Supabase loads');
+      console.log('[BEAULIEU] tenant active: beaulieu – clearing to empty until Supabase loads');
       setEmployees([]);
     } else {
       setEmployees(defaultEmployees);

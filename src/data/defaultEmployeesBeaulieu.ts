@@ -1,7 +1,7 @@
 /**
  * Echte Beaulieu-Mitarbeitende (Seed-Daten)
  * ==========================================
- * Quelle: Mirus Tägliche Stunden 01.04–12.04.2026
+ * Quelle: Mirus Tägliche Stunden + Benutzerdefinierte Korrekturen
  *
  * Diese Liste wird von seedBeaulieuEmployees() (src/lib/supabase-db.ts)
  * verwendet, um die Mitarbeitenden einmalig in Supabase zu schreiben.
@@ -10,7 +10,7 @@
  *
  * Abteilungs-Mapping:
  *   1 Küche         → küche
- *   3 Hilfsarbeiter → küche  (Elmazi, Ramadani erscheinen in beiden Abt.)
+ *   3 Hilfsarbeiter → küche  (Elmazi + Ramadani in beiden Listen → je 1 Eintrag)
  *   2 Service       → service
  *   4 Geschäftsltg. → service (nur Marcel Krebs)
  *
@@ -22,7 +22,8 @@ import { Employee } from '@/types/personnel';
 
 export const defaultEmployeesBeaulieu: Employee[] = [
 
-  // ── KÜCHE (1 Küche + 3 Hilfsarbeiter) ────────────────────────────────────
+  // ── KÜCHE ────────────────────────────────────────────────────────────────
+  // (1 Küche + 3 Hilfsarbeiter → beide Abteilungen = küche)
   {
     id: 'b-1',
     name: 'Barrera Hinestroza Jonathan Filipe',
@@ -72,7 +73,8 @@ export const defaultEmployeesBeaulieu: Employee[] = [
     weeklyHours: 42,
   },
 
-  // ── SERVICE (2 Service + Marcel Krebs aus 4 Geschäftsleitung) ────────────
+  // ── SERVICE ───────────────────────────────────────────────────────────────
+  // (2 Service + Marcel Krebs aus 4 Geschäftsleitung)
   {
     id: 'b-7',
     name: 'Burkhalter Nadica',
@@ -83,14 +85,14 @@ export const defaultEmployeesBeaulieu: Employee[] = [
   },
   {
     id: 'b-8',
-    name: 'Firlovic Maja',
+    name: 'Filipovic Maja',
     department: 'service',
     employmentType: 'teilzeit',
     hourlyWage: 0,
   },
   {
     id: 'b-9',
-    name: 'Svyrydovych Varvara',
+    name: 'Syvrydovych Varvara',
     department: 'service',
     employmentType: 'vollzeit',
     hourlyWage: 0,

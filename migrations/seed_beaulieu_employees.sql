@@ -1,7 +1,7 @@
 -- ============================================================
 -- Seed: Echte Beaulieu-Mitarbeitende
 -- Datum: 2026-04-20
--- Quelle: Mirus Tägliche Stunden 01.04–12.04.2026
+-- Quelle: Mirus Tägliche Stunden + Benutzerdefinierte Korrekturen
 --
 -- ANLEITUNG:
 -- 1. Zuerst sicherstellen, dass 20260420_multi_tenant.sql bereits
@@ -40,138 +40,18 @@ INSERT INTO employees (
 ) VALUES
 
   -- ── KÜCHE (1 Küche + 3 Hilfsarbeiter) ──────────────────────────────────────
-  (
-    'b-1',
-    'Barrera Hinestroza Jonathan Filipe',
-    'kueche',
-    'vollzeit',
-    0.00,
-    'beaulieu',
-    '[]',
-    '[]',
-    1.03,
-    false,
-    'none'
-  ),
-  (
-    'b-2',
-    'Elmazi Fatmire',
-    'kueche',
-    'vollzeit',
-    0.00,
-    'beaulieu',
-    '[]',
-    '[]',
-    1.03,
-    false,
-    'none'
-  ),
-  (
-    'b-3',
-    'Hadzija Hatidze',
-    'kueche',
-    'vollzeit',
-    0.00,
-    'beaulieu',
-    '[]',
-    '[]',
-    1.03,
-    false,
-    'none'
-  ),
-  (
-    'b-4',
-    'Horvath Robert Stefan',
-    'kueche',
-    'vollzeit',
-    0.00,
-    'beaulieu',
-    '[]',
-    '[]',
-    1.03,
-    false,
-    'none'
-  ),
-  (
-    'b-5',
-    'Ramadani Naip',
-    'kueche',
-    'vollzeit',
-    0.00,
-    'beaulieu',
-    '[]',
-    '[]',
-    1.03,
-    false,
-    'none'
-  ),
-  (
-    'b-6',
-    'Santana Cristo Barreto',
-    'kueche',
-    'vollzeit',
-    0.00,
-    'beaulieu',
-    '[]',
-    '[]',
-    1.03,
-    false,
-    'none'
-  ),
+  ('b-1',  'Barrera Hinestroza Jonathan Filipe', 'kueche',  'vollzeit', 0.00, 'beaulieu', '[]', '[]', 1.03, false, 'none'),
+  ('b-2',  'Elmazi Fatmire',                     'kueche',  'vollzeit', 0.00, 'beaulieu', '[]', '[]', 1.03, false, 'none'),
+  ('b-3',  'Hadzija Hatidze',                    'kueche',  'vollzeit', 0.00, 'beaulieu', '[]', '[]', 1.03, false, 'none'),
+  ('b-4',  'Horvath Robert Stefan',               'kueche',  'vollzeit', 0.00, 'beaulieu', '[]', '[]', 1.03, false, 'none'),
+  ('b-5',  'Ramadani Naip',                       'kueche',  'vollzeit', 0.00, 'beaulieu', '[]', '[]', 1.03, false, 'none'),
+  ('b-6',  'Santana Cristo Barreto',              'kueche',  'vollzeit', 0.00, 'beaulieu', '[]', '[]', 1.03, false, 'none'),
 
   -- ── SERVICE (2 Service + Marcel Krebs aus 4 Geschäftsleitung) ───────────────
-  (
-    'b-7',
-    'Burkhalter Nadica',
-    'service',
-    'vollzeit',
-    0.00,
-    'beaulieu',
-    '[]',
-    '[]',
-    1.03,
-    false,
-    'none'
-  ),
-  (
-    'b-8',
-    'Firlovic Maja',
-    'service',
-    'teilzeit',
-    0.00,
-    'beaulieu',
-    '[]',
-    '[]',
-    1.03,
-    false,
-    'none'
-  ),
-  (
-    'b-9',
-    'Svyrydovych Varvara',
-    'service',
-    'vollzeit',
-    0.00,
-    'beaulieu',
-    '[]',
-    '[]',
-    1.03,
-    false,
-    'none'
-  ),
-  (
-    'b-10',
-    'Krebs Marcel',
-    'service',
-    'vollzeit',
-    0.00,
-    'beaulieu',
-    '[]',
-    '[]',
-    1.03,
-    false,
-    'none'
-  )
+  ('b-7',  'Burkhalter Nadica',                   'service', 'vollzeit', 0.00, 'beaulieu', '[]', '[]', 1.03, false, 'none'),
+  ('b-8',  'Filipovic Maja',                      'service', 'teilzeit', 0.00, 'beaulieu', '[]', '[]', 1.03, false, 'none'),
+  ('b-9',  'Syvrydovych Varvara',                 'service', 'vollzeit', 0.00, 'beaulieu', '[]', '[]', 1.03, false, 'none'),
+  ('b-10', 'Krebs Marcel',                        'service', 'vollzeit', 0.00, 'beaulieu', '[]', '[]', 1.03, false, 'none')
 
 ON CONFLICT (id) DO UPDATE SET
   name              = EXCLUDED.name,
@@ -181,10 +61,7 @@ ON CONFLICT (id) DO UPDATE SET
   social_cost_factor = EXCLUDED.social_cost_factor,
   has_13th_salary   = EXCLUDED.has_13th_salary,
   onboarding_status = EXCLUDED.onboarding_status;
-  -- HINWEIS: hourly_wage wird absichtlich NICHT überschrieben,
-  -- damit nachgepflegte Löhne bei erneutem Ausführen erhalten bleiben.
-  -- Falls Löhne zurückgesetzt werden sollen, diese Zeile hinzufügen:
-  -- hourly_wage = EXCLUDED.hourly_wage
+  -- hourly_wage wird NICHT überschrieben, damit nachgepflegte Löhne erhalten bleiben
 
 -- Schritt 3: Bestätigung
 SELECT

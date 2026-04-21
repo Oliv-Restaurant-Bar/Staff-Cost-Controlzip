@@ -1,0 +1,101 @@
+Bitte jetzt die echten Beaulieu-Mitarbeitenden vollständig in die App integrieren, sowohl in Supabase als auch in der Webapp.
+
+Ziel:
+Die Beaulieu-Mitarbeitenden sollen nicht mehr als Platzhalter existieren, sondern als echte Mitarbeiterdaten in Supabase gespeichert werden und im Mandanten Beaulieu direkt in der Webapp erscheinen.
+
+Wichtig:
+Nur diese zwei finalen Abteilungen verwenden:
+- Küche
+- Service
+
+Abteilungslogik:
+- Alle Mitarbeitenden aus "1 Küche" = Küche
+- Alle Mitarbeitenden aus "3 Hilfsarbeiter" = Küche
+- Alle Mitarbeitenden aus "2 Service" = Service
+- Marcel Krebs aus "4 Geschäftsleitung" = Service
+
+Bitte exakt diese Mitarbeitenden anlegen:
+
+KÜCHE
+1 Küche
+- Barrera Hinestrzoa Jonathan Filipe
+- Elmazi Fatmire
+- Hadzija Hatidze
+- Horvath Robert Stefan
+- Ramadani Naip
+- Santana Cristo Barreto
+
+3 Hilfsarbeiter
+- Elmazi Fatmire
+- Ramadani Naip
+
+SERVICE
+2 Service
+- Burkhalter Nadica
+- Filipovic Maja
+- Syvrydovych Varvara
+
+4 Geschäftsleitung
+- Krebs Marcel
+
+Wichtig bei Duplikaten:
+- Elmazi Fatmire nur einmal anlegen, Abteilung = Küche
+- Ramadani Naip nur einmal anlegen, Abteilung = Küche
+
+Bitte exakt so umsetzen:
+
+1. Supabase Integration
+- alle Beaulieu-Mitarbeitenden in die employees Tabelle schreiben
+- restaurant_id = 'beaulieu'
+- bestehende Oliv-Mitarbeitenden nicht verändern
+- upsert statt blindem insert verwenden, damit keine Duplikate entstehen
+
+2. Felder
+Bitte mindestens sauber setzen:
+- id
+- name
+- department
+- restaurant_id = 'beaulieu'
+- active = true
+
+Wenn weitere Pflichtfelder existieren, bitte mit sinnvollen Defaults füllen.
+
+3. Webapp Integration
+- im Mandanten Beaulieu sollen direkt diese Mitarbeitenden erscheinen
+- im Mandanten Oliv weiterhin nur Oliv-Mitarbeitende
+- Platzhalter-Mitarbeitende für Beaulieu nicht mehr anzeigen
+
+4. Platzhalter entfernen
+- defaultEmployeesBeaulieu nicht mehr aktiv verwenden
+- falls sinnvoll, nur noch als Fallback deaktiviert im Code lassen
+- im echten Betrieb dürfen nur die realen Beaulieu-Mitarbeitenden sichtbar sein
+
+5. Dienstplanung Test
+Bitte direkt prüfen:
+- Beaulieu öffnen
+- Mitarbeitende erscheinen im Dienstplan
+- keine Oliv-Namen sichtbar
+- Speichern / Reload funktioniert
+
+6. Personal FIX Test
+Bitte prüfen:
+- Beaulieu Mitarbeitende laden sauber
+- Abteilungen nur Küche und Service
+- keine Vermischung mit Oliv
+
+7. Debug Logs
+Bitte loggen:
+[BEAULIEU] import started
+[BEAULIEU] employee upserted: ...
+[BEAULIEU] department mapped: ...
+[BEAULIEU] restaurant_id: beaulieu
+[BEAULIEU] total imported: ...
+[BEAULIEU] visible in app: ...
+
+8. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie viele Mitarbeitende final importiert wurden
+- welche in Küche sind
+- welche in Service sind
+- ob die Platzhalter jetzt deaktiviert wurden
+- ob die Mitarbeitenden in Webapp und Supabase sichtbar sind
