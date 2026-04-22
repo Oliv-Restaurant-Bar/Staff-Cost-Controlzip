@@ -698,6 +698,7 @@ const IstStundenSection = () => {
       // ─── [CONSISTENCY] Mirus Matching-Basis ──────────────────────────
       console.log(`[CONSISTENCY] tenant: ${tenantId}`);
       console.log(`[CONSISTENCY] mirus matching base: ${list.length}`);
+      console.log(`[CONSISTENCY] employee names mirus: ${list.map(e => e.name).join(', ')}`);
       if (tenantId === 'beaulieu') {
         const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi', 'eduard', 'nahuel', 'nina', 'stefan'];
         const leak = list.filter(e => olivNames.some(o => e.name.toLowerCase().includes(o)));

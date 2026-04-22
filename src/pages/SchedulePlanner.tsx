@@ -378,7 +378,9 @@ const SchedulePlanner = () => {
           // ─── [CONSISTENCY] Standardformat für dienstplan + mirus ────────
           console.log(`[CONSISTENCY] tenant: ${tenantId}`);
           console.log(`[CONSISTENCY] dienstplan employees: ${supabaseEmployees.length}`);
+          console.log(`[CONSISTENCY] employee names dienstplan: ${supabaseEmployees.map(e => e.name).join(', ')}`);
           console.log(`[CONSISTENCY] mirus matching base: ${supabaseEmployees.length}`);
+          console.log(`[CONSISTENCY] employee names mirus: ${supabaseEmployees.map(e => e.name).join(', ')}`);
           console.log(`[CONSISTENCY] mismatch: ${olivLeak.length > 0 ? 'yes – Oliv-Leak: ' + olivLeak.map(e => e.name).join(', ') : 'no'}`);
           // Mirus-Name-Matching-Selbsttest
           runBeaulieuMatchTest(supabaseEmployees);
