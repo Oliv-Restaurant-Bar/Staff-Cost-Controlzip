@@ -65,7 +65,7 @@ const SQL_NEW_BEAULIEU_MANAGER = `-- Beaulieu-Geschäftsführer anlegen:
 --
 -- Schritt 1: Supabase Dashboard → Authentication → Users
 --             → "Add user" → "Create new user"
---             E-Mail: gf@beaulieu-thalwil.ch (oder eigene E-Mail)
+--             E-Mail: info@restaurantbeaulieu.ch
 --             Passwort wählen → "Create User"
 --
 -- Schritt 2: Im Supabase SQL-Editor ausführen:
@@ -76,7 +76,11 @@ ALTER TABLE user_profiles
   ADD CONSTRAINT user_profiles_role_check
   CHECK (role IN ('admin','service_manager','kueche_manager','beaulieu_manager'));
 
-SELECT set_user_role('gf@beaulieu-thalwil.ch', 'beaulieu_manager');
+-- Beaulieu-Geschäftsführer (Hauptzugang):
+SELECT set_user_role('info@restaurantbeaulieu.ch', 'beaulieu_manager');
+
+-- Weiterer Beaulieu-Zugang (optional):
+-- SELECT set_user_role('gf@beaulieu-thalwil.ch', 'beaulieu_manager');
 --
 -- Der User erhält automatisch:
 --   • Tenant-Lock auf "Beaulieu" (kein Oliv-Zugriff)

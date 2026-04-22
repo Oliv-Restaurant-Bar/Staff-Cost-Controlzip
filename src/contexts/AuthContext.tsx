@@ -37,10 +37,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const currentUserIdRef = useRef<string | null>(null);
 
   const EMAIL_ROLE_MAP: Record<string, UserRole> = {
-    'admin@olivbern.ch':        'admin',
-    'service@olivbern.ch':      'service_manager',
-    'kueche@olivbern.ch':       'kueche_manager',
-    'gf@beaulieu-thalwil.ch':   'beaulieu_manager',
+    'admin@olivbern.ch':            'admin',
+    'service@olivbern.ch':          'service_manager',
+    'kueche@olivbern.ch':           'kueche_manager',
+    'gf@beaulieu-thalwil.ch':       'beaulieu_manager',
+    'info@restaurantbeaulieu.ch':   'beaulieu_manager',
   };
 
   const applyRole = (r: UserRole) => {
@@ -49,8 +50,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // [AUTH] debug logs for all roles
     console.log(`[AUTH] user role: ${r}`);
     if (r === 'beaulieu_manager') {
-      console.log('[AUTH] tenant lock: beaulieu');
+      console.log('[AUTH] tenant locked: beaulieu');
       console.log('[AUTH] allowed modules: dienstplanung, personal_fix, tagesansicht, tages_controlling');
+      console.log('[AUTH] tenant switch hidden: true');
+    }
+  };
+
+  // Helper: emit [AUTH] email log for beaulieu_manager
+  const logBeaulieuEmail = (email: string | undefined, resolvedRole: UserRole) => {
+    if (resolvedRole === 'beaulieu_manager' && email) {
+      console.log(`[AUTH] email: ${email}`);
+      console.log('[AUTH] role: beaulieu_manager');
     }
   };
 
@@ -61,6 +71,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const { data, error } = await supabase.rpc('get_my_role' as any);
       if (!error && data) {
         applyRole(data as UserRole);
+        logBeaulieuEmail(email, data as UserRole);
         console.log('[AUTH] loadUserRole: resolved via RPC', data);
         syncEmail(userId, email);
         return;
@@ -72,6 +83,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .from('user_profiles').select('role').eq('id', userId).maybeSingle();
       if (!error && data?.role) {
         applyRole(data.role as UserRole);
+        logBeaulieuEmail(email, data.role as UserRole);
         console.log('[AUTH] loadUserRole: resolved via user_profiles', data.role);
         syncEmail(userId, email);
         return;
@@ -81,6 +93,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (email && EMAIL_ROLE_MAP[email.toLowerCase()]) {
       const r = EMAIL_ROLE_MAP[email.toLowerCase()];
       applyRole(r);
+      logBeaulieuEmail(email, r);
       console.log('[AUTH] loadUserRole: resolved via email map', r);
       (supabase as any).from('user_profiles').upsert({ id: userId, role: r }, { onConflict: 'id' })
         .then(() => {}).catch(() => {});
