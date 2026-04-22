@@ -1324,21 +1324,24 @@ export default function PersonalFixPage() {
     loadEmployees(tenantId).then(emps => {
       if (emps) {
         setEmployees(emps);
+        // ─── [CONSISTENCY] Standardformat-Logs ───────────────────────────
+        console.log(`[CONSISTENCY] tenant: ${tenantId}`);
+        console.log(`[CONSISTENCY] personal_fix employees: ${emps.length}`);
         if (tenantId === 'beaulieu') {
+          const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi', 'eduard', 'nahuel', 'nina', 'stefan'];
+          const leak = emps.filter(e => olivNames.some(o => e.name.toLowerCase().includes(o)));
+          console.log(`[CONSISTENCY] mismatch: ${leak.length > 0 ? 'yes – Oliv-Leak: ' + leak.map(e => e.name).join(', ') : 'no'}`);
+          // Detaillierte Aufschlüsselung
           const küche   = emps.filter(e => e.department === 'küche');
           const service = emps.filter(e => e.department === 'service');
-          const others  = emps.filter(e => e.department !== 'küche' && e.department !== 'service');
-          const olivLeak = emps.filter(e => !String(e.id).startsWith('b-'));
-          console.log(`[CHECK] personal fix employees: ${emps.length} (Küche=${küche.length}, Service=${service.length})`);
-          console.log(`[CHECK] departments valid: ${others.length === 0 ? 'OK – nur Küche/Service' : 'WARN – weitere Abteilung: ' + others.map(e => e.department).join(', ')}`);
-          console.log(`[CHECK] tenant isolation: ${olivLeak.length === 0 ? 'OK – keine Oliv-Daten' : 'ERROR – Oliv-Leak: ' + olivLeak.map(e => e.name).join(', ')}`);
+          console.log(`[CONSISTENCY] personal_fix breakdown: Küche=${küche.length}, Service=${service.length}`);
         } else {
           const beaulieuLeak = emps.filter(e => String(e.id).startsWith('b-'));
-          console.log(`[CHECK] personal fix employees oliv: ${emps.length}`);
-          if (beaulieuLeak.length > 0) console.warn('[CHECK] personal fix tenant isolation: ERROR – Beaulieu-Leak:', beaulieuLeak.map(e => e.name));
+          console.log(`[CONSISTENCY] mismatch: ${beaulieuLeak.length > 0 ? 'yes – Beaulieu-Leak in Oliv' : 'no'}`);
         }
       } else {
         setEmployees([]);
+        console.log(`[CONSISTENCY] personal_fix employees: 0 (keine Daten von Supabase)`);
       }
       setLoading(false);
     });

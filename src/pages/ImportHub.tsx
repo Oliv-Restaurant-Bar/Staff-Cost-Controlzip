@@ -692,8 +692,17 @@ const IstStundenSection = () => {
 
   useEffect(() => {
     loadEmployees(tenantId).then(emps => {
-      if (emps) setEmployees(emps);
+      const list = emps ?? [];
+      setEmployees(list);
       setLoading(false);
+      // ─── [CONSISTENCY] Mirus Matching-Basis ──────────────────────────
+      console.log(`[CONSISTENCY] tenant: ${tenantId}`);
+      console.log(`[CONSISTENCY] mirus matching base: ${list.length}`);
+      if (tenantId === 'beaulieu') {
+        const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi', 'eduard', 'nahuel', 'nina', 'stefan'];
+        const leak = list.filter(e => olivNames.some(o => e.name.toLowerCase().includes(o)));
+        console.log(`[CONSISTENCY] mismatch: ${leak.length > 0 ? 'yes – Oliv-Namen in Mirus-Basis: ' + leak.map(e => e.name).join(', ') : 'no'}`);
+      }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
