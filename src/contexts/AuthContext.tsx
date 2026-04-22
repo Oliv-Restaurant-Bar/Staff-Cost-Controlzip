@@ -2,7 +2,7 @@ import { createContext, useEffect, useRef, useState, useCallback, ReactNode } fr
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
-export type UserRole = 'admin' | 'service_manager' | 'kueche_manager';
+export type UserRole = 'admin' | 'service_manager' | 'kueche_manager' | 'beaulieu_manager';
 
 export interface AuthContextType {
   user: User | null;
@@ -12,6 +12,8 @@ export interface AuthContextType {
   isAdmin: boolean;
   isServiceManager: boolean;
   isKuecheManager: boolean;
+  /** Beaulieu-Geschäftsführer: nur Beaulieu, kein Tenant-Wechsel */
+  isBeaulieuManager: boolean;
   /**
    * Increments on every confirmed auth event (boot, TOKEN_REFRESHED, SIGNED_IN).
    * Data-fetching pages must depend on this so they re-fetch after a background
@@ -35,14 +37,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const currentUserIdRef = useRef<string | null>(null);
 
   const EMAIL_ROLE_MAP: Record<string, UserRole> = {
-    'admin@olivbern.ch':   'admin',
-    'service@olivbern.ch': 'service_manager',
-    'kueche@olivbern.ch':  'kueche_manager',
+    'admin@olivbern.ch':        'admin',
+    'service@olivbern.ch':      'service_manager',
+    'kueche@olivbern.ch':       'kueche_manager',
+    'gf@beaulieu-thalwil.ch':   'beaulieu_manager',
   };
 
   const applyRole = (r: UserRole) => {
     setRole(r);
     localStorage.setItem('user_role', r);
+    // [AUTH] debug logs for all roles
+    console.log(`[AUTH] user role: ${r}`);
+    if (r === 'beaulieu_manager') {
+      console.log('[AUTH] tenant lock: beaulieu');
+      console.log('[AUTH] allowed modules: dienstplanung, personal_fix, tagesansicht, tages_controlling');
+    }
   };
 
   const loadUserRole = useCallback(async (userId: string, email?: string) => {
@@ -300,9 +309,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       loading,
       role,
       sessionVersion,
-      isAdmin:          role === 'admin',
-      isServiceManager: role === 'service_manager',
-      isKuecheManager:  role === 'kueche_manager',
+      isAdmin:            role === 'admin',
+      isServiceManager:   role === 'service_manager',
+      isKuecheManager:    role === 'kueche_manager',
+      isBeaulieuManager:  role === 'beaulieu_manager',
       signIn,
       signOut,
     }}>

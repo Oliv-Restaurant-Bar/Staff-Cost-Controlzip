@@ -3,10 +3,12 @@
  * ====================================
  * Erlaubt das Wechseln zwischen Oliv und Beaulieu.
  * Zeigt den aktiven Mandanten farblich hervorgehoben an.
+ *
+ * Für beaulieu_manager: Mandant nur lesbar anzeigen (kein Wechsel möglich).
  */
 
 import { useTenant, TENANTS, TenantId } from '@/contexts/TenantContext';
-import { Building2 } from 'lucide-react';
+import { Building2, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface TenantSwitcherProps {
@@ -15,9 +17,25 @@ interface TenantSwitcherProps {
 }
 
 export const TenantSwitcher = ({ compact = false }: TenantSwitcherProps) => {
-  const { tenantId, setTenant } = useTenant();
+  const { tenantId, setTenant, tenantLocked, tenant } = useTenant();
 
   const tenantList = Object.values(TENANTS) as typeof TENANTS[TenantId][];
+
+  // Wenn Tenant gesperrt: nur aktiven Mandanten als read-only Badge anzeigen
+  if (tenantLocked) {
+    return (
+      <div className="mx-3 mb-2 rounded-md border border-border p-2 flex items-center gap-2">
+        <Lock className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        <span
+          className="text-xs font-semibold"
+          style={{ color: tenant.color }}
+        >
+          {tenant.shortName}
+        </span>
+        <span className="ml-auto text-[9px] text-muted-foreground">gesperrt</span>
+      </div>
+    );
+  }
 
   if (compact) {
     return (

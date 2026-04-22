@@ -12,6 +12,7 @@ import { GuestSessionProvider, GUEST_SESSION_KEY } from "@/contexts/GuestSession
 import { TenantProvider } from "@/contexts/TenantContext";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useTenant } from "@/contexts/TenantContext";
 import { LoginPage } from "@/components/LoginPage";
 import { GuestBanner } from "@/components/GuestBanner";
 import { TenantBanner } from "@/components/TenantBanner";
@@ -54,11 +55,27 @@ import TagesControllingPage from "./pages/TagesControllingPage";
 
 const queryClient = new QueryClient();
 
+// ─── TenantLockEnforcer ──────────────────────────────────────────────────────
+// Sitzt innerhalb von AuthProvider und erzwingt den Tenant-Lock für
+// beaulieu_manager. Brücke zwischen AuthContext (innen) und TenantContext (außen).
+
+const TenantLockEnforcer = () => {
+  const { role } = useAuth();
+  const { lockTenant, tenantLocked } = useTenant();
+  useEffect(() => {
+    if (role === 'beaulieu_manager' && !tenantLocked) {
+      lockTenant('beaulieu');
+      console.log('[AUTH] TenantLockEnforcer: beaulieu_manager → tenant locked to beaulieu');
+    }
+  }, [role, tenantLocked, lockTenant]);
+  return null;
+};
+
 // ─── Private App (requires authentication) ──────────────────────────────────
 
 const AppContent = () => {
   const { user, loading } = useAuth();
-  const { canAccessSettings, canAccessModule } = usePermissions();
+  const { canAccessSettings, canAccessModule, isBeaulieuManager } = usePermissions();
 
   // Daten aus Supabase nach localStorage synchronisieren (einmalig nach Login)
   useSyncStore(!!user);
@@ -106,6 +123,8 @@ const AppContent = () => {
         {/* Haupt-Inhaltsbereich */}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col pb-16 md:pb-0">
           <TenantBanner />
+          {/* Tenant-Lock für beaulieu_manager — läuft auf jeder Seite */}
+          <TenantLockEnforcer />
           <div className="flex-1 min-h-0 overflow-auto">
           <Routes>
             {/* Routen mit Rollenprüfung */}
@@ -123,40 +142,76 @@ const AppContent = () => {
             />
 
             {/* Personalstamm: alle Rollen, Inhalt rollenbasiert gefiltert */}
-            <Route path="/personal-stamm" element={<Personalstamm />} />
+            <Route path="/personal-stamm"
+              element={isBeaulieuManager
+                ? <Navigate to="/personal" replace />
+                : <Personalstamm />}
+            />
 
             {/* Einstellungen: nur Admin */}
             <Route
               path="/settings"
-              element={canAccessSettings ? <Settings /> : <Navigate to="/" replace />}
+              element={canAccessSettings ? <Settings /> : <Navigate to="/personal" replace />}
             />
 
-            {/* Reporting: Finanzmodul (nur Admin) */}
-            <Route path="/reporting"        element={<Reporting />} />
-            <Route path="/kontenplan"       element={<AccountMappingPage />} />
-            <Route path="/erfolgsrechnung"  element={<PLViewPage />} />
-            <Route path="/csv-import"       element={<CSVImportPage />} />
-            <Route path="/import"           element={<ImportHub />} />
-            <Route path="/lieferanten"          element={<SupplierDocumentsPage />} />
-            <Route path="/lieferanten-vergleich" element={<SupplierComparisonPage />} />
-            <Route path="/budget"           element={<BudgetPage />} />
-            <Route path="/personal-fix"     element={<PersonalFixPage />} />
-            <Route path="/produkte"         element={<ProdukteSeite />} />
+            {/* Reporting + Finanzen: nur Admin – beaulieu_manager wird umgeleitet */}
+            <Route path="/reporting"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <Reporting />}
+            />
+            <Route path="/kontenplan"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <AccountMappingPage />}
+            />
+            <Route path="/erfolgsrechnung"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <PLViewPage />}
+            />
+            <Route path="/csv-import"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <CSVImportPage />}
+            />
+            <Route path="/import"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <ImportHub />}
+            />
+            <Route path="/lieferanten"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <SupplierDocumentsPage />}
+            />
+            <Route path="/lieferanten-vergleich"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <SupplierComparisonPage />}
+            />
+            <Route path="/budget"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <BudgetPage />}
+            />
+            <Route path="/personal-fix"
+              element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
+            />
+            <Route path="/produkte"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <ProdukteSeite />}
+            />
             <Route path="/artikel"          element={<ArtikelPage />} />
             <Route path="/artikel-tracking" element={<ArtikelTrackingPage />} />
-            <Route path="/wes-analyse"      element={<WesAnalysePage />} />
+            <Route path="/wes-analyse"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <WesAnalysePage />}
+            />
             <Route path="/lunch-analyse"    element={<LunchAnalysePage />} />
             <Route path="/takeaway-analyse" element={<TakeAwayAnalysePage />} />
             <Route path="/absenzen"         element={<AbsenzKostenPage />} />
 
             {/* Verkaufsdaten & Produktanalyse */}
-            <Route path="/tagesansicht"          element={<TagesansichtPage />} />
-            <Route path="/tages-controlling"     element={<TagesControllingPage />} />
-            <Route path="/verkauf-dashboard" element={<VerkaufsDashboard />} />
-            <Route path="/sales-upload"      element={<SalesUpload />} />
+            <Route path="/tagesansicht"
+              element={canAccessModule('tagesansicht') ? <TagesansichtPage /> : <Navigate to="/personal" replace />}
+            />
+            <Route path="/tages-controlling"
+              element={canAccessModule('tages_controlling') ? <TagesControllingPage /> : <Navigate to="/personal" replace />}
+            />
+            <Route path="/verkauf-dashboard"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <VerkaufsDashboard />}
+            />
+            <Route path="/sales-upload"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <SalesUpload />}
+            />
             <Route path="/produkt-analyse"   element={<ProduktAnalyse />} />
             <Route path="/kategorien"        element={<KategorienAnalyse />} />
-            <Route path="/produkt-stamm"     element={<ProduktStamm />} />
+            <Route path="/produkt-stamm"
+              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <ProduktStamm />}
+            />
 
             {/* Abteilungs-Dienstpläne */}
             <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />

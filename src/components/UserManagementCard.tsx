@@ -18,7 +18,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
-type UserRole = 'admin' | 'service_manager' | 'kueche_manager';
+type UserRole = 'admin' | 'service_manager' | 'kueche_manager' | 'beaulieu_manager';
 
 interface UserProfile {
   id: string;
@@ -44,6 +44,11 @@ const ROLE_CONFIG: Record<UserRole, { label: string; color: string; Icon: React.
     color: 'bg-orange-100 text-orange-700 border-orange-200',
     Icon: ChefHat,
   },
+  beaulieu_manager: {
+    label: 'Beaulieu – Geschäftsführer',
+    color: 'bg-violet-100 text-violet-700 border-violet-200',
+    Icon: ShieldCheck,
+  },
 };
 
 const SQL_MIGRATION = `-- Im Supabase SQL-Editor ausführen (einmalig):
@@ -55,6 +60,28 @@ const SQL_NEW_ADMIN = `-- Schritt 1: Supabase Dashboard → Authentication → U
 --
 -- Schritt 2: Im SQL-Editor ausführen:
 SELECT set_user_role('admin2@olivbern.ch', 'admin');`;
+
+const SQL_NEW_BEAULIEU_MANAGER = `-- Beaulieu-Geschäftsführer anlegen:
+--
+-- Schritt 1: Supabase Dashboard → Authentication → Users
+--             → "Add user" → "Create new user"
+--             E-Mail: gf@beaulieu-thalwil.ch (oder eigene E-Mail)
+--             Passwort wählen → "Create User"
+--
+-- Schritt 2: Im Supabase SQL-Editor ausführen:
+-- (Falls set_user_role die Rolle noch nicht kennt, erst ALTER TABLE ausführen)
+ALTER TABLE user_profiles
+  DROP CONSTRAINT IF EXISTS user_profiles_role_check;
+ALTER TABLE user_profiles
+  ADD CONSTRAINT user_profiles_role_check
+  CHECK (role IN ('admin','service_manager','kueche_manager','beaulieu_manager'));
+
+SELECT set_user_role('gf@beaulieu-thalwil.ch', 'beaulieu_manager');
+--
+-- Der User erhält automatisch:
+--   • Tenant-Lock auf "Beaulieu" (kein Oliv-Zugriff)
+--   • Zugriff auf: Dienstplanung, Personal FIX, Tagesansicht, Tages-Controlling
+--   • Kein Tenant-Switcher, kein Dashboard, keine Finanz-Module`;
 
 export function UserManagementCard() {
   const { user } = useAuth();
@@ -233,6 +260,7 @@ export function UserManagementCard() {
                           <SelectItem value="admin">Administrator</SelectItem>
                           <SelectItem value="service_manager">Service-Manager</SelectItem>
                           <SelectItem value="kueche_manager">Küchen-Manager</SelectItem>
+                          <SelectItem value="beaulieu_manager">Beaulieu – Geschäftsführer</SelectItem>
                         </SelectContent>
                       </Select>
                       <Button
@@ -319,8 +347,35 @@ export function UserManagementCard() {
             Ersetze <code className="bg-muted px-0.5 rounded">admin2@olivbern.ch</code> durch die gewünschte E-Mail.
             Mögliche Rollen: <code className="bg-muted px-0.5 rounded">admin</code>,{' '}
             <code className="bg-muted px-0.5 rounded">service_manager</code>,{' '}
-            <code className="bg-muted px-0.5 rounded">kueche_manager</code>
+            <code className="bg-muted px-0.5 rounded">kueche_manager</code>,{' '}
+            <code className="bg-muted px-0.5 rounded">beaulieu_manager</code>
           </p>
+        </div>
+
+        {/* Beaulieu-Geschäftsführer einrichten */}
+        <div className="rounded-md border border-violet-200 bg-violet-50/50 dark:bg-violet-950/10 p-3 space-y-2">
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-violet-800 dark:text-violet-300">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Beaulieu-Geschäftsführer anlegen
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Dieser Zugang ist fest auf Mandant <strong>Beaulieu</strong> gebunden.
+            Kein Tenant-Wechsel, kein Oliv-Zugriff. Module: Dienstplanung · Personal FIX · Tagesansicht · Tages-Controlling.
+          </p>
+          <div className="relative">
+            <pre className="text-[9px] bg-background rounded border p-2 overflow-x-auto font-mono whitespace-pre-wrap leading-relaxed">
+              {SQL_NEW_BEAULIEU_MANAGER}
+            </pre>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="absolute top-1 right-1 h-5 w-5 p-0 opacity-60 hover:opacity-100"
+              onClick={() => copyToClipboard(SQL_NEW_BEAULIEU_MANAGER)}
+              title="SQL kopieren"
+            >
+              <Copy className="h-2.5 w-2.5" />
+            </Button>
+          </div>
         </div>
 
       </CardContent>

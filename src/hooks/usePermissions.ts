@@ -6,19 +6,24 @@
  * niemals direkt die Rolle aus useAuth.
  *
  * Rollen:
- *   admin           → Inhaber / Admin: sieht alles
- *   service_manager → Service-Manager: Dienstplanung (Service) + Soll/Ist-Analyse
- *   kueche_manager  → Küchen-Manager:  Dienstplanung (Küche)  + Soll/Ist-Analyse
+ *   admin              → Inhaber / Admin: sieht alles
+ *   service_manager    → Service-Manager: Dienstplanung (Service) + Soll/Ist-Analyse
+ *   kueche_manager     → Küchen-Manager:  Dienstplanung (Küche)  + Soll/Ist-Analyse
+ *   beaulieu_manager   → Beaulieu GF: Dienstplanung + Personal FIX + Tagesansicht + Controlling
+ *                        Fest auf Mandant Beaulieu gesperrt, kein Tenant-Wechsel
  *
  * Modul-Zugriff im Überblick:
- *   Modul               admin  service_mgr  kueche_mgr
- *   ──────────────────  ─────  ───────────  ──────────
- *   Dashboard           ✓      –            –
- *   Dienstplanung       ✓      ✓ (Service)  ✓ (Küche)
- *   Soll/Ist Analyse    ✓      ✓ (Service)  ✓ (Küche)
- *   Personalstamm       ✓      –            –
- *   Reporting / P&L     ✓      –            –
- *   Budget / Import     ✓      –            –
+ *   Modul                admin  service_mgr  kueche_mgr  beaulieu_mgr
+ *   ──────────────────   ─────  ───────────  ──────────  ────────────
+ *   Dashboard             ✓      –            –           –
+ *   Dienstplanung         ✓      ✓ (Service)  ✓ (Küche)   ✓ (alle)
+ *   Soll/Ist Analyse      ✓      ✓ (Service)  ✓ (Küche)   –
+ *   Personal FIX          ✓      –            –           ✓
+ *   Tagesansicht          ✓      –            –           ✓
+ *   Tages-Controlling     ✓      –            –           ✓
+ *   Personalstamm         ✓      –            –           –
+ *   Reporting / P&L       ✓      –            –           –
+ *   Budget / Import       ✓      –            –           –
  */
 
 import { useAuth } from './useAuth';
@@ -30,7 +35,10 @@ export type AppModule =
   | 'dienstplanung'
   | 'soll_ist_analyse'
   | 'personalstamm'
-  | 'reporting';
+  | 'reporting'
+  | 'personal_fix'
+  | 'tagesansicht'
+  | 'tages_controlling';
 
 export type Department = 'service' | 'küche' | 'all';
 
@@ -38,7 +46,8 @@ export interface Permissions {
   // ── Rolle ────────────────────────────────────────────────
   role: UserRole;
   isAdmin: boolean;
-  isManager: boolean; // true für service_manager UND kueche_manager
+  isManager: boolean;
+  isBeaulieuManager: boolean;
 
   // ── Modul-Zugriff ────────────────────────────────────────
   /** Darf der User auf dieses Modul zugreifen? */
@@ -80,25 +89,29 @@ export interface Permissions {
 }
 
 export const usePermissions = (): Permissions => {
-  const { role, isAdmin: isAdminUser, isServiceManager, isKuecheManager } = useAuth();
+  const { role, isAdmin: isAdminUser, isServiceManager, isKuecheManager, isBeaulieuManager: isBeaulieuMgr } = useAuth();
   const { isGuest } = useGuestSession();
 
   // Gäste erhalten vollständige Admin-Rechte (Lese-Zugriff)
   const isAdmin = isAdminUser || isGuest;
 
   const isManager = isServiceManager || isKuecheManager || isGuest;
+  const isBeaulieuManager = isBeaulieuMgr;
 
   // Welche Abteilung darf dieser User sehen?
   const allowedDepartment: Department = isAdmin
     ? 'all'
     : isServiceManager
     ? 'service'
+    : isBeaulieuManager
+    ? 'all'   // Beaulieu GF sieht alle Abteilungen seines Mandanten
     : 'küche';
 
   const canSeeDepartment = (dept: 'service' | 'küche'): boolean => {
     if (isAdmin) return true;
     if (isServiceManager) return dept === 'service';
     if (isKuecheManager)  return dept === 'küche';
+    if (isBeaulieuManager) return true; // alle Abteilungen für Beaulieu-GF
     return false;
   };
 
@@ -106,15 +119,21 @@ export const usePermissions = (): Permissions => {
   const canAccessModule = (module: AppModule): boolean => {
     switch (module) {
       case 'dashboard':
-        return isAdmin; // nur Admin
+        return isAdmin;
       case 'dienstplanung':
         return true; // alle (aber gefiltert nach Abteilung)
       case 'soll_ist_analyse':
-        return true; // alle Rollen (Seite filtert Finanzdaten und Abteilung selbst)
+        return isAdmin || isServiceManager || isKuecheManager; // nicht für beaulieu_manager
       case 'personalstamm':
-        return isAdmin; // nur Admin
+        return isAdmin;
       case 'reporting':
-        return isAdmin; // nur Admin (Finanzdaten)
+        return isAdmin;
+      case 'personal_fix':
+        return isAdmin || isBeaulieuManager;
+      case 'tagesansicht':
+        return isAdmin || isBeaulieuManager;
+      case 'tages_controlling':
+        return isAdmin || isBeaulieuManager;
       default:
         return isAdmin;
     }
@@ -125,6 +144,7 @@ export const usePermissions = (): Permissions => {
     role,
     isAdmin,
     isManager,
+    isBeaulieuManager,
 
     // Abteilung
     allowedDepartment,
@@ -133,7 +153,7 @@ export const usePermissions = (): Permissions => {
 
     // Lohn & Kosten
     canSeeHourlyWages:          isAdmin,
-    canSeePersonnelCostTotals:  true,   // alle sehen Gesamtkosten + Quote
+    canSeePersonnelCostTotals:  true,
     canToggleCostView:           isAdmin,
 
     // Finanzen
@@ -145,8 +165,8 @@ export const usePermissions = (): Permissions => {
     canAccessSettings: isAdmin,
 
     // Dienstplan
-    canEditSchedule: true, // alle, aber nur ihre Abteilung
-    canCopyWeek:     true, // alle, aber nur ihre Abteilung
+    canEditSchedule: true,
+    canCopyWeek:     true,
     canAccessModule,
   };
 };

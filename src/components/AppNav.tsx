@@ -85,14 +85,14 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Tagesansicht',
         shortLabel: 'Tage',
         icon: Table2,
-        adminOnly: true,
+        module: 'tagesansicht' as import('@/hooks/usePermissions').AppModule,
       },
       {
         path: '/tages-controlling',
         label: 'Tages-Controlling',
         shortLabel: 'Controlling',
         icon: Activity,
-        adminOnly: true,
+        module: 'tages_controlling' as import('@/hooks/usePermissions').AppModule,
       },
       {
         path: '/produkt-analyse',
@@ -118,7 +118,7 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Personal FIX',
         shortLabel: 'FIX',
         icon: DollarSign,
-        adminOnly: true,
+        module: 'personal_fix' as import('@/hooks/usePermissions').AppModule,
       },
     ],
   },
@@ -219,6 +219,11 @@ const ROLE_CONFIG = {
     color:      'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700',
     Icon:       ChefHat,
   },
+  beaulieu_manager: {
+    label:      'Beaulieu – Geschäftsführer',
+    color:      'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-700',
+    Icon:       ShieldCheck,
+  },
 };
 
 // ─── Stichtag-Picker ─────────────────────────────────────────────────────────
@@ -278,7 +283,7 @@ const StichtagPicker = () => {
 export const AppSidebar = () => {
   const location = useLocation();
   const { user, signOut } = useAuth();
-  const { role, isAdmin, isManager, allowedDepartment, canAccessModule } = usePermissions();
+  const { role, isAdmin, isManager, isBeaulieuManager, allowedDepartment, canAccessModule } = usePermissions();
   const { isGuest, guestMinutesLeft, clearGuestSession } = useGuestSession();
   const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
   const { tenant } = useTenant();
@@ -295,7 +300,9 @@ export const AppSidebar = () => {
   const guestLabel = guestH > 0 ? `${guestH}h ${guestM}min` : `${guestMinutesLeft} Min.`;
 
   function isItemVisible(item: NavItem): boolean {
+    // adminOnly items are only visible to admin or guest (not beaulieu_manager)
     if (item.adminOnly && !isAdmin && !isGuest) return false;
+    // module-based items: use canAccessModule (handles beaulieu_manager correctly)
     if (item.module && !canAccessModule(item.module) && !isGuest) return false;
     return true;
   }
@@ -442,6 +449,9 @@ export const AppSidebar = () => {
                 </p>
               )}
               {isAdmin && <p className="text-[10px] opacity-80 font-normal">Alle Abteilungen</p>}
+              {isBeaulieuManager && (
+                <p className="text-[10px] opacity-80 font-normal">Beaulieu · gesperrt</p>
+              )}
             </div>
           </div>
         )}

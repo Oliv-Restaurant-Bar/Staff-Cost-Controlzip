@@ -1,0 +1,73 @@
+Bitte jetzt einen separaten Zugang für den Geschäftsführer vom Beaulieu einrichten.
+
+Ziel:
+Der Geschäftsführer vom Beaulieu soll einen eigenen Login / eigenen Zugriff erhalten.
+Er soll nur die Daten vom Mandanten "Beaulieu" sehen und innerhalb von Beaulieu vollen Zugriff auf die relevanten Module haben.
+
+Bitte exakt so umsetzen:
+
+1. Neue Rolle / Zugriffslogik
+Bitte eine eigene Rolle oder ein sauberes Rollenprofil für den Beaulieu-Geschäftsführer einführen.
+
+Anforderungen:
+- Zugriff nur auf Mandant = beaulieu
+- kein Zugriff auf Oliv
+- keine Mandantenumschaltung auf Oliv möglich
+
+2. Rechte für diesen Zugang
+Der Beaulieu-Geschäftsführer soll innerhalb von Beaulieu alles sehen können in:
+
+- Dienstplanung
+- Personal FIX
+- Tagesansicht
+
+Wenn sinnvoll zusätzlich:
+- Tages-Controlling
+- relevante PDF / Excel Exporte
+- Ist / Plan / Vergleich
+
+Falls Admin-Funktionen zu weit gehen, bitte nur die benötigten Controlling- und Planungsmodule freigeben.
+
+3. Tenant-Lock
+Dieser Benutzer soll fest auf Beaulieu gebunden sein.
+
+Wichtig:
+- beim Login automatisch tenant = beaulieu
+- kein Wechsel auf Oliv
+- kein Tenant Switcher oder Mandantenwechsel für diesen User anzeigen
+
+4. UI / Navigation
+Für diesen Benutzer nur die relevanten Module sichtbar machen:
+- Dienstplanung
+- Personal FIX
+- Tagesansicht
+- optional Tages-Controlling
+
+Alles andere, was er nicht braucht, bitte ausblenden oder sperren.
+
+5. Sicherheit
+Bitte sicherstellen:
+- direkte URL auf Oliv darf auch nicht funktionieren
+- auch bei Reload / Deep Link bleibt der Benutzer auf Beaulieu eingeschränkt
+- keine Datenlecks zwischen Oliv und Beaulieu
+
+6. Benutzeranlage vorbereiten
+Bitte den Code so vorbereiten, dass für diesen Geschäftsführer ein sauberer User angelegt oder zugeordnet werden kann.
+
+Falls dafür in Supabase / Auth etwas nötig ist:
+- bitte klar vorbereiten
+- falls ein manuelles Anlegen nötig ist, bitte genau sagen, was ich in Supabase / Auth machen muss
+
+7. Debug Logs
+Bitte loggen:
+[AUTH] user role: ...
+[AUTH] tenant lock: beaulieu
+[AUTH] allowed modules: ...
+[AUTH] tenant switch blocked: ...
+
+8. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie der Beaulieu-Geschäftsführer technisch von Oliv getrennt wird
+- welche Module er sehen kann
+- ob der Tenant Switcher für ihn deaktiviert ist
+- was ich noch manuell in Supabase / Auth anlegen muss
