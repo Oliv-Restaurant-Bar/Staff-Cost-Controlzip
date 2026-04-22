@@ -1,0 +1,58 @@
+Bitte jetzt als nächsten Schritt die Beaulieu-Lohnstruktur sauber aufsetzen, damit Personal FIX und alle Personalkosten-Auswertungen fachlich korrekt werden.
+
+Ziel:
+Die technische Tenant-Isolation ist jetzt sauber.
+Jetzt sollen die Beaulieu-Mitarbeitenden auch mit den richtigen Lohn-/Kostenstammdaten hinterlegt werden, damit Personal FIX, variable Kosten, PKQ und Budgetvergleiche korrekt rechnen.
+
+Bitte exakt so umsetzen:
+
+1. Beaulieu Mitarbeiterstamm um Lohnfelder ergänzen bzw. prüfen
+Bitte prüfen, welche Felder bereits existieren und für Beaulieu verwendet werden:
+- Stundenlohn
+- Monatslohn
+- Anstellung / Typ
+- Sollstunden / Pensum
+- aktiv / inaktiv
+
+2. Keine 0-Werte mehr als produktiver Zustand
+Aktuell stehen die Löhne/Gehälter bei Beaulieu noch auf 0.
+Bitte sicherstellen:
+- Personal FIX warnt klar, wenn Lohnwerte fehlen
+- 0-Werte nicht still als echte Kosten verwendet werden
+- fehlende Löhne sichtbar als unvollständig markiert werden
+
+3. Eingabemöglichkeit für Beaulieu Löhne
+Bitte eine saubere Möglichkeit schaffen, die Löhne für Beaulieu zu pflegen:
+- direkt im Personalstamm
+oder
+- per Import / Bulk-Update
+oder beides
+
+4. Tenant-korrekte Speicherung
+Alle Lohn- und Personalstammdaten müssen nur für restaurant_id = 'beaulieu' gespeichert werden.
+Keine Vermischung mit Oliv.
+
+5. Personal FIX danach testen
+Bitte prüfen:
+- Beaulieu Mitarbeiter erscheinen mit korrekten Löhnen
+- Personal FIX berechnet dann korrekt
+- Küche / Service Summen stimmen
+- keine 0-Kosten mehr, sofern Löhne gepflegt wurden
+
+6. Warnlogik
+Wenn für einen Beaulieu-Mitarbeiter noch kein Lohn hinterlegt ist, bitte klar anzeigen:
+- "Lohn fehlt"
+- oder "unvollständiger Personalstamm"
+
+7. Debug Logs
+Bitte loggen:
+[BEAULIEU-WAGE] employees loaded: ...
+[BEAULIEU-WAGE] wage missing: ...
+[BEAULIEU-WAGE] wage updated: ...
+[BEAULIEU-WAGE] personal_fix ready: yes/no
+
+8. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie die Löhne jetzt gepflegt werden können
+- welche Mitarbeitenden noch unvollständig sind
+- ob Personal FIX danach fachlich korrekt rechnet

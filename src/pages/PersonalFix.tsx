@@ -1283,9 +1283,9 @@ function FlexBreakdownModal({ target, onClose }: {
 // ── Hauptseite ────────────────────────────────────────────────────────────────
 
 export default function PersonalFixPage() {
-  const { isAdmin } = usePermissions();
+  const { isAdmin, isBeaulieuManager, canEditEmployees } = usePermissions();
   const { tenantId, tenantKey } = useTenant();
-  if (!isAdmin) return <Navigate to="/personal" replace />;
+  if (!isAdmin && !isBeaulieuManager) return <Navigate to="/personal" replace />;
 
   const today = new Date();
   const [selectedYear, setSelectedYear] = useState(today.getFullYear());
@@ -1335,6 +1335,14 @@ export default function PersonalFixPage() {
           const küche   = emps.filter(e => e.department === 'küche');
           const service = emps.filter(e => e.department === 'service');
           console.log(`[CONSISTENCY] personal_fix breakdown: Küche=${küche.length}, Service=${service.length}`);
+          // ─── [BEAULIEU-WAGE] Lohnvollständigkeit ─────────────────────────
+          const missingWage = emps.filter(e => (e.hourlyWage ?? 0) === 0 && (e.monthlySalary ?? 0) === 0);
+          console.log(`[BEAULIEU-WAGE] Mitarbeiter ohne Lohn: ${missingWage.length}/${emps.length}`);
+          if (missingWage.length > 0) {
+            console.log(`[BEAULIEU-WAGE] Fehlende Löhne bei: ${missingWage.map(e => e.name).join(', ')}`);
+          } else {
+            console.log(`[BEAULIEU-WAGE] Alle Löhne hinterlegt – OK`);
+          }
         } else {
           const beaulieuLeak = emps.filter(e => String(e.id).startsWith('b-'));
           console.log(`[CONSISTENCY] mismatch: ${beaulieuLeak.length > 0 ? 'yes – Beaulieu-Leak in Oliv' : 'no'}`);
@@ -1482,10 +1490,10 @@ export default function PersonalFixPage() {
     const emp = employees.find(e => e.id === empId);
     if (!emp) { setSaving(null); return; }
     const updated: Employee = { ...emp, hourlyWage: val };
-    await upsertEmployee(updated);
+    await upsertEmployee(updated, tenantId);
     setEmployees(prev => prev.map(e => e.id === empId ? updated : e));
     setSaving(null);
-  }, [employees]);
+  }, [employees, tenantId]);
 
   const handleSaved = async (empId: string, field: 'monthlySalary' | 'monthlySalaryWith13th', val: number) => {
     setSaving(empId);
@@ -1498,7 +1506,7 @@ export default function PersonalFixPage() {
     } else {
       updated = { ...emp, monthlySalaryWith13th: val };
     }
-    await upsertEmployee(updated);
+    await upsertEmployee(updated, tenantId);
     setEmployees(prev => prev.map(e => e.id === empId ? updated : e));
     setSaving(null);
   };
@@ -1512,6 +1520,12 @@ export default function PersonalFixPage() {
 
   const variableEmployees = useMemo(() =>
     employees.filter(e => !hasFixedSalary(e)).sort((a, b) => a.name.localeCompare(b.name, 'de')),
+    [employees],
+  );
+
+  // Beaulieu: Mitarbeiter ohne hinterlegten Lohn (weder Stunden- noch Monatslohn)
+  const missingWageEmployees = useMemo(() =>
+    employees.filter(e => (e.hourlyWage ?? 0) === 0 && (e.monthlySalary ?? 0) === 0),
     [employees],
   );
 
@@ -2395,6 +2409,21 @@ export default function PersonalFixPage() {
 
       <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
 
+        {/* ── [BEAULIEU-WAGE] Fehlende-Lohn-Banner ─────────────────────────── */}
+        {tenantId === 'beaulieu' && missingWageEmployees.length > 0 && (
+          <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 flex items-start gap-3">
+            <span className="text-amber-600 dark:text-amber-400 text-lg leading-none mt-0.5">⚠</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                Lohn fehlt bei {missingWageEmployees.length} Mitarbeiter{missingWageEmployees.length !== 1 ? 'n' : ''}
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                {missingWageEmployees.map(e => e.name).join(', ')} — bitte im Personalstamm hinterlegen, damit Personal FIX korrekt rechnet.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* ── Modus-Steuerung (Pro-Rata Toggle) ────────────────────────────── */}
         <div className="rounded-xl border border-border bg-card shadow-sm p-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -2875,7 +2904,16 @@ export default function PersonalFixPage() {
                           );
                           return (
                             <tr key={row.id} className={i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'}>
-                              <td className="px-3 py-1.5 font-medium">{row.name}</td>
+                              <td className="px-3 py-1.5 font-medium">
+                                <div className="flex items-center gap-2">
+                                  {row.name}
+                                  {row.hourlyWage === 0 && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
+                                      Lohn fehlt
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
                               <td className="px-3 py-1.5 text-center text-muted-foreground capitalize">{row.dept}</td>
                               <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{row.hourlyWage > 0 ? `${row.hourlyWage.toFixed(2)}` : '–'}</td>
                               <td className="px-3 py-1.5 text-right font-mono text-blue-500 dark:text-blue-400">{row.planH > 0 ? `${row.planH.toFixed(1)} h` : '–'}</td>
@@ -2990,14 +3028,14 @@ export default function PersonalFixPage() {
                             <Badge variant="outline" className="text-xs">{EMP_TYPE_LABEL[emp.employmentType]}</Badge>
                           </td>
                           <td className="px-4 py-2.5 text-right">
-                            {isAdmin ? (
+                            {canEditEmployees ? (
                               <InlineSalaryEditor empId={emp.id} field="monthlySalary" value={emp.monthlySalary} onSaved={handleSaved} />
                             ) : (
                               <span className="font-mono text-sm">{emp.monthlySalary ? fmtCHFDec(emp.monthlySalary) : '–'}</span>
                             )}
                           </td>
                           <td className="px-4 py-2.5 text-right">
-                            {isAdmin ? (
+                            {canEditEmployees ? (
                               <InlineSalaryEditor empId={emp.id} field="monthlySalaryWith13th" value={emp.monthlySalaryWith13th} onSaved={handleSaved} />
                             ) : (
                               <span className="font-mono text-sm">{emp.monthlySalaryWith13th ? fmtCHFDec(emp.monthlySalaryWith13th) : '–'}</span>
