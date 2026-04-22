@@ -35,6 +35,7 @@ import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem, calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { useWeekSync } from '@/hooks/useWeekSync';
 import { useSupabaseSchedule, Employee as SupabaseEmployee } from '@/hooks/useSupabaseSchedule';
+import { useTenant } from '@/contexts/TenantContext';
 import { saveActualHourEntry } from '@/lib/supabase-db';
 import { Input } from '@/components/ui/input';
 import { formatCurrency } from '@/lib/personnel-utils';
@@ -83,8 +84,9 @@ const toLocalEmployee = (emp: SupabaseEmployee): Employee => ({
 export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlannerProps) => {
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
   const { currentWeekStart, currentMonthStart, weekNumber, monthLabel, navigateWeek, navigateMonth } = useWeekSync('EmbeddedSchedulePlanner', selectedDate);
-  
-  // Use Supabase hook for employees and schedule
+  const { tenantId } = useTenant();
+
+  // Use Supabase hook for employees and schedule — tenant-filtered
   const {
     employees: supabaseEmployees,
     scheduleData,
@@ -100,6 +102,7 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     refresh,
   } = useSupabaseSchedule({
     currentMonth: currentMonthStart,
+    restaurantId: tenantId,   // ← Tenant-Filter
   });
 
   // Convert to local Employee type

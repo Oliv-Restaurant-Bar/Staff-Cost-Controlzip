@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useParams } from 'react-router-dom';
+import { useTenant } from '@/contexts/TenantContext';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, startOfWeek, endOfWeek, getISOWeek, addDays, isWeekend, getDay } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { supabase } from '@/integrations/supabase/client';
@@ -35,6 +36,7 @@ const DepartmentSchedule = () => {
   const { department } = useParams<{ department: string }>();
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
+  const { tenantId } = useTenant();
   
   const [isValidating, setIsValidating] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState(false);
@@ -74,6 +76,7 @@ const DepartmentSchedule = () => {
     token,
     department: tokenRole === 'admin' ? null : dbDepartment,
     currentMonth: currentMonthStart,
+    restaurantId: tenantId,   // ← Tenant-Filter: lädt nur Mitarbeiter des aktiven Mandanten
   });
 
   // Validate token on mount

@@ -1,0 +1,68 @@
+Der Beaulieu-Geschäftsführer-Zugang funktioniert, aber im Dienstplan werden immer noch die Oliv-Mitarbeitenden angezeigt. Das ist falsch und muss jetzt sauber korrigiert werden.
+
+Ziel:
+Wenn tenant = beaulieu aktiv ist, dürfen im Dienstplan ausschließlich die Beaulieu-Mitarbeitenden geladen und gerendert werden.
+Oliv-Mitarbeitende dürfen dort niemals sichtbar sein.
+
+Bitte exakt so prüfen und korrigieren:
+
+1. Mitarbeiterquelle im Dienstplan prüfen
+Bitte prüfen, aus welcher Quelle der Dienstplan aktuell die Mitarbeitenden lädt:
+- Supabase employees Tabelle
+- Fallback default employees
+- lokaler Cache
+- alte Oliv Defaults
+
+Es wirkt so, als würde der Dienstplan noch auf eine alte Oliv-Liste oder einen falschen Fallback zugreifen.
+
+2. Tenant-Filter erzwingen
+Im Dienstplan bitte das Laden der Mitarbeitenden strikt tenant-basiert machen:
+
+Wenn aktiver Mandant = beaulieu
+→ nur employees mit restaurant_id = 'beaulieu'
+
+Wenn aktiver Mandant = oliv
+→ nur employees mit restaurant_id = 'oliv'
+
+Wichtig:
+Nicht nur im UI filtern, sondern schon beim Laden / Mapping.
+
+3. Fallbacks prüfen
+Bitte alle Fallbacks im Dienstplan prüfen:
+- defaultEmployees
+- localStorage cache
+- statische Daten
+- initial state
+
+Wichtig:
+Im Mandanten Beaulieu darf niemals auf Oliv-Defaults zurückgefallen werden.
+Falls Beaulieu keine DB-Daten hat, dann nur Beaulieu-Fallback verwenden, nie Oliv.
+
+4. Renderlogik prüfen
+Bitte sicherstellen:
+- die Mitarbeiterliste im Dienstplan
+- Service/Küche Gruppierung
+- Alle-Abteilungen-Ansicht
+- Ist / Plan / Vergleich
+
+verwenden alle dieselbe tenant-korrekte Mitarbeiterbasis.
+
+5. Beaulieu Geschäftsführer Test
+Bitte direkt mit tenant = beaulieu prüfen:
+- Dienstplanung zeigt nur Beaulieu-Mitarbeitende
+- keine Namen wie Arber, Artin, Carlos etc. aus Oliv
+- nur die Beaulieu-Namen erscheinen
+
+6. Debug Logs
+Bitte loggen:
+[SCHEDULE-TENANT] active tenant: ...
+[SCHEDULE-TENANT] source: supabase|fallback|cache
+[SCHEDULE-TENANT] employees loaded count: ...
+[SCHEDULE-TENANT] employee names: ...
+[SCHEDULE-TENANT] oliv leak detected: yes/no
+
+7. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wo die falsche Mitarbeiterquelle lag
+- wie der Dienstplan jetzt tenant-korrekt lädt
+- ob Beaulieu jetzt nur noch Beaulieu-Mitarbeitende zeigt

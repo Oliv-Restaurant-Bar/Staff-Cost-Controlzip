@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, subDays, addDays } from 'date-fns';
+import type { TenantId } from '@/contexts/TenantContext';
 import { toast } from 'sonner';
 
 // Types matching the database schema
@@ -115,9 +116,11 @@ interface UseSupabaseScheduleOptions {
   token?: string | null;
   department?: 'service' | 'kueche' | null;
   currentMonth: Date;
+  /** Tenant-Filter: wenn gesetzt, werden nur Mitarbeiter dieses Mandanten geladen */
+  restaurantId?: TenantId | null;
 }
 
-export const useSupabaseSchedule = ({ token, department, currentMonth }: UseSupabaseScheduleOptions) => {
+export const useSupabaseSchedule = ({ token, department, currentMonth, restaurantId }: UseSupabaseScheduleOptions) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [scheduleData, setScheduleData] = useState<Record<string, DaySchedule>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -155,30 +158,54 @@ export const useSupabaseSchedule = ({ token, department, currentMonth }: UseSupa
     validateToken();
   }, [token]);
 
-  // Load employees
+  // Load employees — tenant-filtered
   const loadEmployees = useCallback(async () => {
+    console.log(`[SCHEDULE-TENANT] active tenant: ${restaurantId ?? 'alle'}`);
     try {
       let query = supabase.from('employees').select('*').order('name');
-      
+
+      // ─── TENANT FILTER (Kern-Fix) ────────────────────────────────────────────
+      // Ohne diesen Filter werden alle Mandanten geladen (Oliv + Beaulieu).
+      if (restaurantId) {
+        query = query.eq('restaurant_id', restaurantId);
+        console.log(`[SCHEDULE-TENANT] restaurant_id filter applied: ${restaurantId}`);
+      } else {
+        console.log('[SCHEDULE-TENANT] no tenant filter – loading all employees (admin mode)');
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
       // Filter by department if specified
       if (department) {
         query = query.eq('department', department);
       }
-      
+
       const { data, error } = await query;
-      
+
       if (error) throw error;
-      
+
       const frontendEmployees = (data || []).map(dbToFrontendEmployee);
+
+      // Debug: log loaded employees and detect Oliv leaks
+      const names = frontendEmployees.map(e => e.name);
+      console.log(`[SCHEDULE-TENANT] source: supabase`);
+      console.log(`[SCHEDULE-TENANT] employees loaded count: ${frontendEmployees.length}`);
+      console.log(`[SCHEDULE-TENANT] employee names: ${names.join(', ') || '(keine)'}`);
+
+      // Oliv-Leak-Detektion: Wenn Tenant = Beaulieu aber Oliv-Namen auftauchen
+      if (restaurantId === 'beaulieu') {
+        const olivNames = ['arber', 'artin', 'carlos', 'eduardo', 'joana', 'luka', 'nina', 'stefan'];
+        const leaked = names.filter(n => olivNames.some(o => n.toLowerCase().includes(o)));
+        console.log(`[SCHEDULE-TENANT] oliv leak detected: ${leaked.length > 0 ? 'YES – ' + leaked.join(', ') : 'no'}`);
+      }
+
       setEmployees(frontendEmployees);
-      
       return frontendEmployees;
     } catch (err) {
       console.error('Error loading employees:', err);
       setError('Fehler beim Laden der Mitarbeiter');
       return [];
     }
-  }, [department]);
+  }, [department, restaurantId]);
 
   // Load schedule data for the current month including week overlaps
   const loadScheduleData = useCallback(async () => {
@@ -195,9 +222,15 @@ export const useSupabaseSchedule = ({ token, department, currentMonth }: UseSupa
 
       let query = supabase
         .from('schedule_entries')
-        .select('*, employees!inner(department)')
+        .select('*, employees!inner(department, restaurant_id)')
         .gte('date', startStr)
         .lte('date', endStr);
+
+      // ─── TENANT FILTER für Schedule-Einträge ────────────────────────────────
+      if (restaurantId) {
+        query = query.eq('employees.restaurant_id', restaurantId);
+      }
+      // ────────────────────────────────────────────────────────────────────────
 
       if (department) {
         query = query.eq('employees.department', department);
@@ -210,13 +243,16 @@ export const useSupabaseSchedule = ({ token, department, currentMonth }: UseSupa
       const supabaseRows = (data || []).length;
       console.log(`[SCHEDULE] supabase rows count – ${supabaseRows}`);
 
-      // Also read localStorage as fallback
+      // Also read localStorage as fallback — tenant-prefixed key to avoid cross-tenant leaks
+      const localKey = restaurantId && restaurantId !== 'oliv'
+        ? `${restaurantId}:schedule-v2-${monthKey}`
+        : `schedule-v2-${monthKey}`;
       const localRaw = (() => {
-        try { return JSON.parse(localStorage.getItem(`schedule-v2-${monthKey}`) || '{}'); }
+        try { return JSON.parse(localStorage.getItem(localKey) || '{}'); }
         catch { return {}; }
       })();
       const localRows = Object.keys(localRaw).length;
-      console.log(`[SCHEDULE] local rows count – ${localRows}`);
+      console.log(`[SCHEDULE] local rows count – ${localRows} (key: ${localKey})`);
 
       const supabaseMap = dbToScheduleData(data || []);
 
