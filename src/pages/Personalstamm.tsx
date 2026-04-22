@@ -319,8 +319,11 @@ function emptyEmployee(id: string): Employee {
 const Personalstamm = () => {
   const { tenantId } = useTenant();
   const {
-    isAdmin, isManager, allowedDepartment, canEditEmployees,
+    isAdmin, isManager, allowedDepartment, canEditEmployees, isBeaulieuManager,
   } = usePermissions();
+
+  /** Darf Lohnfelder sehen und bearbeiten */
+  const canEditWages = isAdmin || (isBeaulieuManager && tenantId === 'beaulieu');
 
   // ── Daten ──────────────────────────────────────────────────────────────────
   const [employees, setEmployees]         = useState<Employee[]>([]);
@@ -623,8 +626,50 @@ const Personalstamm = () => {
   const handleSave = async () => {
     if (!editData) return;
     if (!editData.name.trim()) { toast.error('Name ist erforderlich'); return; }
+
+    // ── Lohn-Validierung ───────────────────────────────────────────────────
+    if (canEditWages) {
+      const ml  = editData.monthlySalary        ?? 0;
+      const ml13 = editData.monthlySalaryWith13th ?? 0;
+      const sl  = editData.hourlyWage            ?? 0;
+      if (ml < 0 || ml13 < 0 || sl < 0) {
+        toast.error('Kein negativer Lohn erlaubt');
+        return;
+      }
+      if (ml13 > 0 && ml > 0 && ml13 < ml) {
+        toast.error('Bruttolohn inkl. 13. ML muss ≥ Monatslohn sein');
+        return;
+      }
+    }
+
+    // ── [WAGE-EDIT] Logging — alten Wert vor dem Speichern sichern ─────────
+    const prevEmp = employees.find(e => e.id === editData.id);
+    if (canEditWages && prevEmp) {
+      const oldML  = prevEmp.monthlySalary;
+      const oldML13 = prevEmp.monthlySalaryWith13th;
+      const oldSL  = prevEmp.hourlyWage;
+      const newML  = editData.monthlySalary;
+      const newML13 = editData.monthlySalaryWith13th;
+      const newSL  = editData.hourlyWage;
+      const wageChanged =
+        oldML  !== newML  ||
+        oldML13 !== newML13 ||
+        oldSL  !== newSL;
+      if (wageChanged) {
+        console.log(`[WAGE-EDIT] tenant: ${tenantId}`);
+        console.log(`[WAGE-EDIT] employee: ${editData.name} (id=${editData.id})`);
+        console.log(`[WAGE-EDIT] old value: Monatslohn=${oldML ?? 'n/a'} inkl.13.=${oldML13 ?? 'n/a'} Stundenlohn=${oldSL ?? 'n/a'}`);
+        console.log(`[WAGE-EDIT] new value: Monatslohn=${newML ?? 'n/a'} inkl.13.=${newML13 ?? 'n/a'} Stundenlohn=${newSL ?? 'n/a'}`);
+      }
+    }
+
     setSaving(true);
     const ok = await upsertEmployee(editData, tenantId);
+
+    if (canEditWages) {
+      console.log(`[WAGE-EDIT] save success: ${ok ? 'yes' : 'no'} — ${editData.name}`);
+    }
+
     if (ok) {
       // Mitarbeiter-Liste aktualisieren
       setEmployees(prev => {
@@ -650,7 +695,7 @@ const Personalstamm = () => {
       setEditMode(false);
       toast.success('Mitarbeiter gespeichert');
     } else {
-      toast.error('Fehler beim Speichern');
+      toast.error('Fehler beim Speichern — Supabase nicht erreichbar oder fehlende Berechtigung');
     }
     setSaving(false);
   };
@@ -1909,23 +1954,51 @@ CREATE POLICY "Anon self-register new employee"
                 </Card>
               )}
 
-              {/* ── Abschnitt 4: Lohn & Kosten (nur Admin) ─────────────────── */}
-              {isAdmin && (
+              {/* ── Abschnitt 4: Lohn & Kosten (Admin + Beaulieu GF) ──────────── */}
+              {canEditWages && (
                 <Card className="border-purple-200/50 dark:border-purple-800/30">
                   <CardHeader className="pb-3 pt-4">
                     <CardTitle className="text-sm flex items-center gap-2">
                       <Calculator className="h-4 w-4 text-purple-600" />
                       Lohn & Kosten
                       <span className="text-[10px] font-normal text-muted-foreground bg-purple-50 dark:bg-purple-950/20 border border-purple-200 px-1.5 py-0.5 rounded">
-                        Nur Admin
+                        {isAdmin ? 'Admin' : 'GF Beaulieu'}
                       </span>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4 pt-0">
                     {editMode ? (
                       <>
+                        {/* ── Lohnmodus-Wähler (Monatslohn / Stundenlohn) ─── */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Lohnmodus:</span>
+                          <button
+                            type="button"
+                            onClick={() => setEditData(d => d ? { ...d, contractType: 'monthly', hourlyWage: 0 } : d)}
+                            className={`px-3 py-1 text-xs rounded-md border transition-colors ${
+                              (editData?.contractType === 'monthly' || (!editData?.contractType && (editData?.monthlySalary ?? 0) > 0))
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-muted text-muted-foreground border-border hover:bg-muted/80'
+                            }`}
+                          >
+                            Monatslohn (ML)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditData(d => d ? { ...d, contractType: undefined, monthlySalary: undefined, monthlySalaryWith13th: undefined } : d)}
+                            className={`px-3 py-1 text-xs rounded-md border transition-colors ${
+                              (editData?.contractType !== 'monthly' && !(!editData?.contractType && (editData?.monthlySalary ?? 0) > 0))
+                                ? 'bg-orange-600 text-white border-orange-600'
+                                : 'bg-muted text-muted-foreground border-border hover:bg-muted/80'
+                            }`}
+                          >
+                            Stundenlohn (SL)
+                          </button>
+                        </div>
+
                         {/* ── Lohneingabe abhängig von Vertragsart ─── */}
-                        {editData?.contractType === 'monthly' ? (
+                        {/* Auto-Detection: monthly wenn Monatslohn vorhanden oder contractType='monthly' */}
+                        {(editData?.contractType === 'monthly' || (!editData?.contractType && (editData?.monthlySalary ?? 0) > 0)) ? (
                           <div className="space-y-3">
                             <div className="rounded-md bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-3">
                               <p className="text-xs font-semibold text-blue-800 dark:text-blue-300 mb-2">
@@ -2048,9 +2121,11 @@ CREATE POLICY "Anon self-register new employee"
                         {editData && (() => {
                           const factor   = editData.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
                           const has13th  = editData.has13thSalary ?? false;
-                          const hasSL    = editData.hourlyWage > 0 && editData.contractType !== 'monthly';
+                          // Auto-Detection: hasML wenn contractType='monthly' ODER Monatslohn vorhanden (für Beaulieu ohne contractType)
+                          const hasML    = !!(editData.contractType === 'monthly' || (!editData.contractType && (editData.monthlySalary ?? 0) > 0))
+                                        && !!(editData.monthlySalary && editData.monthlySalary > 0);
+                          const hasSL    = editData.hourlyWage > 0 && !hasML;
                           const mlHours  = editData.weeklyHours || 42;
-                          const hasML    = !!(editData.contractType === 'monthly' && editData.monthlySalary && editData.monthlySalary > 0);
                           if (!hasSL && !hasML) return null;
 
                           const LRow = ({ label, value, bold, sub }: { label: string; value: string; bold?: boolean; sub?: boolean }) => (
