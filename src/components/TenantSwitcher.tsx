@@ -7,6 +7,7 @@
  * Für beaulieu_manager: Mandant nur lesbar anzeigen (kein Wechsel möglich).
  */
 
+import { useEffect } from 'react';
 import { useTenant, TENANTS, TenantId } from '@/contexts/TenantContext';
 import { Building2, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -20,6 +21,12 @@ export const TenantSwitcher = ({ compact = false }: TenantSwitcherProps) => {
   const { tenantId, setTenant, tenantLocked, tenant } = useTenant();
 
   const tenantList = Object.values(TENANTS) as typeof TENANTS[TenantId][];
+
+  useEffect(() => {
+    if (tenantLocked) {
+      console.log('[AUTH] tenant switch hidden: true');
+    }
+  }, [tenantLocked]);
 
   // Wenn Tenant gesperrt: nur aktiven Mandanten als read-only Badge anzeigen
   if (tenantLocked) {

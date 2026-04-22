@@ -71,6 +71,17 @@ const TenantLockEnforcer = () => {
   return null;
 };
 
+// ─── BlockedRoute ─────────────────────────────────────────────────────────────
+// Wrapper für Navigate-Redirects: loggt [AUTH] blocked route to oliv bevor
+// es weiterleitet. Nur aktiv wenn isBeaulieuManager = true.
+
+const BlockedRoute = ({ path, to = '/personal' }: { path: string; to?: string }) => {
+  useEffect(() => {
+    console.log(`[AUTH] blocked route to oliv: ${path} → redirected to ${to}`);
+  }, [path, to]);
+  return <Navigate to={to} replace />;
+};
+
 // ─── Private App (requires authentication) ──────────────────────────────────
 
 const AppContent = () => {
@@ -156,39 +167,39 @@ const AppContent = () => {
 
             {/* Reporting + Finanzen: nur Admin – beaulieu_manager wird umgeleitet */}
             <Route path="/reporting"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <Reporting />}
+              element={isBeaulieuManager ? <BlockedRoute path="/reporting" /> : <Reporting />}
             />
             <Route path="/kontenplan"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <AccountMappingPage />}
+              element={isBeaulieuManager ? <BlockedRoute path="/kontenplan" /> : <AccountMappingPage />}
             />
             <Route path="/erfolgsrechnung"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <PLViewPage />}
+              element={isBeaulieuManager ? <BlockedRoute path="/erfolgsrechnung" /> : <PLViewPage />}
             />
             <Route path="/csv-import"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <CSVImportPage />}
+              element={isBeaulieuManager ? <BlockedRoute path="/csv-import" /> : <CSVImportPage />}
             />
             <Route path="/import"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <ImportHub />}
+              element={isBeaulieuManager ? <BlockedRoute path="/import" /> : <ImportHub />}
             />
             <Route path="/lieferanten"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <SupplierDocumentsPage />}
+              element={isBeaulieuManager ? <BlockedRoute path="/lieferanten" /> : <SupplierDocumentsPage />}
             />
             <Route path="/lieferanten-vergleich"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <SupplierComparisonPage />}
+              element={isBeaulieuManager ? <BlockedRoute path="/lieferanten-vergleich" /> : <SupplierComparisonPage />}
             />
             <Route path="/budget"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <BudgetPage />}
+              element={isBeaulieuManager ? <BlockedRoute path="/budget" /> : <BudgetPage />}
             />
             <Route path="/personal-fix"
               element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
             />
             <Route path="/produkte"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <ProdukteSeite />}
+              element={isBeaulieuManager ? <BlockedRoute path="/produkte" /> : <ProdukteSeite />}
             />
             <Route path="/artikel"          element={<ArtikelPage />} />
             <Route path="/artikel-tracking" element={<ArtikelTrackingPage />} />
             <Route path="/wes-analyse"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <WesAnalysePage />}
+              element={isBeaulieuManager ? <BlockedRoute path="/wes-analyse" /> : <WesAnalysePage />}
             />
             <Route path="/lunch-analyse"    element={<LunchAnalysePage />} />
             <Route path="/takeaway-analyse" element={<TakeAwayAnalysePage />} />
@@ -202,15 +213,15 @@ const AppContent = () => {
               element={canAccessModule('tages_controlling') ? <TagesControllingPage /> : <Navigate to="/personal" replace />}
             />
             <Route path="/verkauf-dashboard"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <VerkaufsDashboard />}
+              element={isBeaulieuManager ? <BlockedRoute path="/verkauf-dashboard" /> : <VerkaufsDashboard />}
             />
             <Route path="/sales-upload"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <SalesUpload />}
+              element={isBeaulieuManager ? <BlockedRoute path="/sales-upload" /> : <SalesUpload />}
             />
             <Route path="/produkt-analyse"   element={<ProduktAnalyse />} />
             <Route path="/kategorien"        element={<KategorienAnalyse />} />
             <Route path="/produkt-stamm"
-              element={isBeaulieuManager ? <Navigate to="/personal" replace /> : <ProduktStamm />}
+              element={isBeaulieuManager ? <BlockedRoute path="/produkt-stamm" /> : <ProduktStamm />}
             />
 
             {/* Abteilungs-Dienstpläne */}
