@@ -152,12 +152,8 @@ const AppContent = () => {
                 : <Navigate to="/personal" replace />}
             />
 
-            {/* Personalstamm: alle Rollen, Inhalt rollenbasiert gefiltert */}
-            <Route path="/personal-stamm"
-              element={isBeaulieuManager
-                ? <Navigate to="/personal" replace />
-                : <Personalstamm />}
-            />
+            {/* Personalstamm: Admin + beaulieu_manager (tenant-gefiltert) */}
+            <Route path="/personal-stamm" element={<Personalstamm />} />
 
             {/* Einstellungen: nur Admin */}
             <Route

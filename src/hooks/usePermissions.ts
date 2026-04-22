@@ -9,7 +9,7 @@
  *   admin              → Inhaber / Admin: sieht alles
  *   service_manager    → Service-Manager: Dienstplanung (Service) + Soll/Ist-Analyse
  *   kueche_manager     → Küchen-Manager:  Dienstplanung (Küche)  + Soll/Ist-Analyse
- *   beaulieu_manager   → Beaulieu GF: Dienstplanung + Personal FIX + Tagesansicht + Controlling
+ *   beaulieu_manager   → Beaulieu GF: Dienstplanung + Personal FIX + Personalstamm (lesen) + Tagesansicht + Controlling
  *                        Fest auf Mandant Beaulieu gesperrt, kein Tenant-Wechsel
  *
  * Modul-Zugriff im Überblick:
@@ -21,7 +21,7 @@
  *   Personal FIX          ✓      –            –           ✓
  *   Tagesansicht          ✓      –            –           ✓
  *   Tages-Controlling     ✓      –            –           ✓
- *   Personalstamm         ✓      –            –           –
+ *   Personalstamm         ✓      –            –           ✓ (lesen)
  *   Reporting / P&L       ✓      –            –           –
  *   Budget / Import       ✓      –            –           –
  */
@@ -125,7 +125,7 @@ export const usePermissions = (): Permissions => {
       case 'soll_ist_analyse':
         return isAdmin || isServiceManager || isKuecheManager; // nicht für beaulieu_manager
       case 'personalstamm':
-        return isAdmin;
+        return isAdmin || isBeaulieuManager;
       case 'reporting':
         return isAdmin;
       case 'personal_fix':

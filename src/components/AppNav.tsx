@@ -158,7 +158,7 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Personalstamm',
         shortLabel: 'Personal',
         icon: Users,
-        adminOnly: true,
+        module: 'personalstamm' as import('@/hooks/usePermissions').AppModule,
       },
       {
         path: '/produkt-stamm',
