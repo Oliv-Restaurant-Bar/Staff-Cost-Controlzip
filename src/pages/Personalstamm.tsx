@@ -460,6 +460,18 @@ const Personalstamm = () => {
         const finalEmps = emps.map(e => migrated.find(m => m.id === e.id) ?? e);
         console.log('[Personalstamm] setEmployees:', finalEmps.length, 'employees');
         setEmployees(finalEmps);
+        if (tenantId === 'beaulieu') {
+          const küche   = finalEmps.filter(e => e.department === 'küche');
+          const service = finalEmps.filter(e => e.department === 'service');
+          const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi', 'eduard', 'nahuel', 'nina'];
+          const olivLeak = finalEmps.filter(e => olivNames.some(o => e.name.toLowerCase().includes(o)));
+          console.log(`[BEAULIEU-STAFF] personalstamm visible count: ${finalEmps.length} (Küche=${küche.length}, Service=${service.length})`);
+          console.log(`[BEAULIEU-STAFF] oliv leak detected: ${olivLeak.length > 0 ? 'yes – ' + olivLeak.map(e => e.name).join(', ') : 'no'}`);
+          const missingWage = finalEmps.filter(e => (e.hourlyWage ?? 0) === 0 && (e.monthlySalary ?? 0) === 0);
+          if (missingWage.length > 0) {
+            console.log(`[BEAULIEU-WAGE] Fehlende Löhne bei: ${missingWage.map(e => e.name).join(', ')}`);
+          }
+        }
         if (migrated.length > 0) {
           console.info(`[Personalstamm] ${migrated.length} Mitarbeiter-Datensätze aus localStorage nach Supabase migriert.`);
         }

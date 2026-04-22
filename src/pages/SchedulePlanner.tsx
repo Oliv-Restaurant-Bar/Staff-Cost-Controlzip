@@ -369,11 +369,13 @@ const SchedulePlanner = () => {
         if (tenantId === 'beaulieu') {
           const bKüche   = supabaseEmployees.filter(e => e.department === 'küche');
           const bService = supabaseEmployees.filter(e => e.department === 'service');
-          const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi', 'eduard', 'nahuel', 'nina', 'stefan'];
+          const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi', 'eduard', 'nahuel', 'nina'];
           const olivLeak = supabaseEmployees.filter(e => olivNames.some(o => e.name.toLowerCase().includes(o)));
           console.log(`[CHECK] ui employees beaulieu: ${supabaseEmployees.length} (Küche=${bKüche.length}, Service=${bService.length})`);
           console.log(`[CHECK] tenant isolation: ${olivLeak.length === 0 ? 'OK – keine Oliv-Daten sichtbar' : 'ERROR – Oliv-Leak: ' + olivLeak.map(e => e.name).join(', ')}`);
           console.log(`[CHECK] departments valid: ${bKüche.length > 0 && bService.length > 0 ? 'OK' : 'WARN – eine Abteilung leer'}`);
+          console.log(`[BEAULIEU-STAFF] dienstplan visible count: ${supabaseEmployees.length} (Küche=${bKüche.length}, Service=${bService.length})`);
+          console.log(`[BEAULIEU-STAFF] oliv leak detected: ${olivLeak.length > 0 ? 'yes – ' + olivLeak.map(e => e.name).join(', ') : 'no'}`);
           // ─── [CONSISTENCY] Standardformat für dienstplan + mirus ────────
           console.log(`[CONSISTENCY] tenant: ${tenantId}`);
           console.log(`[CONSISTENCY] dienstplan employees: ${supabaseEmployees.length}`);

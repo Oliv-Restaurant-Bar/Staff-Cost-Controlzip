@@ -1329,7 +1329,7 @@ export default function PersonalFixPage() {
         console.log(`[CONSISTENCY] personal_fix employees: ${emps.length}`);
         console.log(`[CONSISTENCY] employee names personal_fix: ${emps.map(e => e.name).join(', ')}`);
         if (tenantId === 'beaulieu') {
-          const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi', 'eduard', 'nahuel', 'nina', 'stefan'];
+          const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi', 'eduard', 'nahuel', 'nina'];
           const leak = emps.filter(e => olivNames.some(o => e.name.toLowerCase().includes(o)));
           console.log(`[CONSISTENCY] mismatch: ${leak.length > 0 ? 'yes – Oliv-Leak: ' + leak.map(e => e.name).join(', ') : 'no'}`);
           const küche   = emps.filter(e => e.department === 'küche');

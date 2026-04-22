@@ -168,7 +168,7 @@ export async function loadEmployees(restaurantId?: TenantId): Promise<Employee[]
         console.log(`[CHECK] departments: Küche=${küche.length}, Service=${service.length}`);
         result.forEach(e => console.log(`[CHECK] employee: id=${e.id} name="${e.name}" dept=${e.department}`));
         // Oliv-Leak-Prüfung
-        const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi', 'eduard', 'nahuel', 'nina', 'stefan'];
+        const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi', 'eduard', 'nahuel', 'nina'];
         const leak = result.filter(e => olivNames.some(o => e.name.toLowerCase().includes(o)));
         console.log(`[CHECK] oliv leak detected: ${leak.length > 0 ? 'yes – ' + leak.map(e => e.name).join(', ') : 'no'}`);
       }
