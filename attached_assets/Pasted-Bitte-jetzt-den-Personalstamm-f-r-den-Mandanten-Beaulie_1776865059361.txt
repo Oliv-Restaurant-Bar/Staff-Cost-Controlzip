@@ -1,0 +1,156 @@
+Bitte jetzt den Personalstamm für den Mandanten Beaulieu korrekt aufbauen und gleichzeitig den Dienstplan auf dieselbe Mitarbeiterbasis umstellen.
+
+Ziel:
+Im Beaulieu-Mandanten ist der Personalstamm aktuell leer und im Dienstplan erscheinen noch Oliv-Mitarbeitende. Das muss jetzt sauber korrigiert werden.
+
+Wichtig:
+Bitte für Beaulieu nur Mitarbeitende übernehmen, die im gelieferten Mirus-Personalstamm KEIN Austrittsdatum haben.
+
+Zusätzlich:
+Im hochgeladenen Lohnblatt.pdf findest du den Bruttolohn inkl. 13. Monatslohn. Bitte diese Lohnwerte den aktiven Beaulieu-Mitarbeitenden zuordnen und im Personalstamm speichern.
+
+==================================================
+1. Aktive Beaulieu-Mitarbeitende übernehmen
+==================================================
+
+Bitte aus dem gelieferten Personalstamm nur Mitarbeitende ohne Austrittsdatum übernehmen.
+
+Diese Mitarbeitenden sollen für Beaulieu aktiv angelegt / aktualisiert werden:
+
+- Barrera Hinestroza, Jonathan Filipe
+- Burkhalter, Nadica
+- Elmazi, Fatmire
+- Firilovic, Maja
+- Hadzija, Hatidze
+- Horvath, Robert Stefan
+- Krebs, Marcel
+- Ramadani, Naip
+- Redzepi, Nehat
+- Svyrydovych, Varvara
+
+Nicht übernehmen / nicht aktiv verwenden:
+- Bröcker, Christin Susann
+- Makhiouba, Djamal
+- alle weiteren Mitarbeitenden mit Austrittsdatum
+
+==================================================
+2. Abteilungen auf nur 2 Bereiche reduzieren
+==================================================
+
+Bitte für Beaulieu nur diese zwei finalen Abteilungen verwenden:
+- Küche
+- Service
+
+Mapping:
+- Küche bleibt Küche
+- Hilfsarbeiter → Küche
+- Service bleibt Service
+- Geschäftsleitung → Service
+
+Konkret:
+- Elmazi Fatmire → Küche
+- Ramadani Naip → Küche
+- Krebs Marcel → Service
+- Redzepi Nehat → Service
+
+==================================================
+3. Supabase employees Tabelle befüllen / korrigieren
+==================================================
+
+Bitte die obigen aktiven Mitarbeitenden sauber in Supabase in die employees Tabelle schreiben oder per Upsert aktualisieren.
+
+Wichtig:
+- restaurant_id = 'beaulieu'
+- active = true
+- keine Duplikate
+- bestehende Oliv-Mitarbeitenden nicht verändern
+- bisherige Beaulieu-Platzhalter nicht mehr verwenden
+
+Bitte sinnvoll pflegen:
+- id
+- name
+- first_name
+- last_name
+- department
+- restaurant_id
+- active
+- optional: mirus_pnr falls vorhanden
+- optional: entry_date falls vorhanden
+
+==================================================
+4. Lohnblatt übernehmen
+==================================================
+
+Bitte das hochgeladene Lohnblatt.pdf auslesen und die Bruttolöhne inkl. 13. Monatslohn den obigen aktiven Beaulieu-Mitarbeitenden zuordnen.
+
+Wichtig:
+- Namen sauber matchen
+- Bruttolohn inkl. 13. Monatslohn im Personalstamm speichern
+- falls Monatslohn und Stundenlohn getrennt gebraucht werden, passend auf die vorhandenen Felder mappen
+- falls ein Mitarbeiter im Lohnblatt nicht eindeutig zugeordnet werden kann, bitte loggen statt falsch speichern
+
+Bitte klar kennzeichnen:
+- wage_source = 'Lohnblatt Beaulieu'
+- wage_complete = true/false
+
+==================================================
+5. Personalstamm in der Webapp sichtbar machen
+==================================================
+
+Bitte sicherstellen:
+- im Mandanten Beaulieu ist der Personalstamm nicht mehr leer
+- genau die aktiven Beaulieu-Mitarbeitenden erscheinen
+- keine Oliv-Namen sichtbar
+- Filter Aktiv / Alle / Inaktiv funktioniert korrekt
+
+==================================================
+6. Dienstplan auf dieselbe Beaulieu-Mitarbeiterbasis umstellen
+==================================================
+
+Bitte sicherstellen:
+- im Beaulieu-Dienstplan erscheinen nur die aktiven Beaulieu-Mitarbeitenden aus Supabase
+- keine Oliv-Mitarbeitenden
+- keine alten Defaults
+- keine separaten Fallbacks
+- dieselbe Quelle wie Personalstamm verwenden
+
+Wichtig:
+Dienstplan, Personalstamm, Personal FIX und Mirus-Matching sollen dieselbe zentrale tenant-korrekte Mitarbeiterquelle nutzen.
+
+==================================================
+7. Personal FIX direkt mitprüfen
+==================================================
+
+Wenn die Lohnwerte aus dem Lohnblatt übernommen wurden, bitte direkt prüfen:
+- Personal FIX lädt dieselben Beaulieu-Mitarbeitenden
+- Löhne sind nicht mehr 0
+- Küche / Service Summen plausibel
+- keine Oliv-Daten sichtbar
+
+==================================================
+8. Debug Logs
+==================================================
+
+Bitte loggen:
+[BEAULIEU-STAFF] import started
+[BEAULIEU-STAFF] active employees parsed: ...
+[BEAULIEU-STAFF] skipped because austritt exists: ...
+[BEAULIEU-STAFF] department mapped: ...
+[BEAULIEU-STAFF] wage matched: ...
+[BEAULIEU-STAFF] wage unresolved: ...
+[BEAULIEU-STAFF] employees upserted: ...
+[BEAULIEU-STAFF] personalstamm visible count: ...
+[BEAULIEU-STAFF] dienstplan visible count: ...
+[BEAULIEU-STAFF] oliv leak detected: yes/no
+
+==================================================
+9. Bitte danach kurz sagen
+==================================================
+
+- welche Datei(en) geändert wurden
+- wie viele aktive Beaulieu-Mitarbeitende final übernommen wurden
+- welche ausgeschlossen wurden wegen Austrittsdatum
+- wie Geschäftsleitung / Hilfsarbeiter gemappt wurden
+- ob die Löhne aus dem Lohnblatt übernommen werden konnten
+- ob Personalstamm jetzt sichtbar ist
+- ob der Dienstplan jetzt nur noch Beaulieu-Mitarbeitende zeigt

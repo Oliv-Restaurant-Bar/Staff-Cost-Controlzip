@@ -128,27 +128,27 @@ const dbToEmployee = (row: any): Employee => ({
 
 /**
  * Mitarbeiter laden, optional gefiltert nach Mandant.
- * Wenn restaurantId angegeben, wird `.eq('restaurant_id', restaurantId)` verwendet.
- * Falls die Spalte noch nicht existiert (Migration noch nicht ausgeführt),
- * wird graceful auf Laden aller Mitarbeiter zurückgefallen.
+ * Tenant-Filterung via ID-Präfix: Beaulieu-IDs starten mit "b-" (z.B. "b-169"),
+ * Oliv-IDs sind numerisch. Die Spalte restaurant_id existiert nicht in Supabase.
  */
 export async function loadEmployees(restaurantId?: TenantId): Promise<Employee[] | null> {
   try {
+    // Tenant-Filterung via ID-Präfix:
+    //   Beaulieu-Mitarbeitende haben IDs die mit "b-" beginnen (z.B. "b-169")
+    //   Oliv-Mitarbeitende haben numerische IDs (z.B. "1", "14")
+    // Die Spalte restaurant_id existiert noch nicht in Supabase – deshalb ID-Präfix als Diskriminator.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let query = (supabase as any).from('employees').select('*').order('name');
-    if (restaurantId) {
-      query = query.eq('restaurant_id', restaurantId);
+    if (restaurantId === 'beaulieu') {
+      query = query.like('id', 'b-%');
+      console.log('[TENANT] loadEmployees: tenant=beaulieu → filter id LIKE b-%');
+    } else if (restaurantId === 'oliv') {
+      query = query.not('id', 'like', 'b-%');
+      console.log('[TENANT] loadEmployees: tenant=oliv → filter id NOT LIKE b-%');
     }
     const { data, error } = await query;
 
     if (error) {
-      if (restaurantId && (String(error.message ?? '').includes('restaurant_id') || String(error.code ?? '') === '42703')) {
-        console.warn('[TENANT] restaurant_id column not found – Migration noch nicht ausgeführt. Lade alle Mitarbeiter als Fallback.');
-        const { data: fallback, error: fbErr } = await supabase.from('employees').select('*').order('name');
-        if (fbErr) { console.error('[supabase-db] loadEmployees fallback:', fbErr); return null; }
-        console.log(`[TENANT] employees count (fallback, no tenant filter): ${(fallback ?? []).length}`);
-        return (fallback ?? []).map(dbToEmployee);
-      }
       console.error('[supabase-db] loadEmployees:', error);
       return null;
     }
@@ -164,9 +164,13 @@ export async function loadEmployees(restaurantId?: TenantId): Promise<Employee[]
         const service = result.filter(e => e.department === 'service');
         console.log(`[CHECK] beaulieu employees count: ${result.length}`);
         console.log(`[CHECK] duplicate entries: ${dupIds.length === 0 ? 'none (OK)' : dupIds.map(e => e.id).join(', ')}`);
-        console.log(`[CHECK] restaurant_id validation: ${wrongTenant.length === 0 ? 'OK – alle IDs starten mit b-' : 'ERROR – unerwartete IDs: ' + wrongTenant.map(e => e.id).join(', ')}`);
+        console.log(`[CHECK] id-prefix validation: ${wrongTenant.length === 0 ? 'OK – alle IDs starten mit b-' : 'ERROR – unerwartete IDs: ' + wrongTenant.map(e => e.id).join(', ')}`);
         console.log(`[CHECK] departments: Küche=${küche.length}, Service=${service.length}`);
         result.forEach(e => console.log(`[CHECK] employee: id=${e.id} name="${e.name}" dept=${e.department}`));
+        // Oliv-Leak-Prüfung
+        const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi', 'eduard', 'nahuel', 'nina', 'stefan'];
+        const leak = result.filter(e => olivNames.some(o => e.name.toLowerCase().includes(o)));
+        console.log(`[CHECK] oliv leak detected: ${leak.length > 0 ? 'yes – ' + leak.map(e => e.name).join(', ') : 'no'}`);
       }
     }
     return result;
@@ -178,11 +182,14 @@ export async function loadEmployees(restaurantId?: TenantId): Promise<Employee[]
 
 export async function upsertEmployee(emp: Employee, restaurantId: TenantId = 'oliv'): Promise<boolean> {
   try {
+    // Hinweis: restaurant_id-Spalte existiert noch nicht in Supabase.
+    // Tenant-Zuordnung erfolgt über den ID-Präfix: b-* = beaulieu, numerisch = oliv.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any)
       .from('employees')
-      .upsert({ ...employeeToDb(emp), restaurant_id: restaurantId }, { onConflict: 'id' });
+      .upsert(employeeToDb(emp), { onConflict: 'id' });
     if (error) { console.error('[supabase-db] upsertEmployee:', error); return false; }
+    console.log(`[supabase-db] upsertEmployee OK: id=${emp.id} tenant=${restaurantId}`);
     return true;
   } catch (e) {
     console.error('[supabase-db] upsertEmployee exception:', e);
@@ -254,11 +261,13 @@ export async function deleteEmployee(id: string): Promise<boolean> {
 
 export async function upsertAllEmployees(employees: Employee[], restaurantId: TenantId = 'oliv'): Promise<boolean> {
   try {
+    // Hinweis: restaurant_id-Spalte existiert noch nicht in Supabase – ID-Präfix als Diskriminator.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any)
       .from('employees')
-      .upsert(employees.map(e => ({ ...employeeToDb(e), restaurant_id: restaurantId })), { onConflict: 'id' });
+      .upsert(employees.map(e => employeeToDb(e)), { onConflict: 'id' });
     if (error) { console.error('[supabase-db] upsertAllEmployees:', error); return false; }
+    console.log(`[supabase-db] upsertAllEmployees OK: ${employees.length} employees tenant=${restaurantId}`);
     return true;
   } catch (e) {
     console.error('[supabase-db] upsertAllEmployees exception:', e);
@@ -269,43 +278,66 @@ export async function upsertAllEmployees(employees: Employee[], restaurantId: Te
 // ─── Beaulieu Mitarbeiter-Seed ───────────────────────────────────────────────
 
 /**
- * Einmalige Seed-Funktion für die echten Beaulieu-Mitarbeitenden.
- * Ruft upsert auf – keine Duplikate, bestehende Oliv-Daten bleiben unberührt.
+ * Seed-Funktion für die echten Beaulieu-Mitarbeitenden.
+ * Löscht zuerst alle alten Beaulieu-Platzhalter (id LIKE 'b-%'), dann Upsert.
+ * Oliv-Daten (numerische IDs) bleiben unberührt.
  *
- * Mapping:
- *   1 Küche       → department: 'küche'
- *   3 Hilfsarbeiter → department: 'küche'
- *   2 Service     → department: 'service'
- *   Marcel Krebs (4 Geschäftsleitung) → department: 'service'
+ * Tenant-Diskriminator: ID-Präfix "b-" (z.B. "b-169" = Mirus PNR 169)
  *
- * Aufruf: await seedBeaulieuEmployees(realEmployeeList)
+ * Abteilungs-Mapping:
+ *   1 Küche        → küche
+ *   3 Hilfsarbeiter → küche  (Elmazi, Ramadani)
+ *   2 Service      → service
+ *   4 Geschäftsltg → service (Krebs, Redzepi)
  */
 export async function seedBeaulieuEmployees(
-  employees: Pick<Employee, 'id' | 'name' | 'department' | 'employmentType' | 'hourlyWage' | 'weeklyHours' | 'monthlySalary' | 'monthlySalaryWith13th'>[]
+  employees: Employee[]
 ): Promise<{ success: boolean; count: number; errors: string[] }> {
-  console.log('[BEAULIEU] employee import started');
-  console.log(`[BEAULIEU] restaurant_id set: beaulieu`);
+  console.log('[BEAULIEU-STAFF] import started');
+  console.log(`[BEAULIEU-STAFF] active employees parsed: ${employees.length}`);
+
+  // Löhne aus Lohnblatt
+  const withWage   = employees.filter(e => (e.monthlySalary ?? 0) > 0 || (e.hourlyWage ?? 0) > 0);
+  const noWage     = employees.filter(e => (e.monthlySalary ?? 0) === 0 && (e.hourlyWage ?? 0) === 0);
+  console.log(`[BEAULIEU-STAFF] wage matched: ${withWage.map(e => e.name).join(', ') || 'none'}`);
+  console.log(`[BEAULIEU-STAFF] wage unresolved: ${noWage.map(e => e.name).join(', ') || 'none'}`);
 
   const errors: string[] = [];
   let count = 0;
 
+  // ── Schritt 1: Alte Platzhalter löschen (b-1 bis b-10) ─────────────────────
+  const newIds = new Set(employees.map(e => e.id));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: oldEmps } = await (supabase as any)
+    .from('employees')
+    .select('id')
+    .like('id', 'b-%');
+  const oldToDelete = (oldEmps ?? []).filter((r: { id: string }) => !newIds.has(r.id));
+  if (oldToDelete.length > 0) {
+    console.log(`[BEAULIEU-STAFF] removing old placeholder IDs: ${oldToDelete.map((r: { id: string }) => r.id).join(', ')}`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any)
+      .from('employees')
+      .delete()
+      .in('id', oldToDelete.map((r: { id: string }) => r.id));
+  }
+
+  // ── Schritt 2: Neue Mitarbeitende upserten ──────────────────────────────────
   for (const emp of employees) {
     const dept = emp.department === 'küche' ? 'kueche' : 'service';
-    console.log(`[BEAULIEU] department mapped: "${emp.name}" → ${dept}`);
+    console.log(`[BEAULIEU-STAFF] department mapped: "${emp.name}" → ${dept} (id=${emp.id})`);
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error } = await (supabase as any)
         .from('employees')
-        .upsert(
-          { ...employeeToDb(emp as Employee), restaurant_id: 'beaulieu' },
-          { onConflict: 'id' }
-        );
+        .upsert(employeeToDb(emp), { onConflict: 'id' });
       if (error) {
-        console.error(`[BEAULIEU] failed to upsert "${emp.name}":`, error);
+        console.error(`[BEAULIEU-STAFF] failed to upsert "${emp.name}":`, error);
         errors.push(`${emp.name}: ${error.message}`);
       } else {
-        console.log(`[BEAULIEU] employee inserted: "${emp.name}" dept=${dept} id=${emp.id}`);
+        const wage = emp.monthlySalaryWith13th ?? emp.monthlySalary ?? emp.hourlyWage ?? 0;
+        console.log(`[BEAULIEU-STAFF] employees upserted: "${emp.name}" dept=${dept} id=${emp.id} wage=${wage}`);
         count++;
       }
     } catch (e) {
@@ -314,7 +346,10 @@ export async function seedBeaulieuEmployees(
     }
   }
 
-  console.log(`[BEAULIEU] total employees imported: ${count} / ${employees.length}`);
+  console.log(`[BEAULIEU-STAFF] employees upserted: ${count} / ${employees.length}`);
+  if (errors.length > 0) {
+    console.warn(`[BEAULIEU-STAFF] errors: ${errors.join('; ')}`);
+  }
   return { success: errors.length === 0, count, errors };
 }
 

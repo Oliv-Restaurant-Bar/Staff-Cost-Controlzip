@@ -344,25 +344,24 @@ const SchedulePlanner = () => {
       if (tenantId === 'beaulieu' && supabaseEmployees !== null && supabaseEmployees.length === 0) {
         if (!hasAutoSeededBeaulieu.current) {
           hasAutoSeededBeaulieu.current = true;
-          console.log('[BEAULIEU] import started – auto-seeding 10 Mitarbeitende aus defaultEmployeesBeaulieu');
-          console.log('[BEAULIEU] restaurant_id: beaulieu');
+          console.log('[BEAULIEU-STAFF] auto-seed triggered – Supabase ist leer');
+          console.log(`[BEAULIEU-STAFF] active employees parsed: ${defaultEmployeesBeaulieu.length}`);
           const seedResult = await seedBeaulieuEmployees(defaultEmployeesBeaulieu);
-          console.log(`[BEAULIEU] total imported: ${seedResult.count} / ${defaultEmployeesBeaulieu.length}`);
           if (seedResult.errors.length > 0) {
-            seedResult.errors.forEach(e => console.warn('[BEAULIEU] seed error:', e));
+            seedResult.errors.forEach(e => console.warn('[BEAULIEU-STAFF] seed error:', e));
           }
           // Nach Seed: Mitarbeitende erneut laden
           if (seedResult.count > 0) {
             const freshEmps = await loadEmployees('beaulieu');
             if (freshEmps && freshEmps.length > 0) {
-              console.log(`[BEAULIEU] visible in app: ${freshEmps.length}`);
-              freshEmps.forEach(e => console.log(`[BEAULIEU] employee upserted: "${e.name}" dept=${e.department} id=${e.id}`));
+              console.log(`[BEAULIEU-STAFF] visible in app: ${freshEmps.length}`);
+              freshEmps.forEach(e => console.log(`[BEAULIEU-STAFF] "${e.name}" dept=${e.department} id=${e.id} wage=${e.monthlySalaryWith13th ?? e.monthlySalary ?? e.hourlyWage ?? 0}`));
               setEmployees(freshEmps);
               return;
             }
           }
         }
-        console.log('[BEAULIEU] employees loaded: 0 – Migration noch nicht ausgeführt oder Seed fehlgeschlagen');
+        console.log('[BEAULIEU-STAFF] employees loaded: 0 – Seed fehlgeschlagen oder keine Mitarbeitenden');
         setEmployees([]);
       }
 

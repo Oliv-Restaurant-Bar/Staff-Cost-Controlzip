@@ -10,22 +10,22 @@ Zwei Mandanten: **Oliv** (Standard, alle bestehenden Daten) und **Beaulieu** (ne
 - `src/contexts/TenantContext.tsx` — TenantProvider + `useTenant()` Hook; Auswahl persistent in localStorage (`active_tenant`)
 - `src/components/TenantSwitcher.tsx` — Compact-Switcher in der Sidebar (über Rollen/Abmelden-Bereich)
 - `src/lib/tenant-utils.ts` — `tenantKey()` Helper + `tlsGet/tlsSet/tkvGet/tkvSet` Wrapper
-- `src/data/defaultEmployeesBeaulieu.ts` — **Echte** 10 Beaulieu-Mitarbeitende aus Mirus-Datei (IDs `b-1`–`b-10`; Lohn = 0, nachpflegen im Personalstamm)
+- `src/data/defaultEmployeesBeaulieu.ts` — **Echte** 10 Beaulieu-Mitarbeitende aus Mirus (Stand 22.04.2026) + Lohnblatt.pdf. IDs `b-{MirusPNR}` (b-169, b-41, b-181, b-207, b-77, b-62, b-50, b-200, b-161, b-183). 4 Löhne aus Lohnblatt, 6 noch offen (im Personalstamm nachtragen).
 
 ### Datentrennung
 | Datenspeicher | Oliv | Beaulieu |
 |---|---|---|
 | localStorage-Keys | unveraendert (Rückwärtskompatibel) | `beaulieu:{key}` Präfix |
 | Supabase KV (`app_settings`) | unveraendert | `beaulieu:{key}` Präfix |
-| Supabase `employees` | `restaurant_id = 'oliv'` | `restaurant_id = 'beaulieu'` |
+| Supabase `employees` | ID ist numerisch (kein `b-` Präfix) | ID startet mit `b-` (z.B. `b-169`) |
 | `schedule_entries` / `actual_hours` | implizit via Employee-IDs | implizit via `b-*` Employee-IDs |
 
-### DB-Migration & Seed
-1. `migrations/20260420_multi_tenant.sql` — fügt `restaurant_id TEXT DEFAULT 'oliv'` zu `employees` hinzu
-   - **Einmalig im Supabase SQL Editor ausführen**; graceful Fallback bis dahin
-2. `migrations/seed_beaulieu_employees.sql` — Upsert der 10 echten Beaulieu-Mitarbeitenden
-   - Alternativ: Import-Hub → Beaulieu Mitarbeiter → **„In Supabase importieren"** klicken (ein Knopfdruck, kein SQL nötig)
-   - Lohn/Gehalt ist überall auf 0 gesetzt → im Personalstamm nachpflegen
+**Wichtig:** Die Spalte `restaurant_id` existiert nicht in Supabase. Tenant-Filterung erfolgt via ID-Präfix: `.like('id', 'b-%')` für Beaulieu, `.not('id', 'like', 'b-%')` für Oliv.
+
+### DB-Status (22.04.2026)
+- **10 Beaulieu-Mitarbeitende in Supabase gespeichert** ✅
+- Lohn vorhanden (aus Lohnblatt.pdf): Barrera (CHF 4875), Burkhalter (CHF 4700), Elmazi (CHF 4220.45), Horvath (CHF 5500)
+- Lohn fehlt → im Personalstamm nachtragen: Firlovic (Stundenlohn), Hadzija (Stundenlohn), Krebs, Ramadani, Redzepi, Svyrydovych
 
 ### Geänderte Dateien
 - `src/lib/supabase-db.ts` — `loadEmployees(restaurantId?)`, `upsertEmployee(emp, restaurantId)`, `upsertAllEmployees(employees, restaurantId)`
