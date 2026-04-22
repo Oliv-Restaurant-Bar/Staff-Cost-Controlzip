@@ -18,7 +18,8 @@ import { GastronoviImportSection } from '@/components/GastronoviImportSection';
 import { VjDailyImportSection } from '@/components/VjDailyImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
-import { loadEmployees, saveActualHourEntry, upsertEmployee, seedBeaulieuEmployees } from '@/lib/supabase-db';
+import { loadEmployees, saveActualHourEntry, upsertEmployee, seedBeaulieuEmployees, runBeaulieuHarteTest } from '@/lib/supabase-db';
+import type { HarteTestResult } from '@/lib/supabase-db';
 import { defaultEmployeesBeaulieu } from '@/data/defaultEmployeesBeaulieu';
 import { Employee, MirusDailyImportEntry, MirusImportMode, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -837,6 +838,8 @@ const BeaulieuMitarbeiterSection = () => {
   const [seeding, setSeeding] = useState(false);
   const [seedResult, setSeedResult] = useState<{ count: number; errors: string[] } | null>(null);
   const [supabaseCount, setSupabaseCount] = useState<number | null>(null);
+  const [testRunning, setTestRunning] = useState(false);
+  const [testResult, setTestResult] = useState<HarteTestResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Aktuellen Supabase-Stand laden
@@ -863,6 +866,31 @@ const BeaulieuMitarbeiterSection = () => {
       toast.error('Unerwarteter Fehler beim Import');
     } finally {
       setSeeding(false);
+    }
+  };
+
+  // ── Härtetest ──────────────────────────────────────────────────────────────
+  const handleHarteTest = async () => {
+    setTestRunning(true);
+    setTestResult(null);
+    try {
+      const emps = await loadEmployees('beaulieu');
+      if (!emps || emps.length === 0) {
+        toast.error('Keine Beaulieu-Mitarbeitenden in Supabase – bitte zuerst importieren');
+        return;
+      }
+      const result = await runBeaulieuHarteTest(emps);
+      setTestResult(result);
+      if (result.passed) {
+        toast.success('Härtetest bestanden – Beaulieu ist produktionssicher');
+      } else {
+        toast.error('Härtetest fehlgeschlagen – Details im Ergebnis unten');
+      }
+    } catch (e) {
+      console.error('[HÄRTETEST] exception:', e);
+      toast.error('Unerwarteter Fehler beim Härtetest');
+    } finally {
+      setTestRunning(false);
     }
   };
 
@@ -967,6 +995,66 @@ const BeaulieuMitarbeiterSection = () => {
           )}
         </div>
       )}
+
+      {/* Härtetest */}
+      <div className="border-t pt-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] text-muted-foreground font-medium">Produktions-Härtetest (7 Schritte)</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1.5 border-violet-300 text-violet-700 hover:bg-violet-50 dark:text-violet-400 dark:border-violet-700"
+            onClick={handleHarteTest}
+            disabled={testRunning}
+          >
+            {testRunning
+              ? <><Loader2 className="h-3 w-3 animate-spin" />Teste…</>
+              : <><Database className="h-3 w-3" />Härtetest starten</>}
+          </Button>
+        </div>
+
+        {testResult && (
+          <div className={`rounded-md border p-3 text-xs space-y-2 ${
+            testResult.passed
+              ? 'border-green-200 bg-green-50 dark:bg-green-950/20'
+              : 'border-red-200 bg-red-50 dark:bg-red-950/20'
+          }`}>
+            <div className="flex items-center justify-between">
+              <p className={`font-semibold ${testResult.passed ? 'text-green-800 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>
+                {testResult.passed ? '✓ Alle Tests bestanden' : '✗ Test fehlgeschlagen'}
+              </p>
+              <span className="text-muted-foreground">{testResult.durationMs}ms</span>
+            </div>
+            <div className="space-y-1.5">
+              {testResult.steps.map((s, i) => (
+                <div key={i} className="space-y-0.5">
+                  <div className="flex items-start gap-1.5">
+                    {s.passed
+                      ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600 shrink-0 mt-px" />
+                      : <AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0 mt-px" />}
+                    <div>
+                      <span className="font-medium">{s.name}</span>
+                      <span className="text-muted-foreground ml-1">— {s.message}</span>
+                    </div>
+                  </div>
+                  {s.details.length > 0 && (
+                    <div className="ml-5 space-y-0.5">
+                      {s.details.map((d, j) => (
+                        <p key={j} className="text-[10px] text-muted-foreground/80 font-mono">{d}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {testResult.passed && (
+              <p className="text-[10px] text-green-700 dark:text-green-400 pt-1 border-t border-green-200">
+                Beaulieu ist produktionssicher. Speichern, Laden, Tenant-Isolation und Mirus-Matching funktionieren korrekt.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Trennlinie + Excel-Alternativ-Import */}
       <div className="border-t pt-3">

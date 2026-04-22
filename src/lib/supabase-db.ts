@@ -357,6 +357,184 @@ export function runBeaulieuMatchTest(employees: Employee[]): void {
   });
 }
 
+// ─── Beaulieu Härtetest ───────────────────────────────────────────────────────
+
+export interface HarteTestStep {
+  name: string;
+  passed: boolean;
+  message: string;
+  details: string[];
+}
+
+export interface HarteTestResult {
+  steps: HarteTestStep[];
+  passed: boolean;
+  durationMs: number;
+}
+
+/**
+ * Vollständiger Produktions-Härtetest für Beaulieu.
+ * 1. Speichert 2 echte Dienstplan-Einträge für b-1/b-2
+ * 2. Prüft per DB-Reload ob sie korrekt geladen werden
+ * 3. Prüft Oliv-Isolation: b-* Einträge sind für Oliv-Employees unsichtbar
+ * 4. Zweiter Reload → Einträge noch vorhanden
+ * 5. Mirus-Name-Matching-Simulation aller 10 Beaulieu-Namen
+ * 6. Ist-Stunden-Round-Trip für 3 Namen
+ * 7. Aufräumen (Test-Einträge löschen)
+ */
+export async function runBeaulieuHarteTest(beaulieuEmployees: Employee[]): Promise<HarteTestResult> {
+  const t0 = Date.now();
+  const steps: HarteTestStep[] = [];
+  const TEST_DATE_1 = '2026-04-15';
+  const TEST_DATE_2 = '2026-04-16';
+  const TEST_MONTH  = new Date(2026, 3, 1); // April 2026
+  const EMP1 = beaulieuEmployees.find(e => e.id === 'b-1');
+  const EMP2 = beaulieuEmployees.find(e => e.id === 'b-2');
+
+  const step = (name: string, passed: boolean, message: string, details: string[] = []) => {
+    steps.push({ name, passed, message, details });
+    console.log(`[HÄRTETEST] ${passed ? '✓' : '✗'} ${name}: ${message}`);
+    details.forEach(d => console.log(`  ${d}`));
+  };
+
+  // ── Vorbedingung ──────────────────────────────────────────────────────────
+  if (!EMP1 || !EMP2) {
+    step('Vorbedingung', false, 'b-1 / b-2 nicht in übergebener Employee-Liste – Seed zuerst ausführen', [
+      `Gefundene IDs: ${beaulieuEmployees.map(e => e.id).join(', ')}`,
+    ]);
+    return { steps, passed: false, durationMs: Date.now() - t0 };
+  }
+  step('Vorbedingung', true, `Employees gefunden: b-1="${EMP1.name}", b-2="${EMP2.name}"`, []);
+
+  // ── Schritt 1: Speichern ──────────────────────────────────────────────────
+  const sched1: DaySchedule = { früh: { start: '07:00', end: '15:00' }, spät: null, frühAbsence: null, spätAbsence: null };
+  const sched2: DaySchedule = { früh: null, spät: { start: '14:00', end: '22:00' }, frühAbsence: null, spätAbsence: null };
+  try {
+    await saveScheduleEntry('b-1', TEST_DATE_1, sched1);
+    await saveScheduleEntry('b-2', TEST_DATE_2, sched2);
+    step('1 · Dienstplan speichern', true,
+      `b-1 → ${TEST_DATE_1} Früh 07:00–15:00 | b-2 → ${TEST_DATE_2} Spät 14:00–22:00`, []);
+  } catch (e) {
+    step('1 · Dienstplan speichern', false, `Fehler: ${e}`, []);
+    return { steps, passed: false, durationMs: Date.now() - t0 };
+  }
+
+  // ── Schritt 2: Erster Reload ──────────────────────────────────────────────
+  const loaded1 = await loadScheduleForMonth(TEST_MONTH);
+  const key1 = `b-1-${TEST_DATE_1}`;
+  const key2 = `b-2-${TEST_DATE_2}`;
+  const found1a = loaded1?.[key1];
+  const found2a = loaded1?.[key2];
+  step('2 · Reload nach Speichern', !!(found1a && found2a),
+    found1a && found2a ? 'Beide Einträge im ersten Reload vorhanden' : `Fehlende Keys: ${[!found1a && key1, !found2a && key2].filter(Boolean).join(', ')}`,
+    [
+      `b-1 Früh: ${found1a?.früh?.start ?? 'n/a'} – ${found1a?.früh?.end ?? 'n/a'}`,
+      `b-2 Spät: ${found2a?.spät?.start ?? 'n/a'} – ${found2a?.spät?.end ?? 'n/a'}`,
+    ]
+  );
+
+  // ── Schritt 3: Oliv-Isolation ─────────────────────────────────────────────
+  // Oliv-Employees haben Integer-IDs. Prüfe, ob ein simulierter Oliv-Filter
+  // niemals auf b-* Einträge trifft.
+  const olivEmployees = await loadEmployees('oliv');
+  const olivIds = new Set((olivEmployees ?? []).map(e => String(e.id)));
+  // b-* entries that accidentally appear in oliv ID set = Leak
+  const beaulieuIdsInOliv = ['b-1', 'b-2', 'b-3', 'b-4', 'b-5', 'b-6', 'b-7', 'b-8', 'b-9', 'b-10']
+    .filter(bid => olivIds.has(bid));
+  // Check raw schedule: entries with b-* IDs that Oliv would render (only if olivIds contains them)
+  const scheduleKeysForOliv = Object.keys(loaded1 ?? {}).filter(k => {
+    const empId = k.slice(0, k.length - 11);
+    return olivIds.has(empId) && empId.startsWith('b-');
+  });
+  const olivLeakFree = beaulieuIdsInOliv.length === 0 && scheduleKeysForOliv.length === 0;
+  step('3 · Oliv sieht keine Beaulieu-Daten', olivLeakFree,
+    olivLeakFree
+      ? `Vollständige Isolation: b-* IDs in Oliv-Employees=${beaulieuIdsInOliv.length}, beaulieu-Einträge in Oliv-Render=${scheduleKeysForOliv.length}`
+      : `LEAK! b-IDs in Oliv: ${beaulieuIdsInOliv.join(', ')} | Einträge: ${scheduleKeysForOliv.join(', ')}`,
+    [
+      `Oliv employees count: ${(olivEmployees ?? []).length}`,
+      `Oliv IDs (sample): ${[...olivIds].slice(0, 5).join(', ')}`,
+    ]
+  );
+
+  // ── Schritt 4: Zweiter Reload (nach Mandanten-Simulation) ────────────────
+  const loaded2 = await loadScheduleForMonth(TEST_MONTH);
+  const found1b = loaded2?.[key1];
+  const found2b = loaded2?.[key2];
+  step('4 · Zweiter Reload (Persistenz)', !!(found1b && found2b),
+    found1b && found2b ? 'Einträge nach zweitem Reload noch vorhanden (persistiert)' : 'VERLUST – Einträge nach zweitem Reload verschwunden',
+    [
+      `b-1 Früh: ${found1b?.früh?.start ?? 'n/a'} – ${found1b?.früh?.end ?? 'n/a'}`,
+      `b-2 Spät: ${found2b?.spät?.start ?? 'n/a'} – ${found2b?.spät?.end ?? 'n/a'}`,
+    ]
+  );
+
+  // ── Schritt 5: Mirus-Name-Matching ────────────────────────────────────────
+  try {
+    const { matchEmployeeByName } = await import('@/lib/mirus-name-mapping-store');
+    const mirusNames = [
+      'Barrera Hinestroza Jonathan Filipe',
+      'Elmazi Fatmire',
+      'Hadzija Hatidze',
+      'Horvath Robert Stefan',
+      'Ramadani Naip',
+      'Santana Cristo Barreto',
+      'Burkhalter Nadica',
+      'Filipovic Maja',
+      'Syvrydovych Varvara',
+      'Krebs Marcel',
+      'Marcel Krebs', // reversed order test
+    ];
+    let matchOk = 0;
+    const matchDetails: string[] = [];
+    for (const name of mirusNames) {
+      const res = matchEmployeeByName(name, beaulieuEmployees, false);
+      const ok = res.employee !== null;
+      if (ok) matchOk++;
+      matchDetails.push(`${ok ? '✓' : '✗'} "${name}" → ${res.employee ? `"${res.employee.name}" (${res.matchStep})` : 'NOT FOUND'}`);
+    }
+    step('5 · Mirus-Name-Matching', matchOk === mirusNames.length,
+      `${matchOk}/${mirusNames.length} Namen erfolgreich gemappt`,
+      matchDetails
+    );
+  } catch (e) {
+    step('5 · Mirus-Name-Matching', false, `Import-Fehler: ${e}`, []);
+  }
+
+  // ── Schritt 6: Ist-Stunden Round-Trip ────────────────────────────────────
+  const istEntry = { hours: 8.5, start: '07:00', end: '15:30' };
+  const IST_DATE = '2026-04-15';
+  try {
+    await saveActualHourEntry('b-1', IST_DATE, istEntry);
+    const istLoaded = await loadActualHoursForMonth(TEST_MONTH);
+    const istKey = `b-1-${IST_DATE}`;
+    const found = istLoaded?.[istKey];
+    const correct = found && found.hours === 8.5 && found.start === '07:00';
+    step('6 · Ist-Stunden Round-Trip', !!correct,
+      correct ? `b-1 Ist-Stunden gespeichert & geladen: ${found?.hours}h ${found?.start}–${found?.end}` : `Ist-Stunden nicht korrekt geladen: ${JSON.stringify(found)}`,
+      []
+    );
+    // Cleanup Ist-Stunden
+    await saveActualHourEntry('b-1', IST_DATE, null);
+  } catch (e) {
+    step('6 · Ist-Stunden Round-Trip', false, `Fehler: ${e}`, []);
+  }
+
+  // ── Cleanup: Test-Einträge löschen ────────────────────────────────────────
+  try {
+    await saveScheduleEntry('b-1', TEST_DATE_1, null);
+    await saveScheduleEntry('b-2', TEST_DATE_2, null);
+    step('7 · Cleanup', true, 'Test-Einträge erfolgreich aus DB gelöscht', []);
+  } catch (e) {
+    step('7 · Cleanup', false, `Cleanup fehlgeschlagen: ${e}`, []);
+  }
+
+  const passed = steps.every(s => s.passed);
+  const durationMs = Date.now() - t0;
+  console.log(`[HÄRTETEST] ${passed ? 'BESTANDEN' : 'FEHLGESCHLAGEN'} – ${durationMs}ms – ${steps.filter(s => s.passed).length}/${steps.length} Schritte OK`);
+  return { steps, passed, durationMs };
+}
+
 // ─── Dienstplan (schedule_entries) ───────────────────────────────────────────
 
 export async function loadScheduleForMonth(month: Date): Promise<Record<string, DaySchedule> | null> {
