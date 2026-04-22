@@ -398,9 +398,23 @@ export default function TagesControllingPage() {
   // Employees: zuerst localStorage, dann Supabase (mandantenfähig)
   useEffect(() => {
     setEmployees(loadLocalEmployees(tenantKey));
-    loadEmployeesFromSupabase().then(emps => {
+    // ─── TENANT FILTER: tenantId übergeben → nur Mitarbeiter des Mandanten ──
+    loadEmployeesFromSupabase(tenantId).then(emps => {
       if (emps && emps.length > 0) {
-        setEmployees(emps.map(e => ({ id: e.id, hourlyWage: e.hourlyWage })));
+        const mapped = emps.map(e => ({ id: e.id, hourlyWage: e.hourlyWage }));
+        setEmployees(mapped);
+        console.log(`[CONSISTENCY] tages_controlling employees: ${mapped.length}`);
+        console.log(`[CONSISTENCY] tenant: ${tenantId}`);
+        // Hard-block: Oliv-Leak in Beaulieu erkennen
+        if (tenantId === 'beaulieu') {
+          const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein'];
+          const empsFromSupabase = emps.filter(e => e.name && olivNames.some(o => e.name.toLowerCase().includes(o)));
+          if (empsFromSupabase.length > 0) {
+            console.error(`[CONSISTENCY] mismatch: yes – Tages-Controlling hat Oliv-Mitarbeiter: ${empsFromSupabase.map(e => e.name).join(', ')}`);
+          } else {
+            console.log('[CONSISTENCY] mismatch: no');
+          }
+        }
       }
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps

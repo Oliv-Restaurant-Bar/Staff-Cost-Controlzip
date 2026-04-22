@@ -253,8 +253,9 @@ const Dashboard = () => {
 
   useEffect(() => {
     const load = async () => {
+      // Pass tenantId so only the correct tenant's employees are loaded
       const [emps, sched, actual] = await Promise.all([
-        loadEmployees(),
+        loadEmployees(tenantId),
         loadScheduleForMonth(referenceDate),
         loadActualHoursForMonth(referenceDate),
       ]);
@@ -265,7 +266,7 @@ const Dashboard = () => {
     };
     load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthKey]);
+  }, [monthKey, tenantId]);
 
   // DailyBudgets aus localStorage (Umsatz-Daten) — schreibbar für Schnelleingabe
   const [dailyBudgets, setDailyBudgets] = useState<Record<string, DailyBudget>>(() => {

@@ -1,0 +1,96 @@
+Jetzt bitte eine vollständige Tenant-Konsistenzprüfung für Beaulieu durchführen.
+
+Ziel:
+Sicherstellen, dass ALLE Module dieselbe Beaulieu-Mitarbeiterbasis verwenden und es keine versteckten Oliv-Leaks mehr gibt.
+
+Bitte folgende Bereiche prüfen und vereinheitlichen:
+
+1. Zentrale Mitarbeiter-Quelle
+Es darf nur noch eine einzige Quelle geben:
+
+loadEmployees(tenant)
+
+Diese Funktion muss:
+- bei tenant = beaulieu → ausschließlich restaurant_id = 'beaulieu' laden
+- bei tenant = oliv → ausschließlich restaurant_id = 'oliv' laden
+
+Bitte sicherstellen:
+- keine Komponente lädt Mitarbeitende direkt
+- keine Komponente nutzt eigene Queries ohne Tenant-Filter
+
+2. Betroffene Module prüfen
+
+Bitte explizit prüfen:
+
+A) Dienstplanung (SchedulePlanner)
+→ bereits gefixt, nochmals gegenprüfen
+
+B) Personal FIX
+→ lädt es dieselben Mitarbeitenden?
+→ stimmen Anzahl und Namen mit Dienstplan überein?
+
+C) Ist-Stunden Import (Mirus)
+→ Matching erfolgt gegen richtige Beaulieu-Mitarbeiter?
+→ keine Zuordnung auf Oliv-Namen
+
+D) Tagesansicht / Tages-Controlling
+→ basiert auf denselben Mitarbeitenden?
+→ keine Vermischung
+
+3. Cache / LocalStorage bereinigen
+
+Bitte prüfen:
+- lokale Keys ohne tenant prefix entfernen oder ignorieren
+- alte Keys wie:
+  employees
+  staff
+  schedule_cache
+
+dürfen NICHT mehr global verwendet werden
+
+Stattdessen:
+beaulieu:employees
+oliv:employees
+
+4. Fallback-Logik absichern
+
+Falls Supabase leer ist:
+
+Beaulieu:
+→ nur defaultEmployeesBeaulieu verwenden
+
+Oliv:
+→ nur defaultEmployeesOliv verwenden
+
+Wichtig:
+niemals cross-fallback
+
+5. Konsistenz-Check einbauen
+
+Bitte nach Laden der Mitarbeitenden automatisch prüfen:
+
+- Stimmen Anzahl in allen Modulen?
+- Stimmen Namen exakt überein?
+- Gibt es IDs ohne Prefix bei Beaulieu?
+
+Logs:
+
+[CONSISTENCY] tenant: beaulieu
+[CONSISTENCY] dienstplan employees: X
+[CONSISTENCY] personal_fix employees: X
+[CONSISTENCY] import matching base: X
+[CONSISTENCY] mismatch: yes/no
+
+6. Hard Block bei Fehler
+
+Wenn:
+- ein Oliv-Mitarbeiter im Beaulieu-Modus auftaucht
+→ console.error + Warnung im UI
+
+7. Ergebnis melden
+
+Bitte danach sagen:
+- ob alle Module jetzt dieselbe Quelle nutzen
+- ob irgendwo noch Doppelquellen existierten
+- ob Beaulieu jetzt komplett isoliert ist
+- welche Dateien angepasst wurden

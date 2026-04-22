@@ -6,6 +6,8 @@ import { upsertAllEmployees } from '@/lib/supabase-db';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, eachMonthOfInterval, subMonths, addMonths } from 'date-fns';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { supabase } from '@/integrations/supabase/client';
+import { useTenant } from '@/contexts/TenantContext';
+import type { TenantId } from '@/contexts/TenantContext';
 
 // Storage key used by both SchedulePlanner and usePersonnelData
 const EMPLOYEES_STORAGE_KEY = 'schedule-employees';
@@ -92,32 +94,57 @@ const defaultEmployees: Employee[] = [
   { id: '23', name: 'Aushilfe 2 Küche A', department: 'küche', employmentType: 'teilzeit', hourlyWage: 30.00 },
 ];
 
-// Load employees from Supabase
-const loadEmployeesFromSupabase = async (): Promise<Employee[]> => {
+// Load employees from Supabase — tenant-filtered
+const loadEmployeesFromSupabase = async (restaurantId?: TenantId): Promise<Employee[]> => {
+  // Tenant-appropriate fallback: never use Oliv defaults for Beaulieu
+  const tenantFallback = restaurantId === 'beaulieu' ? [] : defaultEmployees;
+
   try {
+    console.log(`[CONSISTENCY] tenant: ${restaurantId ?? 'alle'}`);
     console.log('[usePersonnelData] Loading employees from Supabase...');
-    const { data, error } = await supabase
-      .from('employees')
-      .select('*')
-      .order('name');
-    
+
+    let query = supabase.from('employees').select('*').order('name');
+
+    // ─── TENANT FILTER ──────────────────────────────────────────────────────
+    if (restaurantId) {
+      query = query.eq('restaurant_id', restaurantId);
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
+    const { data, error } = await query;
+
     if (error) {
       console.error('[usePersonnelData] Error loading employees from Supabase:', error);
-      return defaultEmployees;
+      return tenantFallback;
     }
-    
+
     if (!data || data.length === 0) {
-      console.log('[usePersonnelData] No employees found in Supabase, using defaults');
-      return defaultEmployees;
+      console.log('[usePersonnelData] No employees found in Supabase, using tenant fallback');
+      return tenantFallback;
     }
-    
+
     console.log(`[usePersonnelData] Loaded ${data.length} employees from Supabase`);
     const frontendEmployees = data.map(dbToFrontendEmployee);
+
+    // Oliv-Leak-Check wenn Beaulieu aktiv
+    if (restaurantId === 'beaulieu') {
+      const names = frontendEmployees.map(e => e.name);
+      const olivNames = ['arber', 'artin', 'carlos', 'mendim', 'joana', 'husein', 'mejdi', 'miro', 'culi'];
+      const leaked = names.filter(n => olivNames.some(o => n.toLowerCase().includes(o)));
+      if (leaked.length > 0) {
+        console.error(`[CONSISTENCY] mismatch: yes – Oliv-Mitarbeiter in Beaulieu-Abfrage: ${leaked.join(', ')}`);
+      } else {
+        console.log('[CONSISTENCY] mismatch: no');
+      }
+      console.log(`[CONSISTENCY] personal_fix employees: ${frontendEmployees.length}`);
+      console.log(`[CONSISTENCY] employee names: ${names.join(', ')}`);
+    }
+
     console.log('[usePersonnelData] Küche employees:', frontendEmployees.filter(e => e.department === 'küche').map(e => e.name));
     return frontendEmployees;
   } catch (err) {
     console.error('[usePersonnelData] Failed to load employees from Supabase:', err);
-    return defaultEmployees;
+    return tenantFallback;
   }
 };
 
@@ -441,7 +468,10 @@ const today = format(new Date(), 'yyyy-MM-dd');
 const sampleTimeEntries: TimeEntry[] = [];
 
 export const usePersonnelData = () => {
-  const [employees, setEmployees] = useState<Employee[]>(defaultEmployees);
+  const { tenantId } = useTenant();
+  // Start empty — Supabase will populate with tenant-correct data.
+  // Never pre-fill with Oliv defaultEmployees (they would show as initial state for Beaulieu).
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
   const [timeEntries, setTimeEntries] = useState<TimeEntry[]>(sampleTimeEntries);
   const [manualTimeEntries, setManualTimeEntries] = useState<TimeEntry[]>([]);
@@ -457,13 +487,13 @@ export const usePersonnelData = () => {
     manualRef.current = manualTimeEntries;
   }, [manualTimeEntries]);
 
-  // Sync data from Supabase and localStorage
+  // Sync data from Supabase and localStorage — tenant-aware
   const syncFromSupabase = useCallback(async () => {
     try {
-      console.log('[usePersonnelData] Starting sync from Supabase...');
-      
-      // Load employees from Supabase
-      const supabaseEmployees = await loadEmployeesFromSupabase();
+      console.log(`[usePersonnelData] Starting sync from Supabase (tenant: ${tenantId})...`);
+
+      // Load employees from Supabase — always pass tenantId so filter is applied
+      const supabaseEmployees = await loadEmployeesFromSupabase(tenantId);
       console.log(`[usePersonnelData] Got ${supabaseEmployees.length} employees`);
       
       // Load schedule entries from Supabase and convert to time entries
@@ -487,10 +517,15 @@ export const usePersonnelData = () => {
       console.log('[usePersonnelData] Sync complete!');
     } catch (err) {
       console.error('[usePersonnelData] Error syncing from Supabase:', err);
-      // Fallback to localStorage
-      syncFromStorageFallback();
+      // Fallback to localStorage (Beaulieu: empty rather than Oliv defaults)
+      if (tenantId === 'beaulieu') {
+        setEmployees([]);
+      } else {
+        syncFromStorageFallback();
+      }
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   // Fallback sync from localStorage (if Supabase fails)
   const syncFromStorageFallback = useCallback(() => {

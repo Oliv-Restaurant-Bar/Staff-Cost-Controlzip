@@ -228,8 +228,10 @@ const AppContent = () => {
             <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />
             <Route path="/plan/:department"       element={<DepartmentPlannerWrapper />} />
 
-            {/* Legacy */}
-            <Route path="/overview" element={<Index />} />
+            {/* Legacy – beaulieu_manager darf nicht auf die Oliv-Overview */}
+            <Route path="/overview"
+              element={isBeaulieuManager ? <BlockedRoute path="/overview" /> : <Index />}
+            />
 
             <Route path="*" element={<NotFound />} />
           </Routes>
