@@ -316,14 +316,28 @@ export const AppSidebar = () => {
 
       {/* Marke */}
       <div className="px-4 pt-5 pb-4 border-b border-border">
-        <p
-          className="text-xs font-bold tracking-widest uppercase mb-0.5"
-          style={{ color: tenant.color }}
-        >
-          {tenant.shortName}
-        </p>
-        <p className="text-sm font-bold leading-tight">{tenant.name.replace(tenant.shortName, '').trim() || tenant.name}</p>
-        <p className="text-[10px] text-muted-foreground mt-0.5">Personalkostentracker</p>
+        {isBeaulieuManager ? (
+          <div className="flex flex-col items-start gap-1">
+            <img
+              src="/beaulieu-logo.png"
+              alt="Beaulieu – Deheime ir Länggass"
+              className="w-full max-w-[172px] object-contain"
+              style={{ maxHeight: 52 }}
+            />
+            <p className="text-[10px] text-muted-foreground mt-0.5">Personalkostentracker</p>
+          </div>
+        ) : (
+          <>
+            <p
+              className="text-xs font-bold tracking-widest uppercase mb-0.5"
+              style={{ color: tenant.color }}
+            >
+              {tenant.shortName}
+            </p>
+            <p className="text-sm font-bold leading-tight">{tenant.name.replace(tenant.shortName, '').trim() || tenant.name}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Personalkostentracker</p>
+          </>
+        )}
       </div>
 
       {/* Navigation */}
