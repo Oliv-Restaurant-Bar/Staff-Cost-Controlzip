@@ -1,0 +1,106 @@
+Bitte jetzt einen separaten Geschäftsführer-Zugang nur für Beaulieu einrichten.
+
+Ziel:
+Der Geschäftsführer vom Beaulieu soll einen eigenen Login / eigenen Zugriff erhalten.
+Er soll ausschließlich den Mandanten "beaulieu" sehen können und innerhalb von Beaulieu vollen Zugriff auf die relevanten Module haben.
+
+Wichtig:
+- kein Zugriff auf Oliv
+- kein Mandantenwechsel auf Oliv
+- nur Beaulieu-Daten laden
+- stabil, sicher und produktionsreif
+
+Bitte exakt so umsetzen:
+
+1. Neue Rolle / Zugriffsprofil
+Bitte eine eigene Rolle einführen, z.B.:
+- beaulieu_manager
+
+Diese Rolle soll:
+- fest auf tenant = beaulieu gebunden sein
+- volle Sicht auf die definierten Module haben
+- keinen Zugriff auf andere Mandanten haben
+
+2. Tenant Lock auf Beaulieu
+Dieser Benutzer soll technisch fest auf Beaulieu gebunden sein.
+
+Bitte umsetzen:
+- beim Login automatisch tenant = beaulieu setzen
+- Tenant Switcher für diesen Benutzer ausblenden oder deaktivieren
+- direkte URL-Wechsel auf Oliv blockieren
+- auch nach Reload / Deep Link / Direktzugriff auf Route weiterhin nur Beaulieu zulassen
+
+3. Sichtbare Module für den Geschäftsführer
+Der Geschäftsführer vom Beaulieu soll diese Module sehen können:
+- Dienstplanung
+- Personal FIX
+- Tagesansicht
+
+Optional, wenn sinnvoll ebenfalls:
+- Tages-Controlling
+- Exporte PDF / Excel
+
+Bitte andere nicht notwendige Bereiche ausblenden oder sperren.
+
+4. Rechte innerhalb von Beaulieu
+Er soll innerhalb von Beaulieu:
+- lesen
+- planen
+- filtern
+- exportieren
+
+Also insbesondere:
+- Dienstplan öffnen / bearbeiten / speichern
+- Personal FIX komplett sehen
+- Tagesansicht sehen
+- Exporte nutzen
+
+5. Sicherheit / Isolation
+Bitte sicherstellen:
+- keine Oliv-Daten im UI
+- keine Oliv-Daten über API / Loader
+- keine Oliv-Daten über direkte Route
+- keine Vermischung in Exporten
+- alle DB-Abfragen sauber tenant-gefiltert
+
+6. Navigation für diesen Benutzer
+Bitte die Navigation für diesen Zugang vereinfachen.
+
+Sichtbar:
+- Dienstplanung
+- Personal FIX
+- Tagesansicht
+- optional Tages-Controlling
+
+Nicht sichtbar:
+- Oliv
+- Tenant Switcher
+- nicht relevante Admin- oder Importbereiche
+
+7. Auth / Supabase Vorbereitung
+Bitte den Code so vorbereiten, dass dieser Benutzer sauber in Supabase Auth oder in der bestehenden Benutzer-/Rollenlogik angelegt werden kann.
+
+Wenn dafür ein manueller Schritt nötig ist, bitte genau vorbereiten:
+- welche Rolle setzen
+- welches Feld im Profil / User-Metadaten
+- wie tenant = beaulieu hinterlegt wird
+
+Beispiel:
+- role = beaulieu_manager
+- tenant = beaulieu
+
+8. Debug Logs
+Bitte loggen:
+[AUTH] user role: ...
+[AUTH] tenant locked: beaulieu
+[AUTH] tenant switch hidden: true
+[AUTH] allowed modules: ...
+[AUTH] blocked route to oliv: ...
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie die Rolle heißt
+- wie der Tenant Lock technisch umgesetzt wurde
+- welche Module der Geschäftsführer sieht
+- ob der Tenant Switcher für ihn deaktiviert ist
+- was ich noch manuell in Supabase / Auth anlegen muss
