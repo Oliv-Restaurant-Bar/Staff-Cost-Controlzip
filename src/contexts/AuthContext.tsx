@@ -40,7 +40,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     'admin@olivbern.ch':            'admin',
     'service@olivbern.ch':          'service_manager',
     'kueche@olivbern.ch':           'kueche_manager',
-    'gf@beaulieu-thalwil.ch':       'beaulieu_manager',
     'info@restaurantbeaulieu.ch':   'beaulieu_manager',
   };
 

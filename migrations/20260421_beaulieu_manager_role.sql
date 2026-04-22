@@ -15,11 +15,11 @@ ALTER TABLE public.user_profiles
 
 -- 2. Beaulieu-Geschäftsführer anlegen
 --    Schritt 1: Supabase Dashboard → Authentication → Users → Add user
---               E-Mail + Passwort eingeben (z.B. gf@beaulieu-thalwil.ch)
+--               E-Mail: info@restaurantbeaulieu.ch
+--               Passwort wählen → "Create User"
 --    Schritt 2: Dieses Skript ausführen:
 
--- SELECT set_user_role('gf@beaulieu-thalwil.ch', 'beaulieu_manager');
--- (Kommentar entfernen und echte E-Mail eintragen)
+SELECT set_user_role('info@restaurantbeaulieu.ch', 'beaulieu_manager');
 
 -- 3. Was dieser User erhält:
 --    • Rolle: beaulieu_manager

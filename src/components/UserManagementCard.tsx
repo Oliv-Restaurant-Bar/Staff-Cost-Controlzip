@@ -79,8 +79,6 @@ ALTER TABLE user_profiles
 -- Beaulieu-Geschäftsführer (Hauptzugang):
 SELECT set_user_role('info@restaurantbeaulieu.ch', 'beaulieu_manager');
 
--- Weiterer Beaulieu-Zugang (optional):
--- SELECT set_user_role('gf@beaulieu-thalwil.ch', 'beaulieu_manager');
 --
 -- Der User erhält automatisch:
 --   • Tenant-Lock auf "Beaulieu" (kein Oliv-Zugriff)
