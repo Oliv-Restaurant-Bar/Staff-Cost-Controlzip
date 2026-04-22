@@ -9,8 +9,13 @@
  *   - Beaulieu  → nutzt Präfix "beaulieu:" vor allen Keys
  *
  * Tenant-Lock (beaulieu_manager):
- *   - lockTenant(id) setzt tenantLocked=true und erzwingt den Mandanten
- *   - setTenant() blockiert Wechsel wenn gesperrt
+ *   - lockTenant(id)  → setzt tenantLocked=true und erzwingt den Mandanten
+ *   - unlockTenant()  → setzt tenantLocked=false (z.B. nach Logout oder Admin-Login)
+ *   - setTenant()     → blockiert Wechsel wenn gesperrt
+ *
+ * WICHTIG: TenantProvider wird nie neu gemountet zwischen Logins.
+ * Deshalb muss TenantLockEnforcer in App.tsx den Lock auch aktiv
+ * aufheben wenn die Rolle nicht mehr beaulieu_manager ist.
  *
  * Debug-Logs: [TENANT], [AUTH]
  */
@@ -67,6 +72,12 @@ interface TenantContextValue {
    * Wird von TenantLockEnforcer aufgerufen wenn Rolle = beaulieu_manager.
    */
   lockTenant: (id: TenantId) => void;
+  /**
+   * Hebt den Tenant-Lock auf.
+   * Wird von TenantLockEnforcer aufgerufen wenn Rolle nicht mehr beaulieu_manager ist
+   * (z.B. nach Logout oder beim Login als Admin).
+   */
+  unlockTenant: () => void;
   /** true wenn der aktuelle User auf einen Mandanten fest gebunden ist */
   tenantLocked: boolean;
 }
@@ -98,6 +109,11 @@ export const TenantProvider = ({ children }: { children: ReactNode }) => {
     console.log(`[AUTH] tenant lock applied: "${id}" – Mandantenwechsel gesperrt`);
   };
 
+  const unlockTenant = () => {
+    setTenantLocked(false);
+    console.log('[AUTH] tenant lock released – Mandantenwechsel freigegeben');
+  };
+
   const tenantKey = (key: string): string =>
     tenantId === 'oliv' ? key : `${tenantId}:${key}`;
 
@@ -106,7 +122,7 @@ export const TenantProvider = ({ children }: { children: ReactNode }) => {
   }, [tenantId, tenantLocked]);
 
   return (
-    <TenantContext.Provider value={{ tenantId, tenant: TENANTS[tenantId], setTenant, tenantKey, lockTenant, tenantLocked }}>
+    <TenantContext.Provider value={{ tenantId, tenant: TENANTS[tenantId], setTenant, tenantKey, lockTenant, unlockTenant, tenantLocked }}>
       {children}
     </TenantContext.Provider>
   );
