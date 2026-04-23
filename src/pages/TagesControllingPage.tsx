@@ -33,6 +33,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
+import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
 import { kvSet } from '@/lib/supabase-kv';
 import { loadMonthInvoices } from '@/lib/waren-db';
