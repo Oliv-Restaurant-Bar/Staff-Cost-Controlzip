@@ -584,9 +584,15 @@ export default function WarenrechnungenPage() {
       cumNet += costNet; cumRev += revenue;
       const pct    = revenue > 0 ? (costNet / revenue) * 100 : null;
       const cumPct = cumRev > 0 ? (cumNet / cumRev) * 100 : null;
+      // Debug-Logs
+      console.log(`[WAREN-YEAR] month: ${mk}`);
+      console.log(`[WAREN-YEAR] revenue: CHF ${revenue.toFixed(0)}`);
+      console.log(`[WAREN-YEAR] cost chf: CHF ${costNet.toFixed(0)}`);
+      console.log(`[WAREN-YEAR] cost pct: ${pct !== null ? pct.toFixed(1) + '%' : '–'}`);
+      console.log(`[WAREN-YEAR] status: ${pct === null ? 'nodata' : pct <= targetPct ? 'green' : pct <= targetPct + 2 ? 'yellow' : 'red'}`);
       return { monthKey: mk, label: `${MONTHS[m-1]} ${y !== aRangeYear ? y : ''}`.trim(), revenue, costNet, pct, cumNet, cumRev, cumPct };
     });
-  }, [analyseMode, aFromYear, aFromMonth, aToYear, aToMonth, aRangeYear, rangeEntries, rangeRevenue, analyseDates, todayStr]);
+  }, [analyseMode, aFromYear, aFromMonth, aToYear, aToMonth, aRangeYear, rangeEntries, rangeRevenue, analyseDates, todayStr, targetPct]);
 
   // Wochen-Alerts (innerhalb des gewählten Analyse-Zeitraums, nur Monat-Modus sinnvoll)
   const analyseWeeklyData = useMemo((): WeekData[] => {
@@ -1591,47 +1597,134 @@ export default function WarenrechnungenPage() {
                     </section>
                     )}
 
-                    {/* ── Monats-Übersicht (nur multi_month / Jahr / YTD) ─── */}
-                    {(analyseMode === 'multi_month' || analyseMode === 'year' || analyseMode === 'ytd') && analyseMonthPoints.length > 0 && (
+                    {/* ── Monats-Ampel-Karten (nur Jahr / YTD) ─────────────── */}
+                    {(analyseMode === 'year' || analyseMode === 'ytd') && analyseMonthPoints.length > 0 && (() => {
+                      const getStatus = (pct: number | null) =>
+                        pct === null ? 'nodata' : pct <= targetPct ? 'green' : pct <= targetPct + 2 ? 'yellow' : 'red';
+                      const statusCfg = {
+                        green:  { bg: 'bg-green-50 dark:bg-green-950/30',  border: 'border-green-200 dark:border-green-800',  dot: 'bg-green-500',  label: 'Im Ziel',       txt: 'text-green-700 dark:text-green-400'  },
+                        yellow: { bg: 'bg-amber-50 dark:bg-amber-950/30',  border: 'border-amber-200 dark:border-amber-800',  dot: 'bg-amber-400',  label: 'Leicht über',   txt: 'text-amber-700 dark:text-amber-400'  },
+                        red:    { bg: 'bg-red-50 dark:bg-red-950/30',      border: 'border-red-200 dark:border-red-800',      dot: 'bg-red-500',    label: 'Über Ziel',     txt: 'text-red-700 dark:text-red-400'      },
+                        nodata: { bg: 'bg-muted/20',                       border: 'border-border',                           dot: 'bg-muted-foreground/30', label: 'Keine Daten', txt: 'text-muted-foreground' },
+                      };
+                      return (
+                      <section className="bg-card border border-border rounded-xl overflow-hidden">
+                        <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between">
+                          <h2 className="text-sm font-semibold">Monatsvergleich · {analyseRangeLabel}</h2>
+                          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-green-500" />≤ {targetPct.toFixed(0)}%</span>
+                            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-amber-400" />≤ {(targetPct + 2).toFixed(0)}%</span>
+                            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-red-500" />&gt; {(targetPct + 2).toFixed(0)}%</span>
+                          </div>
+                        </div>
+                        <div className="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                          {analyseMonthPoints.map(p => {
+                            const st = getStatus(p.pct);
+                            const cfg = statusCfg[st];
+                            return (
+                              <div key={p.monthKey} className={cn('rounded-lg border p-3 flex flex-col gap-1', cfg.bg, cfg.border)}>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-semibold text-foreground/80">{p.label}</span>
+                                  <span className={cn('inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full', cfg.txt)}>
+                                    <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', cfg.dot)} />
+                                    {cfg.label}
+                                  </span>
+                                </div>
+                                <div className="tabular-nums text-sm font-bold text-foreground">
+                                  {p.pct !== null ? `${p.pct.toFixed(1)} %` : <span className="text-muted-foreground/40 font-normal text-xs">–</span>}
+                                </div>
+                                <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-0.5">
+                                  <span>{p.costNet > 0 ? `CHF ${fmtChf(p.costNet)}` : '–'}</span>
+                                  <span className="opacity-70">{p.revenue > 0 ? `/ ${fmtChf(p.revenue)}` : ''}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {/* Jahres-Zusammenfassung */}
+                        <div className="px-5 py-3 border-t border-border bg-muted/10 flex items-center gap-6 flex-wrap text-sm">
+                          <span className="text-muted-foreground text-xs uppercase tracking-wide font-medium">Jahres-Total</span>
+                          <span className="tabular-nums font-semibold">Umsatz <span className="text-muted-foreground font-normal">CHF {fmtChf(analyseKPIs.totalRev)}</span></span>
+                          <span className="tabular-nums font-semibold">Waren <span className="text-muted-foreground font-normal">CHF {fmtChf(analyseKPIs.totalCost)}</span></span>
+                          <span className="font-semibold">Quote <PctBadge pct={analyseKPIs.pct} /></span>
+                          <span className="ml-auto flex gap-2 text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-green-500" />{analyseMonthPoints.filter(p => getStatus(p.pct) === 'green').length}× Im Ziel</span>
+                            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-amber-400" />{analyseMonthPoints.filter(p => getStatus(p.pct) === 'yellow').length}× Leicht</span>
+                            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-red-500" />{analyseMonthPoints.filter(p => getStatus(p.pct) === 'red').length}× Über Ziel</span>
+                          </span>
+                        </div>
+                      </section>
+                      );
+                    })()}
+
+                    {/* ── Monats-Übersicht Tabelle (nur multi_month / Jahr / YTD) ─── */}
+                    {(analyseMode === 'multi_month' || analyseMode === 'year' || analyseMode === 'ytd') && analyseMonthPoints.length > 0 && (() => {
+                      const getStatus = (pct: number | null) =>
+                        pct === null ? 'nodata' : pct <= targetPct ? 'green' : pct <= targetPct + 2 ? 'yellow' : 'red';
+                      const rowBg: Record<string, string> = {
+                        green:  'border-l-2 border-l-green-400',
+                        yellow: 'border-l-2 border-l-amber-400',
+                        red:    'border-l-2 border-l-red-500',
+                        nodata: '',
+                      };
+                      const dotColor: Record<string, string> = {
+                        green: 'bg-green-500', yellow: 'bg-amber-400', red: 'bg-red-500', nodata: 'bg-muted-foreground/30',
+                      };
+                      return (
                     <section className="bg-card border border-border rounded-xl overflow-hidden">
                       <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between">
-                        <h2 className="text-sm font-semibold">Monatsübersicht · {analyseRangeLabel}</h2>
-                        <span className="text-xs text-muted-foreground">{analyseMonthPoints.length} Monate</span>
+                        <h2 className="text-sm font-semibold">Monatsdetail · {analyseRangeLabel}</h2>
+                        <span className="text-xs text-muted-foreground">{analyseMonthPoints.length} Monate · Ziel {targetPct.toFixed(0)} %</span>
                       </div>
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b border-border bg-muted/10 text-xs text-muted-foreground">
+                              <th className="px-4 py-2.5 text-left font-medium w-6"></th>
                               <th className="px-4 py-2.5 text-left font-medium">Monat</th>
                               <th className="px-4 py-2.5 text-right font-medium text-muted-foreground/70">Umsatz</th>
                               <th className="px-4 py-2.5 text-right font-medium">Warenkosten</th>
                               <th className="px-4 py-2.5 text-right font-medium">Monats %</th>
+                              <th className="px-4 py-2.5 text-right font-medium">Status</th>
                               <th className="px-4 py-2.5 text-right font-medium border-l border-border/50"><span className="text-foreground/80">Kum. %</span></th>
                             </tr>
                           </thead>
                           <tbody>
-                            {analyseMonthPoints.map((p, i) => (
-                              <tr key={p.monthKey} className={cn('border-b border-border/40 hover:bg-muted/20 transition-colors', i % 2 === 1 && 'bg-muted/10')}>
+                            {analyseMonthPoints.map((p, i) => {
+                              const st = getStatus(p.pct);
+                              return (
+                              <tr key={p.monthKey} className={cn('border-b border-border/40 hover:bg-muted/20 transition-colors', i % 2 === 1 && 'bg-muted/10', rowBg[st])}>
+                                <td className="pl-3 pr-1 py-2.5 w-6">
+                                  <span className={cn('inline-block w-2 h-2 rounded-full', dotColor[st])} />
+                                </td>
                                 <td className="px-4 py-2.5 font-medium">{p.label}</td>
                                 <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{p.revenue > 0 ? `CHF ${fmtChf(p.revenue)}` : <span className="opacity-30">–</span>}</td>
                                 <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{p.costNet > 0 ? `CHF ${fmtChf(p.costNet)}` : <span className="text-muted-foreground/30">–</span>}</td>
                                 <td className="px-4 py-2.5 text-right"><PctBadge pct={p.pct} /></td>
+                                <td className="px-4 py-2.5 text-right text-xs">
+                                  {st === 'green'  && <span className="text-green-600 dark:text-green-400 font-medium">Im Ziel</span>}
+                                  {st === 'yellow' && <span className="text-amber-600 dark:text-amber-400 font-medium">Leicht über</span>}
+                                  {st === 'red'    && <span className="text-red-600 dark:text-red-400 font-semibold">Über Ziel</span>}
+                                  {st === 'nodata' && <span className="text-muted-foreground/40">–</span>}
+                                </td>
                                 <td className="px-4 py-2.5 text-right border-l border-border/50"><PctBadge pct={p.cumPct} /></td>
                               </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                           <tfoot>
                             <tr className="border-t-2 border-border bg-muted/20 font-bold">
-                              <td className="px-4 py-3 font-bold">Total</td>
+                              <td className="px-4 py-3" colSpan={2}>Total</td>
                               <td className="px-4 py-3 text-right tabular-nums text-xs text-muted-foreground">CHF {fmtChf(analyseKPIs.totalRev)}</td>
                               <td className="px-4 py-3 text-right tabular-nums font-bold">CHF {fmtChf(analyseKPIs.totalCost)}</td>
-                              <td className="px-4 py-3 text-right" colSpan={2}><PctBadge pct={analyseKPIs.pct} /></td>
+                              <td className="px-4 py-3 text-right" colSpan={3}><PctBadge pct={analyseKPIs.pct} /></td>
                             </tr>
                           </tfoot>
                         </table>
                       </div>
                     </section>
-                    )}
+                      );
+                    })()}
 
                     {/* Umsatzbasis fehlt */}
                     {analyseKPIs.totalRev === 0 && analysisEntries.length > 0 && (
