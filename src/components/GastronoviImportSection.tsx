@@ -25,8 +25,9 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { kvSet } from '@/lib/supabase-kv';
+import { useTenant } from '@/contexts/TenantContext';
 
-const DAILY_BUDGETS_KEY = 'dailyBudgets';
+const DAILY_BUDGETS_BASE = 'dailyBudgets';
 
 type ImportTarget = 'actual' | 'previous_year';
 
@@ -57,18 +58,18 @@ function todayIso(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function loadBudgets(): Record<string, DailyBudget> {
-  try { return JSON.parse(localStorage.getItem(DAILY_BUDGETS_KEY) || '{}'); }
+function loadBudgets(storageKey: string): Record<string, DailyBudget> {
+  try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); }
   catch { return {}; }
 }
 
-function saveBudgets(b: Record<string, DailyBudget>) {
-  localStorage.setItem(DAILY_BUDGETS_KEY, JSON.stringify(b));
+function saveBudgets(b: Record<string, DailyBudget>, storageKey: string) {
+  localStorage.setItem(storageKey, JSON.stringify(b));
 }
 
 // ─── Manual entry sub-component ──────────────────────────────────────────────
 
-function ManualEntryCard() {
+function ManualEntryCard({ storageKey }: { storageKey: string }) {
   const [date, setDate]         = useState(todayIso());
   const [target, setTarget]     = useState<ImportTarget>('actual');
   const [total, setTotal]       = useState('');
@@ -78,7 +79,7 @@ function ManualEntryCard() {
   const [saved, setSaved]       = useState(false);
 
   const existingValue = (() => {
-    const b = loadBudgets();
+    const b = loadBudgets(storageKey);
     const e = b[date];
     if (!e) return null;
     return target === 'actual' ? e.actualRevenue : e.previousYearRevenue;
@@ -129,7 +130,7 @@ function ManualEntryCard() {
     const foodNum = parseFloat(food.replace(',', '.')) || 0;
     const bevNum  = parseFloat(beverage.replace(',', '.')) || 0;
 
-    const budgets = loadBudgets();
+    const budgets = loadBudgets(storageKey);
     const prev = budgets[date] ?? {
       date,
       plannedRevenue: 0,
@@ -145,11 +146,11 @@ function ManualEntryCard() {
       budgets[date] = { ...prev, previousYearRevenue: totalNum, previousYearFood: foodNum, previousYearBeverage: bevNum };
     }
 
-    saveBudgets(budgets);
-    // Sync to Supabase KV so all pages (TagesControlling, Dashboard, etc.) see the new value
-    console.log(`[UMSATZ] saved persistently: ${date} field=${target} total=${totalNum}`);
-    kvSet(DAILY_BUDGETS_KEY, budgets).then(() => {
-      console.log(`[UMSATZ] kvSet ok: dailyBudgets now has ${Object.keys(budgets).length} Tage`);
+    saveBudgets(budgets, storageKey);
+    // Sync to Supabase KV (uses prefixed key → korrekte Mandanten-Isolation)
+    console.log(`[UMSATZ] saved persistently: ${date} field=${target} total=${totalNum} key=${storageKey}`);
+    kvSet(storageKey, budgets).then(() => {
+      console.log(`[UMSATZ] kvSet ok: ${storageKey} now has ${Object.keys(budgets).length} Tage`);
       window.dispatchEvent(new Event('supabase-kv-synced'));
     }).catch(err => console.error('[UMSATZ] kvSet failed:', err));
     setSaved(true);
@@ -408,6 +409,9 @@ function ConflictDialog({ open, conflicts, freshCount, target, onClose, onConfir
 // ─── Main import section ──────────────────────────────────────────────────────
 
 export function GastronoviImportSection() {
+  const { tenantId, tenantKey } = useTenant();
+  const storageKey = tenantKey(DAILY_BUDGETS_BASE);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [parsing, setParsing]   = useState(false);
@@ -470,7 +474,7 @@ export function GastronoviImportSection() {
   const handleImportClick = () => {
     if (!results) return;
 
-    const budgets = loadBudgets();
+    const budgets = loadBudgets(storageKey);
     const field = target === 'actual' ? 'actualRevenue' : 'previousYearRevenue';
 
     const foundConflicts: ConflictRow[] = [];
@@ -503,7 +507,7 @@ export function GastronoviImportSection() {
   };
 
   const commitImport = (rows: GastronoviDayResult[], datesToReplace: Set<string>) => {
-    const budgets = loadBudgets();
+    const budgets = loadBudgets(storageKey);
     const field   = target === 'actual' ? 'actualRevenue'      : 'previousYearRevenue';
     const foodKey = target === 'actual' ? 'actualFood'         : 'previousYearFood';
     const bevKey  = target === 'actual' ? 'actualBeverage'     : 'previousYearBeverage';
@@ -531,15 +535,15 @@ export function GastronoviImportSection() {
       count++;
     }
 
-    saveBudgets(budgets);
+    saveBudgets(budgets, storageKey);
 
-    // Sync to Supabase KV immediately — without this, TagesControlling/Dashboard
-    // read from Supabase KV and show the OLD data, ignoring what was just imported.
+    // Sync to Supabase KV immediately — mandantenkorrekter Key
     const dates = rows.map(r => r.date).sort();
-    console.log(`[UMSATZ] import committed: ${count} Tage, Bereich ${dates[0] ?? '?'} bis ${dates.at(-1) ?? '?'}`);
-    console.log(`[UMSATZ] available keys: [${Object.keys(budgets).sort().slice(-10).join(', ')}]`);
-    kvSet(DAILY_BUDGETS_KEY, budgets).then(() => {
-      console.log(`[UMSATZ] kvSet ok: dailyBudgets → ${Object.keys(budgets).length} Tage in Supabase`);
+    console.log(`[REVENUE-BEAULIEU] tenant: ${tenantId}`);
+    console.log(`[REVENUE-BEAULIEU] saved rows: ${count} Tage, Bereich ${dates[0] ?? '?'} bis ${dates.at(-1) ?? '?'}`);
+    console.log(`[REVENUE-BEAULIEU] storage key: ${storageKey}`);
+    kvSet(storageKey, budgets).then(() => {
+      console.log(`[REVENUE-BEAULIEU] loaded rows: ${Object.keys(budgets).length} Tage in Supabase (key: ${storageKey})`);
       window.dispatchEvent(new Event('supabase-kv-synced'));
     }).catch(err => console.error('[UMSATZ] kvSet failed:', err));
 
@@ -561,7 +565,7 @@ export function GastronoviImportSection() {
   return (
     <div className="space-y-6">
 
-      <ManualEntryCard />
+      <ManualEntryCard storageKey={storageKey} />
 
       <div className="relative">
         <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>

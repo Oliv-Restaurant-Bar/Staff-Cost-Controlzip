@@ -2,6 +2,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { Employee } from '@/types/personnel';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import type { TenantId } from '@/contexts/TenantContext';
+import { kvGet, kvSet } from '@/lib/supabase-kv';
+import type { BudgetYear, BudgetPLLineItem } from '@/types/budget';
 
 // ─── Typen ──────────────────────────────────────────────────────────────────
 
@@ -1321,4 +1323,148 @@ export async function runPersonalstammE2ETest(): Promise<HarteTestResult> {
   const finalPassed = allPassed && cleanOk;
   console.log(`[TEST] result: ${finalPassed ? 'SUCCESS' : 'FAILED'} (${Date.now() - t0} ms)`);
   return { steps, passed: finalPassed, durationMs: Date.now() - t0 };
+}
+
+// ─── Budget 2026 Beaulieu – Seed aus Excel-Datei ──────────────────────────────
+
+export interface BeaulieuBudgetSeedResult {
+  success: boolean;
+  updatedItems: string[];
+  addedItems: string[];
+  message: string;
+  durationMs: number;
+}
+
+/**
+ * Schreibt das Budget 2026 für Beaulieu (aus Budget_Beaulieu_2026.xlsx) fest in
+ * Supabase → app_settings (key: "beaulieu:budget_v1").
+ * Bestehende plLineItems werden aktualisiert, fehlende hinzugefügt.
+ * Gibt ein Ergebnis-Objekt für die UI zurück.
+ */
+export async function seedBeaulieuBudget2026(): Promise<BeaulieuBudgetSeedResult> {
+  const t0  = Date.now();
+  const KEY = 'beaulieu:budget_v1';
+
+  console.log('[BUDGET-BEAULIEU] import started');
+  console.log('[BUDGET-BEAULIEU] tenant: beaulieu');
+
+  // ── Monatswerte Jan–Dez aus Excel "Budget Beaulieu 2026.xlsx" ──────────────
+  const MONTHLY: Record<string, [number,number,number,number,number,number,number,number,number,number,number,number]> = {
+    // 3000 Betriebsertrag Netto
+    pli_ertrag_a:        [120000,130000,150000,200000,170000,160000,120000,140000,130000,170000,200000,200000],
+    // 4020–4090 Direkter Warenaufwand
+    pli_wein_wa:         [3600,3900,4500,6000,5100,4800,3600,4200,3900,5100,6000,6000],
+    pli_bier_wa:         [1800,1950,2250,3000,2550,2400,1800,2100,1950,2550,3000,3000],
+    pli_spirit_wa:       [1200,1300,1500,2000,1700,1600,1200,1400,1300,1700,2000,2000],
+    pli_mineral_wa:      [2400,2600,3000,4000,3400,3200,2400,2800,2600,3400,4000,4000],
+    pli_kueche_wa:       [22800,24700,28500,38000,32300,30400,22800,26600,24700,32300,38000,38000],
+    pli_kaffee_wa:       [600,650,750,1000,850,800,600,700,650,850,1000,1000],
+    pli_uebrig_wa:       [600,650,750,1000,850,800,600,700,650,850,1000,1000],
+    // 4701 Betriebsmaterial Restaurant
+    pli_betriebsmat:     [360,390,450,600,510,480,360,420,390,510,600,600],
+    // 5000–5010 Lohnaufwand
+    pli_lohn_fix:        [35000,35000,35000,35000,35000,35000,35000,35000,35000,35000,35000,35000],
+    pli_lohn_flex:       [1800,1950,2250,3000,2550,2400,1800,2100,1950,2550,3000,3000],
+    pli_lohn_13:         [2400,2600,3000,4000,3400,3200,2400,2800,2600,3400,4000,4000],
+    pli_zulagen:         [1200,1300,1500,2000,1700,1600,1200,1400,1300,1700,2000,2000],
+    // 5700–5730 Sozialversicherungen
+    pli_ahv:             [3000,3250,3750,5000,4250,4000,3000,3500,3250,4250,5000,5000],
+    pli_bvg:             [1320,1430,1650,2200,1870,1760,1320,1540,1430,1870,2200,2200],
+    pli_uvg:             [720,780,900,1200,1020,960,720,840,780,1020,1200,1200],
+    // 5890 Übriger Personalaufwand
+    pli_uebrig_pers:     [120,130,150,200,170,160,120,140,130,170,200,200],
+    // 6000–6040 Raumaufwand
+    pli_miete:           [20860,20860,20860,20860,20860,20860,20860,20860,20860,20860,20860,20860],
+    pli_reinigung_ent:   [1200,1300,1500,2000,1700,1600,1200,1400,1300,1700,2000,2000],
+    // 6100–6140 Unterhalt / URE
+    pli_ure_maschinen:   [960,1040,1200,1600,1360,1280,960,1120,1040,1360,1600,1600],
+    pli_ure_mobiliar:    [360,390,450,600,510,480,360,420,390,510,600,600],
+    pli_ure_edv:         [720,780,900,1200,1020,960,720,840,780,1020,1200,1200],
+    // 6400 Energie (Strom + Heizung + Kehricht)
+    pli_energie:         [3240,3510,4050,5400,4590,4320,3240,3780,3510,4590,5400,5400],
+    // 6500–6530 Verwaltungsaufwand
+    pli_bueromaterial:   [120,130,150,200,170,160,120,140,130,170,200,200],
+    pli_telefon:         [240,260,300,400,340,320,240,280,260,340,400,400],
+    pli_buchhaltung:     [2500,2500,2500,2500,2500,2500,2500,2500,2500,2500,2500,2500],
+    // 6600 Werbeaufwand
+    pli_werbung:         [960,1040,1200,1600,1360,1280,960,1120,1040,1360,1600,1600],
+    // 6690 Übriger Betriebsaufwand
+    pli_diverse_auslagen:[720,780,900,1200,1020,960,720,840,780,1020,1200,1200],
+    // 6800–6940 Finanzaufwand
+    pli_finance_6800:    [504,546,630,840,714,672,504,588,546,714,840,840],
+    pli_bankspesen:      [50,50,50,50,50,50,50,50,50,50,50,50],
+  };
+
+  console.log(`[BUDGET-BEAULIEU] rows parsed: ${Object.keys(MONTHLY).length} Konten`);
+
+  // ── Existierendes Budget aus Supabase laden ────────────────────────────────
+  const existing = await kvGet(KEY) as Record<number, BudgetYear> | null;
+  const allYears: Record<number, BudgetYear> =
+    (existing && typeof existing === 'object' && !Array.isArray(existing))
+      ? (existing as Record<number, BudgetYear>)
+      : {};
+
+  const y2026: BudgetYear = allYears[2026] ?? {
+    year: 2026,
+    positions: [],
+    rules: [],
+    wasAutoCalculated: false,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    plCategories: [],
+    plLineItems: [],
+  };
+
+  const existingItems: BudgetPLLineItem[] = y2026.plLineItems ?? [];
+  const existingIds = new Set(existingItems.map(i => i.id));
+
+  const updatedItems: string[] = [];
+  const addedItems: string[]   = [];
+
+  // Bestehende Positionen aktualisieren
+  const newItems: BudgetPLLineItem[] = existingItems.map(item => {
+    const mv = MONTHLY[item.id];
+    if (!mv) return item;
+    updatedItems.push(item.id);
+    return { ...item, monthlyValues: mv };
+  });
+
+  // Fehlende Positionen ergänzen (falls das Budget noch nicht vollständig war)
+  const Z12 = [0,0,0,0,0,0,0,0,0,0,0,0] as const;
+  for (const [id, mv] of Object.entries(MONTHLY)) {
+    if (!existingIds.has(id)) {
+      // Minimales Item anlegen – loadBudgetWithPL füllt Metadaten beim nächsten Aufruf
+      newItems.push({
+        id,
+        categoryId:    'pl_revenue',
+        accountNumber: '0000',
+        label:         id,
+        valueType:     'chf',
+        sortOrder:     999,
+        isDefault:     false,
+        monthlyValues: mv,
+      } as BudgetPLLineItem);
+      addedItems.push(id);
+    }
+  }
+
+  y2026.plLineItems = newItems;
+  y2026.updatedAt   = new Date().toISOString();
+  allYears[2026]    = y2026;
+
+  // ── Supabase + localStorage speichern ─────────────────────────────────────
+  await kvSet(KEY, allYears);
+  localStorage.setItem(KEY, JSON.stringify(allYears));
+  window.dispatchEvent(new Event('supabase-kv-synced'));
+
+  console.log(`[BUDGET-BEAULIEU] saved to supabase: ${KEY}`);
+  console.log(`[BUDGET-BEAULIEU] updated: ${updatedItems.length} Konten, ergänzt: ${addedItems.length}`);
+
+  return {
+    success:      true,
+    updatedItems,
+    addedItems,
+    message:      `Budget 2026 Beaulieu gespeichert: ${updatedItems.length} Konten aktualisiert, ${addedItems.length} ergänzt.`,
+    durationMs:   Date.now() - t0,
+  };
 }

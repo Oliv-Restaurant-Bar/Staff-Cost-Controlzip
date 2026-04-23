@@ -1,0 +1,129 @@
+Bitte jetzt zwei kritische Punkte für den Mandanten Beaulieu korrigieren:
+
+Ziel:
+1. Das Budget 2026 von Beaulieu soll fest und korrekt hinterlegt werden
+2. Der Ist-Umsatz 2026 von Beaulieu soll korrekt gespeichert und in allen Modulen sichtbar werden
+
+Wichtig:
+Es geht ausdrücklich um den Mandanten "beaulieu".
+
+==================================================
+1. Budget 2026 Beaulieu fest hinterlegen
+==================================================
+
+Bitte die hochgeladene Datei
+- Budget Beaulieu 2026.xlsx
+
+verwenden und das Budget 2026 für Beaulieu sauber ins System übernehmen.
+
+Bitte umsetzen:
+- Budgetdaten tenant-korrekt auf restaurant_id = 'beaulieu' speichern
+- Budget nicht nur temporär laden, sondern fest in Supabase hinterlegen
+- dieselbe Struktur wie bei Oliv verwenden, damit:
+  - Budget-Modul
+  - Tagesansicht
+  - Tages-Controlling
+  - Erfolgsrechnung
+  - Personalplanung
+korrekt darauf zugreifen können
+
+Wichtig:
+Falls Monatsbudgets oder Kontengruppen in der Datei enthalten sind, bitte sauber mappen und speichern.
+
+==================================================
+2. Ist-Umsatz 2026 Beaulieu korrekt speichern
+==================================================
+
+Problem:
+Der Ist-Umsatz 2026 wird zwar teilweise importiert oder erfasst, erscheint aber nicht korrekt in:
+- Dashboard
+- Tagesansicht
+- Erfolgsrechnung
+- Datenstand in der Import-Zentrale
+
+Bitte exakt prüfen und korrigieren:
+
+A) Speicherung
+- Ist-Umsätze müssen tenant-korrekt mit restaurant_id = 'beaulieu' gespeichert werden
+- keine Vermischung mit Oliv
+- keine nur lokale Speicherung
+- Supabase muss Source of Truth sein
+
+B) Laden
+Bitte prüfen, welche Module aktuell falsch laden oder falsch filtern:
+- Dashboard
+- Tagesansicht
+- Erfolgsrechnung
+- Datenstand / Import-Zentrale
+
+Alle diese Module müssen:
+- den aktiven Tenant beachten
+- die Beaulieu-Umsätze laden
+- dieselbe zentrale Umsatzquelle verwenden
+
+C) Datenstand in Import-Zentrale
+Der Kasten "Tagesumsatz" soll den Beaulieu-Ist-Umsatz korrekt erkennen und das aktuelle Importdatum / den letzten vorhandenen Umsatzstand anzeigen.
+
+==================================================
+3. Zentrale Umsatzquelle prüfen
+==================================================
+
+Bitte sicherstellen, dass alle Umsatzmodule dieselbe zentrale tenant-korrekte Funktion verwenden, z.B.:
+- loadDailyRevenues(restaurantId)
+oder die entsprechende bestehende Funktion
+
+Wichtig:
+Keine Sonderqueries pro Modul ohne Tenant-Filter.
+
+==================================================
+4. Beaulieu-spezifischer Check
+==================================================
+
+Bitte konkret prüfen:
+- Gibt es 2026 Umsatzdaten für Beaulieu in Supabase?
+- Unter welchem restaurant_id werden sie gespeichert?
+- Werden sie im Dashboard gefunden?
+- Werden sie in der Tagesansicht gefunden?
+- Werden sie in der Erfolgsrechnung gefunden?
+- Wird der Datenstand korrekt angezeigt?
+
+==================================================
+5. Datenstand-Box korrigieren
+==================================================
+
+In der Import-Zentrale für Beaulieu soll "Tagesumsatz" nicht mehr "Keine Daten" zeigen, wenn Umsatzdaten vorhanden sind.
+
+Bitte:
+- letzten vorhandenen Umsatz-Tag für Beaulieu ermitteln
+- diesen als Datenstand anzeigen
+- tenant-korrekt
+
+==================================================
+6. Debug Logs
+==================================================
+
+Bitte loggen:
+[BUDGET-BEAULIEU] import started
+[BUDGET-BEAULIEU] rows parsed: ...
+[BUDGET-BEAULIEU] saved to supabase: ...
+[BUDGET-BEAULIEU] tenant: beaulieu
+
+[REVENUE-BEAULIEU] tenant: beaulieu
+[REVENUE-BEAULIEU] saved rows: ...
+[REVENUE-BEAULIEU] loaded rows: ...
+[REVENUE-BEAULIEU] dashboard total: ...
+[REVENUE-BEAULIEU] tagesansicht total: ...
+[REVENUE-BEAULIEU] erfolgsrechnung total: ...
+[REVENUE-BEAULIEU] import hub freshness: ...
+[REVENUE-BEAULIEU] mismatch: yes/no
+
+==================================================
+7. Bitte danach kurz sagen
+==================================================
+
+- welche Datei(en) geändert wurden
+- wie das Budget 2026 von Beaulieu gespeichert wurde
+- wo der Fehler beim Ist-Umsatz lag
+- welche Module jetzt korrekt Beaulieu-Umsätze laden
+- ob der Datenstand in der Import-Zentrale jetzt funktioniert
+- wie ich am schnellsten prüfen kann, dass Budget und Umsatz 2026 für Beaulieu überall korrekt sichtbar sind

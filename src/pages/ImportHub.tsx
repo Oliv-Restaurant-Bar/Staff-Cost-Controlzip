@@ -18,7 +18,7 @@ import { GastronoviImportSection } from '@/components/GastronoviImportSection';
 import { VjDailyImportSection } from '@/components/VjDailyImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
-import { loadEmployees, saveActualHourEntry, upsertEmployee, seedBeaulieuEmployees, runBeaulieuHarteTest } from '@/lib/supabase-db';
+import { loadEmployees, saveActualHourEntry, upsertEmployee, seedBeaulieuEmployees, runBeaulieuHarteTest, seedBeaulieuBudget2026, type BeaulieuBudgetSeedResult } from '@/lib/supabase-db';
 import type { HarteTestResult } from '@/lib/supabase-db';
 import { defaultEmployeesBeaulieu } from '@/data/defaultEmployeesBeaulieu';
 import { Employee, MirusDailyImportEntry, MirusImportMode, Department } from '@/types/personnel';
@@ -95,12 +95,19 @@ const STALENESS_TEXT: Record<string, string> = {
 
 function readTagesumsatzDate(keyFn: (k: string) => string = k => k): string | null {
   try {
-    const db = JSON.parse(localStorage.getItem(keyFn('dailyBudgets')) || '{}') as Record<string, { actualRevenue?: number }>;
+    const storageKey = keyFn('dailyBudgets');
+    const db = JSON.parse(localStorage.getItem(storageKey) || '{}') as Record<string, { actualRevenue?: number }>;
     const dates = Object.entries(db)
       .filter(([, v]) => (v?.actualRevenue ?? 0) > 0)
       .map(([k]) => k)
       .sort();
-    return dates.at(-1) ?? null;
+    const latest = dates.at(-1) ?? null;
+    const isBeau = storageKey.startsWith('beaulieu:');
+    if (isBeau) {
+      console.log(`[REVENUE-BEAULIEU] import hub freshness: key=${storageKey}, total days=${dates.length}, latest=${latest ?? 'none'}`);
+      console.log(`[REVENUE-BEAULIEU] mismatch: ${latest ? 'no – Daten vorhanden' : 'yes – keine Ist-Umsätze für Beaulieu im localStorage'}`);
+    }
+    return latest;
   } catch { return null; }
 }
 
@@ -1103,6 +1110,72 @@ const PlaceholderSection = ({ label }: { label: string }) => (
   </div>
 );
 
+// ─── Beaulieu Budget 2026 Import ─────────────────────────────────────────────
+
+function BeaulieuBudgetImportSection() {
+  const [running, setRunning]   = useState(false);
+  const [result, setResult]     = useState<BeaulieuBudgetSeedResult | null>(null);
+
+  const handleSeed = async () => {
+    setRunning(true);
+    setResult(null);
+    try {
+      const res = await seedBeaulieuBudget2026();
+      setResult(res);
+      if (res.success) {
+        toast.success(`Budget 2026 Beaulieu gespeichert — ${res.updatedItems.length} Konten`);
+      } else {
+        toast.error('Budget-Import fehlgeschlagen');
+      }
+    } catch (e) {
+      toast.error('Fehler: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Schreibt die Budgetwerte aus <strong>Budget Beaulieu 2026.xlsx</strong> fest in Supabase
+        (Schlüssel: <code className="text-xs bg-muted px-1 rounded">beaulieu:budget_v1</code>).
+        Alle Module (Budget, Tagesansicht, Tages-Controlling, Erfolgsrechnung, Personalplanung) lesen danach die korrekten Monatswerte.
+      </p>
+
+      <Button
+        onClick={handleSeed}
+        disabled={running}
+        className="gap-2 bg-violet-600 hover:bg-violet-700 text-white"
+      >
+        {running
+          ? <><Loader2 className="h-4 w-4 animate-spin" />Budget wird gespeichert…</>
+          : <><Database className="h-4 w-4" />Budget 2026 in Supabase speichern</>
+        }
+      </Button>
+
+      {result && (
+        <div className={`rounded-lg border px-4 py-3 text-sm space-y-1 ${result.success ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30' : 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/30'}`}>
+          <p className="font-semibold flex items-center gap-1.5">
+            {result.success
+              ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              : <AlertCircle className="h-4 w-4 text-red-600" />
+            }
+            {result.message}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {result.updatedItems.length} Konten aktualisiert · {result.addedItems.length} ergänzt · {result.durationMs} ms
+          </p>
+          {result.updatedItems.length > 0 && (
+            <p className="text-xs font-mono text-muted-foreground break-all">
+              {result.updatedItems.join(', ')}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Hauptseite ───────────────────────────────────────────────────────────────
 
 const ImportHub = () => {
@@ -1249,6 +1322,21 @@ const ImportHub = () => {
             badgeColor="border-violet-300 text-violet-700 bg-violet-50 dark:bg-violet-950/20"
           >
             <BeaulieuMitarbeiterSection />
+          </Section>
+        )}
+
+        {/* ── Beaulieu: Budget 2026 hinterlegen ────────────────────────── */}
+        {tenant.id === 'beaulieu' && (
+          <Section
+            id="beaulieu-budget"
+            title="Budget 2026 Beaulieu"
+            subtitle="Budgetwerte aus Excel fest in Supabase speichern (alle Module)"
+            icon={<Database className="h-4 w-4" />}
+            color="border-violet-400 dark:border-violet-600"
+            badge="Beaulieu"
+            badgeColor="border-violet-300 text-violet-700 bg-violet-50 dark:bg-violet-950/20"
+          >
+            <BeaulieuBudgetImportSection />
           </Section>
         )}
 
