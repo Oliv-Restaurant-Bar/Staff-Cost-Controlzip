@@ -279,15 +279,26 @@ function noticePeriodLabel(inProb: boolean): string {
   return inProb ? '3 Arbeitstage' : '1 Monat auf Monatsende';
 }
 
+/** Extrahiert alle numerischen Anteile aus Beaulieu-IDs (b-42 → 42) */
+function beaulieuNums(existing: Employee[]): number[] {
+  return existing
+    .map(e => { const m = String(e.id).match(/^b-(\d+)$/); return m ? parseInt(m[1]) : NaN; })
+    .filter(n => !isNaN(n));
+}
+
+/** Nächste freie b-ID, nur anhand der übergebenen Liste berechnet */
+function nextBeaulieuId(existing: Employee[]): string {
+  const nums = beaulieuNums(existing);
+  const highest = nums.length > 0 ? Math.max(...nums) : 0;
+  console.log(`[BEAULIEU-ID] highest existing id: b-${highest === 0 ? '(none)' : highest}`);
+  const next = `b-${highest + 1}`;
+  console.log(`[BEAULIEU-ID] next id: ${next}`);
+  return next;
+}
+
 function generateId(existing: Employee[], tenantId?: string): string {
   if (tenantId === 'beaulieu') {
-    const nums = existing
-      .map(e => { const m = String(e.id).match(/^b-(\d+)$/); return m ? parseInt(m[1]) : NaN; })
-      .filter(n => !isNaN(n));
-    const maxNum = nums.length > 0 ? Math.max(...nums) : 200;
-    const newId = `b-${maxNum + 1}`;
-    console.log(`[EMPLOYEE SAVE] generateId beaulieu: existing b-* max=${maxNum} → newId=${newId}`);
-    return newId;
+    return nextBeaulieuId(existing);
   }
   const nums = existing.map(e => parseInt(e.id)).filter(n => !isNaN(n));
   const maxNum = nums.length > 0 ? Math.max(...nums) : 0;
@@ -674,14 +685,35 @@ const Personalstamm = () => {
 
     setSaving(true);
     const isNew = !employees.some(e => e.id === editData.id);
-    if (isNew) {
-      console.log(`[EMPLOYEE SAVE] inserting employee... id=${editData.id} name="${editData.name}"`);
-      console.log(`[EMPLOYEE SAVE] restaurant_id=${tenantId}`);
-      console.log(`[EMPLOYEE SAVE] department=${editData.department} type=${editData.employmentType}`);
+
+    // ── Beaulieu: vor Insert frische ID aus Supabase ableiten ──────────────
+    let finalData = editData;
+    if (isNew && tenantId === 'beaulieu') {
+      const freshList = await loadEmployees('beaulieu');
+      const freshId = nextBeaulieuId(freshList ?? employees);
+      // Sicherheits-Check: ID darf nicht bereits vergeben sein
+      const conflict = (freshList ?? employees).some(e => e.id === freshId);
+      if (conflict) {
+        console.error(`[BEAULIEU-ID] conflict detected for ${freshId} — aborting`);
+        toast.error(`ID-Konflikt bei ${freshId} — bitte nochmals versuchen`);
+        setSaving(false);
+        return;
+      }
+      finalData = { ...editData, id: freshId };
+      console.log(`[BEAULIEU-ID] employee created with id: ${freshId}`);
+      // ID in UI synchronisieren
+      setEditData(finalData);
+      setSelectedId(freshId);
     }
-    const ok = await upsertEmployee(editData, tenantId);
+
     if (isNew) {
-      console.log(`[EMPLOYEE SAVE] ${ok ? 'success' : 'FAILED'} id=${editData.id}`);
+      console.log(`[EMPLOYEE SAVE] inserting employee... id=${finalData.id} name="${finalData.name}"`);
+      console.log(`[EMPLOYEE SAVE] restaurant_id=${tenantId}`);
+      console.log(`[EMPLOYEE SAVE] department=${finalData.department} type=${finalData.employmentType}`);
+    }
+    const ok = await upsertEmployee(finalData, tenantId);
+    if (isNew) {
+      console.log(`[EMPLOYEE SAVE] ${ok ? 'success' : 'FAILED'} id=${finalData.id}`);
     }
     if (canEditWages) {
       console.log(`[WAGE-EDIT] save success: ${ok ? 'yes' : 'no'} — ${editData.name}`);
@@ -690,8 +722,8 @@ const Personalstamm = () => {
     if (ok) {
       // Lokale Daten speichern (inkl. neuer HR-Felder)
       const newLocal = { ...localData };
-      const prevLocal = getLocalEntry(newLocal, editData.id);
-      newLocal[editData.id] = {
+      const prevLocal = getLocalEntry(newLocal, finalData.id);
+      newLocal[finalData.id] = {
         ...prevLocal,
         active: editActive,
         notes:  editNotes,
@@ -705,29 +737,29 @@ const Personalstamm = () => {
         const reloaded = await loadEmployees(tenantId);
         if (reloaded) {
           setEmployees(reloaded);
-          const saved = reloaded.find(e => e.id === editData.id);
+          const saved = reloaded.find(e => e.id === finalData.id);
           console.log(`[CHECK] employees saved in DB: ${saved ? 'OK' : 'MISSING – not found after reload'}`);
           console.log(`[CHECK] employees reload after refresh: OK`);
           console.log(`[CHECK] beaulieu count: ${reloaded.length}`);
         } else {
           console.warn(`[EMPLOYEE SAVE] reload returned null after insert`);
           // Fallback: lokal hinzufügen
-          setEmployees(prev => [...prev, editData]);
+          setEmployees(prev => [...prev, finalData]);
         }
       } else {
         // Bestehender Mitarbeiter: lokal aktualisieren
         setEmployees(prev => {
-          const idx = prev.findIndex(e => e.id === editData.id);
+          const idx = prev.findIndex(e => e.id === finalData.id);
           if (idx >= 0) {
             const next = [...prev];
-            next[idx] = editData;
+            next[idx] = finalData;
             return next;
           }
-          return [...prev, editData];
+          return [...prev, finalData];
         });
       }
 
-      setSelectedId(editData.id);
+      setSelectedId(finalData.id);
       setEditMode(false);
       toast.success('Mitarbeiter gespeichert');
     } else {
