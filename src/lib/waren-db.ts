@@ -215,6 +215,35 @@ export async function saveWarenMonthlyRevenue(
 }
 
 /**
+ * Tagesgewichte für die Umsatzverteilung.
+ * Index = getDay() Rückgabewert: 0=So, 1=Mo, 2=Di, 3=Mi, 4=Do, 5=Fr, 6=Sa
+ * Restaurant Beaulieu: Mo–Fr = 15, Sa = 10, So = 0 (geschlossen)
+ */
+export const WAREN_DAY_WEIGHTS = [0, 15, 15, 15, 15, 15, 10];
+
+/**
+ * Berechnet den tagesgenauen Budget-Umsatz basierend auf den Tagesgewichten.
+ * @param monthBudget Monatlicher Gesamtbudget-Umsatz in CHF
+ * @param dayStr Datum des Tages (YYYY-MM-DD)
+ * @param allDaysInMonth Alle Tage des Monats (YYYY-MM-DD[])
+ * @returns Anteil des Tages am Monatsbudget
+ */
+export function computeDailyBudgetRevenue(
+  monthBudget: number,
+  dayStr: string,
+  allDaysInMonth: string[],
+): number {
+  const totalWeight = allDaysInMonth.reduce((s, d) => {
+    const dow = new Date(d + 'T12:00:00').getDay();
+    return s + WAREN_DAY_WEIGHTS[dow];
+  }, 0);
+  if (totalWeight === 0) return 0;
+  const dow = new Date(dayStr + 'T12:00:00').getDay();
+  const w = WAREN_DAY_WEIGHTS[dow];
+  return w === 0 ? 0 : (w / totalWeight) * monthBudget;
+}
+
+/**
  * Vordefinierte monatliche Umsatz-Budgets.
  * Quelle: Budget_Beaulieu_2026.xlsx – BETRIEBSERTRAG NETTO
  */
