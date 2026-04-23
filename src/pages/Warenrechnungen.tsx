@@ -1229,14 +1229,17 @@ export default function WarenrechnungenPage() {
                     </div>
                   </div>
 
-                  {(analyseMode === 'week' || analyseMode === 'month') ? (
-                    analyseChartPoints.filter(p => p.hasEntry || p.dayRev > 0).length < 2 ? (
-                      <div className="flex flex-col items-center justify-center h-52 gap-2 text-muted-foreground">
-                        <BarChart3 className="h-8 w-8 opacity-20" />
-                        <p className="text-sm">Noch zu wenig Daten für {analyseRangeLabel}</p>
-                        <p className="text-xs opacity-60">Mindestens 2 Tage mit Umsatzdaten erforderlich.</p>
-                      </div>
-                    ) : (
+                  {/* ── Woche / Monat: zu wenig Daten ──────────────────── */}
+                  {(analyseMode === 'week' || analyseMode === 'month') && analyseChartPoints.filter(p => p.hasEntry || p.dayRev > 0).length < 2 && (
+                    <div className="flex flex-col items-center justify-center h-52 gap-2 text-muted-foreground">
+                      <BarChart3 className="h-8 w-8 opacity-20" />
+                      <p className="text-sm">Noch zu wenig Daten für {analyseRangeLabel}</p>
+                      <p className="text-xs opacity-60">Mindestens 2 Tage mit Umsatzdaten erforderlich.</p>
+                    </div>
+                  )}
+
+                  {/* ── Woche / Monat: Tages-Chart ──────────────────────── */}
+                  {(analyseMode === 'week' || analyseMode === 'month') && analyseChartPoints.filter(p => p.hasEntry || p.dayRev > 0).length >= 2 && (
                     <div className="px-2 pt-4 pb-3">
                       <ResponsiveContainer width="100%" height={260}>
                         <ComposedChart data={analyseChartPoints} margin={{ top: 8, right: 24, left: 0, bottom: 4 }}>
@@ -1295,8 +1298,6 @@ export default function WarenrechnungenPage() {
                               );
                             }}
                           />
-
-                          {/* Zielwert-Linie */}
                           <ReferenceLine
                             y={targetPct}
                             stroke="hsl(var(--muted-foreground))"
@@ -1305,8 +1306,6 @@ export default function WarenrechnungenPage() {
                             strokeOpacity={0.6}
                             label={{ value: `Ziel ${targetPct}%`, position: 'insideTopRight', fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
                           />
-
-                          {/* Tageswert — dünne Linie, Punkte nur bei Einträgen */}
                           <Line
                             type="monotone"
                             dataKey="dayPct"
@@ -1330,8 +1329,6 @@ export default function WarenrechnungenPage() {
                             activeDot={{ r: 4, strokeWidth: 1.5, stroke: 'white' }}
                             connectNulls={false}
                           />
-
-                          {/* Kumuliert — dicke Hauptlinie */}
                           <Line
                             type="monotone"
                             dataKey="cumPct"
@@ -1344,8 +1341,6 @@ export default function WarenrechnungenPage() {
                           />
                         </ComposedChart>
                       </ResponsiveContainer>
-
-                      {/* Legende */}
                       <div className="flex items-center gap-5 justify-end px-3 pt-2 text-xs text-muted-foreground">
                         <div className="flex items-center gap-1.5">
                           <span className="inline-block w-6 h-0.5 bg-muted-foreground/50" />
@@ -1361,54 +1356,57 @@ export default function WarenrechnungenPage() {
                         </div>
                       </div>
                     </div>
-                  ) : (
-                    /* Monats-Chart für multi_month / Jahr / YTD */
-                    analyseMonthPoints.length < 2 ? (
-                      <div className="flex flex-col items-center justify-center h-52 gap-2 text-muted-foreground">
-                        <BarChart3 className="h-8 w-8 opacity-20" />
-                        <p className="text-sm">Noch zu wenig Daten für {analyseRangeLabel}</p>
-                        <p className="text-xs opacity-60">Mindestens 2 Monate mit Daten erforderlich.</p>
+                  )}
+
+                  {/* ── Multi / Jahr / YTD: zu wenig Daten ─────────────── */}
+                  {analyseMode !== 'week' && analyseMode !== 'month' && analyseMonthPoints.length < 2 && (
+                    <div className="flex flex-col items-center justify-center h-52 gap-2 text-muted-foreground">
+                      <BarChart3 className="h-8 w-8 opacity-20" />
+                      <p className="text-sm">Noch zu wenig Daten für {analyseRangeLabel}</p>
+                      <p className="text-xs opacity-60">Mindestens 2 Monate mit Daten erforderlich.</p>
+                    </div>
+                  )}
+
+                  {/* ── Multi / Jahr / YTD: Monats-Chart ───────────────── */}
+                  {analyseMode !== 'week' && analyseMode !== 'month' && analyseMonthPoints.length >= 2 && (
+                    <div className="px-2 pt-4 pb-3">
+                      <ResponsiveContainer width="100%" height={260}>
+                        <ComposedChart data={analyseMonthPoints} margin={{ top: 8, right: 24, left: 0, bottom: 4 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
+                          <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} tickLine={false} axisLine={{ stroke: 'hsl(var(--border))' }} />
+                          <YAxis yAxisId="chf" orientation="left" tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : String(v)} tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} tickLine={false} axisLine={false} width={44} />
+                          <YAxis yAxisId="pct" orientation="right" tickFormatter={v => `${v}%`} tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} tickLine={false} axisLine={false} width={38} domain={[0, (mx: number) => Math.max(Math.ceil(mx / 5) * 5 + 5, targetPct + 5)]} />
+                          <Tooltip content={({ active, payload, label }) => {
+                            if (!active || !payload?.length) return null;
+                            const d = payload[0]?.payload as AMonthPoint;
+                            return (
+                              <div className="rounded-lg border border-border bg-card shadow-lg px-3.5 py-3 text-xs space-y-1.5 min-w-[180px]">
+                                <p className="font-semibold text-foreground text-sm">{label}</p>
+                                <div className="flex justify-between gap-4"><span className="text-muted-foreground">Umsatz</span><span className="tabular-nums font-medium">CHF {fmtChf(d.revenue)}</span></div>
+                                <div className="flex justify-between gap-4"><span className="text-muted-foreground">Warenkosten</span><span className="tabular-nums font-medium">CHF {fmtChf(d.costNet)}</span></div>
+                                {d.pct !== null && <div className="flex justify-between gap-4"><span className="text-muted-foreground">Monats %</span><span className={cn('tabular-nums font-semibold', d.pct > targetPct + 2 ? 'text-red-600' : d.pct > targetPct ? 'text-amber-600' : 'text-emerald-600')}>{fmtPct(d.pct)}</span></div>}
+                                {d.cumPct !== null && <div className="border-t border-border/50 pt-1.5 flex justify-between gap-4"><span className="text-muted-foreground font-medium">Kum. %</span><span className={cn('tabular-nums font-bold', d.cumPct > targetPct + 2 ? 'text-red-600' : d.cumPct > targetPct ? 'text-amber-600' : 'text-emerald-600')}>{fmtPct(d.cumPct)}</span></div>}
+                              </div>
+                            );
+                          }} />
+                          <ReferenceLine yAxisId="pct" y={targetPct} stroke="hsl(var(--muted-foreground))" strokeDasharray="6 4" strokeWidth={1.5} strokeOpacity={0.6} label={{ value: `Ziel ${targetPct}%`, position: 'insideTopRight', fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
+                          <Bar yAxisId="chf" dataKey="revenue" name="Umsatz" fill="hsl(var(--muted-foreground))" fillOpacity={0.15} radius={[3,3,0,0]} maxBarSize={40}>
+                            {analyseMonthPoints.map((_, i) => <Cell key={i} fill="hsl(var(--muted-foreground))" fillOpacity={0.15} />)}
+                          </Bar>
+                          <Bar yAxisId="chf" dataKey="costNet" name="Warenkosten" fill="#3b82f6" fillOpacity={0.7} radius={[3,3,0,0]} maxBarSize={40}>
+                            {analyseMonthPoints.map((p, i) => <Cell key={i} fill={p.pct !== null && p.pct > targetPct + 2 ? '#ef4444' : p.pct !== null && p.pct > targetPct ? '#f59e0b' : '#3b82f6'} fillOpacity={0.7} />)}
+                          </Bar>
+                          <Line yAxisId="pct" type="monotone" dataKey="pct" name="Monats %" stroke="#f97316" strokeWidth={2} dot={{ r: 4, fill: '#f97316', stroke: 'white', strokeWidth: 1.5 }} activeDot={{ r: 5 }} connectNulls />
+                          <Line yAxisId="pct" type="monotone" dataKey="cumPct" name="Kum. %" stroke="#3b82f6" strokeWidth={2} dot={false} activeDot={{ r: 5, fill: '#3b82f6', stroke: 'white', strokeWidth: 2 }} connectNulls />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                      <div className="flex items-center gap-5 justify-end px-3 pt-2 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-3 rounded-sm bg-muted-foreground/20" /><span>Umsatz</span></div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-3 rounded-sm bg-blue-500/70" /><span>Warenkosten CHF</span></div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-6 h-[2.5px] rounded bg-orange-500" /><span>Monats %</span></div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-6 h-[3px] rounded bg-blue-500" /><span className="font-medium text-foreground/80">Kum. %</span></div>
                       </div>
-                    ) : (
-                      <div className="px-2 pt-4 pb-3">
-                        <ResponsiveContainer width="100%" height={260}>
-                          <ComposedChart data={analyseMonthPoints} margin={{ top: 8, right: 24, left: 0, bottom: 4 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
-                            <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} tickLine={false} axisLine={{ stroke: 'hsl(var(--border))' }} />
-                            <YAxis yAxisId="chf" orientation="left" tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : String(v)} tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} tickLine={false} axisLine={false} width={44} />
-                            <YAxis yAxisId="pct" orientation="right" tickFormatter={v => `${v}%`} tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} tickLine={false} axisLine={false} width={38} domain={[0, (mx: number) => Math.max(Math.ceil(mx / 5) * 5 + 5, targetPct + 5)]} />
-                            <Tooltip content={({ active, payload, label }) => {
-                              if (!active || !payload?.length) return null;
-                              const d = payload[0]?.payload as AMonthPoint;
-                              return (
-                                <div className="rounded-lg border border-border bg-card shadow-lg px-3.5 py-3 text-xs space-y-1.5 min-w-[180px]">
-                                  <p className="font-semibold text-foreground text-sm">{label}</p>
-                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Umsatz</span><span className="tabular-nums font-medium">CHF {fmtChf(d.revenue)}</span></div>
-                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Warenkosten</span><span className="tabular-nums font-medium">CHF {fmtChf(d.costNet)}</span></div>
-                                  {d.pct !== null && <div className="flex justify-between gap-4"><span className="text-muted-foreground">Monats %</span><span className={cn('tabular-nums font-semibold', d.pct > targetPct + 2 ? 'text-red-600' : d.pct > targetPct ? 'text-amber-600' : 'text-emerald-600')}>{fmtPct(d.pct)}</span></div>}
-                                  {d.cumPct !== null && <div className="border-t border-border/50 pt-1.5 flex justify-between gap-4"><span className="text-muted-foreground font-medium">Kum. %</span><span className={cn('tabular-nums font-bold', d.cumPct > targetPct + 2 ? 'text-red-600' : d.cumPct > targetPct ? 'text-amber-600' : 'text-emerald-600')}>{fmtPct(d.cumPct)}</span></div>}
-                                </div>
-                              );
-                            }} />
-                            <ReferenceLine yAxisId="pct" y={targetPct} stroke="hsl(var(--muted-foreground))" strokeDasharray="6 4" strokeWidth={1.5} strokeOpacity={0.6} label={{ value: `Ziel ${targetPct}%`, position: 'insideTopRight', fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
-                            <Bar yAxisId="chf" dataKey="revenue" name="Umsatz" fill="hsl(var(--muted-foreground))" fillOpacity={0.15} radius={[3,3,0,0]} maxBarSize={40}>
-                              {analyseMonthPoints.map((_, i) => <Cell key={i} fill="hsl(var(--muted-foreground))" fillOpacity={0.15} />)}
-                            </Bar>
-                            <Bar yAxisId="chf" dataKey="costNet" name="Warenkosten" fill="#3b82f6" fillOpacity={0.7} radius={[3,3,0,0]} maxBarSize={40}>
-                              {analyseMonthPoints.map((p, i) => <Cell key={i} fill={p.pct !== null && p.pct > targetPct + 2 ? '#ef4444' : p.pct !== null && p.pct > targetPct ? '#f59e0b' : '#3b82f6'} fillOpacity={0.7} />)}
-                            </Bar>
-                            <Line yAxisId="pct" type="monotone" dataKey="pct" name="Monats %" stroke="#f97316" strokeWidth={2} dot={{ r: 4, fill: '#f97316', stroke: 'white', strokeWidth: 1.5 }} activeDot={{ r: 5 }} connectNulls />
-                            <Line yAxisId="pct" type="monotone" dataKey="cumPct" name="Kum. %" stroke="#3b82f6" strokeWidth={2} dot={false} activeDot={{ r: 5, fill: '#3b82f6', stroke: 'white', strokeWidth: 2 }} connectNulls />
-                          </ComposedChart>
-                        </ResponsiveContainer>
-                        <div className="flex items-center gap-5 justify-end px-3 pt-2 text-xs text-muted-foreground">
-                          <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-3 rounded-sm bg-muted-foreground/20" /><span>Umsatz</span></div>
-                          <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-3 rounded-sm bg-blue-500/70" /><span>Warenkosten CHF</span></div>
-                          <div className="flex items-center gap-1.5"><span className="inline-block w-6 h-[2.5px] rounded bg-orange-500" /><span>Monats %</span></div>
-                          <div className="flex items-center gap-1.5"><span className="inline-block w-6 h-[3px] rounded bg-blue-500" /><span className="font-medium text-foreground/80">Kum. %</span></div>
-                        </div>
-                      </div>
-                    )
+                    </div>
                   )}
                 </section>
 
