@@ -1,0 +1,88 @@
+Bitte jetzt im Modul "Warenrechnungen" ein Wochen-Alert-System einbauen.
+
+Ziel:
+Ich möchte pro Woche automatisch sehen, ob die Warenkostenquote kritisch wird, damit ich früh reagieren kann.
+
+Bitte exakt so umsetzen:
+
+1. Wochenlogik
+Bitte die Monatsdaten zusätzlich nach Kalenderwochen gruppieren.
+
+Pro Woche berechnen:
+- Wochenumsatz CHF
+- Warenkosten CHF
+- Warenkosten %
+- kumulierte Monatswerte bis Ende dieser Woche
+
+2. Alert-Status pro Woche
+Bitte pro Woche einen Status berechnen:
+
+- Grün = im Ziel
+- Gelb = leicht über Ziel
+- Rot = deutlich über Ziel
+
+Basis:
+- Warenkosten % der Woche
+- optional zusätzlich kumulierte Warenkosten % bis zu dieser Woche
+
+3. Schwellenwerte
+Bitte als erste Version diese Logik verwenden:
+- Grün: bis Zielwert
+- Gelb: bis 2 Prozentpunkte über Zielwert
+- Rot: mehr als 2 Prozentpunkte über Zielwert
+
+Beispiel:
+Zielwert 30%
+- bis 30% = grün
+- >30% bis 32% = gelb
+- >32% = rot
+
+Bitte so bauen, dass der Zielwert später leicht angepasst werden kann.
+
+4. Darstellung im UI
+Bitte im Modul Warenrechnungen einen Bereich "Wochen-Alerts" ergänzen.
+
+Darstellung z.B. als kompakte Karten oder Liste:
+- KW 14
+- Umsatz CHF
+- Warenkosten CHF
+- Warenkosten %
+- Status
+
+Optional zusätzlich:
+- kurzer Hinweistext:
+  - "Woche über Ziel"
+  - "Woche im Rahmen"
+  - "Woche kritisch"
+
+5. Wichtigste Woche hervorheben
+Falls mehrere Wochen vorhanden sind:
+- kritischste Woche oben
+oder
+- aktuelle Woche oben
+
+6. Kumulierte Sicht optional anzeigen
+Wenn sinnvoll:
+- pro Woche zusätzlich anzeigen:
+  - kumulierte Warenkosten % bis Ende dieser Woche
+
+7. Tenant-Fähigkeit
+Alles strikt tenant-korrekt:
+- Oliv getrennt von Beaulieu
+- Wochenwerte nur für aktiven Mandanten
+
+8. Debug Logs
+Bitte loggen:
+[WAREN-WEEK] tenant: ...
+[WAREN-WEEK] week: ...
+[WAREN-WEEK] revenue: ...
+[WAREN-WEEK] cost chf: ...
+[WAREN-WEEK] cost pct: ...
+[WAREN-WEEK] status: green|yellow|red
+
+9. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie die Wochen berechnet werden
+- welche Schwellenwerte verwendet werden
+- wo die Wochen-Alerts sichtbar sind
+- ob der Zielwert später leicht anpassbar ist

@@ -106,6 +106,29 @@ function formatDateLong(dateStr: string): string {
   return d.toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' });
 }
 
+// ISO-Kalenderwoche (Mo–So) + Wochenjahr
+function getIsoWeek(dateStr: string): { week: number; isoYear: number; weekLabel: string } {
+  const d = new Date(dateStr + 'T12:00:00');
+  const tmp = new Date(d);
+  tmp.setHours(0, 0, 0, 0);
+  tmp.setDate(tmp.getDate() + 3 - ((tmp.getDay() + 6) % 7));
+  const jan4 = new Date(tmp.getFullYear(), 0, 4);
+  const week = 1 + Math.round(((tmp.getTime() - jan4.getTime()) / 86400000 - 3 + ((jan4.getDay() + 6) % 7)) / 7);
+  return { week, isoYear: tmp.getFullYear(), weekLabel: `KW ${String(week).padStart(2, '0')}` };
+}
+
+// Montag und Sonntag einer ISO-Woche als Datumsstring
+function isoWeekRange(isoYear: number, week: number): { from: string; to: string } {
+  const jan4 = new Date(isoYear, 0, 4);
+  const dayOfWeek = (jan4.getDay() + 6) % 7; // 0 = Mon
+  const monday = new Date(jan4);
+  monday.setDate(jan4.getDate() - dayOfWeek + (week - 1) * 7);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  return { from: fmt(monday), to: fmt(sunday) };
+}
+
 // ─── KPI-Box ──────────────────────────────────────────────────────────────────
 
 const KpiBox = ({
@@ -267,6 +290,101 @@ export default function WarenrechnungenPage() {
     cumPct:  number | null;
     hasEntry: boolean;
   }
+
+  // ─── Wochen-Daten ───────────────────────────────────────────────────────────
+
+  type WeekStatus = 'green' | 'yellow' | 'red' | 'nodata';
+
+  interface WeekData {
+    weekKey:   string;   // "2026-W14"
+    weekLabel: string;   // "KW 14"
+    from:      string;   // "2026-04-01"
+    to:        string;   // "2026-04-07"
+    revenue:   number;
+    costNet:   number;
+    pct:       number | null;
+    cumNet:    number;
+    cumRev:    number;
+    cumPct:    number | null;
+    status:    WeekStatus;
+    isCurrent: boolean;
+    isComplete: boolean; // Sonntag der Woche liegt in der Vergangenheit
+  }
+
+  const weeklyData = useMemo((): WeekData[] => {
+    const allDays = getDaysInMonth(year, month);
+    // Nur vergangene oder heutige Tage
+    const pastDays = allDays.filter(d => d <= todayStr);
+
+    // Alle vorkommenden Wochen sammeln
+    const weekKeys = new Set<string>();
+    for (const d of pastDays) {
+      const { week, isoYear } = getIsoWeek(d);
+      weekKeys.add(`${isoYear}-W${String(week).padStart(2, '0')}`);
+    }
+
+    // Kumulierte Werte über den ganzen Monat
+    let runCumNet = 0;
+    let runCumRev = 0;
+    const cumByDate: Record<string, { cumNet: number; cumRev: number }> = {};
+    for (const d of allDays.filter(d2 => d2 <= todayStr)) {
+      runCumNet += entries.filter(e => e.date === d).reduce((s, e) => s + e.amountNet, 0);
+      runCumRev += revenueByDate[d] ?? 0;
+      cumByDate[d] = { cumNet: runCumNet, cumRev: runCumRev };
+    }
+
+    const currentWeekKey = (() => { const { week, isoYear } = getIsoWeek(todayStr); return `${isoYear}-W${String(week).padStart(2, '0')}`; })();
+
+    const result: WeekData[] = [];
+    for (const wk of Array.from(weekKeys).sort()) {
+      const [isoYStr, wStr] = wk.split('-W');
+      const isoYear = Number(isoYStr);
+      const week    = Number(wStr);
+      const { from, to } = isoWeekRange(isoYear, week);
+
+      // Tage dieser Woche die im Monat und Vergangenheit liegen
+      const weekDays = pastDays.filter(d => d >= from && d <= to);
+
+      const revenue = weekDays.reduce((s, d) => s + (revenueByDate[d] ?? 0), 0);
+      const costNet = weekDays.reduce((s, d) => s + entries.filter(e => e.date === d).reduce((s2, e) => s2 + e.amountNet, 0), 0);
+      const pct     = revenue > 0 ? (costNet / revenue) * 100 : null;
+
+      // Kumuliert bis Ende der Woche (letzter bekannter Tag)
+      const lastDay    = weekDays[weekDays.length - 1] ?? to;
+      const cum        = cumByDate[lastDay] ?? { cumNet: 0, cumRev: 0 };
+      const cumPct     = cum.cumRev > 0 ? (cum.cumNet / cum.cumRev) * 100 : null;
+      const isComplete = to <= todayStr;
+      const isCurrent  = wk === currentWeekKey;
+
+      const status: WeekStatus = (() => {
+        if (pct === null) return 'nodata';
+        if (pct <= targetPct)            return 'green';
+        if (pct <= targetPct + 2)        return 'yellow';
+        return 'red';
+      })();
+
+      console.log(`[WAREN-WEEK] tenant: ${tenantId}`);
+      console.log(`[WAREN-WEEK] week: ${wk} (${from}–${to})`);
+      console.log(`[WAREN-WEEK] revenue: CHF ${revenue.toFixed(0)}`);
+      console.log(`[WAREN-WEEK] cost chf: CHF ${costNet.toFixed(0)}`);
+      console.log(`[WAREN-WEEK] cost pct: ${pct !== null ? pct.toFixed(1) + '%' : '–'}`);
+      console.log(`[WAREN-WEEK] status: ${status}`);
+
+      result.push({
+        weekKey: wk, weekLabel: `KW ${String(week).padStart(2, '0')}`,
+        from, to, revenue, costNet, pct, cumNet: cum.cumNet, cumRev: cum.cumRev,
+        cumPct, status, isCurrent, isComplete,
+      });
+    }
+
+    // Aktuelle Woche oben, dann nach Status (rot zuerst), dann nach Wochennummer absteigend
+    return result.sort((a, b) => {
+      if (a.isCurrent && !b.isCurrent) return -1;
+      if (!a.isCurrent && b.isCurrent) return  1;
+      const order: Record<WeekStatus, number> = { red: 0, yellow: 1, green: 2, nodata: 3 };
+      return order[a.status] - order[b.status];
+    });
+  }, [entries, revenueByDate, year, month, todayStr, targetPct, tenantId]);
 
   const chartData = useMemo((): ChartPoint[] => {
     const allDays = getDaysInMonth(year, month);
@@ -865,6 +983,111 @@ export default function WarenrechnungenPage() {
                   </div>
                 ) : (
                   <>
+                    {/* ── Wochen-Alerts ──────────────────────────────────── */}
+                    {weeklyData.length > 0 && (
+                      <section className="bg-card border border-border rounded-xl overflow-hidden">
+                        <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold">Wochen-Alerts</span>
+                            <span className="text-xs text-muted-foreground">Ziel {targetPct} %  ·  +2 % = Warnung  ·  &gt;+2 % = Kritisch</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            {weeklyData.some(w => w.status === 'red') && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-red-100 text-red-700 dark:bg-red-950/30 dark:text-red-400 px-2 py-0.5 font-medium">
+                                {weeklyData.filter(w => w.status === 'red').length}× kritisch
+                              </span>
+                            )}
+                            {weeklyData.some(w => w.status === 'yellow') && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400 px-2 py-0.5 font-medium">
+                                {weeklyData.filter(w => w.status === 'yellow').length}× Warnung
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 p-4">
+                          {weeklyData.map(w => {
+                            const statusCfg: Record<WeekStatus, {
+                              bg: string; border: string; dot: string; label: string; badge: string;
+                            }> = {
+                              green:  { bg: 'bg-emerald-50 dark:bg-emerald-950/20',  border: 'border-emerald-200 dark:border-emerald-800', dot: 'bg-emerald-500', label: 'Im Ziel', badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
+                              yellow: { bg: 'bg-amber-50 dark:bg-amber-950/20',     border: 'border-amber-200 dark:border-amber-800',     dot: 'bg-amber-400',   label: 'Über Ziel', badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
+                              red:    { bg: 'bg-red-50 dark:bg-red-950/20',         border: 'border-red-200 dark:border-red-800',         dot: 'bg-red-500',     label: 'Kritisch', badge: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+                              nodata: { bg: 'bg-muted/30',                           border: 'border-border',                              dot: 'bg-muted-foreground/30', label: 'Kein Umsatz', badge: 'bg-muted text-muted-foreground' },
+                            };
+                            const cfg = statusCfg[w.status];
+                            return (
+                              <div
+                                key={w.weekKey}
+                                className={cn(
+                                  'rounded-xl border p-4 space-y-2.5 relative',
+                                  cfg.bg, cfg.border,
+                                  w.isCurrent && 'ring-2 ring-offset-1 ring-blue-400 dark:ring-blue-600',
+                                )}
+                              >
+                                {/* Header */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className={cn('w-2 h-2 rounded-full flex-shrink-0', cfg.dot)} />
+                                    <span className="font-bold text-sm tabular-nums">{w.weekLabel}</span>
+                                    {w.isCurrent && (
+                                      <span className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded px-1.5 py-0.5 font-medium">laufend</span>
+                                    )}
+                                    {!w.isCurrent && w.isComplete && (
+                                      <span className="text-[10px] text-muted-foreground/60">abgeschlossen</span>
+                                    )}
+                                  </div>
+                                  <span className={cn('text-xs font-semibold rounded-md px-2 py-0.5', cfg.badge)}>
+                                    {cfg.label}
+                                  </span>
+                                </div>
+
+                                {/* Datum-Range */}
+                                <p className="text-[11px] text-muted-foreground">
+                                  {formatDateShort(w.from)} – {formatDateShort(w.to)}
+                                </p>
+
+                                {/* Zahlen */}
+                                <div className="space-y-1.5 pt-0.5">
+                                  <div className="flex justify-between items-baseline gap-2">
+                                    <span className="text-xs text-muted-foreground">Umsatz</span>
+                                    <span className="text-xs tabular-nums font-medium">
+                                      {w.revenue > 0 ? `CHF ${fmtChf(w.revenue)}` : <span className="opacity-40">–</span>}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between items-baseline gap-2">
+                                    <span className="text-xs text-muted-foreground">Warenkosten</span>
+                                    <span className="text-xs tabular-nums font-semibold">
+                                      {w.costNet > 0 ? `CHF ${fmtChf(w.costNet)}` : <span className="opacity-40">–</span>}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between items-baseline gap-2 pt-0.5 border-t border-current/10">
+                                    <span className="text-xs text-muted-foreground font-medium">Wochen %</span>
+                                    <span className={cn(
+                                      'text-sm tabular-nums font-bold',
+                                      w.status === 'red' ? 'text-red-700 dark:text-red-400' :
+                                      w.status === 'yellow' ? 'text-amber-700 dark:text-amber-400' :
+                                      w.status === 'green' ? 'text-emerald-700 dark:text-emerald-400' :
+                                      'text-muted-foreground',
+                                    )}>
+                                      {w.pct !== null ? fmtPct(w.pct) : '–'}
+                                    </span>
+                                  </div>
+                                  {w.cumPct !== null && (
+                                    <div className="flex justify-between items-baseline gap-2">
+                                      <span className="text-[11px] text-muted-foreground/70">Kum. bis hier</span>
+                                      <span className="text-[11px] tabular-nums text-muted-foreground/80 font-medium">
+                                        {fmtPct(w.cumPct)}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    )}
+
                     {/* Lieferanten-Rangliste */}
                     <section className="bg-card border border-border rounded-xl overflow-hidden">
                       <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between flex-wrap gap-2">
