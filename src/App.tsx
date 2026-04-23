@@ -201,7 +201,9 @@ const AppContent = () => {
             />
             <Route path="/artikel"          element={<ArtikelPage />} />
             <Route path="/artikel-tracking" element={<ArtikelTrackingPage />} />
-            <Route path="/warenrechnungen" element={<WarenrechnungenPage />} />
+            <Route path="/warenrechnungen"
+              element={canAccessModule('warenrechnungen') ? <WarenrechnungenPage /> : <Navigate to="/personal" replace />}
+            />
             <Route path="/wes-analyse"
               element={isBeaulieuManager ? <BlockedRoute path="/wes-analyse" /> : <WesAnalysePage />}
             />

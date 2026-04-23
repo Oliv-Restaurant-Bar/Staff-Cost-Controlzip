@@ -131,7 +131,7 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Warenrechnungen',
         shortLabel: 'Waren',
         icon: ShoppingCart,
-        adminOnly: true,
+        module: 'warenrechnungen' as import('@/hooks/usePermissions').AppModule,
       },
       {
         path: '/wes-analyse',

@@ -22,6 +22,7 @@
  *   Tagesansicht          ✓      –            –           ✓
  *   Tages-Controlling     ✓      –            –           ✓
  *   Personalstamm         ✓      –            –           ✓ (lesen)
+ *   Warenrechnungen       ✓      –            –           ✓ (Vollzugriff, tenant-gefiltert)
  *   Reporting / P&L       ✓      –            –           –
  *   Budget / Import       ✓      –            –           –
  */
@@ -38,7 +39,8 @@ export type AppModule =
   | 'reporting'
   | 'personal_fix'
   | 'tagesansicht'
-  | 'tages_controlling';
+  | 'tages_controlling'
+  | 'warenrechnungen';
 
 export type Department = 'service' | 'küche' | 'all';
 
@@ -133,6 +135,8 @@ export const usePermissions = (): Permissions => {
       case 'tagesansicht':
         return isAdmin || isBeaulieuManager;
       case 'tages_controlling':
+        return isAdmin || isBeaulieuManager;
+      case 'warenrechnungen':
         return isAdmin || isBeaulieuManager;
       default:
         return isAdmin;

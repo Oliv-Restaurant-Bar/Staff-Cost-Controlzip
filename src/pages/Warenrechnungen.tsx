@@ -10,6 +10,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTenant } from '@/contexts/TenantContext';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   loadSuppliers,
   saveSuppliers,
@@ -200,6 +201,16 @@ function PctBadge({ pct }: { pct: number | null }) {
 
 export default function WarenrechnungenPage() {
   const { tenantId, tenant } = useTenant();
+  const { role, isAdmin, isBeaulieuManager, canAccessModule } = usePermissions();
+
+  // ─── Auth Debug-Logs ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const allowed = isAdmin || isBeaulieuManager;
+    console.log(`[AUTH] role: ${role}`);
+    console.log(`[AUTH] module access: warenrechnungen = ${allowed ? 'allowed' : 'denied'}`);
+    console.log(`[AUTH] permissions: create|edit|delete|view = ${allowed}`);
+  }, [role, isAdmin, isBeaulieuManager, canAccessModule]);
+
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
 
