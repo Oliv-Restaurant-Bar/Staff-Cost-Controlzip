@@ -1,0 +1,238 @@
+Bitte jetzt das neue Modul "Warenrechnungen" bauen UND die bisherigen WES-Spalten im Tages-Controlling durch die echten Warenkosten ersetzen.
+
+Ziel:
+Ich möchte während dem Monat pro Tag und pro Lieferant meine Lieferscheine / Warenrechnungen erfassen und diese Werte direkt im Tages-Controlling sehen.
+
+Wichtig:
+Die bisherigen WES-Spalten im Tages-Controlling sollen durch:
+- Warenkosten CHF
+- Warenkosten %
+ersetzt werden.
+
+Die Warenkosten sollen aus den manuell erfassten Lieferanten-Einträgen kommen und gegen den jeweiligen Tagesumsatz gerechnet werden.
+
+Bitte exakt so umsetzen:
+
+==================================================
+1. Neues Modul in der Navigation
+==================================================
+
+Bitte links einen neuen Reiter ergänzen:
+- Warenrechnungen
+
+Er soll im Bereich Kosten erscheinen.
+
+==================================================
+2. Datenbasis Warenrechnungen
+==================================================
+
+Ich möchte pro Tag und pro Lieferant erfassen können:
+- Datum
+- Lieferant
+- Betrag
+- optional Rechnungsnummer / Lieferscheinnummer
+- optional Bemerkung
+- Auswahl:
+  - mit MWST
+  - ohne MWST
+- automatische Netto-/Brutto-Berechnung je nach Auswahl
+
+Bitte eine einfache Schnellerfassung bauen:
+- Datum
+- Lieferant
+- Betrag
+- MWST Toggle
+- Speichern
+
+Zusätzlich:
+- bestehende Einträge bearbeiten
+- löschen
+- neue Lieferanten hinzufügen
+
+==================================================
+3. Lieferantenstamm
+==================================================
+
+Bitte mit diesen Lieferanten starten:
+- Prodega
+- Transgourmet
+- Blaser Café
+- Metzgerei Spahni
+- Siebe Dupf
+- Feldschlösschen
+- Chocolats Camille
+- Caporaso
+- Ambro Food
+- La Marra
+- Asia Company
+- Amarx Espro
+- Terravigna
+- Fideco
+- Korngold
+- Paul Ulrich
+- Hiestand
+- Frigemo
+- Compagnie Desserts
+
+Wichtig:
+- Lieferanten bearbeitbar
+- neue Lieferanten manuell hinzufügbar
+- tenant-korrekt pro Restaurant gespeichert
+
+==================================================
+4. Speicherung in Supabase
+==================================================
+
+Bitte die Daten sauber in Supabase speichern.
+
+Vorschlag:
+Tabelle:
+- supplier_invoice_entries
+
+Felder z.B.:
+- id
+- restaurant_id
+- date
+- supplier_name oder supplier_id
+- amount_gross
+- amount_net
+- vat_included
+- vat_rate
+- reference
+- note
+- created_at
+- updated_at
+
+Wenn sinnvoll:
+- separate supplier master table
+
+==================================================
+5. Berechnungslogik Warenkosten
+==================================================
+
+Bitte folgende Logik umsetzen:
+
+A) pro Tag
+- Tagesumsatz aus bestehendem Umsatzmodul
+- Warenkosten Tageswert = Summe aller Lieferanten-Einträge des Tages
+- Warenkosten % = Warenkosten / Tagesumsatz
+
+B) kumuliert im Monat
+- kumulierter Umsatz bis zum jeweiligen Tag
+- kumulierte Warenkosten bis zum jeweiligen Tag
+- kumulierte Warenkosten % = kumulierte Warenkosten / kumulierter Umsatz
+
+C) pro Lieferant
+- Betrag je Lieferant pro Tag
+- Betrag je Lieferant kumuliert im Monat
+- optional Lieferantenanteil %
+
+==================================================
+6. Tages-Controlling anpassen
+==================================================
+
+Bitte im Tages-Controlling die bisherigen WES-Spalten ersetzen.
+
+Aktuell vorhandene WES-Spalten bitte entfernen / ersetzen durch:
+
+- Warenkosten CHF
+- Warenkosten %
+- optional kumulierte Warenkosten CHF
+- optional kumulierte Warenkosten %
+
+Wichtig:
+Diese Werte sollen nicht aus Rezeptur / Buchhaltung / theoretischem WES kommen,
+sondern aus den neu erfassten Warenrechnungen / Lieferscheinen.
+
+Das Tages-Controlling soll also operativ zeigen:
+- Umsatz
+- Personalkosten
+- Warenkosten
+- jeweilige Prozentwerte
+
+==================================================
+7. KPI-Boxen und Übersicht
+==================================================
+
+Bitte oben im Modul Warenrechnungen KPI-Boxen anzeigen:
+- Warenkosten heute CHF
+- Warenkosten heute %
+- Warenkosten Monat CHF
+- Warenkosten Monat %
+- kumulierter Umsatz
+- Anzahl Lieferanten mit Einträgen
+
+==================================================
+8. Monatsübersicht wie Excel
+==================================================
+
+Bitte eine Monatsübersicht bauen, die fachlich an das Excel angelehnt ist:
+
+Zeilen = Lieferanten
+Spalten mindestens:
+- Monats-Total CHF
+- Monats-Total %
+- Tageswerte pro Datum
+- optional Tages-% pro Datum
+
+Wichtig:
+- Monatskumulierung sichtbar
+- klar lesbar
+- nicht überladen
+- moderne Webansicht, aber Excel-Logik
+
+==================================================
+9. Tenant-Fähigkeit
+==================================================
+
+Das Ganze muss tenant-korrekt sein:
+- Oliv getrennt von Beaulieu
+- Lieferanten und Wareneinträge tenant-korrekt
+- keine Vermischung
+
+==================================================
+10. Editieren / Korrigieren
+==================================================
+
+Ich möchte bestehende Einträge:
+- bearbeiten
+- korrigieren
+- löschen
+
+Nach jeder Änderung:
+- Tages-Controlling sofort neu berechnen
+- Monatskumulierung sofort neu berechnen
+
+==================================================
+11. Optional vorbereiten
+==================================================
+
+Bitte die Struktur so bauen, dass später auch PDF- oder Bild-Upload von Lieferscheinen möglich wäre, aber jetzt noch nicht zwingend umsetzen.
+
+==================================================
+12. Debug Logs
+==================================================
+
+Bitte loggen:
+[WAREN] tenant: ...
+[WAREN] entry saved: ...
+[WAREN] entry updated: ...
+[WAREN] entry deleted: ...
+[WAREN] day total chf: ...
+[WAREN] day total pct: ...
+[WAREN] month total chf: ...
+[WAREN] month total pct: ...
+[WAREN] supplier totals: ...
+[TAGES-CONTROLLING] warenkosten source: supplier_invoice_entries
+[TAGES-CONTROLLING] wes columns replaced: yes
+
+==================================================
+13. Bitte danach kurz sagen
+==================================================
+
+- welche Datei(en) geändert wurden
+- wie die Daten in Supabase gespeichert werden
+- wie die Warenkosten-% berechnet werden
+- wie die kumulierte Monatslogik funktioniert
+- wie die WES-Spalten im Tages-Controlling ersetzt wurden
+- wie ich am schnellsten 3 bis 4 Tageswerte testen kann

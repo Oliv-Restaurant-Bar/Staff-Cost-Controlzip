@@ -35,8 +35,7 @@ import { cn } from '@/lib/utils';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { grossToNet } from '@/types/personnel';
 import { kvSet } from '@/lib/supabase-kv';
-import { getMonthSummary } from '@/lib/supplier-documents-store';
-import { loadMonth, loadJournalEntries, loadJournalEntriesFromDB } from '@/lib/reporting-store';
+import { loadMonthInvoices } from '@/lib/waren-db';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import {
   loadScheduleForMonth,
@@ -189,61 +188,21 @@ function buildActualCostFromHours(
 }
 
 /**
- * WES pro-rata: monatliche Gesamtkosten / Tage-im-Monat pro Tag.
- * Primär: Lieferantendokumente (supplier_docs_v1)
- * Fallback: Buchhaltungsdaten (reporting_v1) → wareneinsatz_* Kategorien
- * Rückgabe: Map { 'yyyy-MM-dd' → CHF }
+ * Lädt echte Warenkosten (Tageswerte) aus den manuell erfassten
+ * Lieferantenrechnungen (waren-db: supplier_invoice_entries).
+ * Rückgabe: Map { 'yyyy-MM-dd' → netto CHF Summe des Tages }
+ *
+ * Ersetzt den alten buildWesMap (pro-rata aus Lieferantendoks / Buchhaltung).
  */
-function buildWesMap(dates: Date[]): Record<string, number> {
-  const monthGroups = new Map<string, Date[]>();
-  for (const d of dates) {
-    const mk = format(d, 'yyyy-MM');
-    if (!monthGroups.has(mk)) monthGroups.set(mk, []);
-    monthGroups.get(mk)!.push(d);
-  }
+async function loadWarenkostenMap(
+  tenantId: import('@/contexts/TenantContext').TenantId,
+  monthKeys: string[],
+): Promise<Record<string, number>> {
   const map: Record<string, number> = {};
-  for (const [mk, days] of monthGroups) {
-    const [y, m] = mk.split('-').map(Number);
-
-    // Primär: Lieferantendokumente (supplier_docs_v1)
-    let total = 0;
-    const summary = getMonthSummary(y, m);
-    if (summary.totalCost > 0) {
-      total = summary.totalCost;
-    }
-
-    // Fallback 1: reporting_v1 – wareneinsatz_* Kategorien
-    if (total <= 0) {
-      try {
-        const rec = loadMonth(y, m);
-        const warCats = rec.expenseCategories.filter(c =>
-          c.categoryId.startsWith('wareneinsatz'),
-        );
-        total = warCats.reduce((s, c) => s + (c.amount ?? 0), 0);
-      } catch { /* ignore */ }
-    }
-
-    // Fallback 2: Sage-Journal (sage_journal_v1) – Konten 4000–4999 (Wareneinsatz)
-    if (total <= 0) {
-      try {
-        const entries = loadJournalEntries(y, m);
-        total = entries
-          .filter(e => {
-            const nr = parseInt(e.accountNumber, 10);
-            return nr >= 4000 && nr <= 4999;
-          })
-          .reduce((s, e) => s + (e.amount ?? 0), 0);
-        if (total > 0) {
-          console.log(`[WES] sage_journal Fallback ${mk}: ${entries.length} Einträge → ${total.toFixed(0)} CHF`);
-        }
-      } catch { /* ignore */ }
-    }
-
-    if (total <= 0) continue;
-    const daysInMonth = endOfMonth(new Date(y, m - 1, 1)).getDate();
-    const perDay = total / daysInMonth;
-    for (const d of days) {
-      map[format(d, 'yyyy-MM-dd')] = perDay;
+  for (const mk of monthKeys) {
+    const entries = await loadMonthInvoices(tenantId, mk);
+    for (const e of entries) {
+      map[e.date] = (map[e.date] ?? 0) + e.amountNet;
     }
   }
   return map;
@@ -335,9 +294,10 @@ export default function TagesControllingPage() {
   const [employees, setEmployees]     = useState<EmployeeLite[]>([]);
   const [scheduleMap, setScheduleMap] = useState<Record<string, DaySchedule>>({});
   const [actualHoursMap, setActualHoursMap] = useState<Record<string, ActualHourEntry>>({});
-  const [loadingPK, setLoadingPK]     = useState(false);
-  const [journalTick, setJournalTick] = useState(0);
+  const [loadingPK, setLoadingPK]           = useState(false);
+  const [warenkostenMap, setWarenkostenMap] = useState<Record<string, number>>({});
   const loadGenRef = useRef(0);
+  const warenGenRef = useRef(0);
 
   // ── Pro-Rata (Monatsansicht) ───────────────────────────────────────────────
   const [proRataMode, setProRataMode]       = useState<'off' | 'auto' | 'manual'>('off');
@@ -483,18 +443,23 @@ export default function TagesControllingPage() {
     }).catch(() => { if (loadGenRef.current === gen) setLoadingPK(false); });
   }, [dates]);
 
-  // Sage-Journal für WES: bei jeder Periodenänderung aus Supabase laden
+  // Echte Warenkosten aus supplier_invoice_entries laden
   useEffect(() => {
-    const monthSet = new Set<string>();
-    for (const d of dates) monthSet.add(format(d, 'yyyy-MM'));
-    const pairs = Array.from(monthSet).map(mk => {
-      const [y, m] = mk.split('-').map(Number);
-      return { y, m };
+    const gen = ++warenGenRef.current;
+    const monthKeys = Array.from(new Set(dates.map(d => format(d, 'yyyy-MM'))));
+    console.log(`[TAGES-CONTROLLING] warenkosten source: supplier_invoice_entries`);
+    loadWarenkostenMap(tenantId, monthKeys).then(map => {
+      if (warenGenRef.current !== gen) return;
+      setWarenkostenMap(map);
+      const totalChf = Object.values(map).reduce((s, v) => s + v, 0);
+      const days = Object.keys(map).filter(d => map[d] > 0).length;
+      console.log(`[TAGES-CONTROLLING] wes columns replaced: yes`);
+      console.log(`[WAREN] day total chf: ${totalChf.toFixed(2)} CHF über ${days} Tage`);
+    }).catch(() => {
+      if (warenGenRef.current === gen) setWarenkostenMap({});
     });
-    Promise.all(pairs.map(({ y, m }) => loadJournalEntriesFromDB(y, m))).then(() => {
-      setJournalTick(t => t + 1);
-    }).catch(() => {});
-  }, [dates]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dates, tenantId]);
 
   // WageMap aus employees
   const wageMap = useMemo(() => {
@@ -503,11 +468,9 @@ export default function TagesControllingPage() {
     return m;
   }, [employees]);
 
-  // Plan / Ist / WES-Maps berechnen
+  // Plan / Ist / Warenkosten-Maps berechnen
   const planMap   = useMemo(() => buildPlanCostFromSchedule(scheduleMap, wageMap),   [scheduleMap, wageMap]);
   const actualMap = useMemo(() => buildActualCostFromHours(actualHoursMap, wageMap), [actualHoursMap, wageMap]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const wesMap    = useMemo(() => buildWesMap(dates), [dates, journalTick]);
 
   // ── Pro-Rata: letzter Tag mit Umsatz im gewählten Monat (auto-Erkennung) ────
   const lastRevenueDayInMonth = useMemo(() => {
@@ -531,19 +494,19 @@ export default function TagesControllingPage() {
     return lastRevenueDayInMonth;
   }, [proRataMode, manualCutoffDay, lastRevenueDayInMonth]);
 
-  // Zeilenberechnung
+  // Zeilenberechnung (wesChf = echte Warenkosten aus supplier_invoice_entries)
   const rows = useMemo((): ControllingRow[] => {
     return dates.map(day => {
       const d   = format(day, 'yyyy-MM-dd');
       const grossRev  = dailyBudgets[d]?.actualRevenue   ?? 0;
       const takeaway  = dailyBudgets[d]?.takeawayRevenue ?? 0;
       const umsatz    = showNetRevenue ? grossToNet(grossRev, takeaway) : grossRev;
-      const pkPlanChf = planMap[d]   ?? 0;
-      const pkIstChf  = actualMap[d] ?? 0;
-      const wesChf    = wesMap[d]    ?? 0;
+      const pkPlanChf = planMap[d]       ?? 0;
+      const pkIstChf  = actualMap[d]     ?? 0;
+      const wesChf    = warenkostenMap[d] ?? 0;
       return { date: d, day, umsatz, pkPlanChf, pkIstChf, wesChf };
     });
-  }, [dates, dailyBudgets, planMap, actualMap, wesMap, showNetRevenue]);
+  }, [dates, dailyBudgets, planMap, actualMap, warenkostenMap, showNetRevenue]);
 
   // Total-Zeile (gewichtete Prozente; bei aktivem Pro-Rata nur bis Stichtag)
   const total = useMemo(() => {
@@ -585,7 +548,10 @@ export default function TagesControllingPage() {
     console.log(`[PRO-RATA] Total Umsatz (cutoff): ${tRev.toFixed(0)} CHF`);
     console.log(`[PRO-RATA] Total PK Plan (cutoff): ${tPlan.toFixed(0)} CHF`);
     console.log(`[PRO-RATA] Total PK Ist (cutoff): ${tIst.toFixed(0)} CHF`);
-    console.log(`[PRO-RATA] Total WES (cutoff): ${tWes.toFixed(0)} CHF`);
+    console.log(`[PRO-RATA] Total Warenkosten (cutoff): ${tWes.toFixed(0)} CHF`);
+    console.log(`[WAREN] month total chf: ${tWes.toFixed(0)} CHF (pro-rata cutoff)`);
+    const monthPct = tRev > 0 ? (tWes / tRev) * 100 : 0;
+    console.log(`[WAREN] month total pct: ${monthPct.toFixed(1)}%`);
   }, [proRataMode, period, anchor, lastRevenueDayInMonth, effectiveCutoffDay, rows]);
 
   const navigate = useCallback((dir: 1 | -1) => {
@@ -654,8 +620,8 @@ export default function TagesControllingPage() {
       { label: 'PK Plan %',         value: fmtP(total.pkPlanPct, total.sumUmsatz > 0),  accent: C_MUTED },
       { label: 'PK Ist %',          value: fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), accent: total.pkIstPct > total.pkPlanPct && total.sumPkIst > 0 ? C_RED_TXT : C_GREEN_TXT },
       ...(showWesInExport ? [
-        { label: 'WES Total',       value: total.sumWes > 0 ? fmtCHF(total.sumWes) : '–', accent: C_TEAL_TXT },
-        { label: 'WES %',           value: fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0), accent: C_TEAL_TXT },
+        { label: 'Warenkosten Total', value: total.sumWes > 0 ? fmtCHF(total.sumWes) : '–', accent: C_TEAL_TXT },
+        { label: 'Warenkosten %',     value: fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0), accent: C_TEAL_TXT },
       ] : []),
     ];
     const kW = (W - 2 * M - (kpis.length - 1) * 3) / kpis.length;
@@ -683,7 +649,7 @@ export default function TagesControllingPage() {
     console.log('[PDF-EXPORT] Tabelle | Zeilen:', period === 'jahr' ? monthRows.length : rows.length, '| WES-Spalten:', showWesInExport);
 
     if (period === 'jahr') {
-      const head = [['Monat', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', ...(showWesInExport ? ['WES CHF', 'WES %'] : [])]];
+      const head = [['Monat', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', ...(showWesInExport ? ['Warenkosten CHF', 'Warenkosten %'] : [])]];
       const totalPkPlanPct = total.sumUmsatz > 0 ? (total.sumPkPlan / total.sumUmsatz) * 100 : 0;
       const totalPkIstPct  = total.sumUmsatz > 0 && total.sumPkIst > 0 ? (total.sumPkIst / total.sumUmsatz) * 100 : 0;
       const totalWesPct    = total.sumUmsatz > 0 && total.sumWes > 0 ? (total.sumWes / total.sumUmsatz) * 100 : 0;
@@ -718,7 +684,7 @@ export default function TagesControllingPage() {
         },
       });
     } else {
-      const head = [['Datum', 'WT', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', ...(showWesInExport ? ['WES CHF', 'WES %'] : [])]];
+      const head = [['Datum', 'WT', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', ...(showWesInExport ? ['Warenkosten CHF', 'Warenkosten %'] : [])]];
       const body: string[][] = [
         ['TOTAL', '', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), total.sumPkIst > 0 ? fmtV(total.sumPkIst) : '–', fmtD(total.sumPkIst, total.sumPkPlan), fmtP(total.pkPlanPct, total.sumUmsatz > 0), fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), ...(showWesInExport ? [total.sumWes > 0 ? fmtV(total.sumWes) : '–', fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)] : [])],
         ...rows.map(r => {
@@ -810,7 +776,7 @@ export default function TagesControllingPage() {
     titleRow.font = { bold: true, size: 13, color: { argb: 'FF' + HEADER_BG } };
 
     if (period === 'jahr') {
-      const headers = ['Monat', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %'];
+      const headers = ['Monat', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'Warenkosten CHF', 'Warenkosten %'];
       const hRow = ws.addRow(headers);
       hRow.height = 16;
       hRow.eachCell(cell => {
@@ -846,7 +812,7 @@ export default function TagesControllingPage() {
       ws.columns = [{ width: 18 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 12 }, { width: 11 }, { width: 11 }, { width: 13 }, { width: 10 }];
 
     } else {
-      const headers = ['Datum', 'WT', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'WES CHF', 'WES %'];
+      const headers = ['Datum', 'WT', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'Warenkosten CHF', 'Warenkosten %'];
       const hRow = ws.addRow(headers);
       hRow.height = 16;
       hRow.eachCell(cell => {
@@ -939,7 +905,7 @@ export default function TagesControllingPage() {
           <div className="flex-1 min-w-0">
             <h1 className="text-base font-semibold truncate">Tages-Controlling</h1>
             <p className="text-xs text-muted-foreground mt-0.5 hidden sm:block">
-              Umsatz · Personalkosten Plan/Ist · Wareneinsatz
+              Umsatz · Personalkosten Plan/Ist · Warenkosten
             </p>
           </div>
 
@@ -989,7 +955,7 @@ export default function TagesControllingPage() {
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => setShowWesInExport(v => !v)}
-              title="WES-Spalten im Export ein-/ausblenden"
+              title="Warenkosten-Spalten im Export ein-/ausblenden"
               className={cn(
                 'h-8 px-2.5 text-xs rounded border transition-colors font-medium',
                 showWesInExport
@@ -997,7 +963,7 @@ export default function TagesControllingPage() {
                   : 'border-border text-muted-foreground hover:bg-muted',
               )}
             >
-              WES
+              Waren
             </button>
             <Button
               variant="outline"
@@ -1116,11 +1082,11 @@ export default function TagesControllingPage() {
                       <ResizeHandle col="pkIstPct" />
                     </th>
                     <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('wesChf')}>
-                      <span>WES CHF</span>
+                      <span>Warenkosten CHF</span>
                       <ResizeHandle col="wesChf" />
                     </th>
                     <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('wesPct')}>
-                      <span>WES %</span>
+                      <span>Warenkosten %</span>
                       <ResizeHandle col="wesPct" />
                     </th>
                   </tr>
@@ -1335,15 +1301,15 @@ export default function TagesControllingPage() {
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-amber-600 dark:text-amber-400 font-medium">28–35 %</span>
-              PK/WES – erhöht
+              PK / Waren – erhöht
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-red-600 dark:text-red-400 font-medium">&gt; 35 %</span>
-              PK/WES – kritisch
+              PK / Waren – kritisch
             </div>
             <div className="ml-auto">
               PK Plan = Dienstplan × Stundenlohn &nbsp;·&nbsp;
-              WES = Lieferantendoks. / Buchhaltung pro-rata &nbsp;·&nbsp;
+              Warenkosten = erfasste Lieferantenrechnungen (Netto) &nbsp;·&nbsp;
               % = gewichtete Gesamtquote
             </div>
           </div>
