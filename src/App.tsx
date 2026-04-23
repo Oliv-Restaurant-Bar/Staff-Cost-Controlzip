@@ -63,18 +63,17 @@ const queryClient = new QueryClient();
 const TenantLockEnforcer = () => {
   const { role } = useAuth();
   const { lockTenant, unlockTenant, tenantLocked } = useTenant();
+  // beaulieu_manager und beaulieu_viewer werden beide auf den Beaulieu-Mandanten gesperrt
+  const isBeaulieuRole = role === 'beaulieu_manager' || role === 'beaulieu_viewer';
   useEffect(() => {
-    if (role === 'beaulieu_manager' && !tenantLocked) {
-      // Beaulieu-GF eingeloggt → Tenant auf beaulieu sperren
+    if (isBeaulieuRole && !tenantLocked) {
       lockTenant('beaulieu');
-      console.log('[AUTH] TenantLockEnforcer: beaulieu_manager → tenant locked to beaulieu');
-    } else if (role !== 'beaulieu_manager' && tenantLocked) {
-      // Anderer User eingeloggt (Admin, Service, Küche) oder ausgeloggt
-      // → Lock aufheben damit Mandantenwechsel wieder möglich ist
+      console.log(`[AUTH] TenantLockEnforcer: ${role} → tenant locked to beaulieu`);
+    } else if (!isBeaulieuRole && tenantLocked) {
       unlockTenant();
       console.log(`[AUTH] TenantLockEnforcer: role="${role}" → tenant lock released`);
     }
-  }, [role, tenantLocked, lockTenant, unlockTenant]);
+  }, [role, isBeaulieuRole, tenantLocked, lockTenant, unlockTenant]);
   return null;
 };
 

@@ -13,23 +13,42 @@
  *                        Fest auf Mandant Beaulieu gesperrt, kein Tenant-Wechsel
  *
  * Modul-Zugriff im Überblick:
- *   Modul                admin  service_mgr  kueche_mgr  beaulieu_mgr
- *   ──────────────────   ─────  ───────────  ──────────  ────────────
- *   Dashboard             ✓      –            –           –
- *   Dienstplanung         ✓      ✓ (Service)  ✓ (Küche)   ✓ (alle)
- *   Soll/Ist Analyse      ✓      ✓ (Service)  ✓ (Küche)   –
- *   Personal FIX          ✓      –            –           ✓
- *   Tagesansicht          ✓      –            –           ✓
- *   Tages-Controlling     ✓      –            –           ✓
- *   Personalstamm         ✓      –            –           ✓ (lesen)
- *   Warenrechnungen       ✓      –            –           ✓ (Vollzugriff, tenant-gefiltert)
- *   Reporting / P&L       ✓      –            –           –
- *   Budget / Import       ✓      –            –           –
+ *   Modul                admin  service_mgr  kueche_mgr  beaulieu_mgr  beaulieu_viewer
+ *   ──────────────────   ─────  ───────────  ──────────  ────────────  ───────────────
+ *   Dashboard             ✓      –            –           –             –
+ *   Dienstplanung         ✓      ✓ (Service)  ✓ (Küche)   ✓ (alle)      –
+ *   Soll/Ist Analyse      ✓      ✓ (Service)  ✓ (Küche)   –             –
+ *   Personal FIX          ✓      –            –           ✓             –
+ *   Tagesansicht          ✓      –            –           ✓             –
+ *   Tages-Controlling     ✓      –            –           ✓             –
+ *   Personalstamm         ✓      –            –           ✓ (lesen)     –
+ *   Warenrechnungen       ✓      –            –           ✓ (voll)      ✓ (lesen)
+ *   Reporting / P&L       ✓      –            –           –             –
+ *   Budget / Import       ✓      –            –           –             –
+ *
+ * Warenrechnungen – Feingranulare Rechte (WarenrechnungenPerms):
+ *   Aktion     admin  beaulieu_mgr  beaulieu_viewer
+ *   ────────   ─────  ────────────  ───────────────
+ *   view        ✓      ✓             ✓
+ *   create      ✓      ✓             –
+ *   edit        ✓      ✓             –
+ *   delete      ✓      ✓             –
+ *   export      ✓      ✓             ✓  (konfigurierbar, siehe VIEWER_CAN_EXPORT)
+ *
+ * Neue Rolle hinzufügen:
+ *   1. UserRole in AuthContext.tsx ergänzen
+ *   2. isXxx Flag hier in usePermissions.ts via useAuth() destructuren
+ *   3. canAccessModule + warenrechnungenPerms um neuen Fall erweitern
  */
 
 import { useAuth } from './useAuth';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import type { UserRole } from '@/contexts/AuthContext';
+
+// ─── Konfigurations-Konstante ─────────────────────────────────────────────────
+// Darf beaulieu_viewer Daten exportieren?
+// true = Viewer kann exportieren, false = kein Export für Viewer
+const VIEWER_CAN_EXPORT = true;
 
 export type AppModule =
   | 'dashboard'
@@ -42,6 +61,20 @@ export type AppModule =
   | 'tages_controlling'
   | 'warenrechnungen';
 
+/** Feingranulare Rechte für das Warenrechnungen-Modul */
+export interface WarenrechnungenPerms {
+  /** Modul sehen, KPI, Tabellen, Analyse */
+  canView: boolean;
+  /** Neue Einträge erstellen, Lieferanten hinzufügen */
+  canCreate: boolean;
+  /** Bestehende Einträge bearbeiten */
+  canEdit: boolean;
+  /** Einträge löschen */
+  canDelete: boolean;
+  /** CSV/Excel-Export (konfigurierbar via VIEWER_CAN_EXPORT) */
+  canExport: boolean;
+}
+
 export type Department = 'service' | 'küche' | 'all';
 
 export interface Permissions {
@@ -50,10 +83,14 @@ export interface Permissions {
   isAdmin: boolean;
   isManager: boolean;
   isBeaulieuManager: boolean;
+  /** Beaulieu-Leser: Vollzugriff auf Warenrechnungen (view + export), kein Schreiben */
+  isBeaulieuViewer: boolean;
 
   // ── Modul-Zugriff ────────────────────────────────────────
   /** Darf der User auf dieses Modul zugreifen? */
   canAccessModule: (module: AppModule) => boolean;
+  /** Feingranulare Rechte für das Warenrechnungen-Modul */
+  warenrechnungenPerms: WarenrechnungenPerms;
 
   // ── Abteilungs-Sichtbarkeit ──────────────────────────────
   /** Welche Abteilung(en) darf dieser User sehen? */
@@ -91,7 +128,14 @@ export interface Permissions {
 }
 
 export const usePermissions = (): Permissions => {
-  const { role, isAdmin: isAdminUser, isServiceManager, isKuecheManager, isBeaulieuManager: isBeaulieuMgr } = useAuth();
+  const {
+    role,
+    isAdmin: isAdminUser,
+    isServiceManager,
+    isKuecheManager,
+    isBeaulieuManager: isBeaulieuMgr,
+    isBeaulieuViewer: isBeaulieuViewerRaw,
+  } = useAuth();
   const { isGuest } = useGuestSession();
 
   // Gäste erhalten vollständige Admin-Rechte (Lese-Zugriff)
@@ -99,6 +143,7 @@ export const usePermissions = (): Permissions => {
 
   const isManager = isServiceManager || isKuecheManager || isGuest;
   const isBeaulieuManager = isBeaulieuMgr;
+  const isBeaulieuViewer  = isBeaulieuViewerRaw;
 
   // Welche Abteilung darf dieser User sehen?
   const allowedDepartment: Department = isAdmin
@@ -137,11 +182,29 @@ export const usePermissions = (): Permissions => {
       case 'tages_controlling':
         return isAdmin || isBeaulieuManager;
       case 'warenrechnungen':
-        return isAdmin || isBeaulieuManager;
+        return isAdmin || isBeaulieuManager || isBeaulieuViewer;
       default:
         return isAdmin;
     }
   };
+
+  // ─── Feingranulare Warenrechnungen-Berechtigungen ─────────────────────────
+  const warenrechnungenPerms: WarenrechnungenPerms = (() => {
+    if (isAdmin || isBeaulieuManager) {
+      return { canView: true, canCreate: true, canEdit: true, canDelete: true, canExport: true };
+    }
+    if (isBeaulieuViewer) {
+      return {
+        canView:   true,
+        canCreate: false,
+        canEdit:   false,
+        canDelete: false,
+        canExport: VIEWER_CAN_EXPORT, // konfigurierbar via VIEWER_CAN_EXPORT
+      };
+    }
+    // alle anderen Rollen: kein Zugriff
+    return { canView: false, canCreate: false, canEdit: false, canDelete: false, canExport: false };
+  })();
 
   return {
     // Rolle
@@ -149,6 +212,11 @@ export const usePermissions = (): Permissions => {
     isAdmin,
     isManager,
     isBeaulieuManager,
+    isBeaulieuViewer,
+
+    // Modul + feingranulare Rechte
+    canAccessModule,
+    warenrechnungenPerms,
 
     // Abteilung
     allowedDepartment,
@@ -171,6 +239,5 @@ export const usePermissions = (): Permissions => {
     // Dienstplan
     canEditSchedule: true,
     canCopyWeek:     true,
-    canAccessModule,
   };
 };

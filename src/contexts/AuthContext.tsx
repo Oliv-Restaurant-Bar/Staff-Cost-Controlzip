@@ -2,7 +2,13 @@ import { createContext, useEffect, useRef, useState, useCallback, ReactNode } fr
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
-export type UserRole = 'admin' | 'service_manager' | 'kueche_manager' | 'beaulieu_manager';
+export type UserRole =
+  | 'admin'
+  | 'service_manager'
+  | 'kueche_manager'
+  | 'beaulieu_manager'
+  /** Lesezugriff auf Beaulieu-Daten (z.B. Warenrechnungen); kein Schreiben */
+  | 'beaulieu_viewer';
 
 export interface AuthContextType {
   user: User | null;
@@ -12,8 +18,10 @@ export interface AuthContextType {
   isAdmin: boolean;
   isServiceManager: boolean;
   isKuecheManager: boolean;
-  /** Beaulieu-Geschäftsführer: nur Beaulieu, kein Tenant-Wechsel */
+  /** Beaulieu-Geschäftsführer: nur Beaulieu, kein Tenant-Wechsel, Vollzugriff */
   isBeaulieuManager: boolean;
+  /** Beaulieu-Leser: nur Beaulieu, nur Lesezugriff */
+  isBeaulieuViewer: boolean;
   /**
    * Increments on every confirmed auth event (boot, TOKEN_REFRESHED, SIGNED_IN).
    * Data-fetching pages must depend on this so they re-fetch after a background
@@ -325,6 +333,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       isServiceManager:   role === 'service_manager',
       isKuecheManager:    role === 'kueche_manager',
       isBeaulieuManager:  role === 'beaulieu_manager',
+      isBeaulieuViewer:   role === 'beaulieu_viewer',
       signIn,
       signOut,
     }}>

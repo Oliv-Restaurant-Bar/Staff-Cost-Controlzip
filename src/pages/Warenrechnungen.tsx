@@ -44,7 +44,7 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import {
   ShoppingCart, Plus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
-  TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList,
+  TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -201,15 +201,19 @@ function PctBadge({ pct }: { pct: number | null }) {
 
 export default function WarenrechnungenPage() {
   const { tenantId, tenant } = useTenant();
-  const { role, isAdmin, isBeaulieuManager, canAccessModule } = usePermissions();
+  const { role, warenrechnungenPerms } = usePermissions();
+  const { canView, canCreate, canEdit, canDelete, canExport } = warenrechnungenPerms;
 
-  // ─── Auth Debug-Logs ─────────────────────────────────────────────────────
+  // ─── Permissions Debug-Logs ──────────────────────────────────────────────
   useEffect(() => {
-    const allowed = isAdmin || isBeaulieuManager;
-    console.log(`[AUTH] role: ${role}`);
-    console.log(`[AUTH] module access: warenrechnungen = ${allowed ? 'allowed' : 'denied'}`);
-    console.log(`[AUTH] permissions: create|edit|delete|view = ${allowed}`);
-  }, [role, isAdmin, isBeaulieuManager, canAccessModule]);
+    console.log(`[PERMISSIONS] role: ${role}`);
+    console.log(`[PERMISSIONS] module: warenrechnungen`);
+    console.log(`[PERMISSIONS] view: ${canView}`);
+    console.log(`[PERMISSIONS] create: ${canCreate}`);
+    console.log(`[PERMISSIONS] edit: ${canEdit}`);
+    console.log(`[PERMISSIONS] delete: ${canDelete}`);
+    console.log(`[PERMISSIONS] export: ${canExport}`);
+  }, [role, canView, canCreate, canEdit, canDelete, canExport]);
 
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
@@ -662,6 +666,7 @@ export default function WarenrechnungenPage() {
   })();
 
   async function handleSave() {
+    if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
     if (!form.supplierName) { toast.error('Bitte Lieferant wählen.'); return; }
     if (!form.amount || isNaN(Number(form.amount)) || Number(form.amount) <= 0) {
       toast.error('Bitte gültigen Betrag eingeben.'); return;
@@ -684,6 +689,7 @@ export default function WarenrechnungenPage() {
   }
 
   async function handleEditSave() {
+    if (!canEdit) { toast.error('Keine Berechtigung zum Bearbeiten von Einträgen.'); return; }
     if (!editEntry) return;
     setSaving(true);
     await saveInvoiceEntry(tenantId, { ...editEntry, updatedAt: new Date().toISOString() });
@@ -696,6 +702,7 @@ export default function WarenrechnungenPage() {
   }
 
   async function handleDelete(entry: InvoiceEntry) {
+    if (!canDelete) { toast.error('Keine Berechtigung zum Löschen von Einträgen.'); return; }
     await deleteInvoiceEntry(tenantId, entry.id, entry.date);
     console.log(`[WAREN] entry deleted: ${entry.id}`);
     await loadData();
@@ -760,11 +767,13 @@ export default function WarenrechnungenPage() {
             </button>
           </div>
 
-          {/* Lieferanten */}
+          {/* Lieferanten – nur für Benutzer mit Schreibrecht */}
+          {canCreate && (
           <Button variant="outline" size="sm" onClick={() => setShowSupplierDialog(true)} className="h-8 gap-1.5 text-xs">
             <Settings2 className="h-3.5 w-3.5" />
             Lieferanten
           </Button>
+          )}
         </div>
 
         {/* ── Tabs ─────────────────────────────────────────────────────────── */}
@@ -856,7 +865,14 @@ export default function WarenrechnungenPage() {
             {tab === 'erfassung' && (
               <div className="space-y-5">
 
-                {/* Schnellerfassung */}
+                {/* Schnellerfassung – nur für Benutzer mit Erfassungsrecht */}
+                {!canCreate && (
+                  <div className="flex items-center gap-2.5 text-xs text-muted-foreground bg-muted/30 border border-border rounded-lg px-4 py-3">
+                    <ShieldCheck className="h-4 w-4 flex-shrink-0" />
+                    <span>Lesezugriff – Erfassen, Bearbeiten und Löschen ist für diese Rolle nicht erlaubt.</span>
+                  </div>
+                )}
+                {canCreate && (
                 <section className="bg-card border border-border rounded-xl overflow-hidden">
                   <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
                     <Plus className="h-4 w-4" style={{ color: tenant.color }} />
@@ -992,6 +1008,7 @@ export default function WarenrechnungenPage() {
                     </div>
                   </div>
                 </section>
+                )} {/* end canCreate */}
 
                 {/* Letzte Einträge */}
                 {entries.length === 0 ? (
@@ -1032,11 +1049,13 @@ export default function WarenrechnungenPage() {
                               <td className="px-4 py-2.5 text-xs text-muted-foreground max-w-[140px] truncate">{e.note ?? <span className="opacity-30">–</span>}</td>
                               <td className="px-4 py-2.5">
                                 <div className="flex items-center gap-1">
+                                  {canEdit && (
                                   <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={() => { setEditEntry(e); setShowEditDialog(true); }}>
                                     <Pencil className="h-3 w-3" />
                                     Edit
                                   </Button>
-                                  {deleteConfirm === e.id ? (
+                                  )}
+                                  {canDelete && (deleteConfirm === e.id ? (
                                     <Button variant="destructive" size="sm" className="h-7 px-2 text-xs" onClick={() => handleDelete(e)}>
                                       Löschen?
                                     </Button>
@@ -1044,6 +1063,9 @@ export default function WarenrechnungenPage() {
                                     <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive/50 hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteConfirm(e.id)}>
                                       <Trash2 className="h-3 w-3" />
                                     </Button>
+                                  ))}
+                                  {!canEdit && !canDelete && (
+                                    <span className="text-[10px] text-muted-foreground/40 px-1">Lesezugriff</span>
                                   )}
                                 </div>
                               </td>
