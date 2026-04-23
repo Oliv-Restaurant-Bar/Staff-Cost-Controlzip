@@ -282,8 +282,18 @@ const Dashboard = () => {
   useEffect(() => {
     console.log(`[TENANT] Dashboard: Mandant gewechselt → "${tenantId}", dailyBudgets neu laden`);
     try {
-      const data = JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}');
+      const storageKey = tenantKey('dailyBudgets');
+      const data = JSON.parse(localStorage.getItem(storageKey) || '{}') as Record<string, { actualRevenue?: number }>;
       setDailyBudgets(data);
+      if (tenantId === 'beaulieu') {
+        const revenueEntries = Object.entries(data).filter(([, v]) => (v?.actualRevenue ?? 0) > 0);
+        const latestDate = revenueEntries.map(([k]) => k).sort().at(-1) ?? 'none';
+        console.log(`[REVENUE-CHECK] tenant: ${tenantId}`);
+        console.log(`[REVENUE-CHECK] rows loaded: ${revenueEntries.length}`);
+        console.log(`[REVENUE-CHECK] visible in dashboard: ${revenueEntries.length > 0 ? 'yes' : 'no'}`);
+        console.log(`[REVENUE-CHECK] latest date: ${latestDate}`);
+        console.log(`[REVENUE-CHECK] mismatch: ${revenueEntries.length === 0 ? 'yes – keine Ist-Umsätze' : 'no – Daten vorhanden'}`);
+      }
     } catch { /* ignore */ }
     setReportingTick(t => t + 1);
   // eslint-disable-next-line react-hooks/exhaustive-deps

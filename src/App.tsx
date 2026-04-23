@@ -15,7 +15,6 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useTenant } from "@/contexts/TenantContext";
 import { LoginPage } from "@/components/LoginPage";
 import { GuestBanner } from "@/components/GuestBanner";
-import { TenantBanner } from "@/components/TenantBanner";
 import { Loader2 } from "lucide-react";
 import { AppNav } from "@/components/AppNav";
 import Dashboard from "./pages/Dashboard";
@@ -139,7 +138,6 @@ const AppContent = () => {
 
         {/* Haupt-Inhaltsbereich */}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col pb-16 md:pb-0">
-          <TenantBanner />
           {/* Tenant-Lock für beaulieu_manager — läuft auf jeder Seite */}
           <TenantLockEnforcer />
           <div className="flex-1 min-h-0 overflow-auto">

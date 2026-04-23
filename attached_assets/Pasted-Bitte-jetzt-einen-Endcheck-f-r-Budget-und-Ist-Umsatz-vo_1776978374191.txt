@@ -1,0 +1,95 @@
+Bitte jetzt einen Endcheck für Budget und Ist-Umsatz von Beaulieu machen UND gleichzeitig die Mandanten-Umschaltung im UI bereinigen.
+
+Ziel:
+1. Sicherstellen, dass Budget 2026 und Ist-Umsatz 2026 von Beaulieu überall korrekt sichtbar sind
+2. Den lila Balken oben entfernen
+3. Mandantenwechsel nur noch links in der Navigation ermöglichen
+
+Bitte exakt so umsetzen:
+
+==================================================
+1. Endcheck Budget + Ist-Umsatz Beaulieu
+==================================================
+
+Bitte direkt prüfen, ob Beaulieu jetzt in allen relevanten Modulen korrekt geladen wird:
+
+A) Budget 2026
+- Budget in Supabase gespeichert
+- tenant = beaulieu
+- im Budget-Modul sichtbar
+- in Tagesansicht / Tages-Controlling nutzbar
+- in Erfolgsrechnung nutzbar
+
+B) Ist-Umsatz 2026
+- in Supabase gespeichert
+- tenant = beaulieu
+- im Dashboard sichtbar
+- in Tagesansicht sichtbar
+- in Erfolgsrechnung sichtbar
+- im Datenstand der Import-Zentrale sichtbar
+
+Bitte dafür echte Vergleichs-Checks loggen:
+[BUDGET-CHECK] tenant: beaulieu
+[BUDGET-CHECK] rows loaded: ...
+[BUDGET-CHECK] visible in budget module: yes/no
+[BUDGET-CHECK] visible in tagesansicht: yes/no
+[BUDGET-CHECK] visible in erfolgsrechnung: yes/no
+
+[REVENUE-CHECK] tenant: beaulieu
+[REVENUE-CHECK] rows loaded: ...
+[REVENUE-CHECK] visible in dashboard: yes/no
+[REVENUE-CHECK] visible in tagesansicht: yes/no
+[REVENUE-CHECK] visible in erfolgsrechnung: yes/no
+[REVENUE-CHECK] visible in import-hub freshness: yes/no
+[REVENUE-CHECK] mismatch: yes/no
+
+==================================================
+2. Lila Mandanten-Balken oben entfernen
+==================================================
+
+Aktuell gibt es oben einen lila Balken:
+"Aktiver Mandant: Restaurant Beaulieu ..."
+
+Diesen Balken bitte komplett entfernen.
+
+Wichtig:
+- kein oberer Hinweisbalken mehr
+- keine doppelte Mandantenanzeige im Contentbereich
+- die Seiten sollen ruhiger wirken
+
+==================================================
+3. Mandantenwechsel nur links
+==================================================
+
+Ich möchte den Mandantenwechsel künftig nur links in der Navigation haben.
+
+Bitte umsetzen:
+- links im Sidebar-Bereich klarer Mandantenwechsel
+- dort zwischen Oliv und Beaulieu wechselbar
+- nicht oben im Contentbereich
+- nicht als Banner
+- nicht als zusätzlicher Balken
+
+Wichtig:
+- UX ruhig und sauber
+- Mandantenwechsel logisch links bei Navigation / Kontext
+- bestehende Lock-Logik für beaulieu_manager respektieren
+
+==================================================
+4. Rollenlogik beachten
+==================================================
+
+Wichtig:
+- Admin / berechtigte Rollen dürfen links den Mandanten wechseln
+- beaulieu_manager darf NICHT wechseln
+- bei beaulieu_manager links stattdessen nur Beaulieu anzeigen, ohne Wechselmöglichkeit
+
+==================================================
+5. Bitte danach kurz sagen
+==================================================
+
+- welche Datei(en) geändert wurden
+- ob der lila Balken entfernt wurde
+- wo der Mandantenwechsel jetzt sitzt
+- ob Budget und Ist-Umsatz für Beaulieu überall korrekt sichtbar sind
+- ob es noch Inkonsistenzen gibt

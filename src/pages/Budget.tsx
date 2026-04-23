@@ -192,9 +192,18 @@ function BudgetContent() {
 
   useEffect(() => { reload(selectedYear); }, [selectedYear, reload]);
 
-  // Mandantenwechsel: Daten neu laden
+  // Mandantenwechsel: Daten neu laden + Check-Logs
   useEffect(() => {
     reload(selectedYear);
+    if (tenantId === 'beaulieu') {
+      const bud = loadBudgetWithPL(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
+      const rows = (bud.plLineItems ?? []).length;
+      const hasErtragsKonto = (bud.plLineItems ?? []).some(i => i.id === 'pli_ertrag_a');
+      console.log(`[BUDGET-CHECK] tenant: ${tenantId}`);
+      console.log(`[BUDGET-CHECK] rows loaded: ${rows}`);
+      console.log(`[BUDGET-CHECK] visible in budget module: ${rows > 0 ? 'yes' : 'no'}`);
+      console.log(`[BUDGET-CHECK] Ertragskonto (pli_ertrag_a) present: ${hasErtragsKonto ? 'yes' : 'no'}`);
+    }
     console.log(`[TENANT] Budget: Mandant "${tenantId}" – Budget neu geladen`);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);

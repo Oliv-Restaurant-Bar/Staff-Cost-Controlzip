@@ -116,6 +116,12 @@ export default function TagesansichtPage() {
     const local = readDailyBudgets(tenantKey);
     const localKeys = Object.keys(local).filter(k => (local[k]?.actualRevenue ?? 0) > 0).sort();
     console.log(`[UMSATZ][${tenantId}] TagesansichtPage localStorage: ${localKeys.length} Tage, latest=${localKeys.at(-1) ?? '–'}`);
+    if (tenantId === 'beaulieu') {
+      console.log(`[REVENUE-CHECK] tenant: ${tenantId}`);
+      console.log(`[REVENUE-CHECK] rows loaded: ${localKeys.length}`);
+      console.log(`[REVENUE-CHECK] visible in tagesansicht: ${localKeys.length > 0 ? 'yes' : 'no'}`);
+      console.log(`[REVENUE-CHECK] mismatch: ${localKeys.length === 0 ? 'yes – keine Ist-Umsätze' : 'no – Daten vorhanden'}`);
+    }
     setDailyBudgets(local);
     import('@/lib/supabase-kv').then(({ kvGet }) =>
       kvGet(tenantKey('dailyBudgets'))
