@@ -46,6 +46,10 @@ import {
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ReferenceLine, ResponsiveContainer, Dot,
+} from 'recharts';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -189,6 +193,7 @@ export default function WarenrechnungenPage() {
   const [showSupplierDialog,setShowSupplierDialog]= useState(false);
   const [newSupplierName,   setNewSupplierName]   = useState('');
   const [deleteConfirm,     setDeleteConfirm]     = useState<string | null>(null);
+  const [targetPct,         setTargetPct]         = useState<number>(30);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -248,6 +253,43 @@ export default function WarenrechnungenPage() {
     const cumRev = Object.entries(revenueByDate).filter(([d]) => d <= upToDate).reduce((s, [, v]) => s + v, 0);
     return { cumNet, cumRev, pct: cumRev > 0 ? (cumNet / cumRev) * 100 : null };
   }
+
+  // ─── Chart-Daten ────────────────────────────────────────────────────────────
+
+  interface ChartPoint {
+    date:    string;
+    label:   string;
+    dayNet:  number;
+    dayRev:  number;
+    dayPct:  number | null;
+    cumNet:  number;
+    cumRev:  number;
+    cumPct:  number | null;
+    hasEntry: boolean;
+  }
+
+  const chartData = useMemo((): ChartPoint[] => {
+    const allDays = getDaysInMonth(year, month);
+    const past = allDays.filter(d => d <= todayStr);
+    let cumNet = 0;
+    let cumRev = 0;
+    const points = past.map(d => {
+      const dayNet = entries.filter(e => e.date === d).reduce((s, e) => s + e.amountNet, 0);
+      const dayRev = revenueByDate[d] ?? 0;
+      cumNet += dayNet;
+      cumRev += dayRev;
+      const dayPct = dayRev > 0 ? (dayNet / dayRev) * 100 : null;
+      const cumPct = cumRev > 0 ? (cumNet / cumRev) * 100 : null;
+      return { date: d, label: formatDateShort(d), dayNet, dayRev, dayPct, cumNet, cumRev, cumPct, hasEntry: dayNet > 0 };
+    });
+    const daysLoaded = points.filter(p => p.hasEntry).length;
+    const lastCum = points.length > 0 ? points[points.length - 1].cumPct : null;
+    console.log(`[WAREN-CHART] tenant: ${tenantId}`);
+    console.log(`[WAREN-CHART] days loaded: ${daysLoaded}`);
+    console.log(`[WAREN-CHART] cumulative pct: ${lastCum !== null ? lastCum.toFixed(1) + '%' : '–'}`);
+    console.log(`[WAREN-CHART] daily pct: ${points.filter(p => p.dayPct !== null).map(p => p.dayPct!.toFixed(1) + '%').join(', ') || '–'}`);
+    return points;
+  }, [entries, revenueByDate, year, month, todayStr, tenantId]);
 
   async function handleSave() {
     if (!form.supplierName) { toast.error('Bitte Lieferant wählen.'); return; }
@@ -658,6 +700,162 @@ export default function WarenrechnungenPage() {
             {/* ── Tab: Analyse ──────────────────────────────────────────── */}
             {tab === 'analyse' && (
               <div className="space-y-5">
+
+                {/* ── Verlaufsgrafik ──────────────────────────────────────── */}
+                <section className="bg-card border border-border rounded-xl overflow-hidden">
+                  <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between flex-wrap gap-3">
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                      <h2 className="text-sm font-semibold">Verlauf Warenkosten {monthLabel}</h2>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>Ziel</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={targetPct}
+                        onChange={e => setTargetPct(Number(e.target.value))}
+                        className="w-14 h-7 rounded-md border border-border bg-background px-2 text-center text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                      <span>%</span>
+                    </div>
+                  </div>
+
+                  {chartData.filter(p => p.hasEntry || p.dayRev > 0).length < 2 ? (
+                    <div className="flex flex-col items-center justify-center h-52 gap-2 text-muted-foreground">
+                      <BarChart3 className="h-8 w-8 opacity-20" />
+                      <p className="text-sm">Noch zu wenig Daten für {monthLabel}</p>
+                      <p className="text-xs opacity-60">Mindestens 2 Tage mit Umsatzdaten erforderlich.</p>
+                    </div>
+                  ) : (
+                    <div className="px-2 pt-4 pb-3">
+                      <ResponsiveContainer width="100%" height={260}>
+                        <ComposedChart data={chartData} margin={{ top: 8, right: 24, left: 0, bottom: 4 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
+                          <XAxis
+                            dataKey="label"
+                            tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                            tickLine={false}
+                            axisLine={{ stroke: 'hsl(var(--border))' }}
+                            interval="preserveStartEnd"
+                          />
+                          <YAxis
+                            tickFormatter={v => `${v}%`}
+                            tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                            tickLine={false}
+                            axisLine={false}
+                            width={42}
+                            domain={[0, (max: number) => Math.max(Math.ceil(max / 5) * 5 + 5, targetPct + 5)]}
+                          />
+                          <Tooltip
+                            content={({ active, payload, label }) => {
+                              if (!active || !payload?.length) return null;
+                              const d = payload[0]?.payload as ChartPoint;
+                              return (
+                                <div className="rounded-lg border border-border bg-card shadow-lg px-3.5 py-3 text-xs space-y-1.5 min-w-[180px]">
+                                  <p className="font-semibold text-foreground text-sm">{label}</p>
+                                  <div className="flex justify-between gap-4">
+                                    <span className="text-muted-foreground">Umsatz</span>
+                                    <span className="tabular-nums font-medium">CHF {fmtChf(d.dayRev)}</span>
+                                  </div>
+                                  <div className="flex justify-between gap-4">
+                                    <span className="text-muted-foreground">Warenkosten</span>
+                                    <span className="tabular-nums font-medium">CHF {fmtChf(d.dayNet)}</span>
+                                  </div>
+                                  {d.dayPct !== null && (
+                                    <div className="flex justify-between gap-4">
+                                      <span className="text-muted-foreground">Tages %</span>
+                                      <span className={cn('tabular-nums font-semibold', d.dayPct > 35 ? 'text-red-600' : d.dayPct > 30 ? 'text-amber-600' : 'text-emerald-600')}>
+                                        {fmtPct(d.dayPct)}
+                                      </span>
+                                    </div>
+                                  )}
+                                  <div className="border-t border-border/50 pt-1.5 flex justify-between gap-4">
+                                    <span className="text-muted-foreground">Kum. Waren</span>
+                                    <span className="tabular-nums font-medium">CHF {fmtChf(d.cumNet)}</span>
+                                  </div>
+                                  {d.cumPct !== null && (
+                                    <div className="flex justify-between gap-4">
+                                      <span className="text-muted-foreground font-medium">Kum. %</span>
+                                      <span className={cn('tabular-nums font-bold', d.cumPct > 35 ? 'text-red-600' : d.cumPct > 30 ? 'text-amber-600' : 'text-emerald-600')}>
+                                        {fmtPct(d.cumPct)}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }}
+                          />
+
+                          {/* Zielwert-Linie */}
+                          <ReferenceLine
+                            y={targetPct}
+                            stroke="hsl(var(--muted-foreground))"
+                            strokeDasharray="6 4"
+                            strokeWidth={1.5}
+                            strokeOpacity={0.6}
+                            label={{ value: `Ziel ${targetPct}%`, position: 'insideTopRight', fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                          />
+
+                          {/* Tageswert — dünne Linie, Punkte nur bei Einträgen */}
+                          <Line
+                            type="monotone"
+                            dataKey="dayPct"
+                            name="Tages %"
+                            stroke="hsl(var(--muted-foreground))"
+                            strokeWidth={1.5}
+                            strokeOpacity={0.55}
+                            dot={(props) => {
+                              const { cx, cy, payload } = props;
+                              if (!payload.hasEntry || payload.dayPct === null) return <g key={props.key} />;
+                              return (
+                                <Dot
+                                  key={props.key}
+                                  cx={cx} cy={cy} r={3}
+                                  fill={payload.dayPct > 35 ? '#ef4444' : payload.dayPct > 30 ? '#f59e0b' : '#10b981'}
+                                  stroke="white"
+                                  strokeWidth={1}
+                                />
+                              );
+                            }}
+                            activeDot={{ r: 4, strokeWidth: 1.5, stroke: 'white' }}
+                            connectNulls={false}
+                          />
+
+                          {/* Kumuliert — dicke Hauptlinie */}
+                          <Line
+                            type="monotone"
+                            dataKey="cumPct"
+                            name="Kum. %"
+                            stroke="#3b82f6"
+                            strokeWidth={2.5}
+                            dot={false}
+                            activeDot={{ r: 5, fill: '#3b82f6', stroke: 'white', strokeWidth: 2 }}
+                            connectNulls
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+
+                      {/* Legende */}
+                      <div className="flex items-center gap-5 justify-end px-3 pt-2 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-block w-6 h-0.5 bg-muted-foreground/50" />
+                          <span>Tages %</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-block w-6 h-[3px] bg-blue-500 rounded" />
+                          <span className="font-medium text-foreground/80">Kumuliert %</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-block w-5 border-t border-dashed border-muted-foreground/60" style={{ borderSpacing: '4px' }} />
+                          <span>Ziel {targetPct} %</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </section>
 
                 {entries.length === 0 ? (
                   <div className="bg-card border border-dashed border-border rounded-xl p-10 text-center">
