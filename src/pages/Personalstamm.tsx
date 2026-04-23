@@ -34,6 +34,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
@@ -48,8 +51,10 @@ import { useTenant } from '@/contexts/TenantContext';
 import {
   loadEmployees, upsertEmployee, deleteEmployee, activateEmployee,
   loadOnboardingSubmissions, deleteOnboardingSubmission, activateSubmissionAsEmployee,
+  runPersonalstammE2ETest,
   OnboardingSubmission,
 } from '@/lib/supabase-db';
+import type { HarteTestResult } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { generateContract, detectContractTemplate } from '@/lib/generateContract';
@@ -352,6 +357,11 @@ const Personalstamm = () => {
   const [saving, setSaving]               = useState(false);
   const [deleteTarget, setDeleteTarget]   = useState<Employee | null>(null);
 
+  // ── System-Check ───────────────────────────────────────────────────────────
+  const [e2eRunning,    setE2eRunning]    = useState(false);
+  const [e2eResult,     setE2eResult]     = useState<HarteTestResult | null>(null);
+  const [e2eOpen,       setE2eOpen]       = useState(false);
+
   // ── Selbst-Anmeldungen (onboarding_submissions Tabelle) ───────────────────
   const [submissions, setSubmissions]                 = useState<OnboardingSubmission[]>([]);
   const [selectedSubmission, setSelectedSubmission]   = useState<OnboardingSubmission | null>(null);
@@ -625,6 +635,35 @@ const Personalstamm = () => {
       toast.success(`Anmeldung von ${sub.name} abgelehnt.`);
     } else {
       toast.error('Ablehnen fehlgeschlagen.');
+    }
+  };
+
+  // ── System-Check Handler ───────────────────────────────────────────────────
+  const handleE2ECheck = async () => {
+    if (tenantId !== 'beaulieu') {
+      toast.error('System Check nur für Mandant Beaulieu verfügbar');
+      return;
+    }
+    setE2eRunning(true);
+    setE2eOpen(true);
+    setE2eResult(null);
+    try {
+      const result = await runPersonalstammE2ETest();
+      setE2eResult(result);
+      if (result.passed) {
+        toast.success('System Check: alle Tests bestanden');
+      } else {
+        const failed = result.steps.filter(s => !s.passed).length;
+        toast.error(`System Check: ${failed} Test${failed !== 1 ? 's' : ''} fehlgeschlagen`);
+      }
+      // Mitarbeiterliste nach Cleanup neu laden
+      const fresh = await loadEmployees(tenantId);
+      if (fresh) setEmployees(fresh);
+    } catch (e) {
+      console.error('[System Check] Unerwarteter Fehler:', e);
+      toast.error('System Check: Unerwarteter Fehler');
+    } finally {
+      setE2eRunning(false);
     }
   };
 
@@ -903,6 +942,20 @@ const Personalstamm = () => {
               <Button size="sm" onClick={handleNew} className="h-8">
                 <Plus className="h-3.5 w-3.5 mr-1" />
                 Neuer Mitarbeiter
+              </Button>
+            )}
+            {isAdmin && tenantId === 'beaulieu' && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleE2ECheck}
+                disabled={e2eRunning}
+                className="h-8 border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
+              >
+                {e2eRunning
+                  ? <><RefreshCw className="h-3.5 w-3.5 mr-1 animate-spin" />Prüfe…</>
+                  : <><RefreshCw className="h-3.5 w-3.5 mr-1" />System Check</>
+                }
               </Button>
             )}
           </div>
@@ -2864,6 +2917,49 @@ CREATE POLICY "Anon self-register new employee"
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── System Check Ergebnis-Dialog ────────────────────────────────────── */}
+      <Dialog open={e2eOpen} onOpenChange={setE2eOpen}>
+        <DialogContent className="max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <RefreshCw className={`h-4 w-4 ${e2eRunning ? 'animate-spin text-amber-500' : e2eResult?.passed ? 'text-emerald-500' : 'text-red-500'}`} />
+              System Check — Personalstamm Beaulieu
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+            {e2eRunning && !e2eResult && (
+              <p className="text-sm text-muted-foreground animate-pulse py-4 text-center">Tests laufen…</p>
+            )}
+            {e2eResult && (
+              <>
+                <div className={`rounded-lg px-4 py-2 text-sm font-semibold ${e2eResult.passed ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-300'}`}>
+                  {e2eResult.passed ? '✓ Alle Tests bestanden' : `✗ ${e2eResult.steps.filter(s => !s.passed).length} Test(s) fehlgeschlagen`}
+                  <span className="ml-2 font-normal text-xs opacity-70">({e2eResult.durationMs} ms)</span>
+                </div>
+                {e2eResult.steps.map((s, i) => (
+                  <div key={i} className={`rounded-md border px-3 py-2 text-sm ${s.passed ? 'border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/30' : 'border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30'}`}>
+                    <p className="font-medium flex items-center gap-1.5">
+                      <span className={s.passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
+                        {s.passed ? '✓' : '✗'}
+                      </span>
+                      {s.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{s.message}</p>
+                    {s.details.length > 0 && (
+                      <ul className="mt-1 space-y-0.5">
+                        {s.details.map((d, j) => (
+                          <li key={j} className="text-xs font-mono text-muted-foreground">{d}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -1158,3 +1158,167 @@ export async function uploadOnboardingFile(
     return null;
   }
 }
+
+// ─── Personalstamm E2E System-Check ──────────────────────────────────────────
+
+/**
+ * Vollständiger End-to-End-Test für den Personalstamm Beaulieu:
+ *  1. Legt zwei Test-Mitarbeiter an (Fix-Lohn + Flex/Aushilfe)
+ *  2. Prüft Persistenz via Supabase-Reload
+ *  3. Prüft Personal-FIX-Sichtbarkeit (Flex muss in variableEmployees erscheinen)
+ *  4. Prüft Mandanten-Isolation (keine Oliv-Daten in Beaulieu)
+ *  5. Löscht Test-Mitarbeiter wieder (Cleanup)
+ */
+export async function runPersonalstammE2ETest(): Promise<HarteTestResult> {
+  const t0 = Date.now();
+  const steps: HarteTestStep[] = [];
+  let allPassed = true;
+
+  const step = (name: string, passed: boolean, message: string, details: string[] = []) => {
+    steps.push({ name, passed, message, details });
+    if (!passed) allPassed = false;
+    console.log(`[TEST] ${passed ? '✓' : '✗'} ${name}: ${message}`);
+    details.forEach(d => console.log(`  ${d}`));
+  };
+
+  // ── Hilfsfunktion: hasFixedSalary (gespiegelt aus PersonalFix.tsx) ─────────
+  const hasFixedSalary = (emp: Employee) =>
+    (emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit')
+    && (emp.monthlySalary ?? 0) > 0;
+
+  // ── SCHRITT 1: Aktuelle Beaulieu-Liste laden → nächste freie ID ────────────
+  console.log('[TEST] creating employee...');
+  const currentList = await loadEmployees('beaulieu');
+  const current = currentList ?? [];
+  const beaulieuNums = current
+    .map(e => { const m = String(e.id).match(/^b-(\d+)$/); return m ? parseInt(m[1]) : NaN; })
+    .filter(n => !isNaN(n));
+  const maxNum = beaulieuNums.length > 0 ? Math.max(...beaulieuNums) : 0;
+  const testIdFix  = `b-${maxNum + 1}`;
+  const testIdFlex = `b-${maxNum + 2}`;
+
+  step('0 · Voraussetzungen', true,
+    `Aktuelle Beaulieu-Mitarbeiter: ${current.length} | Test-IDs: ${testIdFix}, ${testIdFlex}`,
+    [`Höchste bestehende ID: b-${maxNum}`]
+  );
+
+  // ── SCHRITT 2: Test-Mitarbeiter einfügen ───────────────────────────────────
+  const empFix: Employee = {
+    id: testIdFix, name: 'TEST Beaulieu Fix', department: 'service',
+    employmentType: 'vollzeit', monthlySalary: 4000, hourlyWage: 0,
+  };
+  const empFlex: Employee = {
+    id: testIdFlex, name: 'TEST Beaulieu Flex', department: 'service',
+    employmentType: 'aushilfe', hourlyWage: 22, monthlySalary: undefined,
+  };
+
+  const okFix  = await upsertEmployee(empFix,  'beaulieu');
+  const okFlex = await upsertEmployee(empFlex, 'beaulieu');
+
+  console.log(`[TEST] insert success: fix=${okFix} flex=${okFlex}`);
+  step('1 · Supabase INSERT', okFix && okFlex,
+    okFix && okFlex ? 'Beide Test-Mitarbeiter gespeichert' : `Fehler: fix=${okFix}, flex=${okFlex}`,
+    [`Fix  → id=${testIdFix}  name="${empFix.name}"`,
+     `Flex → id=${testIdFlex} name="${empFlex.name}"`]
+  );
+  if (!okFix || !okFlex) {
+    step('Abbruch', false, 'INSERT fehlgeschlagen – weitere Tests übersprungen');
+    await deleteEmployee(testIdFix).catch(() => null);
+    await deleteEmployee(testIdFlex).catch(() => null);
+    return { steps, passed: false, durationMs: Date.now() - t0 };
+  }
+
+  // ── SCHRITT 3: Reload-Prüfung ─────────────────────────────────────────────
+  console.log('[TEST] reload check...');
+  const reloaded = await loadEmployees('beaulieu');
+  const afterInsert = reloaded ?? [];
+  const foundFix  = afterInsert.find(e => e.id === testIdFix);
+  const foundFlex = afterInsert.find(e => e.id === testIdFlex);
+
+  step('2 · Reload nach Insert', !!(foundFix && foundFlex),
+    foundFix && foundFlex
+      ? `Beide Mitarbeiter nach Reload gefunden (total: ${afterInsert.length})`
+      : `FEHLER – nicht gefunden: ${[!foundFix && testIdFix, !foundFlex && testIdFlex].filter(Boolean).join(', ')}`,
+    [
+      `Fix  (${testIdFix}): ${foundFix ? '✓ gefunden' : '✗ fehlt'}`,
+      `Flex (${testIdFlex}): ${foundFlex ? '✓ gefunden' : '✗ fehlt'}`,
+      `[CHECK] employee saved in DB: ${foundFix && foundFlex ? 'OK' : 'ERROR'}`,
+    ]
+  );
+  console.log(`[CHECK] employee saved in DB: ${foundFix && foundFlex ? 'OK' : 'ERROR'}`);
+
+  // ── SCHRITT 4: Zweiter Reload (Persistenz-Simulation) ─────────────────────
+  const reloaded2 = await loadEmployees('beaulieu');
+  const afterReload2 = reloaded2 ?? [];
+  const foundFix2  = afterReload2.find(e => e.id === testIdFix);
+  const foundFlex2 = afterReload2.find(e => e.id === testIdFlex);
+
+  step('3 · Persistenz (2. Reload)', !!(foundFix2 && foundFlex2),
+    foundFix2 && foundFlex2 ? 'Persistenz bestätigt – Daten nach zweitem Reload vorhanden' : 'PERSISTENZ-FEHLER',
+    [`[CHECK] employee visible after reload: ${foundFix2 && foundFlex2 ? 'OK' : 'ERROR'}`]
+  );
+  console.log(`[CHECK] employee visible after reload: ${foundFix2 && foundFlex2 ? 'OK' : 'ERROR'}`);
+
+  // ── SCHRITT 5: Personal FIX Sichtbarkeit ──────────────────────────────────
+  console.log('[TEST] personal fix check...');
+  const fixVisible  = foundFix2  ? hasFixedSalary(foundFix2)  : false;
+  const flexVisible = foundFlex2 ? !hasFixedSalary(foundFlex2) : false;
+
+  step('4 · Personal FIX – Fix-Mitarbeiter', fixVisible,
+    fixVisible
+      ? `"${empFix.name}" erscheint korrekt in Fixlohn-Sektion`
+      : `"${empFix.name}" erscheint NICHT in Fixlohn-Sektion (employmentType=${foundFix2?.employmentType}, salary=${foundFix2?.monthlySalary})`,
+    [`hasFixedSalary: ${fixVisible}`]
+  );
+
+  step('5 · Personal FIX – Flex-Mitarbeiter', flexVisible,
+    flexVisible
+      ? `"${empFlex.name}" erscheint korrekt in variabler Sektion`
+      : `"${empFlex.name}" erscheint NICHT in variabler Sektion (employmentType=${foundFlex2?.employmentType})`,
+    [
+      `hasFixedSalary: ${foundFlex2 ? hasFixedSalary(foundFlex2) : '–'}`,
+      `[CHECK] flex employee visible: ${flexVisible ? 'OK' : 'ERROR'}`,
+    ]
+  );
+  console.log(`[CHECK] flex employee visible: ${flexVisible ? 'OK' : 'ERROR'}`);
+  console.log(`[CHECK] employee appears in personal_fix: ${fixVisible && flexVisible ? 'OK' : 'ERROR'}`);
+
+  // ── SCHRITT 6: Mandanten-Isolation ────────────────────────────────────────
+  const olivList = await loadEmployees('oliv');
+  const olivIds  = new Set((olivList ?? []).map(e => String(e.id)));
+  const leakFix  = olivIds.has(testIdFix);
+  const leakFlex = olivIds.has(testIdFlex);
+  const isolated = !leakFix && !leakFlex;
+
+  step('6 · Mandanten-Isolation', isolated,
+    isolated
+      ? `Keine Beaulieu-Test-IDs in Oliv-Liste (Oliv: ${(olivList ?? []).length} Mitarbeiter)`
+      : `LEAK! ${[leakFix && testIdFix, leakFlex && testIdFlex].filter(Boolean).join(', ')} in Oliv gefunden`,
+    [`[CHECK] tenant isolation: ${isolated ? 'OK' : 'ERROR'}`]
+  );
+  console.log(`[CHECK] tenant isolation: ${isolated ? 'OK' : 'ERROR'}`);
+
+  // ── SCHRITT 7: Cleanup – Test-Mitarbeiter löschen ─────────────────────────
+  const delFix  = await deleteEmployee(testIdFix);
+  const delFlex = await deleteEmployee(testIdFlex);
+  const cleaned = delFix && delFlex;
+
+  // Dritter Reload: sicherstellen dass Cleanup erfolgreich war
+  const reloaded3  = await loadEmployees('beaulieu');
+  const afterClean = reloaded3 ?? [];
+  const stillFix   = afterClean.some(e => e.id === testIdFix);
+  const stillFlex  = afterClean.some(e => e.id === testIdFlex);
+  const cleanOk    = cleaned && !stillFix && !stillFlex;
+
+  step('7 · Cleanup (DELETE)', cleanOk,
+    cleanOk
+      ? 'Test-Mitarbeiter erfolgreich gelöscht und nicht mehr in Supabase vorhanden'
+      : `Cleanup-Problem: del=${delFix}/${delFlex}, noch vorhanden: ${[stillFix && testIdFix, stillFlex && testIdFlex].filter(Boolean).join(', ')}`,
+    [`Verbleibende Beaulieu-Mitarbeiter nach Cleanup: ${afterClean.length}`]
+  );
+
+  // ── Ergebnis ───────────────────────────────────────────────────────────────
+  const finalPassed = allPassed && cleanOk;
+  console.log(`[TEST] result: ${finalPassed ? 'SUCCESS' : 'FAILED'} (${Date.now() - t0} ms)`);
+  return { steps, passed: finalPassed, durationMs: Date.now() - t0 };
+}
