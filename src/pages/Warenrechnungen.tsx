@@ -18,6 +18,8 @@ import {
   saveInvoiceEntry,
   deleteInvoiceEntry,
   loadDailyRevenueFromLocalStorage,
+  loadWarenMonthlyRevenue,
+  seedMonthlyRevenueIfMissing,
   computeMonthStats,
   calcAmounts,
   type Supplier,
@@ -249,6 +251,7 @@ export default function WarenrechnungenPage() {
   const [aRangeYear,  setARangeYear]  = useState(today.getFullYear());
   const [rangeEntries, setRangeEntries] = useState<InvoiceEntry[]>([]);
   const [rangeRevenue, setRangeRevenue] = useState<Record<string, number>>({});
+  const [monthlyRevBudget, setMonthlyRevBudget] = useState<Record<string, number>>({}); // YYYY-MM → CHF
   const [rangeLoading, setRangeLoading] = useState(false);
 
   const loadData = useCallback(async () => {
@@ -302,8 +305,16 @@ export default function WarenrechnungenPage() {
     for (const mk of monthKeys) {
       Object.assign(allRevenue, loadDailyRevenueFromLocalStorage(tenantId, mk));
     }
+    // Monatliches Umsatz-Budget laden (als Fallback wenn kein tagesgenauer Umsatz vorhanden)
+    // Seed-Daten werden beim ersten Aufruf automatisch eingetragen (einmalig, authentifiziert)
+    const years = Array.from(new Set(monthKeys.map(mk => Number(mk.slice(0, 4)))));
+    await Promise.all(years.map(y => seedMonthlyRevenueIfMissing(tenantId, y)));
+    const budgetResults = await Promise.all(years.map(y => loadWarenMonthlyRevenue(tenantId, y)));
+    const allBudget: Record<string, number> = {};
+    budgetResults.forEach(b => Object.assign(allBudget, b));
     setRangeEntries(allEntries);
     setRangeRevenue(allRevenue);
+    setMonthlyRevBudget(allBudget);
     setRangeLoading(false);
   }, [analyseMode, aYear, aMonth, aWeekNum, aFromYear, aFromMonth, aToYear, aToMonth, aRangeYear, tenantId]);
 
@@ -518,7 +529,11 @@ export default function WarenrechnungenPage() {
 
   const analyseKPIs = useMemo(() => {
     const effectiveTo = analyseDates.to > todayStr ? todayStr : analyseDates.to;
-    const totalRev  = Object.entries(analysisRevenue).filter(([k]) => k <= effectiveTo).reduce((s, [, v]) => s + v, 0);
+    let totalRev  = Object.entries(analysisRevenue).filter(([k]) => k <= effectiveTo).reduce((s, [, v]) => s + v, 0);
+    // Monatliches Budget als Fallback für Jahr/Multi/YTD wenn kein tagesgenauer Umsatz
+    if (totalRev === 0 && (analyseMode === 'year' || analyseMode === 'multi_month' || analyseMode === 'ytd')) {
+      totalRev = analyseMonthPoints.reduce((s, p) => s + p.revenue, 0);
+    }
     const totalCost = analysisEntries.filter(e => e.date <= effectiveTo).reduce((s, e) => s + e.amountNet, 0);
     const pct = totalRev > 0 ? (totalCost / totalRev) * 100 : null;
     console.log(`[WAREN-ANALYSE] mode: ${analyseMode}`);
@@ -527,7 +542,7 @@ export default function WarenrechnungenPage() {
     console.log(`[WAREN-ANALYSE] cost total: CHF ${totalCost.toFixed(0)}`);
     console.log(`[WAREN-ANALYSE] cost pct: ${pct !== null ? pct.toFixed(1) + '%' : '–'}`);
     return { totalRev, totalCost, pct };
-  }, [analysisEntries, analysisRevenue, analyseDates, analyseMode, todayStr]);
+  }, [analysisEntries, analysisRevenue, analyseMonthPoints, analyseDates, analyseMode, todayStr]);
 
   const analyseSuppliers = useMemo(() => {
     const effectiveTo = analyseDates.to > todayStr ? todayStr : analyseDates.to;
@@ -594,7 +609,9 @@ export default function WarenrechnungenPage() {
       const [y, m] = mk.split('-').map(Number);
       const days   = getDaysInMonth(y, m);
       const pastDs = days.filter(d => d <= todayStr && d <= analyseDates.to);
-      const revenue = pastDs.reduce((s, d) => s + (rangeRevenue[d] ?? 0), 0);
+      const dailyRevSum = pastDs.reduce((s, d) => s + (rangeRevenue[d] ?? 0), 0);
+      // Monatliches Budget als Fallback wenn keine tagesgenauen Umsatzdaten vorhanden
+      const revenue = dailyRevSum > 0 ? dailyRevSum : (monthlyRevBudget[mk] ?? 0);
       const costNet = rangeEntries.filter(e => e.date >= days[0] && e.date <= days[days.length-1] && e.date <= todayStr).reduce((s, e) => s + e.amountNet, 0);
       cumNet += costNet; cumRev += revenue;
       const pct    = revenue > 0 ? (costNet / revenue) * 100 : null;
@@ -607,7 +624,7 @@ export default function WarenrechnungenPage() {
       console.log(`[WAREN-YEAR] status: ${pct === null ? 'nodata' : pct <= targetPct ? 'green' : pct <= targetPct + 2 ? 'yellow' : 'red'}`);
       return { monthKey: mk, label: `${MONTHS[m-1]} ${y !== aRangeYear ? y : ''}`.trim(), revenue, costNet, pct, cumNet, cumRev, cumPct };
     });
-  }, [analyseMode, aFromYear, aFromMonth, aToYear, aToMonth, aRangeYear, rangeEntries, rangeRevenue, analyseDates, todayStr, targetPct]);
+  }, [analyseMode, aFromYear, aFromMonth, aToYear, aToMonth, aRangeYear, rangeEntries, rangeRevenue, monthlyRevBudget, analyseDates, todayStr, targetPct]);
 
   // Wochen-Alerts (innerhalb des gewählten Analyse-Zeitraums, nur Monat-Modus sinnvoll)
   const analyseWeeklyData = useMemo((): WeekData[] => {

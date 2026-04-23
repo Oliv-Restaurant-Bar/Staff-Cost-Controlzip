@@ -173,6 +173,88 @@ export function loadDailyRevenueFromLocalStorage(
   }
 }
 
+// ─── Monatliches Umsatz-Budget (Warenrechnungen-Analyse) ──────────────────────
+
+/**
+ * Schlüssel für das monatliche Umsatz-Budget im KV-Store.
+ * Format: { "YYYY-MM": CHF_Betrag, ... }
+ * Beispiel Beaulieu 2026: beaulieu:waren_monthly_rev_2026 = { "2026-01": 120000, ... }
+ */
+function monthlyRevKey(tenantId: TenantId, year: number): string {
+  return tenantKey(tenantId, `waren_monthly_rev_${year}`);
+}
+
+/**
+ * Lädt das monatliche Umsatz-Budget für ein Jahr aus dem KV-Store.
+ * Gibt ein leeres Objekt zurück wenn kein Budget gesetzt ist.
+ */
+export async function loadWarenMonthlyRevenue(
+  tenantId: TenantId,
+  year: number,
+): Promise<Record<string, number>> {
+  const key = monthlyRevKey(tenantId, year);
+  const raw = await kvGet(key);
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, number>;
+  }
+  return {};
+}
+
+/**
+ * Speichert das monatliche Umsatz-Budget für ein Jahr im KV-Store.
+ * @param data Record mit "YYYY-MM" → CHF-Betrag (z.B. { "2026-01": 120000 })
+ */
+export async function saveWarenMonthlyRevenue(
+  tenantId: TenantId,
+  year: number,
+  data: Record<string, number>,
+): Promise<void> {
+  const key = monthlyRevKey(tenantId, year);
+  await kvSet(key, data);
+  console.log(`[WAREN] monthly revenue budget saved: year=${year} tenant="${tenantId}" months=${Object.keys(data).length}`);
+}
+
+/**
+ * Vordefinierte monatliche Umsatz-Budgets.
+ * Quelle: Budget_Beaulieu_2026.xlsx – BETRIEBSERTRAG NETTO
+ */
+const PRESET_MONTHLY_BUDGETS: Record<string, Record<string, number>> = {
+  'beaulieu:waren_monthly_rev_2026': {
+    '2026-01': 120000,
+    '2026-02': 130000,
+    '2026-03': 150000,
+    '2026-04': 200000,
+    '2026-05': 170000,
+    '2026-06': 160000,
+    '2026-07': 120000,
+    '2026-08': 140000,
+    '2026-09': 130000,
+    '2026-10': 170000,
+    '2026-11': 200000,
+    '2026-12': 200000,
+  },
+};
+
+/**
+ * Seed-Funktion: Trägt vordefinierte Budgets automatisch ein wenn noch kein Eintrag vorhanden.
+ * Wird beim ersten Laden des Analyse-Tabs aufgerufen (läuft im authentifizierten Browser-Client).
+ */
+export async function seedMonthlyRevenueIfMissing(
+  tenantId: TenantId,
+  year: number,
+): Promise<void> {
+  const key = monthlyRevKey(tenantId, year);
+  const existing = await kvGet(key);
+  if (existing && typeof existing === 'object' && Object.keys(existing).length > 0) {
+    console.log(`[WAREN] monthly revenue budget already exists for ${key}, skipping seed`);
+    return;
+  }
+  const preset = PRESET_MONTHLY_BUDGETS[key];
+  if (!preset) return;
+  await kvSet(key, preset);
+  console.log(`[WAREN] monthly revenue budget seeded for ${key}: ${Object.keys(preset).length} months`);
+}
+
 // ─── Berechnungshelfer ────────────────────────────────────────────────────────
 
 export function calcAmounts(
