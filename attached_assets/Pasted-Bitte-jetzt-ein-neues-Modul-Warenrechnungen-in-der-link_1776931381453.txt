@@ -1,0 +1,199 @@
+Bitte jetzt ein neues Modul "Warenrechnungen" in der linken Navigation einbauen.
+
+Ziel:
+Ich möchte während dem laufenden Monat meine Lieferungen, Lieferscheine und Warenrechnungen pro Tag und pro Lieferant erfassen und direkt sehen, wie hoch die Warenkosten in CHF und in % zum Umsatz sind.
+
+Das Modul soll operativ nutzbar sein, damit ich während dem Monat sehe, ob wir die Warenkosten im Griff haben.
+
+Bitte exakt so umsetzen:
+
+1. Neues Modul in der Navigation
+Bitte links einen neuen Reiter ergänzen:
+- Warenrechnungen
+
+Er soll logisch im Bereich Kosten erscheinen, nahe bei WES, Budget und Erfolgsrechnung.
+
+2. Zweck des Moduls
+Ich möchte pro Tag und pro Lieferant erfassen können:
+- Datum
+- Lieferant
+- Betrag
+- optional Rechnungsnummer oder Lieferscheinnummer
+- optional Bemerkung
+- Auswahl ob Betrag mit MWST oder ohne MWST erfasst wurde
+- automatische Berechnung des Netto- oder Bruttobetrags je nach Auswahl
+
+3. Schnelle Erfassung oben
+Bitte ganz oben eine einfache Schnell-Erfassung bauen mit:
+- Datum
+- Lieferant Dropdown
+- Betrag
+- Toggle:
+  - mit MWST
+  - ohne MWST
+- MwSt-Satz falls nötig
+- Speichern
+
+Ziel:
+Ein Eintrag soll in wenigen Sekunden erfasst werden können.
+
+4. Lieferantenstamm
+Bitte eine bearbeitbare Lieferantenliste vorsehen.
+
+Start mit diesen Lieferanten wie im Excel:
+- Prodega
+- Transgourmet
+- Blaser Café
+- Metzgerei Spahni
+- Siebe Dupf
+- Feldschlösschen
+- Chocolats Camille
+- Caporaso
+- Ambro Food
+- La Marra
+- Asia Company
+- Amarx Espro
+- Terravigna
+- Fideco
+- Korngold
+- Paul Ulrich
+- Hiestand
+- Frigemo
+- Compagnie Desserts
+
+Wichtig:
+- Lieferanten sollen bearbeitbar sein
+- neue Lieferanten sollen manuell hinzugefügt werden können
+- tenant-korrekt pro Restaurant gespeichert werden
+
+5. Berechnungslogik
+Bitte dieselbe Logik wie im Excel umsetzen:
+
+A) pro Tag
+- Umsatz Tageswert
+- Warenkosten Tageswert
+- Warenkosten % = Warenkosten / Umsatz
+
+B) kumuliert im Monat
+- kumulierter Umsatz bis zum jeweiligen Tag
+- kumulierte Warenkosten bis zum jeweiligen Tag
+- kumulierte Warenkosten % = kumulierte Warenkosten / kumulierter Umsatz
+
+C) pro Lieferant
+- Betrag je Lieferant pro Tag
+- Betrag je Lieferant kumuliert im Monat
+- Anteil je Lieferant in CHF und optional %
+
+6. Umsatz als Basis
+Bitte die bereits vorhandenen Tagesumsätze des aktiven Mandanten als Basis verwenden.
+
+Wichtig:
+- Tagesumsatz aus dem bestehenden Umsatzmodul verwenden
+- wenn kein Umsatz vorhanden ist, klar anzeigen
+- %-Berechnung immer gegen den vorhandenen Umsatz rechnen
+
+7. Hauptansicht / UI
+Bitte die Seite in 3 Bereiche aufteilen:
+
+A) KPI-Boxen oben
+- Warenkosten heute CHF
+- Warenkosten heute %
+- Warenkosten Monat CHF
+- Warenkosten Monat %
+- kumulierter Umsatz
+- Anzahl Lieferanten mit Einträgen
+
+B) Schnellerfassung
+- Datum
+- Lieferant
+- Betrag
+- MWST Toggle
+- Speichern
+
+C) Übersichtstabelle darunter
+Bitte ähnlich wie im Excel, aber webfreundlich:
+
+Zeilen = Lieferanten
+Spalten mindestens:
+- Monats-Total CHF
+- Monats-Total %
+- Tageswerte pro Datum
+- optional Tages-% pro Datum
+
+Wichtig:
+- klar lesbar
+- Excel-Logik erkennbar
+- nicht überladen
+- Monatskumulierung sichtbar
+
+8. Bearbeiten / Löschen
+Ich möchte bestehende Einträge manuell:
+- bearbeiten
+- korrigieren
+- löschen
+
+Wichtig:
+- nach jeder Änderung sofort neu berechnen
+- keine doppelten Summen
+- tenant-korrekt speichern
+
+9. Tenant-Fähigkeit
+Das Modul muss mandantenfähig sein:
+- Oliv getrennt von Beaulieu
+- Lieferanten und Einträge tenant-korrekt
+- keine Vermischung
+
+10. Speicherung in Supabase
+Bitte die Daten sauber in Supabase speichern.
+
+Vorschlag:
+Tabelle z.B.:
+- supplier_invoice_entries
+mit Feldern:
+- id
+- restaurant_id
+- date
+- supplier_name oder supplier_id
+- amount_gross
+- amount_net
+- vat_included
+- vat_rate
+- reference
+- note
+- created_at
+- updated_at
+
+Wenn sinnvoll:
+- separate supplier master table
+
+11. Kumulierte Monatslogik
+Bitte die Monatsansicht so bauen, dass sie wie im Excel funktioniert:
+- Tagesumsatz kumuliert
+- Warenkosten kumuliert
+- Prozent kumuliert
+- pro Lieferant sichtbar, wie viel im Monat bereits gelaufen ist
+
+12. Manuelle Ergänzung möglich
+Wichtig:
+Auch wenn ein Lieferant bisher nicht in der Liste ist, möchte ich ihn direkt hinzufügen und danach sofort erfassen können.
+
+13. Optional vorbereiten
+Bitte die Struktur so anlegen, dass später auch PDF- oder Bild-Upload von Lieferscheinen möglich wäre, aber jetzt noch nicht zwingend umsetzen.
+
+14. Debug Logs
+Bitte loggen:
+[WAREN] tenant: ...
+[WAREN] entry saved: ...
+[WAREN] entry updated: ...
+[WAREN] entry deleted: ...
+[WAREN] month total chf: ...
+[WAREN] month total pct: ...
+[WAREN] supplier totals: ...
+
+15. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie die Daten in Supabase gespeichert werden
+- wie die %-Berechnung erfolgt
+- wie die kumulierte Monatslogik funktioniert
+- wie ich neue Lieferanten hinzufügen kann
+- wie ich am schnellsten 3 bis 4 Tageswerte testen kann

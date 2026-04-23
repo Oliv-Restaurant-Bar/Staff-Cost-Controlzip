@@ -52,6 +52,7 @@ import KategorienAnalyse from "./pages/KategorienAnalyse";
 import ProduktStamm from "./pages/ProduktStamm";
 import TagesansichtPage from "./pages/TagesansichtPage";
 import TagesControllingPage from "./pages/TagesControllingPage";
+import WarenrechnungenPage from "./pages/Warenrechnungen";
 
 const queryClient = new QueryClient();
 
@@ -200,6 +201,7 @@ const AppContent = () => {
             />
             <Route path="/artikel"          element={<ArtikelPage />} />
             <Route path="/artikel-tracking" element={<ArtikelTrackingPage />} />
+            <Route path="/warenrechnungen" element={<WarenrechnungenPage />} />
             <Route path="/wes-analyse"
               element={isBeaulieuManager ? <BlockedRoute path="/wes-analyse" /> : <WesAnalysePage />}
             />

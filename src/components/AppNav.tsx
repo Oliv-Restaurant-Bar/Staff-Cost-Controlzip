@@ -28,7 +28,7 @@ import {
   Upload, Settings, Inbox,
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
-  Wallet, BarChart3,
+  Wallet, BarChart3, ShoppingCart,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -126,6 +126,13 @@ const NAV_GROUPS: NavGroup[] = [
     groupLabel: 'Kosten',
     adminOnly: true,
     items: [
+      {
+        path: '/warenrechnungen',
+        label: 'Warenrechnungen',
+        shortLabel: 'Waren',
+        icon: ShoppingCart,
+        adminOnly: true,
+      },
       {
         path: '/wes-analyse',
         label: 'WES-Analyse',
