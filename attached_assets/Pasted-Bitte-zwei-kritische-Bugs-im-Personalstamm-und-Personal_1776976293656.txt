@@ -1,0 +1,119 @@
+Bitte zwei kritische Bugs im Personalstamm und Personal FIX beheben.
+
+Ziel:
+- Mitarbeiter im Beaulieu müssen persistent in Supabase gespeichert werden
+- Flex-Mitarbeiter müssen korrekt im Personal FIX erscheinen
+
+---
+
+1. BUG: Mitarbeiter werden nicht gespeichert
+
+Problem:
+Neu erstellte Mitarbeiter verschwinden nach Reload → aktuell nur im Frontend-State gespeichert
+
+Fix:
+
+a) Beim Erstellen eines Mitarbeiters sicherstellen:
+- Supabase INSERT oder UPSERT wird ausgeführt
+
+Beispiel:
+supabase.from('employees').insert({
+  id: 'b-xx',
+  name: ...,
+  department: ...,
+  restaurant_id: 'beaulieu'
+})
+
+b) WICHTIG:
+- restaurant_id MUSS = 'beaulieu' gesetzt werden
+- sonst wird er später nicht geladen
+
+c) Nach erfolgreichem Save:
+- neu laden via loadEmployees(tenantId)
+- kein reiner setState ohne DB
+
+d) Debug Logs:
+[EMPLOYEE SAVE] inserting employee...
+[EMPLOYEE SAVE] success id=...
+[EMPLOYEE SAVE] restaurant_id=beaulieu
+
+---
+
+2. BUG: Mitarbeiter laden (Personalstamm leer / unvollständig)
+
+Bitte prüfen:
+
+loadEmployees(restaurantId):
+- MUSS enthalten:
+.eq('restaurant_id', restaurantId)
+
+UND:
+- keine Fallback defaultEmployees verwenden
+- wenn leer → wirklich leer anzeigen
+
+Debug:
+[EMPLOYEE LOAD] tenant: beaulieu
+[EMPLOYEE LOAD] count: X
+
+---
+
+3. BUG: Flex-Mitarbeiter fehlen im Personal FIX
+
+Problem:
+Flex / Teilzeit Mitarbeiter erscheinen nicht
+
+Fix:
+
+a) Personal FIX darf NICHT nur Vollzeit laden
+bitte KEIN Filter wie:
+employment_type = 'fulltime'
+
+b) Stattdessen:
+ALLE Mitarbeiter laden:
+- Vollzeit
+- Teilzeit
+- Aushilfe / Flex
+
+c) Falls Gruppierung:
+- korrekt zuweisen:
+  Küche / Service
+
+d) Debug:
+[PERSONAL FIX] employees total: X
+[PERSONAL FIX] flex employees: X
+
+---
+
+4. Datenstruktur prüfen
+
+Bitte sicherstellen:
+employees Tabelle enthält:
+
+- id
+- name
+- department ('küche' | 'service')
+- restaurant_id ('beaulieu')
+- optional:
+  - employment_type
+  - pensum
+  - wage
+
+---
+
+5. HARD CHECK (wichtig)
+
+Nach Fix bitte automatisch prüfen:
+
+[CHECK] employees saved in DB: OK
+[CHECK] employees reload after refresh: OK
+[CHECK] beaulieu count: X
+[CHECK] flex employees visible: OK
+
+---
+
+6. Bitte danach kurz sagen:
+
+- wo der Save gefehlt hat (Datei)
+- ob insert oder upsert verwendet wird
+- ob restaurant_id jetzt immer gesetzt wird
+- warum Flex-Mitarbeiter vorher nicht erschienen sind

@@ -1321,9 +1321,11 @@ export default function PersonalFixPage() {
 
   useEffect(() => {
     setLoading(true);
+    console.log(`[EMPLOYEE LOAD] tenant: ${tenantId}`);
     loadEmployees(tenantId).then(emps => {
       if (emps) {
         setEmployees(emps);
+        console.log(`[EMPLOYEE LOAD] count: ${emps.length}`);
         // ─── [CONSISTENCY] Standardformat-Logs ───────────────────────────
         console.log(`[CONSISTENCY] tenant: ${tenantId}`);
         console.log(`[CONSISTENCY] personal_fix employees: ${emps.length}`);
@@ -1980,7 +1982,13 @@ export default function PersonalFixPage() {
         diffHoliday:  istHoliday  - planHoliday,
         diffTotalVar: istTotalVar - planTotalVar,
       };
-    }).filter(r => r.planWork > 0 || r.istWork > 0 || r.planHoliday > 0 || r.istHoliday > 0);
+    });
+
+    // ── [PERSONAL FIX] Debug ────────────────────────────────────────────────
+    const flexEmps = rows.filter(r => r.planWork === 0 && r.istWork === 0);
+    console.log(`[PERSONAL FIX] employees total: ${rows.length}`);
+    console.log(`[PERSONAL FIX] flex employees: ${rows.length}`);
+    console.log(`[CHECK] flex employees visible: ${rows.length > 0 ? 'OK' : 'none'}`);
 
     // ── Cross-check: table sums must match pfix master ──────────────────────
     const ref         = proRataDay !== null ? pfix.cutoff! : pfix.month;
