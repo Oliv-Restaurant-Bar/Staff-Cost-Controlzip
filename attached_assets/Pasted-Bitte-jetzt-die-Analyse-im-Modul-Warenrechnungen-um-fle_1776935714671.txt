@@ -1,0 +1,105 @@
+Bitte jetzt die Analyse im Modul "Warenrechnungen" um flexible Zeiträume erweitern.
+
+Ziel:
+Ich möchte die Warenkosten nicht nur für einen einzelnen Monat sehen, sondern auch als:
+- Wochenansicht
+- Monatsansicht
+- Mehrmonatsansicht
+- Jahresansicht
+- optional YTD
+
+Bitte exakt so umsetzen:
+
+1. Neue Zeitraum-Auswahl in der Analyse
+Bitte in der Analyse einen Zeitraum-Selector ergänzen mit:
+
+- Woche
+- Monat
+- Mehrere Monate
+- Jahr
+- optional YTD
+
+2. Wochenansicht
+In der Wochenansicht bitte zeigen:
+- Umsatz CHF der Woche
+- Warenkosten CHF der Woche
+- Warenkosten % der Woche
+- Lieferanten-Total der Woche
+- Status / Alert der Woche
+
+3. Monatsansicht
+In der Monatsansicht wie bisher:
+- Tageswerte
+- Monats-Total CHF
+- Monats-Total %
+- kumulierte Monatswerte
+- Lieferantenübersicht
+
+4. Mehrmonatsansicht
+Ich möchte mehrere Monate miteinander oder zusammen auswerten können.
+
+Bitte ermöglichen:
+- von Monat X bis Monat Y
+- kumulierter Umsatz über den Zeitraum
+- kumulierte Warenkosten über den Zeitraum
+- Warenkosten %
+- Aufteilung nach Lieferanten
+- Monatsvergleich innerhalb des Zeitraums
+
+5. Jahresansicht
+Bitte eine Jahresansicht ergänzen mit:
+- Umsatz pro Monat
+- Warenkosten pro Monat
+- Warenkosten % pro Monat
+- kumulierte Jahreswerte
+- Jahres-Total
+- Lieferanten-Total im Jahr
+
+6. Optional YTD
+Wenn sinnvoll:
+- aktuelles Jahr bis Stichtag
+- Umsatz YTD
+- Warenkosten YTD
+- Warenkosten % YTD
+
+7. Einheitliche Logik
+Wichtig:
+Alle Ansichten sollen dieselbe zentrale Datenbasis verwenden:
+- supplier_invoice_entries
+- Tagesumsatz des aktiven Mandanten
+
+Keine zweite Berechnungslogik je Ansicht.
+
+8. Lieferantenanalyse je Zeitraum
+Bitte in jeder Zeitansicht auch die Lieferanten sauber aggregieren:
+- Woche -> Lieferanten dieser Woche
+- Monat -> Lieferanten im Monat
+- Mehrmonate -> Lieferanten im Zeitraum
+- Jahr -> Lieferanten im Jahr
+
+9. Diagramme / Visualisierung
+Wenn bereits Diagramm vorhanden:
+- auf den gewählten Zeitraum reagieren
+- Woche = Tagesverlauf der Woche
+- Monat = Tagesverlauf des Monats
+- Jahr = Monatsverlauf des Jahres
+
+10. UI
+Bitte die Zeitumschaltung ähnlich aufbauen wie in anderen Modulen:
+- klar sichtbare Buttons / Tabs
+- nicht überladen
+- aktuelle Auswahl gut erkennbar
+
+11. Debug Logs
+Bitte loggen:
+[WAREN-ANALYSE] mode: week|month|multi_month|year|ytd
+[WAREN-ANALYSE] range: ...
+[WAREN-ANALYSE] revenue total: ...
+[WAREN-ANALYSE] cost total: ...
+[WAREN-ANALYSE] cost pct: ...
+
+12. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- welche Zeitansichten jetzt möglich sind
+- wie Mehrmonats- und Jahresansicht berechnet werden
+- ob die Lieferantenanalyse je Zeitraum funktioniert
