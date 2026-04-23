@@ -1,0 +1,120 @@
+Bitte jetzt die neue Seite "Warenrechnungen" optisch und strukturell als starkes Controlling-Modul gestalten.
+
+Ziel:
+Die Seite soll nicht nur funktional sein, sondern im Alltag schnell lesbar und benutzerfreundlich.
+Sie soll professionell wirken und logisch zu Tages-Controlling / Personal FIX passen.
+
+Bitte exakt so umsetzen:
+
+1. Seitenaufbau klar strukturieren
+Die Seite "Warenrechnungen" soll in 4 klare Bereiche gegliedert sein:
+
+A) Header
+- Titel: Warenrechnungen
+- aktiver Monat / Zeitraum
+- aktiver Mandant sichtbar
+
+B) KPI-Block oben
+- Warenkosten heute CHF
+- Warenkosten heute %
+- Warenkosten Monat CHF
+- Warenkosten Monat %
+- kumulierter Umsatz
+- Anzahl Lieferanten mit Einträgen
+
+C) Schnellerfassung
+- kompakt, sofort nutzbar
+- Datum
+- Lieferant
+- Betrag
+- MWST Toggle
+- Speichern
+
+D) Analyse / Übersicht
+- Monatsübersicht
+- Lieferantenübersicht
+- kumulierte Entwicklung
+
+2. KPI-Boxen wie in der Webapp
+Bitte die KPI-Boxen optisch ähnlich wie im Tages-Controlling / Personal FIX gestalten:
+- gleich hohe Boxen
+- klare Titel
+- grosse Hauptzahl
+- kleine Sekundärinfo darunter
+- ruhige Farben
+
+3. Schnellerfassung benutzerfreundlich
+Die Schnellerfassung soll aussehen wie ein produktives Erfassungsformular:
+- Felder auf einer klaren Linie
+- nicht zu breit
+- Speichern-Button gut sichtbar
+- optional "Eintrag gespeichert" Feedback
+
+4. Tabellen / Analyse lesbar machen
+Bitte die Übersichtstabellen klar strukturieren:
+- Header sticky
+- Zahlen rechtsbündig
+- CHF sauber formatiert
+- Prozentwerte sauber formatiert
+- Zebra-Zeilen
+- Monats-Total klar hervorgehoben
+- Lieferanten-Zeilen gut scanbar
+
+5. Kumulierte Monatslogik visuell hervorheben
+Bitte in der Analyse klar sichtbar machen:
+- Tageswert
+- kumulierter Monatswert
+- Prozentwert
+
+Nicht alles gleich stark gewichten.
+Kumulierte Werte sollen visuell als wichtige Steuerungsgrösse erkennbar sein.
+
+6. Zwei sinnvolle Tabs oder Unteransichten
+Bitte die Seite intern sauber aufteilen, z.B. über Tabs oder Segmente:
+
+- Erfassung
+- Analyse
+
+Oder:
+- Tageserfassung
+- Monatsübersicht
+
+Wichtig:
+Die Seite soll nicht überladen wirken.
+
+7. Farben logisch einsetzen
+- neutrale Farben für normale Werte
+- grün für gute / tiefe Warenkostenquote
+- rot für hohe Warenkostenquote
+- gelb für auffällige Werte
+- dezent und druck-/bildschirmtauglich
+
+8. Lieferantenübersicht übersichtlich
+Die Lieferanten sollen in der Analyse gut sichtbar sein:
+- Monatskosten pro Lieferant
+- Anteil am Total
+- Tagesverteilung falls sinnvoll
+
+Optional:
+die grössten Lieferanten oben
+
+9. Bearbeiten / Löschen angenehm machen
+- keine versteckten Mini-Icons
+- klarer Edit / Delete Zugriff
+- ohne unruhige UI
+
+10. Nähe zur Webapp
+Die Seite soll sich optisch an den bestehenden Modulen orientieren:
+- Personal FIX
+- Tages-Controlling
+- Dashboard
+
+Wichtig:
+Nicht wie ein Fremdmodul oder Roh-Adminscreen wirken.
+
+11. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie die Seite strukturiert wurde
+- welche Tabs / Bereiche es gibt
+- wie KPI, Erfassung und Analyse optisch getrennt wurden
+- ob die Seite jetzt benutzerfreundlich und controlling-tauglich wirkt

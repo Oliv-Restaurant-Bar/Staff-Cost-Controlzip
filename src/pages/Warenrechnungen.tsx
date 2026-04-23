@@ -1,8 +1,8 @@
 /**
  * Warenrechnungen – Modul zur Erfassung und Kontrolle von Lieferantenrechnungen
  * ==============================================================================
- * Erfassung per Tag und Lieferant mit MWST-Logik.
- * Vergleich Warenkosten vs. Tagesumsatz (% und CHF).
+ * Tab A: Erfassung  → KPI-Boxen + Schnellerfassung + letzte Einträge
+ * Tab B: Analyse    → Lieferanten-Übersicht + kumulierter Verlauf
  * Mandantenfähig (Oliv / Beaulieu) via TenantContext.
  *
  * Debug-Logs: [WAREN]
@@ -39,19 +39,11 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import {
   ShoppingCart, Plus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
-  TrendingUp, AlertCircle, CheckCircle2, Package,
+  TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -79,20 +71,19 @@ const EMPTY_FORM: EntryForm = {
 
 const VAT_RATES = ['8.1', '2.6', '3.8', '0'];
 
+type Tab = 'erfassung' | 'analyse';
+
 // ─── Hilfsfunktionen ──────────────────────────────────────────────────────────
 
 function fmtChf(val: number): string {
   return val.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-
 function fmtPct(val: number): string {
-  return val.toFixed(1) + '%';
+  return val.toFixed(1) + ' %';
 }
-
 function generateId(): string {
   return `inv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
-
 function getDaysInMonth(year: number, month: number): string[] {
   const days: string[] = [];
   const d = new Date(year, month - 1, 1);
@@ -102,74 +93,103 @@ function getDaysInMonth(year: number, month: number): string[] {
   }
   return days;
 }
-
 function formatDateShort(dateStr: string): string {
   const d = new Date(dateStr + 'T12:00:00');
   return d.toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' });
+}
+function formatDateLong(dateStr: string): string {
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' });
 }
 
 // ─── KPI-Box ──────────────────────────────────────────────────────────────────
 
 const KpiBox = ({
-  label, value, sub, icon: Icon, variant = 'default',
+  label, value, sub, sub2, icon: Icon, variant = 'default',
 }: {
   label: string;
   value: string;
   sub?: string;
+  sub2?: string;
   icon?: React.FC<{ className?: string }>;
-  variant?: 'default' | 'warn' | 'ok' | 'muted';
+  variant?: 'default' | 'warn' | 'alert' | 'ok' | 'muted';
 }) => {
-  const colors = {
+  const bg: Record<string, string> = {
     default: 'bg-card border-border',
-    warn:    'bg-orange-50 border-orange-200 dark:bg-orange-950/20 dark:border-orange-800',
+    warn:    'bg-amber-50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800',
+    alert:   'bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800',
     ok:      'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800',
-    muted:   'bg-muted/40 border-border',
+    muted:   'bg-muted/30 border-border',
   };
-  const valColors = {
+  const vc: Record<string, string> = {
     default: 'text-foreground',
-    warn:    'text-orange-700 dark:text-orange-400',
+    warn:    'text-amber-700 dark:text-amber-400',
+    alert:   'text-red-700 dark:text-red-400',
     ok:      'text-emerald-700 dark:text-emerald-400',
     muted:   'text-muted-foreground',
   };
+  const dot: Record<string, string> = {
+    default: 'bg-blue-400',
+    warn:    'bg-amber-400',
+    alert:   'bg-red-500',
+    ok:      'bg-emerald-500',
+    muted:   'bg-muted-foreground/30',
+  };
   return (
-    <div className={cn('rounded-xl border p-4 space-y-1', colors[variant])}>
+    <div className={cn('rounded-xl border p-4 flex flex-col gap-1 min-h-[96px]', bg[variant])}>
       <div className="flex items-center gap-1.5">
+        <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', dot[variant])} />
         {Icon && <Icon className="h-3.5 w-3.5 text-muted-foreground" />}
-        <p className="text-xs text-muted-foreground font-medium">{label}</p>
+        <p className="text-xs text-muted-foreground font-medium leading-tight">{label}</p>
       </div>
-      <p className={cn('text-2xl font-bold tabular-nums', valColors[variant])}>{value}</p>
-      {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
+      <p className={cn('text-2xl font-bold tabular-nums leading-none mt-0.5', vc[variant])}>{value}</p>
+      {sub && <p className="text-xs text-muted-foreground leading-tight">{sub}</p>}
+      {sub2 && <p className="text-[11px] text-muted-foreground/60 leading-tight">{sub2}</p>}
     </div>
   );
 };
+
+// ─── Pct-Badge ────────────────────────────────────────────────────────────────
+
+function PctBadge({ pct }: { pct: number | null }) {
+  if (pct === null) return <span className="text-xs text-muted-foreground/40">–</span>;
+  const cls = pct > 35
+    ? 'bg-red-100 text-red-700 dark:bg-red-950/30 dark:text-red-400'
+    : pct > 30
+    ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400'
+    : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400';
+  return (
+    <span className={cn('inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-mono font-semibold tabular-nums', cls)}>
+      {fmtPct(pct)}
+    </span>
+  );
+}
 
 // ─── Hauptkomponente ──────────────────────────────────────────────────────────
 
 export default function WarenrechnungenPage() {
   const { tenantId, tenant } = useTenant();
-
-  // Monat
   const today = new Date();
-  const [year, setYear] = useState(today.getFullYear());
+  const todayStr = today.toISOString().split('T')[0];
+
+  const [year,  setYear]  = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const monthKey = `${year}-${String(month).padStart(2, '0')}`;
 
-  // Daten
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [entries, setEntries] = useState<InvoiceEntry[]>([]);
-  const [revenueByDate, setRevenueByDate] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(true);
+  const [suppliers,      setSuppliers]      = useState<Supplier[]>([]);
+  const [entries,        setEntries]        = useState<InvoiceEntry[]>([]);
+  const [revenueByDate,  setRevenueByDate]  = useState<Record<string, number>>({});
+  const [loading,        setLoading]        = useState(true);
+  const [tab,            setTab]            = useState<Tab>('erfassung');
 
-  // UI-State
-  const [form, setForm] = useState<EntryForm>(EMPTY_FORM);
-  const [saving, setSaving] = useState(false);
-  const [editEntry, setEditEntry] = useState<InvoiceEntry | null>(null);
-  const [showEditDialog, setShowEditDialog] = useState(false);
-  const [showSupplierDialog, setShowSupplierDialog] = useState(false);
-  const [newSupplierName, setNewSupplierName] = useState('');
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [form,              setForm]              = useState<EntryForm>(EMPTY_FORM);
+  const [saving,            setSaving]            = useState(false);
+  const [editEntry,         setEditEntry]         = useState<InvoiceEntry | null>(null);
+  const [showEditDialog,    setShowEditDialog]    = useState(false);
+  const [showSupplierDialog,setShowSupplierDialog]= useState(false);
+  const [newSupplierName,   setNewSupplierName]   = useState('');
+  const [deleteConfirm,     setDeleteConfirm]     = useState<string | null>(null);
 
-  // Daten laden
   const loadData = useCallback(async () => {
     setLoading(true);
     console.log(`[WAREN] tenant: ${tenantId} · month: ${monthKey}`);
@@ -186,7 +206,6 @@ export default function WarenrechnungenPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Monat wechseln
   const prevMonth = () => {
     if (month === 1) { setYear(y => y - 1); setMonth(12); }
     else setMonth(m => m - 1);
@@ -197,49 +216,38 @@ export default function WarenrechnungenPage() {
   };
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1;
 
-  // Statistik
-  const stats = useMemo(
-    () => computeMonthStats(entries, revenueByDate),
-    [entries, revenueByDate],
-  );
+  const stats = useMemo(() => computeMonthStats(entries, revenueByDate), [entries, revenueByDate]);
 
   const totalRevenue = useMemo(
     () => Object.values(revenueByDate).reduce((s, v) => s + v, 0),
     [revenueByDate],
   );
-
-  const monthPct = totalRevenue > 0 ? (stats.totalNet / totalRevenue) * 100 : null;
-
-  // Heute-Werte
-  const todayStr = today.toISOString().split('T')[0];
-  const todayNet = useMemo(
-    () => entries.filter(e => e.date === todayStr).reduce((s, e) => s + e.amountNet, 0),
-    [entries, todayStr],
-  );
+  const monthPct     = totalRevenue > 0 ? (stats.totalNet / totalRevenue) * 100 : null;
+  const todayNet     = useMemo(() => entries.filter(e => e.date === todayStr).reduce((s, e) => s + e.amountNet, 0), [entries, todayStr]);
   const todayRevenue = revenueByDate[todayStr] ?? 0;
-  const todayPct = todayRevenue > 0 ? (todayNet / todayRevenue) * 100 : null;
+  const todayPct     = todayRevenue > 0 ? (todayNet / todayRevenue) * 100 : null;
 
-  // Tage im Monat mit Einträgen
-  const datesWithEntries = useMemo(() => {
-    const ds = new Set(entries.map(e => e.date));
-    return Array.from(ds).sort();
-  }, [entries]);
+  const datesWithEntries = useMemo(() => Array.from(new Set(entries.map(e => e.date))).sort(), [entries]);
 
-  // Tage mit Einträgen oder Umsatz für Tabelle (max. 15 letzte Tage)
   const tableDates = useMemo(() => {
-    const all = getDaysInMonth(year, month);
-    const today2 = new Date().toISOString().split('T')[0];
-    const past = all.filter(d => d <= today2);
-    return past.slice(-15); // max. 15 Tage
-  }, [year, month]);
+    const all  = getDaysInMonth(year, month);
+    const past = all.filter(d => d <= todayStr);
+    return past.slice(-14);
+  }, [year, month, todayStr]);
 
-  // Betrag live berechnen
   const liveAmounts = useMemo(() => {
     if (!form.amount || isNaN(Number(form.amount))) return null;
     return calcAmounts(Number(form.amount), form.vatIncluded, Number(form.vatRate));
   }, [form.amount, form.vatIncluded, form.vatRate]);
 
-  // ─── Eintrag speichern ──────────────────────────────────────────────────
+  const activeSuppliers    = suppliers.filter(s => s.active);
+  const suppliersWithEntries = stats.supplierTotals.length;
+
+  function getCumulative(upToDate: string) {
+    const cumNet = entries.filter(e => e.date <= upToDate).reduce((s, e) => s + e.amountNet, 0);
+    const cumRev = Object.entries(revenueByDate).filter(([d]) => d <= upToDate).reduce((s, [, v]) => s + v, 0);
+    return { cumNet, cumRev, pct: cumRev > 0 ? (cumNet / cumRev) * 100 : null };
+  }
 
   async function handleSave() {
     if (!form.supplierName) { toast.error('Bitte Lieferant wählen.'); return; }
@@ -249,36 +257,25 @@ export default function WarenrechnungenPage() {
     const amounts = calcAmounts(Number(form.amount), form.vatIncluded, Number(form.vatRate));
     setSaving(true);
     const entry: InvoiceEntry = {
-      id: generateId(),
-      date: form.date,
-      supplierName: form.supplierName,
-      amountGross: amounts.amountGross,
-      amountNet: amounts.amountNet,
-      vatIncluded: form.vatIncluded,
-      vatRate: Number(form.vatRate),
-      reference: form.reference || undefined,
-      note: form.note || undefined,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      id: generateId(), date: form.date, supplierName: form.supplierName,
+      amountGross: amounts.amountGross, amountNet: amounts.amountNet,
+      vatIncluded: form.vatIncluded, vatRate: Number(form.vatRate),
+      reference: form.reference || undefined, note: form.note || undefined,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
     await saveInvoiceEntry(tenantId, entry);
+    console.log(`[WAREN] entry saved: ${entry.supplierName} · ${entry.date} · net CHF ${entry.amountNet.toFixed(2)}`);
     await loadData();
     setForm(f => ({ ...EMPTY_FORM, date: f.date, supplierName: f.supplierName, vatRate: f.vatRate, vatIncluded: f.vatIncluded }));
-    toast.success(`Eintrag gespeichert: ${form.supplierName} · CHF ${fmtChf(amounts.amountNet)} netto`);
+    toast.success(`${form.supplierName} · CHF ${fmtChf(amounts.amountNet)} netto gespeichert`);
     setSaving(false);
-  }
-
-  // ─── Eintrag bearbeiten ─────────────────────────────────────────────────
-
-  function openEdit(entry: InvoiceEntry) {
-    setEditEntry(entry);
-    setShowEditDialog(true);
   }
 
   async function handleEditSave() {
     if (!editEntry) return;
     setSaving(true);
     await saveInvoiceEntry(tenantId, { ...editEntry, updatedAt: new Date().toISOString() });
+    console.log(`[WAREN] entry updated: ${editEntry.id}`);
     await loadData();
     setShowEditDialog(false);
     setEditEntry(null);
@@ -286,16 +283,13 @@ export default function WarenrechnungenPage() {
     setSaving(false);
   }
 
-  // ─── Eintrag löschen ────────────────────────────────────────────────────
-
   async function handleDelete(entry: InvoiceEntry) {
     await deleteInvoiceEntry(tenantId, entry.id, entry.date);
+    console.log(`[WAREN] entry deleted: ${entry.id}`);
     await loadData();
     setDeleteConfirm(null);
     toast.success('Eintrag gelöscht.');
   }
-
-  // ─── Lieferant hinzufügen ───────────────────────────────────────────────
 
   async function handleAddSupplier() {
     const name = newSupplierName.trim();
@@ -303,557 +297,578 @@ export default function WarenrechnungenPage() {
     if (suppliers.some(s => s.name.toLowerCase() === name.toLowerCase())) {
       toast.error('Lieferant existiert bereits.'); return;
     }
-    const updated: Supplier[] = [
-      ...suppliers,
-      { id: `sup-${Date.now()}`, name, active: true, createdAt: new Date().toISOString() },
-    ];
+    const updated: Supplier[] = [...suppliers, { id: `sup-${Date.now()}`, name, active: true, createdAt: new Date().toISOString() }];
     await saveSuppliers(tenantId, updated);
     setSuppliers(updated);
     setNewSupplierName('');
-    toast.success(`Lieferant "${name}" hinzugefügt.`);
+    toast.success(`"${name}" hinzugefügt.`);
   }
 
   async function handleToggleSupplier(sup: Supplier) {
-    const updated = suppliers.map(s =>
-      s.id === sup.id ? { ...s, active: !s.active } : s,
-    );
+    const updated = suppliers.map(s => s.id === sup.id ? { ...s, active: !s.active } : s);
     await saveSuppliers(tenantId, updated);
     setSuppliers(updated);
   }
 
-  const activeSuppliers = suppliers.filter(s => s.active);
-  const suppliersWithEntries = stats.supplierTotals.length;
-
-  // ─── Kumulierungslogik ──────────────────────────────────────────────────
-
-  function getCumulative(upToDate: string) {
-    const relevant = entries.filter(e => e.date <= upToDate);
-    const cumNet = relevant.reduce((s, e) => s + e.amountNet, 0);
-    const cumRev = Object.entries(revenueByDate)
-      .filter(([d]) => d <= upToDate)
-      .reduce((s, [, v]) => s + v, 0);
-    const pct = cumRev > 0 ? (cumNet / cumRev) * 100 : null;
-    return { cumNet, cumRev, pct };
-  }
-
-  // ─── Render ─────────────────────────────────────────────────────────────
-
   const monthLabel = new Date(year, month - 1, 1).toLocaleDateString('de-CH', { month: 'long', year: 'numeric' });
+  const kpiVariant = (pct: number | null): 'ok' | 'warn' | 'alert' | 'muted' => {
+    if (pct === null) return 'muted';
+    if (pct > 35) return 'alert';
+    if (pct > 30) return 'warn';
+    return 'ok';
+  };
+
+  // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-4 md:p-6 space-y-6 max-w-full">
+    <div className="min-h-screen bg-background">
 
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg" style={{ backgroundColor: tenant.color + '18' }}>
-            <ShoppingCart className="h-5 w-5" style={{ color: tenant.color }} />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold">Warenrechnungen</h1>
-            <p className="text-xs text-muted-foreground">{tenant.name}</p>
-          </div>
-        </div>
+      {/* ── Sticky Header ───────────────────────────────────────────────────── */}
+      <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur-sm">
+        <div className="mx-auto max-w-[1400px] px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
 
-        {/* Monatswechsel */}
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={prevMonth}>
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <span className="text-sm font-semibold min-w-[140px] text-center">{monthLabel}</span>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={nextMonth} disabled={isCurrentMonth}>
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setShowSupplierDialog(true)} className="h-8 gap-1.5">
+          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+            <div className="p-1.5 rounded-lg flex-shrink-0" style={{ backgroundColor: tenant.color + '18' }}>
+              <ShoppingCart className="h-4 w-4" style={{ color: tenant.color }} />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-base font-semibold leading-none">Warenrechnungen</h1>
+              <p className="text-xs text-muted-foreground mt-0.5">{tenant.name}</p>
+            </div>
+          </div>
+
+          {/* Monat */}
+          <div className="flex items-center gap-1.5">
+            <button onClick={prevMonth} className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors">
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="text-sm font-semibold tabular-nums min-w-[148px] text-center">{monthLabel}</span>
+            <button onClick={nextMonth} disabled={isCurrentMonth} className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors disabled:opacity-40">
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Lieferanten */}
+          <Button variant="outline" size="sm" onClick={() => setShowSupplierDialog(true)} className="h-8 gap-1.5 text-xs">
             <Settings2 className="h-3.5 w-3.5" />
             Lieferanten
           </Button>
         </div>
-      </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-16 text-muted-foreground text-sm">
-          Wird geladen…
+        {/* ── Tabs ─────────────────────────────────────────────────────────── */}
+        <div className="mx-auto max-w-[1400px] px-4 sm:px-6 flex gap-0 border-t border-border/50">
+          {([
+            { id: 'erfassung', label: 'Erfassung',  Icon: ClipboardList },
+            { id: 'analyse',   label: 'Analyse',    Icon: BarChart3     },
+          ] as { id: Tab; label: string; Icon: React.FC<{ className?: string }> }[]).map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors',
+                tab === t.id
+                  ? 'border-foreground text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border',
+              )}
+            >
+              <t.Icon className="h-3.5 w-3.5" />
+              {t.label}
+              {t.id === 'erfassung' && entries.length > 0 && (
+                <span className="ml-1 text-[10px] bg-muted text-muted-foreground rounded-full px-1.5 py-0.5 font-mono">
+                  {entries.length}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
-      ) : (
-        <>
-          {/* ── KPI-Boxen ───────────────────────────────────────────────── */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            <KpiBox
-              label="Warenkosten heute"
-              value={`CHF ${fmtChf(todayNet)}`}
-              sub={isCurrentMonth && todayRevenue === 0 ? 'Kein Umsatz' : undefined}
-              icon={ShoppingCart}
-              variant={todayPct !== null && todayPct > 35 ? 'warn' : todayNet > 0 ? 'ok' : 'muted'}
-            />
-            <KpiBox
-              label="Warenkosten heute %"
-              value={todayPct !== null ? fmtPct(todayPct) : '–'}
-              sub={todayRevenue > 0 ? `Umsatz CHF ${fmtChf(todayRevenue)}` : 'Kein Umsatz'}
-              icon={TrendingUp}
-              variant={todayPct !== null ? (todayPct > 35 ? 'warn' : 'ok') : 'muted'}
-            />
-            <KpiBox
-              label="Warenkosten Monat"
-              value={`CHF ${fmtChf(stats.totalNet)}`}
-              sub={`${stats.entryCount} Einträge · exkl. MWST`}
-              icon={Package}
-              variant={stats.totalNet > 0 ? 'default' : 'muted'}
-            />
-            <KpiBox
-              label="Warenkosten Monat %"
-              value={monthPct !== null ? fmtPct(monthPct) : '–'}
-              sub={monthPct !== null ? `Ziel ≤ 30%` : 'Kein Umsatz'}
-              icon={TrendingUp}
-              variant={monthPct !== null ? (monthPct > 35 ? 'warn' : monthPct > 30 ? 'default' : 'ok') : 'muted'}
-            />
-            <KpiBox
-              label="Kum. Umsatz Monat"
-              value={totalRevenue > 0 ? `CHF ${fmtChf(totalRevenue)}` : '–'}
-              sub={totalRevenue === 0 ? 'Keine Umsatzdaten' : undefined}
-              icon={TrendingUp}
-              variant={totalRevenue > 0 ? 'default' : 'muted'}
-            />
-            <KpiBox
-              label="Lieferanten aktiv"
-              value={String(suppliersWithEntries)}
-              sub={`von ${activeSuppliers.length} verfügbar`}
-              icon={CheckCircle2}
-              variant={suppliersWithEntries > 0 ? 'default' : 'muted'}
-            />
+      </header>
+
+      {/* ── Inhalt ──────────────────────────────────────────────────────────── */}
+      <main className="mx-auto max-w-[1400px] px-4 sm:px-6 py-5">
+        {loading ? (
+          <div className="flex items-center justify-center py-20 text-muted-foreground text-sm gap-2">
+            <span className="animate-spin rounded-full h-4 w-4 border-2 border-border border-t-foreground" />
+            Wird geladen…
           </div>
-
-          {/* ── Schnellerfassung ─────────────────────────────────────────── */}
-          <div className="bg-card border border-border rounded-xl p-4">
-            <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
-              <Plus className="h-4 w-4" style={{ color: tenant.color }} />
-              Neue Rechnung erfassen
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 items-end">
-
-              {/* Datum */}
-              <div className="space-y-1">
-                <Label className="text-xs">Datum</Label>
-                <Input
-                  type="date"
-                  value={form.date}
-                  max={today.toISOString().split('T')[0]}
-                  onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-                  className="h-9 text-sm"
-                />
-              </div>
-
-              {/* Lieferant */}
-              <div className="space-y-1 md:col-span-1 lg:col-span-2">
-                <Label className="text-xs">Lieferant</Label>
-                <Select
-                  value={form.supplierName}
-                  onValueChange={v => setForm(f => ({ ...f, supplierName: v }))}
-                >
-                  <SelectTrigger className="h-9 text-sm">
-                    <SelectValue placeholder="Lieferant wählen" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {activeSuppliers.map(s => (
-                      <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Betrag */}
-              <div className="space-y-1">
-                <Label className="text-xs">Betrag (CHF)</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  value={form.amount}
-                  onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
-                  className="h-9 text-sm"
-                />
-              </div>
-
-              {/* MWST Toggle */}
-              <div className="space-y-1">
-                <Label className="text-xs">MWST</Label>
-                <div className="flex rounded-md overflow-hidden border border-border h-9 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, vatIncluded: true }))}
-                    className={cn(
-                      'flex-1 px-2 font-medium transition-colors',
-                      form.vatIncluded ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
-                    )}
-                  >
-                    inkl.
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, vatIncluded: false }))}
-                    className={cn(
-                      'flex-1 px-2 font-medium transition-colors',
-                      !form.vatIncluded ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
-                    )}
-                  >
-                    exkl.
-                  </button>
-                </div>
-              </div>
-
-              {/* MwSt-Satz */}
-              <div className="space-y-1">
-                <Label className="text-xs">Satz</Label>
-                <Select
-                  value={form.vatRate}
-                  onValueChange={v => setForm(f => ({ ...f, vatRate: v }))}
-                >
-                  <SelectTrigger className="h-9 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {VAT_RATES.map(r => (
-                      <SelectItem key={r} value={r}>{r === '0' ? '0% (befreit)' : `${r}%`}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Speichern */}
-              <div className="space-y-1">
-                <Label className="text-xs">&nbsp;</Label>
-                <Button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="h-9 w-full gap-1.5"
-                  style={{ backgroundColor: tenant.color }}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Speichern
-                </Button>
-              </div>
+        ) : (
+          <>
+            {/* ── KPI-Block (immer sichtbar) ──────────────────────────────── */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
+              <KpiBox
+                label="Warenkosten heute"
+                value={`CHF ${fmtChf(todayNet)}`}
+                sub={todayPct !== null ? `${fmtPct(todayPct)} vom Umsatz` : 'Kein Umsatz'}
+                sub2={isCurrentMonth ? undefined : undefined}
+                icon={ShoppingCart}
+                variant={todayNet === 0 ? 'muted' : kpiVariant(todayPct)}
+              />
+              <KpiBox
+                label="Warenkosten heute %"
+                value={todayPct !== null ? fmtPct(todayPct) : '–'}
+                sub={todayRevenue > 0 ? `Umsatz CHF ${fmtChf(todayRevenue)}` : 'Kein Umsatz'}
+                icon={TrendingUp}
+                variant={kpiVariant(todayPct)}
+              />
+              <KpiBox
+                label="Warenkosten Monat"
+                value={`CHF ${fmtChf(stats.totalNet)}`}
+                sub={`${stats.entryCount} Einträge (exkl. MWST)`}
+                icon={Package}
+                variant={stats.totalNet > 0 ? 'default' : 'muted'}
+              />
+              <KpiBox
+                label="Warenkosten Monat %"
+                value={monthPct !== null ? fmtPct(monthPct) : '–'}
+                sub={monthPct !== null ? `Ziel ≤ 30 %` : 'Kein Umsatz'}
+                sub2={monthPct !== null && monthPct <= 30 ? '✓ Im Zielbereich' : monthPct !== null ? '↑ Über Ziel' : undefined}
+                icon={TrendingUp}
+                variant={kpiVariant(monthPct)}
+              />
+              <KpiBox
+                label="Kum. Umsatz Monat"
+                value={totalRevenue > 0 ? `CHF ${fmtChf(totalRevenue)}` : '–'}
+                sub={totalRevenue === 0 ? 'Keine Umsatzdaten' : `${Object.keys(revenueByDate).length} Tage`}
+                icon={TrendingUp}
+                variant={totalRevenue > 0 ? 'default' : 'muted'}
+              />
+              <KpiBox
+                label="Lieferanten aktiv"
+                value={String(suppliersWithEntries)}
+                sub={`von ${activeSuppliers.length} verfügbar`}
+                icon={CheckCircle2}
+                variant={suppliersWithEntries > 0 ? 'ok' : 'muted'}
+              />
             </div>
 
-            {/* Live-Berechnung */}
-            {liveAmounts && (
-              <div className="mt-2.5 flex gap-4 text-xs text-muted-foreground bg-muted/40 rounded-md px-3 py-1.5">
-                <span>Netto: <strong className="text-foreground">CHF {fmtChf(liveAmounts.amountNet)}</strong></span>
-                <span>Brutto: <strong className="text-foreground">CHF {fmtChf(liveAmounts.amountGross)}</strong></span>
-                <span className="text-muted-foreground/60">MWST {form.vatRate}%</span>
+            {/* ── Tab: Erfassung ────────────────────────────────────────── */}
+            {tab === 'erfassung' && (
+              <div className="space-y-5">
+
+                {/* Schnellerfassung */}
+                <section className="bg-card border border-border rounded-xl overflow-hidden">
+                  <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
+                    <Plus className="h-4 w-4" style={{ color: tenant.color }} />
+                    <h2 className="text-sm font-semibold">Neue Rechnung erfassen</h2>
+                  </div>
+                  <div className="px-5 py-4 space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 items-end">
+
+                      {/* Datum */}
+                      <div className="space-y-1 col-span-1">
+                        <Label className="text-xs text-muted-foreground">Datum</Label>
+                        <Input
+                          type="date"
+                          value={form.date}
+                          max={today.toISOString().split('T')[0]}
+                          onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+                          className="h-9 text-sm"
+                        />
+                      </div>
+
+                      {/* Lieferant */}
+                      <div className="space-y-1 col-span-2">
+                        <Label className="text-xs text-muted-foreground">Lieferant</Label>
+                        <Select value={form.supplierName} onValueChange={v => setForm(f => ({ ...f, supplierName: v }))}>
+                          <SelectTrigger className="h-9 text-sm">
+                            <SelectValue placeholder="Lieferant wählen…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {activeSuppliers.map(s => (
+                              <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Betrag */}
+                      <div className="space-y-1 col-span-1">
+                        <Label className="text-xs text-muted-foreground">Betrag (CHF)</Label>
+                        <Input
+                          type="number" step="0.01" min="0" placeholder="0.00"
+                          value={form.amount}
+                          onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+                          className="h-9 text-sm"
+                          onKeyDown={e => e.key === 'Enter' && handleSave()}
+                        />
+                      </div>
+
+                      {/* MWST Toggle */}
+                      <div className="space-y-1 col-span-1">
+                        <Label className="text-xs text-muted-foreground">MWST</Label>
+                        <div className="flex rounded-md overflow-hidden border border-border h-9 text-xs font-medium">
+                          <button
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, vatIncluded: true }))}
+                            className={cn(
+                              'flex-1 transition-colors',
+                              form.vatIncluded ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted',
+                            )}
+                          >inkl.</button>
+                          <button
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, vatIncluded: false }))}
+                            className={cn(
+                              'flex-1 transition-colors border-l border-border',
+                              !form.vatIncluded ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted',
+                            )}
+                          >exkl.</button>
+                        </div>
+                      </div>
+
+                      {/* Satz */}
+                      <div className="space-y-1 col-span-1">
+                        <Label className="text-xs text-muted-foreground">Satz</Label>
+                        <Select value={form.vatRate} onValueChange={v => setForm(f => ({ ...f, vatRate: v }))}>
+                          <SelectTrigger className="h-9 text-sm">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {VAT_RATES.map(r => (
+                              <SelectItem key={r} value={r}>{r === '0' ? '0 % (befreit)' : `${r} %`}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Speichern */}
+                      <div className="space-y-1 col-span-2">
+                        <Label className="text-xs">&nbsp;</Label>
+                        <Button
+                          onClick={handleSave}
+                          disabled={saving || !form.supplierName || !form.amount}
+                          className="h-9 w-full gap-1.5 font-semibold"
+                          style={{ backgroundColor: tenant.color }}
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          {saving ? 'Speichern…' : 'Speichern'}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Live-Berechnung */}
+                    {liveAmounts && (
+                      <div className="flex items-center gap-5 text-xs bg-muted/40 rounded-lg px-4 py-2 border border-border/50">
+                        <span className="text-muted-foreground">Netto:</span>
+                        <strong className="text-foreground tabular-nums">CHF {fmtChf(liveAmounts.amountNet)}</strong>
+                        <span className="text-muted-foreground/40">|</span>
+                        <span className="text-muted-foreground">Brutto:</span>
+                        <strong className="text-foreground tabular-nums">CHF {fmtChf(liveAmounts.amountGross)}</strong>
+                        <span className="text-muted-foreground/50 ml-auto">MWST {form.vatRate} %</span>
+                      </div>
+                    )}
+
+                    {/* Optionale Felder */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Rechnungs-/Lieferscheinnummer</Label>
+                        <Input
+                          placeholder="z.B. LS-2025-0412"
+                          value={form.reference}
+                          onChange={e => setForm(f => ({ ...f, reference: e.target.value }))}
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Bemerkung</Label>
+                        <Input
+                          placeholder="z.B. Wochenlieferung"
+                          value={form.note}
+                          onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Letzte Einträge */}
+                {entries.length === 0 ? (
+                  <div className="bg-card border border-dashed border-border rounded-xl p-10 text-center">
+                    <ShoppingCart className="h-10 w-10 text-muted-foreground/20 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-muted-foreground">Noch keine Einträge für {monthLabel}</p>
+                    <p className="text-xs text-muted-foreground/50 mt-1">Erfasse oben deine erste Warenrechnung.</p>
+                  </div>
+                ) : (
+                  <section className="bg-card border border-border rounded-xl overflow-hidden">
+                    <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between">
+                      <h2 className="text-sm font-semibold">Einträge {monthLabel}</h2>
+                      <span className="text-xs text-muted-foreground">{entries.length} Einträge · CHF {fmtChf(stats.totalNet)} netto</span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-border bg-muted/10 text-xs text-muted-foreground">
+                            <th className="px-4 py-2.5 text-left font-medium w-[110px]">Datum</th>
+                            <th className="px-4 py-2.5 text-left font-medium">Lieferant</th>
+                            <th className="px-4 py-2.5 text-right font-medium">Netto CHF</th>
+                            <th className="px-4 py-2.5 text-right font-medium text-muted-foreground/70">Brutto CHF</th>
+                            <th className="px-4 py-2.5 text-center font-medium w-[70px]">MWST</th>
+                            <th className="px-4 py-2.5 text-left font-medium">Referenz</th>
+                            <th className="px-4 py-2.5 text-left font-medium">Bemerkung</th>
+                            <th className="px-4 py-2.5 w-[88px]"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...entries].sort((a, b) => b.date.localeCompare(a.date)).map((e, i) => (
+                            <tr key={e.id} className={cn('border-b border-border/40 hover:bg-muted/20 transition-colors', i % 2 === 1 && 'bg-muted/10')}>
+                              <td className="px-4 py-2.5 text-sm text-muted-foreground">{formatDateLong(e.date)}</td>
+                              <td className="px-4 py-2.5 font-medium">{e.supplierName}</td>
+                              <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{fmtChf(e.amountNet)}</td>
+                              <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(e.amountGross)}</td>
+                              <td className="px-4 py-2.5 text-center text-xs text-muted-foreground">{e.vatRate} %</td>
+                              <td className="px-4 py-2.5 text-xs text-muted-foreground">{e.reference ?? <span className="opacity-30">–</span>}</td>
+                              <td className="px-4 py-2.5 text-xs text-muted-foreground max-w-[140px] truncate">{e.note ?? <span className="opacity-30">–</span>}</td>
+                              <td className="px-4 py-2.5">
+                                <div className="flex items-center gap-1">
+                                  <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={() => { setEditEntry(e); setShowEditDialog(true); }}>
+                                    <Pencil className="h-3 w-3" />
+                                    Edit
+                                  </Button>
+                                  {deleteConfirm === e.id ? (
+                                    <Button variant="destructive" size="sm" className="h-7 px-2 text-xs" onClick={() => handleDelete(e)}>
+                                      Löschen?
+                                    </Button>
+                                  ) : (
+                                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive/50 hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteConfirm(e.id)}>
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t-2 border-border bg-muted/20 font-bold">
+                            <td className="px-4 py-2.5 text-xs text-muted-foreground uppercase tracking-wide" colSpan={2}>Total</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums font-bold">CHF {fmtChf(stats.totalNet)}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(stats.totalGross)}</td>
+                            <td colSpan={4} className="px-4 py-2.5 text-right">
+                              {monthPct !== null && <PctBadge pct={monthPct} />}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </section>
+                )}
               </div>
             )}
 
-            {/* Optionale Felder */}
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Rechnungs-/Lieferscheinnummer (optional)</Label>
-                <Input
-                  placeholder="z.B. LS-2025-0412"
-                  value={form.reference}
-                  onChange={e => setForm(f => ({ ...f, reference: e.target.value }))}
-                  className="h-8 text-xs"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Bemerkung (optional)</Label>
-                <Input
-                  placeholder="z.B. Wochenlieferung"
-                  value={form.note}
-                  onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
-                  className="h-8 text-xs"
-                />
-              </div>
-            </div>
-          </div>
+            {/* ── Tab: Analyse ──────────────────────────────────────────── */}
+            {tab === 'analyse' && (
+              <div className="space-y-5">
 
-          {/* ── Übersichtstabelle ─────────────────────────────────────────── */}
-          {entries.length === 0 ? (
-            <div className="bg-card border border-border rounded-xl p-8 text-center">
-              <ShoppingCart className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
-              <p className="text-sm font-medium text-muted-foreground">Noch keine Einträge für {monthLabel}</p>
-              <p className="text-xs text-muted-foreground/60 mt-1">Erfasse oben deine erste Warenrechnung.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
+                {entries.length === 0 ? (
+                  <div className="bg-card border border-dashed border-border rounded-xl p-10 text-center">
+                    <BarChart3 className="h-10 w-10 text-muted-foreground/20 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-muted-foreground">Keine Daten für {monthLabel}</p>
+                    <p className="text-xs text-muted-foreground/50 mt-1">Wechsle zur Erfassung und trage Warenrechnungen ein.</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Lieferanten-Rangliste */}
+                    <section className="bg-card border border-border rounded-xl overflow-hidden">
+                      <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between flex-wrap gap-2">
+                        <h2 className="text-sm font-semibold">Lieferanten · {monthLabel}</h2>
+                        <span className="text-xs text-muted-foreground">
+                          Total CHF {fmtChf(stats.totalNet)} · {suppliersWithEntries} Lieferanten
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/10 text-xs text-muted-foreground">
+                              <th className="px-4 py-2.5 text-left font-medium w-[200px]">Lieferant</th>
+                              <th className="px-4 py-2.5 text-right font-medium">Total Netto</th>
+                              <th className="px-4 py-2.5 text-right font-medium">Anteil</th>
+                              <th className="px-4 py-2.5 text-right font-medium text-muted-foreground/70">Brutto</th>
+                              {tableDates.map(d => (
+                                <th key={d} className="px-3 py-2.5 text-right font-medium min-w-[72px]">{formatDateShort(d)}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[...stats.supplierTotals]
+                              .sort((a, b) => b.totalNet - a.totalNet)
+                              .map((st, i) => {
+                                const pct = stats.totalNet > 0 ? (st.totalNet / stats.totalNet) * 100 : 0;
+                                return (
+                                  <tr key={st.supplierName} className={cn('border-b border-border/40 hover:bg-muted/20 transition-colors', i % 2 === 1 && 'bg-muted/10')}>
+                                    <td className="px-4 py-2.5 font-medium">{st.supplierName}</td>
+                                    <td className="px-4 py-2.5 text-right tabular-nums font-semibold">CHF {fmtChf(st.totalNet)}</td>
+                                    <td className="px-4 py-2.5 text-right">
+                                      <div className="flex items-center justify-end gap-2">
+                                        <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
+                                          <div className="h-full rounded-full bg-foreground/30" style={{ width: `${Math.min(pct, 100)}%` }} />
+                                        </div>
+                                        <span className="text-xs tabular-nums text-muted-foreground w-10 text-right">{pct.toFixed(0)} %</span>
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(st.totalGross)}</td>
+                                    {tableDates.map(d => {
+                                      const val = st.byDate[d];
+                                      return (
+                                        <td key={d} className="px-3 py-2.5 text-right tabular-nums text-xs">
+                                          {val ? <span className="font-medium">{fmtChf(val)}</span> : <span className="text-muted-foreground/20">–</span>}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t border-border/50 bg-muted/10 text-xs text-muted-foreground">
+                              <td className="px-4 py-2 font-medium text-muted-foreground/70">Umsatz (Basis)</td>
+                              <td className="px-4 py-2 text-right tabular-nums" colSpan={3}>CHF {fmtChf(totalRevenue)}</td>
+                              {tableDates.map(d => {
+                                const rev = revenueByDate[d];
+                                return (
+                                  <td key={d} className="px-3 py-2 text-right tabular-nums text-xs text-muted-foreground/70">
+                                    {rev ? fmtChf(rev) : <span className="opacity-30">–</span>}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                            <tr className="border-t-2 border-border bg-muted/20 font-bold">
+                              <td className="px-4 py-3 font-bold">Total Warenkosten</td>
+                              <td className="px-4 py-3 text-right tabular-nums font-bold">CHF {fmtChf(stats.totalNet)}</td>
+                              <td className="px-4 py-3 text-right">
+                                <PctBadge pct={monthPct} />
+                              </td>
+                              <td className="px-4 py-3 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(stats.totalGross)}</td>
+                              {tableDates.map(d => {
+                                const dayNet = entries.filter(e => e.date === d).reduce((s, e) => s + e.amountNet, 0);
+                                const dayRev = revenueByDate[d] ?? 0;
+                                const dayPct = dayRev > 0 ? (dayNet / dayRev) * 100 : null;
+                                return (
+                                  <td key={d} className="px-3 py-3 text-right tabular-nums text-xs">
+                                    {dayNet > 0 ? (
+                                      <div className="space-y-0.5">
+                                        <div className="font-semibold">{fmtChf(dayNet)}</div>
+                                        {dayPct !== null && <div className={cn('text-[10px]', dayPct > 35 ? 'text-red-600' : dayPct > 30 ? 'text-amber-600' : 'text-emerald-600')}>{fmtPct(dayPct)}</div>}
+                                      </div>
+                                    ) : <span className="text-muted-foreground/20">–</span>}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </section>
 
-              {/* Lieferanten-Übersicht */}
-              <div className="bg-card border border-border rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-border bg-muted/20">
-                  <h2 className="text-sm font-semibold">Monatstotale nach Lieferant</h2>
-                </div>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-[180px]">Lieferant</TableHead>
-                        <TableHead className="text-right">Total Netto</TableHead>
-                        <TableHead className="text-right">Total Brutto</TableHead>
-                        <TableHead className="text-right">Anteil %</TableHead>
-                        {tableDates.map(d => (
-                          <TableHead key={d} className="text-right text-[11px] min-w-[64px]">
-                            {formatDateShort(d)}
-                          </TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {stats.supplierTotals.map(st => {
-                        const pct = stats.totalNet > 0 ? (st.totalNet / stats.totalNet) * 100 : 0;
-                        return (
-                          <TableRow key={st.supplierName}>
-                            <TableCell className="font-medium text-sm">{st.supplierName}</TableCell>
-                            <TableCell className="text-right tabular-nums text-sm font-semibold">
-                              CHF {fmtChf(st.totalNet)}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
-                              {fmtChf(st.totalGross)}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Badge variant="secondary" className="text-xs font-mono">{fmtPct(pct)}</Badge>
-                            </TableCell>
-                            {tableDates.map(d => {
-                              const val = st.byDate[d];
+                    {/* Kumulierter Verlauf */}
+                    <section className="bg-card border border-border rounded-xl overflow-hidden">
+                      <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between">
+                        <h2 className="text-sm font-semibold">Kumulierter Verlauf</h2>
+                        <span className="text-xs text-muted-foreground">{datesWithEntries.length} Tage mit Einträgen</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/10 text-xs text-muted-foreground">
+                              <th className="px-4 py-2.5 text-left font-medium w-[110px]">Datum</th>
+                              <th className="px-4 py-2.5 text-right font-medium">Tageswaren</th>
+                              <th className="px-4 py-2.5 text-right font-medium text-muted-foreground/70">Tagesumsatz</th>
+                              <th className="px-4 py-2.5 text-right font-medium">Tages %</th>
+                              <th className="px-4 py-2.5 text-right font-medium border-l border-border/50">
+                                <span className="text-foreground/80">Kum. Waren</span>
+                              </th>
+                              <th className="px-4 py-2.5 text-right font-medium text-muted-foreground/70">Kum. Umsatz</th>
+                              <th className="px-4 py-2.5 text-right font-medium">
+                                <span className="text-foreground/80">Kum. %</span>
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {datesWithEntries.map((d, i) => {
+                              const dayNet = entries.filter(e => e.date === d).reduce((s, e) => s + e.amountNet, 0);
+                              const dayRev = revenueByDate[d] ?? 0;
+                              const dayPct = dayRev > 0 ? (dayNet / dayRev) * 100 : null;
+                              const { cumNet, cumRev, pct: cumPct } = getCumulative(d);
+                              const isToday = d === todayStr;
                               return (
-                                <TableCell key={d} className="text-right tabular-nums text-xs">
-                                  {val ? (
-                                    <span className="font-medium">{fmtChf(val)}</span>
-                                  ) : (
-                                    <span className="text-muted-foreground/30">–</span>
-                                  )}
-                                </TableCell>
+                                <tr key={d} className={cn(
+                                  'border-b border-border/40 hover:bg-muted/20 transition-colors',
+                                  i % 2 === 1 && 'bg-muted/10',
+                                  isToday && 'ring-1 ring-inset ring-blue-200 dark:ring-blue-800',
+                                )}>
+                                  <td className="px-4 py-2.5 font-medium text-sm">
+                                    {formatDateLong(d)}
+                                    {isToday && <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded px-1 py-0.5">heute</span>}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right tabular-nums font-semibold">CHF {fmtChf(dayNet)}</td>
+                                  <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">
+                                    {dayRev > 0 ? fmtChf(dayRev) : <span className="opacity-30">–</span>}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right"><PctBadge pct={dayPct} /></td>
+                                  <td className="px-4 py-2.5 text-right tabular-nums font-bold border-l border-border/50 text-foreground/80">
+                                    CHF {fmtChf(cumNet)}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">
+                                    {cumRev > 0 ? fmtChf(cumRev) : <span className="opacity-30">–</span>}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right">
+                                    <PctBadge pct={cumPct} />
+                                  </td>
+                                </tr>
                               );
                             })}
-                          </TableRow>
-                        );
-                      })}
+                          </tbody>
+                          {datesWithEntries.length > 0 && (() => {
+                            const last = datesWithEntries[datesWithEntries.length - 1];
+                            const { cumNet, cumRev, pct: cumPct } = getCumulative(last);
+                            return (
+                              <tfoot>
+                                <tr className="border-t-2 border-border bg-muted/20 font-bold">
+                                  <td className="px-4 py-3 text-xs text-muted-foreground uppercase tracking-wide">Stand {formatDateShort(last)}</td>
+                                  <td className="px-4 py-3 text-right tabular-nums">CHF {fmtChf(stats.totalNet)}</td>
+                                  <td className="px-4 py-3 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(totalRevenue)}</td>
+                                  <td className="px-4 py-3 text-right"><PctBadge pct={monthPct} /></td>
+                                  <td className="px-4 py-3 text-right tabular-nums font-bold border-l border-border/50">CHF {fmtChf(cumNet)}</td>
+                                  <td className="px-4 py-3 text-right tabular-nums text-xs text-muted-foreground">{cumRev > 0 ? fmtChf(cumRev) : '–'}</td>
+                                  <td className="px-4 py-3 text-right"><PctBadge pct={cumPct} /></td>
+                                </tr>
+                              </tfoot>
+                            );
+                          })()}
+                        </table>
+                      </div>
+                    </section>
 
-                      {/* Umsatz-Zeile */}
-                      <TableRow className="bg-muted/20 border-t-2">
-                        <TableCell className="font-semibold text-xs text-muted-foreground uppercase tracking-wide">
-                          Umsatz (Basis)
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-sm text-muted-foreground" colSpan={3}>
-                          CHF {fmtChf(totalRevenue)}
-                        </TableCell>
-                        {tableDates.map(d => {
-                          const rev = revenueByDate[d];
-                          return (
-                            <TableCell key={d} className="text-right tabular-nums text-xs text-muted-foreground">
-                              {rev ? fmtChf(rev) : <span className="opacity-30">–</span>}
-                            </TableCell>
-                          );
-                        })}
-                      </TableRow>
-
-                      {/* Total-Zeile */}
-                      <TableRow className="bg-muted/30 font-bold">
-                        <TableCell className="font-bold text-sm">Total Warenkosten</TableCell>
-                        <TableCell className="text-right tabular-nums text-sm font-bold">
-                          CHF {fmtChf(stats.totalNet)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
-                          {fmtChf(stats.totalGross)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {monthPct !== null ? (
-                            <Badge
-                              variant="secondary"
-                              className={cn(
-                                'text-xs font-mono font-bold',
-                                monthPct > 35 ? 'bg-orange-100 text-orange-700' : monthPct > 30 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700',
-                              )}
-                            >
-                              {fmtPct(monthPct)}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">–</span>
-                          )}
-                        </TableCell>
-                        {tableDates.map(d => {
-                          const dayEntries = entries.filter(e => e.date === d);
-                          const dayNet = dayEntries.reduce((s, e) => s + e.amountNet, 0);
-                          const dayRev = revenueByDate[d] ?? 0;
-                          const dayPct = dayRev > 0 ? (dayNet / dayRev) * 100 : null;
-                          return (
-                            <TableCell key={d} className="text-right tabular-nums text-xs">
-                              {dayNet > 0 ? (
-                                <div>
-                                  <div className="font-semibold">{fmtChf(dayNet)}</div>
-                                  {dayPct !== null && (
-                                    <div className={cn(
-                                      'text-[10px]',
-                                      dayPct > 35 ? 'text-orange-600' : 'text-muted-foreground',
-                                    )}>
-                                      {fmtPct(dayPct)}
-                                    </div>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-muted-foreground/30">–</span>
-                              )}
-                            </TableCell>
-                          );
-                        })}
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </div>
+                    {/* Fehlende Umsatzbasis */}
+                    {totalRevenue === 0 && (
+                      <div className="flex items-center gap-2.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 dark:text-amber-400 rounded-lg px-4 py-3">
+                        <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                        Kein Tagesumsatz für {monthLabel} vorhanden. %-Berechnungen sind nicht möglich. Bitte Umsatzdaten importieren.
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
+            )}
 
-              {/* Kumulierungsansicht */}
-              <div className="bg-card border border-border rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-border bg-muted/20">
-                  <h2 className="text-sm font-semibold">Kumulierter Verlauf</h2>
-                </div>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-[100px]">Datum</TableHead>
-                        <TableHead className="text-right">Tageswaren</TableHead>
-                        <TableHead className="text-right">Tagesumsatz</TableHead>
-                        <TableHead className="text-right">Tages %</TableHead>
-                        <TableHead className="text-right">Kum. Waren</TableHead>
-                        <TableHead className="text-right">Kum. Umsatz</TableHead>
-                        <TableHead className="text-right">Kum. %</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {datesWithEntries.map(d => {
-                        const dayNet = entries.filter(e => e.date === d).reduce((s, e) => s + e.amountNet, 0);
-                        const dayRev = revenueByDate[d] ?? 0;
-                        const dayPct = dayRev > 0 ? (dayNet / dayRev) * 100 : null;
-                        const { cumNet, cumRev, pct: cumPct } = getCumulative(d);
-                        return (
-                          <TableRow key={d}>
-                            <TableCell className="text-sm font-medium">{formatDateShort(d)}</TableCell>
-                            <TableCell className="text-right tabular-nums text-sm">CHF {fmtChf(dayNet)}</TableCell>
-                            <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
-                              {dayRev > 0 ? fmtChf(dayRev) : <span className="opacity-40">–</span>}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {dayPct !== null ? (
-                                <Badge variant="secondary" className={cn(
-                                  'text-xs',
-                                  dayPct > 35 ? 'bg-orange-100 text-orange-700' : 'bg-muted',
-                                )}>
-                                  {fmtPct(dayPct)}
-                                </Badge>
-                              ) : <span className="text-xs text-muted-foreground/40">–</span>}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums text-sm font-semibold">
-                              CHF {fmtChf(cumNet)}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
-                              {cumRev > 0 ? fmtChf(cumRev) : <span className="opacity-40">–</span>}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {cumPct !== null ? (
-                                <Badge variant="secondary" className={cn(
-                                  'text-xs font-mono',
-                                  cumPct > 35 ? 'bg-orange-100 text-orange-700' : cumPct > 30 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700',
-                                )}>
-                                  {fmtPct(cumPct)}
-                                </Badge>
-                              ) : <span className="text-xs text-muted-foreground/40">–</span>}
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
+            {/* ── Legende ───────────────────────────────────────────────── */}
+            <div className="mt-6 flex flex-wrap items-center gap-4 text-xs text-muted-foreground border-t border-border/50 pt-4">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-sm bg-emerald-500" />
+                <span>≤ 30 % – im Ziel</span>
               </div>
-
-              {/* Einzeleinträge */}
-              <div className="bg-card border border-border rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-border bg-muted/20">
-                  <h2 className="text-sm font-semibold">Alle Einträge ({entries.length})</h2>
-                </div>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Datum</TableHead>
-                        <TableHead>Lieferant</TableHead>
-                        <TableHead className="text-right">Netto CHF</TableHead>
-                        <TableHead className="text-right">Brutto CHF</TableHead>
-                        <TableHead>MWST</TableHead>
-                        <TableHead>Referenz</TableHead>
-                        <TableHead>Bemerkung</TableHead>
-                        <TableHead className="w-[80px]"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {[...entries].sort((a, b) => b.date.localeCompare(a.date)).map(e => (
-                        <TableRow key={e.id}>
-                          <TableCell className="text-sm">{formatDateShort(e.date)}</TableCell>
-                          <TableCell className="text-sm font-medium">{e.supplierName}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm font-semibold">
-                            {fmtChf(e.amountNet)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
-                            {fmtChf(e.amountGross)}
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {e.vatRate}%
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {e.reference ?? '–'}
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
-                            {e.note ?? '–'}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex gap-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                onClick={() => openEdit(e)}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              {deleteConfirm === e.id ? (
-                                <Button
-                                  variant="destructive"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  onClick={() => handleDelete(e)}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-destructive/60 hover:text-destructive"
-                                  onClick={() => setDeleteConfirm(e.id)}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-sm bg-amber-400" />
+                <span>30–35 % – erhöht</span>
               </div>
-
-              {/* Hinweis wenn kein Umsatz */}
-              {totalRevenue === 0 && (
-                <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-                  Kein Tagesumsatz für {monthLabel} vorhanden. %-Berechnungen sind nicht möglich. Bitte Umsatzdaten importieren.
-                </div>
-              )}
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-sm bg-red-500" />
+                <span>&gt; 35 % – kritisch</span>
+              </div>
+              <span className="ml-auto">Alle Beträge exkl. MWST (Netto)</span>
             </div>
-          )}
-        </>
-      )}
+          </>
+        )}
+      </main>
 
       {/* ── Dialog: Eintrag bearbeiten ──────────────────────────────────────── */}
       <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
@@ -866,97 +881,64 @@ export default function WarenrechnungenPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">Datum</Label>
-                  <Input
-                    type="date"
-                    value={editEntry.date}
+                  <Input type="date" value={editEntry.date}
                     onChange={e => setEditEntry(v => v ? { ...v, date: e.target.value } : v)}
-                    className="h-9 text-sm"
-                  />
+                    className="h-9 text-sm" />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Lieferant</Label>
-                  <Select
-                    value={editEntry.supplierName}
-                    onValueChange={v => setEditEntry(x => x ? { ...x, supplierName: v } : x)}
-                  >
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
+                  <Select value={editEntry.supplierName} onValueChange={v => setEditEntry(x => x ? { ...x, supplierName: v } : x)}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {activeSuppliers.map(s => (
-                        <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
-                      ))}
+                      {activeSuppliers.map(s => <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-1 col-span-1">
+                <div className="space-y-1">
                   <Label className="text-xs">Netto CHF</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={editEntry.amountNet.toFixed(2)}
+                  <Input type="number" step="0.01" value={editEntry.amountNet.toFixed(2)}
                     onChange={e => {
                       const net = Number(e.target.value);
-                      const gross = net * (1 + editEntry.vatRate / 100);
-                      setEditEntry(x => x ? { ...x, amountNet: net, amountGross: gross } : x);
+                      setEditEntry(x => x ? { ...x, amountNet: net, amountGross: net * (1 + x.vatRate / 100) } : x);
                     }}
-                    className="h-9 text-sm"
-                  />
+                    className="h-9 text-sm" />
                 </div>
-                <div className="space-y-1 col-span-1">
+                <div className="space-y-1">
                   <Label className="text-xs">Brutto CHF</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={editEntry.amountGross.toFixed(2)}
-                    readOnly
-                    className="h-9 text-sm bg-muted"
-                  />
+                  <Input type="number" step="0.01" value={editEntry.amountGross.toFixed(2)} readOnly className="h-9 text-sm bg-muted" />
                 </div>
-                <div className="space-y-1 col-span-1">
+                <div className="space-y-1">
                   <Label className="text-xs">MWST %</Label>
-                  <Select
-                    value={String(editEntry.vatRate)}
-                    onValueChange={v => {
-                      const rate = Number(v);
-                      const gross = editEntry.amountNet * (1 + rate / 100);
-                      setEditEntry(x => x ? { ...x, vatRate: rate, amountGross: gross } : x);
-                    }}
-                  >
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
+                  <Select value={String(editEntry.vatRate)} onValueChange={v => {
+                    const rate = Number(v);
+                    setEditEntry(x => x ? { ...x, vatRate: rate, amountGross: x.amountNet * (1 + rate / 100) } : x);
+                  }}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {VAT_RATES.map(r => (
-                        <SelectItem key={r} value={r}>{r}%</SelectItem>
-                      ))}
+                      {VAT_RATES.map(r => <SelectItem key={r} value={r}>{r} %</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Referenz (optional)</Label>
-                <Input
-                  value={editEntry.reference ?? ''}
+                <Input value={editEntry.reference ?? ''}
                   onChange={e => setEditEntry(x => x ? { ...x, reference: e.target.value || undefined } : x)}
-                  className="h-8 text-sm"
-                />
+                  className="h-8 text-sm" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Bemerkung (optional)</Label>
-                <Input
-                  value={editEntry.note ?? ''}
+                <Input value={editEntry.note ?? ''}
                   onChange={e => setEditEntry(x => x ? { ...x, note: e.target.value || undefined } : x)}
-                  className="h-8 text-sm"
-                />
+                  className="h-8 text-sm" />
               </div>
             </div>
           )}
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setShowEditDialog(false)}>Abbrechen</Button>
-            <Button onClick={handleEditSave} disabled={saving}>Speichern</Button>
+            <Button onClick={handleEditSave} disabled={saving}>{saving ? 'Speichern…' : 'Speichern'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -971,7 +953,6 @@ export default function WarenrechnungenPage() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
-            {/* Neuen Lieferanten hinzufügen */}
             <div className="flex gap-2">
               <Input
                 placeholder="Neuer Lieferant…"
@@ -984,28 +965,18 @@ export default function WarenrechnungenPage() {
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
-            <div className="text-xs text-muted-foreground px-0.5">
-              {suppliers.length} Lieferanten · {activeSuppliers.length} aktiv
-            </div>
-            {/* Liste */}
+            <p className="text-xs text-muted-foreground">{suppliers.length} Lieferanten · {activeSuppliers.length} aktiv</p>
             <div className="space-y-1 max-h-[340px] overflow-y-auto pr-1">
               {suppliers.map(s => (
-                <div
-                  key={s.id}
-                  className={cn(
-                    'flex items-center justify-between rounded-md px-3 py-2 text-sm border transition-colors',
-                    s.active ? 'bg-card border-border' : 'bg-muted/30 border-border/40 opacity-50',
-                  )}
-                >
-                  <span className={s.active ? 'font-medium' : 'text-muted-foreground line-through'}>
-                    {s.name}
-                  </span>
+                <div key={s.id} className={cn(
+                  'flex items-center justify-between rounded-lg px-3 py-2 text-sm border transition-colors',
+                  s.active ? 'bg-card border-border' : 'bg-muted/30 border-border/40',
+                )}>
+                  <span className={s.active ? 'font-medium' : 'text-muted-foreground/50 line-through text-xs'}>{s.name}</span>
                   <button
                     className={cn(
-                      'text-xs px-2 py-0.5 rounded-md border transition-colors',
-                      s.active
-                        ? 'text-muted-foreground border-border hover:bg-muted'
-                        : 'text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100',
+                      'text-xs px-2.5 py-1 rounded-md border transition-colors',
+                      s.active ? 'text-muted-foreground border-border hover:bg-muted' : 'text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100',
                     )}
                     onClick={() => handleToggleSupplier(s)}
                   >
@@ -1020,6 +991,7 @@ export default function WarenrechnungenPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 }
