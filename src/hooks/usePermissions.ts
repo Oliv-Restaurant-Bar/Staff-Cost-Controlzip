@@ -9,22 +9,29 @@
  *   admin              → Inhaber / Admin: sieht alles
  *   service_manager    → Service-Manager: Dienstplanung (Service) + Soll/Ist-Analyse
  *   kueche_manager     → Küchen-Manager:  Dienstplanung (Küche)  + Soll/Ist-Analyse
- *   beaulieu_manager   → Beaulieu GF: Dienstplanung + Personal FIX + Personalstamm (lesen) + Tagesansicht + Controlling
+ *   beaulieu_manager   → Beaulieu GF: alle Module ausser Budget + Erfolgsrechnung
  *                        Fest auf Mandant Beaulieu gesperrt, kein Tenant-Wechsel
  *
  * Modul-Zugriff im Überblick:
  *   Modul                admin  service_mgr  kueche_mgr  beaulieu_mgr  beaulieu_viewer
  *   ──────────────────   ─────  ───────────  ──────────  ────────────  ───────────────
- *   Dashboard             ✓      –            –           –             –
+ *   Dashboard             ✓      –            –           ✓             –
  *   Dienstplanung         ✓      ✓ (Service)  ✓ (Küche)   ✓ (alle)      –
  *   Soll/Ist Analyse      ✓      ✓ (Service)  ✓ (Küche)   –             –
  *   Personal FIX          ✓      –            –           ✓             –
  *   Tagesansicht          ✓      –            –           ✓             –
  *   Tages-Controlling     ✓      –            –           ✓             –
- *   Personalstamm         ✓      –            –           ✓ (lesen)     –
+ *   Personalstamm         ✓      –            –           ✓             –
  *   Warenrechnungen       ✓      –            –           ✓ (voll)      ✓ (lesen)
- *   Reporting / P&L       ✓      –            –           –             –
- *   Budget / Import       ✓      –            –           –             –
+ *   Verkaufs-Dashboard    ✓      –            –           ✓             –
+ *   Produktanalyse        ✓      –            –           ✓             –
+ *   WES-Analyse           ✓      –            –           ✓             –
+ *   Import-Zentrale       ✓      –            –           ✓             –
+ *   Verkaufsdaten Upload  ✓      –            –           ✓             –
+ *   Produkte / Stamm      ✓      –            –           ✓             –
+ *   Budget                ✓      –            –           ✗ (gesperrt)  –
+ *   Erfolgsrechnung       ✓      –            –           ✗ (gesperrt)  –
+ *   Reporting             ✓      –            –           –             –
  *
  * Warenrechnungen – Feingranulare Rechte (WarenrechnungenPerms):
  *   Aktion     admin  beaulieu_mgr  beaulieu_viewer
@@ -166,7 +173,7 @@ export const usePermissions = (): Permissions => {
   const canAccessModule = (module: AppModule): boolean => {
     switch (module) {
       case 'dashboard':
-        return isAdmin;
+        return isAdmin || isBeaulieuManager;
       case 'dienstplanung':
         return true; // alle (aber gefiltert nach Abteilung)
       case 'soll_ist_analyse':

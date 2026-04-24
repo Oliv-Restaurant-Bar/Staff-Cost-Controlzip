@@ -48,6 +48,8 @@ interface NavItem {
   shortLabel: string;
   icon: React.FC<{ className?: string }>;
   adminOnly?: boolean;
+  /** Explizit auch für beaulieu_manager sichtbar machen, auch wenn adminOnly=true */
+  beaulieuAllowed?: boolean;
   module?: import('@/hooks/usePermissions').AppModule;
 }
 
@@ -79,6 +81,7 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Verkauf',
         icon: PieChart,
         adminOnly: true,
+        beaulieuAllowed: true,
       },
       {
         path: '/tagesansicht',
@@ -100,6 +103,7 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Produkte',
         icon: BarChart3,
         adminOnly: true,
+        beaulieuAllowed: true,
       },
     ],
   },
@@ -139,6 +143,7 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'WES',
         icon: TrendingDown,
         adminOnly: true,
+        beaulieuAllowed: true,
       },
       {
         path: '/budget',
@@ -146,6 +151,7 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Budget',
         icon: Wallet,
         adminOnly: true,
+        // beaulieuAllowed: false — intentionally absent: beaulieu_manager darf Budget nicht sehen
       },
       {
         path: '/erfolgsrechnung',
@@ -153,6 +159,7 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'ER',
         icon: BarChart3,
         adminOnly: true,
+        // beaulieuAllowed: false — intentionally absent: beaulieu_manager darf Erfolgsrechnung nicht sehen
       },
     ],
   },
@@ -173,6 +180,7 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Produkte',
         icon: Package,
         adminOnly: true,
+        beaulieuAllowed: true,
       },
     ],
   },
@@ -186,6 +194,7 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Import',
         icon: Inbox,
         adminOnly: true,
+        beaulieuAllowed: true,
       },
       {
         path: '/sales-upload',
@@ -193,6 +202,7 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Upload',
         icon: Upload,
         adminOnly: true,
+        beaulieuAllowed: true,
       },
       {
         path: '/settings',
@@ -200,6 +210,7 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Settings',
         icon: Settings,
         adminOnly: true,
+        // beaulieuAllowed: false — Einstellungen bleiben gesperrt
       },
     ],
   },
@@ -307,9 +318,11 @@ export const AppSidebar = () => {
   const guestLabel = guestH > 0 ? `${guestH}h ${guestM}min` : `${guestMinutesLeft} Min.`;
 
   function isItemVisible(item: NavItem): boolean {
-    // adminOnly items are only visible to admin or guest (not beaulieu_manager)
-    if (item.adminOnly && !isAdmin && !isGuest) return false;
-    // module-based items: use canAccessModule (handles beaulieu_manager correctly)
+    // adminOnly items: sichtbar für admin/guest, oder für beaulieu_manager wenn beaulieuAllowed=true
+    if (item.adminOnly && !isAdmin && !isGuest) {
+      if (!(isBeaulieuManager && item.beaulieuAllowed)) return false;
+    }
+    // module-based items: canAccessModule (beaulieu_manager korrekt abgedeckt)
     if (item.module && !canAccessModule(item.module) && !isGuest) return false;
     return true;
   }

@@ -80,9 +80,9 @@ const TenantLockEnforcer = () => {
 // Wrapper für Navigate-Redirects: loggt [AUTH] blocked route to oliv bevor
 // es weiterleitet. Nur aktiv wenn isBeaulieuManager = true.
 
-const BlockedRoute = ({ path, to = '/personal' }: { path: string; to?: string }) => {
+const BlockedRoute = ({ path, to = '/' }: { path: string; to?: string }) => {
   useEffect(() => {
-    console.log(`[AUTH] blocked route to oliv: ${path} → redirected to ${to}`);
+    console.log(`[AUTH] blocked route: ${path} → redirected to ${to}`);
   }, [path, to]);
   return <Navigate to={to} replace />;
 };
@@ -92,6 +92,17 @@ const BlockedRoute = ({ path, to = '/personal' }: { path: string; to?: string })
 const AppContent = () => {
   const { user, loading } = useAuth();
   const { canAccessSettings, canAccessModule, isBeaulieuManager } = usePermissions();
+
+  // [AUTH] Debug-Logs für beaulieu_manager beim Mount
+  useEffect(() => {
+    if (isBeaulieuManager) {
+      console.log('[AUTH] role: beaulieu_manager');
+      console.log('[AUTH] tenant locked: beaulieu');
+      console.log('[AUTH] module budget: blocked');
+      console.log('[AUTH] module erfolgsrechnung: blocked');
+      console.log('[AUTH] allowed modules: dashboard, tagesansicht, tages-controlling, verkauf-dashboard, produkt-analyse, dienstplanung, personal-fix, personalstamm, produkt-stamm, warenrechnungen, wes-analyse, import, sales-upload');
+    }
+  }, [isBeaulieuManager]);
 
   // Daten aus Supabase nach localStorage synchronisieren (einmalig nach Login)
   useSyncStore(!!user);
@@ -179,7 +190,7 @@ const AppContent = () => {
               element={isBeaulieuManager ? <BlockedRoute path="/csv-import" /> : <CSVImportPage />}
             />
             <Route path="/import"
-              element={isBeaulieuManager ? <BlockedRoute path="/import" /> : <ImportHub />}
+              element={<ImportHub />}
             />
             <Route path="/lieferanten"
               element={isBeaulieuManager ? <BlockedRoute path="/lieferanten" /> : <SupplierDocumentsPage />}
@@ -194,7 +205,7 @@ const AppContent = () => {
               element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
             />
             <Route path="/produkte"
-              element={isBeaulieuManager ? <BlockedRoute path="/produkte" /> : <ProdukteSeite />}
+              element={<ProdukteSeite />}
             />
             <Route path="/artikel"          element={<ArtikelPage />} />
             <Route path="/artikel-tracking" element={<ArtikelTrackingPage />} />
@@ -202,7 +213,7 @@ const AppContent = () => {
               element={canAccessModule('warenrechnungen') ? <WarenrechnungenPage /> : <Navigate to="/personal" replace />}
             />
             <Route path="/wes-analyse"
-              element={isBeaulieuManager ? <BlockedRoute path="/wes-analyse" /> : <WesAnalysePage />}
+              element={<WesAnalysePage />}
             />
             <Route path="/lunch-analyse"    element={<LunchAnalysePage />} />
             <Route path="/takeaway-analyse" element={<TakeAwayAnalysePage />} />
@@ -216,15 +227,15 @@ const AppContent = () => {
               element={canAccessModule('tages_controlling') ? <TagesControllingPage /> : <Navigate to="/personal" replace />}
             />
             <Route path="/verkauf-dashboard"
-              element={isBeaulieuManager ? <BlockedRoute path="/verkauf-dashboard" /> : <VerkaufsDashboard />}
+              element={<VerkaufsDashboard />}
             />
             <Route path="/sales-upload"
-              element={isBeaulieuManager ? <BlockedRoute path="/sales-upload" /> : <SalesUpload />}
+              element={<SalesUpload />}
             />
             <Route path="/produkt-analyse"   element={<ProduktAnalyse />} />
             <Route path="/kategorien"        element={<KategorienAnalyse />} />
             <Route path="/produkt-stamm"
-              element={isBeaulieuManager ? <BlockedRoute path="/produkt-stamm" /> : <ProduktStamm />}
+              element={<ProduktStamm />}
             />
 
             {/* Abteilungs-Dienstpläne */}
