@@ -4,6 +4,7 @@ import { format, isWeekend, isSunday, getDay } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { getEmployeeDisplayName } from '@/lib/personnel-utils';
+import { calcML, LGAV } from '@/lib/salaryCalc';
 import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
@@ -52,6 +53,33 @@ const isDayOff = (employee: Employee, day: Date): boolean => {
   return employee.daysOff.some(dayName => WEEKDAY_MAP[dayName] === dayOfWeek);
 };
 
+// ── Effektiver Stundenansatz ──────────────────────────────────────────────────
+// Priorität: 1) hourlyWage > 0  2) Monatslohn → L-GAV interner Stundenansatz  3) null
+export function getEffectiveHourlyRate(emp: Employee): number | null {
+  if (emp.hourlyWage && emp.hourlyWage > 0) return emp.hourlyWage;
+  const base = emp.monthlySalary || 0;
+  if (base > 0) {
+    const ml = calcML(
+      base,
+      emp.has13thSalary ?? false,
+      emp.weeklyHours ?? LGAV.WEEKLY_HOURS_FULLTIME,
+      1.13,
+    );
+    return ml.internalHourlyCost;
+  }
+  return null;
+}
+
+// Wage source label (for display)
+export function getWageLabel(emp: Employee): string {
+  if (emp.hourlyWage && emp.hourlyWage > 0) return `${emp.hourlyWage.toFixed(2)} CHF/h`;
+  if (emp.monthlySalary && emp.monthlySalary > 0) {
+    const rate = getEffectiveHourlyRate(emp);
+    return rate != null ? `ML ~${rate.toFixed(2)} CHF/h` : 'Monatslohn';
+  }
+  return 'Lohn fehlt';
+}
+
 // Calculate hours from start/end times
 const calculateHoursFromTimes = (start: string, end: string): number => {
   const [startH, startM] = start.split(':').map(Number);
@@ -88,8 +116,11 @@ const ActualHoursCell = ({
   const isSundayDay = isSunday(day);
   const isDayOffDay = isDayOff(employee, day);
 
+  // Effektiver Stundenansatz: hourlyWage > 0 → direkt; Monatslohn → L-GAV intern; sonst 0
+  const effectiveRate = getEffectiveHourlyRate(employee) ?? 0;
+
   // Calculate hours from CHF amount
-  const hoursFromChf = chfInput ? (parseFloat(chfInput.replace(',', '.')) / employee.hourlyWage) : 0;
+  const hoursFromChf = (chfInput && effectiveRate > 0) ? (parseFloat(chfInput.replace(',', '.')) / effectiveRate) : 0;
 
   const handleCellClick = () => {
     // ── Schnellerfassung-Modus: kein Dialog, direkte Zuweisung ──
@@ -106,7 +137,7 @@ const ActualHoursCell = ({
     // ── Normaler Modus: Dialog öffnen ──
     if (entry) {
       setHoursInput(entry.hours.toString());
-      setChfInput((entry.hours * employee.hourlyWage).toFixed(0));
+      setChfInput(effectiveRate > 0 ? (entry.hours * effectiveRate).toFixed(0) : '');
       setStartInput(entry.start || '');
       setEndInput(entry.end || '');
       setInputMode(entry.start && entry.end ? 'times' : 'hours');
@@ -130,8 +161,8 @@ const ActualHoursCell = ({
       }
     } else if (inputMode === 'chf') {
       const chf = parseFloat(chfInput.replace(',', '.'));
-      if (!isNaN(chf) && chf > 0) {
-        const hours = chf / employee.hourlyWage;
+      if (!isNaN(chf) && chf > 0 && effectiveRate > 0) {
+        const hours = chf / effectiveRate;
         onSave({ hours: Math.round(hours * 100) / 100 });
       } else if (chfInput === '' || chf === 0) {
         onSave(null);
@@ -155,7 +186,7 @@ const ActualHoursCell = ({
   };
 
   const hours = entry?.hours || 0;
-  const cost = hours * employee.hourlyWage;
+  const cost = hours * effectiveRate;
   const absenceType = entry?.absenceType;
 
   const handleAbsenceQuick = (type: 'FE' | 'K' | 'F') => {
@@ -356,9 +387,9 @@ const ActualHoursCell = ({
                   onKeyDown={handleKeyDown}
                   autoFocus
                 />
-                {chfInput && hoursFromChf > 0 && (
+                {chfInput && hoursFromChf > 0 && effectiveRate > 0 && (
                   <div className="text-sm text-center text-muted-foreground">
-                    = {hoursFromChf.toFixed(2)} Stunden ({employee.hourlyWage.toFixed(2)} CHF/h)
+                    = {hoursFromChf.toFixed(2)} Stunden ({effectiveRate.toFixed(2)} CHF/h)
                   </div>
                 )}
               </div>
@@ -373,8 +404,9 @@ const ActualHoursCell = ({
                     variant="outline"
                     onClick={() => setChfInput('200')}
                     className="text-xs"
+                    disabled={effectiveRate <= 0}
                   >
-                    200 CHF = {(200 / employee.hourlyWage).toFixed(1)}h
+                    200 CHF = {effectiveRate > 0 ? (200 / effectiveRate).toFixed(1) : '?'}h
                   </Button>
                   <Button
                     type="button"
@@ -382,8 +414,9 @@ const ActualHoursCell = ({
                     variant="outline"
                     onClick={() => setChfInput('300')}
                     className="text-xs"
+                    disabled={effectiveRate <= 0}
                   >
-                    300 CHF = {(300 / employee.hourlyWage).toFixed(1)}h
+                    300 CHF = {effectiveRate > 0 ? (300 / effectiveRate).toFixed(1) : '?'}h
                   </Button>
                   <Button
                     type="button"
@@ -391,8 +424,9 @@ const ActualHoursCell = ({
                     variant="outline"
                     onClick={() => setChfInput('250')}
                     className="text-xs"
+                    disabled={effectiveRate <= 0}
                   >
-                    250 CHF = {(250 / employee.hourlyWage).toFixed(1)}h
+                    250 CHF = {effectiveRate > 0 ? (250 / effectiveRate).toFixed(1) : '?'}h
                   </Button>
                 </div>
               </div>
@@ -480,8 +514,18 @@ export const ActualHoursGrid = ({
       const cellKey = `${emp.id}-${dateStr}`;
       const entry = actualHoursData[cellKey];
       if (entry?.hours) {
+        const effRate = getEffectiveHourlyRate(emp) ?? 0;
+        const istCost = entry.hours * effRate;
         totalHours += entry.hours;
-        totalCosts += entry.hours * (emp.hourlyWage || 0);
+        totalCosts += istCost;
+        // [WAGE-COST] logs per employee with IST hours
+        console.log(`[WAGE-COST] employee: ${emp.name} (${emp.id})`);
+        console.log(`[WAGE-COST] hourly_rate: ${emp.hourlyWage ?? 0}`);
+        console.log(`[WAGE-COST] monthly_salary: ${emp.monthlySalary ?? 0}`);
+        console.log(`[WAGE-COST] target_hours: ${emp.weeklyHours ?? LGAV.WEEKLY_HOURS_FULLTIME}h/Woche → ${LGAV.MONTHLY_HOURS}h/Monat (L-GAV)`);
+        console.log(`[WAGE-COST] effective hourly rate: ${effRate.toFixed(2)} CHF/h${effRate === 0 ? ' → LOHN FEHLT' : ''}`);
+        console.log(`[WAGE-COST] ist hours: ${entry.hours.toFixed(2)}`);
+        console.log(`[WAGE-COST] ist cost: CHF ${istCost.toFixed(2)}`);
       }
     });
 
@@ -493,7 +537,8 @@ export const ActualHoursGrid = ({
     const maxAllowedCosts = revenueForMark > 0 ? revenueForMark * (LABOR_COST_THRESHOLD / 100) : 0;
     const excessCosts = Math.max(0, totalCosts - maxAllowedCosts);
     const isOverBudget = revenueForMark > 0 && totalCosts > maxAllowedCosts;
-    const avgWage = employees.filter(e => e.hourlyWage).reduce((s, e) => s + e.hourlyWage, 0) / Math.max(1, employees.filter(e => e.hourlyWage).length);
+    const empsWithRate = employees.map(e => getEffectiveHourlyRate(e) ?? 0).filter(r => r > 0);
+    const avgWage = empsWithRate.length > 0 ? empsWithRate.reduce((s, r) => s + r, 0) / empsWithRate.length : 0;
     const excessHours = avgWage > 0 ? excessCosts / avgWage : 0;
 
     // Ampel: excessPct = how much over the allowed budget in %
@@ -528,8 +573,9 @@ export const ActualHoursGrid = ({
       const cellKey = `${emp.id}-${dateStr}`;
       const entry = actualHoursData[cellKey];
       const hours = entry?.hours || 0;
-      const cost = hours * (emp.hourlyWage || 0);
-      return { employee: emp, hours, cost };
+      const effRate = getEffectiveHourlyRate(emp) ?? 0;
+      const cost = hours * effRate;
+      return { employee: emp, hours, cost, effRate };
     }).filter(e => e.hours > 0).sort((a, b) => b.cost - a.cost);
   };
 
@@ -543,9 +589,10 @@ export const ActualHoursGrid = ({
     const suggestions: { employee: typeof employees[0]; currentHours: number; suggestedCut: number; saving: number }[] = [];
     for (const { employee, hours, cost } of breakdown) {
       if (remainingExcess <= 0) break;
-      const maxCut = Math.min(hours, remainingExcess / (employee.hourlyWage || 1));
+      const empRate = getEffectiveHourlyRate(employee) ?? 0;
+      const maxCut = Math.min(hours, remainingExcess / (empRate || 1));
       const actualCut = Math.ceil(maxCut * 2) / 2; // round to 0.5h
-      const saving = actualCut * (employee.hourlyWage || 0);
+      const saving = actualCut * (empRate || 0);
       if (actualCut > 0) {
         suggestions.push({ employee, currentHours: hours, suggestedCut: actualCut, saving });
         remainingExcess -= saving;
@@ -770,8 +817,8 @@ export const ActualHoursGrid = ({
                         {getEmployeeDisplayName(employee)}
                       </span>
                     </div>
-                    <div className="text-[9px] text-muted-foreground mt-0.5">
-                      {employee.hourlyWage.toFixed(2)} CHF/h
+                    <div className={`text-[9px] mt-0.5 ${getEffectiveHourlyRate(employee) == null ? 'text-red-500 font-semibold' : 'text-muted-foreground'}`}>
+                      {getWageLabel(employee)}
                     </div>
                   </td>
 
@@ -976,11 +1023,16 @@ export const ActualHoursGrid = ({
               {breakdown.length > 0 && (
                 <div className="space-y-1.5">
                   <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ist-Stunden nach Mitarbeiter</div>
-                  {breakdown.map(({ employee, hours, cost }) => (
+                  {breakdown.map(({ employee, hours, cost, effRate }) => (
                     <div key={employee.id} className="flex items-center gap-2 text-xs">
                       <div className="flex-1 truncate">{getEmployeeDisplayName(employee)}</div>
-                      <div className="text-muted-foreground shrink-0">{hours.toFixed(1)}h × CHF {employee.hourlyWage.toFixed(2)}</div>
-                      <div className="font-semibold shrink-0 w-20 text-right">CHF {cost.toFixed(0)}</div>
+                      <div className={`shrink-0 ${effRate === 0 ? 'text-red-500 font-semibold' : 'text-muted-foreground'}`}>
+                        {hours.toFixed(1)}h × CHF {effRate > 0 ? effRate.toFixed(2) : '—'}
+                        {effRate === 0 && ' (Lohn fehlt)'}
+                      </div>
+                      <div className="font-semibold shrink-0 w-20 text-right">
+                        {effRate > 0 ? `CHF ${cost.toFixed(0)}` : <span className="text-red-500">—</span>}
+                      </div>
                     </div>
                   ))}
                 </div>

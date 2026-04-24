@@ -1,0 +1,67 @@
+Bitte die Ist-Kostenberechnung im Beaulieu-Dienstplan korrigieren.
+
+Problem:
+Bei mehreren Beaulieu-Mitarbeitenden werden Ist-Stunden korrekt angezeigt, aber Ist-Kosten bleiben 0 CHF, weil im Personalstamm hourly_rate offenbar 0.00 ist oder der Monatslohn nicht in einen internen Stundenlohn umgerechnet wird.
+
+Ziel:
+Auch Monatslohn-Mitarbeitende müssen im Ist-Dienstplan Kosten anzeigen.
+
+Bitte exakt so umsetzen:
+
+1. Lohnquelle prüfen
+Für Beaulieu-Mitarbeitende prüfen:
+- hourly_rate
+- monthly_salary
+- salary_incl_13
+- employment_type
+- target_hours_per_month
+
+2. Kostenlogik vereinheitlichen
+Wenn hourly_rate > 0:
+- Ist-Kosten = Ist-Stunden × hourly_rate
+
+Wenn hourly_rate fehlt oder 0, aber Monatslohn vorhanden:
+- interner Stundenansatz = Monatslohn inkl. 13. / Sollstunden pro Monat
+- Ist-Kosten = Ist-Stunden × interner Stundenansatz
+
+Wenn weder Stundenlohn noch Monatslohn vorhanden:
+- im Dienstplan klar anzeigen "Lohn fehlt"
+- nicht still 0 CHF anzeigen
+
+3. Personalstamm
+Bitte sicherstellen:
+- Beaulieu-Löhne aus dem Lohnblatt werden in Supabase gespeichert
+- Monatsmitarbeiter haben einen Monatslohn
+- Flex/Stundenlohn-Mitarbeiter haben einen Stundenlohn
+- alle relevanten Lohnfelder sind tenant-korrekt mit restaurant_id = 'beaulieu'
+
+4. Anzeige im Dienstplan
+Unter dem Namen soll nicht 0.00 CHF/h stehen, wenn ein Monatslohn vorhanden ist.
+Stattdessen:
+- berechneter interner Stundenansatz anzeigen
+oder
+- "Monatslohn" mit berechnetem Ansatz
+
+5. Personal FIX und Dienstplan müssen gleich rechnen
+Die Kostenlogik für:
+- Dienstplan Ist-Kosten
+- Personal FIX
+- Tages-Controlling
+
+muss dieselbe Lohnbasis verwenden.
+
+6. Debug Logs
+Bitte loggen:
+[WAGE-COST] employee: ...
+[WAGE-COST] hourly_rate: ...
+[WAGE-COST] monthly_salary: ...
+[WAGE-COST] target_hours: ...
+[WAGE-COST] effective hourly rate: ...
+[WAGE-COST] ist hours: ...
+[WAGE-COST] ist cost: ...
+
+7. Bitte danach kurz sagen:
+- warum vorher 0 CHF angezeigt wurde
+- welche Lohnfelder jetzt verwendet werden
+- wie Monatslohn in Stundenkosten umgerechnet wird
+- ob Beaulieu-Ist-Kosten jetzt korrekt erscheinen
