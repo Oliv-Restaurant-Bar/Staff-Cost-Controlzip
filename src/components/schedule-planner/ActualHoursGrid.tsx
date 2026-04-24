@@ -14,11 +14,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb, Zap, CheckCircle2, Minus as MinusIcon } from 'lucide-react';
 
+export type AbsenceCode = 'FE' | 'FT' | 'K' | 'F';
+export const ABSENCE_CODES: ReadonlySet<AbsenceCode> = new Set(['FE', 'FT', 'K', 'F']);
+export const isProductiveEntry = (entry: ActualHoursEntry | undefined): boolean =>
+  !!entry && entry.hours > 0 && !entry.absenceType;
+
 export interface ActualHoursEntry {
   hours: number;
   start?: string;
   end?: string;
-  absenceType?: 'FE' | 'K' | 'F';
+  absenceType?: AbsenceCode;
 }
 
 interface ActualHoursGridProps {
@@ -103,7 +108,7 @@ const ActualHoursCell = ({
   entry: ActualHoursEntry | undefined;
   onSave: (entry: ActualHoursEntry | null) => void;
   showCosts?: boolean;
-  quickEntry?: 'FE' | 'K' | 'F' | null;
+  quickEntry?: AbsenceCode | null;
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [inputMode, setInputMode] = useState<'hours' | 'times' | 'chf'>('hours');
@@ -129,8 +134,7 @@ const ActualHoursCell = ({
         // Gleicher Typ nochmal → aufheben
         onSave(null);
       } else {
-        const hours = quickEntry === 'K' ? 8.4 : 0;
-        onSave({ hours, absenceType: quickEntry });
+        onSave({ hours: 0, absenceType: quickEntry });
       }
       return;
     }
@@ -189,20 +193,21 @@ const ActualHoursCell = ({
   const cost = hours * effectiveRate;
   const absenceType = entry?.absenceType;
 
-  const handleAbsenceQuick = (type: 'FE' | 'K' | 'F') => {
-    const hours = type === 'K' ? 8.4 : 0;
-    onSave({ hours, absenceType: type });
+  const handleAbsenceQuick = (type: AbsenceCode) => {
+    onSave({ hours: 0, absenceType: type });
     setIsEditing(false);
   };
 
   // Quick-entry hover color matches the active type
   const quickHoverClass = quickEntry === 'FE'
     ? 'hover:bg-blue-100 dark:hover:bg-blue-900/40 ring-1 ring-inset ring-blue-300/60 dark:ring-blue-700/60'
-    : quickEntry === 'K'
-      ? 'hover:bg-red-100 dark:hover:bg-red-900/40 ring-1 ring-inset ring-red-300/60 dark:ring-red-700/60'
-      : quickEntry === 'F'
-        ? 'hover:bg-slate-200 dark:hover:bg-slate-700/40 ring-1 ring-inset ring-slate-400/60 dark:ring-slate-600/60'
-        : 'hover:bg-primary/10';
+    : quickEntry === 'FT'
+      ? 'hover:bg-violet-100 dark:hover:bg-violet-900/40 ring-1 ring-inset ring-violet-300/60 dark:ring-violet-700/60'
+      : quickEntry === 'K'
+        ? 'hover:bg-red-100 dark:hover:bg-red-900/40 ring-1 ring-inset ring-red-300/60 dark:ring-red-700/60'
+        : quickEntry === 'F'
+          ? 'hover:bg-slate-200 dark:hover:bg-slate-700/40 ring-1 ring-inset ring-slate-400/60 dark:ring-slate-600/60'
+          : 'hover:bg-primary/10';
 
   return (
     <>
@@ -215,6 +220,7 @@ const ActualHoursCell = ({
           isSundayDay && "bg-amber-100/50 dark:bg-amber-900/30 border-r-2 border-r-primary/30",
           isDayOffDay && "bg-muted/50",
           absenceType === 'FE' && "bg-blue-50 dark:bg-blue-900/20",
+          absenceType === 'FT' && "bg-violet-50 dark:bg-violet-900/20",
           absenceType === 'K' && "bg-red-50 dark:bg-red-900/20",
           absenceType === 'F' && "bg-slate-100 dark:bg-slate-800/50",
           !absenceType && hours > 0 && "bg-green-50 dark:bg-green-900/20",
@@ -228,6 +234,7 @@ const ActualHoursCell = ({
             <span className={cn(
               "font-bold text-xs px-1.5 py-0.5 rounded",
               absenceType === 'FE' && "text-blue-600 dark:text-blue-400",
+              absenceType === 'FT' && "text-violet-600 dark:text-violet-400",
               absenceType === 'K' && "text-red-600 dark:text-red-400",
               absenceType === 'F' && "text-slate-500 dark:text-slate-400"
             )}>
@@ -272,29 +279,37 @@ const ActualHoursCell = ({
             {format(day, 'EEEE, d. MMMM yyyy', { locale: de })}
           </div>
 
-          {/* FE / K / F Schnellauswahl */}
-          <div className="flex gap-2 mb-4">
+          {/* FE / FT / K / F Schnellauswahl */}
+          <div className="grid grid-cols-2 gap-2 mb-4">
             <Button
               size="sm"
               variant="outline"
               onClick={() => handleAbsenceQuick('FE')}
-              className={cn("flex-1 font-semibold text-blue-600 border-blue-300 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/30", absenceType === 'FE' && "bg-blue-50 border-blue-400 dark:bg-blue-900/30")}
+              className={cn("font-semibold text-blue-600 border-blue-300 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/30", absenceType === 'FE' && "bg-blue-50 border-blue-400 dark:bg-blue-900/30")}
             >
               FE – Ferien
             </Button>
             <Button
               size="sm"
               variant="outline"
-              onClick={() => handleAbsenceQuick('K')}
-              className={cn("flex-1 font-semibold text-red-600 border-red-300 hover:bg-red-50", absenceType === 'K' && "bg-red-50 dark:bg-red-900/30")}
+              onClick={() => handleAbsenceQuick('FT')}
+              className={cn("font-semibold text-violet-600 border-violet-300 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-400 dark:hover:bg-violet-950/30", absenceType === 'FT' && "bg-violet-50 border-violet-400 dark:bg-violet-900/30")}
             >
-              K – Krank (8.4h)
+              FT – Feiertag
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleAbsenceQuick('K')}
+              className={cn("font-semibold text-red-600 border-red-300 hover:bg-red-50", absenceType === 'K' && "bg-red-50 dark:bg-red-900/30")}
+            >
+              K – Krank
             </Button>
             <Button
               size="sm"
               variant="outline"
               onClick={() => handleAbsenceQuick('F')}
-              className={cn("flex-1 font-semibold text-slate-500 border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800/30", absenceType === 'F' && "bg-slate-100 border-slate-400 dark:bg-slate-800/50")}
+              className={cn("font-semibold text-slate-500 border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800/30", absenceType === 'F' && "bg-slate-100 border-slate-400 dark:bg-slate-800/50")}
             >
               F – Frei
             </Button>
@@ -491,9 +506,9 @@ export const ActualHoursGrid = ({
   const isWeekView = days.length <= 7;
 
   // ── Schnellerfassung-Modus ─────────────────────────────────────────────────
-  const [quickEntry, setQuickEntry] = useState<'FE' | 'K' | 'F' | null>(null);
+  const [quickEntry, setQuickEntry] = useState<AbsenceCode | null>(null);
 
-  const toggleQuickEntry = (type: 'FE' | 'K' | 'F') => {
+  const toggleQuickEntry = (type: AbsenceCode) => {
     setQuickEntry(prev => prev === type ? null : type);
   };
 
@@ -510,10 +525,21 @@ export const ActualHoursGrid = ({
     let totalHours = 0;
     let totalCosts = 0;
 
+    let absenceCellsSkipped = 0;
+
     employees.forEach((emp) => {
       const cellKey = `${emp.id}-${dateStr}`;
       const entry = actualHoursData[cellKey];
-      if (entry?.hours) {
+      if (!entry) return;
+
+      // Exclude ALL absence types from productive day totals
+      if (entry.absenceType) {
+        absenceCellsSkipped++;
+        console.log(`[ABSENCE] type: ${entry.absenceType} excluded from day totals | employee: ${emp.name}`);
+        return;
+      }
+
+      if (entry.hours > 0) {
         const effRate = getEffectiveHourlyRate(emp) ?? 0;
         const istCost = entry.hours * effRate;
         totalHours += entry.hours;
@@ -528,6 +554,12 @@ export const ActualHoursGrid = ({
         console.log(`[WAGE-COST] ist cost: CHF ${istCost.toFixed(2)}`);
       }
     });
+
+    if (absenceCellsSkipped > 0) {
+      console.log(`[ABSENCE] absence cells skipped: ${absenceCellsSkipped}`);
+      console.log(`[ABSENCE] productive day hours: ${totalHours.toFixed(2)}`);
+      console.log(`[ABSENCE] totals recalculated: hours=${totalHours.toFixed(2)} cost=${totalCosts.toFixed(2)}`);
+    }
 
     const plannedRevenue = dailyBudgets[dateStr]?.plannedRevenue || 0;
     const actualRevenue  = dailyBudgets[dateStr]?.actualRevenue;
@@ -567,12 +599,13 @@ export const ActualHoursGrid = ({
     return { totalHours, totalCosts, plannedRevenue, actualRevenue, laborCostPct, isOverBudget, excessCosts, excessHours, markerStatus, revenueForMark };
   };
 
-  // Per-employee breakdown for a specific day
+  // Per-employee breakdown for a specific day (only productive entries, no absences)
   const getDayEmployeeBreakdown = (dateStr: string) => {
     return employees.map(emp => {
       const cellKey = `${emp.id}-${dateStr}`;
       const entry = actualHoursData[cellKey];
-      const hours = entry?.hours || 0;
+      const isAbsence = !!entry?.absenceType;
+      const hours = (!isAbsence && entry?.hours) ? entry.hours : 0;
       const effRate = getEffectiveHourlyRate(emp) ?? 0;
       const cost = hours * effRate;
       return { employee: emp, hours, cost, effRate };
@@ -609,9 +642,11 @@ export const ActualHoursGrid = ({
       quickEntry
         ? quickEntry === 'FE'
           ? "bg-blue-50 border-blue-300 dark:bg-blue-950/40 dark:border-blue-700"
-          : quickEntry === 'K'
-            ? "bg-red-50 border-red-300 dark:bg-red-950/40 dark:border-red-700"
-            : "bg-slate-100 border-slate-300 dark:bg-slate-800/60 dark:border-slate-600"
+          : quickEntry === 'FT'
+            ? "bg-violet-50 border-violet-300 dark:bg-violet-950/40 dark:border-violet-700"
+            : quickEntry === 'K'
+              ? "bg-red-50 border-red-300 dark:bg-red-950/40 dark:border-red-700"
+              : "bg-slate-100 border-slate-300 dark:bg-slate-800/60 dark:border-slate-600"
         : "bg-muted/40 border-border"
     )}>
       <Zap className={cn(
@@ -619,7 +654,7 @@ export const ActualHoursGrid = ({
         quickEntry ? "text-amber-500" : "text-muted-foreground"
       )} />
       <span className="text-xs font-medium text-muted-foreground shrink-0">Schnellerfassung:</span>
-      <div className="flex gap-1.5">
+      <div className="flex gap-1.5 flex-wrap">
         <button
           onClick={() => toggleQuickEntry('FE')}
           className={cn(
@@ -630,6 +665,17 @@ export const ActualHoursGrid = ({
           )}
         >
           FE – Ferien
+        </button>
+        <button
+          onClick={() => toggleQuickEntry('FT')}
+          className={cn(
+            "px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all",
+            quickEntry === 'FT'
+              ? "bg-violet-500 text-white border-violet-500 shadow-sm"
+              : "border-violet-300 text-violet-600 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-400 dark:hover:bg-violet-950/40"
+          )}
+        >
+          FT – Feiertag
         </button>
         <button
           onClick={() => toggleQuickEntry('K')}
@@ -659,6 +705,7 @@ export const ActualHoursGrid = ({
           <span className={cn(
             "text-xs font-medium",
             quickEntry === 'FE' && "text-blue-700 dark:text-blue-400",
+            quickEntry === 'FT' && "text-violet-700 dark:text-violet-400",
             quickEntry === 'K' && "text-red-700 dark:text-red-400",
             quickEntry === 'F' && "text-slate-600 dark:text-slate-400",
           )}>

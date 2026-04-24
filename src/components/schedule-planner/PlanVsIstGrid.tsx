@@ -10,7 +10,8 @@ const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 
 // Alle Abwesenheitscodes, die in Plan oder Ist neutral behandelt werden
 // d.h. kein Soll-/Ist-Stundenvergleich, delta = 0
-const ABSENCE_CODES: ReadonlySet<string> = new Set(['FE', 'K', 'F']);
+// FE=Ferien, FT=Feiertag, K=Krank, F=Frei
+const ABSENCE_CODES: ReadonlySet<string> = new Set(['FE', 'FT', 'K', 'F']);
 
 interface IstEntry {
   hours: number;
@@ -190,7 +191,7 @@ export const PlanVsIstGrid = ({
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-3 h-3 rounded-sm bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 inline-block" />
-          <span>Abwesenheit (FE / K / F) — neutral</span>
+          <span>Abwesenheit (FE / FT / K / F) — neutral</span>
         </div>
       </div>
 

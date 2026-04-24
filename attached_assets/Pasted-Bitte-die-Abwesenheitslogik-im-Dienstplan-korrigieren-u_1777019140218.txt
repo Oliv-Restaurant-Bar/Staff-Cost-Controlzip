@@ -1,0 +1,98 @@
+Bitte die Abwesenheitslogik im Dienstplan korrigieren und eine neue Kategorie "Feiertage" ergänzen.
+
+Ziel:
+Ferien und Feiertage dürfen nicht als produktive Sollstunden in den Tages-Totalstunden gezählt werden.
+
+Aktuell werden Ferientage offenbar in den Totalstunden pro Tag mitgerechnet. Das ist falsch.
+Ferien und Feiertage sind Abwesenheiten und dürfen nicht als Arbeitsstunden in der Tagesplanung / Tages-Summe erscheinen.
+
+Bitte exakt so umsetzen:
+
+1. Ferientage aus Tages-Totalstunden ausschliessen
+Wenn eine Zelle als FE / Ferien markiert ist:
+- nicht zu Tages-Totalstunden zählen
+- nicht zu geplanten produktiven Stunden zählen
+- nicht zu Ist-Stunden zählen
+- nicht in Personalkosten des Tages rechnen
+- nicht in Soll/Ist-Abweichung als Minus oder Plus Arbeitsstunden behandeln
+
+Die FE-Zelle soll sichtbar bleiben, aber neutral für Arbeitsstunden und Tageskosten sein.
+
+2. Neue Kategorie Feiertage ergänzen
+Bitte eine neue Abwesenheitskategorie ergänzen:
+
+- Feiertag
+- Kürzel: FT
+- Darstellung analog zu FE / Ferien
+- eigene Farbe, z.B. hellblau oder dezent violett
+- in Schnell-Erfassung neben FE / K / F anzeigen
+
+3. Feiertage ebenfalls neutral behandeln
+Wenn eine Zelle als FT / Feiertag markiert ist:
+- nicht zu Tages-Totalstunden zählen
+- nicht zu produktiven Planstunden zählen
+- nicht zu Ist-Stunden zählen
+- nicht zu Tageskosten rechnen
+- nicht als negative Abweichung im Plan-vs-Ist Vergleich behandeln
+
+4. Bestehende Abwesenheitslogik erweitern
+Bitte alle Stellen prüfen, wo absenceType oder ähnliche Logik genutzt wird:
+
+- Dienstplan Tages-Summen
+- Mitarbeiter Monats-Summen
+- Ist-Modus
+- Plan-Modus
+- Vergleich-Modus
+- Personal FIX / Flex-Auswertung
+- Tages-Popup
+- PDF Export
+- localStorage / Supabase KV Absence-Speicherung
+
+FE und FT müssen überall als nicht produktive Abwesenheiten behandelt werden.
+
+5. Speicherung
+Bitte FT analog zu FE speichern:
+- in derselben Abwesenheitsstruktur
+- tenant-korrekt
+- reload-sicher
+- Supabase / KV falls FE dort gespeichert wird
+
+6. Anzeige
+In der Zelle:
+- FE = Ferien
+- FT = Feiertag
+
+In Tooltip / Popup:
+- klar anzeigen "Ferien" oder "Feiertag"
+- keine Stunden / Kosten als Arbeit
+
+7. Vergleich Plan vs Ist
+Wenn Plan oder Ist FE/FT enthält:
+- keine negative Abweichung nur wegen Abwesenheit
+- keine roten Minus-Stunden
+- Zelle neutral darstellen
+
+8. Tages-Total
+Die Tages-Summe unten darf nur produktive Arbeit zählen:
+- echte Schichten
+- echte Arbeitszeiten
+Nicht zählen:
+- FE Ferien
+- FT Feiertag
+- K Krank
+- F Frei
+
+9. Debug Logs
+Bitte loggen:
+[ABSENCE] type: FE excluded from day totals
+[ABSENCE] type: FT excluded from day totals
+[ABSENCE] productive day hours: ...
+[ABSENCE] absence cells skipped: ...
+[ABSENCE] totals recalculated: ...
+
+10. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- ob FE jetzt aus Tages-Totalstunden ausgeschlossen ist
+- ob FT ergänzt wurde
+- ob FT gespeichert und nach Reload erhalten bleibt
+- ob Plan/Ist/Vergleich und PDF korrekt angepasst wurden

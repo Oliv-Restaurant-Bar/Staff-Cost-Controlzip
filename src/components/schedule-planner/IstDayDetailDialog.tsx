@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { AlertTriangle, CheckCircle2, Minus, ChevronDown, ChevronUp, Clock, Users, TrendingUp } from 'lucide-react';
 import { DaySchedule } from './ScheduleGrid';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { getEffectiveHourlyRate, ABSENCE_CODES } from './ActualHoursGrid';
 
 interface IstDayDetailDialogProps {
   open: boolean;
@@ -49,10 +50,17 @@ export function IstDayDetailDialog({
   const dateStr = format(date, 'yyyy-MM-dd');
   const targetPct = laborCostThreshold / 100;
 
-  const totalIstHours = employees.reduce((s, e) => s + (actualHoursData[`${e.id}-${dateStr}`]?.hours ?? 0), 0);
+  // Only count productive entries (exclude all absence types: FE, FT, K, F)
+  const totalIstHours = employees.reduce((s, e) => {
+    const entry = actualHoursData[`${e.id}-${dateStr}`];
+    if (!entry || entry.absenceType || ABSENCE_CODES.has(entry.absenceType as string)) return s;
+    return s + (entry.hours ?? 0);
+  }, 0);
   const totalIstCost = employees.reduce((s, e) => {
-    const h = actualHoursData[`${e.id}-${dateStr}`]?.hours ?? 0;
-    return s + h * (e.hourlyWage || 0);
+    const entry = actualHoursData[`${e.id}-${dateStr}`];
+    if (!entry || entry.absenceType) return s;
+    const h = entry.hours ?? 0;
+    return s + h * (getEffectiveHourlyRate(e) ?? 0);
   }, 0);
 
   const istRevenue = (actualRevenue !== undefined && actualRevenue > 0) ? actualRevenue : null;
@@ -64,8 +72,8 @@ export function IstDayDetailDialog({
     : null;
 
   const avgWage = (() => {
-    const waged = employees.filter(e => (e.hourlyWage || 0) > 0);
-    return waged.length ? waged.reduce((s, e) => s + e.hourlyWage, 0) / waged.length : 0;
+    const rates = employees.map(e => getEffectiveHourlyRate(e) ?? 0).filter(r => r > 0);
+    return rates.length ? rates.reduce((s, r) => s + r, 0) / rates.length : 0;
   })();
   const extraHours = (devCHF !== null && devCHF > 0 && avgWage > 0) ? devCHF / avgWage : 0;
 
@@ -86,8 +94,11 @@ export function IstDayDetailDialog({
   console.log(`[IST-DAY] marker status: ${markerStatus}`);
 
   const empBreakdown = employees.map(e => {
-    const h = actualHoursData[`${e.id}-${dateStr}`]?.hours ?? 0;
-    const cost = h * (e.hourlyWage || 0);
+    const entry = actualHoursData[`${e.id}-${dateStr}`];
+    const isAbsence = !!entry?.absenceType;
+    const h = (!isAbsence && entry?.hours) ? entry.hours : 0;
+    const effRate = getEffectiveHourlyRate(e) ?? 0;
+    const cost = h * effRate;
     const share = totalIstCost > 0 ? (cost / totalIstCost) * 100 : 0;
     return { emp: e, hours: h, cost, share };
   }).filter(r => r.hours > 0).sort((a, b) => b.cost - a.cost);
