@@ -22,10 +22,11 @@ export function getDAY_WEIGHTS(): Record<number, number> {
  * Liest den geplanten Monats-Umsatz aus dem Budget-Store (P&L-Format).
  * @param year       Jahreszahl (z.B. 2026)
  * @param monthIndex Monat 0-basiert (0 = Januar, 11 = Dezember)
+ * @param storeKey   Optionaler Tenant-Speicherschlüssel (default: Oliv 'budget_v1')
  */
-export function getMonthlyBudgetRevenue(year: number, monthIndex: number): number {
+export function getMonthlyBudgetRevenue(year: number, monthIndex: number, storeKey?: string): number {
   try {
-    const budget  = loadBudgetWithPL(year);
+    const budget  = loadBudgetWithPL(year, storeKey);
     const totals  = computePLCategoryTotals(budget.plLineItems ?? []);
     const byMonth = totals['pl_revenue'] ?? Array(12).fill(0);
     return byMonth[monthIndex] ?? 0;

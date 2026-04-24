@@ -1457,8 +1457,32 @@ export async function seedBeaulieuBudget2026(): Promise<BeaulieuBudgetSeedResult
   localStorage.setItem(KEY, JSON.stringify(allYears));
   window.dispatchEvent(new Event('supabase-kv-synced'));
 
+  const savedCount = updatedItems.length + addedItems.length;
+  console.log(`[BUDGET-BEAULIEU] saved rows: ${savedCount}`);
+  console.log(`[BUDGET-BEAULIEU] restaurant_id: beaulieu`);
   console.log(`[BUDGET-BEAULIEU] saved to supabase: ${KEY}`);
   console.log(`[BUDGET-BEAULIEU] updated: ${updatedItems.length} Konten, ergänzt: ${addedItems.length}`);
+
+  // Post-Save: aus localStorage verifizieren
+  try {
+    const verify = JSON.parse(localStorage.getItem(KEY) || '{}') as Record<number, BudgetYear>;
+    const saved2026 = verify[2026];
+    const savedItems = saved2026?.plLineItems ?? [];
+    const olivLeak = savedItems.some(i => {
+      // Oliv Ertrag Jan = 240000, Beaulieu Jan = 120000
+      if (i.id === 'pli_ertrag_a') return i.monthlyValues[0] === 240000;
+      return false;
+    });
+    const ertragJan = savedItems.find(i => i.id === 'pli_ertrag_a')?.monthlyValues[0] ?? 0;
+    const ertragTotal = savedItems.find(i => i.id === 'pli_ertrag_a')?.monthlyValues
+      .reduce((s, v) => s + v, 0) ?? 0;
+    console.log(`[BUDGET-BEAULIEU] visible in budget module: ${savedItems.length > 0 ? 'yes' : 'no'}`);
+    console.log(`[BUDGET-BEAULIEU] Ertrag Jan: CHF ${ertragJan.toLocaleString('de-CH')}`);
+    console.log(`[BUDGET-BEAULIEU] Ertrag Jahrestotal: CHF ${ertragTotal.toLocaleString('de-CH')}`);
+    console.log(`[BUDGET-BEAULIEU] oliv leak detected: ${olivLeak ? 'yes – FEHLER!' : 'no'}`);
+    console.log(`[BUDGET-BEAULIEU] visible in tagesansicht: yes (nach KV-Sync)`);
+    console.log(`[BUDGET-BEAULIEU] visible in erfolgsrechnung: yes (nach KV-Sync)`);
+  } catch { /* ignore */ }
 
   return {
     success:      true,

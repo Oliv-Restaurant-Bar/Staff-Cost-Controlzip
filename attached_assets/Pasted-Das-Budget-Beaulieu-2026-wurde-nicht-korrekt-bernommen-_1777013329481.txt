@@ -1,0 +1,74 @@
+Das Budget Beaulieu 2026 wurde nicht korrekt übernommen. In der Budgetansicht erscheint weiterhin offenbar das falsche Budget bzw. Oliv-Werte.
+
+Bitte jetzt das Budget für Beaulieu sauber und endgültig korrigieren.
+
+Ziel:
+- Die Datei "Budget Beaulieu 2026.xlsx" soll korrekt eingelesen werden
+- Die Werte sollen tenant-korrekt für restaurant_id = 'beaulieu' gespeichert werden
+- In der Budgetansicht von Beaulieu dürfen keine Oliv-Werte erscheinen
+- Alle Budget-Module sollen dieselbe Beaulieu-Datenbasis verwenden
+
+Bitte exakt so prüfen und umsetzen:
+
+1. Excel-Datei korrekt auslesen
+Bitte die hochgeladene Datei
+- Budget Beaulieu 2026.xlsx
+nochmals sauber einlesen.
+
+Wichtig:
+- nicht nur Frontend-Vorschau
+- nicht nur temporär
+- sondern echte Übernahme in Supabase
+
+2. Prüfen, wo der Fehler liegt
+Bitte genau prüfen:
+- wurde das Excel überhaupt geparst?
+- wurden die Daten gespeichert?
+- unter welchem restaurant_id wurden sie gespeichert?
+- lädt die Budgetseite evtl. noch Oliv-Daten oder Defaultdaten?
+
+3. Tenant-korrekte Speicherung
+Bitte sicherstellen:
+- alle Budgetpositionen von Beaulieu werden mit restaurant_id = 'beaulieu' gespeichert
+- keine Vermischung mit Oliv
+- bestehende Oliv-Daten nicht verändern
+
+4. Budgetansicht fixen
+Wenn tenant = beaulieu aktiv ist, darf die Budgetseite nur Beaulieu-Budgetwerte laden.
+
+Wichtig:
+- keine Oliv-Budgetwerte
+- keine globalen Defaults
+- keine Fallbacks ohne Tenant-Filter
+
+5. Alle Budget-abhängigen Module prüfen
+Bitte prüfen, ob nach dem Fix auch diese Module die richtigen Beaulieu-Budgetdaten sehen:
+- Budget
+- Tagesansicht vs Budget
+- Tages-Controlling
+- Erfolgsrechnung
+- Personalplanung falls budgetabhängig
+
+6. Debug Logs
+Bitte loggen:
+[BUDGET-BEAULIEU] excel parse started
+[BUDGET-BEAULIEU] rows parsed: ...
+[BUDGET-BEAULIEU] saved rows: ...
+[BUDGET-BEAULIEU] restaurant_id: beaulieu
+[BUDGET-BEAULIEU] visible in budget module: yes/no
+[BUDGET-BEAULIEU] visible in tagesansicht: yes/no
+[BUDGET-BEAULIEU] visible in erfolgsrechnung: yes/no
+[BUDGET-BEAULIEU] oliv leak detected: yes/no
+
+7. Hard check
+Bitte nach dem Import direkt prüfen:
+- Beaulieu Budget Total plausibel?
+- stimmen Monatswerte aus dem Excel?
+- erscheinen nicht mehr die Oliv-Summen wie CHF 3'470'000 etc., falls diese nicht aus Beaulieu stammen?
+
+8. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wo der Fehler lag
+- ob das Excel jetzt wirklich in Supabase übernommen wurde
+- welches Budgettotal jetzt für Beaulieu geladen wird
+- ob die Budgetansicht jetzt tenant-korrekt nur Beaulieu zeigt

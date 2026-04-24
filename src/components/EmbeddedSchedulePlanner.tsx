@@ -84,7 +84,7 @@ const toLocalEmployee = (emp: SupabaseEmployee): Employee => ({
 export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlannerProps) => {
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
   const { currentWeekStart, currentMonthStart, weekNumber, monthLabel, navigateWeek, navigateMonth } = useWeekSync('EmbeddedSchedulePlanner', selectedDate);
-  const { tenantId } = useTenant();
+  const { tenantId, tenantKey } = useTenant();
 
   // Use Supabase hook for employees and schedule — tenant-filtered
   const {
@@ -150,12 +150,12 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
   useEffect(() => {
     const year         = currentMonthStart.getFullYear();
     const monthIdx     = currentMonthStart.getMonth();
-    const monthlyRev   = getMonthlyBudgetRevenue(year, monthIdx);
+    const monthlyRev   = getMonthlyBudgetRevenue(year, monthIdx, tenantKey('budget_v1'));
     const allDays      = eachDayOfInterval({
       start: startOfMonth(currentMonthStart),
       end:   endOfMonth(currentMonthStart),
     });
-    const savedBudgets = localStorage.getItem('dailyBudgets');
+    const savedBudgets = localStorage.getItem(tenantKey('dailyBudgets'));
     const manualBudgets: Record<string, { plannedRevenue?: number; actualRevenue?: number }> =
       savedBudgets ? JSON.parse(savedBudgets) : {};
 
@@ -604,14 +604,14 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
 
   const handleUpdatePlannedRevenue = (dateStr: string, value: number | null) => {
     const overrides: Record<string, number> =
-      JSON.parse(localStorage.getItem('dailyRevenueOverrides') || '{}');
+      JSON.parse(localStorage.getItem(tenantKey('dailyRevenueOverrides')) || '{}');
     if (value === null) {
       delete overrides[dateStr];
-      localStorage.setItem('dailyRevenueOverrides', JSON.stringify(overrides));
+      localStorage.setItem(tenantKey('dailyRevenueOverrides'), JSON.stringify(overrides));
       // Zurück auf Auto-Wert: Monats-Distribution neu berechnen
       const [y, m, d] = dateStr.split('-').map(Number);
       const day = new Date(y, m - 1, d);
-      const monthlyRev = getMonthlyBudgetRevenue(y, m - 1);
+      const monthlyRev = getMonthlyBudgetRevenue(y, m - 1, tenantKey('budget_v1'));
       if (monthlyRev > 0) {
         const allDays = eachDayOfInterval({ start: startOfMonth(day), end: endOfMonth(day) });
         const auto = distributeBudgetByWeekday(monthlyRev, allDays);

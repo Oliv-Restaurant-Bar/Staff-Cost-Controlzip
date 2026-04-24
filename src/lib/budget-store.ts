@@ -84,10 +84,16 @@ export function loadBudgetYear(year: number, storeKey: string = STORAGE_KEY): Bu
       item => item.monthlyValues.some(v => v !== 0)
     );
     if (!hasRealValues) {
-      const seeded = createSeededBudget2026();
-      all[2026] = seeded;
-      saveAll(all, storeKey);
-      return seeded;
+      // Auto-Seed NUR für Oliv (Standard-Key) — Beaulieu wird über seedBeaulieuBudget2026() befüllt
+      if (storeKey === STORAGE_KEY) {
+        const seeded = createSeededBudget2026();
+        all[2026] = seeded;
+        saveAll(all, storeKey);
+        return seeded;
+      }
+      // Beaulieu: leeres Budget zurückgeben — kein Oliv-Seed!
+      console.log(`[BUDGET-BEAULIEU] loadBudgetYear: kein Auto-Seed für storeKey="${storeKey}", warte auf seedBeaulieuBudget2026()`);
+      return existing ?? createEmptyBudgetYear(year);
     }
     return existing;
   }
@@ -540,8 +546,10 @@ function ensureDefaultPLCategories(budget: BudgetYear): BudgetYear {
  * 6400 Energie (pli_energie), 6800 Abschreibungen (pli_finance_6800),
  * 6910 Zinsaufwand (pli_zinsaufwand).
  */
-function migrateSeedZeroValues2026(budget: BudgetYear): BudgetYear {
+function migrateSeedZeroValues2026(budget: BudgetYear, storeKey: string = STORAGE_KEY): BudgetYear {
   if (budget.year !== 2026) return budget;
+  // Nur für Oliv-Tenant — Beaulieu hat eigene Seed-Daten über seedBeaulieuBudget2026()
+  if (storeKey !== STORAGE_KEY) return budget;
   const seedMap = new Map(SEED_2026_LINE_ITEMS.map(s => [s.id, s]));
   const items = budget.plLineItems ?? [];
   let changed = false;
@@ -572,7 +580,7 @@ export function loadBudgetWithPL(year: number, storeKey: string = STORAGE_KEY): 
   budget = migrateObsoletePLItems(budget);
   budget = ensureDefaultPLCategories(budget);
   budget = ensureDefaultPLItems(budget);
-  budget = migrateSeedZeroValues2026(budget);
+  budget = migrateSeedZeroValues2026(budget, storeKey);
   // Immer Sync: plLineItems → legacy positions (damit Dashboard/SollIst budget_revenue findet)
   budget = syncPLToLegacyPositions(budget);
   saveBudgetYear(budget, storeKey);

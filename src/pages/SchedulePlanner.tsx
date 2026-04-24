@@ -601,7 +601,7 @@ const SchedulePlanner = () => {
       // ── Tagesbudgets ─────────────────────────────────────────────────────────
       const year           = currentMonth.getFullYear();
       const monthIdx       = currentMonth.getMonth();
-      const monthlyRevenue = getMonthlyBudgetRevenue(year, monthIdx);
+      const monthlyRevenue = getMonthlyBudgetRevenue(year, monthIdx, tenantKey('budget_v1'));
       const allDays        = eachDayOfInterval({ start: startOfMonth(currentMonth), end: endOfMonth(currentMonth) });
 
       const savedBudgets    = localStorage.getItem(tenantKey('dailyBudgets'));
