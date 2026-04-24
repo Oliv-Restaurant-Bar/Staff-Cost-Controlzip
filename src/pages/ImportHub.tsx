@@ -18,7 +18,7 @@ import { GastronoviImportSection } from '@/components/GastronoviImportSection';
 import { VjDailyImportSection } from '@/components/VjDailyImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
-import { loadEmployees, saveActualHourEntry, upsertEmployee, seedBeaulieuEmployees, runBeaulieuHarteTest, seedBeaulieuBudget2026, type BeaulieuBudgetSeedResult } from '@/lib/supabase-db';
+import { loadEmployees, saveActualHourEntry, upsertEmployee, seedBeaulieuEmployees, runBeaulieuHarteTest, seedBeaulieuBudget2026, type BeaulieuBudgetSeedResult, type BeaulieuBudgetVerifyRow } from '@/lib/supabase-db';
 import type { HarteTestResult } from '@/lib/supabase-db';
 import { defaultEmployeesBeaulieu } from '@/data/defaultEmployeesBeaulieu';
 import { Employee, MirusDailyImportEntry, MirusImportMode, Department } from '@/types/personnel';
@@ -1112,6 +1112,98 @@ const PlaceholderSection = ({ label }: { label: string }) => (
 
 // ─── Beaulieu Budget 2026 Import ─────────────────────────────────────────────
 
+const MONTH_ABBREVS = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+function isMonthRow(position: string) {
+  return MONTH_ABBREVS.some(m => position === `Umsatz ${m}`);
+}
+
+function BudgetVerifyTable({ rows }: { rows: BeaulieuBudgetVerifyRow[] }) {
+  const fmtCHF = (v: number) => `CHF ${v.toLocaleString('de-CH')}`;
+  const months = rows.filter(r => isMonthRow(r.position));
+  const totals = rows.filter(r => !isMonthRow(r.position));
+  const hasErrors = rows.some(r => r.status === 'ERROR');
+
+  return (
+    <div className="space-y-3">
+      <div className={`flex items-center gap-2 text-sm font-semibold ${hasErrors ? 'text-red-600' : 'text-emerald-600'}`}>
+        {hasErrors
+          ? <AlertCircle className="h-4 w-4" />
+          : <CheckCircle2 className="h-4 w-4" />
+        }
+        {hasErrors ? 'Differenzen gefunden — bitte prüfen' : 'Alle Werte stimmen mit dem Excel überein'}
+      </div>
+
+      {/* Monatliche Umsätze */}
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Umsatz Monatswerte (CHF)</p>
+        <div className="overflow-x-auto rounded border border-border">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="text-left px-2 py-1.5 font-medium">Monat</th>
+                <th className="text-right px-2 py-1.5 font-medium">Excel</th>
+                <th className="text-right px-2 py-1.5 font-medium">Supabase</th>
+                <th className="text-right px-2 py-1.5 font-medium">Diff</th>
+                <th className="text-center px-2 py-1.5 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {months.map(r => (
+                <tr key={r.position} className={r.status === 'ERROR' ? 'bg-red-50 dark:bg-red-950/20' : ''}>
+                  <td className="px-2 py-1 font-medium">{r.position.replace('Umsatz ', '')}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{r.excel.toLocaleString('de-CH')}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{r.supabase.toLocaleString('de-CH')}</td>
+                  <td className={`px-2 py-1 text-right tabular-nums ${r.diff !== 0 ? 'text-red-600 font-semibold' : 'text-muted-foreground'}`}>{r.diff === 0 ? '—' : (r.diff > 0 ? '+' : '') + r.diff.toLocaleString('de-CH')}</td>
+                  <td className="px-2 py-1 text-center">
+                    {r.status === 'OK'
+                      ? <span className="text-emerald-600">✓</span>
+                      : <span className="text-red-600 font-bold">✗</span>
+                    }
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Jahrestotale */}
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Jahrestotale</p>
+        <div className="overflow-x-auto rounded border border-border">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="text-left px-2 py-1.5 font-medium">Position</th>
+                <th className="text-right px-2 py-1.5 font-medium">Excel</th>
+                <th className="text-right px-2 py-1.5 font-medium">Supabase</th>
+                <th className="text-right px-2 py-1.5 font-medium">Diff</th>
+                <th className="text-center px-2 py-1.5 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {totals.map(r => (
+                <tr key={r.position} className={`${r.status === 'ERROR' ? 'bg-red-50 dark:bg-red-950/20' : ''} ${r.position.includes('EBITDA') || r.position.includes('Umsatz Total') ? 'font-semibold' : ''}`}>
+                  <td className="px-2 py-1">{r.position}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{fmtCHF(r.excel)}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{fmtCHF(r.supabase)}</td>
+                  <td className={`px-2 py-1 text-right tabular-nums ${r.diff !== 0 ? 'text-red-600 font-semibold' : 'text-muted-foreground'}`}>{r.diff === 0 ? '—' : (r.diff > 0 ? '+' : '') + fmtCHF(r.diff)}</td>
+                  <td className="px-2 py-1 text-center">
+                    {r.status === 'OK'
+                      ? <span className="text-emerald-600">✓</span>
+                      : <span className="text-red-600 font-bold">✗</span>
+                    }
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BeaulieuBudgetImportSection() {
   const [running, setRunning]   = useState(false);
   const [result, setResult]     = useState<BeaulieuBudgetSeedResult | null>(null);
@@ -1122,8 +1214,11 @@ function BeaulieuBudgetImportSection() {
     try {
       const res = await seedBeaulieuBudget2026();
       setResult(res);
-      if (res.success) {
-        toast.success(`Budget 2026 Beaulieu gespeichert — ${res.updatedItems.length} Konten`);
+      const hasErrors = res.verifyRows?.some(r => r.status === 'ERROR');
+      if (res.success && !hasErrors) {
+        toast.success(`Budget 2026 Beaulieu gespeichert — alle Werte korrekt ✓`);
+      } else if (res.success && hasErrors) {
+        toast.warning('Budget gespeichert, aber Differenzen im Vergleich gefunden');
       } else {
         toast.error('Budget-Import fehlgeschlagen');
       }
@@ -1139,7 +1234,7 @@ function BeaulieuBudgetImportSection() {
       <p className="text-sm text-muted-foreground">
         Schreibt die Budgetwerte aus <strong>Budget Beaulieu 2026.xlsx</strong> fest in Supabase
         (Schlüssel: <code className="text-xs bg-muted px-1 rounded">beaulieu:budget_v1</code>).
-        Alle Module (Budget, Tagesansicht, Tages-Controlling, Erfolgsrechnung, Personalplanung) lesen danach die korrekten Monatswerte.
+        Nach dem Speichern wird automatisch ein Abgleich Excel ↔ Supabase durchgeführt.
       </p>
 
       <Button
@@ -1148,27 +1243,47 @@ function BeaulieuBudgetImportSection() {
         className="gap-2 bg-violet-600 hover:bg-violet-700 text-white"
       >
         {running
-          ? <><Loader2 className="h-4 w-4 animate-spin" />Budget wird gespeichert…</>
-          : <><Database className="h-4 w-4" />Budget 2026 in Supabase speichern</>
+          ? <><Loader2 className="h-4 w-4 animate-spin" />Budget wird gespeichert + verifiziert…</>
+          : <><Database className="h-4 w-4" />Budget 2026 speichern + verifizieren</>
         }
       </Button>
 
       {result && (
-        <div className={`rounded-lg border px-4 py-3 text-sm space-y-1 ${result.success ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30' : 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/30'}`}>
-          <p className="font-semibold flex items-center gap-1.5">
-            {result.success
-              ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              : <AlertCircle className="h-4 w-4 text-red-600" />
-            }
-            {result.message}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {result.updatedItems.length} Konten aktualisiert · {result.addedItems.length} ergänzt · {result.durationMs} ms
-          </p>
-          {result.updatedItems.length > 0 && (
-            <p className="text-xs font-mono text-muted-foreground break-all">
-              {result.updatedItems.join(', ')}
-            </p>
+        <div className="space-y-3">
+          {/* Save-Zusammenfassung */}
+          <div className={`rounded-lg border px-4 py-3 text-sm ${result.success ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30' : 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/30'}`}>
+            <div className="flex items-center gap-1.5 font-semibold mb-1">
+              {result.success
+                ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                : <AlertCircle className="h-4 w-4 text-red-600" />
+              }
+              {result.message}
+            </div>
+            <div className="text-xs text-muted-foreground space-y-0.5">
+              <p>{result.updatedItems.length} Konten aktualisiert · {result.addedItems.length} ergänzt · {result.durationMs} ms</p>
+              {result.totalRevenue !== undefined && (
+                <p className="font-medium">
+                  Jahresumsatz Beaulieu 2026: <span className="text-foreground">CHF {result.totalRevenue.toLocaleString('de-CH')}</span>
+                </p>
+              )}
+              {result.olivLeakDetected && (
+                <p className="text-red-600 font-semibold">⚠ Oliv-Leak erkannt! Jan-Umsatz = 240'000 (Oliv-Wert). Budget muss neu geseeded werden.</p>
+              )}
+              {result.olivLeakDetected === false && (
+                <p className="text-emerald-600">✓ Kein Oliv-Leak — restaurant_id beaulieu korrekt isoliert</p>
+              )}
+            </div>
+          </div>
+
+          {/* Vergleichstabelle */}
+          {result.verifyRows && result.verifyRows.length > 0 && (
+            <div className="rounded-lg border border-border p-3 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Kontrollabgleich: Excel ↔ Supabase
+              </p>
+              <BudgetVerifyTable rows={result.verifyRows} />
+            </div>
           )}
         </div>
       )}

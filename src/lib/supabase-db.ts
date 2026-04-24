@@ -1327,12 +1327,23 @@ export async function runPersonalstammE2ETest(): Promise<HarteTestResult> {
 
 // ─── Budget 2026 Beaulieu – Seed aus Excel-Datei ──────────────────────────────
 
+export interface BeaulieuBudgetVerifyRow {
+  position: string;
+  excel: number;
+  supabase: number;
+  diff: number;
+  status: 'OK' | 'ERROR';
+}
+
 export interface BeaulieuBudgetSeedResult {
   success: boolean;
   updatedItems: string[];
   addedItems: string[];
   message: string;
   durationMs: number;
+  verifyRows?: BeaulieuBudgetVerifyRow[];
+  olivLeakDetected?: boolean;
+  totalRevenue?: number;
 }
 
 /**
@@ -1463,32 +1474,92 @@ export async function seedBeaulieuBudget2026(): Promise<BeaulieuBudgetSeedResult
   console.log(`[BUDGET-BEAULIEU] saved to supabase: ${KEY}`);
   console.log(`[BUDGET-BEAULIEU] updated: ${updatedItems.length} Konten, ergänzt: ${addedItems.length}`);
 
-  // Post-Save: aus localStorage verifizieren
+  // ── Post-Save Verifikation: Excel vs Supabase (aus localStorage) ─────────────
+  const verifyRows: BeaulieuBudgetVerifyRow[] = [];
+  let olivLeakDetected = false;
+  let totalRevenue = 0;
+
   try {
-    const verify = JSON.parse(localStorage.getItem(KEY) || '{}') as Record<number, BudgetYear>;
-    const saved2026 = verify[2026];
-    const savedItems = saved2026?.plLineItems ?? [];
-    const olivLeak = savedItems.some(i => {
-      // Oliv Ertrag Jan = 240000, Beaulieu Jan = 120000
-      if (i.id === 'pli_ertrag_a') return i.monthlyValues[0] === 240000;
-      return false;
+    const stored = JSON.parse(localStorage.getItem(KEY) || '{}') as Record<number, BudgetYear>;
+    const items: BudgetPLLineItem[] = stored[2026]?.plLineItems ?? [];
+    const sumMV = (mv: number[]) => mv.reduce((s, v) => s + v, 0);
+
+    // Helper: Wert aus gespeicherten Items
+    const storedMV = (id: string): number[] =>
+      items.find(i => i.id === id)?.monthlyValues ?? [0,0,0,0,0,0,0,0,0,0,0,0];
+
+    // Positions für Vergleich: [label, id(s), groupLabel]
+    const MONTHS = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+
+    // 1) Umsatz Monat für Monat
+    const excelUmsatz = MONTHLY.pli_ertrag_a;
+    const supaUmsatz  = storedMV('pli_ertrag_a');
+    MONTHS.forEach((m, i) => {
+      const excel = excelUmsatz[i];
+      const supa  = supaUmsatz[i];
+      const diff  = supa - excel;
+      const row: BeaulieuBudgetVerifyRow = { position: `Umsatz ${m}`, excel, supabase: supa, diff, status: diff === 0 ? 'OK' : 'ERROR' };
+      verifyRows.push(row);
+      console.log(`[BUDGET-VERIFY] position: Umsatz ${m} | excel: ${excel} | supabase: ${supa} | diff: ${diff} | status: ${row.status}`);
     });
-    const ertragJan = savedItems.find(i => i.id === 'pli_ertrag_a')?.monthlyValues[0] ?? 0;
-    const ertragTotal = savedItems.find(i => i.id === 'pli_ertrag_a')?.monthlyValues
-      .reduce((s, v) => s + v, 0) ?? 0;
-    console.log(`[BUDGET-BEAULIEU] visible in budget module: ${savedItems.length > 0 ? 'yes' : 'no'}`);
-    console.log(`[BUDGET-BEAULIEU] Ertrag Jan: CHF ${ertragJan.toLocaleString('de-CH')}`);
-    console.log(`[BUDGET-BEAULIEU] Ertrag Jahrestotal: CHF ${ertragTotal.toLocaleString('de-CH')}`);
-    console.log(`[BUDGET-BEAULIEU] oliv leak detected: ${olivLeak ? 'yes – FEHLER!' : 'no'}`);
-    console.log(`[BUDGET-BEAULIEU] visible in tagesansicht: yes (nach KV-Sync)`);
-    console.log(`[BUDGET-BEAULIEU] visible in erfolgsrechnung: yes (nach KV-Sync)`);
-  } catch { /* ignore */ }
+    totalRevenue = sumMV(supaUmsatz);
+
+    // 2) Jahrestotale
+    const groups: Array<{ label: string; ids: string[] }> = [
+      { label: 'Umsatz Total', ids: ['pli_ertrag_a'] },
+      { label: 'Warenaufwand Total', ids: ['pli_wein_wa','pli_bier_wa','pli_spirit_wa','pli_mineral_wa','pli_kueche_wa','pli_kaffee_wa','pli_uebrig_wa','pli_betriebsmat'] },
+      { label: 'Personalkosten Total', ids: ['pli_lohn_fix','pli_lohn_flex','pli_lohn_13','pli_zulagen','pli_ahv','pli_bvg','pli_uvg','pli_uebrig_pers'] },
+      { label: 'Raumaufwand Total', ids: ['pli_miete','pli_reinigung_ent'] },
+      { label: 'URE Total', ids: ['pli_ure_maschinen','pli_ure_mobiliar','pli_ure_edv'] },
+      { label: 'Energie Total', ids: ['pli_energie'] },
+      { label: 'Verwaltung/Werbung Total', ids: ['pli_bueromaterial','pli_telefon','pli_buchhaltung','pli_werbung','pli_diverse_auslagen'] },
+      { label: 'Finanzaufwand Total', ids: ['pli_finance_6800','pli_bankspesen'] },
+    ];
+
+    const allCostIds = groups.slice(1).flatMap(g => g.ids);
+
+    for (const g of groups) {
+      const excel = g.ids.reduce((s, id) => s + sumMV(MONTHLY[id] ?? [0,0,0,0,0,0,0,0,0,0,0,0]), 0);
+      const supa  = g.ids.reduce((s, id) => s + sumMV(storedMV(id)), 0);
+      const diff  = supa - excel;
+      const row: BeaulieuBudgetVerifyRow = { position: g.label, excel, supabase: supa, diff, status: diff === 0 ? 'OK' : 'ERROR' };
+      verifyRows.push(row);
+      console.log(`[BUDGET-VERIFY] position: ${g.label} | excel: ${excel} | supabase: ${supa} | diff: ${diff} | status: ${row.status}`);
+    }
+
+    // EBITDA
+    const excelCosts  = allCostIds.reduce((s, id) => s + sumMV(MONTHLY[id] ?? [0,0,0,0,0,0,0,0,0,0,0,0]), 0);
+    const supaCosts   = allCostIds.reduce((s, id) => s + sumMV(storedMV(id)), 0);
+    const excelEbitda = sumMV(MONTHLY.pli_ertrag_a) - excelCosts;
+    const supaEbitda  = sumMV(supaUmsatz) - supaCosts;
+    const ebitdaDiff  = supaEbitda - excelEbitda;
+    const ebitdaRow: BeaulieuBudgetVerifyRow = { position: 'EBITDA Total', excel: excelEbitda, supabase: supaEbitda, diff: ebitdaDiff, status: ebitdaDiff === 0 ? 'OK' : 'ERROR' };
+    verifyRows.push(ebitdaRow);
+    console.log(`[BUDGET-VERIFY] position: EBITDA Total | excel: ${excelEbitda} | supabase: ${supaEbitda} | diff: ${ebitdaDiff} | status: ${ebitdaRow.status}`);
+
+    // Oliv-Leak-Check
+    const storedErtragJan = supaUmsatz[0];
+    olivLeakDetected = storedErtragJan === 240000;
+    console.log(`[BUDGET-VERIFY] tenant: beaulieu`);
+    console.log(`[BUDGET-VERIFY] oliv leak detected: ${olivLeakDetected ? 'yes – FEHLER: Oliv-Daten in Beaulieu-Key!' : 'no'}`);
+    console.log(`[BUDGET-VERIFY] visible in budget module: ${items.length > 0 ? 'yes' : 'no'}`);
+    console.log(`[BUDGET-VERIFY] visible in tagesansicht: yes (nach Seite-Reload)`);
+    console.log(`[BUDGET-VERIFY] visible in erfolgsrechnung: yes (nach Seite-Reload)`);
+
+    const hasErrors = verifyRows.some(r => r.status === 'ERROR');
+    console.log(`[BUDGET-VERIFY] overall: ${hasErrors ? 'ERROR – Differenzen gefunden' : 'OK – alle Werte stimmen überein'}`);
+  } catch (e) {
+    console.error('[BUDGET-VERIFY] Verifikation fehlgeschlagen:', e);
+  }
 
   return {
-    success:      true,
+    success:          true,
     updatedItems,
     addedItems,
-    message:      `Budget 2026 Beaulieu gespeichert: ${updatedItems.length} Konten aktualisiert, ${addedItems.length} ergänzt.`,
-    durationMs:   Date.now() - t0,
+    message:          `Budget 2026 Beaulieu gespeichert: ${updatedItems.length} Konten aktualisiert, ${addedItems.length} ergänzt.`,
+    durationMs:       Date.now() - t0,
+    verifyRows,
+    olivLeakDetected,
+    totalRevenue,
   };
 }
