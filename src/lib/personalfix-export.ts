@@ -1276,18 +1276,18 @@ function flexAmpelBg(st: 'green' | 'yellow' | 'red' | 'neutral'): [number, numbe
 }
 
 function flexAmpelLabel(st: 'green' | 'yellow' | 'red' | 'neutral'): string {
-  return st === 'green' ? 'Im Plan' : st === 'yellow' ? 'Leicht über Plan' : st === 'red' ? 'Über Plan' : '–';
+  return st === 'green' ? 'Im Plan' : st === 'yellow' ? 'Leicht über Plan' : st === 'red' ? 'Über Plan' : '-';
 }
 
 function flexFmtDiff(v: number): string {
   const s = fmtCHF(Math.abs(v));
-  return v > 0.005 ? `+${s}` : v < -0.005 ? `−${s}` : s;
+  return v > 0.005 ? `+${s}` : v < -0.005 ? `-${s}` : s;
 }
 
 function flexFmtPct(v: number | null): string {
-  if (v === null) return '–';
+  if (v === null) return '-';
   const s = `${Math.abs(v).toFixed(1)} %`;
-  return v > 0.05 ? `+${s}` : v < -0.05 ? `−${s}` : s;
+  return v > 0.05 ? `+${s}` : v < -0.05 ? `-${s}` : s;
 }
 
 const ABW_MODE_LABEL: Record<string, string> = {
@@ -1310,12 +1310,12 @@ export function exportFlexAuswertungToPDF(data: FlexAuswertungExportData): void 
   const monthStCol  = flexAmpelColor(monthSt);
   const monthStBg   = flexAmpelBg(monthSt);
 
-  const pdf   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const pw    = pdf.internal.pageSize.getWidth();
-  const ph    = pdf.internal.pageSize.getHeight();
+  const pdf   = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const pw    = pdf.internal.pageSize.getWidth();   // 297 mm
+  const ph    = pdf.internal.pageSize.getHeight();  // 210 mm
   const M     = 14;
-  const W     = pw - M * 2;
-  const FOOT  = 18;
+  const W     = pw - M * 2;   // 269 mm Nutzbreite
+  const FOOT  = 16;
   const BOTTOM = ph - FOOT;
 
   let curY = 0;
@@ -1421,18 +1421,18 @@ export function exportFlexAuswertungToPDF(data: FlexAuswertungExportData): void 
     foot: periodRows.length > 1 ? [[
       'Total', fmtCHF(sumPlan), fmtCHF(sumIst), flexFmtDiff(monthDiff), flexFmtPct(monthPct), flexAmpelLabel(monthSt),
     ]] : undefined,
-    headStyles: { fillColor: C.tableHead, textColor: C.headerGray, fontStyle: 'bold', fontSize: 7.5, cellPadding: 2.5 },
-    bodyStyles: { fontSize: 8, cellPadding: { vertical: 2.5, horizontal: 3 } },
-    footStyles: { fillColor: monthStBg, textColor: monthStCol, fontStyle: 'bold', fontSize: 8, cellPadding: 2.5 },
+    headStyles: { fillColor: C.tableHead, textColor: C.headerGray, fontStyle: 'bold', fontSize: 8, cellPadding: 3 },
+    bodyStyles: { fontSize: 8.5, cellPadding: { top: 3, bottom: 3, left: 4, right: 4 } },
+    footStyles: { fillColor: monthStBg, textColor: monthStCol, fontStyle: 'bold', fontSize: 8.5, cellPadding: 3 },
     alternateRowStyles: { fillColor: C.rowGray },
     showFoot: 'lastPage',
     columnStyles: {
       0: { cellWidth: 'auto' },
-      1: { halign: 'right', cellWidth: 35, textColor: C.textBlue,   fontStyle: 'bold' },
-      2: { halign: 'right', cellWidth: 35, textColor: C.textOrange, fontStyle: 'bold' },
-      3: { halign: 'right', cellWidth: 30 },
-      4: { halign: 'right', cellWidth: 22 },
-      5: { cellWidth: 30 },
+      1: { halign: 'right', cellWidth: 38, textColor: C.textBlue,   fontStyle: 'bold' },
+      2: { halign: 'right', cellWidth: 38, textColor: C.textOrange, fontStyle: 'bold' },
+      3: { halign: 'right', cellWidth: 34 },
+      4: { halign: 'right', cellWidth: 26 },
+      5: { cellWidth: 34 },
     },
   });
   curY = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
@@ -1446,12 +1446,12 @@ export function exportFlexAuswertungToPDF(data: FlexAuswertungExportData): void 
     const empBody = empRows.map(r => [
       r.name,
       r.dept,
-      r.planWork   > 0 ? fmtCHF(r.planWork)    : '–',
-      r.istWork    > 0 ? fmtCHF(r.istWork)     : '–',
-      r.planHoliday > 0 ? fmtCHF(r.planHoliday) : '–',
-      r.istHoliday  > 0 ? fmtCHF(r.istHoliday)  : '–',
-      r.planTotal  > 0 ? fmtCHF(r.planTotal)   : '–',
-      r.istTotal   > 0 ? fmtCHF(r.istTotal)    : '–',
+      r.planWork    > 0 ? fmtCHF(r.planWork)    : '-',
+      r.istWork     > 0 ? fmtCHF(r.istWork)     : '-',
+      r.planHoliday > 0 ? fmtCHF(r.planHoliday) : '-',
+      r.istHoliday  > 0 ? fmtCHF(r.istHoliday)  : '-',
+      r.planTotal   > 0 ? fmtCHF(r.planTotal)   : '-',
+      r.istTotal    > 0 ? fmtCHF(r.istTotal)    : '-',
       flexFmtDiff(r.diffTotal),
     ]);
 
@@ -1462,30 +1462,30 @@ export function exportFlexAuswertungToPDF(data: FlexAuswertungExportData): void 
       body: empBody,
       foot: [[
         `Total (${empRows.length} MA)`, '',
-        empRows.reduce((s, r) => s + r.planWork, 0)    > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.planWork, 0))    : '–',
-        empRows.reduce((s, r) => s + r.istWork, 0)     > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.istWork, 0))     : '–',
-        empRows.reduce((s, r) => s + r.planHoliday, 0) > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.planHoliday, 0)) : '–',
-        empRows.reduce((s, r) => s + r.istHoliday, 0)  > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.istHoliday, 0))  : '–',
+        empRows.reduce((s, r) => s + r.planWork, 0)    > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.planWork, 0))    : '-',
+        empRows.reduce((s, r) => s + r.istWork, 0)     > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.istWork, 0))     : '-',
+        empRows.reduce((s, r) => s + r.planHoliday, 0) > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.planHoliday, 0)) : '-',
+        empRows.reduce((s, r) => s + r.istHoliday, 0)  > 0 ? fmtCHF(empRows.reduce((s, r) => s + r.istHoliday, 0))  : '-',
         fmtCHF(empRows.reduce((s, r) => s + r.planTotal, 0)),
         fmtCHF(empRows.reduce((s, r) => s + r.istTotal, 0)),
         flexFmtDiff(empRows.reduce((s, r) => s + r.diffTotal, 0)),
       ]],
-      headStyles: { fillColor: C.tableHead, textColor: C.headerGray, fontStyle: 'bold', fontSize: 7, cellPadding: 2.5 },
-      bodyStyles: { fontSize: 7.5, cellPadding: { vertical: 2, horizontal: 2.5 } },
-      footStyles: { fillColor: C.lightOrange, textColor: C.textOrange, fontStyle: 'bold', fontSize: 7.5, cellPadding: 2.5 },
+      headStyles: { fillColor: C.tableHead, textColor: C.headerGray, fontStyle: 'bold', fontSize: 8, cellPadding: 3 },
+      bodyStyles: { fontSize: 8, cellPadding: { top: 3, bottom: 3, left: 4, right: 4 } },
+      footStyles: { fillColor: C.lightOrange, textColor: C.textOrange, fontStyle: 'bold', fontSize: 8, cellPadding: 3 },
       alternateRowStyles: { fillColor: C.rowGray },
       showFoot: 'lastPage',
       columnStyles: {
-        // Fixed cols total: 14+19+19+19+19+22+22+20 = 154 mm → Name auto = 182−154 = 28 mm ✓
+        // Querformat 269 mm: Name auto = 269 − (16+27+27+27+27+30+30+28) = 57 mm ✓
         0: { cellWidth: 'auto' },
-        1: { cellWidth: 14 },
-        2: { halign: 'right', cellWidth: 19, textColor: C.textBlue   },
-        3: { halign: 'right', cellWidth: 19, textColor: C.textOrange },
-        4: { halign: 'right', cellWidth: 19, textColor: C.textBlue   },
-        5: { halign: 'right', cellWidth: 19, textColor: C.textOrange },
-        6: { halign: 'right', cellWidth: 22, fontStyle: 'bold', textColor: C.textBlue   },
-        7: { halign: 'right', cellWidth: 22, fontStyle: 'bold', textColor: C.textOrange },
-        8: { halign: 'right', cellWidth: 20 },
+        1: { cellWidth: 16 },
+        2: { halign: 'right', cellWidth: 27, textColor: C.textBlue   },
+        3: { halign: 'right', cellWidth: 27, textColor: C.textOrange },
+        4: { halign: 'right', cellWidth: 27, textColor: C.textBlue   },
+        5: { halign: 'right', cellWidth: 27, textColor: C.textOrange },
+        6: { halign: 'right', cellWidth: 30, fontStyle: 'bold', textColor: C.textBlue   },
+        7: { halign: 'right', cellWidth: 30, fontStyle: 'bold', textColor: C.textOrange },
+        8: { halign: 'right', cellWidth: 28 },
       },
     });
   }
