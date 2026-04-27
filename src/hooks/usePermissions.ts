@@ -228,7 +228,7 @@ export const usePermissions = (): Permissions => {
     // Abteilung
     allowedDepartment,
     canSeeDepartment,
-    canSwitchDepartment: isAdmin,
+    canSwitchDepartment: isAdmin || isBeaulieuManager,
 
     // Lohn & Kosten
     canSeeHourlyWages:          isAdmin,
