@@ -8,13 +8,14 @@
  * Produkte ausblenden: per Klick auf Mülleimer, mit Reset-Button
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
-  BarChart3, RefreshCw, TrendingUp, Hash, Trash2, RotateCcw, EyeOff,
+  BarChart3, RefreshCw, TrendingUp, Hash, Trash2, RotateCcw, EyeOff, Search, X,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -94,6 +95,10 @@ export default function ProduktAnalyse() {
 
   // Ausgeblendete Produkte (nur client-seitig, kein Supabase-Delete)
   const [hiddenProducts, setHiddenProducts] = useState<Set<string>>(new Set());
+
+  // Produktsuche / -filter
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -182,6 +187,12 @@ export default function ProduktAnalyse() {
   }, [allRows, mode, year, month, multiYear, selectedMonths, yearFrom, monthFrom, yearTo, monthTo, sortBy, hiddenProducts]);
 
   const displayed = limit === 0 ? ranked : ranked.slice(0, limit);
+
+  // Suchergebnisse: filtert die angezeigte Liste nach Produktname
+  const q = searchQuery.trim().toLowerCase();
+  const filteredDisplayed = q
+    ? displayed.filter(r => r.product_name.toLowerCase().includes(q))
+    : displayed;
 
   const totalRevenue = ranked.reduce((s, r) => s + r.total_revenue, 0);
   const totalQty     = ranked.reduce((s, r) => s + r.total_qty, 0);
@@ -452,6 +463,28 @@ export default function ProduktAnalyse() {
               ))}
             </div>
           </div>
+
+          {/* Suche — volle Breite */}
+          <div className="w-full pt-1 border-t border-border/60">
+            <div className="relative max-w-sm">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <Input
+                ref={searchInputRef}
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Produkt suchen…"
+                className="h-8 pl-8 pr-8 text-sm"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -487,8 +520,10 @@ export default function ProduktAnalyse() {
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-semibold flex items-center justify-between">
             <span>
-              {limit === 0 ? 'Alle Produkte' : `Top ${limit} Produkte`}
-              {' '}– sortiert nach {sortBy === 'revenue' ? 'Umsatz' : 'Anzahl'}
+              {q
+                ? `Suche: "${searchQuery}" – ${filteredDisplayed.length} Treffer`
+                : limit === 0 ? 'Alle Produkte' : `Top ${limit} Produkte`}
+              {!q && ` – sortiert nach ${sortBy === 'revenue' ? 'Umsatz' : 'Anzahl'}`}
             </span>
             <div className="flex items-center gap-2">
               {hiddenProducts.size > 0 && (
@@ -520,14 +555,16 @@ export default function ProduktAnalyse() {
               <p className="text-xs text-muted-foreground">{error}</p>
             </div>
           )}
-          {!loading && !error && displayed.length === 0 && (
+          {!loading && !error && filteredDisplayed.length === 0 && (
             <div className="p-8 text-center text-sm text-muted-foreground">
               {ranked.length === 0
                 ? 'Keine Daten für diesen Zeitraum gefunden.'
-                : 'Alle Produkte ausgeblendet.'}
+                : q
+                  ? `Kein Produkt enthält "${searchQuery}".`
+                  : 'Alle Produkte ausgeblendet.'}
             </div>
           )}
-          {!loading && !error && displayed.length > 0 && (
+          {!loading && !error && filteredDisplayed.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -550,8 +587,8 @@ export default function ProduktAnalyse() {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayed.map((row, idx) => {
-                    const rank = idx + 1;
+                  {filteredDisplayed.map((row) => {
+                    const rank = displayed.indexOf(row) + 1;
                     const isTop3 = rank <= 3;
                     return (
                       <tr
@@ -621,19 +658,21 @@ export default function ProduktAnalyse() {
                   <tr className="border-t-2 bg-muted/50 font-semibold">
                     <td className="px-4 py-2.5" />
                     <td className="px-4 py-2.5 text-xs uppercase tracking-wide text-muted-foreground">
-                      {limit === 0 ? 'Total' : `Top ${displayed.length} von ${ranked.length}`}
+                      {q
+                        ? `${filteredDisplayed.length} Treffer von ${displayed.length}`
+                        : limit === 0 ? 'Total' : `Top ${displayed.length} von ${ranked.length}`}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums">
-                      {fmtChf(displayed.reduce((s, r) => s + r.total_revenue, 0))}
+                      {fmtChf(filteredDisplayed.reduce((s, r) => s + r.total_revenue, 0))}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
-                      {pct(displayed.reduce((s, r) => s + r.total_revenue, 0), totalRevenue)}
+                      {pct(filteredDisplayed.reduce((s, r) => s + r.total_revenue, 0), totalRevenue)}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums">
-                      {fmtNum(displayed.reduce((s, r) => s + r.total_qty, 0))}
+                      {fmtNum(filteredDisplayed.reduce((s, r) => s + r.total_qty, 0))}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
-                      {pct(displayed.reduce((s, r) => s + r.total_qty, 0), totalQty)}
+                      {pct(filteredDisplayed.reduce((s, r) => s + r.total_qty, 0), totalQty)}
                     </td>
                     <td className="px-3 py-2.5" />
                   </tr>
