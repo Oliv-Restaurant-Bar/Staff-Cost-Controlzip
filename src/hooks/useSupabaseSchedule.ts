@@ -278,6 +278,23 @@ export const useSupabaseSchedule = ({ token, department, currentMonth, restauran
         return finalMap;
       });
 
+      // ── Sync to localStorage so PersonalFix / Tages-Controlling can read plan hours ──
+      // Only write entries for the current month (not the extended week-overlap range).
+      if (mergedRows > 0) {
+        try {
+          const monthOnlyMap: Record<string, DaySchedule> = {};
+          for (const [k, v] of Object.entries(finalMap)) {
+            if (k.slice(-10).startsWith(monthKey)) monthOnlyMap[k] = v;
+          }
+          if (Object.keys(monthOnlyMap).length > 0) {
+            localStorage.setItem(localKey, JSON.stringify(monthOnlyMap));
+            console.log(`[SCHEDULE] localStorage synced – ${Object.keys(monthOnlyMap).length} entries → ${localKey}`);
+          }
+        } catch (e) {
+          console.warn('[SCHEDULE] localStorage sync failed:', e);
+        }
+      }
+
       return finalMap;
     } catch (err) {
       console.error('[SCHEDULE] load error:', err);
@@ -443,6 +460,20 @@ export const useSupabaseSchedule = ({ token, department, currentMonth, restauran
         setScheduleData(prev => ({ ...prev, [cellKey]: updated }));
       }
       
+      // Sync cell to localStorage so PersonalFix / Tages-Controlling stay up-to-date
+      try {
+        const monthKey = date.substring(0, 7); // 'yyyy-MM'
+        const lKey = restaurantId && restaurantId !== 'oliv'
+          ? `${restaurantId}:schedule-v2-${monthKey}`
+          : `schedule-v2-${monthKey}`;
+        const existing: Record<string, DaySchedule> = (() => {
+          try { return JSON.parse(localStorage.getItem(lKey) || '{}'); } catch { return {}; }
+        })();
+        if (isEmpty) { delete existing[cellKey]; }
+        else { existing[cellKey] = updated; }
+        localStorage.setItem(lKey, JSON.stringify(existing));
+      } catch { /* ignore localStorage errors */ }
+
       // Dispatch event for other components
       window.dispatchEvent(new CustomEvent('schedule-updated'));
       

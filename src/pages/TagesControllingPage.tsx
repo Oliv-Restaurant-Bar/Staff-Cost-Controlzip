@@ -362,7 +362,17 @@ export default function TagesControllingPage() {
     // ─── TENANT FILTER: tenantId übergeben → nur Mitarbeiter des Mandanten ──
     loadEmployeesFromSupabase(tenantId).then(emps => {
       if (emps && emps.length > 0) {
-        const mapped = emps.map(e => ({ id: e.id, hourlyWage: e.hourlyWage }));
+        const mapped = emps.map(e => {
+          // VZ/TZ employees may have hourlyWage=0 and use monthlySalary instead.
+          // Compute effective hourly wage so plan-cost calculation works.
+          let hw = e.hourlyWage ?? 0;
+          if (hw === 0) {
+            const monthly = e.monthlySalaryWith13th ?? e.monthlySalary ?? 0;
+            const wh = e.weeklyHours ?? 42;
+            if (monthly > 0 && wh > 0) hw = monthly / (wh * 4.3333);
+          }
+          return { id: e.id, hourlyWage: hw };
+        });
         setEmployees(mapped);
         console.log(`[CONSISTENCY] tages_controlling employees: ${mapped.length}`);
         console.log(`[CONSISTENCY] tenant: ${tenantId}`);
