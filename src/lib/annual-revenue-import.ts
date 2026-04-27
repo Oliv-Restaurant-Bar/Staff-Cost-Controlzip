@@ -177,19 +177,30 @@ export async function parseAnnualRevenueXLSX(file: File): Promise<AnnualImportRe
     }
   }
 
-  debugParts.push(`Erkannte Tagesspalten: ${detectedCount} (${Object.keys(monthColumns).length} Monate)`);
+  const monthCount = Object.keys(monthColumns).length;
+  debugParts.push(`Erkannte Tagesspalten: ${detectedCount} (${monthCount} Monate)`);
 
-  if (Object.keys(monthColumns).length < 6) {
+  // Kein einziger Monat erkannt → echten Formatfehler werfen
+  if (monthCount === 0) {
     const sampleHeaders = (data[0] as unknown[]).slice(2, 7).map(String).join(' | ');
     throw new Error(
-      `Spaltenköpfe wurden nicht erkannt (${Object.keys(monthColumns).length} Monate gefunden, mind. 6 erwartet). ` +
+      `Spaltenköpfe wurden nicht erkannt (0 Monate gefunden). ` +
       `Stichprobe der Spaltenköpfe: "${sampleHeaders}". ` +
       `Erwartet: "01.01.", "02.01.", ... (Format DD.MM.) oder Excel-Datumszellen.`
     );
   }
 
-  if (Object.keys(monthColumns).length < 12) {
-    warnings.push(`Nur ${Object.keys(monthColumns).length} Monate gefunden (12 erwartet).`);
+  // Monats-Export (< 12 Monate) → Warnung, aber kein Fehler
+  if (monthCount < 12) {
+    const foundMonths = Object.keys(monthColumns)
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map(m => new Date(2000, m - 1, 1).toLocaleString('de-CH', { month: 'long' }))
+      .join(', ');
+    warnings.push(
+      `Teilimport: ${monthCount} Monat${monthCount === 1 ? '' : 'e'} gefunden (${foundMonths}). ` +
+      `Nur diese Monate werden gespeichert.`
+    );
   }
 
   // Relevante Zeilen finden (case-insensitive Suche in Spalte A)
@@ -250,9 +261,9 @@ export async function parseAnnualRevenueXLSX(file: File): Promise<AnnualImportRe
 
   yearTotal = Math.round(yearTotal * 100) / 100;
 
-  // Plausibilitätscheck: Jahrestotal aus "Zeitraum"-Spalte (Spalte B)
+  // Plausibilitätscheck: Zeitraumsumme aus Spalte B (nur bei Volljahres-Import aussagekräftig)
   const declaredTotal = parseCHFValue((gesamtRow as unknown[])[1]);
-  if (declaredTotal > 0) {
+  if (declaredTotal > 0 && monthCount === 12) {
     const diff = Math.abs(yearTotal - declaredTotal);
     if (diff > 50) {
       warnings.push(
