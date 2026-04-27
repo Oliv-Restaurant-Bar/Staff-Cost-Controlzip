@@ -231,9 +231,9 @@ export const usePermissions = (): Permissions => {
     canSwitchDepartment: isAdmin || isBeaulieuManager,
 
     // Lohn & Kosten
-    canSeeHourlyWages:          isAdmin,
+    canSeeHourlyWages:          isAdmin || isBeaulieuManager,
     canSeePersonnelCostTotals:  true,
-    canToggleCostView:           isAdmin,
+    canToggleCostView:           isAdmin || isBeaulieuManager,
 
     // Finanzen
     canSeeFullFinancials: isAdmin,
