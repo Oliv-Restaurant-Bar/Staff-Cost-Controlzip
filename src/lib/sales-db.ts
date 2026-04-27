@@ -475,9 +475,11 @@ function formatSupabaseError(err: unknown): string {
 function sanitizeRow(row: Record<string, unknown>): Record<string, unknown> {
   // Explizit nur die Felder, die in product_sales existieren.
   // KEIN category, KEIN file_name, KEIN notes.
+  // quantity muss Integer sein (DB-Typ integer) – Dezimalwerte (z.B. 16.5) werden gerundet.
+  const rawQty = Number(row.quantity ?? 0);
   const out: Record<string, unknown> = {
     product_name:  row.product_name,
-    quantity:      row.quantity,
+    quantity:      Math.round(rawQty),
     revenue:       row.revenue,
     sale_date:     row.sale_date,
   };
