@@ -233,7 +233,7 @@ const DEFAULT_SHIFTS: ShiftConfigItem[] = [
     hours: 8.4, 
     color: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-400 dark:border-gray-500', 
     isPaid: false, 
-    countsToTarget: true, 
+    countsToTarget: false, 
     abbrev: 'FE',
     excelColor: 'FFE5E7EB',
     textColor: 'FF374151',
@@ -301,6 +301,23 @@ function getExcelColorsFromTailwind(tailwindColor: string): { excelColor: string
   return { excelColor: 'FFFFFFFF', textColor: 'FF000000' };
 }
 
+/**
+ * Migration: Ferien (FE) und Frei (F) dürfen niemals zu den Sollstunden zählen.
+ * Korrigiert alte gespeicherte Configs, die countsToTarget: true hatten.
+ */
+function applyMandatoryMigrations(items: ShiftConfigItem[]): { items: ShiftConfigItem[]; changed: boolean } {
+  let changed = false;
+  const migrated = items.map(item => {
+    // Ferien (FE) und Frei (F) müssen immer countsToTarget: false haben
+    if ((item.abbrev === 'FE' || item.abbrev === 'F') && item.countsToTarget) {
+      changed = true;
+      return { ...item, countsToTarget: false };
+    }
+    return item;
+  });
+  return { items: migrated, changed };
+}
+
 function loadShiftsFromStorage(): ShiftConfigItem[] {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -318,14 +335,17 @@ function loadShiftsFromStorage(): ShiftConfigItem[] {
       // Merge in any new default shifts that don't exist in storage
       const storedNames = new Set(enriched.map(s => s.name));
       const newDefaults = DEFAULT_SHIFTS.filter(d => !storedNames.has(d.name));
-      if (newDefaults.length > 0) {
-        const merged = [...enriched, ...newDefaults];
-        // Save merged config back to storage (no broadcast – internal migration)
-        saveShiftsToStorage(merged, false);
-        return merged;
+      const merged = newDefaults.length > 0 ? [...enriched, ...newDefaults] : enriched;
+
+      // Apply mandatory migrations (Ferien/Frei countsToTarget: false)
+      const { items: final, changed } = applyMandatoryMigrations(merged);
+
+      if (newDefaults.length > 0 || changed) {
+        // Save migrated config back to storage (no broadcast – internal migration)
+        saveShiftsToStorage(final, false);
       }
       
-      return enriched;
+      return final;
     }
   } catch (e) {
     console.error('Failed to load shift config from localStorage:', e);
@@ -355,7 +375,15 @@ async function loadShiftsFromDB(): Promise<ShiftConfigItem[] | null> {
   try {
     const remote = await kvGet(STORAGE_KEY);
     if (remote !== null && Array.isArray(remote) && (remote as ShiftConfigItem[]).length > 0) {
-      const shifts = remote as ShiftConfigItem[];
+      let shifts = remote as ShiftConfigItem[];
+      // Apply mandatory migrations (Ferien/Frei countsToTarget: false)
+      const { items: migrated, changed } = applyMandatoryMigrations(shifts);
+      if (changed) {
+        shifts = migrated;
+        // Persist corrected config back to Supabase (fire-and-forget)
+        kvSet(STORAGE_KEY, shifts).catch(() => {});
+        console.log('[Schichten] Migration: FE/F countsToTarget korrigiert und in Supabase gespeichert');
+      }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(shifts));
       console.log(`[Schichten] Aus Supabase geladen: ${shifts.length} Schichttypen`);
       return shifts;
