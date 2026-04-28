@@ -32,6 +32,7 @@ import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { grossToNet } from '@/types/personnel';
 import { loadMonth } from '@/lib/reporting-store';
 import { useVj2025Import } from '@/hooks/useVj2025Import';
+import { useVj2025BeaulieuImport } from '@/hooks/useVj2025BeaulieuImport';
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
 import { getDailyBudgetMap } from '@/lib/budget-day';
 
@@ -77,6 +78,8 @@ export default function TagesansichtPage() {
 
   // Einmaliger Import der VJ-2025-Tagesdaten (löst 'supabase-kv-synced' aus wenn fertig)
   useVj2025Import(tenantId);
+  // Beaulieu: Seed VJ-2025-Tagesdaten direkt in Supabase (vj_daily:beaulieu: Keys)
+  useVj2025BeaulieuImport(tenantId);
 
   // Monat-Selektor
   const [refDate, setRefDate] = useState(() =>
