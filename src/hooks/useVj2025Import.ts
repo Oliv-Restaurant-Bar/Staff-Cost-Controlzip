@@ -8,6 +8,9 @@
  * Setzt dailyBudgets[2025-XX-XX].actualRevenue für alle 365 Tage.
  * Überschreibt bestehende 2025-Einträge nur wenn sie 0 sind.
  * 2026-Einträge werden nicht angetastet.
+ *
+ * Tenant-Isolation: Diese Seed-Daten (VJ2025_DAILY) sind Oliv-spezifisch.
+ * Der Hook läuft nur wenn tenantId === 'oliv'.
  */
 
 import { useEffect } from 'react';
@@ -15,14 +18,17 @@ import { VJ2025_DAILY } from '@/data/vj2025-daily';
 
 const IMPORT_DONE_KEY = 'vj2025_imported_v1';
 
-function readDailyBudgets(): Record<string, { actualRevenue?: number; takeawayRevenue?: number; previousYearRevenue?: number; plannedRevenue?: number }> {
-  try { return JSON.parse(localStorage.getItem('dailyBudgets') || '{}'); }
+function readDailyBudgets(storageKey = 'dailyBudgets'): Record<string, { actualRevenue?: number; takeawayRevenue?: number; previousYearRevenue?: number; plannedRevenue?: number }> {
+  try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); }
   catch { return {}; }
 }
 
-export function useVj2025Import(onDone?: () => void) {
+export function useVj2025Import(tenantId?: string, onDone?: () => void) {
   useEffect(() => {
-    // Nur einmal ausführen (localStorage-Flag verhindert Wiederholung)
+    // Nur für Oliv — VJ2025_DAILY enthält Oliv-spezifische Daten
+    if (tenantId && tenantId !== 'oliv') return;
+
+    // Nur einmal ausführen (sessionStorage-Flag verhindert Wiederholung)
     if (sessionStorage.getItem(IMPORT_DONE_KEY)) return;
 
     // Prüfen ob April-2025-Daten bereits vorhanden
@@ -49,7 +55,7 @@ export function useVj2025Import(onDone?: () => void) {
         if (count === 0) { sessionStorage.setItem(IMPORT_DONE_KEY, '1'); return; }
 
         localStorage.setItem('dailyBudgets', JSON.stringify(db));
-        console.log(`[VJ2025 IMPORT] ${count} Tage in dailyBudgets gesetzt`);
+        console.log(`[VJ2025 IMPORT] ${count} Tage in dailyBudgets gesetzt (tenant: oliv)`);
 
         // Supabase-Sync (async, fire-and-forget)
         const { kvSet } = await import('@/lib/supabase-kv');
@@ -66,5 +72,5 @@ export function useVj2025Import(onDone?: () => void) {
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tenantId]);
 }

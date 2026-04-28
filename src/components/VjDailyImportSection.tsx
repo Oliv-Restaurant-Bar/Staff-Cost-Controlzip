@@ -5,7 +5,8 @@
  * und speichert sie per Batch-Upsert in Supabase (app_settings).
  *
  * Supabase-Struktur:
- *   key   = "vj_daily:2025-04-03"
+ *   Oliv:     key = "vj_daily:2025-04-03"          (rückwärtskompatibel)
+ *   Beaulieu: key = "vj_daily:beaulieu:2025-04-03"  (tenant-isoliert)
  *   value = { date, year, actualRevenue, foodRevenue, beverageRevenue, source }
  *
  * Excel-Format (Gastronovi Tagesbericht):
@@ -34,6 +35,7 @@ import {
   countVjDailyYear,
   type VjDayRecord,
 } from '@/lib/vj-daily-supabase';
+import { useTenant } from '@/contexts/TenantContext';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -238,6 +240,7 @@ function fmtDate(iso: string): string {
 const currentYear = new Date().getFullYear();
 
 export function VjDailyImportSection() {
+  const { tenantId } = useTenant();
   const fileRef   = useRef<HTMLInputElement>(null);
   const [year,    setYear]    = useState(currentYear - 1);
   const [parsing, setParsing] = useState(false);
@@ -249,8 +252,8 @@ export function VjDailyImportSection() {
 
   // Beim Laden prüfen ob bereits VJ-Daten in Supabase vorhanden sind
   useEffect(() => {
-    countVjDailyYear(year).then(n => setExistingCount(n));
-  }, [year]);
+    countVjDailyYear(year, tenantId).then(n => setExistingCount(n));
+  }, [year, tenantId]);
 
   const handleFile = async (file: File) => {
     setParsing(true);
@@ -285,7 +288,7 @@ export function VjDailyImportSection() {
         ...(entry.beverage != null ? { beverageRevenue: entry.beverage } : {}),
       }));
 
-      const { upserted, error: supaErr } = await upsertVjDailyBatch(records);
+      const { upserted, error: supaErr } = await upsertVjDailyBatch(records, tenantId);
 
       if (supaErr) {
         toast.error('Supabase-Fehler: ' + supaErr);
@@ -333,7 +336,7 @@ export function VjDailyImportSection() {
               setYear(Number(v));
               setPreview(null);
               setSaved(false);
-              countVjDailyYear(Number(v)).then(n => setExistingCount(n));
+              countVjDailyYear(Number(v), tenantId).then(n => setExistingCount(n));
             }}
           >
             <SelectTrigger className="h-8 w-28 text-xs">

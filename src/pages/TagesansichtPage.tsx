@@ -76,7 +76,7 @@ export default function TagesansichtPage() {
   const today = useMemo(() => new Date(), []);
 
   // Einmaliger Import der VJ-2025-Tagesdaten (löst 'supabase-kv-synced' aus wenn fertig)
-  useVj2025Import();
+  useVj2025Import(tenantId);
 
   // Monat-Selektor
   const [refDate, setRefDate] = useState(() =>
@@ -107,10 +107,11 @@ export default function TagesansichtPage() {
   useEffect(() => {
     const vjYear  = year - 1;
     const vjMonth = month;
-    loadVjDailyMonth(vjYear, vjMonth).then(data => {
+    loadVjDailyMonth(vjYear, vjMonth, tenantId).then(data => {
       setVjSupabaseData(data);
     });
-  }, [year, month]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month, tenantId]);
 
   useEffect(() => {
     const local = readDailyBudgets(tenantKey);
@@ -143,7 +144,7 @@ export default function TagesansichtPage() {
     const onSync = () => {
       setDailyBudgets(readDailyBudgets(tenantKey));
       setReportingTick(t => t + 1);
-      loadVjDailyMonth(year - 1, month).then(setVjSupabaseData);
+      loadVjDailyMonth(year - 1, month, tenantId).then(setVjSupabaseData);
     };
     window.addEventListener('supabase-kv-synced', onSync);
     return () => window.removeEventListener('supabase-kv-synced', onSync);
