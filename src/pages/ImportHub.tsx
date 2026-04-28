@@ -409,7 +409,7 @@ const AnnualRevenueImportSection = () => {
           <p className="text-xs font-medium text-blue-700 dark:text-blue-300">
             Excel-Datei hierher ziehen oder klicken
           </p>
-          <p className="text-[10px] text-muted-foreground mt-1">.xlsx · Gastronovi-Jahresbericht</p>
+          <p className="text-[10px] text-muted-foreground mt-1">.xlsx · Gastronovi-Jahresbericht oder Monatsbericht</p>
           <input
             ref={fileRef}
             type="file"

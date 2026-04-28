@@ -23,6 +23,8 @@
 
 import { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const XLSXany = XLSX as any;
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
@@ -71,27 +73,111 @@ function matchRow(label: string, patterns: string[]): boolean {
   return patterns.some(p => l.includes(p));
 }
 
+/**
+ * Extrahiert Tag (1–31) und Monat (1–12) aus einer Zelle im Tabellenkopf.
+ * Unterstützt:
+ *   - String  "01.04."  / "01.04"  / "01.04.2025"
+ *   - Excel-Date-Serial  (Zahl > 1)
+ *   - JavaScript Date-Objekt
+ * Gibt null zurück wenn kein Datum erkannt.
+ */
+function extractDayMonth(cell: unknown): { dd: string; mm: string } | null {
+  if (cell === null || cell === undefined || cell === '') return null;
+
+  // String-basiert
+  if (typeof cell === 'string') {
+    const s = cell.trim();
+    // "01.04." / "01.04" / "01.04.2025" / "01.04.25"
+    const m = s.match(/^(\d{1,2})\.(\d{1,2})\.?(?:\d{2,4})?$/);
+    if (m) {
+      const dd = m[1].padStart(2, '0');
+      const mm = m[2].padStart(2, '0');
+      const day = parseInt(dd); const month = parseInt(mm);
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) return { dd, mm };
+    }
+    // ISO: "2025-04-01"
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) {
+      const mm = iso[2]; const dd = iso[3];
+      if (parseInt(mm) >= 1 && parseInt(mm) <= 12) return { dd, mm };
+    }
+    return null;
+  }
+
+  // JavaScript Date-Objekt (aus XLSX mit cellDates: true)
+  if (cell instanceof Date && !isNaN(cell.getTime())) {
+    const dd = String(cell.getDate()).padStart(2, '0');
+    const mm = String(cell.getMonth() + 1).padStart(2, '0');
+    return { dd, mm };
+  }
+
+  // Excel-Date-Serial (Zahl > 1)
+  if (typeof cell === 'number' && cell > 1) {
+    try {
+      const parsed = XLSXany.SSF.parse_date_code(cell);
+      if (parsed && parsed.d >= 1 && parsed.m >= 1 && parsed.m <= 12) {
+        return {
+          dd: String(parsed.d).padStart(2, '0'),
+          mm: String(parsed.m).padStart(2, '0'),
+        };
+      }
+    } catch { /* ignore */ }
+  }
+
+  return null;
+}
+
 async function parseVjDaily(file: File, year: number): Promise<VjPreview> {
   const buf = await file.arrayBuffer();
-  const wb  = XLSX.read(buf, { type: 'array' });
+
+  // Erst mit cellDates: true → Datumszellen kommen als JS Date
+  const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
   const ws  = wb.Sheets[wb.SheetNames[0]];
-  const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
+  const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '', raw: false });
 
   if (raw.length < 2) throw new Error('Datei enthält zu wenig Zeilen');
 
   const headerRow = raw[0] as unknown[];
-  const colToDate: Record<number, string> = {};
+  let colToDate: Record<number, string> = {};
+
   for (let c = 0; c < headerRow.length; c++) {
-    const cell = String(headerRow[c] ?? '').trim();
-    const m = cell.match(/^(\d{1,2})\.(\d{1,2})\.?$/);
-    if (!m) continue;
-    const dd = m[1].padStart(2, '0');
-    const mm = m[2].padStart(2, '0');
-    colToDate[c] = `${year}-${mm}-${dd}`;
+    const dm = extractDayMonth(headerRow[c]);
+    if (!dm) continue;
+    colToDate[c] = `${year}-${dm.mm}-${dm.dd}`;
   }
 
-  if (Object.keys(colToDate).length < 28) {
-    throw new Error(`Zu wenige Datum-Spalten erkannt (${Object.keys(colToDate).length}). Bitte Datei prüfen.`);
+  // Fallback: rohe Zahlen (Excel-Serial) wenn cellDates nicht ausreicht
+  if (Object.keys(colToDate).length < 7) {
+    const wb2  = XLSX.read(buf, { type: 'array', cellDates: false });
+    const ws2  = wb2.Sheets[wb2.SheetNames[0]];
+    const raw2 = XLSX.utils.sheet_to_json<unknown[]>(ws2, { header: 1, defval: '', raw: true });
+    const hr2  = (raw2[0] ?? []) as unknown[];
+    const colToDate2: Record<number, string> = {};
+    for (let c = 0; c < hr2.length; c++) {
+      const dm = extractDayMonth(hr2[c]);
+      if (!dm) continue;
+      colToDate2[c] = `${year}-${dm.mm}-${dm.dd}`;
+    }
+    if (Object.keys(colToDate2).length > Object.keys(colToDate).length) {
+      colToDate = colToDate2;
+      // Re-read data rows too
+      const dataRows2 = raw2 as unknown[][];
+      // Replace raw with raw2 for row matching below
+      (raw as unknown[]).length = 0;
+      for (const r of dataRows2) (raw as unknown[]).push(r);
+    }
+  }
+
+  const detectedDays = Object.keys(colToDate).length;
+  console.log(`[VJ-IMPORT] header samples: ${headerRow.slice(0, 5).map(x => typeof x === 'object' ? JSON.stringify(x) : String(x)).join(' | ')}`);
+  console.log(`[VJ-IMPORT] date columns detected: ${detectedDays}`);
+
+  if (detectedDays < 1) {
+    const sample = headerRow.slice(0, 6).map(x => typeof x === 'object' && x instanceof Date ? x.toISOString() : String(x ?? '')).join(' | ');
+    throw new Error(
+      `Keine Datum-Spalten erkannt (0 Tage). Stichprobe der Spaltenköpfe: "${sample}". ` +
+      `Erwartet: "01.04.", "01.04.2025" oder Excel-Datumszellen.`
+    );
   }
 
   let gesamtRow: unknown[] | null = null;
@@ -380,10 +466,11 @@ export function VjDailyImportSection() {
       {/* Hinweis / Leerzustand ───────────────────────────────────────────── */}
       {!preview && !error && (
         <div className="text-[11px] text-muted-foreground space-y-0.5">
-          <p>• Format: Gastronovi-Tagesbericht Excel (.xlsx)</p>
-          <p>• Erste Zeile: Datumsheader <span className="font-mono bg-muted px-1 rounded">01.01.</span>, <span className="font-mono bg-muted px-1 rounded">02.01.</span> …</p>
+          <p>• Format: Gastronovi-Tagesbericht Excel (.xlsx) — <strong>Jahres- oder Monats-Export</strong></p>
+          <p>• Datumsheader: <span className="font-mono bg-muted px-1 rounded">01.04.</span>, <span className="font-mono bg-muted px-1 rounded">01.04.2025</span> oder Excel-Datumszellen — alle Formate werden erkannt</p>
           <p>• Spalte A: <span className="font-mono bg-muted px-1 rounded">Gesamt</span>, <span className="font-mono bg-muted px-1 rounded">Food (Speisen)</span>, <span className="font-mono bg-muted px-1 rounded">Beverage (Getränke)</span></p>
           <p>• Werte: <span className="font-mono bg-muted px-1 rounded">CHF 7'118.00</span> oder <span className="font-mono bg-muted px-1 rounded">CHF 7118,75</span></p>
+          <p>• Monatsexport möglich: Nur die Tage des gewählten Monats werden importiert</p>
           <p>• Supabase ist die primäre Datenquelle — Daten werden dauerhaft gespeichert</p>
         </div>
       )}
