@@ -467,6 +467,11 @@ const SchedulePlanner = () => {
           console.log('[PLAN] state set', { gen, newKeys, prevKeys });
           setScheduleSource('supabase');
           setLoadedEntryCount(newKeys);
+          // Cache Supabase plan data to localStorage so PersonalFix can read
+          // plan hours without requiring the user to click "Speichern" first.
+          try {
+            localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(supabaseSchedule));
+          } catch { /* quota exceeded – ignore */ }
           return supabaseSchedule;
         });
       } else {
