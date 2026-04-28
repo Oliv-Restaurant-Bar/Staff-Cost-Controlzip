@@ -251,11 +251,15 @@ export default function ProduktStamm() {
       setRows(data);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      const msgL = msg.toLowerCase();
       const isTableMissing =
         msg.includes('PGRST205') ||
         msg.includes('42P01') ||
         msg.includes("Tabelle 'produkte_kosten' fehlt") ||
-        msg.toLowerCase().includes('undefined_table');
+        msgL.includes('undefined_table') ||
+        msgL.includes('could not find the table') ||
+        msgL.includes('does not exist in the schema cache') ||
+        (msgL.includes('produkte_kosten') && msgL.includes('not found'));
       if (isTableMissing) {
         setTableMissing(true);
       } else {

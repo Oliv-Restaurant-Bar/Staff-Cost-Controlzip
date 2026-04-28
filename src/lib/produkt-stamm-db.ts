@@ -62,13 +62,15 @@ export async function loadProduktStamm(restaurantId: string = 'oliv'): Promise<P
 
     // PGRST205 = Relation does not exist (Tabelle fehlt)
     // 42P01 = PostgreSQL undefined_table
+    const msg = typeof error.message === 'string' ? error.message.toLowerCase() : '';
     const isTableMissing =
       error.code === 'PGRST205' ||
       error.code === '42P01' ||
-      (typeof error.message === 'string' && (
-        error.message.toLowerCase().includes('relation') && error.message.toLowerCase().includes('does not exist')
-      )) ||
-      (typeof error.message === 'string' && error.message.toLowerCase().includes('undefined_table'));
+      (msg.includes('relation') && msg.includes('does not exist')) ||
+      msg.includes('undefined_table') ||
+      msg.includes('could not find the table') ||
+      msg.includes('does not exist in the schema cache') ||
+      (msg.includes('produkte_kosten') && msg.includes('not found'));
 
     if (isTableMissing) {
       console.warn(`[PRODUCTS] table exists: no — Tabelle fehlt, bitte Migration ausführen`);
