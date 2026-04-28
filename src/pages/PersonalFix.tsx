@@ -16,7 +16,7 @@ import {
 } from '@/lib/personalfix-export';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { loadEmployees, upsertEmployee, loadActualHoursForMonth } from '@/lib/supabase-db';
+import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth } from '@/lib/supabase-db';
 import { Employee } from '@/types/personnel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1368,10 +1368,12 @@ export default function PersonalFixPage() {
   }, [selectedYear, selectedMonth, tenantId]);
 
   // Reload Plan/Ist hours whenever month changes.
+  // Plan-Stunden: read localStorage first (fast), then enrich with Supabase schedule data.
   // Ist-Stunden: read localStorage first (fast), then enrich with Supabase data.
   // Supabase is the canonical source when both planners write there; localStorage
   // is the fallback/cache for entries that haven't round-tripped through Supabase.
   useEffect(() => {
+    // Fast local read first (instant, no flicker)
     setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth, tenantKey));
     // FE-Ferientage immer aus localStorage (Supabase speichert kein absenceType)
     const istFE = loadFerienDaysFromStorage(selectedYear, selectedMonth, tenantKey);
@@ -1379,6 +1381,21 @@ export default function PersonalFixPage() {
     const planFE = loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey);
     setFerienPlanDays(planFE);
     console.log(`[FERIEN] preserved on reload: ist=${Object.values(istFE).reduce((s, v) => s + v, 0)} plan=${Object.values(planFE).reduce((s, v) => s + v, 0)} FE-Tage gesamt`);
+
+    // Enrich plan hours from Supabase (schedule_entries) — same pattern as ist-hours below.
+    // This ensures plan data is always current even if the user never opened Dienstplanung
+    // on this device (Supabase is the canonical write path for the schedule planner).
+    const scheduleMonthDate = new Date(selectedYear, selectedMonth - 1, 1);
+    loadScheduleForMonth(scheduleMonthDate).then(supabaseSchedule => {
+      if (!supabaseSchedule) return; // Supabase error – keep local result
+      const scheduleKey = tenantKey(`schedule-v2-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
+      try { localStorage.setItem(scheduleKey, JSON.stringify(supabaseSchedule)); } catch { /* quota exceeded */ }
+      // Re-read plan hours and ferien plan from the freshly written cache
+      setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth, tenantKey));
+      setFerienPlanDays(loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey));
+      const totalPlanEntries = Object.keys(supabaseSchedule).length;
+      console.log(`[PLAN] personal-fix schedule loaded from Supabase: ${totalPlanEntries} Einträge für ${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
+    });
 
     // Fast local read first
     const localIst = loadIstHoursFromStorage(selectedYear, selectedMonth, tenantKey);
