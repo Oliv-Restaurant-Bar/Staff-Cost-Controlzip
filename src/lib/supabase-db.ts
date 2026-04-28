@@ -77,14 +77,23 @@ const employeeToDb = (emp: Employee) => ({
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const dbToEmployee = (row: any): Employee => ({
+const dbToEmployee = (row: any): Employee => {
+  const storedWage = Number(row.hourly_wage);
+  // Falls kein Stundenlohn hinterlegt (0 oder null), aber Monatslohn + Wochenstunden vorhanden:
+  // Effektiven Stundenlohn ableiten: Monatslohn / (Wochenstunden × 52 / 12)
+  const derivedWage =
+    !storedWage && row.monthly_salary && row.weekly_hours && Number(row.weekly_hours) > 0
+      ? Math.round((Number(row.monthly_salary) / (Number(row.weekly_hours) * 52 / 12)) * 100) / 100
+      : storedWage;
+
+  return {
   // ── Stammdaten ────────────────────────────────────────────────────────────
   id:                     row.id,
   name:                   row.name,
   department:             row.department === 'kueche' ? 'küche' : 'service',
   employmentType:         row.employment_type,
   // ── Arbeitszeit & Lohn ────────────────────────────────────────────────────
-  hourlyWage:             Number(row.hourly_wage),
+  hourlyWage:             derivedWage,
   weeklyHours:            row.weekly_hours              ?? undefined,
   monthlySalary:          row.monthly_salary            ?? undefined,
   monthlySalaryWith13th:  row.monthly_salary_with_13th  ?? undefined,
@@ -125,7 +134,8 @@ const dbToEmployee = (row: any): Employee => ({
   onboardingStatus:       row.onboarding_status         ?? undefined,
   onboardingToken:        row.onboarding_token          ?? undefined,
   onboardingDocuments:    row.onboarding_documents      ?? undefined,
-});
+  };
+};
 
 // ─── Mitarbeiter ─────────────────────────────────────────────────────────────
 
