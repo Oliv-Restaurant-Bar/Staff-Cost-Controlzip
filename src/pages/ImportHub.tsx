@@ -111,28 +111,24 @@ function readTagesumsatzDate(keyFn: (k: string) => string = k => k): string | nu
   } catch { return null; }
 }
 
-function readIstStundenDate(keyFn: (k: string) => string = k => k): string | null {
+/**
+ * Liest das letzte importierte Datum aus der Supabase-Tabelle actual_hours.
+ * Filtert nach Mandant: Beaulieu-Mitarbeiter haben IDs mit "b-" Prefix.
+ */
+async function fetchIstStundenDate(tenantId: string): Promise<string | null> {
   try {
-    // Match both plain keys (Oliv) and prefixed keys (Beaulieu: beaulieu:actual-hours-*)
-    const prefix = keyFn('').replace(/\.$/, '');
-    const keys = Object.keys(localStorage).filter(k => {
-      const plain = prefix ? k.replace(new RegExp(`^${prefix}\\:`), '') : k;
-      return /^actual-hours-\d{4}-\d{2}$/.test(plain);
-    });
-    let latestDate: string | null = null;
-    for (const key of keys) {
-      try {
-        const entries = JSON.parse(localStorage.getItem(key) || '{}') as Record<string, unknown>;
-        for (const entryKey of Object.keys(entries)) {
-          // Key format: "{employeeId}-{yyyy-MM-dd}" — date is last 10 chars
-          const dateStr = entryKey.slice(-10);
-          if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr) && (!latestDate || dateStr > latestDate)) {
-            latestDate = dateStr;
-          }
-        }
-      } catch { /* skip */ }
+    let query = supabase
+      .from('actual_hours')
+      .select('date')
+      .order('date', { ascending: false })
+      .limit(1);
+    if (tenantId === 'beaulieu') {
+      query = query.like('employee_id', 'b-%');
+    } else {
+      query = query.not('employee_id', 'like', 'b-%');
     }
-    return latestDate;
+    const { data } = await query;
+    return data?.[0]?.date ?? null;
   } catch { return null; }
 }
 
@@ -160,16 +156,18 @@ async function fetchVerkaufsdatenDate(): Promise<string | null> {
 
 const DatenstandCard = () => {
   const { tenantId, tenantKey } = useTenant();
-  const [verkaufDate, setVerkaufDate]   = useState<string | null | 'loading'>('loading');
-  const [refreshKey, setRefreshKey]     = useState(0);
+  const [verkaufDate, setVerkaufDate]         = useState<string | null | 'loading'>('loading');
+  const [istStundenDate, setIstStundenDate]   = useState<string | null | 'loading'>('loading');
+  const [refreshKey, setRefreshKey]           = useState(0);
 
   const tagesumsatzDate  = readTagesumsatzDate(tenantKey);
-  const istStundenDate   = readIstStundenDate(tenantKey);
   const buchhaltungDate  = readBuchhaltungDate(tenantKey);
 
   useEffect(() => {
     setVerkaufDate('loading');
+    setIstStundenDate('loading');
     fetchVerkaufsdatenDate().then(d => setVerkaufDate(d));
+    fetchIstStundenDate(tenantId).then(d => setIstStundenDate(d));
     console.log(`[TENANT] DatenstandCard: Mandant "${tenantId}" geladen`);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey, tenantId]);
@@ -187,8 +185,8 @@ const DatenstandCard = () => {
       label:       'Ist-Stunden',
       sublabel:    'Mirus / CSV',
       icon:        <Clock className="h-3.5 w-3.5" />,
-      latestDate:  istStundenDate,
-      displayDate: istStundenDate,
+      latestDate:  istStundenDate === 'loading' ? null : istStundenDate,
+      displayDate: istStundenDate === 'loading' ? null : istStundenDate,
       mode:        'daily',
       linkTo:      '#ist-stunden',
     },
@@ -226,7 +224,7 @@ const DatenstandCard = () => {
             className="text-muted-foreground hover:text-foreground transition-colors"
             title="Aktualisieren"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', verkaufDate === 'loading' && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (verkaufDate === 'loading' || istStundenDate === 'loading') && 'animate-spin')} />
           </button>
         </div>
       </CardHeader>
@@ -235,7 +233,8 @@ const DatenstandCard = () => {
           {entries.map(e => {
             const s = staleness(e.latestDate, e.mode);
             const dateStr = formatDatenstandDate(e.displayDate ?? e.latestDate);
-            const loading = e.label === 'Verkaufsdaten Produkte' && verkaufDate === 'loading';
+            const loading = (e.label === 'Verkaufsdaten Produkte' && verkaufDate === 'loading')
+                         || (e.label === 'Ist-Stunden'           && istStundenDate === 'loading');
             return (
               <div
                 key={e.label}
