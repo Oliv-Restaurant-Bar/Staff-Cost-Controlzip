@@ -188,6 +188,12 @@ export default function TagesansichtPage() {
     const daysInVJMonth = endOfMonth(new Date(year - 1, month - 1, 1)).getDate();
     const vjProRata     = vjMonthlyBase > 0 ? vjMonthlyBase / daysInVJMonth : 0;
 
+    // Prüfen ob Supabase für diesen VJ-Monat überhaupt Einträge hat.
+    // Wenn ja: fehlende Tage = Schliessungstage (0), NICHT pro-rata.
+    // Wenn nein: pro-rata als Fallback verwenden.
+    const vjYearMM = `${year - 1}-${String(month).padStart(2, '0')}`;
+    const hasVjSupabaseMonth = Object.keys(vjSupabaseData).some(k => k.startsWith(vjYearMM));
+
     return monthDays.map(day => {
       const d = format(day, 'yyyy-MM-dd');
 
@@ -198,23 +204,43 @@ export default function TagesansichtPage() {
 
       // VJ: 1. Supabase (vj_daily:YYYY-MM-DD) → 2. dailyBudgets-Blob → 3. Pro-rata aus reporting_v1
       const vjKey      = `${year - 1}-${d.slice(5)}`;
-      const vjSupabase = vjSupabaseData[vjKey]?.actualRevenue ?? 0;
+      const vjSupabase = vjSupabaseData[vjKey]?.actualRevenue;    // undefined wenn nicht vorhanden
       const vjDirect   = dailyBudgets[d]?.previousYearRevenue ?? 0;
       const vjBlob     = vjDirect > 0 ? vjDirect : (dailyBudgets[vjKey]?.actualRevenue ?? 0);
-      const vjDailyRaw = vjSupabase > 0 ? vjSupabase : vjBlob; // Supabase hat Priorität
-      const vjIsExact  = vjDailyRaw > 0;
-      const vjBase     = vjIsExact
+
+      let vjDailyRaw: number;
+      let vjIsExact: boolean;
+
+      if (vjSupabase !== undefined) {
+        // Exakter Supabase-Wert vorhanden (auch 0 = Schliessungstag)
+        vjDailyRaw = vjSupabase;
+        vjIsExact  = true;
+      } else if (hasVjSupabaseMonth) {
+        // Monat hat Supabase-Daten, aber dieser Tag fehlt → Schliessungstag (0)
+        vjDailyRaw = 0;
+        vjIsExact  = true;
+      } else if (vjBlob > 0) {
+        // Kein Supabase → Blob-Fallback (dailyBudgets / previousYearRevenue)
+        vjDailyRaw = vjBlob;
+        vjIsExact  = true;
+      } else {
+        // Kein Tages-Exaktwert → pro-rata aus reporting_v1 (Monatssumme)
+        vjDailyRaw = 0;
+        vjIsExact  = false;
+      }
+
+      const vjBase = vjIsExact
         ? (showNetRevenue ? grossToNet(vjDailyRaw) : vjDailyRaw)
         : vjProRata; // Fallback: pro-rata aus reporting_v1
-      const vjDate     = new Date(vjKey + 'T00:00:00');
+      const vjDate = new Date(vjKey + 'T00:00:00');
 
       // Diagnose-Log (nur Tag 1-5)
       if (day.getDate() <= 5) {
-        const src = vjSupabase > 0 ? 'supabase' : vjBlob > 0 ? 'blob' : 'proRata';
+        const src = vjSupabase !== undefined ? 'supabase' : hasVjSupabaseMonth ? 'closed(0)' : vjBlob > 0 ? 'blob' : 'proRata';
         console.log(
           `[TAGESANSICHT] ${d} → VJ ${vjKey}:` +
-          ` supabase=${vjSupabase} | blob=${vjBlob} | proRata=${vjProRata.toFixed(0)}` +
-          ` | vjMonthly=${vjMonthlyGross} | using=${src}`,
+          ` supabase=${vjSupabase ?? 'n/a'} | blob=${vjBlob} | proRata=${vjProRata.toFixed(0)}` +
+          ` | hasVjMonth=${hasVjSupabaseMonth} | using=${src}`,
         );
       }
 
