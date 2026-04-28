@@ -4,13 +4,14 @@
  * CRUD für die Tabelle produkte_kosten (Supabase).
  *
  * Schema:
- *   id           BIGSERIAL  PK
- *   name         TEXT       NOT NULL
- *   category     TEXT       'food' | 'beverage'
- *   wes          NUMERIC    WES pro Stück (CHF)   ← das ist wes_per_unit
- *   wes_q        NUMERIC    WES-Quote (%) — wird auto berechnet / optional
- *   updated_at   TIMESTAMPTZ
- *   UNIQUE (name, category)
+ *   id            BIGSERIAL  PK
+ *   restaurant_id TEXT       Tenant-Kennung (z.B. 'oliv', 'beaulieu')
+ *   name          TEXT       NOT NULL
+ *   category      TEXT       'food' | 'beverage'
+ *   wes           NUMERIC    WES pro Stück (CHF)   ← das ist wes_per_unit
+ *   wes_q         NUMERIC    WES-Quote (%) — wird auto berechnet / optional
+ *   updated_at    TIMESTAMPTZ
+ *   UNIQUE (restaurant_id, name, category)
  *
  * Authentifizierung: RLS-Policies erlauben Lesen + Schreiben für alle
  * eingeloggten Benutzer.
@@ -29,26 +30,46 @@ export interface ProduktStammRow {
 }
 
 export interface ProduktStammInsert {
-  name:     string;
-  category: 'food' | 'beverage';
-  wes:      number;
-  wes_q?:   number;
+  name:          string;
+  category:      'food' | 'beverage';
+  wes:           number;
+  wes_q?:        number;
+  restaurant_id: string;
 }
+
+// Fehlercode wenn Tabelle nicht existiert
+const TABLE_NOT_FOUND_CODE = 'PGRST205';
 
 // ─── Lesen ───────────────────────────────────────────────────────────────────
 
-export async function loadProduktStamm(): Promise<ProduktStammRow[]> {
+export async function loadProduktStamm(restaurantId: string = 'oliv'): Promise<ProduktStammRow[]> {
+  console.log(`[PRODUCTS] tenant: ${restaurantId}`);
+  console.log(`[PRODUCTS] table name used: produkte_kosten`);
+
   const { data, error } = await (supabase as any)
     .from('produkte_kosten')
     .select('id, name, category, wes, updated_at')
+    .eq('restaurant_id', restaurantId)
     .order('name', { ascending: true });
 
   if (error) {
+    // Tabelle existiert nicht → als leeres Ergebnis behandeln, nicht als Fehler
+    if (error.code === TABLE_NOT_FOUND_CODE || error.message?.includes('produkte_kosten')) {
+      console.warn(`[PRODUCTS] table exists: no — Tabelle fehlt, bitte Migration ausführen`);
+      console.log(`[PRODUCTS] empty state vs error: TABLE_MISSING`);
+      throw new Error(`Tabelle 'produkte_kosten' fehlt. Bitte die SQL-Migration ausführen. (${error.code})`);
+    }
     console.error('[ProduktStamm] loadProduktStamm error:', error);
+    console.log(`[PRODUCTS] table exists: unknown — Fehler beim Laden`);
     throw new Error(`Laden fehlgeschlagen: ${error.message} (${error.code})`);
   }
 
-  return (data ?? []).map((r: any) => ({
+  const rows = data ?? [];
+  console.log(`[PRODUCTS] table exists: yes`);
+  console.log(`[PRODUCTS] rows loaded: ${rows.length}`);
+  console.log(`[PRODUCTS] empty state vs error: ${rows.length === 0 ? 'EMPTY_OK' : 'HAS_DATA'}`);
+
+  return rows.map((r: any) => ({
     id:           r.id,
     name:         r.name,
     category:     r.category,
@@ -66,12 +87,13 @@ export async function upsertProduktStamm(
     .from('produkte_kosten')
     .upsert(
       {
-        name:     entry.name.trim(),
-        category: entry.category,
-        wes:      entry.wes,
-        wes_q:    entry.wes_q ?? 0,
+        restaurant_id: entry.restaurant_id,
+        name:          entry.name.trim(),
+        category:      entry.category,
+        wes:           entry.wes,
+        wes_q:         entry.wes_q ?? 0,
       },
-      { onConflict: 'name,category' },
+      { onConflict: 'restaurant_id,name,category' },
     )
     .select('id, name, category, wes, updated_at')
     .single();

@@ -17,6 +17,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Navigate } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/contexts/TenantContext';
 import {
   Package, Plus, RefreshCw, Pencil, Trash2, Check, X,
   Download, Search, AlertTriangle, ChevronDown,
@@ -221,11 +222,15 @@ function NewRow({
 
 export default function ProduktStamm() {
   const { isAdmin } = usePermissions();
+  const { tenantId } = useTenant();
+  const restaurantId = tenantId ?? 'oliv';
+
   if (!isAdmin) return <Navigate to="/" replace />;
 
   const [rows,        setRows]        = useState<ProduktStammRow[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [dbError,     setDbError]     = useState<string | null>(null);
+  const [tableMissing, setTableMissing] = useState(false);
   const [editingId,   setEditingId]   = useState<number | null>(null);
   const [showNewRow,  setShowNewRow]  = useState(false);
   const [searchTerm,  setSearchTerm]  = useState('');
@@ -238,18 +243,23 @@ export default function ProduktStamm() {
   async function load() {
     setLoading(true);
     setDbError(null);
+    setTableMissing(false);
     try {
-      const data = await loadProduktStamm();
+      const data = await loadProduktStamm(restaurantId);
       setRows(data);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setDbError(msg);
+      if (msg.includes('PGRST205') || msg.includes("Tabelle 'produkte_kosten' fehlt")) {
+        setTableMissing(true);
+      } else {
+        setDbError(msg);
+      }
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [restaurantId]);
 
   // ── Gefilterte Zeilen ──────────────────────────────────────────────────────
 
@@ -287,7 +297,7 @@ export default function ProduktStamm() {
   // ── Neu ────────────────────────────────────────────────────────────────────
 
   async function handleNew(entry: { name: string; category: 'food' | 'beverage'; wes: number }) {
-    await upsertProduktStamm({ name: entry.name, category: entry.category, wes: entry.wes });
+    await upsertProduktStamm({ name: entry.name, category: entry.category, wes: entry.wes, restaurant_id: restaurantId });
     toast.success(`${entry.name} hinzugefügt`);
     setShowNewRow(false);
     await load();
@@ -330,7 +340,7 @@ export default function ProduktStamm() {
     try {
       let count = 0;
       for (const name of names) {
-        await upsertProduktStamm({ name, category, wes: 0 });
+        await upsertProduktStamm({ name, category, wes: 0, restaurant_id: restaurantId });
         count++;
       }
       toast.success(`${count} Produkte importiert (WES = 0, bitte nachtragen)`);
@@ -398,17 +408,40 @@ export default function ProduktStamm() {
         </div>
       </div>
 
-      {/* DB-Fehler */}
-      {dbError && (
+      {/* Tabelle fehlt → SQL-Migration hinweis */}
+      {tableMissing && (
+        <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
+          <CardContent className="py-4 flex items-start gap-3">
+            <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold text-amber-800 dark:text-amber-400 text-sm">
+                Datenbanktabelle fehlt
+              </p>
+              <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                Die Tabelle <code className="font-mono bg-amber-100 dark:bg-amber-900/40 px-1 rounded">produkte_kosten</code> existiert noch nicht in Supabase.
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Bitte die Datei{' '}
+                <code className="font-mono bg-muted px-1 rounded">
+                  supabase/migrations/20260428_produkte_kosten_with_tenant.sql
+                </code>{' '}
+                im Supabase SQL-Editor ausführen.
+              </p>
+              <Button size="sm" variant="outline" className="mt-3 h-7 text-xs" onClick={load}>
+                <RefreshCw className="h-3 w-3 mr-1" /> Nochmals versuchen
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Allgemeiner DB-Fehler */}
+      {dbError && !tableMissing && (
         <Card className="border-red-300 bg-red-50 dark:bg-red-950/20">
           <CardContent className="py-4 flex items-start gap-3">
             <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
             <div>
-              <p className="font-semibold text-red-700 dark:text-red-400 text-sm">Tabelle nicht gefunden</p>
-              <p className="text-sm text-red-600 dark:text-red-300 mt-1">
-                Die Datenbanktabelle <code className="font-mono bg-red-100 dark:bg-red-900/40 px-1 rounded">produkte_kosten</code> existiert noch nicht in Supabase.
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">Bitte die Tabelle in Supabase anlegen, damit die Stammdaten verfügbar werden.</p>
+              <p className="font-semibold text-red-700 dark:text-red-400 text-sm">Fehler beim Laden</p>
               <p className="text-xs text-red-500/70 font-mono mt-2">{dbError}</p>
               <Button size="sm" variant="outline" className="mt-2 h-7 text-xs" onClick={load}>Nochmals versuchen</Button>
             </div>
@@ -467,6 +500,9 @@ export default function ProduktStamm() {
           Alle Produkte aus den Verkaufsdaten sind bereits im Stamm vorhanden.
         </div>
       )}
+
+      {/* Statistik + Filter + Tabelle: nur anzeigen wenn Tabelle existiert */}
+      {!tableMissing && (<>
 
       {/* Statistik */}
       <div className="grid grid-cols-3 gap-3">
@@ -628,6 +664,8 @@ export default function ProduktStamm() {
         WES pro Stück wird im Verkaufs-Dashboard mit der verkauften Menge multipliziert,
         um den Gesamt-Wareneinsatz zu berechnen. Matching erfolgt über den exakten Produktnamen (Gross-/Kleinschreibung ignoriert).
       </p>
+
+      </>)}
 
     </div>
   );
