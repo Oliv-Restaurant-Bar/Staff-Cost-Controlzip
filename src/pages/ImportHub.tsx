@@ -360,19 +360,23 @@ const AnnualRevenueImportSection = () => {
     if (!result) return;
     setSaving(true);
     let saved = 0;
+    // Vorjahresumsatz wird als revenuePreviousYear im Folgejahr gespeichert,
+    // damit die P&L-Engine (pl-engine.ts) record.revenuePreviousYear korrekt liest.
+    // Beispiel: Datei für 2025 → gespeichert als revenuePreviousYear in Jahr 2026.
+    const saveYear = importYear + 1;
     for (const row of result.months) {
       if (row.revenue === 0) continue;
       saveMonth(
-        { year: importYear, month: row.month, revenueActual: row.revenue },
+        { year: saveYear, month: row.month, revenuePreviousYear: row.revenue },
         'annual_xlsx_import',
         'update',
-        { note: `Jahres-Import ${fileName}` },
+        { note: `Vorjahr-Import ${importYear} → erscheint in P&L ${saveYear}` },
       );
       saved++;
     }
     setSaving(false);
     setSaved(true);
-    toast.success(`${saved} Monate gespeichert (Vorjahr ${importYear})`);
+    toast.success(`${saved} Monate als Vorjahr ${importYear} gespeichert (sichtbar in P&L ${saveYear})`);
   };
 
   const fmt = (v: number) =>
@@ -393,7 +397,7 @@ const AnnualRevenueImportSection = () => {
           </SelectContent>
         </Select>
         <span className="text-[10px] text-muted-foreground">
-          (wird als Ist-Daten für dieses Jahr gespeichert)
+          → erscheint als Vorjahr-Spalte in P&L {importYear + 1}
         </span>
       </div>
 
@@ -465,7 +469,7 @@ const AnnualRevenueImportSection = () => {
           <div className="flex gap-2">
             <Button size="sm" className="h-8 text-xs" onClick={handleSave} disabled={saving}>
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <CheckCircle2 className="h-3.5 w-3.5 mr-1" />}
-              Speichern ({importYear})
+              Als Vorjahr {importYear} speichern
             </Button>
             <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => { setResult(null); setFileName(''); }}>
               Abbrechen
@@ -477,7 +481,7 @@ const AnnualRevenueImportSection = () => {
       {saved && (
         <div className="flex items-center gap-2 text-xs text-green-700 dark:text-green-400">
           <CheckCircle2 className="h-4 w-4" />
-          Daten gespeichert für {importYear}. Nächste Datei?{' '}
+          Vorjahr {importYear} gespeichert — sichtbar in P&L {importYear + 1}. Nächste Datei?{' '}
           <button className="underline" onClick={() => { setResult(null); setFileName(''); setSaved(false); }}>
             Erneut importieren
           </button>
