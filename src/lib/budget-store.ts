@@ -31,6 +31,7 @@ import {
   createDefaultPLLineItem,
 } from '@/types/budget';
 import { createSeededBudget2026, SEED_2026_LINE_ITEMS } from '@/lib/budget-seed-2026';
+import { createSeededBeaulieuBudget2026, SEED_BEAULIEU_2026_LINE_ITEMS } from '@/lib/budget-seed-beaulieu-2026';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -84,18 +85,22 @@ export function loadBudgetYear(year: number, storeKey: string = STORAGE_KEY): Bu
       item => item.monthlyValues.some(v => v !== 0)
     );
     if (!hasRealValues) {
-      // Auto-Seed NUR für Oliv (Standard-Key) — Beaulieu wird über seedBeaulieuBudget2026() befüllt
+      // Auto-Seed für Oliv (Standard-Key)
       if (storeKey === STORAGE_KEY) {
         const seeded = createSeededBudget2026();
         all[2026] = seeded;
         saveAll(all, storeKey);
         return seeded;
       }
-      // Beaulieu: leeres Budget zurückgeben — kein Oliv-Seed!
-      console.log(`[BUDGET-BEAULIEU] loadBudgetYear: kein Auto-Seed für storeKey="${storeKey}", warte auf seedBeaulieuBudget2026()`);
-      return existing ?? createEmptyBudgetYear(year);
+      // Auto-Seed für Beaulieu — Werte aus Budget_Beaulieu_2026.xlsx
+      if (storeKey === 'beaulieu:budget_v1') {
+        const seeded = createSeededBeaulieuBudget2026();
+        all[2026] = seeded;
+        saveAll(all, storeKey);
+        return seeded;
+      }
     }
-    return existing;
+    return existing ?? createEmptyBudgetYear(year);
   }
   return all[year] ?? createEmptyBudgetYear(year);
 }
@@ -548,9 +553,18 @@ function ensureDefaultPLCategories(budget: BudgetYear): BudgetYear {
  */
 function migrateSeedZeroValues2026(budget: BudgetYear, storeKey: string = STORAGE_KEY): BudgetYear {
   if (budget.year !== 2026) return budget;
-  // Nur für Oliv-Tenant — Beaulieu hat eigene Seed-Daten über seedBeaulieuBudget2026()
-  if (storeKey !== STORAGE_KEY) return budget;
-  const seedMap = new Map(SEED_2026_LINE_ITEMS.map(s => [s.id, s]));
+
+  // Seed-Map je nach Tenant
+  let seedItems: BudgetPLLineItem[];
+  if (storeKey === STORAGE_KEY) {
+    seedItems = SEED_2026_LINE_ITEMS;
+  } else if (storeKey === 'beaulieu:budget_v1') {
+    seedItems = SEED_BEAULIEU_2026_LINE_ITEMS;
+  } else {
+    return budget;
+  }
+
+  const seedMap = new Map(seedItems.map(s => [s.id, s]));
   const items = budget.plLineItems ?? [];
   let changed = false;
   const healed = items.map(item => {
@@ -583,8 +597,51 @@ export function loadBudgetWithPL(year: number, storeKey: string = STORAGE_KEY): 
   budget = migrateSeedZeroValues2026(budget, storeKey);
   // Immer Sync: plLineItems → legacy positions (damit Dashboard/SollIst budget_revenue findet)
   budget = syncPLToLegacyPositions(budget);
-  saveBudgetYear(budget, storeKey);
+  // Nur zurückschreiben wenn echte Daten vorhanden.
+  // Ein leeres Budget NICHT nach Supabase schreiben — das würde dort gespeicherte
+  // Seed-Daten (z.B. von seedBeaulieuBudget2026) überschreiben, bevor sie in
+  // localStorage geladen wurden (race condition beim ersten Seitenaufruf).
+  const hasRealData = budget.plLineItems?.some(i => i.monthlyValues.some(v => v !== 0));
+  if (hasRealData) {
+    saveBudgetYear(budget, storeKey);
+  }
   return budget;
+}
+
+/**
+ * Lädt das Budget aus Supabase und speichert es in localStorage.
+ * Gibt das Budget zurück wenn echte Daten gefunden wurden, sonst null.
+ * Wird aufgerufen wenn localStorage leer ist (z.B. neuer Browser oder Cache geleert).
+ */
+export async function syncBudgetFromSupabase(year: number, storeKey: string = STORAGE_KEY): Promise<BudgetYear | null> {
+  try {
+    const { kvGet } = await import('./supabase-kv');
+    const remote = await kvGet(storeKey);
+    if (!remote || typeof remote !== 'object' || Array.isArray(remote)) {
+      console.log(`[BUDGET-SYNC] Supabase: kein Eintrag für storeKey="${storeKey}"`);
+      return null;
+    }
+    const all = remote as Record<number, BudgetYear>;
+    const budget = all[year];
+    if (!budget) {
+      console.log(`[BUDGET-SYNC] Supabase: kein Budget für Jahr=${year} in storeKey="${storeKey}"`);
+      return null;
+    }
+    const hasRealData = budget.plLineItems?.some(i => i.monthlyValues.some(v => v !== 0));
+    if (!hasRealData) {
+      console.log(`[BUDGET-SYNC] Supabase: Budget für Jahr=${year} hat nur Nullwerte — kein Sync`);
+      return null;
+    }
+    // In localStorage speichern (Supabase → localStorage)
+    const localAll = loadAll(storeKey);
+    localAll[year] = budget;
+    localStorage.setItem(storeKey, JSON.stringify(localAll));
+    console.log(`[BUDGET-SYNC] Supabase→localStorage: storeKey="${storeKey}" year=${year}, items=${budget.plLineItems?.length ?? 0}`);
+    return budget;
+  } catch (e) {
+    console.error('[BUDGET-SYNC] Fehler beim Supabase-Sync:', e);
+    return null;
+  }
 }
 
 /**

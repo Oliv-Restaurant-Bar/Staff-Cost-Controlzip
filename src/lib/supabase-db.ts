@@ -4,6 +4,7 @@ import { format, startOfMonth, endOfMonth } from 'date-fns';
 import type { TenantId } from '@/contexts/TenantContext';
 import { kvGet, kvSet } from '@/lib/supabase-kv';
 import type { BudgetYear, BudgetPLLineItem } from '@/types/budget';
+import { SEED_BEAULIEU_2026_LINE_ITEMS } from '@/lib/budget-seed-beaulieu-2026';
 
 // ─── Typen ──────────────────────────────────────────────────────────────────
 
@@ -1441,18 +1442,19 @@ export async function seedBeaulieuBudget2026(): Promise<BeaulieuBudgetSeedResult
   });
 
   // Fehlende Positionen ergänzen (falls das Budget noch nicht vollständig war)
-  const Z12 = [0,0,0,0,0,0,0,0,0,0,0,0] as const;
+  // Metadaten (categoryId, accountNumber, label) aus Seed-File übernehmen
+  const seedMeta = new Map(SEED_BEAULIEU_2026_LINE_ITEMS.map(i => [i.id, i]));
   for (const [id, mv] of Object.entries(MONTHLY)) {
     if (!existingIds.has(id)) {
-      // Minimales Item anlegen – loadBudgetWithPL füllt Metadaten beim nächsten Aufruf
+      const meta = seedMeta.get(id);
       newItems.push({
         id,
-        categoryId:    'pl_revenue',
-        accountNumber: '0000',
-        label:         id,
+        categoryId:    meta?.categoryId    ?? 'pl_other_op',
+        accountNumber: meta?.accountNumber ?? '0000',
+        label:         meta?.label         ?? id,
         valueType:     'chf',
-        sortOrder:     999,
-        isDefault:     false,
+        sortOrder:     meta?.sortOrder     ?? 999,
+        isDefault:     true,
         monthlyValues: mv,
       } as BudgetPLLineItem);
       addedItems.push(id);
@@ -1467,6 +1469,7 @@ export async function seedBeaulieuBudget2026(): Promise<BeaulieuBudgetSeedResult
   await kvSet(KEY, allYears);
   localStorage.setItem(KEY, JSON.stringify(allYears));
   window.dispatchEvent(new Event('supabase-kv-synced'));
+  window.dispatchEvent(new Event('store-synced'));
 
   const savedCount = updatedItems.length + addedItems.length;
   console.log(`[BUDGET-BEAULIEU] saved rows: ${savedCount}`);

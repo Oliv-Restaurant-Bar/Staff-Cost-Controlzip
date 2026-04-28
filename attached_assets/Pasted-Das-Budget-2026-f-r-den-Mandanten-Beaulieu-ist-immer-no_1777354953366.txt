@@ -1,0 +1,80 @@
+Das Budget 2026 für den Mandanten Beaulieu ist immer noch nicht korrekt übernommen. In der Budgetseite zeigt Beaulieu weiterhin CHF 0, obwohl die Datei "Budget Beaulieu 2026.xlsx" vorhanden ist.
+
+Bitte jetzt nicht nur UI prüfen, sondern den kompletten Datenfluss reparieren.
+
+1. Budget-Import wirklich ausführen
+Bitte die Datei "Budget Beaulieu 2026.xlsx" erneut einlesen und die Werte wirklich in Supabase speichern.
+
+Wichtig:
+restaurant_id = 'beaulieu'
+year = 2026
+
+Nicht nur parsen, nicht nur lokal anzeigen.
+
+2. Vor dem Speichern prüfen
+Bitte zuerst loggen:
+[BUDGET-BEAULIEU] excel file found: yes/no
+[BUDGET-BEAULIEU] sheets: ...
+[BUDGET-BEAULIEU] rows parsed: ...
+[BUDGET-BEAULIEU] total revenue parsed: ...
+[BUDGET-BEAULIEU] personnel budget parsed: ...
+[BUDGET-BEAULIEU] ebitda parsed: ...
+
+3. Supabase Upsert
+Bitte die Werte in dieselbe Budgetstruktur schreiben, welche die Budgetseite tatsächlich lädt.
+
+Falls mehrere Budgettabellen oder KV-Keys existieren, bitte die echte Quelle der Budgetseite identifizieren und genau dort speichern.
+
+Wichtig:
+Keine separate neue Tabelle bauen, die UI danach nicht liest.
+
+4. Alte leere Beaulieu-Budgetwerte ersetzen
+Falls für restaurant_id = 'beaulieu' und year = 2026 bereits leere CHF 0 Werte existieren:
+- diese korrekt überschreiben
+- nicht duplizieren
+- nicht daneben neue Werte anlegen
+
+5. Budgetseite tenant-korrekt laden
+Bitte prüfen:
+Wenn aktiver Mandant = beaulieu:
+- Budgetseite lädt nur restaurant_id = 'beaulieu'
+- keine Oliv-Werte
+- keine leeren Defaults, falls Supabase Werte vorhanden sind
+- kein localStorage-Key ohne Tenant
+
+6. Sofortiger Kontrollabgleich
+Nach dem Speichern bitte direkt vergleichen:
+
+Excel-Wert vs Supabase-Wert vs UI-Wert
+
+Für mindestens:
+- Umsatz Budget 2026
+- Personalkosten Budget
+- EBITDA Budget
+- Warenaufwand
+- Monatswerte Jan bis Dez
+
+Logs:
+[BUDGET-VERIFY] position: Umsatz Budget 2026
+[BUDGET-VERIFY] excel: ...
+[BUDGET-VERIFY] supabase: ...
+[BUDGET-VERIFY] ui: ...
+[BUDGET-VERIFY] status: OK/ERROR
+
+7. Fehler hart anzeigen
+Wenn das Excel nicht gelesen werden kann oder die UI eine andere Datenquelle nutzt:
+Bitte nicht als erfolgreich melden.
+Bitte genau sagen:
+- welche Datei gelesen wurde
+- welche Tabelle / KV-Key beschrieben wurde
+- welche Tabelle / KV-Key die Budgetseite liest
+- warum die UI noch CHF 0 zeigt
+
+8. Akzeptanzkriterium
+Der Fix ist erst fertig, wenn im Mandanten Beaulieu auf /budget oben nicht mehr CHF 0 steht, sondern die Werte aus "Budget Beaulieu 2026.xlsx" angezeigt werden.
+
+9. Bitte danach kurz sagen:
+- wo der Fehler lag
+- welche Supabase Tabelle oder KV-Key jetzt beschrieben wird
+- welches Umsatzbudget 2026 für Beaulieu gespeichert wurde
+- ob Budgetseite, Tagesansicht und Erfolgsrechnung dieselben Beaulieu-Budgetwerte laden

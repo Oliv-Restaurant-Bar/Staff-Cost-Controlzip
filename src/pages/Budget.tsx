@@ -35,6 +35,7 @@ import {
   savePLLineItem, addCustomPLLineItem, removeCustomPLLineItem,
   computePLCategoryTotals, computePLResultTotals,
   restoreMissingDefaultPLItems, resetPLToDefaults,
+  syncBudgetFromSupabase,
   STORAGE_KEY as BUDGET_STORAGE_KEY,
 } from '@/lib/budget-store';
 
@@ -208,11 +209,34 @@ function BudgetContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
-  // Nach Supabase-Sync Budget neu laden
+  // Supabase→localStorage Sync: Budget laden wenn localStorage leer ist.
+  // Tritt auf wenn: neuer Browser, Cache geleert, oder seedBeaulieuBudget2026
+  // in einem anderen Tab ausgeführt wurde.
+  useEffect(() => {
+    const storeKey = tenantKey(BUDGET_STORAGE_KEY);
+    const hasData = budget.plLineItems?.some(i => i.monthlyValues.some(v => v !== 0));
+    if (hasData) return;
+    console.log(`[BUDGET-SYNC] localStorage leer für storeKey="${storeKey}" – versuche Supabase-Sync`);
+    syncBudgetFromSupabase(selectedYear, storeKey).then(remoteBudget => {
+      if (remoteBudget) {
+        console.log(`[BUDGET-SYNC] Supabase-Daten geladen – Budget wird neu gerendert`);
+        reload(selectedYear);
+      } else {
+        console.log(`[BUDGET-SYNC] Keine Daten in Supabase – Budget bleibt leer (seedBeaulieuBudget2026 ausführen)`);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, selectedYear]);
+
+  // Nach Supabase-Sync Budget neu laden (beide Event-Namen abdecken)
   useEffect(() => {
     const handler = () => reload(selectedYear);
     window.addEventListener('store-synced', handler);
-    return () => window.removeEventListener('store-synced', handler);
+    window.addEventListener('supabase-kv-synced', handler);
+    return () => {
+      window.removeEventListener('store-synced', handler);
+      window.removeEventListener('supabase-kv-synced', handler);
+    };
   }, [selectedYear, reload]);
 
   // ── Berechnungen ─────────────────────────────────────────────────────────────
