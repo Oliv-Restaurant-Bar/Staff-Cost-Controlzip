@@ -230,6 +230,7 @@ export default function ProduktStamm() {
   const [rows,        setRows]        = useState<ProduktStammRow[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [dbError,     setDbError]     = useState<string | null>(null);
+  const [rawError,    setRawError]    = useState<string | null>(null);
   const [tableMissing, setTableMissing] = useState(false);
   const [editingId,   setEditingId]   = useState<number | null>(null);
   const [showNewRow,  setShowNewRow]  = useState(false);
@@ -243,17 +244,24 @@ export default function ProduktStamm() {
   async function load() {
     setLoading(true);
     setDbError(null);
+    setRawError(null);
     setTableMissing(false);
     try {
       const data = await loadProduktStamm(restaurantId);
       setRows(data);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('PGRST205') || msg.includes("Tabelle 'produkte_kosten' fehlt")) {
+      const isTableMissing =
+        msg.includes('PGRST205') ||
+        msg.includes('42P01') ||
+        msg.includes("Tabelle 'produkte_kosten' fehlt") ||
+        msg.toLowerCase().includes('undefined_table');
+      if (isTableMissing) {
         setTableMissing(true);
       } else {
         setDbError(msg);
       }
+      setRawError(msg);
     } finally {
       setLoading(false);
     }
@@ -427,6 +435,11 @@ export default function ProduktStamm() {
                 </code>{' '}
                 im Supabase SQL-Editor ausführen.
               </p>
+              {rawError && (
+                <p className="text-[11px] font-mono bg-amber-100 dark:bg-amber-900/30 rounded px-2 py-1 mt-2 text-amber-900 dark:text-amber-300 break-all">
+                  {rawError}
+                </p>
+              )}
               <Button size="sm" variant="outline" className="mt-3 h-7 text-xs" onClick={load}>
                 <RefreshCw className="h-3 w-3 mr-1" /> Nochmals versuchen
               </Button>

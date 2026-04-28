@@ -53,8 +53,24 @@ export async function loadProduktStamm(restaurantId: string = 'oliv'): Promise<P
     .order('name', { ascending: true });
 
   if (error) {
-    // Tabelle existiert nicht → als leeres Ergebnis behandeln, nicht als Fehler
-    if (error.code === TABLE_NOT_FOUND_CODE || error.message?.includes('produkte_kosten')) {
+    // Immer den vollen Fehler loggen damit wir den echten Code sehen
+    console.error('[PRODUCTS] Supabase error full object:', JSON.stringify(error));
+    console.log('[PRODUCTS] error.code:', error.code);
+    console.log('[PRODUCTS] error.message:', error.message);
+    console.log('[PRODUCTS] error.details:', error.details);
+    console.log('[PRODUCTS] error.hint:', error.hint);
+
+    // PGRST205 = Relation does not exist (Tabelle fehlt)
+    // 42P01 = PostgreSQL undefined_table
+    const isTableMissing =
+      error.code === 'PGRST205' ||
+      error.code === '42P01' ||
+      (typeof error.message === 'string' && (
+        error.message.toLowerCase().includes('relation') && error.message.toLowerCase().includes('does not exist')
+      )) ||
+      (typeof error.message === 'string' && error.message.toLowerCase().includes('undefined_table'));
+
+    if (isTableMissing) {
       console.warn(`[PRODUCTS] table exists: no — Tabelle fehlt, bitte Migration ausführen`);
       console.log(`[PRODUCTS] empty state vs error: TABLE_MISSING`);
       throw new Error(`Tabelle 'produkte_kosten' fehlt. Bitte die SQL-Migration ausführen. (${error.code})`);
