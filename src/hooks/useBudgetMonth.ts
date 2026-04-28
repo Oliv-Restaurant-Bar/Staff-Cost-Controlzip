@@ -13,7 +13,8 @@
  */
 
 import { useMemo } from 'react';
-import { loadBudgetWithPL, resolveBudgetYear } from '@/lib/budget-store';
+import { loadBudgetWithPL, resolveBudgetYear, STORAGE_KEY } from '@/lib/budget-store';
+import { useTenant } from '@/contexts/TenantContext';
 
 export interface BudgetMonthData {
   revenueBudget:         number;
@@ -27,9 +28,12 @@ export interface BudgetMonthData {
 }
 
 export function useBudgetMonth(year: number, month: number): BudgetMonthData {
+  const { tenantId, tenantKey } = useTenant();
   return useMemo(() => {
     // loadBudgetWithPL stellt sicher dass plLineItems → positions sync läuft
-    const budget   = loadBudgetWithPL(year);
+    // tenantKey() liefert den korrekten storeKey je Mandant (Oliv: 'budget_v1', Beaulieu: 'beaulieu:budget_v1')
+    const storeKey = tenantKey(STORAGE_KEY);
+    const budget   = loadBudgetWithPL(year, storeKey);
     const resolved = resolveBudgetYear(budget);
 
     const m = month - 1; // 0-basierter Array-Index (0=Jan, 11=Dez)
@@ -84,5 +88,6 @@ export function useBudgetMonth(year: number, month: number): BudgetMonthData {
       operatingResultBudget,
       hasBudget,
     };
-  }, [year, month]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month, tenantId]);
 }
