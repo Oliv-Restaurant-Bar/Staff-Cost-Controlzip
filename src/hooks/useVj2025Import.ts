@@ -11,12 +11,18 @@
  *
  * Tenant-Isolation: Diese Seed-Daten (VJ2025_DAILY) sind Oliv-spezifisch.
  * Der Hook läuft nur wenn tenantId === 'oliv'.
+ *
+ * Lock-Schutz: Wenn prior_year_locked:oliv:2025 gesperrt ist,
+ * wird kein Seed durchgeführt.
  */
 
 import { useEffect } from 'react';
 import { VJ2025_DAILY } from '@/data/vj2025-daily';
+import { isLocked } from '@/lib/prior-year-lock';
 
 const IMPORT_DONE_KEY = 'vj2025_imported_v1';
+const TENANT_ID = 'oliv';
+const VJ_YEAR = 2025;
 
 function readDailyBudgets(storageKey = 'dailyBudgets'): Record<string, { actualRevenue?: number; takeawayRevenue?: number; previousYearRevenue?: number; plannedRevenue?: number }> {
   try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); }
@@ -26,22 +32,30 @@ function readDailyBudgets(storageKey = 'dailyBudgets'): Record<string, { actualR
 export function useVj2025Import(tenantId?: string, onDone?: () => void) {
   useEffect(() => {
     // Nur für Oliv — VJ2025_DAILY enthält Oliv-spezifische Daten
-    if (tenantId && tenantId !== 'oliv') return;
+    if (tenantId && tenantId !== TENANT_ID) return;
 
     // Nur einmal ausführen (sessionStorage-Flag verhindert Wiederholung)
     if (sessionStorage.getItem(IMPORT_DONE_KEY)) return;
 
-    // Prüfen ob April-2025-Daten bereits vorhanden
-    const existing = readDailyBudgets();
-    const alreadyHas2025 = Object.keys(existing).filter(k => k.startsWith('2025-')).length >= 300;
-    if (alreadyHas2025) {
-      sessionStorage.setItem(IMPORT_DONE_KEY, '1');
-      return;
-    }
-
-    // Import durchführen
     (async () => {
       try {
+        // Lock-Check: Keine Seed-Daten importieren wenn VJ gesperrt
+        const locked = await isLocked(TENANT_ID, VJ_YEAR);
+        if (locked) {
+          console.log(`[PRIOR-YEAR] tenant: ${TENANT_ID} | year: ${VJ_YEAR} | locked: true`);
+          console.log(`[PRIOR-YEAR] import blocked: locked | values preserved: yes`);
+          sessionStorage.setItem(IMPORT_DONE_KEY, '1');
+          return;
+        }
+
+        // Prüfen ob April-2025-Daten bereits vorhanden
+        const existing = readDailyBudgets();
+        const alreadyHas2025 = Object.keys(existing).filter(k => k.startsWith('2025-')).length >= 300;
+        if (alreadyHas2025) {
+          sessionStorage.setItem(IMPORT_DONE_KEY, '1');
+          return;
+        }
+
         const db = readDailyBudgets();
         let count = 0;
         for (const [iso, revenue] of Object.entries(VJ2025_DAILY)) {

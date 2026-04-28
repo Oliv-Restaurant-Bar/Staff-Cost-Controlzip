@@ -29,13 +29,21 @@ const XLSXany = XLSX as any;
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Upload, CheckCircle2, Loader2, AlertCircle, Database } from 'lucide-react';
+import { Upload, CheckCircle2, Loader2, AlertCircle, Database, Lock, LockOpen, ShieldCheck } from 'lucide-react';
 import {
   upsertVjDailyBatch,
   countVjDailyYear,
   type VjDayRecord,
 } from '@/lib/vj-daily-supabase';
 import { useTenant } from '@/contexts/TenantContext';
+import { usePermissions } from '@/hooks/usePermissions';
+import {
+  getLockState,
+  lockYear,
+  unlockYear,
+  formatLockedAt,
+  type PriorYearLockState,
+} from '@/lib/prior-year-lock';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -241,6 +249,7 @@ const currentYear = new Date().getFullYear();
 
 export function VjDailyImportSection() {
   const { tenantId } = useTenant();
+  const { isAdmin }  = usePermissions();
   const fileRef   = useRef<HTMLInputElement>(null);
   const [year,    setYear]    = useState(currentYear - 1);
   const [parsing, setParsing] = useState(false);
@@ -248,11 +257,15 @@ export function VjDailyImportSection() {
   const [saved,   setSaved]   = useState(false);
   const [preview, setPreview] = useState<VjPreview | null>(null);
   const [error,   setError]   = useState<string | null>(null);
-  const [existingCount, setExistingCount] = useState<number | null>(null);
+  const [existingCount, setExistingCount]   = useState<number | null>(null);
+  const [lockState,     setLockState]       = useState<PriorYearLockState>({ locked: false });
+  const [lockLoading,   setLockLoading]     = useState(false);
 
-  // Beim Laden prüfen ob bereits VJ-Daten in Supabase vorhanden sind
+  // Beim Laden: Datenzähler + Lock-Status laden
   useEffect(() => {
-    countVjDailyYear(year, tenantId).then(n => setExistingCount(n));
+    const tid = tenantId ?? 'oliv';
+    countVjDailyYear(year, tid).then(n => setExistingCount(n));
+    getLockState(tid, year).then(s => setLockState(s));
   }, [year, tenantId]);
 
   const handleFile = async (file: File) => {
@@ -276,9 +289,17 @@ export function VjDailyImportSection() {
 
   const handleSave = async () => {
     if (!preview) return;
+    const tid = tenantId ?? 'oliv';
+
+    // Lock-Check: Abbruch wenn Vorjahresdaten gesperrt sind
+    if (lockState.locked) {
+      console.warn(`[PRIOR-YEAR] import blocked: locked | tenant: ${tid} | year: ${preview.year}`);
+      toast.error(`VJ ${preview.year} ist gesperrt. Bitte zuerst entsperren (nur Admin).`);
+      return;
+    }
+
     setSaving(true);
     try {
-      // VjDayRecord-Array aus Preview aufbauen
       const records: VjDayRecord[] = Object.entries(preview.days).map(([date, entry]) => ({
         date,
         year:          preview.year,
@@ -288,18 +309,20 @@ export function VjDailyImportSection() {
         ...(entry.beverage != null ? { beverageRevenue: entry.beverage } : {}),
       }));
 
-      const { upserted, error: supaErr } = await upsertVjDailyBatch(records, tenantId);
+      const { upserted, error: supaErr } = await upsertVjDailyBatch(records, tid);
 
       if (supaErr) {
         toast.error('Supabase-Fehler: ' + supaErr);
         return;
       }
 
-      // Session-Storage zurücksetzen damit useVj2025Import nicht mehr alt-importiert
+      // Seed-Flags zurücksetzen (verhindert alten Seed-Daten das Überschreiben)
       sessionStorage.removeItem('vj2025_imported_v1');
+      sessionStorage.removeItem('vj2025_beaulieu_imported_v1');
       window.dispatchEvent(new Event('supabase-kv-synced'));
       setExistingCount(upserted);
       setSaved(true);
+      console.log(`[PRIOR-YEAR] values preserved: yes | tenant: ${tid} | year: ${preview.year} | upserted: ${upserted}`);
       toast.success(`${upserted} Tage für ${preview.year} in Supabase gespeichert`);
     } catch (e) {
       toast.error('Speicher-Fehler: ' + String(e));
@@ -308,22 +331,90 @@ export function VjDailyImportSection() {
     }
   };
 
+  const handleLock = async () => {
+    const tid = tenantId ?? 'oliv';
+    setLockLoading(true);
+    try {
+      const { error } = await lockYear(tid, year, {
+        source: 'vorjahr_import',
+        days:   existingCount ?? undefined,
+      });
+      if (error) { toast.error('Sperren fehlgeschlagen: ' + error); return; }
+      const newState = await getLockState(tid, year);
+      setLockState(newState);
+      toast.success(`VJ ${year} gesperrt — keine weiteren Imports möglich`);
+    } finally {
+      setLockLoading(false);
+    }
+  };
+
+  const handleUnlock = async () => {
+    const tid = tenantId ?? 'oliv';
+    setLockLoading(true);
+    try {
+      const { error } = await unlockYear(tid, year);
+      if (error) { toast.error('Entsperren fehlgeschlagen: ' + error); return; }
+      setLockState({ locked: false });
+      toast.success(`VJ ${year} entsperrt — Import wieder möglich`);
+    } finally {
+      setLockLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
 
-      {/* Supabase-Status ─────────────────────────────────────────────────────── */}
-      {existingCount !== null && (
-        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-[11px] ${
-          existingCount > 0
-            ? 'border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/20 text-teal-700 dark:text-teal-400'
-            : 'border-border bg-muted/40 text-muted-foreground'
-        }`}>
-          <Database className="h-3.5 w-3.5 shrink-0" />
-          {existingCount > 0
-            ? <span>Supabase enthält <strong>{existingCount}</strong> VJ-Tagesdatensätze für {year} — Tagesansicht liest diese bereits.</span>
-            : <span>Noch keine VJ-Tagesdaten in Supabase für {year}. Datei hochladen um zu importieren.</span>
-          }
+      {/* Lock-Status ─────────────────────────────────────────────────────────── */}
+      {lockState.locked ? (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-[11px]">
+          <Lock className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span className="text-amber-800 dark:text-amber-300 flex-1">
+            <strong>VJ {year} gesperrt</strong> — Import blockiert.
+            {lockState.lockedAt && <> Fixiert am {formatLockedAt(lockState.lockedAt)}.</>}
+            {lockState.source   && <> Quelle: <span className="font-mono">{lockState.source}</span>.</>}
+            {lockState.days != null && <> {lockState.days} Tage importiert.</>}
+          </span>
+          {isAdmin && (
+            <Button
+              size="sm" variant="outline"
+              className="h-6 px-2 text-[10px] gap-1 border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:border-amber-600"
+              onClick={handleUnlock}
+              disabled={lockLoading}
+            >
+              {lockLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <LockOpen className="h-3 w-3" />}
+              Entsperren
+            </Button>
+          )}
         </div>
+      ) : (
+        <>
+          {/* Supabase-Status (nur wenn entsperrt) */}
+          {existingCount !== null && existingCount > 0 && (
+            <div className="flex items-center gap-2 rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/20 px-3 py-2 text-[11px]">
+              <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-teal-600 dark:text-teal-400" />
+              <span className="text-teal-700 dark:text-teal-400 flex-1">
+                Supabase: <strong>{existingCount}</strong> VJ-Datensätze für {year} — Tagesansicht liest diese bereits.
+              </span>
+              {isAdmin && (
+                <Button
+                  size="sm" variant="outline"
+                  className="h-6 px-2 text-[10px] gap-1 border-teal-400 text-teal-700 hover:bg-teal-100 dark:text-teal-300 dark:border-teal-600"
+                  onClick={handleLock}
+                  disabled={lockLoading}
+                >
+                  {lockLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
+                  Fixieren
+                </Button>
+              )}
+            </div>
+          )}
+          {existingCount !== null && existingCount === 0 && (
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+              <Database className="h-3.5 w-3.5 shrink-0" />
+              <span>Noch keine VJ-Tagesdaten in Supabase für {year}. Datei hochladen um zu importieren.</span>
+            </div>
+          )}
+        </>
       )}
 
       {/* Jahres-Auswahl + Upload ──────────────────────────────────────────── */}
@@ -363,11 +454,14 @@ export function VjDailyImportSection() {
             variant="outline"
             className="h-8 text-xs gap-1.5"
             onClick={() => fileRef.current?.click()}
-            disabled={parsing}
+            disabled={parsing || lockState.locked}
+            title={lockState.locked ? `VJ ${year} ist gesperrt — Entsperren um zu importieren` : undefined}
           >
             {parsing
               ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Wird analysiert…</>
-              : <><Upload className="h-3.5 w-3.5" />Excel-Datei wählen</>}
+              : lockState.locked
+                ? <><Lock className="h-3.5 w-3.5" />VJ {year} gesperrt</>
+                : <><Upload className="h-3.5 w-3.5" />Excel-Datei wählen</>}
           </Button>
         </div>
       </div>
@@ -436,15 +530,19 @@ export function VjDailyImportSection() {
               size="sm"
               className="h-8 text-xs gap-1.5"
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || lockState.locked}
             >
               {saving
                 ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Wird in Supabase gespeichert…</>
-                : <><Database className="h-3.5 w-3.5" />In Supabase speichern ({preview.year})</>}
+                : lockState.locked
+                  ? <><Lock className="h-3.5 w-3.5" />Import gesperrt</>
+                  : <><Database className="h-3.5 w-3.5" />In Supabase speichern ({preview.year})</>}
             </Button>
-            <p className="text-[11px] text-muted-foreground">
-              Upsert · bestehende {preview.year}-Datensätze werden aktualisiert
-            </p>
+            {!lockState.locked && (
+              <p className="text-[11px] text-muted-foreground">
+                Upsert · bestehende {preview.year}-Datensätze werden aktualisiert
+              </p>
+            )}
           </div>
         </div>
       )}

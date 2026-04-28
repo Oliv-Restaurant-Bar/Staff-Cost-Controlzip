@@ -1,0 +1,96 @@
+Bitte die Vorjahreszahlen im System stabilisieren und gegen unbeabsichtigte Änderungen schützen.
+
+Ziel:
+Vorjahreszahlen sollen nach Import oder Freigabe stabil bleiben und sich nicht mehr automatisch verändern.
+Sie dürfen nicht durch neue Imports, Berechnungen, Reloads, Tenant-Wechsel oder Fallback-Logik überschrieben werden.
+
+Bitte exakt so umsetzen:
+
+1. Vorjahresdaten als eigene Datenart behandeln
+Vorjahreszahlen müssen klar getrennt werden von:
+- Ist-Zahlen aktuelles Jahr
+- Budget-Zahlen
+- Plan-Zahlen
+- automatisch berechneten Werten
+
+Bitte überall prüfen:
+- Tagesansicht vs Vorjahr
+- Dashboard
+- Erfolgsrechnung
+- Tages-Controlling
+- Import-Zentrale
+- Budget / P&L Module
+
+2. Lock-Status für Vorjahreszahlen
+Bitte einen Status einführen:
+- unlocked = bearbeitbar / importierbar
+- locked = fixiert / nicht überschreibbar
+
+Sobald Vorjahreszahlen importiert und bestätigt wurden, sollen sie fixiert werden können.
+
+3. Kein automatisches Überschreiben
+Wenn Vorjahreszahlen locked sind:
+- keine neuen Imports dürfen sie überschreiben
+- keine Fallback-Logik darf sie ersetzen
+- keine automatische Neuberechnung darf sie ändern
+- keine leeren Werte dürfen bestehende Werte überschreiben
+
+4. UI Anzeige
+Bitte sichtbar anzeigen:
+- Vorjahreszahlen fixiert
+- zuletzt importiert am
+- Quelle des Imports
+
+Optional:
+Button:
+- Vorjahreszahlen fixieren
+- Fixierung aufheben nur für Admin
+
+5. Importlogik
+Beim Import von Vorjahreszahlen:
+- wenn unlocked: Import erlauben
+- wenn locked: Import blockieren oder explizite Admin-Bestätigung verlangen
+- bestehende Werte nicht still überschreiben
+
+6. Tenant-Sicherheit
+Alles tenant-korrekt:
+- Oliv Vorjahreszahlen getrennt von Beaulieu
+- restaurant_id immer berücksichtigen
+- keine Vermischung
+
+7. Datenbank / Supabase
+Bitte prüfen, wo Vorjahreszahlen gespeichert werden.
+Falls nötig, ergänzen:
+- is_locked boolean
+- locked_at
+- locked_by
+- source
+- import_batch_id
+
+Oder separate Settings/KV Struktur:
+- prior_year_locked_2025_oliv
+- prior_year_locked_2025_beaulieu
+
+8. Debug Logs
+Bitte loggen:
+[PRIOR-YEAR] tenant: ...
+[PRIOR-YEAR] year: ...
+[PRIOR-YEAR] locked: true/false
+[PRIOR-YEAR] import blocked: locked
+[PRIOR-YEAR] values preserved: yes
+[PRIOR-YEAR] overwrite attempted: yes/no
+
+9. Akzeptanzkriterium
+Nach Fix:
+- Vorjahreszahlen bleiben nach Reload gleich
+- Vorjahreszahlen bleiben nach neuem Umsatzimport gleich
+- Vorjahreszahlen bleiben nach Tenant-Wechsel gleich
+- Vorjahreszahlen werden nicht durch 0 oder leere Werte ersetzt
+- Vorjahresvergleich zeigt stabile Werte
+
+10. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wo Vorjahreszahlen gespeichert werden
+- wie der Lock funktioniert
+- wer die Fixierung aufheben darf
+- wie ich testen kann, dass die Vorjahreszahlen stabil bleiben

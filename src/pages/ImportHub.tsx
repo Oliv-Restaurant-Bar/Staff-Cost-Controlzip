@@ -5,8 +5,15 @@ import { useTenant } from '@/contexts/TenantContext';
 import {
   Upload, TrendingUp, Clock, BookOpen, ArrowLeft,
   CheckCircle2, AlertCircle, Loader2, ChevronDown,
-  ShoppingCart, Database, RefreshCw,
+  ShoppingCart, Database, RefreshCw, Lock, LockOpen, ShieldCheck,
 } from 'lucide-react';
+import {
+  getLockState,
+  lockYear,
+  unlockYear,
+  formatLockedAt,
+  type PriorYearLockState,
+} from '@/lib/prior-year-lock';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -321,6 +328,8 @@ const Section = ({ id, title, subtitle, icon, color, badge, badgeColor, children
 // ─── Vorjahr-Umsatz importieren ───────────────────────────────────────────────
 
 const AnnualRevenueImportSection = () => {
+  const { tenantId } = useTenant();
+  const { isAdmin }  = usePermissions();
   const fileRef = useRef<HTMLInputElement>(null);
   const [importYear, setImportYear] = useState(currentYear - 1);
   const [parsing, setParsing] = useState(false);
@@ -329,6 +338,14 @@ const AnnualRevenueImportSection = () => {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [lockState, setAnnualLockState]  = useState<PriorYearLockState>({ locked: false });
+  const [lockLoading, setAnnualLockLoading] = useState(false);
+
+  // Lock-Status laden wenn Jahr wechselt
+  useEffect(() => {
+    const tid = tenantId ?? 'oliv';
+    getLockState(tid, importYear).then(s => setAnnualLockState(s));
+  }, [importYear, tenantId]);
 
   const handleFile = async (file: File) => {
     if (!file.name.match(/\.(xlsx|xls)$/i)) {
@@ -358,6 +375,15 @@ const AnnualRevenueImportSection = () => {
 
   const handleSave = () => {
     if (!result) return;
+    const tid = tenantId ?? 'oliv';
+
+    // Lock-Check: Abbruch wenn Vorjahresdaten gesperrt sind
+    if (lockState.locked) {
+      console.warn(`[PRIOR-YEAR] import blocked: locked | tenant: ${tid} | year: ${importYear}`);
+      toast.error(`VJ ${importYear} ist gesperrt. Bitte zuerst entsperren (nur Admin).`);
+      return;
+    }
+
     setSaving(true);
     let saved = 0;
     // Vorjahresumsatz wird als revenuePreviousYear im Folgejahr gespeichert,
@@ -376,7 +402,35 @@ const AnnualRevenueImportSection = () => {
     }
     setSaving(false);
     setSaved(true);
+    console.log(`[PRIOR-YEAR] values preserved: yes | tenant: ${tid} | year: ${importYear} | months: ${saved}`);
     toast.success(`${saved} Monate als Vorjahr ${importYear} gespeichert (sichtbar in P&L ${saveYear})`);
+  };
+
+  const handleAnnualLock = async () => {
+    const tid = tenantId ?? 'oliv';
+    setAnnualLockLoading(true);
+    try {
+      const { error } = await lockYear(tid, importYear, { source: 'annual_xlsx_import' });
+      if (error) { toast.error('Sperren fehlgeschlagen: ' + error); return; }
+      const newState = await getLockState(tid, importYear);
+      setAnnualLockState(newState);
+      toast.success(`VJ ${importYear} gesperrt — Monats-Import blockiert`);
+    } finally {
+      setAnnualLockLoading(false);
+    }
+  };
+
+  const handleAnnualUnlock = async () => {
+    const tid = tenantId ?? 'oliv';
+    setAnnualLockLoading(true);
+    try {
+      const { error } = await unlockYear(tid, importYear);
+      if (error) { toast.error('Entsperren fehlgeschlagen: ' + error); return; }
+      setAnnualLockState({ locked: false });
+      toast.success(`VJ ${importYear} entsperrt — Import wieder möglich`);
+    } finally {
+      setAnnualLockLoading(false);
+    }
   };
 
   const fmt = (v: number) =>
@@ -401,7 +455,48 @@ const AnnualRevenueImportSection = () => {
         </span>
       </div>
 
-      {!result && !parsing && (
+      {/* Lock-Status ─────────────────────────────────────────────────────── */}
+      {lockState.locked ? (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-[11px]">
+          <Lock className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span className="text-amber-800 dark:text-amber-300 flex-1">
+            <strong>VJ {importYear} gesperrt</strong> — Monatlicher Import blockiert.
+            {lockState.lockedAt && <> Fixiert am {formatLockedAt(lockState.lockedAt)}.</>}
+            {lockState.source   && <> Quelle: <span className="font-mono">{lockState.source}</span>.</>}
+          </span>
+          {isAdmin && (
+            <Button
+              size="sm" variant="outline"
+              className="h-6 px-2 text-[10px] gap-1 border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:border-amber-600"
+              onClick={handleAnnualUnlock}
+              disabled={lockLoading}
+            >
+              {lockLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <LockOpen className="h-3 w-3" />}
+              Entsperren
+            </Button>
+          )}
+        </div>
+      ) : saved ? (
+        <div className="flex items-center gap-2 rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/20 px-3 py-2 text-[11px]">
+          <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-teal-600 dark:text-teal-400" />
+          <span className="text-teal-700 dark:text-teal-400 flex-1">
+            VJ {importYear} importiert. Jetzt fixieren um versehentliches Überschreiben zu verhindern.
+          </span>
+          {isAdmin && (
+            <Button
+              size="sm" variant="outline"
+              className="h-6 px-2 text-[10px] gap-1 border-teal-400 text-teal-700 hover:bg-teal-100 dark:text-teal-300 dark:border-teal-600"
+              onClick={handleAnnualLock}
+              disabled={lockLoading}
+            >
+              {lockLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
+              Fixieren
+            </Button>
+          )}
+        </div>
+      ) : null}
+
+      {!result && !parsing && !lockState.locked && (
         <div
           className="border-2 border-dashed border-blue-300 dark:border-blue-700 rounded-lg p-5 text-center cursor-pointer hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-colors"
           onClick={() => fileRef.current?.click()}

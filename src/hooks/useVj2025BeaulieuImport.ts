@@ -8,12 +8,16 @@
  * Nur aktiv wenn tenantId === 'beaulieu'.
  * Prüft vor dem Import ob Daten bereits vorhanden sind (countVjDailyYear).
  * Überschreibt KEINE bestehenden Daten falls bereits >= 200 Tage vorhanden.
+ *
+ * Lock-Schutz: Wenn prior_year_locked:beaulieu:2025 gesperrt ist,
+ * wird kein Seed durchgeführt.
  */
 
 import { useEffect } from 'react';
 import { VJ2025_DAILY_BEAULIEU } from '@/data/vj2025-daily-beaulieu';
 import { upsertVjDailyBatch, countVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
+import { isLocked } from '@/lib/prior-year-lock';
 
 const IMPORT_DONE_KEY = 'vj2025_beaulieu_imported_v1';
 const TENANT_ID = 'beaulieu';
@@ -29,6 +33,15 @@ export function useVj2025BeaulieuImport(tenantId?: string, onDone?: () => void) 
 
     (async () => {
       try {
+        // Lock-Check: Keine Seed-Daten importieren wenn VJ gesperrt
+        const locked = await isLocked(TENANT_ID, VJ_YEAR);
+        if (locked) {
+          console.log(`[PRIOR-YEAR] tenant: ${TENANT_ID} | year: ${VJ_YEAR} | locked: true`);
+          console.log(`[PRIOR-YEAR] import blocked: locked | values preserved: yes`);
+          sessionStorage.setItem(IMPORT_DONE_KEY, '1');
+          return;
+        }
+
         // Prüfen ob Daten bereits in Supabase vorhanden
         const existing = await countVjDailyYear(VJ_YEAR, TENANT_ID);
         if (existing >= 200) {
@@ -53,6 +66,7 @@ export function useVj2025BeaulieuImport(tenantId?: string, onDone?: () => void) 
           return;
         }
 
+        console.log(`[PRIOR-YEAR] values preserved: yes | tenant: ${TENANT_ID} | year: ${VJ_YEAR} | upserted: ${upserted}`);
         console.log(`[VJ2025 BEAULIEU IMPORT] ${upserted} Tage gespeichert`);
         sessionStorage.setItem(IMPORT_DONE_KEY, '1');
 
