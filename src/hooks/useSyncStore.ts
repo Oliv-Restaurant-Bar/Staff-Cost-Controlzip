@@ -3,9 +3,12 @@
  * =======================================================================
  * Mandantenfähig: synct für den aktiven Mandanten (Oliv / Beaulieu).
  *
- * Ablauf (pro Mandant, einmalig nach Login und bei Mandantenwechsel):
+ * Ablauf (bei jedem Mandantenwechsel):
  * 1. Lokale Daten → Supabase (Backup / Erstbefüllung)
  * 2. Supabase → localStorage (Master-Stand in den lokalen Speicher)
+ *
+ * Der Sync läuft bei JEDEM Mandantenwechsel — auch wenn der Mandant
+ * zuvor schon einmal aktiv war. So sind die Zahlen immer aktuell.
  *
  * Debug-Logs: [TENANT]
  */
@@ -23,14 +26,17 @@ const SYNC_KEYS = [
 export function useSyncStore(authenticated: boolean) {
   const { tenantId } = useTenant();
 
-  // Welche Mandanten wurden bereits synchronisiert?
-  const syncedTenants = useRef<Set<TenantId>>(new Set());
+  // Welcher Tenant wurde zuletzt synchronisiert?
+  // (nicht Set — damit bei jedem Tenant-Wechsel neu gesyncт wird)
+  const lastSyncedTenant = useRef<TenantId | null>(null);
 
   useEffect(() => {
     if (!authenticated) return;
-    if (syncedTenants.current.has(tenantId)) return;
 
-    syncedTenants.current.add(tenantId);
+    // Bereits für diesen Tenant gesyncт — kein doppelter Sync beim gleichen Tenant
+    if (lastSyncedTenant.current === tenantId) return;
+
+    lastSyncedTenant.current = tenantId;
     console.log(`[TENANT] useSyncStore: starte Sync für Mandant "${tenantId}"`);
 
     (async () => {
@@ -38,15 +44,18 @@ export function useSyncStore(authenticated: boolean) {
         await syncLocalToSupabase(SYNC_KEYS, tenantId);
 
         const changed = await syncSupabaseToLocal(SYNC_KEYS, tenantId);
-        if (changed) {
-          console.log(`[TENANT] useSyncStore: Sync abgeschlossen für "${tenantId}" – store-synced Event`);
-          window.dispatchEvent(new CustomEvent('store-synced'));
-        }
+        console.log(`[TENANT] useSyncStore: Sync abgeschlossen für "${tenantId}" (changed=${changed})`);
+
+        // Immer Event auslösen damit alle Komponenten aktualisieren
+        window.dispatchEvent(new CustomEvent('store-synced'));
       } catch {
         // Supabase nicht erreichbar – localStorage-Daten bleiben bestehen
+        console.warn(`[TENANT] useSyncStore: Sync fehlgeschlagen für "${tenantId}" – localStorage bleibt aktiv`);
+        // Trotzdem Event auslösen damit UI sich neu initialisiert
+        window.dispatchEvent(new CustomEvent('store-synced'));
       }
     })();
-  // Re-run wenn authenticated status oder tenantId sich ändert
+  // Re-run bei jedem Tenant-Wechsel
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, tenantId]);
 }

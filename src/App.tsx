@@ -92,6 +92,7 @@ const BlockedRoute = ({ path, to = '/' }: { path: string; to?: string }) => {
 const AppContent = () => {
   const { user, loading } = useAuth();
   const { canAccessSettings, canAccessModule, isBeaulieuManager } = usePermissions();
+  const { tenantId } = useTenant();
 
   // [AUTH] Debug-Logs für beaulieu_manager beim Mount
   useEffect(() => {
@@ -151,7 +152,7 @@ const AppContent = () => {
         <div className="flex-1 min-w-0 min-h-0 flex flex-col pb-16 md:pb-0">
           {/* Tenant-Lock für beaulieu_manager — läuft auf jeder Seite */}
           <TenantLockEnforcer />
-          <div className="flex-1 min-h-0 overflow-auto">
+          <div className="flex-1 min-h-0 overflow-auto" key={tenantId}>
           <Routes>
             {/* Routen mit Rollenprüfung */}
             <Route path="/"
