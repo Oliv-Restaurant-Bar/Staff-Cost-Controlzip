@@ -48,21 +48,32 @@ interface DbEmployee {
 // Convert DB employee to frontend Employee type
 import { DayOfWeek } from '@/types/personnel';
 
-const dbToFrontendEmployee = (db: DbEmployee): Employee => ({
-  id: db.id,
-  name: db.name,
-  department: db.department === 'kueche' ? 'küche' : 'service',
-  employmentType: db.employment_type,
-  hourlyWage: Number(db.hourly_wage),
-  weeklyHours: db.weekly_hours ?? undefined,
-  monthlySalary: db.monthly_salary ?? undefined,
-  monthlySalaryWith13th: db.monthly_salary_with_13th ?? undefined,
-  daysOff: (db.days_off as DayOfWeek[]) ?? undefined,
-  preferredWorkDays: (db.preferred_work_days as DayOfWeek[]) ?? undefined,
-  hoursBalance: db.hours_balance ?? undefined,
-  vacationBalance: db.vacation_balance ?? undefined,
-  vacationDaysPerYear: db.vacation_days_per_year ?? undefined,
-});
+const dbToFrontendEmployee = (db: DbEmployee): Employee => {
+  const storedWage = Number(db.hourly_wage);
+  // Falls kein Stundenlohn hinterlegt, aber Monatslohn + Wochenstunden vorhanden:
+  // Effektiven Stundenlohn berechnen (Bruttolohn: Monatslohn / monatliche Sollstunden)
+  // Formel: Jahresstunden = Wochenstunden × 52, Monatsstunden = / 12
+  const derivedWage =
+    !storedWage && db.monthly_salary && db.weekly_hours && db.weekly_hours > 0
+      ? Math.round((db.monthly_salary / (db.weekly_hours * 52 / 12)) * 100) / 100
+      : storedWage;
+
+  return {
+    id: db.id,
+    name: db.name,
+    department: db.department === 'kueche' ? 'küche' : 'service',
+    employmentType: db.employment_type,
+    hourlyWage: derivedWage,
+    weeklyHours: db.weekly_hours ?? undefined,
+    monthlySalary: db.monthly_salary ?? undefined,
+    monthlySalaryWith13th: db.monthly_salary_with_13th ?? undefined,
+    daysOff: (db.days_off as DayOfWeek[]) ?? undefined,
+    preferredWorkDays: (db.preferred_work_days as DayOfWeek[]) ?? undefined,
+    hoursBalance: db.hours_balance ?? undefined,
+    vacationBalance: db.vacation_balance ?? undefined,
+    vacationDaysPerYear: db.vacation_days_per_year ?? undefined,
+  };
+};
 
 // Fallback employees for when Supabase is not available
 const defaultEmployees: Employee[] = [
