@@ -155,7 +155,10 @@ export const defaultEmployeesBeaulieu: Employee[] = [
     department: 'service',
     employmentType: 'vollzeit',
     weeklyHours: 42,
-    // Lohnblatt: nicht enthalten – Stundenlohn bitte im Personalstamm nachtragen
+    // Festlohn CHF 7'500 exkl. 13. Monatslohn (CHF 625) = total CHF 8'125
+    monthlySalary: 7500,
+    monthlySalaryWith13th: 8125,
+    has13thSalary: true,
     hourlyWage: 0,
     birthDate: '1985-10-30',
     ahvNumber: '756.4789.6865.49',
@@ -169,7 +172,10 @@ export const defaultEmployeesBeaulieu: Employee[] = [
     department: 'service',
     employmentType: 'vollzeit',
     weeklyHours: 42,
-    // Lohnblatt: nicht enthalten – Stundenlohn bitte im Personalstamm nachtragen
+    // Festlohn CHF 6'000 exkl. 13. Monatslohn (CHF 500) = total CHF 6'500
+    monthlySalary: 6000,
+    monthlySalaryWith13th: 6500,
+    has13thSalary: true,
     hourlyWage: 0,
     birthDate: '1976-11-24',
     ahvNumber: '756.4825.9938.15',
@@ -183,7 +189,10 @@ export const defaultEmployeesBeaulieu: Employee[] = [
     department: 'service',
     employmentType: 'vollzeit',
     weeklyHours: 42,
-    // Lohnblatt: nicht enthalten – Stundenlohn bitte im Personalstamm nachtragen
+    // Festlohn CHF 4'000 exkl. 13. Monatslohn (CHF 333.35) = total CHF 4'333.35
+    monthlySalary: 4000,
+    monthlySalaryWith13th: 4333.35,
+    has13thSalary: true,
     hourlyWage: 0,
     birthDate: '2004-03-01',
     ahvNumber: '756.3543.1068.73',
