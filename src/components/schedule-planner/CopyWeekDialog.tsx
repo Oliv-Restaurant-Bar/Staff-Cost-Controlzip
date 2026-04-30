@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -25,15 +25,23 @@ interface CopyWeekDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentMonth: Date;
+  currentWeekStart?: Date;
   scheduleData: Record<string, DaySchedule>;
   employeeIds: string[];
   onCopy: (newScheduleData: Record<string, DaySchedule>) => void;
+}
+
+/** Parse a "yyyy-MM-dd" string in LOCAL time (avoids UTC midnight → previous day in UTC+x zones). */
+function parseLocalDate(value: string): Date {
+  const [y, m, d] = value.split('-').map(Number);
+  return new Date(y, m - 1, d);
 }
 
 export const CopyWeekDialog = ({
   open,
   onOpenChange,
   currentMonth,
+  currentWeekStart,
   scheduleData,
   employeeIds,
   onCopy,
@@ -45,12 +53,10 @@ export const CopyWeekDialog = ({
   const getWeeksInMonth = () => {
     const weeks: { start: Date; end: Date; label: string; value: string }[] = [];
     
-    // Collect weeks
     for (let i = 0; i < 6; i++) {
       const weekStart = addWeeks(startOfWeek(currentMonth, { weekStartsOn: 1 }), i);
       const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
       
-      // Check if any day of this week is in the current month
       const daysInWeek = eachDayOfInterval({ start: weekStart, end: weekEnd });
       const hasAnyDayInMonth = daysInWeek.some(d => isSameMonth(d, currentMonth));
       
@@ -69,11 +75,26 @@ export const CopyWeekDialog = ({
 
   const weeks = getWeeksInMonth();
 
+  // Pre-select the currently displayed week as source on open
+  useEffect(() => {
+    if (!open) return;
+    if (currentWeekStart) {
+      const key = format(currentWeekStart, 'yyyy-MM-dd');
+      const inList = weeks.some(w => w.value === key);
+      setSourceWeek(inList ? key : (weeks[0]?.value ?? ''));
+    } else {
+      setSourceWeek(weeks[0]?.value ?? '');
+    }
+    setTargetWeek('');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   const handleCopy = () => {
     if (!sourceWeek || !targetWeek) return;
 
-    const sourceStart = new Date(sourceWeek);
-    const targetStart = new Date(targetWeek);
+    // Use LOCAL time parsing to avoid UTC off-by-one in UTC+ timezones
+    const sourceStart = parseLocalDate(sourceWeek);
+    const targetStart = parseLocalDate(targetWeek);
     const sourceDays = eachDayOfInterval({
       start: sourceStart,
       end: endOfWeek(sourceStart, { weekStartsOn: 1 }),
@@ -95,7 +116,6 @@ export const CopyWeekDialog = ({
         const sourceKey = `${empId}-${sourceDateStr}`;
         const targetKey = `${empId}-${targetDateStr}`;
 
-        // Copy schedule data (früh, spät, absences)
         if (scheduleData[sourceKey]) {
           newScheduleData[targetKey] = { ...scheduleData[sourceKey] };
         }
@@ -111,10 +131,10 @@ export const CopyWeekDialog = ({
   const sourceWeekData = weeks.find(w => w.value === sourceWeek);
   const targetWeekData = weeks.find(w => w.value === targetWeek);
 
-  // Count entries in source week (früh + spät slots)
+  // Count entries in a week — use LOCAL time parsing to avoid UTC off-by-one
   const countEntriesInWeek = (weekValue: string) => {
     if (!weekValue) return 0;
-    const weekStart = new Date(weekValue);
+    const weekStart = parseLocalDate(weekValue);
     const days = eachDayOfInterval({
       start: weekStart,
       end: endOfWeek(weekStart, { weekStartsOn: 1 }),
@@ -134,6 +154,9 @@ export const CopyWeekDialog = ({
     });
     return count;
   };
+
+  const sourceCount = countEntriesInWeek(sourceWeek);
+  const targetCount = countEntriesInWeek(targetWeek);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -197,15 +220,15 @@ export const CopyWeekDialog = ({
             <div className="p-3 bg-muted/50 rounded-lg text-sm">
               <p className="font-medium mb-1">Vorschau:</p>
               <p className="text-muted-foreground">
-                {countEntriesInWeek(sourceWeek)} Einträge werden von{' '}
+                {sourceCount} Einträge werden von{' '}
                 <span className="font-medium text-foreground">{sourceWeekData?.label}</span>
                 {' '}nach{' '}
                 <span className="font-medium text-foreground">{targetWeekData?.label}</span>
                 {' '}kopiert.
               </p>
-              {countEntriesInWeek(targetWeek) > 0 && (
+              {targetCount > 0 && (
                 <p className="text-amber-600 mt-2">
-                  ⚠️ Bestehende {countEntriesInWeek(targetWeek)} Einträge in der Zielwoche werden überschrieben.
+                  ⚠️ Bestehende {targetCount} Einträge in der Zielwoche werden überschrieben.
                 </p>
               )}
             </div>
@@ -218,7 +241,7 @@ export const CopyWeekDialog = ({
           </Button>
           <Button
             onClick={handleCopy}
-            disabled={!sourceWeek || !targetWeek || countEntriesInWeek(sourceWeek) === 0}
+            disabled={!sourceWeek || !targetWeek}
           >
             <Copy className="h-4 w-4 mr-2" />
             Kopieren

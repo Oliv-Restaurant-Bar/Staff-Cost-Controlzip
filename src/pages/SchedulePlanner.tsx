@@ -3498,6 +3498,7 @@ const SchedulePlanner = () => {
         open={copyWeekDialogOpen}
         onOpenChange={setCopyWeekDialogOpen}
         currentMonth={currentMonth}
+        currentWeekStart={weeksInMonth[selectedWeekIndex] ?? weeksInMonth[0]}
         scheduleData={scheduleData}
         employeeIds={filteredEmployees.map(e => e.id)}
         onCopy={(newScheduleData) => {
