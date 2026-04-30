@@ -193,6 +193,11 @@ const SchedulePlanner = () => {
   const [visibleWeekInMonth, setVisibleWeekInMonth] = useState(0);
   const [selectedDayOffset, setSelectedDayOffset] = useState(0);
   const [copyWeekDialogOpen, setCopyWeekDialogOpen] = useState(false);
+  const [copiedShift, setCopiedShift] = useState<{ start: string; end: string } | null>(null);
+  const handleCopyShift = (slot: { start: string; end: string }) => {
+    setCopiedShift(slot);
+    toast.success(`Schicht ${slot.start}–${slot.end} kopiert — öffne eine Zelle zum Einfügen`);
+  };
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [dayDetailDialogOpen, setDayDetailDialogOpen] = useState(false);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
@@ -2746,6 +2751,8 @@ const SchedulePlanner = () => {
                           onExternalToolChange={setPaintTool}
                           highlightedEmployeeId={highlightedEmpId}
                           patternWarnings={patternWarnings}
+                          copiedShift={copiedShift}
+                          onCopyShift={handleCopyShift}
                         />
                       </div>
                       
@@ -2785,6 +2792,8 @@ const SchedulePlanner = () => {
                           onExternalToolChange={setPaintTool}
                           highlightedEmployeeId={highlightedEmpId}
                           patternWarnings={patternWarnings}
+                          copiedShift={copiedShift}
+                          onCopyShift={handleCopyShift}
                         />
                       </div>
                     </div>
@@ -2820,6 +2829,8 @@ const SchedulePlanner = () => {
                         onExternalToolChange={setPaintTool}
                         highlightedEmployeeId={highlightedEmpId}
                         patternWarnings={patternWarnings}
+                        copiedShift={copiedShift}
+                        onCopyShift={handleCopyShift}
                       />
                     </>
                   )}

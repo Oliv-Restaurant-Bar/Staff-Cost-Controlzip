@@ -67,6 +67,9 @@ interface ScheduleGridProps {
   highlightedEmployeeId?: string | null;
   /** Pre-computed pattern warnings to show as chips in the employee name column */
   patternWarnings?: PatternWarning[];
+  /** Clipboard slot for copy/paste within TimeInputCell */
+  copiedShift?: TimeSlot | null;
+  onCopyShift?: (slot: TimeSlot) => void;
 }
 
 function patternShortLabel(type: PatternType): string {
@@ -246,6 +249,8 @@ export const ScheduleGrid = ({
   onExternalToolChange,
   highlightedEmployeeId,
   patternWarnings = [],
+  copiedShift,
+  onCopyShift,
 }: ScheduleGridProps) => {
   const { shiftMap, absenceShifts } = useShiftConfig();
   
@@ -1064,6 +1069,8 @@ export const ScheduleGrid = ({
                                   isRequestedFree={cellIsRequestedFree}
                                   isBlocked={cellIsBlocked}
                                   activeTool={resolvedActiveTool}
+                                  copiedShift={copiedShift}
+                                  onCopyShift={onCopyShift}
                                 />
                               </div>
                               {isSuggestedFrüh && !isOverlapping && frühSuggestion && (
@@ -1124,6 +1131,8 @@ export const ScheduleGrid = ({
                                   isRequestedFree={cellIsRequestedFree}
                                   isBlocked={cellIsBlocked}
                                   activeTool={resolvedActiveTool}
+                                  copiedShift={copiedShift}
+                                  onCopyShift={onCopyShift}
                                 />
                               </div>
                               {isSuggestedSpät && !isOverlapping && spätSuggestion && (

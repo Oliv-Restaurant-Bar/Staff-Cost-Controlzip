@@ -24,6 +24,8 @@ interface TimeInputCellProps {
   isBlocked?: boolean;        // Gesperrt   — rote Warnung, Bestätigung nötig
   department?: 'service' | 'küche' | 'all';
   activeTool?: string | null;
+  copiedShift?: TimeSlot | null;
+  onCopyShift?: (slot: TimeSlot) => void;
 }
 
 // Quick time presets for each slot type (fallback)
@@ -52,7 +54,9 @@ export const TimeInputCell = ({
   isRequestedFree,
   isBlocked,
   department,
-  activeTool
+  activeTool,
+  copiedShift,
+  onCopyShift,
 }: TimeInputCellProps) => {
   // For blocked days: require explicit override before showing inputs
   const [blockedOverride, setBlockedOverride] = useState(false);
@@ -397,6 +401,28 @@ export const TimeInputCell = ({
                 </button>
               );
             })}
+          </div>
+
+          {/* Copy / Paste row */}
+          <div className="flex gap-1 pt-1 border-t">
+            {value?.start && (
+              <button
+                onClick={() => { onCopyShift?.(value); setOpen(false); }}
+                title="Schichtzeit in Zwischenablage kopieren"
+                className="flex-1 text-xs text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 py-1 rounded border border-blue-200 dark:border-blue-700 transition-colors"
+              >
+                📋 Kopieren
+              </button>
+            )}
+            {copiedShift?.start && (
+              <button
+                onClick={() => { onChange(copiedShift, null); setOpen(false); }}
+                title={`${copiedShift.start}–${copiedShift.end} einfügen`}
+                className="flex-1 text-xs text-green-700 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/30 py-1 rounded border border-green-200 dark:border-green-700 transition-colors"
+              >
+                📌 {copiedShift.start.replace(':00','')}-{copiedShift.end.replace(':00','')}
+              </button>
+            )}
           </div>
 
           {/* Clear button */}
