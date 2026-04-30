@@ -1799,8 +1799,8 @@ const SchedulePlanner = () => {
     ? activeEmployees 
     : activeEmployees.filter(e => e.department === activeDepartment);
 
-  // Calculate summary stats for all employees
-  const employeeSummaries = employees.map(emp => {
+  // Calculate summary stats only for active employees in the current month
+  const employeeSummaries = activeEmployees.map(emp => {
     const plannedHours = calculateEmployeeHours(emp.id);
     const targetHours = getMonthlyTargetHours(emp);
     const difference = plannedHours - targetHours;
