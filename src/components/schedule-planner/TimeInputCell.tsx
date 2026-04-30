@@ -13,6 +13,17 @@ interface TimeSlot {
   end: string;
 }
 
+/** Verfügbare Zellfarben für manuelle Uhrzeiten */
+const CELL_COLORS: { hex: string; label: string }[] = [
+  { hex: '#FCD34D', label: 'Gelb' },
+  { hex: '#4ADE80', label: 'Grün' },
+  { hex: '#60A5FA', label: 'Blau' },
+  { hex: '#FB923C', label: 'Orange' },
+  { hex: '#F87171', label: 'Rot' },
+  { hex: '#C4B5FD', label: 'Violett' },
+  { hex: '#9CA3AF', label: 'Grau' },
+];
+
 interface TimeInputCellProps {
   value: TimeSlot | null;
   absenceType?: string | null;
@@ -26,6 +37,10 @@ interface TimeInputCellProps {
   activeTool?: string | null;
   copiedShift?: TimeSlot | null;
   onCopyShift?: (slot: TimeSlot) => void;
+  /** Optional color hex for this cell (manual times only) */
+  cellColor?: string | null;
+  /** Called when the user selects/deselects a color; null = reset to default */
+  onCellColorChange?: (color: string | null) => void;
 }
 
 // Quick time presets for each slot type (fallback)
@@ -57,6 +72,8 @@ export const TimeInputCell = ({
   activeTool,
   copiedShift,
   onCopyShift,
+  cellColor,
+  onCellColorChange,
 }: TimeInputCellProps) => {
   // For blocked days: require explicit override before showing inputs
   const [blockedOverride, setBlockedOverride] = useState(false);
@@ -242,6 +259,9 @@ export const TimeInputCell = ({
     setOpen(nextOpen);
   };
 
+  // Custom cell color applies only to manual time entries (not absences)
+  const hasCellColor = !absenceType && !!value?.start && !!cellColor;
+
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
@@ -267,9 +287,10 @@ export const TimeInputCell = ({
             isBlocked && !isEmptyBlocked && "ring-1 ring-red-400/60 dark:ring-red-600/60",
             // Absence colors take priority
             absenceType && absenceConfig?.color,
-            // Shift time colors
-            !absenceType && value?.start && !isRequestedFree && !isBlocked && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
+            // Shift time colors (overridden by custom cell color via inline style below)
+            !absenceType && value?.start && !isRequestedFree && !isBlocked && !hasCellColor && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
           )}
+          style={hasCellColor ? { backgroundColor: cellColor!, borderColor: cellColor!, color: '#1e3a5f' } : undefined}
         >
           {displayValue || (isEmptyDayOff ? 'F' : isEmptyRequestedFree ? 'WF' : isEmptyBlocked ? '⛔' : '—')}
         </button>
@@ -424,6 +445,41 @@ export const TimeInputCell = ({
               </button>
             )}
           </div>
+
+          {/* Cell color picker — only for manual time entries */}
+          {value?.start && onCellColorChange && (
+            <div className="pt-1.5 border-t">
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-[9px] text-muted-foreground shrink-0">Farbe:</span>
+                {CELL_COLORS.map(c => {
+                  const isActive = cellColor === c.hex;
+                  return (
+                    <button
+                      key={c.hex}
+                      title={isActive ? `${c.label} (klicken zum Entfernen)` : c.label}
+                      onClick={() => onCellColorChange(isActive ? null : c.hex)}
+                      className={cn(
+                        "w-4 h-4 rounded-full transition-all shrink-0",
+                        isActive
+                          ? "ring-2 ring-offset-1 ring-foreground scale-110"
+                          : "ring-1 ring-border hover:scale-110"
+                      )}
+                      style={{ backgroundColor: c.hex }}
+                    />
+                  );
+                })}
+                {cellColor && (
+                  <button
+                    onClick={() => onCellColorChange(null)}
+                    className="text-[9px] text-muted-foreground hover:text-destructive ml-0.5"
+                    title="Farbe zurücksetzen"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Clear button */}
           <button

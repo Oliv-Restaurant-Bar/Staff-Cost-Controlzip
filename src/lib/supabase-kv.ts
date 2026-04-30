@@ -300,3 +300,89 @@ export async function loadMonthAbsences(
   if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
   return data as Record<string, string>;
 }
+
+// ─── Mitarbeiter-Sortierreihenfolge ──────────────────────────────────────────
+// Key format: "sort-order:{tenantId}:{department}"
+// Value: ordered array of employee IDs
+// localStorage is used as fast cache; Supabase KV is source of truth.
+
+function sortOrderKey(tenantId: string, department: string): string {
+  return `sort-order:${tenantId}:${department}`;
+}
+
+/**
+ * Load the display sort order for a department.
+ * Returns null if no order has been saved yet (use default alphabetical).
+ */
+export async function loadEmployeeSortOrder(
+  tenantId: string,
+  department: 'service' | 'küche',
+): Promise<string[] | null> {
+  const key = sortOrderKey(tenantId, department);
+  // Fast path: localStorage cache
+  try {
+    const cached = localStorage.getItem(key);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        console.log(`[SORT] order loaded from cache: tenant=${tenantId} dept=${department} (${parsed.length} IDs)`);
+        return parsed as string[];
+      }
+    }
+  } catch { /* ignore */ }
+  // Slow path: Supabase KV
+  const data = await kvGet(key);
+  if (!data || !Array.isArray(data) || data.length === 0) return null;
+  try { localStorage.setItem(key, JSON.stringify(data)); } catch { /* ignore */ }
+  console.log(`[SORT] order loaded from Supabase: tenant=${tenantId} dept=${department} (${data.length} IDs)`);
+  return data as string[];
+}
+
+/**
+ * Persist the display sort order for a department.
+ * Writes to localStorage immediately (cache) and Supabase KV (source of truth).
+ */
+export async function saveEmployeeSortOrder(
+  tenantId: string,
+  department: 'service' | 'küche',
+  orderedIds: string[],
+): Promise<void> {
+  const key = sortOrderKey(tenantId, department);
+  try { localStorage.setItem(key, JSON.stringify(orderedIds)); } catch { /* ignore */ }
+  await kvSet(key, orderedIds);
+  console.log(`[SORT] order saved: tenant=${tenantId} dept=${department} (${orderedIds.length} IDs)`);
+}
+
+// ─── Zellfarben (Dienstplan) ──────────────────────────────────────────────────
+// Key format: "cell-colors-{YYYY-MM}" (Oliv) or "beaulieu:cell-colors-{YYYY-MM}"
+// Value: Record<"empId-YYYY-MM-DD-früh" | "empId-YYYY-MM-DD-spät", hex string>
+
+function cellColorsKey(monthKey: string, tenantId: TenantId): string {
+  const base = `cell-colors-${monthKey}`;
+  return tenantId === 'oliv' ? base : `${tenantId}:${base}`;
+}
+
+/**
+ * Load cell colors for a month from Supabase KV.
+ * Returns empty object if none saved.
+ */
+export async function loadCellColors(
+  monthKey: string,
+  tenantId: TenantId,
+): Promise<Record<string, string>> {
+  const data = await kvGet(cellColorsKey(monthKey, tenantId));
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+  return data as Record<string, string>;
+}
+
+/**
+ * Persist the full cell color map for a month.
+ * Pass an empty object to clear all colors for that month.
+ */
+export async function saveCellColors(
+  monthKey: string,
+  colors: Record<string, string>,
+  tenantId: TenantId,
+): Promise<void> {
+  await kvSet(cellColorsKey(monthKey, tenantId), colors);
+}

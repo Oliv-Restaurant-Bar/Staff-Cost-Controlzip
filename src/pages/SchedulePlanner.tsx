@@ -17,11 +17,15 @@ import {
   runBeaulieuMatchTest,
 } from '@/lib/supabase-db';
 import { supabase } from '@/integrations/supabase/client';
-import { saveMonthAbsences, loadMonthAbsences } from '@/lib/supabase-kv';
+import {
+  saveMonthAbsences, loadMonthAbsences,
+  loadEmployeeSortOrder, saveEmployeeSortOrder,
+  loadCellColors, saveCellColors,
+} from '@/lib/supabase-kv';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -249,6 +253,11 @@ const SchedulePlanner = () => {
   const [proRataDay, setProRataDay]                           = useState<string>('');
   const [pkDetailOpen, setPkDetailOpen]                       = useState(false);
 
+  // ── Sortierungsmodus & Zellfarben ────────────────────────────────────────
+  const [sortModeActive, setSortModeActive]                   = useState(false);
+  const [employeeSortOrder, setEmployeeSortOrder]             = useState<{ service: string[]; küche: string[] }>({ service: [], küche: [] });
+  const [cellColors, setCellColors]                           = useState<Record<string, string>>({});
+
   // ── Save / Dirty state ────────────────────────────────────────────────────
   const [isDirty,       setIsDirty]       = useState(false);
   const [isSaving,      setIsSaving]      = useState(false);
@@ -279,6 +288,23 @@ const SchedulePlanner = () => {
     if (isServiceManager) setActiveDepartment('service');
     else if (isKuecheManager) setActiveDepartment('küche');
   }, [isServiceManager, isKuecheManager]);
+
+  // ── Sortierreihenfolge laden (pro Mandant & Abteilung) ─────────────────────
+  useEffect(() => {
+    if (!tenantId) return;
+    let cancelled = false;
+    Promise.all([
+      loadEmployeeSortOrder(tenantId, 'service'),
+      loadEmployeeSortOrder(tenantId, 'küche'),
+    ]).then(([svc, kue]) => {
+      if (cancelled) return;
+      setEmployeeSortOrder({
+        service: svc ?? [],
+        küche:   kue ?? [],
+      });
+    }).catch(() => { /* silent — fallback to default order */ });
+    return () => { cancelled = true; };
+  }, [tenantId]);
 
   // Manager sehen niemals Einzellöhne – effectiveShowCosts ist für sie immer false
   const effectiveShowCosts = canSeeHourlyWages && showCosts;
@@ -502,10 +528,12 @@ const SchedulePlanner = () => {
 
       // ── IST-Daten (actual_hours) ─────────────────────────────────────────────
       console.log('[IST] fetch start', { gen, monthKey });
-      const [supabaseActual, kvAbsences] = await Promise.all([
+      const [supabaseActual, kvAbsences, kvCellColors] = await Promise.all([
         loadActualHoursForMonth(currentMonth),
         loadMonthAbsences(monthKey, tenantId),
+        loadCellColors(monthKey, tenantId),
       ]);
+      setCellColors(kvCellColors);
       const kvAbsenceCount = Object.keys(kvAbsences).length;
       if (kvAbsenceCount > 0) {
         console.log(`[FE-STABLE] load holiday entries: ${kvAbsenceCount} entries for ${monthKey}`, Object.keys(kvAbsences));
@@ -1794,10 +1822,65 @@ const SchedulePlanner = () => {
     return exitDate >= monthStartDate;
   });
 
-  // Filter employees by active department
-  const filteredEmployees = activeDepartment === 'all' 
-    ? activeEmployees 
-    : activeEmployees.filter(e => e.department === activeDepartment);
+  // ── Sortierungsfunktion ────────────────────────────────────────────────────
+  /** Sortiert eine Mitarbeiterliste anhand der gespeicherten Reihenfolge. */
+  const applySort = (emps: Employee[], dept: 'service' | 'küche'): Employee[] => {
+    const order = employeeSortOrder[dept];
+    if (!order || order.length === 0) return emps;
+    return [...emps].sort((a, b) => {
+      const ai = order.indexOf(a.id);
+      const bi = order.indexOf(b.id);
+      if (ai === -1 && bi === -1) return 0;
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+  };
+
+  // Filter employees by active department (sorted by saved order)
+  const filteredEmployees = activeDepartment === 'all'
+    ? activeEmployees
+    : applySort(activeEmployees.filter(e => e.department === activeDepartment), activeDepartment as 'service' | 'küche');
+
+  // ── Reihenfolge-Handler ────────────────────────────────────────────────────
+  const handleMoveEmployee = (empId: string, dept: 'service' | 'küche', direction: 'up' | 'down') => {
+    setEmployeeSortOrder(prev => {
+      const deptEmployees = activeEmployees.filter(e => e.department === dept);
+      // If no order saved yet, start from current display order
+      const currentOrder = prev[dept].length > 0
+        ? prev[dept]
+        : deptEmployees.map(e => e.id);
+      const idx = currentOrder.indexOf(empId);
+      if (idx === -1) return prev;
+      const next = [...currentOrder];
+      if (direction === 'up' && idx > 0) {
+        [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+      } else if (direction === 'down' && idx < next.length - 1) {
+        [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+      } else {
+        return prev;
+      }
+      // Persist asynchronously (fire-and-forget)
+      saveEmployeeSortOrder(tenantId, dept, next).catch(() => {});
+      return { ...prev, [dept]: next };
+    });
+  };
+
+  // ── Zellfarben-Handler ────────────────────────────────────────────────────
+  const handleCellColorChange = (key: string, color: string | null) => {
+    const monthKey = format(currentMonth, 'yyyy-MM');
+    setCellColors(prev => {
+      const next = { ...prev };
+      if (color === null) {
+        delete next[key];
+      } else {
+        next[key] = color;
+      }
+      // Persist asynchronously
+      saveCellColors(monthKey, next, tenantId).catch(() => {});
+      return next;
+    });
+  };
 
   // Calculate summary stats only for active employees in the current month
   const employeeSummaries = activeEmployees.map(emp => {
@@ -2672,18 +2755,33 @@ const SchedulePlanner = () => {
                 )}
               </div>
               
-              {/* Footer-Toggle */}
-              <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
-                <Button
-                  variant={showFooter ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setShowFooter(!showFooter)}
-                  className="h-7 gap-1"
-                  title={showFooter ? 'Tages-Summe ausblenden' : 'Tages-Summe einblenden'}
-                >
-                  {showFooter ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
-                  <span className="hidden sm:inline text-xs">Σ</span>
-                </Button>
+              <div className="flex items-center gap-2">
+                {/* Sortierungsmodus-Toggle — nur im Plan-Modus */}
+                {scheduleMode === 'plan' && (
+                  <Button
+                    variant={sortModeActive ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setSortModeActive(v => !v)}
+                    className="h-7 gap-1"
+                    title={sortModeActive ? 'Sortierungsmodus beenden' : 'Reihenfolge der Mitarbeiter anpassen'}
+                  >
+                    <ArrowUpDown className="h-3 w-3" />
+                    <span className="hidden sm:inline text-xs">Sortierung</span>
+                  </Button>
+                )}
+                {/* Footer-Toggle */}
+                <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+                  <Button
+                    variant={showFooter ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setShowFooter(!showFooter)}
+                    className="h-7 gap-1"
+                    title={showFooter ? 'Tages-Summe ausblenden' : 'Tages-Summe einblenden'}
+                  >
+                    {showFooter ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                    <span className="hidden sm:inline text-xs">Σ</span>
+                  </Button>
+                </div>
               </div>
             </div>
           </CardHeader>
@@ -2760,7 +2858,7 @@ const SchedulePlanner = () => {
                           />
                         )}
                         <ScheduleGrid
-                          employees={employees.filter(e => e.department === 'service')}
+                          employees={applySort(employees.filter(e => e.department === 'service'), 'service')}
                           days={displayDays}
                           scheduleData={scheduleData}
                           onSlotChange={handleSlotChange}
@@ -2782,6 +2880,9 @@ const SchedulePlanner = () => {
                           patternWarnings={patternWarnings}
                           copiedShift={copiedShift}
                           onCopyShift={handleCopyShift}
+                          onMoveEmployee={sortModeActive ? (id, dir) => handleMoveEmployee(id, 'service', dir) : undefined}
+                          cellColors={cellColors}
+                          onCellColorChange={handleCellColorChange}
                         />
                       </div>
                       
@@ -2801,7 +2902,7 @@ const SchedulePlanner = () => {
                           />
                         )}
                         <ScheduleGrid
-                          employees={employees.filter(e => e.department === 'küche')}
+                          employees={applySort(employees.filter(e => e.department === 'küche'), 'küche')}
                           days={displayDays}
                           scheduleData={scheduleData}
                           onSlotChange={handleSlotChange}
@@ -2823,6 +2924,9 @@ const SchedulePlanner = () => {
                           patternWarnings={patternWarnings}
                           copiedShift={copiedShift}
                           onCopyShift={handleCopyShift}
+                          onMoveEmployee={sortModeActive ? (id, dir) => handleMoveEmployee(id, 'küche', dir) : undefined}
+                          cellColors={cellColors}
+                          onCellColorChange={handleCellColorChange}
                         />
                       </div>
                     </div>
@@ -2860,6 +2964,13 @@ const SchedulePlanner = () => {
                         patternWarnings={patternWarnings}
                         copiedShift={copiedShift}
                         onCopyShift={handleCopyShift}
+                        onMoveEmployee={
+                          sortModeActive && activeDepartment !== 'all'
+                            ? (id, dir) => handleMoveEmployee(id, activeDepartment as 'service' | 'küche', dir)
+                            : undefined
+                        }
+                        cellColors={cellColors}
+                        onCellColorChange={handleCellColorChange}
                       />
                     </>
                   )}

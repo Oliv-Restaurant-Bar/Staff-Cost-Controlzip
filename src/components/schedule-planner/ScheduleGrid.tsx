@@ -8,7 +8,7 @@ import { TimeInputCell } from './TimeInputCell';
 import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
-import { Trash2, CalendarOff, Clock, X, AlertTriangle, Lightbulb, CheckCircle2, EyeOff, Clock3 } from 'lucide-react';
+import { Trash2, CalendarOff, Clock, X, AlertTriangle, Lightbulb, CheckCircle2, EyeOff, Clock3, ChevronUp, ChevronDown } from 'lucide-react';
 import { computeSuggestions, CorrectionSuggestion } from './correctionSuggestions';
 import {
   AlertDialog,
@@ -70,6 +70,17 @@ interface ScheduleGridProps {
   /** Clipboard slot for copy/paste within TimeInputCell */
   copiedShift?: TimeSlot | null;
   onCopyShift?: (slot: TimeSlot) => void;
+  /**
+   * When provided, ▲/▼ sort buttons appear in the employee name column.
+   * Only pass this when sort mode is active in the parent.
+   */
+  onMoveEmployee?: (empId: string, direction: 'up' | 'down') => void;
+  /**
+   * Per-cell color map for manual time entries.
+   * Key format: `${empId}-${yyyy-MM-dd}-früh` or `…-spät`
+   */
+  cellColors?: Record<string, string>;
+  onCellColorChange?: (key: string, color: string | null) => void;
 }
 
 function patternShortLabel(type: PatternType): string {
@@ -251,6 +262,9 @@ export const ScheduleGrid = ({
   patternWarnings = [],
   copiedShift,
   onCopyShift,
+  onMoveEmployee,
+  cellColors = {},
+  onCellColorChange,
 }: ScheduleGridProps) => {
   const { shiftMap, absenceShifts } = useShiftConfig();
   
@@ -817,7 +831,7 @@ export const ScheduleGrid = ({
             </tr>
           </thead>
           <tbody>
-            {employees.map(employee => {
+            {employees.map((employee, empIdx) => {
               const plannedHours = getEmployeeHours(employee.id);
               const targetHours = getTargetHours(employee);
               const percentage = Math.min((plannedHours / targetHours) * 100, 100);
@@ -926,6 +940,27 @@ export const ScheduleGrid = ({
                             </AlertDialogContent>
                           </AlertDialog>
                         )}
+                        {/* Sort order arrows — only shown when sort mode is active */}
+                        {onMoveEmployee && (
+                          <div className="flex flex-col shrink-0">
+                            <button
+                              title="Nach oben"
+                              disabled={empIdx === 0}
+                              onClick={() => onMoveEmployee(employee.id, 'up')}
+                              className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed"
+                            >
+                              <ChevronUp className="h-3 w-3" />
+                            </button>
+                            <button
+                              title="Nach unten"
+                              disabled={empIdx === employees.length - 1}
+                              onClick={() => onMoveEmployee(employee.id, 'down')}
+                              className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed"
+                            >
+                              <ChevronDown className="h-3 w-3" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                     {/* Pattern warning chips */}
@@ -1025,6 +1060,8 @@ export const ScheduleGrid = ({
                     const cellIsBlocked       = availStatus === 'blocked';
                     const frühInlineKey = `${employee.id}-${dateStr}-früh`;
                     const spätInlineKey = `${employee.id}-${dateStr}-spät`;
+                    const frühCellColor = cellColors[frühInlineKey] ?? null;
+                    const spätCellColor = cellColors[spätInlineKey] ?? null;
 
                     // Block cells after the employee's employment end date
                     const exitDate = employee.employmentEndDate ? parseISO(employee.employmentEndDate) : null;
@@ -1071,6 +1108,8 @@ export const ScheduleGrid = ({
                                   activeTool={resolvedActiveTool}
                                   copiedShift={copiedShift}
                                   onCopyShift={onCopyShift}
+                                  cellColor={frühCellColor}
+                                  onCellColorChange={onCellColorChange ? (c) => onCellColorChange(frühInlineKey, c) : undefined}
                                 />
                               </div>
                               {isSuggestedFrüh && !isOverlapping && frühSuggestion && (
@@ -1133,6 +1172,8 @@ export const ScheduleGrid = ({
                                   activeTool={resolvedActiveTool}
                                   copiedShift={copiedShift}
                                   onCopyShift={onCopyShift}
+                                  cellColor={spätCellColor}
+                                  onCellColorChange={onCellColorChange ? (c) => onCellColorChange(spätInlineKey, c) : undefined}
                                 />
                               </div>
                               {isSuggestedSpät && !isOverlapping && spätSuggestion && (

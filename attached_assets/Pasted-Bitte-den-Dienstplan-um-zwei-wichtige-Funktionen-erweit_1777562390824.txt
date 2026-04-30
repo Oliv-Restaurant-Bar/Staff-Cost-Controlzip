@@ -1,0 +1,192 @@
+Bitte den Dienstplan um zwei wichtige Funktionen erweitern:
+
+1. Mitarbeiter-Reihenfolge im Dienstplan manuell sortierbar machen
+2. Manuell eingegebene Uhrzeiten optional farblich markieren können
+
+Ziel:
+Ich möchte die Mitarbeitenden im Dienstplan per Drag and Drop oder mit Pfeilen nach oben und unten verschieben können, damit die Reihenfolge gleich ist wie in den Dienstplänen, die ich vom Team erhalte.
+
+Zusätzlich möchte ich bei manuell eingegebenen Uhrzeiten optional eine Farbe hinterlegen können, damit der Plan visuell schneller kontrollierbar ist wie im bisherigen Küchenplan.
+
+==================================================
+1. Mitarbeiter-Reihenfolge manuell sortierbar
+==================================================
+
+Bitte im Dienstplan ermöglichen:
+
+• Mitarbeiter innerhalb einer Abteilung verschieben
+• Reihenfolge per Drag and Drop oder Pfeil hoch/runter ändern
+• Reihenfolge dauerhaft speichern
+• Reihenfolge soll nach Reload erhalten bleiben
+• Reihenfolge soll tenant-korrekt pro Restaurant gespeichert werden
+• Reihenfolge soll je Abteilung getrennt funktionieren
+
+Beispiel:
+Küche Beaulieu hat eigene Reihenfolge
+Service Beaulieu hat eigene Reihenfolge
+Oliv Küche hat eigene Reihenfolge
+Oliv Service hat eigene Reihenfolge
+
+Wichtig:
+Die Reihenfolge darf keine Mitarbeiterdaten verändern, sondern nur die Anzeige-Sortierung.
+
+==================================================
+2. Speicherung der Reihenfolge
+==================================================
+
+Bitte dafür ein Feld oder eine Struktur verwenden, z.B.:
+
+employees.sort_order
+
+oder separate Tabelle:
+employee_display_order
+
+Felder:
+• restaurant_id
+• department
+• employee_id
+• sort_order
+
+Wichtig:
+• keine Oliv und Beaulieu Vermischung
+• keine Reihenfolge aus localStorage als einzige Quelle
+• Supabase muss Source of Truth sein
+• localStorage höchstens als Cache
+
+==================================================
+3. UI für Sortierung
+==================================================
+
+Bitte im Dienstplan neben dem Mitarbeiter oder im Bearbeiten-Modus ermöglichen:
+
+• Drag Handle
+oder
+• kleine Pfeile hoch/runter
+
+Nur wenn Bearbeiten aktiv ist, damit normale Planung nicht gestört wird.
+
+Optional:
+Button "Reihenfolge speichern"
+
+Nach Speichern:
+• klare Bestätigung
+• bei Fehler Meldung anzeigen
+
+Debug Logs:
+[SORT] tenant: ...
+[SORT] department: ...
+[SORT] old order: ...
+[SORT] new order: ...
+[SORT] saved: yes/no
+
+==================================================
+4. Manuelle Uhrzeit mit optionaler Farbe
+==================================================
+
+Wenn ich direkt in einer Zelle eine Uhrzeit eingebe, z.B.
+10:00 bis 14:00
+oder
+17:30 bis 23:00
+
+möchte ich optional eine Farbe für genau diese Zelle wählen können.
+
+Wichtig:
+• Farbe ist optional
+• Farbe gilt nur für dieses eine Kästchen
+• Uhrzeit bleibt weiterhin normale Arbeitszeit
+• Kosten und Stundenberechnung bleiben unverändert
+• Farbe dient nur der visuellen Kontrolle
+
+==================================================
+5. Farbauswahl direkt in der Zelle
+==================================================
+
+Bitte eine einfache UI bauen:
+
+Wenn Zelle bearbeitet wird:
+• Uhrzeit eingeben
+• optional Farbe auswählen
+
+Farben z.B.:
+• Gelb
+• Blau
+• Grün
+• Orange
+• Rot
+• Grau
+• Standard
+
+Oder Farbauswahl analog zu bestehenden Schicht-Legenden.
+
+==================================================
+6. Speicherung der Zellfarbe
+==================================================
+
+Bitte Zellfarbe zusammen mit dem Schichteintrag speichern.
+
+Beispiel Feld:
+cell_color
+oder
+custom_color
+
+Wichtig:
+• tenant-korrekt
+• reload-sicher
+• in Supabase speichern
+• nicht nur localStorage
+• bestehende Schichten ohne Farbe bleiben unverändert
+
+==================================================
+7. Verhältnis zur Legende
+==================================================
+
+Bitte bestehende Legenden-Schichten nicht kaputt machen.
+
+Logik:
+• Wenn eine Zelle über eine Legende gesetzt wird, übernimmt sie Legendenfarbe
+• Wenn eine Uhrzeit manuell gesetzt wird, kann optional eine eigene Zellfarbe gewählt werden
+• Manuelle Zellfarbe überschreibt nur die Darstellung dieser Zelle
+• Stunden und Kosten bleiben aus der Uhrzeit berechnet
+
+==================================================
+8. PDF Export berücksichtigen
+==================================================
+
+Bitte sicherstellen:
+• Mitarbeiter-Reihenfolge wird im PDF genau gleich übernommen
+• Zellfarben werden im PDF sichtbar übernommen
+• Mitarbeiterfreundlicher PDF Export bleibt lesbar
+
+==================================================
+9. Vergleich und Ist-Modus
+==================================================
+
+Bitte prüfen:
+• Plan-Modus zeigt Sortierung und Farben
+• Ist-Modus zeigt Sortierung
+• Vergleich-Modus zeigt Sortierung
+• Farben im Vergleich nur anzeigen, wenn es die Lesbarkeit nicht verschlechtert
+
+==================================================
+10. Debug Logs
+==================================================
+
+Bitte loggen:
+[SORT] order loaded
+[SORT] order saved
+[SORT] employee moved
+[CELL-COLOR] date: ...
+[CELL-COLOR] employee: ...
+[CELL-COLOR] color: ...
+[CELL-COLOR] saved: yes/no
+
+==================================================
+11. Bitte danach kurz sagen
+==================================================
+
+• welche Datei(en) geändert wurden
+• wie die Reihenfolge gespeichert wird
+• ob Drag and Drop oder Pfeile verwendet wurden
+• wie die Zellfarbe gespeichert wird
+• ob PDF Export Reihenfolge und Farben übernimmt
+• wie ich es am schnellsten testen kann
