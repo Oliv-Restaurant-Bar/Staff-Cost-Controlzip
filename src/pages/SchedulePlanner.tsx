@@ -183,9 +183,17 @@ const SchedulePlanner = () => {
   } = usePermissions();
   
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [employees, setEmployees] = useState<Employee[]>(
-    tenantId === 'beaulieu' ? [] : defaultEmployees
-  );
+  const [employees, setEmployees] = useState<Employee[]>(() => {
+    if (tenantId === 'beaulieu') return [];
+    try {
+      const cached = localStorage.getItem(tenantKey('schedule-employees'));
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch { /* ignore */ }
+    return defaultEmployees;
+  });
   const [scheduleData, setScheduleData] = useState<{[key: string]: DaySchedule}>({});
   const [activeDepartment, setActiveDepartment] = useState<ViewMode>('service');
   const [calendarView, setCalendarView] = useState<CalendarView>('month');
@@ -440,6 +448,10 @@ const SchedulePlanner = () => {
           }
         }
         setEmployees(supabaseEmployees);
+        // Cache aktualisieren: nächster Fallback hat immer die aktuellsten Mitarbeitenden
+        try {
+          localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(supabaseEmployees));
+        } catch { /* ignore quota errors */ }
       } else if (supabaseEmployees === null) {
         const saved = localStorage.getItem(tenantKey('schedule-employees'));
         if (saved) { try { setEmployees(JSON.parse(saved)); } catch { /* ignore */ } }
@@ -656,17 +668,34 @@ const SchedulePlanner = () => {
   }, []);
 
   // ── Mandantenwechsel: Mitarbeiter zurücksetzen ─────────────────────────────
-  // Wenn der Mandant wechselt, sofort auf Default-Mitarbeiter zurückfallen,
+  // Wenn der Mandant wechselt, sofort auf Cache-Mitarbeiter zurückfallen,
   // damit kein Mitarbeiter des anderen Mandanten kurz sichtbar ist.
   // Beaulieu: kein Placeholder-Fallback – echte Mitarbeitende kommen aus Supabase.
   useEffect(() => {
     console.log(`[TENANT] SchedulePlanner reset für ${tenantId}`);
-    hasAutoSeededBeaulieu.current = false; // reset so auto-seed can run again for new tenant
+    hasAutoSeededBeaulieu.current = false;
     if (tenantId === 'beaulieu') {
       console.log('[BEAULIEU] tenant active: beaulieu – clearing to empty until Supabase loads');
       setEmployees([]);
     } else {
-      setEmployees(defaultEmployees);
+      // Bevorzuge den gespeicherten Cache (enthält aktuelle Namen+Mitarbeiter) gegenüber
+      // der veralteten defaultEmployees-Hardcodeliste. Fallback: defaultEmployees.
+      const cached = localStorage.getItem(tenantKey('schedule-employees'));
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            console.log(`[TENANT] Oliv reset: cache found (${parsed.length} MA) – using cache instead of defaultEmployees`);
+            setEmployees(parsed);
+          } else {
+            setEmployees(defaultEmployees);
+          }
+        } catch {
+          setEmployees(defaultEmployees);
+        }
+      } else {
+        setEmployees(defaultEmployees);
+      }
     }
     setScheduleData({});
     setActualHoursData({});
