@@ -101,7 +101,7 @@ export const PlannedLaborCostCalculator = ({ employees }: PlannedLaborCostCalcul
           if (config.isPaid) {
             paidHours += config.hours;
           } else if (config.countsToTarget) {
-            // Ferien, Krank - counts to target but not paid
+            // Ferien - counts to target but not paid (Krank zählt nicht mehr zu Soll)
             unpaidHours += config.hours;
           }
           // Frei - doesn't count at all

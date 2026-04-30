@@ -119,7 +119,7 @@ export const ShiftDropdown = ({ value, customShift, onChange, department }: Shif
       return `${config.hours}h fest`;
     }
 
-    // Absence shifts that count to target (Ferien, Krank): show abbreviation
+    // Absence shifts that count to target (e.g. Ferien): show abbreviation
     if (config.countsToTarget && !config.isPaid && config.abbrev) {
       return config.abbrev;
     }
@@ -320,7 +320,7 @@ export const ShiftDropdown = ({ value, customShift, onChange, department }: Shif
                     {shift === 'Krank' && <ThermometerSnowflake className="h-3 w-3" />}
                   </div>
                   <span className="text-xs text-muted-foreground shrink-0">
-                    {shift === 'Ferien' || shift === 'Krank' ? 'zählt zu Soll*' : '0h'}
+                    {config.countsToTarget ? 'zählt zu Soll*' : '0h'}
                   </span>
                 </div>
               </DropdownMenuItem>

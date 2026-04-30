@@ -246,7 +246,7 @@ const DEFAULT_SHIFTS: ShiftConfigItem[] = [
     hours: 8.4, 
     color: 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200 border-gray-400 dark:border-gray-500', 
     isPaid: false, 
-    countsToTarget: true, 
+    countsToTarget: false, 
     abbrev: 'K',
     excelColor: 'FFD1D5DB',
     textColor: 'FF374151',
@@ -302,14 +302,14 @@ function getExcelColorsFromTailwind(tailwindColor: string): { excelColor: string
 }
 
 /**
- * Migration: Ferien (FE) und Frei (F) dürfen niemals zu den Sollstunden zählen.
+ * Migration: Ferien (FE), Frei (F) und Krank (K) dürfen niemals zu den Sollstunden zählen.
  * Korrigiert alte gespeicherte Configs, die countsToTarget: true hatten.
  */
 function applyMandatoryMigrations(items: ShiftConfigItem[]): { items: ShiftConfigItem[]; changed: boolean } {
   let changed = false;
   const migrated = items.map(item => {
-    // Ferien (FE) und Frei (F) müssen immer countsToTarget: false haben
-    if ((item.abbrev === 'FE' || item.abbrev === 'F') && item.countsToTarget) {
+    // Ferien (FE), Frei (F) und Krank (K) müssen immer countsToTarget: false haben
+    if ((item.abbrev === 'FE' || item.abbrev === 'F' || item.abbrev === 'K') && item.countsToTarget) {
       changed = true;
       return { ...item, countsToTarget: false };
     }
@@ -382,7 +382,7 @@ async function loadShiftsFromDB(): Promise<ShiftConfigItem[] | null> {
         shifts = migrated;
         // Persist corrected config back to Supabase (fire-and-forget)
         kvSet(STORAGE_KEY, shifts).catch(() => {});
-        console.log('[Schichten] Migration: FE/F countsToTarget korrigiert und in Supabase gespeichert');
+        console.log('[Schichten] Migration: FE/F/K countsToTarget korrigiert und in Supabase gespeichert');
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(shifts));
       console.log(`[Schichten] Aus Supabase geladen: ${shifts.length} Schichttypen`);
