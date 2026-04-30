@@ -3541,6 +3541,7 @@ const SchedulePlanner = () => {
         currentWeekStart={weeksInMonth[selectedWeekIndex] ?? weeksInMonth[0]}
         scheduleData={scheduleData}
         employeeIds={filteredEmployees.map(e => e.id)}
+        tenantKey={tenantKey}
         onCopy={(newScheduleData) => {
           setScheduleData(newScheduleData);
           saveFullScheduleForMonth(currentMonth, newScheduleData);

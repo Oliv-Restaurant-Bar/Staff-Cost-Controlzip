@@ -17,7 +17,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Copy, ArrowRight } from 'lucide-react';
-import { format, startOfWeek, endOfWeek, addWeeks, eachDayOfInterval, isSameMonth } from 'date-fns';
+import {
+  format,
+  startOfMonth,
+  startOfWeek,
+  endOfWeek,
+  addWeeks,
+  subWeeks,
+  eachDayOfInterval,
+  isSameMonth,
+} from 'date-fns';
 import { de } from 'date-fns/locale';
 import { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
 
@@ -29,6 +38,8 @@ interface CopyWeekDialogProps {
   scheduleData: Record<string, DaySchedule>;
   employeeIds: string[];
   onCopy: (newScheduleData: Record<string, DaySchedule>) => void;
+  /** tenantKey function so the dialog can load previous-month data from localStorage */
+  tenantKey: (key: string) => string;
 }
 
 /** Parse a "yyyy-MM-dd" string in LOCAL time (avoids UTC midnight → previous day in UTC+x zones). */
@@ -45,21 +56,43 @@ export const CopyWeekDialog = ({
   scheduleData,
   employeeIds,
   onCopy,
+  tenantKey,
 }: CopyWeekDialogProps) => {
   const [sourceWeek, setSourceWeek] = useState<string>('');
   const [targetWeek, setTargetWeek] = useState<string>('');
+  /** Merged schedule data: current month + previous month loaded from localStorage */
+  const [extendedScheduleData, setExtendedScheduleData] =
+    useState<Record<string, DaySchedule>>(scheduleData);
 
-  // Get all weeks that have at least one day in the current month
-  const getWeeksInMonth = () => {
+  // ── Source weeks: today's week + last 4 weeks (covers previous month too) ──
+  const getSourceWeeks = () => {
+    const today = new Date();
+    const thisWeek = startOfWeek(today, { weekStartsOn: 1 });
     const weeks: { start: Date; end: Date; label: string; value: string }[] = [];
-    
-    for (let i = 0; i < 6; i++) {
-      const weekStart = addWeeks(startOfWeek(currentMonth, { weekStartsOn: 1 }), i);
+    for (let i = 0; i <= 4; i++) {
+      const weekStart = subWeeks(thisWeek, i);
       const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
-      
+      weeks.push({
+        start: weekStart,
+        end: weekEnd,
+        label: `${format(weekStart, 'd. MMM', { locale: de })} - ${format(weekEnd, 'd. MMM', { locale: de })}`,
+        value: format(weekStart, 'yyyy-MM-dd'),
+      });
+    }
+    return weeks;
+  };
+
+  // ── Target weeks: all weeks that have at least one day in the current month ─
+  // FIX: use startOfMonth(currentMonth) so the loop always starts from the
+  // first week of the month, not from mid-month when currentMonth === day 28/30.
+  const getTargetWeeks = () => {
+    const weeks: { start: Date; end: Date; label: string; value: string }[] = [];
+    const monthFirst = startOfMonth(currentMonth);
+    for (let i = 0; i < 6; i++) {
+      const weekStart = addWeeks(startOfWeek(monthFirst, { weekStartsOn: 1 }), i);
+      const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
       const daysInWeek = eachDayOfInterval({ start: weekStart, end: weekEnd });
       const hasAnyDayInMonth = daysInWeek.some(d => isSameMonth(d, currentMonth));
-      
       if (hasAnyDayInMonth) {
         weeks.push({
           start: weekStart,
@@ -69,30 +102,70 @@ export const CopyWeekDialog = ({
         });
       }
     }
-    
     return weeks;
   };
 
-  const weeks = getWeeksInMonth();
+  const sourceWeeks = getSourceWeeks();
+  const targetWeeks = getTargetWeeks();
 
-  // Pre-select the currently displayed week as source on open
+  // Pre-select on open + load previous month data for cross-month copy
   useEffect(() => {
     if (!open) return;
+
+    // Load previous month's schedule from localStorage so cross-month copying works
+    const merged: Record<string, DaySchedule> = { ...scheduleData };
+    try {
+      // Load up to 2 previous months to cover all possible source weeks
+      for (let mBack = 1; mBack <= 2; mBack++) {
+        const d = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - mBack, 1);
+        const monthKey = format(d, 'yyyy-MM');
+        const raw = localStorage.getItem(tenantKey(`schedule-v2-${monthKey}`));
+        if (raw) {
+          const parsed = JSON.parse(raw) as Record<string, DaySchedule>;
+          Object.assign(merged, parsed);
+        }
+      }
+    } catch { /* ignore */ }
+    setExtendedScheduleData(merged);
+
+    // Pre-select: try to match currentWeekStart in source list, else first week
     if (currentWeekStart) {
       const key = format(currentWeekStart, 'yyyy-MM-dd');
-      const inList = weeks.some(w => w.value === key);
-      setSourceWeek(inList ? key : (weeks[0]?.value ?? ''));
+      const inList = sourceWeeks.some(w => w.value === key);
+      setSourceWeek(inList ? key : (sourceWeeks[0]?.value ?? ''));
     } else {
-      setSourceWeek(weeks[0]?.value ?? '');
+      setSourceWeek(sourceWeeks[0]?.value ?? '');
     }
     setTargetWeek('');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Count entries in a week using the extended (cross-month) schedule data
+  const countEntriesInWeek = (weekValue: string, data: Record<string, DaySchedule>) => {
+    if (!weekValue) return 0;
+    const weekStart = parseLocalDate(weekValue);
+    const days = eachDayOfInterval({
+      start: weekStart,
+      end: endOfWeek(weekStart, { weekStartsOn: 1 }),
+    });
+    let count = 0;
+    employeeIds.forEach(empId => {
+      days.forEach(day => {
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const key = `${empId}-${dateStr}`;
+        const daySchedule = data[key];
+        if (daySchedule) {
+          if (daySchedule.früh || daySchedule.frühAbsence) count++;
+          if (daySchedule.spät || daySchedule.spätAbsence) count++;
+        }
+      });
+    });
+    return count;
+  };
+
   const handleCopy = () => {
     if (!sourceWeek || !targetWeek) return;
 
-    // Use LOCAL time parsing to avoid UTC off-by-one in UTC+ timezones
     const sourceStart = parseLocalDate(sourceWeek);
     const targetStart = parseLocalDate(targetWeek);
     const sourceDays = eachDayOfInterval({
@@ -104,6 +177,7 @@ export const CopyWeekDialog = ({
       end: endOfWeek(targetStart, { weekStartsOn: 1 }),
     });
 
+    // Write into a copy of the CURRENT month's data only
     const newScheduleData = { ...scheduleData };
 
     employeeIds.forEach(empId => {
@@ -116,8 +190,9 @@ export const CopyWeekDialog = ({
         const sourceKey = `${empId}-${sourceDateStr}`;
         const targetKey = `${empId}-${targetDateStr}`;
 
-        if (scheduleData[sourceKey]) {
-          newScheduleData[targetKey] = { ...scheduleData[sourceKey] };
+        // Read from extended data (may include previous months)
+        if (extendedScheduleData[sourceKey]) {
+          newScheduleData[targetKey] = { ...extendedScheduleData[sourceKey] };
         }
       });
     });
@@ -128,35 +203,11 @@ export const CopyWeekDialog = ({
     setTargetWeek('');
   };
 
-  const sourceWeekData = weeks.find(w => w.value === sourceWeek);
-  const targetWeekData = weeks.find(w => w.value === targetWeek);
+  const sourceWeekData = sourceWeeks.find(w => w.value === sourceWeek);
+  const targetWeekData = targetWeeks.find(w => w.value === targetWeek);
 
-  // Count entries in a week — use LOCAL time parsing to avoid UTC off-by-one
-  const countEntriesInWeek = (weekValue: string) => {
-    if (!weekValue) return 0;
-    const weekStart = parseLocalDate(weekValue);
-    const days = eachDayOfInterval({
-      start: weekStart,
-      end: endOfWeek(weekStart, { weekStartsOn: 1 }),
-    });
-    
-    let count = 0;
-    employeeIds.forEach(empId => {
-      days.forEach(day => {
-        const dateStr = format(day, 'yyyy-MM-dd');
-        const key = `${empId}-${dateStr}`;
-        const daySchedule = scheduleData[key];
-        if (daySchedule) {
-          if (daySchedule.früh || daySchedule.frühAbsence) count++;
-          if (daySchedule.spät || daySchedule.spätAbsence) count++;
-        }
-      });
-    });
-    return count;
-  };
-
-  const sourceCount = countEntriesInWeek(sourceWeek);
-  const targetCount = countEntriesInWeek(targetWeek);
+  const sourceCount = countEntriesInWeek(sourceWeek, extendedScheduleData);
+  const targetCount = countEntriesInWeek(targetWeek, scheduleData);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -172,7 +223,7 @@ export const CopyWeekDialog = ({
         </DialogHeader>
 
         <div className="space-y-6 py-4">
-          {/* Source Week */}
+          {/* Source Week — last 5 weeks (including previous month) */}
           <div className="space-y-2">
             <Label>Von Woche</Label>
             <Select value={sourceWeek} onValueChange={setSourceWeek}>
@@ -180,9 +231,9 @@ export const CopyWeekDialog = ({
                 <SelectValue placeholder="Quell-Woche wählen" />
               </SelectTrigger>
               <SelectContent>
-                {weeks.map(week => (
+                {sourceWeeks.map(week => (
                   <SelectItem key={week.value} value={week.value}>
-                    {week.label} ({countEntriesInWeek(week.value)} Einträge)
+                    {week.label} ({countEntriesInWeek(week.value, extendedScheduleData)} Einträge)
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -196,7 +247,7 @@ export const CopyWeekDialog = ({
             </div>
           )}
 
-          {/* Target Week */}
+          {/* Target Week — weeks in current month */}
           <div className="space-y-2">
             <Label>Auf Woche</Label>
             <Select value={targetWeek} onValueChange={setTargetWeek}>
@@ -204,11 +255,11 @@ export const CopyWeekDialog = ({
                 <SelectValue placeholder="Ziel-Woche wählen" />
               </SelectTrigger>
               <SelectContent>
-                {weeks
+                {targetWeeks
                   .filter(week => week.value !== sourceWeek)
                   .map(week => (
                     <SelectItem key={week.value} value={week.value}>
-                      {week.label} ({countEntriesInWeek(week.value)} Einträge)
+                      {week.label} ({countEntriesInWeek(week.value, scheduleData)} Einträge)
                     </SelectItem>
                   ))}
               </SelectContent>
