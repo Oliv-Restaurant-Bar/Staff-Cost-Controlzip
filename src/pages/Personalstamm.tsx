@@ -772,6 +772,8 @@ const Personalstamm = () => {
       saveLocalData(newLocal);
 
       if (isNew) {
+        // Signal für Dienstplan: Mitarbeiterliste hat sich geändert (auch in anderen Tabs)
+        localStorage.setItem('employees-updated-at', String(Date.now()));
         // Neuer Mitarbeiter: Komplette Liste aus Supabase neu laden → Persistenz-Check
         console.log(`[EMPLOYEE SAVE] reloading employees from Supabase after insert...`);
         const reloaded = await loadEmployees(tenantId);

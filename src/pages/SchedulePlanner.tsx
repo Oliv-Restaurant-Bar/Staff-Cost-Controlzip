@@ -727,6 +727,26 @@ const SchedulePlanner = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadMonthData]);
 
+  // ── Reload employees when Personalstamm signals a change ─────────────────
+  // When a new employee is added in Personalstamm (same tab or different tab),
+  // it sets 'employees-updated-at' in localStorage.  The storage event fires
+  // in all OTHER tabs; for same-tab SPA navigation the component remounts and
+  // loadMonthData() fires via the session/month effect above.
+  useEffect(() => {
+    const sessionVersionRef = { current: sessionVersion };
+    sessionVersionRef.current = sessionVersion;
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'employees-updated-at' && sessionVersionRef.current > 0) {
+        console.log('[ROUTE] employees-updated-at changed – reloading employees');
+        loadMonthData();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadMonthData]);
+
   // Re-read actual hours from localStorage when an external import fires `schedule-updated`
   useEffect(() => {
     const handleScheduleUpdated = () => {
