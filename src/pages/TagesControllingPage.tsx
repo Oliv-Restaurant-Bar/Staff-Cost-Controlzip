@@ -45,6 +45,7 @@ import {
   type DaySchedule,
   type ActualHourEntry,
 } from '@/lib/supabase-db';
+import { getEffectiveWageBatch } from '@/lib/wage-history';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -360,12 +361,14 @@ export default function TagesControllingPage() {
   useEffect(() => {
     setEmployees(loadLocalEmployees(tenantKey));
     // ─── TENANT FILTER: tenantId übergeben → nur Mitarbeiter des Mandanten ──
-    loadEmployeesFromSupabase(tenantId).then(emps => {
+    loadEmployeesFromSupabase(tenantId).then(async emps => {
       if (emps && emps.length > 0) {
+        const today = new Date().toISOString().split('T')[0];
+        const wageHistory = await getEffectiveWageBatch(emps.map(e => e.id), today, tenantId);
         const mapped = emps.map(e => {
           // VZ/TZ employees may have hourlyWage=0 and use monthlySalary instead.
           // Compute effective hourly wage so plan-cost calculation works.
-          let hw = e.hourlyWage ?? 0;
+          let hw = wageHistory[e.id]?.hourlyWage || (e.hourlyWage ?? 0);
           if (hw === 0) {
             const monthly = e.monthlySalaryWith13th ?? e.monthlySalary ?? 0;
             const wh = e.weeklyHours ?? 42;

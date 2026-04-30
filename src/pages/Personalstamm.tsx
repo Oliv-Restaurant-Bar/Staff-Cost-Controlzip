@@ -44,8 +44,9 @@ import {
   Building, Phone, Mail, MapPin, CreditCard, Shield,
   Briefcase, Calendar, Clock, Link as LinkIcon,
   Paperclip, FileCheck, FileClock, FileSignature,
-  Download, RefreshCw,
+  Download, RefreshCw, History,
 } from 'lucide-react';
+import { WageHistorySection } from '@/components/WageHistorySection';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
 import {
@@ -391,7 +392,7 @@ const Personalstamm = () => {
   const [generatingContract,  setGeneratingContract]  = useState(false);
   const [contractDraft,       setContractDraft]       = useState<ContractDraft | null>(null);
   const [showContractEditor,  setShowContractEditor]  = useState(true);
-  const [activeDetailTab,     setActiveDetailTab]     = useState<'stammdaten' | 'vertrag'>('stammdaten');
+  const [activeDetailTab,     setActiveDetailTab]     = useState<'stammdaten' | 'vertrag' | 'lohnhistorie'>('stammdaten');
 
   // ── UI-Abschnitte aufklappbar ──────────────────────────────────────────────
   const [openPersonal,   setOpenPersonal]   = useState(false);
@@ -1594,15 +1595,19 @@ CREATE POLICY "Anon self-register new employee"
               {/* ── Tab-Leiste ────────────────────────────────────────────── */}
               <Tabs
                 value={activeDetailTab}
-                onValueChange={(v) => setActiveDetailTab(v as 'stammdaten' | 'vertrag')}
+                onValueChange={(v) => setActiveDetailTab(v as 'stammdaten' | 'vertrag' | 'lohnhistorie')}
               >
-                <TabsList className="w-full grid grid-cols-2 mb-2">
+                <TabsList className="w-full grid grid-cols-3 mb-2">
                   <TabsTrigger value="stammdaten" className="text-xs">
                     Stammdaten
                   </TabsTrigger>
                   <TabsTrigger value="vertrag" className="text-xs flex items-center gap-1.5">
                     <FileSignature className="h-3.5 w-3.5" />
-                    Arbeitsvertrag
+                    Vertrag
+                  </TabsTrigger>
+                  <TabsTrigger value="lohnhistorie" className="text-xs flex items-center gap-1.5">
+                    <History className="h-3.5 w-3.5" />
+                    Lohnhistorie
                   </TabsTrigger>
                 </TabsList>
 
@@ -2888,6 +2893,22 @@ CREATE POLICY "Anon self-register new employee"
               </Card>
 
                 </TabsContent>
+
+                {/* ── Tab 3: Lohnhistorie ──────────────────────────────── */}
+                <TabsContent value="lohnhistorie" className="space-y-4 mt-0">
+                  {selectedEmp ? (
+                    <WageHistorySection
+                      employee={selectedEmp}
+                      restaurantId={tenantId}
+                      isAdmin={isAdmin || canEditWages}
+                    />
+                  ) : (
+                    <div className="text-xs text-muted-foreground py-4 text-center">
+                      Keinen Mitarbeiter ausgewählt.
+                    </div>
+                  )}
+                </TabsContent>
+
               </Tabs>
 
             </div>

@@ -1,0 +1,123 @@
+Bitte eine sichere Lohnänderungs-Logik für Mitarbeitende implementieren.
+
+Ziel:
+Ich möchte Lohnänderungen erfassen können (z.B. ab 01.05.2026), ohne bestehende Löhne zu überschreiben oder historische Auswertungen zu verfälschen.
+
+WICHTIG:
+Bestehende Löhne dürfen NIE überschrieben werden.
+Alle bisherigen Auswertungen müssen unverändert bleiben.
+
+==================================================
+1. Neue Struktur für Lohnhistorie
+==================================================
+
+Bitte KEINE bestehenden Felder wie hourly_rate oder monthly_salary überschreiben.
+
+Stattdessen:
+Neue Tabelle oder Struktur einführen, z.B. employee_wages:
+
+Felder:
+- id uuid
+- employee_id
+- restaurant_id
+- valid_from date
+- hourly_rate numeric
+- monthly_salary numeric
+- salary_13 boolean
+- created_at
+
+Optional:
+- valid_to date (kann auch automatisch berechnet werden)
+
+==================================================
+2. Logik der Lohnänderung
+==================================================
+
+Beispiel:
+- 01.01.2026 → CHF 25/h
+- 01.05.2026 → CHF 27/h
+
+Dann gilt:
+- bis 30.04. → alter Lohn
+- ab 01.05. → neuer Lohn
+
+Wichtig:
+- keine Überschreibung
+- nur neue Zeile hinzufügen
+
+==================================================
+3. Berechnung im System
+==================================================
+
+Alle Module müssen IMMER den korrekten Lohn anhand Datum holen:
+
+Beispiel:
+getEffectiveWage(employee_id, date)
+
+→ nimmt den letzten gültigen Eintrag:
+WHERE valid_from <= date
+ORDER BY valid_from DESC LIMIT 1
+
+==================================================
+4. Betroffene Module anpassen
+==================================================
+
+Diese Module müssen angepasst werden:
+
+- Dienstplan Ist-Kosten
+- Personal FIX
+- Tages-Controlling
+- Auswertungen / Reports
+- Monats- und Jahresanalysen
+
+Alle dürfen NICHT mehr direkt auf:
+- hourly_rate
+- monthly_salary
+
+zugreifen, sondern immer über:
+→ getEffectiveWage()
+
+==================================================
+5. Sicherheit (extrem wichtig)
+==================================================
+
+Bitte sicherstellen:
+
+- bestehende Löhne bleiben unverändert
+- alte Auswertungen bleiben identisch
+- keine automatische Migration, die alte Daten überschreibt
+- fallback:
+  wenn keine Historie vorhanden → bestehenden Lohn verwenden
+
+==================================================
+6. UI Erweiterung
+==================================================
+
+Im Personalstamm:
+
+Neuer Bereich:
+"Lohnhistorie"
+
+Funktionen:
+- neuer Lohn ab Datum erfassen
+- Liste der bisherigen Löhne anzeigen
+- keine Bearbeitung bestehender Einträge (nur neue hinzufügen)
+
+==================================================
+7. Debug Logs
+==================================================
+
+[WAGE-HISTORY] employee: ...
+[WAGE-HISTORY] date: ...
+[WAGE-HISTORY] selected wage: ...
+[WAGE-HISTORY] source: history/fallback
+
+==================================================
+8. Bitte danach sagen:
+==================================================
+
+- welche Tabelle neu erstellt wurde
+- wie die historische Lohnlogik funktioniert
+- welche Module angepasst wurden
+- ob bestehende Daten 100% unverändert bleiben
+- wie ich eine Lohnänderung teste (z.B. April vs Mai Vergleich)

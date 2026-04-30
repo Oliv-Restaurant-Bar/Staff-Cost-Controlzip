@@ -17,6 +17,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth } from '@/lib/supabase-db';
+import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { Employee } from '@/types/personnel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1322,10 +1323,12 @@ export default function PersonalFixPage() {
   useEffect(() => {
     setLoading(true);
     console.log(`[EMPLOYEE LOAD] tenant: ${tenantId}`);
-    loadEmployees(tenantId).then(emps => {
+    loadEmployees(tenantId).then(async emps => {
       if (emps) {
-        setEmployees(emps);
-        console.log(`[EMPLOYEE LOAD] count: ${emps.length}`);
+        const effectiveDate = firstOfMonth(selectedYear, selectedMonth);
+        const enriched = await applyEffectiveWages(emps, effectiveDate, tenantId);
+        setEmployees(enriched);
+        console.log(`[EMPLOYEE LOAD] count: ${enriched.length}`);
         // ─── [CONSISTENCY] Standardformat-Logs ───────────────────────────
         console.log(`[CONSISTENCY] tenant: ${tenantId}`);
         console.log(`[CONSISTENCY] personal_fix employees: ${emps.length}`);
