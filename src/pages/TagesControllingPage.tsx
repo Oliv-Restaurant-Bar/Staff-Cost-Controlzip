@@ -51,6 +51,7 @@ import { getEffectiveWageBatch } from '@/lib/wage-history';
 
 type Period = 'woche' | 'monat' | 'jahr';
 type WarenFilter = 'total' | 'food' | 'beverage';
+type ViewMode    = 'personal' | 'waren';
 
 interface EmployeeLite {
   id: string;
@@ -80,12 +81,17 @@ interface ControllingRow {
 }
 
 interface MonthRow {
-  monthKey:  string;   // yyyy-MM
-  label:     string;   // "Januar 2025"
-  umsatz:    number;
-  pkPlanChf: number;
-  pkIstChf:  number;
-  wesChf:    number;
+  monthKey:   string;   // yyyy-MM
+  label:      string;   // "Januar 2025"
+  umsatz:     number;   // gemäss warenFilter
+  umsatzTotal: number;
+  umsatzFood: number;
+  umsatzBev:  number;
+  pkPlanChf:  number;
+  pkIstChf:   number;
+  wesChf:     number;   // gemäss warenFilter
+  wesFood:    number;
+  wesBev:     number;
 }
 
 // ── Konstanten ────────────────────────────────────────────────────────────────
@@ -104,6 +110,14 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
   pkIstPct: 100,
   wesChf: 110,
   wesPct: 90,
+  // Waren-Ansicht
+  umsatzTotal: 130,
+  umsatzFood:  120,
+  umsatzBev:   120,
+  wkFoodChf:   110,
+  wkFoodPct:   90,
+  wkBevChf:    110,
+  wkBevPct:    90,
 };
 
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────────
@@ -271,13 +285,18 @@ function buildMonthRows(rows: ControllingRow[]): MonthRow[] {
     if (!map.has(mk)) {
       const [y, m] = mk.split('-').map(Number);
       const label = format(new Date(y, m - 1, 1), 'MMMM yyyy', { locale: de });
-      map.set(mk, { monthKey: mk, label, umsatz: 0, pkPlanChf: 0, pkIstChf: 0, wesChf: 0 });
+      map.set(mk, { monthKey: mk, label, umsatz: 0, umsatzTotal: 0, umsatzFood: 0, umsatzBev: 0, pkPlanChf: 0, pkIstChf: 0, wesChf: 0, wesFood: 0, wesBev: 0 });
     }
     const mr = map.get(mk)!;
-    mr.umsatz    += r.umsatz;
-    mr.pkPlanChf += r.pkPlanChf;
-    mr.pkIstChf  += r.pkIstChf;
-    mr.wesChf    += r.wesChf;
+    mr.umsatz     += r.umsatz;
+    mr.umsatzTotal += r.umsatzTotal;
+    mr.umsatzFood  += r.umsatzFood;
+    mr.umsatzBev   += r.umsatzBev;
+    mr.pkPlanChf   += r.pkPlanChf;
+    mr.pkIstChf    += r.pkIstChf;
+    mr.wesChf      += r.wesChf;
+    mr.wesFood     += r.wesFood;
+    mr.wesBev      += r.wesBev;
   }
   return Array.from(map.values()).sort((a, b) => a.monthKey.localeCompare(b.monthKey));
 }
@@ -350,6 +369,7 @@ export default function TagesControllingPage() {
   const [loadingPK, setLoadingPK]           = useState(false);
   const [warenkostenMap, setWarenkostenMap] = useState<Record<string, WarenkostenDay>>({});
   const [warenFilter,    setWarenFilter]    = useState<WarenFilter>('total');
+  const [viewMode,       setViewMode]       = useState<ViewMode>('personal');
   const loadGenRef = useRef(0);
   const warenGenRef = useRef(0);
 
@@ -599,14 +619,25 @@ export default function TagesControllingPage() {
     const baseRows = effectiveCutoffDay !== null
       ? rows.filter(r => parseInt(r.date.slice(8), 10) <= effectiveCutoffDay)
       : rows;
-    const sumUmsatz  = baseRows.reduce((s, r) => s + r.umsatz, 0);
-    const sumPkPlan  = baseRows.reduce((s, r) => s + r.pkPlanChf, 0);
-    const sumPkIst   = baseRows.reduce((s, r) => s + r.pkIstChf, 0);
-    const sumWes     = baseRows.reduce((s, r) => s + r.wesChf, 0);
-    const pkPlanPct  = sumUmsatz > 0 ? (sumPkPlan / sumUmsatz) * 100 : 0;
-    const pkIstPct   = sumUmsatz > 0 ? (sumPkIst  / sumUmsatz) * 100 : 0;
-    const wesPct     = sumUmsatz > 0 ? (sumWes    / sumUmsatz) * 100 : 0;
-    return { sumUmsatz, sumPkPlan, sumPkIst, sumWes, pkPlanPct, pkIstPct, wesPct };
+    const sumUmsatz     = baseRows.reduce((s, r) => s + r.umsatz, 0);
+    const sumUmsatzTotal= baseRows.reduce((s, r) => s + r.umsatzTotal, 0);
+    const sumUmsatzFood = baseRows.reduce((s, r) => s + r.umsatzFood, 0);
+    const sumUmsatzBev  = baseRows.reduce((s, r) => s + r.umsatzBev, 0);
+    const sumPkPlan     = baseRows.reduce((s, r) => s + r.pkPlanChf, 0);
+    const sumPkIst      = baseRows.reduce((s, r) => s + r.pkIstChf, 0);
+    const sumWes        = baseRows.reduce((s, r) => s + r.wesChf, 0);
+    const sumWesFood    = baseRows.reduce((s, r) => s + r.wesFood, 0);
+    const sumWesBev     = baseRows.reduce((s, r) => s + r.wesBev, 0);
+    const pkPlanPct     = sumUmsatz > 0 ? (sumPkPlan / sumUmsatz) * 100 : 0;
+    const pkIstPct      = sumUmsatz > 0 ? (sumPkIst  / sumUmsatz) * 100 : 0;
+    const wesPct        = sumUmsatz > 0 ? (sumWes    / sumUmsatz) * 100 : 0;
+    const wesFoodPct    = sumUmsatzFood > 0 ? (sumWesFood / sumUmsatzFood) * 100 : 0;
+    const wesBevPct     = sumUmsatzBev  > 0 ? (sumWesBev  / sumUmsatzBev)  * 100 : 0;
+    return {
+      sumUmsatz, sumUmsatzTotal, sumUmsatzFood, sumUmsatzBev,
+      sumPkPlan, sumPkIst, sumWes, sumWesFood, sumWesBev,
+      pkPlanPct, pkIstPct, wesPct, wesFoodPct, wesBevPct,
+    };
   }, [rows, effectiveCutoffDay]);
 
   // Monatszeilen für Jahresansicht
@@ -688,7 +719,11 @@ export default function TagesControllingPage() {
     doc.setFontSize(8);
     doc.setTextColor(...C_HEADER_TXT);
     doc.text(getPeriodLabel(period, anchor), W / 2, 10, { align: 'center' });
-    if (showWesInExport) {
+    if (viewMode === 'waren') {
+      doc.setFontSize(6.5);
+      doc.setTextColor(45, 212, 191);
+      doc.text('Warenkostenansicht', W / 2, 16, { align: 'center' });
+    } else if (showWesInExport) {
       doc.setFontSize(6.5);
       doc.setTextColor(180, 210, 180);
       doc.text('inkl. WES', W / 2, 16, { align: 'center' });
@@ -735,78 +770,118 @@ export default function TagesControllingPage() {
     console.log('[PDF-EXPORT] Tabelle | Zeilen:', period === 'jahr' ? monthRows.length : rows.length, '| WES-Spalten:', showWesInExport);
 
     if (period === 'jahr') {
-      const head = [['Monat', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', ...(showWesInExport ? ['Warenkosten CHF', 'Warenkosten %'] : [])]];
-      const totalPkPlanPct = total.sumUmsatz > 0 ? (total.sumPkPlan / total.sumUmsatz) * 100 : 0;
-      const totalPkIstPct  = total.sumUmsatz > 0 && total.sumPkIst > 0 ? (total.sumPkIst / total.sumUmsatz) * 100 : 0;
-      const totalWesPct    = total.sumUmsatz > 0 && total.sumWes > 0 ? (total.sumWes / total.sumUmsatz) * 100 : 0;
-      const body: string[][] = [
-        ['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), fmtD(total.sumPkIst, total.sumPkPlan), fmtP(totalPkPlanPct, total.sumUmsatz > 0), fmtP(totalPkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), ...(showWesInExport ? [fmtV(total.sumWes), fmtP(totalWesPct, total.sumWes > 0 && total.sumUmsatz > 0)] : [])],
-        ...monthRows.map(mr => {
-          const pp = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
-          const pi = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
-          const wp = mr.umsatz > 0 && mr.wesChf   > 0 ? (mr.wesChf   / mr.umsatz) * 100 : 0;
-          return [mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), fmtV(mr.pkIstChf), fmtD(mr.pkIstChf, mr.pkPlanChf), fmtP(pp, mr.umsatz > 0 && mr.pkPlanChf > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChf > 0), ...(showWesInExport ? [fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChf > 0)] : [])];
-        }),
-      ];
-      autoTable(doc, {
-        head, body, startY: y,
-        styles: { fontSize: 7.5, cellPadding: { top: 2.5, right: 3, bottom: 2.5, left: 3 }, font: 'helvetica', valign: 'middle' },
-        headStyles: { fillColor: C_HEADER_BG, textColor: C_HEADER_TXT, fontStyle: 'bold', halign: 'right' },
-        columnStyles: { 0: { halign: 'left', fontStyle: 'normal' } },
-        alternateRowStyles: { fillColor: [250, 251, 252] },
-        didParseCell: (data) => {
-          if (data.row.index === 0) {
-            data.cell.styles.fillColor = C_TOTAL_BG;
-            data.cell.styles.textColor = C_TOTAL_TXT;
-            data.cell.styles.fontStyle = 'bold';
-          }
-          if (data.column.index === 4 && data.row.index > 0) {
-            const v = data.cell.raw as string;
-            if (v && v !== '–') data.cell.styles.textColor = v.startsWith('+') ? C_RED_TXT : C_GREEN_TXT;
-          }
-          if (showWesInExport && data.column.index >= 7 && data.row.index > 0) {
-            data.cell.styles.textColor = C_TEAL_TXT;
-          }
-        },
-      });
+      const C_GREEN_TXT_PDF: [number,number,number] = [22, 163, 74];
+      if (viewMode === 'waren') {
+        // ── Waren-Ansicht Jahrestabelle ──────────────────────────────────
+        const head = [['Monat', 'Ist-Umsatz Total', 'Ist-Umsatz Food', 'Ist-Umsatz Bev', 'WK Food CHF', 'WK Food %', 'WK Bev CHF', 'WK Bev %']];
+        const body: string[][] = [
+          ['TOTAL', fmtV(total.sumUmsatzTotal), fmtV(total.sumUmsatzFood), fmtV(total.sumUmsatzBev), fmtV(total.sumWesFood), fmtP(total.wesFoodPct, total.sumWesFood > 0 && total.sumUmsatzFood > 0), fmtV(total.sumWesBev), fmtP(total.wesBevPct, total.sumWesBev > 0 && total.sumUmsatzBev > 0)],
+          ...monthRows.map(mr => {
+            const wfp = mr.umsatzFood > 0 && mr.wesFood > 0 ? (mr.wesFood / mr.umsatzFood) * 100 : 0;
+            const wbp = mr.umsatzBev  > 0 && mr.wesBev  > 0 ? (mr.wesBev  / mr.umsatzBev)  * 100 : 0;
+            return [mr.label, fmtV(mr.umsatzTotal), fmtV(mr.umsatzFood), fmtV(mr.umsatzBev), mr.wesFood > 0 ? fmtV(mr.wesFood) : '–', mr.umsatzFood > 0 && mr.wesFood > 0 ? fmtP(wfp, true) : '–', mr.wesBev > 0 ? fmtV(mr.wesBev) : '–', mr.umsatzBev > 0 && mr.wesBev > 0 ? fmtP(wbp, true) : '–'];
+          }),
+        ];
+        autoTable(doc, {
+          head, body, startY: y,
+          styles: { fontSize: 7.5, cellPadding: { top: 2.5, right: 3, bottom: 2.5, left: 3 }, font: 'helvetica', valign: 'middle' },
+          headStyles: { fillColor: C_HEADER_BG, textColor: C_HEADER_TXT, fontStyle: 'bold', halign: 'right' },
+          columnStyles: { 0: { halign: 'left', fontStyle: 'normal' } },
+          alternateRowStyles: { fillColor: [250, 251, 252] },
+          didParseCell: (data) => {
+            if (data.row.index === 0) { data.cell.styles.fillColor = C_TOTAL_BG; data.cell.styles.textColor = C_TOTAL_TXT; data.cell.styles.fontStyle = 'bold'; }
+            if ([2, 4, 5].includes(data.column.index) && data.row.index > 0) data.cell.styles.textColor = C_GREEN_TXT_PDF;
+            if ([3, 6, 7].includes(data.column.index) && data.row.index > 0) data.cell.styles.textColor = C_BLUE_TXT;
+          },
+        });
+      } else {
+        // ── Personal-Ansicht Jahrestabelle ────────────────────────────────
+        const head = [['Monat', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', ...(showWesInExport ? ['Warenkosten CHF', 'Warenkosten %'] : [])]];
+        const totalPkPlanPct = total.sumUmsatz > 0 ? (total.sumPkPlan / total.sumUmsatz) * 100 : 0;
+        const totalPkIstPct  = total.sumUmsatz > 0 && total.sumPkIst > 0 ? (total.sumPkIst / total.sumUmsatz) * 100 : 0;
+        const totalWesPct    = total.sumUmsatz > 0 && total.sumWes > 0 ? (total.sumWes / total.sumUmsatz) * 100 : 0;
+        const body: string[][] = [
+          ['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), fmtD(total.sumPkIst, total.sumPkPlan), fmtP(totalPkPlanPct, total.sumUmsatz > 0), fmtP(totalPkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), ...(showWesInExport ? [fmtV(total.sumWes), fmtP(totalWesPct, total.sumWes > 0 && total.sumUmsatz > 0)] : [])],
+          ...monthRows.map(mr => {
+            const pp = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
+            const pi = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
+            const wp = mr.umsatz > 0 && mr.wesChf   > 0 ? (mr.wesChf   / mr.umsatz) * 100 : 0;
+            return [mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), fmtV(mr.pkIstChf), fmtD(mr.pkIstChf, mr.pkPlanChf), fmtP(pp, mr.umsatz > 0 && mr.pkPlanChf > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChf > 0), ...(showWesInExport ? [fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChf > 0)] : [])];
+          }),
+        ];
+        autoTable(doc, {
+          head, body, startY: y,
+          styles: { fontSize: 7.5, cellPadding: { top: 2.5, right: 3, bottom: 2.5, left: 3 }, font: 'helvetica', valign: 'middle' },
+          headStyles: { fillColor: C_HEADER_BG, textColor: C_HEADER_TXT, fontStyle: 'bold', halign: 'right' },
+          columnStyles: { 0: { halign: 'left', fontStyle: 'normal' } },
+          alternateRowStyles: { fillColor: [250, 251, 252] },
+          didParseCell: (data) => {
+            if (data.row.index === 0) { data.cell.styles.fillColor = C_TOTAL_BG; data.cell.styles.textColor = C_TOTAL_TXT; data.cell.styles.fontStyle = 'bold'; }
+            if (data.column.index === 4 && data.row.index > 0) {
+              const v = data.cell.raw as string;
+              if (v && v !== '–') data.cell.styles.textColor = v.startsWith('+') ? C_RED_TXT : C_GREEN_TXT;
+            }
+            if (showWesInExport && data.column.index >= 7 && data.row.index > 0) data.cell.styles.textColor = C_TEAL_TXT;
+          },
+        });
+      }
     } else {
-      const head = [['Datum', 'WT', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', ...(showWesInExport ? ['Warenkosten CHF', 'Warenkosten %'] : [])]];
-      const body: string[][] = [
-        ['TOTAL', '', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), total.sumPkIst > 0 ? fmtV(total.sumPkIst) : '–', fmtD(total.sumPkIst, total.sumPkPlan), fmtP(total.pkPlanPct, total.sumUmsatz > 0), fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), ...(showWesInExport ? [total.sumWes > 0 ? fmtV(total.sumWes) : '–', fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)] : [])],
-        ...rows.map(r => {
-          const pp = r.umsatz > 0 ? (r.pkPlanChf / r.umsatz) * 100 : 0;
-          const pi = r.umsatz > 0 && r.pkIstChf > 0 ? (r.pkIstChf / r.umsatz) * 100 : 0;
-          const wp = r.umsatz > 0 && r.wesChf   > 0 ? (r.wesChf   / r.umsatz) * 100 : 0;
-          return [format(r.day, 'dd.MM.yyyy'), WT_ABBR[r.day.getDay()], fmtV(r.umsatz), fmtV(r.pkPlanChf), r.pkIstChf > 0 ? fmtV(r.pkIstChf) : '–', fmtD(r.pkIstChf, r.pkPlanChf), r.umsatz > 0 && r.pkPlanChf > 0 ? fmtP(pp, true) : '–', r.umsatz > 0 && r.pkIstChf > 0 ? fmtP(pi, true) : '–', ...(showWesInExport ? [r.wesChf > 0 ? fmtV(r.wesChf) : '–', r.umsatz > 0 && r.wesChf > 0 ? fmtP(wp, true) : '–'] : [])];
-        }),
-      ];
-      autoTable(doc, {
-        head, body, startY: y,
-        styles: { fontSize: 7.5, cellPadding: { top: 2.5, right: 3, bottom: 2.5, left: 3 }, font: 'helvetica', valign: 'middle' },
-        headStyles: { fillColor: C_HEADER_BG, textColor: C_HEADER_TXT, fontStyle: 'bold', halign: 'right' },
-        columnStyles: {
-          0: { halign: 'left' }, 1: { halign: 'center', textColor: C_MUTED },
-          2: { textColor: C_BLUE_TXT }, 3: { textColor: C_BLUE_TXT },
-        },
-        alternateRowStyles: { fillColor: [250, 251, 252] },
-        didParseCell: (data) => {
-          if (data.row.index === 0) {
-            data.cell.styles.fillColor = C_TOTAL_BG;
-            data.cell.styles.textColor = C_TOTAL_TXT;
-            data.cell.styles.fontStyle = 'bold';
-          }
-          if (data.column.index === 5 && data.row.index > 0) {
-            const v = data.cell.raw as string;
-            if (v && v !== '–') data.cell.styles.textColor = v.startsWith('+') ? C_RED_TXT : C_GREEN_TXT;
-          }
-          if (data.column.index === 4 && data.row.index > 0) {
-            data.cell.styles.textColor = C_BLUE_TXT;
-          }
-          if (showWesInExport && data.column.index >= 8 && data.row.index > 0) {
-            data.cell.styles.textColor = C_TEAL_TXT;
-          }
-        },
-      });
+      const C_GREEN_TXT_PDF: [number,number,number] = [22, 163, 74];
+      if (viewMode === 'waren') {
+        // ── Waren-Ansicht Tages-/Wochentabelle ────────────────────────────
+        const head = [['Datum', 'WT', 'Ist-Umsatz Total', 'Ist-Umsatz Food', 'Ist-Umsatz Bev', 'WK Food CHF', 'WK Food %', 'WK Bev CHF', 'WK Bev %']];
+        const body: string[][] = [
+          ['TOTAL', '', fmtV(total.sumUmsatzTotal), fmtV(total.sumUmsatzFood), fmtV(total.sumUmsatzBev), fmtV(total.sumWesFood), fmtP(total.wesFoodPct, total.sumWesFood > 0 && total.sumUmsatzFood > 0), fmtV(total.sumWesBev), fmtP(total.wesBevPct, total.sumWesBev > 0 && total.sumUmsatzBev > 0)],
+          ...rows.map(r => {
+            const wfp = r.umsatzFood > 0 && r.wesFood > 0 ? (r.wesFood / r.umsatzFood) * 100 : 0;
+            const wbp = r.umsatzBev  > 0 && r.wesBev  > 0 ? (r.wesBev  / r.umsatzBev)  * 100 : 0;
+            return [format(r.day, 'dd.MM.yyyy'), WT_ABBR[r.day.getDay()], fmtV(r.umsatzTotal), r.umsatzFood > 0 ? fmtV(r.umsatzFood) : '–', r.umsatzBev > 0 ? fmtV(r.umsatzBev) : '–', r.wesFood > 0 ? fmtV(r.wesFood) : '–', r.umsatzFood > 0 && r.wesFood > 0 ? fmtP(wfp, true) : '–', r.wesBev > 0 ? fmtV(r.wesBev) : '–', r.umsatzBev > 0 && r.wesBev > 0 ? fmtP(wbp, true) : '–'];
+          }),
+        ];
+        autoTable(doc, {
+          head, body, startY: y,
+          styles: { fontSize: 7.5, cellPadding: { top: 2.5, right: 3, bottom: 2.5, left: 3 }, font: 'helvetica', valign: 'middle' },
+          headStyles: { fillColor: C_HEADER_BG, textColor: C_HEADER_TXT, fontStyle: 'bold', halign: 'right' },
+          columnStyles: { 0: { halign: 'left' }, 1: { halign: 'center', textColor: C_MUTED } },
+          alternateRowStyles: { fillColor: [250, 251, 252] },
+          didParseCell: (data) => {
+            if (data.row.index === 0) { data.cell.styles.fillColor = C_TOTAL_BG; data.cell.styles.textColor = C_TOTAL_TXT; data.cell.styles.fontStyle = 'bold'; }
+            if ([3, 5, 6].includes(data.column.index) && data.row.index > 0) data.cell.styles.textColor = C_GREEN_TXT_PDF;
+            if ([4, 7, 8].includes(data.column.index) && data.row.index > 0) data.cell.styles.textColor = C_BLUE_TXT;
+          },
+        });
+      } else {
+        // ── Personal-Ansicht Tages-/Wochentabelle ─────────────────────────
+        const head = [['Datum', 'WT', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', ...(showWesInExport ? ['Warenkosten CHF', 'Warenkosten %'] : [])]];
+        const body: string[][] = [
+          ['TOTAL', '', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), total.sumPkIst > 0 ? fmtV(total.sumPkIst) : '–', fmtD(total.sumPkIst, total.sumPkPlan), fmtP(total.pkPlanPct, total.sumUmsatz > 0), fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), ...(showWesInExport ? [total.sumWes > 0 ? fmtV(total.sumWes) : '–', fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)] : [])],
+          ...rows.map(r => {
+            const pp = r.umsatz > 0 ? (r.pkPlanChf / r.umsatz) * 100 : 0;
+            const pi = r.umsatz > 0 && r.pkIstChf > 0 ? (r.pkIstChf / r.umsatz) * 100 : 0;
+            const wp = r.umsatz > 0 && r.wesChf   > 0 ? (r.wesChf   / r.umsatz) * 100 : 0;
+            return [format(r.day, 'dd.MM.yyyy'), WT_ABBR[r.day.getDay()], fmtV(r.umsatz), fmtV(r.pkPlanChf), r.pkIstChf > 0 ? fmtV(r.pkIstChf) : '–', fmtD(r.pkIstChf, r.pkPlanChf), r.umsatz > 0 && r.pkPlanChf > 0 ? fmtP(pp, true) : '–', r.umsatz > 0 && r.pkIstChf > 0 ? fmtP(pi, true) : '–', ...(showWesInExport ? [r.wesChf > 0 ? fmtV(r.wesChf) : '–', r.umsatz > 0 && r.wesChf > 0 ? fmtP(wp, true) : '–'] : [])];
+          }),
+        ];
+        autoTable(doc, {
+          head, body, startY: y,
+          styles: { fontSize: 7.5, cellPadding: { top: 2.5, right: 3, bottom: 2.5, left: 3 }, font: 'helvetica', valign: 'middle' },
+          headStyles: { fillColor: C_HEADER_BG, textColor: C_HEADER_TXT, fontStyle: 'bold', halign: 'right' },
+          columnStyles: {
+            0: { halign: 'left' }, 1: { halign: 'center', textColor: C_MUTED },
+            2: { textColor: C_BLUE_TXT }, 3: { textColor: C_BLUE_TXT },
+          },
+          alternateRowStyles: { fillColor: [250, 251, 252] },
+          didParseCell: (data) => {
+            if (data.row.index === 0) { data.cell.styles.fillColor = C_TOTAL_BG; data.cell.styles.textColor = C_TOTAL_TXT; data.cell.styles.fontStyle = 'bold'; }
+            if (data.column.index === 5 && data.row.index > 0) {
+              const v = data.cell.raw as string;
+              if (v && v !== '–') data.cell.styles.textColor = v.startsWith('+') ? C_RED_TXT : C_GREEN_TXT;
+            }
+            if (data.column.index === 4 && data.row.index > 0) data.cell.styles.textColor = C_BLUE_TXT;
+            if (showWesInExport && data.column.index >= 8 && data.row.index > 0) data.cell.styles.textColor = C_TEAL_TXT;
+          },
+        });
+      }
     }
 
     // ── Footer ─────────────────────────────────────────────────────────────
@@ -823,10 +898,10 @@ export default function TagesControllingPage() {
       doc.text(`Seite ${i} / ${pageCount}`, W - M, PH - 4, { align: 'right' });
     }
 
-    const filename = `tages-controlling-${format(anchor, 'yyyy-MM')}${showWesInExport ? '-mit-WES' : ''}.pdf`;
+    const filename = `tages-controlling-${format(anchor, 'yyyy-MM')}${viewMode === 'waren' ? '-warenkosten' : showWesInExport ? '-mit-WES' : ''}.pdf`;
     console.log('[PDF-EXPORT] Speichern:', filename, '| Seiten:', pageCount);
     doc.save(filename);
-  }, [period, anchor, rows, monthRows, total, showWesInExport]);
+  }, [period, anchor, rows, monthRows, total, showWesInExport, viewMode]);
 
   // ── Export Excel ─────────────────────────────────────────────────────────────
 
@@ -861,9 +936,8 @@ export default function TagesControllingPage() {
     titleRow.height = 20;
     titleRow.font = { bold: true, size: 13, color: { argb: 'FF' + HEADER_BG } };
 
-    if (period === 'jahr') {
-      const headers = ['Monat', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'Warenkosten CHF', 'Warenkosten %'];
-      const hRow = ws.addRow(headers);
+    const GREEN_FG_XLSX = '15803012'; // emerald
+    const addHeaderStyle = (hRow: ReturnType<typeof ws.addRow>) => {
       hRow.height = 16;
       hRow.eachCell(cell => {
         cell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + HEADER_BG } };
@@ -871,93 +945,169 @@ export default function TagesControllingPage() {
         cell.border = { bottom: { style: 'thin', color: { argb: 'FF94A3B8' } } };
         cell.alignment = { horizontal: 'right' };
       });
-      hRow.getCell(1).alignment = { horizontal: 'left' };
-
-      const totalPkPlanPct = total.sumUmsatz > 0 ? (total.sumPkPlan / total.sumUmsatz) * 100 : 0;
-      const totalPkIstPct  = total.sumUmsatz > 0 && total.sumPkIst > 0 ? (total.sumPkIst / total.sumUmsatz) * 100 : 0;
-      const totalWesPct    = total.sumUmsatz > 0 && total.sumWes > 0 ? (total.sumWes / total.sumUmsatz) * 100 : 0;
-      const tRow = ws.addRow(['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), Math.round(total.sumPkIst - total.sumPkPlan), Math.round(totalPkPlanPct * 10) / 10, Math.round(totalPkIstPct * 10) / 10, fmtV(total.sumWes), Math.round(totalWesPct * 10) / 10]);
+    };
+    const addTotalStyle = (tRow: ReturnType<typeof ws.addRow>) => {
       tRow.eachCell(cell => {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + TOTAL_BG } };
         cell.font = { bold: true, color: { argb: 'FF' + TOTAL_FG }, size: 9 };
         cell.alignment = { horizontal: 'right' };
       });
-      tRow.getCell(1).alignment = { horizontal: 'left' };
+    };
 
-      monthRows.forEach((mr, idx) => {
-        const pp = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
-        const pi = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
-        const wp = mr.umsatz > 0 && mr.wesChf   > 0 ? (mr.wesChf   / mr.umsatz) * 100 : 0;
-        const delta = mr.pkIstChf > 0 && mr.pkPlanChf > 0 ? Math.round(mr.pkIstChf - mr.pkPlanChf) : 0;
-        const r = ws.addRow([mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), mr.pkIstChf > 0 ? fmtV(mr.pkIstChf) : 0, delta, fmtP(pp, mr.umsatz > 0 && mr.pkPlanChf > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChf > 0), fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChf > 0)]);
-        if (idx % 2 === 0) r.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + ALT_BG } }; });
-        r.getCell(5).font = { color: { argb: 'FF' + (delta > 0 ? RED_FG : delta < 0 ? GREEN_FG : TOTAL_FG) } };
-        r.eachCell(c => { c.alignment = { horizontal: 'right' }; });
-        r.getCell(1).alignment = { horizontal: 'left' };
-      });
-      ws.columns = [{ width: 18 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 12 }, { width: 11 }, { width: 11 }, { width: 13 }, { width: 10 }];
+    if (period === 'jahr') {
+      if (viewMode === 'waren') {
+        // ── Waren-Ansicht Jahres-Excel ────────────────────────────────────
+        const hRow = ws.addRow(['Monat', 'Ist-Umsatz Total', 'Ist-Umsatz Food', 'Ist-Umsatz Bev', 'WK Food CHF', 'WK Food %', 'WK Bev CHF', 'WK Bev %']);
+        addHeaderStyle(hRow);
+        hRow.getCell(1).alignment = { horizontal: 'left' };
 
+        const tRow = ws.addRow(['TOTAL', fmtV(total.sumUmsatzTotal), fmtV(total.sumUmsatzFood), fmtV(total.sumUmsatzBev), fmtV(total.sumWesFood), Math.round(total.wesFoodPct * 10) / 10, fmtV(total.sumWesBev), Math.round(total.wesBevPct * 10) / 10]);
+        addTotalStyle(tRow);
+        tRow.getCell(1).alignment = { horizontal: 'left' };
+
+        monthRows.forEach((mr, idx) => {
+          const wfp = mr.umsatzFood > 0 && mr.wesFood > 0 ? (mr.wesFood / mr.umsatzFood) * 100 : 0;
+          const wbp = mr.umsatzBev  > 0 && mr.wesBev  > 0 ? (mr.wesBev  / mr.umsatzBev)  * 100 : 0;
+          const r = ws.addRow([mr.label, fmtV(mr.umsatzTotal), fmtV(mr.umsatzFood), fmtV(mr.umsatzBev), mr.wesFood > 0 ? fmtV(mr.wesFood) : 0, Math.round(wfp * 10) / 10, mr.wesBev > 0 ? fmtV(mr.wesBev) : 0, Math.round(wbp * 10) / 10]);
+          if (idx % 2 === 0) r.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + ALT_BG } }; });
+          r.eachCell(c => { c.alignment = { horizontal: 'right' }; });
+          r.getCell(1).alignment = { horizontal: 'left' };
+          [3, 5, 6].forEach(i => { r.getCell(i).font = { color: { argb: 'FF' + GREEN_FG_XLSX } }; });
+          [4, 7, 8].forEach(i => { r.getCell(i).font = { color: { argb: 'FF' + BLUE_FG } }; });
+        });
+        ws.columns = [{ width: 18 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 14 }, { width: 10 }, { width: 14 }, { width: 10 }];
+
+        // Number formats
+        const numFmt = '#,##0'; const pctFmt = '0.0"%"';
+        ws.eachRow((row, rowNum) => {
+          if (rowNum < 4) return;
+          row.eachCell((cell, colNum) => {
+            if (typeof cell.value === 'number') {
+              if ([2, 3, 4, 5, 7].includes(colNum)) cell.numFmt = numFmt;
+              if ([6, 8].includes(colNum))           cell.numFmt = pctFmt;
+            }
+          });
+        });
+      } else {
+        // ── Personal-Ansicht Jahres-Excel ─────────────────────────────────
+        const hRow = ws.addRow(['Monat', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'Warenkosten CHF', 'Warenkosten %']);
+        addHeaderStyle(hRow);
+        hRow.getCell(1).alignment = { horizontal: 'left' };
+
+        const totalPkPlanPct = total.sumUmsatz > 0 ? (total.sumPkPlan / total.sumUmsatz) * 100 : 0;
+        const totalPkIstPct  = total.sumUmsatz > 0 && total.sumPkIst > 0 ? (total.sumPkIst / total.sumUmsatz) * 100 : 0;
+        const totalWesPct    = total.sumUmsatz > 0 && total.sumWes > 0 ? (total.sumWes / total.sumUmsatz) * 100 : 0;
+        const tRow = ws.addRow(['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), Math.round(total.sumPkIst - total.sumPkPlan), Math.round(totalPkPlanPct * 10) / 10, Math.round(totalPkIstPct * 10) / 10, fmtV(total.sumWes), Math.round(totalWesPct * 10) / 10]);
+        addTotalStyle(tRow);
+        tRow.getCell(1).alignment = { horizontal: 'left' };
+
+        monthRows.forEach((mr, idx) => {
+          const pp = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
+          const pi = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
+          const wp = mr.umsatz > 0 && mr.wesChf   > 0 ? (mr.wesChf   / mr.umsatz) * 100 : 0;
+          const delta = mr.pkIstChf > 0 && mr.pkPlanChf > 0 ? Math.round(mr.pkIstChf - mr.pkPlanChf) : 0;
+          const r = ws.addRow([mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), mr.pkIstChf > 0 ? fmtV(mr.pkIstChf) : 0, delta, fmtP(pp, mr.umsatz > 0 && mr.pkPlanChf > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChf > 0), fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChf > 0)]);
+          if (idx % 2 === 0) r.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + ALT_BG } }; });
+          r.getCell(5).font = { color: { argb: 'FF' + (delta > 0 ? RED_FG : delta < 0 ? GREEN_FG : TOTAL_FG) } };
+          r.eachCell(c => { c.alignment = { horizontal: 'right' }; });
+          r.getCell(1).alignment = { horizontal: 'left' };
+        });
+        ws.columns = [{ width: 18 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 12 }, { width: 11 }, { width: 11 }, { width: 13 }, { width: 10 }];
+
+        const numFmt = '#,##0'; const pctFmt = '0.0"%"';
+        ws.eachRow((row, rowNum) => {
+          if (rowNum < 4) return;
+          row.eachCell((cell, colNum) => {
+            if (typeof cell.value === 'number') {
+              if ([2, 3, 4, 5, 8].includes(colNum)) cell.numFmt = numFmt;
+              if ([6, 7, 9].includes(colNum))        cell.numFmt = pctFmt;
+            }
+          });
+        });
+      }
     } else {
-      const headers = ['Datum', 'WT', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'Warenkosten CHF', 'Warenkosten %'];
-      const hRow = ws.addRow(headers);
-      hRow.height = 16;
-      hRow.eachCell(cell => {
-        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + HEADER_BG } };
-        cell.font      = { bold: true, color: { argb: 'FF' + HEADER_FG }, size: 9 };
-        cell.border    = { bottom: { style: 'thin', color: { argb: 'FF94A3B8' } } };
-        cell.alignment = { horizontal: 'right' };
-      });
-      hRow.getCell(1).alignment = { horizontal: 'left' };
-      hRow.getCell(2).alignment = { horizontal: 'center' };
+      if (viewMode === 'waren') {
+        // ── Waren-Ansicht Tages-/Wochen-Excel ────────────────────────────
+        const hRow = ws.addRow(['Datum', 'WT', 'Ist-Umsatz Total', 'Ist-Umsatz Food', 'Ist-Umsatz Bev', 'WK Food CHF', 'WK Food %', 'WK Bev CHF', 'WK Bev %']);
+        addHeaderStyle(hRow);
+        hRow.getCell(1).alignment = { horizontal: 'left' };
+        hRow.getCell(2).alignment = { horizontal: 'center' };
 
-      const tRow = ws.addRow(['TOTAL', '', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), Math.round(total.sumPkIst - total.sumPkPlan), Math.round(total.pkPlanPct * 10) / 10, Math.round(total.pkIstPct * 10) / 10, fmtV(total.sumWes), Math.round(total.wesPct * 10) / 10]);
-      tRow.eachCell(cell => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + TOTAL_BG } };
-        cell.font = { bold: true, color: { argb: 'FF' + TOTAL_FG }, size: 9 };
-        cell.alignment = { horizontal: 'right' };
-      });
-      tRow.getCell(1).alignment = { horizontal: 'left' };
+        const tRow = ws.addRow(['TOTAL', '', fmtV(total.sumUmsatzTotal), fmtV(total.sumUmsatzFood), fmtV(total.sumUmsatzBev), fmtV(total.sumWesFood), Math.round(total.wesFoodPct * 10) / 10, fmtV(total.sumWesBev), Math.round(total.wesBevPct * 10) / 10]);
+        addTotalStyle(tRow);
+        tRow.getCell(1).alignment = { horizontal: 'left' };
 
-      rows.forEach((r, idx) => {
-        const pp = r.umsatz > 0 ? (r.pkPlanChf / r.umsatz) * 100 : 0;
-        const pi = r.umsatz > 0 && r.pkIstChf > 0 ? (r.pkIstChf / r.umsatz) * 100 : 0;
-        const wp = r.umsatz > 0 && r.wesChf   > 0 ? (r.wesChf   / r.umsatz) * 100 : 0;
-        const delta = r.pkIstChf > 0 && r.pkPlanChf > 0 ? Math.round(r.pkIstChf - r.pkPlanChf) : 0;
-        const eRow = ws.addRow([format(r.day, 'dd.MM.yyyy'), WT_ABBR[r.day.getDay()], fmtV(r.umsatz), fmtV(r.pkPlanChf), r.pkIstChf > 0 ? fmtV(r.pkIstChf) : 0, delta, fmtP(pp, r.umsatz > 0 && r.pkPlanChf > 0), fmtP(pi, r.umsatz > 0 && r.pkIstChf > 0), r.wesChf > 0 ? fmtV(r.wesChf) : 0, fmtP(wp, r.umsatz > 0 && r.wesChf > 0)]);
-        if (idx % 2 === 0) eRow.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + ALT_BG } }; });
-        eRow.getCell(3).font = { color: { argb: 'FF' + BLUE_FG } };
-        eRow.getCell(4).font = { color: { argb: 'FF' + BLUE_FG } };
-        eRow.getCell(6).font = { color: { argb: 'FF' + (delta > 0 ? RED_FG : delta < 0 ? GREEN_FG : TOTAL_FG) } };
-        eRow.eachCell(c => { c.alignment = { horizontal: 'right' }; });
-        eRow.getCell(1).alignment = { horizontal: 'left' };
-        eRow.getCell(2).alignment = { horizontal: 'center' };
-      });
-      ws.columns = [{ width: 13 }, { width: 5 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 12 }, { width: 11 }, { width: 11 }, { width: 13 }, { width: 10 }];
+        rows.forEach((r, idx) => {
+          const wfp = r.umsatzFood > 0 && r.wesFood > 0 ? (r.wesFood / r.umsatzFood) * 100 : 0;
+          const wbp = r.umsatzBev  > 0 && r.wesBev  > 0 ? (r.wesBev  / r.umsatzBev)  * 100 : 0;
+          const eRow = ws.addRow([format(r.day, 'dd.MM.yyyy'), WT_ABBR[r.day.getDay()], fmtV(r.umsatzTotal), r.umsatzFood > 0 ? fmtV(r.umsatzFood) : 0, r.umsatzBev > 0 ? fmtV(r.umsatzBev) : 0, r.wesFood > 0 ? fmtV(r.wesFood) : 0, Math.round(wfp * 10) / 10, r.wesBev > 0 ? fmtV(r.wesBev) : 0, Math.round(wbp * 10) / 10]);
+          if (idx % 2 === 0) eRow.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + ALT_BG } }; });
+          eRow.eachCell(c => { c.alignment = { horizontal: 'right' }; });
+          eRow.getCell(1).alignment = { horizontal: 'left' };
+          eRow.getCell(2).alignment = { horizontal: 'center' };
+          [4, 6, 7].forEach(i => { eRow.getCell(i).font = { color: { argb: 'FF' + GREEN_FG_XLSX } }; });
+          [5, 8, 9].forEach(i => { eRow.getCell(i).font = { color: { argb: 'FF' + BLUE_FG } }; });
+        });
+        ws.columns = [{ width: 13 }, { width: 5 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 14 }, { width: 10 }, { width: 14 }, { width: 10 }];
+
+        const numFmt = '#,##0'; const pctFmt = '0.0"%"';
+        ws.eachRow((row, rowNum) => {
+          if (rowNum < 4) return;
+          row.eachCell((cell, colNum) => {
+            if (typeof cell.value === 'number') {
+              if ([3, 4, 5, 6, 8].includes(colNum)) cell.numFmt = numFmt;
+              if ([7, 9].includes(colNum))           cell.numFmt = pctFmt;
+            }
+          });
+        });
+      } else {
+        // ── Personal-Ansicht Tages-/Wochen-Excel ─────────────────────────
+        const hRow = ws.addRow(['Datum', 'WT', 'Ist-Umsatz CHF', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', 'Warenkosten CHF', 'Warenkosten %']);
+        addHeaderStyle(hRow);
+        hRow.getCell(1).alignment = { horizontal: 'left' };
+        hRow.getCell(2).alignment = { horizontal: 'center' };
+
+        const tRow = ws.addRow(['TOTAL', '', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), Math.round(total.sumPkIst - total.sumPkPlan), Math.round(total.pkPlanPct * 10) / 10, Math.round(total.pkIstPct * 10) / 10, fmtV(total.sumWes), Math.round(total.wesPct * 10) / 10]);
+        addTotalStyle(tRow);
+        tRow.getCell(1).alignment = { horizontal: 'left' };
+
+        rows.forEach((r, idx) => {
+          const pp = r.umsatz > 0 ? (r.pkPlanChf / r.umsatz) * 100 : 0;
+          const pi = r.umsatz > 0 && r.pkIstChf > 0 ? (r.pkIstChf / r.umsatz) * 100 : 0;
+          const wp = r.umsatz > 0 && r.wesChf   > 0 ? (r.wesChf   / r.umsatz) * 100 : 0;
+          const delta = r.pkIstChf > 0 && r.pkPlanChf > 0 ? Math.round(r.pkIstChf - r.pkPlanChf) : 0;
+          const eRow = ws.addRow([format(r.day, 'dd.MM.yyyy'), WT_ABBR[r.day.getDay()], fmtV(r.umsatz), fmtV(r.pkPlanChf), r.pkIstChf > 0 ? fmtV(r.pkIstChf) : 0, delta, fmtP(pp, r.umsatz > 0 && r.pkPlanChf > 0), fmtP(pi, r.umsatz > 0 && r.pkIstChf > 0), r.wesChf > 0 ? fmtV(r.wesChf) : 0, fmtP(wp, r.umsatz > 0 && r.wesChf > 0)]);
+          if (idx % 2 === 0) eRow.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + ALT_BG } }; });
+          eRow.getCell(3).font = { color: { argb: 'FF' + BLUE_FG } };
+          eRow.getCell(4).font = { color: { argb: 'FF' + BLUE_FG } };
+          eRow.getCell(6).font = { color: { argb: 'FF' + (delta > 0 ? RED_FG : delta < 0 ? GREEN_FG : TOTAL_FG) } };
+          eRow.eachCell(c => { c.alignment = { horizontal: 'right' }; });
+          eRow.getCell(1).alignment = { horizontal: 'left' };
+          eRow.getCell(2).alignment = { horizontal: 'center' };
+        });
+        ws.columns = [{ width: 13 }, { width: 5 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 12 }, { width: 11 }, { width: 11 }, { width: 13 }, { width: 10 }];
+
+        const numFmt = '#,##0'; const pctFmt = '0.0"%"';
+        ws.eachRow((row, rowNum) => {
+          if (rowNum < 4) return;
+          row.eachCell((cell, colNum) => {
+            if (typeof cell.value === 'number') {
+              if ([3, 4, 5, 6, 9].includes(colNum)) cell.numFmt = numFmt;
+              if ([7, 8, 10].includes(colNum))       cell.numFmt = pctFmt;
+            }
+          });
+        });
+      }
     }
-
-    // Format number cells
-    const numFmt = '#,##0';
-    const pctFmt = '0.0"%"';
-    ws.eachRow((row, rowNum) => {
-      if (rowNum < 4) return;
-      row.eachCell((cell, colNum) => {
-        if (typeof cell.value === 'number') {
-          const isCHF = period === 'jahr' ? [2, 3, 4, 5, 8].includes(colNum) : [3, 4, 5, 6, 9].includes(colNum);
-          const isPct = period === 'jahr' ? [6, 7, 9].includes(colNum) : [7, 8, 10].includes(colNum);
-          if (isCHF) cell.numFmt = numFmt;
-          if (isPct)  cell.numFmt = pctFmt;
-        }
-      });
-    });
 
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
-    a.href = url; a.download = `tages-controlling-${format(anchor, 'yyyy-MM')}.xlsx`;
+    a.href = url; a.download = `tages-controlling-${format(anchor, 'yyyy-MM')}${viewMode === 'waren' ? '-warenkosten' : ''}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [period, anchor, rows, monthRows, total]);
+  }, [period, anchor, rows, monthRows, total, viewMode]);
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -1037,25 +1187,53 @@ export default function TagesControllingPage() {
             Heute
           </Button>
 
-          {/* Food/Bev/Total Filter */}
+          {/* Ansichts-Umschalter: Personal / Waren */}
           <div className="flex rounded-lg border border-border overflow-hidden text-xs font-medium">
-            {(['total', 'food', 'beverage'] as WarenFilter[]).map(f => (
-              <button
-                key={f}
-                onClick={() => setWarenFilter(f)}
-                className={cn(
-                  'px-2.5 py-1.5 transition-colors border-l border-border first:border-l-0',
-                  warenFilter === f
-                    ? f === 'food'     ? 'bg-emerald-600 text-white'
-                      : f === 'beverage' ? 'bg-blue-600 text-white'
-                      : 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:bg-muted',
-                )}
-              >
-                {f === 'total' ? 'Total' : f === 'food' ? 'Food' : 'Beverage'}
-              </button>
-            ))}
+            <button
+              onClick={() => setViewMode('personal')}
+              className={cn(
+                'px-3 py-1.5 transition-colors flex items-center gap-1.5',
+                viewMode === 'personal'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+            >
+              <span>Personal</span>
+            </button>
+            <button
+              onClick={() => setViewMode('waren')}
+              className={cn(
+                'px-3 py-1.5 transition-colors border-l border-border flex items-center gap-1.5',
+                viewMode === 'waren'
+                  ? 'bg-teal-600 text-white'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+            >
+              <span>Warenkosten</span>
+            </button>
           </div>
+
+          {/* Food/Bev/Total Filter – nur in Personal-Ansicht */}
+          {viewMode === 'personal' && (
+            <div className="flex rounded-lg border border-border overflow-hidden text-xs font-medium">
+              {(['total', 'food', 'beverage'] as WarenFilter[]).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setWarenFilter(f)}
+                  className={cn(
+                    'px-2.5 py-1.5 transition-colors border-l border-border first:border-l-0',
+                    warenFilter === f
+                      ? f === 'food'     ? 'bg-emerald-600 text-white'
+                        : f === 'beverage' ? 'bg-blue-600 text-white'
+                        : 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-muted',
+                  )}
+                >
+                  {f === 'total' ? 'Total' : f === 'food' ? 'Food' : 'Beverage'}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Export-Buttons */}
           <div className="flex items-center gap-1.5">
@@ -1163,51 +1341,65 @@ export default function TagesControllingPage() {
                         <ResizeHandle col="wt" />
                       </th>
                     )}
-                    <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('umsatz')} title="Klicken zum Bearbeiten (Brutto CHF)">
-                      <span className="inline-flex items-center gap-1 justify-end">
-                        {warenFilter === 'food' ? 'Food-Umsatz CHF'
-                          : warenFilter === 'beverage' ? 'Bev-Umsatz CHF'
-                          : 'Ist-Umsatz CHF'}
-                        <Pencil className="h-2.5 w-2.5 opacity-40" />
-                      </span>
-                      <ResizeHandle col="umsatz" />
-                    </th>
-                    <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('pkPlan')}>
-                      <span>PK Plan CHF</span>
-                      <ResizeHandle col="pkPlan" />
-                    </th>
-                    <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('pkIst')}>
-                      <span>PK Ist CHF</span>
-                      <ResizeHandle col="pkIst" />
-                    </th>
-                    <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('delta')}>
-                      <span>Δ PK CHF</span>
-                      <ResizeHandle col="delta" />
-                    </th>
-                    <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('pkPlanPct')}>
-                      <span>PK Plan %</span>
-                      <ResizeHandle col="pkPlanPct" />
-                    </th>
-                    <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('pkIstPct')}>
-                      <span>PK Ist %</span>
-                      <ResizeHandle col="pkIstPct" />
-                    </th>
-                    <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('wesChf')}>
-                      <span>
-                        {warenFilter === 'food' ? 'WK Food CHF'
-                          : warenFilter === 'beverage' ? 'WK Bev CHF'
-                          : 'Warenkosten CHF'}
-                      </span>
-                      <ResizeHandle col="wesChf" />
-                    </th>
-                    <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('wesPct')}>
-                      <span>
-                        {warenFilter === 'food' ? 'WK Food %'
-                          : warenFilter === 'beverage' ? 'WK Bev %'
-                          : 'Warenkosten %'}
-                      </span>
-                      <ResizeHandle col="wesPct" />
-                    </th>
+                    {viewMode === 'personal' ? (<>
+                      {/* ── Personal-Ansicht: Umsatz + PK + WES ──────────────── */}
+                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('umsatz')} title="Klicken zum Bearbeiten (Brutto CHF)">
+                        <span className="inline-flex items-center gap-1 justify-end">
+                          {warenFilter === 'food' ? 'Food-Umsatz CHF'
+                            : warenFilter === 'beverage' ? 'Bev-Umsatz CHF'
+                            : 'Ist-Umsatz CHF'}
+                          <Pencil className="h-2.5 w-2.5 opacity-40" />
+                        </span>
+                        <ResizeHandle col="umsatz" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('pkPlan')}>
+                        <span>PK Plan CHF</span><ResizeHandle col="pkPlan" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('pkIst')}>
+                        <span>PK Ist CHF</span><ResizeHandle col="pkIst" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('delta')}>
+                        <span>Δ PK CHF</span><ResizeHandle col="delta" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('pkPlanPct')}>
+                        <span>PK Plan %</span><ResizeHandle col="pkPlanPct" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('pkIstPct')}>
+                        <span>PK Ist %</span><ResizeHandle col="pkIstPct" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('wesChf')}>
+                        <span>{warenFilter === 'food' ? 'WK Food CHF' : warenFilter === 'beverage' ? 'WK Bev CHF' : 'Warenkosten CHF'}</span>
+                        <ResizeHandle col="wesChf" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('wesPct')}>
+                        <span>{warenFilter === 'food' ? 'WK Food %' : warenFilter === 'beverage' ? 'WK Bev %' : 'Warenkosten %'}</span>
+                        <ResizeHandle col="wesPct" />
+                      </th>
+                    </>) : (<>
+                      {/* ── Waren-Ansicht: Umsatz-Split + WK Food/Bev ────────── */}
+                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('umsatzTotal')} title="Klicken zum Bearbeiten (Brutto CHF)">
+                        <span className="inline-flex items-center gap-1 justify-end">Ist-Umsatz Total<Pencil className="h-2.5 w-2.5 opacity-40" /></span>
+                        <ResizeHandle col="umsatzTotal" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-emerald-700 dark:text-emerald-400 border-l border-border/50" style={colStyle('umsatzFood')}>
+                        <span>Ist-Umsatz Food</span><ResizeHandle col="umsatzFood" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-blue-700 dark:text-blue-400" style={colStyle('umsatzBev')}>
+                        <span>Ist-Umsatz Beverage</span><ResizeHandle col="umsatzBev" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-emerald-700 dark:text-emerald-400 border-l border-border/50" style={colStyle('wkFoodChf')}>
+                        <span>WK Food CHF</span><ResizeHandle col="wkFoodChf" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-emerald-700 dark:text-emerald-400" style={colStyle('wkFoodPct')}>
+                        <span>WK Food %</span><ResizeHandle col="wkFoodPct" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-blue-700 dark:text-blue-400 border-l border-border/50" style={colStyle('wkBevChf')}>
+                        <span>WK Bev CHF</span><ResizeHandle col="wkBevChf" />
+                      </th>
+                      <th className="relative group px-3 py-2 text-right font-medium text-blue-700 dark:text-blue-400" style={colStyle('wkBevPct')}>
+                        <span>WK Bev %</span><ResizeHandle col="wkBevPct" />
+                      </th>
+                    </>)}
                   </tr>
 
                   {/* ── Total-Zeile (sticky, direkt unter Header) ──────────── */}
@@ -1225,38 +1417,63 @@ export default function TagesControllingPage() {
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums" style={colStyle('umsatz')}>
-                      {fmtN(total.sumUmsatz)}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums border-l border-border/50" style={colStyle('pkPlan')}>
-                      {fmtN(total.sumPkPlan)}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums" style={colStyle('pkIst')}>
-                      {total.sumPkIst > 0 ? fmtN(total.sumPkIst) : <span className="text-muted-foreground font-normal">–</span>}
-                    </td>
-                    <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/50 font-semibold', (() => {
-                      const d = total.sumPkIst - total.sumPkPlan;
-                      if (total.sumPkIst === 0 || total.sumPkPlan === 0) return 'text-muted-foreground';
-                      return d > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
-                    })())} style={colStyle('delta')}>
-                      {(() => {
-                        if (total.sumPkIst === 0 || total.sumPkPlan === 0) return '–';
+                    {viewMode === 'personal' ? (<>
+                      <td className="px-3 py-2 text-right tabular-nums" style={colStyle('umsatz')}>
+                        {fmtN(total.sumUmsatz)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums border-l border-border/50" style={colStyle('pkPlan')}>
+                        {fmtN(total.sumPkPlan)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums" style={colStyle('pkIst')}>
+                        {total.sumPkIst > 0 ? fmtN(total.sumPkIst) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/50 font-semibold', (() => {
                         const d = total.sumPkIst - total.sumPkPlan;
-                        return (d > 0 ? '+' : '') + fmtN(d);
-                      })()}
-                    </td>
-                    <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/50', pctCls(total.pkPlanPct))} style={colStyle('pkPlanPct')}>
-                      {fmtPct(total.pkPlanPct, total.sumUmsatz > 0)}
-                    </td>
-                    <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(total.pkIstPct))} style={colStyle('pkIstPct')}>
-                      {fmtPct(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0)}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums border-l border-border/50" style={colStyle('wesChf')}>
-                      {total.sumWes > 0 ? fmtN(total.sumWes) : <span className="text-muted-foreground font-normal">–</span>}
-                    </td>
-                    <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(total.wesPct))} style={colStyle('wesPct')}>
-                      {fmtPct(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)}
-                    </td>
+                        if (total.sumPkIst === 0 || total.sumPkPlan === 0) return 'text-muted-foreground';
+                        return d > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
+                      })())} style={colStyle('delta')}>
+                        {(() => {
+                          if (total.sumPkIst === 0 || total.sumPkPlan === 0) return '–';
+                          const d = total.sumPkIst - total.sumPkPlan;
+                          return (d > 0 ? '+' : '') + fmtN(d);
+                        })()}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/50', pctCls(total.pkPlanPct))} style={colStyle('pkPlanPct')}>
+                        {fmtPct(total.pkPlanPct, total.sumUmsatz > 0)}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(total.pkIstPct))} style={colStyle('pkIstPct')}>
+                        {fmtPct(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums border-l border-border/50" style={colStyle('wesChf')}>
+                        {total.sumWes > 0 ? fmtN(total.sumWes) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(total.wesPct))} style={colStyle('wesPct')}>
+                        {fmtPct(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)}
+                      </td>
+                    </>) : (<>
+                      {/* Waren-Ansicht Total */}
+                      <td className="px-3 py-2 text-right tabular-nums" style={colStyle('umsatzTotal')}>
+                        {fmtN(total.sumUmsatzTotal)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums border-l border-border/50 text-emerald-700 dark:text-emerald-400" style={colStyle('umsatzFood')}>
+                        {total.sumUmsatzFood > 0 ? fmtN(total.sumUmsatzFood) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-blue-700 dark:text-blue-400" style={colStyle('umsatzBev')}>
+                        {total.sumUmsatzBev > 0 ? fmtN(total.sumUmsatzBev) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums border-l border-border/50 text-emerald-700 dark:text-emerald-400" style={colStyle('wkFoodChf')}>
+                        {total.sumWesFood > 0 ? fmtN(total.sumWesFood) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums text-emerald-700 dark:text-emerald-400', pctCls(total.wesFoodPct))} style={colStyle('wkFoodPct')}>
+                        {fmtPct(total.wesFoodPct, total.sumWesFood > 0 && total.sumUmsatzFood > 0)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums border-l border-border/50 text-blue-700 dark:text-blue-400" style={colStyle('wkBevChf')}>
+                        {total.sumWesBev > 0 ? fmtN(total.sumWesBev) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums text-blue-700 dark:text-blue-400', pctCls(total.wesBevPct))} style={colStyle('wkBevPct')}>
+                        {fmtPct(total.wesBevPct, total.sumWesBev > 0 && total.sumUmsatzBev > 0)}
+                      </td>
+                    </>)}
                   </tr>
                 </thead>
 
@@ -1264,9 +1481,11 @@ export default function TagesControllingPage() {
                   {period === 'jahr'
                     /* ── Jahresansicht: 12 Monatszeilen ──────────────────────── */
                     ? monthRows.map(mr => {
-                        const pkPlanPct = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
-                        const pkIstPct  = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
-                        const wesPct    = mr.umsatz > 0 && mr.wesChf   > 0 ? (mr.wesChf   / mr.umsatz) * 100 : 0;
+                        const pkPlanPct  = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
+                        const pkIstPct   = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
+                        const wesPct     = mr.umsatz > 0 && mr.wesChf > 0 ? (mr.wesChf / mr.umsatz) * 100 : 0;
+                        const wesFoodPct = mr.umsatzFood > 0 && mr.wesFood > 0 ? (mr.wesFood / mr.umsatzFood) * 100 : 0;
+                        const wesBevPct  = mr.umsatzBev  > 0 && mr.wesBev  > 0 ? (mr.wesBev  / mr.umsatzBev)  * 100 : 0;
                         const isCurrentMonth = mr.monthKey === format(today, 'yyyy-MM');
                         return (
                           <tr
@@ -1280,38 +1499,63 @@ export default function TagesControllingPage() {
                               {mr.label}
                               {isCurrentMonth && <span className="ml-1.5 text-blue-600 dark:text-blue-400 text-xs">◀</span>}
                             </td>
-                            <td className={cn('px-3 py-2 text-right tabular-nums font-medium', mr.umsatz === 0 && 'text-muted-foreground')} style={colStyle('umsatz')}>
-                              {mr.umsatz > 0 ? fmtN(mr.umsatz) : '–'}
-                            </td>
-                            <td className="px-3 py-2 text-right tabular-nums border-l border-border/30 text-muted-foreground" style={colStyle('pkPlan')}>
-                              {mr.pkPlanChf > 0 ? fmtN(mr.pkPlanChf) : '–'}
-                            </td>
-                            <td className="px-3 py-2 text-right tabular-nums" style={colStyle('pkIst')}>
-                              {mr.pkIstChf > 0
-                                ? <span className={cn(mr.pkIstChf > mr.pkPlanChf && mr.pkPlanChf > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')}>{fmtN(mr.pkIstChf)}</span>
-                                : <span className="text-muted-foreground">–</span>}
-                            </td>
-                            {(() => {
-                              const d = mr.pkIstChf - mr.pkPlanChf;
-                              const show = mr.pkIstChf > 0 && mr.pkPlanChf > 0;
-                              return (
-                                <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/30', show ? (d > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400') : 'text-muted-foreground')} style={colStyle('delta')}>
-                                  {show ? (d > 0 ? '+' : '') + fmtN(d) : '–'}
-                                </td>
-                              );
-                            })()}
-                            <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/30', pctCls(pkPlanPct))} style={colStyle('pkPlanPct')}>
-                              {mr.umsatz > 0 && mr.pkPlanChf > 0 ? fmtPct(pkPlanPct) : '–'}
-                            </td>
-                            <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(pkIstPct))} style={colStyle('pkIstPct')}>
-                              {mr.umsatz > 0 && mr.pkIstChf > 0 ? fmtPct(pkIstPct) : '–'}
-                            </td>
-                            <td className="px-3 py-2 text-right tabular-nums border-l border-border/30 text-muted-foreground" style={colStyle('wesChf')}>
-                              {mr.wesChf > 0 ? fmtN(mr.wesChf) : '–'}
-                            </td>
-                            <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(wesPct))} style={colStyle('wesPct')}>
-                              {mr.umsatz > 0 && mr.wesChf > 0 ? fmtPct(wesPct) : '–'}
-                            </td>
+                            {viewMode === 'personal' ? (<>
+                              <td className={cn('px-3 py-2 text-right tabular-nums font-medium', mr.umsatz === 0 && 'text-muted-foreground')} style={colStyle('umsatz')}>
+                                {mr.umsatz > 0 ? fmtN(mr.umsatz) : '–'}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums border-l border-border/30 text-muted-foreground" style={colStyle('pkPlan')}>
+                                {mr.pkPlanChf > 0 ? fmtN(mr.pkPlanChf) : '–'}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums" style={colStyle('pkIst')}>
+                                {mr.pkIstChf > 0
+                                  ? <span className={cn(mr.pkIstChf > mr.pkPlanChf && mr.pkPlanChf > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')}>{fmtN(mr.pkIstChf)}</span>
+                                  : <span className="text-muted-foreground">–</span>}
+                              </td>
+                              {(() => {
+                                const d = mr.pkIstChf - mr.pkPlanChf;
+                                const show = mr.pkIstChf > 0 && mr.pkPlanChf > 0;
+                                return (
+                                  <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/30', show ? (d > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400') : 'text-muted-foreground')} style={colStyle('delta')}>
+                                    {show ? (d > 0 ? '+' : '') + fmtN(d) : '–'}
+                                  </td>
+                                );
+                              })()}
+                              <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/30', pctCls(pkPlanPct))} style={colStyle('pkPlanPct')}>
+                                {mr.umsatz > 0 && mr.pkPlanChf > 0 ? fmtPct(pkPlanPct) : '–'}
+                              </td>
+                              <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(pkIstPct))} style={colStyle('pkIstPct')}>
+                                {mr.umsatz > 0 && mr.pkIstChf > 0 ? fmtPct(pkIstPct) : '–'}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums border-l border-border/30 text-muted-foreground" style={colStyle('wesChf')}>
+                                {mr.wesChf > 0 ? fmtN(mr.wesChf) : '–'}
+                              </td>
+                              <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(wesPct))} style={colStyle('wesPct')}>
+                                {mr.umsatz > 0 && mr.wesChf > 0 ? fmtPct(wesPct) : '–'}
+                              </td>
+                            </>) : (<>
+                              {/* Waren-Ansicht */}
+                              <td className="px-3 py-2 text-right tabular-nums" style={colStyle('umsatzTotal')}>
+                                {mr.umsatzTotal > 0 ? fmtN(mr.umsatzTotal) : '–'}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums border-l border-border/30 text-emerald-700 dark:text-emerald-400" style={colStyle('umsatzFood')}>
+                                {mr.umsatzFood > 0 ? fmtN(mr.umsatzFood) : '–'}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-blue-700 dark:text-blue-400" style={colStyle('umsatzBev')}>
+                                {mr.umsatzBev > 0 ? fmtN(mr.umsatzBev) : '–'}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums border-l border-border/30 text-emerald-700 dark:text-emerald-400" style={colStyle('wkFoodChf')}>
+                                {mr.wesFood > 0 ? fmtN(mr.wesFood) : '–'}
+                              </td>
+                              <td className={cn('px-3 py-2 text-right tabular-nums text-emerald-700 dark:text-emerald-400', pctCls(wesFoodPct))} style={colStyle('wkFoodPct')}>
+                                {mr.umsatzFood > 0 && mr.wesFood > 0 ? fmtPct(wesFoodPct) : '–'}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums border-l border-border/30 text-blue-700 dark:text-blue-400" style={colStyle('wkBevChf')}>
+                                {mr.wesBev > 0 ? fmtN(mr.wesBev) : '–'}
+                              </td>
+                              <td className={cn('px-3 py-2 text-right tabular-nums text-blue-700 dark:text-blue-400', pctCls(wesBevPct))} style={colStyle('wkBevPct')}>
+                                {mr.umsatzBev > 0 && mr.wesBev > 0 ? fmtPct(wesBevPct) : '–'}
+                              </td>
+                            </>)}
                           </tr>
                         );
                       })
@@ -1370,35 +1614,60 @@ export default function TagesControllingPage() {
                                 </button>
                               )}
                             </td>
-                            <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-muted-foreground" style={colStyle('pkPlan')}>
-                              {row.pkPlanChf > 0 ? fmtN(row.pkPlanChf) : '–'}
-                            </td>
-                            <td className="px-3 py-1.5 text-right tabular-nums" style={colStyle('pkIst')}>
-                              {row.pkIstChf > 0
-                                ? <span className={cn(row.pkIstChf > row.pkPlanChf && row.pkPlanChf > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')}>{fmtN(row.pkIstChf)}</span>
-                                : <span className="text-muted-foreground">–</span>}
-                            </td>
-                            {(() => {
-                              const d = row.pkIstChf - row.pkPlanChf;
-                              const show = row.pkIstChf > 0 && row.pkPlanChf > 0;
-                              return (
-                                <td className={cn('px-3 py-1.5 text-right tabular-nums border-l border-border/30', show ? (d > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400') : 'text-muted-foreground')} style={colStyle('delta')}>
-                                  {show ? (d > 0 ? '+' : '') + fmtN(d) : '–'}
+                            {viewMode === 'personal' ? (<>
+                              <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-muted-foreground" style={colStyle('pkPlan')}>
+                                {row.pkPlanChf > 0 ? fmtN(row.pkPlanChf) : '–'}
+                              </td>
+                              <td className="px-3 py-1.5 text-right tabular-nums" style={colStyle('pkIst')}>
+                                {row.pkIstChf > 0
+                                  ? <span className={cn(row.pkIstChf > row.pkPlanChf && row.pkPlanChf > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')}>{fmtN(row.pkIstChf)}</span>
+                                  : <span className="text-muted-foreground">–</span>}
+                              </td>
+                              {(() => {
+                                const d = row.pkIstChf - row.pkPlanChf;
+                                const show = row.pkIstChf > 0 && row.pkPlanChf > 0;
+                                return (
+                                  <td className={cn('px-3 py-1.5 text-right tabular-nums border-l border-border/30', show ? (d > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400') : 'text-muted-foreground')} style={colStyle('delta')}>
+                                    {show ? (d > 0 ? '+' : '') + fmtN(d) : '–'}
+                                  </td>
+                                );
+                              })()}
+                              <td className={cn('px-3 py-1.5 text-right tabular-nums border-l border-border/30', pctCls(pkPlanPct))} style={colStyle('pkPlanPct')}>
+                                {row.umsatz > 0 && row.pkPlanChf > 0 ? fmtPct(pkPlanPct) : '–'}
+                              </td>
+                              <td className={cn('px-3 py-1.5 text-right tabular-nums', pctCls(pkIstPct))} style={colStyle('pkIstPct')}>
+                                {row.umsatz > 0 && row.pkIstChf > 0 ? fmtPct(pkIstPct) : '–'}
+                              </td>
+                              <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-muted-foreground" style={colStyle('wesChf')}>
+                                {row.wesChf > 0 ? fmtN(row.wesChf) : '–'}
+                              </td>
+                              <td className={cn('px-3 py-1.5 text-right tabular-nums', pctCls(wesPct))} style={colStyle('wesPct')}>
+                                {row.umsatz > 0 && row.wesChf > 0 ? fmtPct(wesPct) : '–'}
+                              </td>
+                            </>) : (() => {
+                              const wkFoodPct = row.umsatzFood > 0 && row.wesFood > 0 ? (row.wesFood / row.umsatzFood) * 100 : 0;
+                              const wkBevPct  = row.umsatzBev  > 0 && row.wesBev  > 0 ? (row.wesBev  / row.umsatzBev)  * 100 : 0;
+                              return (<>
+                                <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-emerald-700 dark:text-emerald-400" style={colStyle('umsatzFood')}>
+                                  {row.umsatzFood > 0 ? fmtN(row.umsatzFood) : '–'}
                                 </td>
-                              );
+                                <td className="px-3 py-1.5 text-right tabular-nums text-blue-700 dark:text-blue-400" style={colStyle('umsatzBev')}>
+                                  {row.umsatzBev > 0 ? fmtN(row.umsatzBev) : '–'}
+                                </td>
+                                <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-emerald-700 dark:text-emerald-400" style={colStyle('wkFoodChf')}>
+                                  {row.wesFood > 0 ? fmtN(row.wesFood) : '–'}
+                                </td>
+                                <td className={cn('px-3 py-1.5 text-right tabular-nums text-emerald-700 dark:text-emerald-400', pctCls(wkFoodPct))} style={colStyle('wkFoodPct')}>
+                                  {row.umsatzFood > 0 && row.wesFood > 0 ? fmtPct(wkFoodPct) : '–'}
+                                </td>
+                                <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-blue-700 dark:text-blue-400" style={colStyle('wkBevChf')}>
+                                  {row.wesBev > 0 ? fmtN(row.wesBev) : '–'}
+                                </td>
+                                <td className={cn('px-3 py-1.5 text-right tabular-nums text-blue-700 dark:text-blue-400', pctCls(wkBevPct))} style={colStyle('wkBevPct')}>
+                                  {row.umsatzBev > 0 && row.wesBev > 0 ? fmtPct(wkBevPct) : '–'}
+                                </td>
+                              </>);
                             })()}
-                            <td className={cn('px-3 py-1.5 text-right tabular-nums border-l border-border/30', pctCls(pkPlanPct))} style={colStyle('pkPlanPct')}>
-                              {row.umsatz > 0 && row.pkPlanChf > 0 ? fmtPct(pkPlanPct) : '–'}
-                            </td>
-                            <td className={cn('px-3 py-1.5 text-right tabular-nums', pctCls(pkIstPct))} style={colStyle('pkIstPct')}>
-                              {row.umsatz > 0 && row.pkIstChf > 0 ? fmtPct(pkIstPct) : '–'}
-                            </td>
-                            <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-muted-foreground" style={colStyle('wesChf')}>
-                              {row.wesChf > 0 ? fmtN(row.wesChf) : '–'}
-                            </td>
-                            <td className={cn('px-3 py-1.5 text-right tabular-nums', pctCls(wesPct))} style={colStyle('wesPct')}>
-                              {row.umsatz > 0 && row.wesChf > 0 ? fmtPct(wesPct) : '–'}
-                            </td>
                           </tr>
                         );
                       })
