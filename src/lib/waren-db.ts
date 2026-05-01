@@ -25,6 +25,11 @@ export interface Supplier {
 }
 
 /**
+ * Kategorie einer Warenrechnung für die Kostenaufteilung Food/Beverage.
+ */
+export type WarenKategorie = 'Food' | 'Beverage' | 'Sonstiges';
+
+/**
  * Zuordnung eines Rechnungsbetrags zu einem Warenkonto.
  * Wird für die optionale Kontoaufteilung (Split auf 2 Konten) verwendet.
  */
@@ -48,6 +53,8 @@ export interface InvoiceEntry {
   warenkonto?: string;
   /** Optionale Kontoaufteilung auf 2 Konten (überschreibt warenkonto wenn vorhanden) */
   kontoSplits?: KontoSplit[];
+  /** Kategorie für Food/Beverage-Auswertung (Standard: Sonstiges) */
+  kategorie?: WarenKategorie;
   createdAt: string;
   updatedAt: string;
 }

@@ -27,6 +27,7 @@ import {
   type Supplier,
   type InvoiceEntry,
   type KontoSplit,
+  type WarenKategorie,
 } from '@/lib/waren-db';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,7 +74,10 @@ interface EntryForm {
   split1Amount: string;
   split2Warenkonto: string;
   split2Amount: string;
+  kategorie: WarenKategorie;
 }
+
+const WARE_KATEGORIEN: WarenKategorie[] = ['Food', 'Beverage', 'Sonstiges'];
 
 const EMPTY_FORM: EntryForm = {
   date: new Date().toISOString().split('T')[0],
@@ -89,6 +93,7 @@ const EMPTY_FORM: EntryForm = {
   split1Amount: '',
   split2Warenkonto: '',
   split2Amount: '',
+  kategorie: 'Sonstiges',
 };
 
 const VAT_RATES = ['8.1', '2.6', '3.8', '0'];
@@ -753,6 +758,7 @@ export default function WarenrechnungenPage() {
         vatIncluded: form.vatIncluded, vatRate: r,
         reference: form.reference || undefined, note: form.note || undefined,
         kontoSplits: splits,
+        kategorie: form.kategorie,
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
     } else {
@@ -766,6 +772,7 @@ export default function WarenrechnungenPage() {
         vatIncluded: form.vatIncluded, vatRate: Number(form.vatRate),
         reference: form.reference || undefined, note: form.note || undefined,
         warenkonto: form.warenkonto || undefined,
+        kategorie: form.kategorie,
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
     }
@@ -1071,8 +1078,32 @@ export default function WarenrechnungenPage() {
                       </div>
                     </div>
 
-                    {/* ── Warenkonto-Zeile ───────────────────────────────────────── */}
+                    {/* ── Kategorie + Warenkonto-Zeile ───────────────────────────── */}
                     <div className="flex flex-wrap items-end gap-3 pt-1">
+
+                      {/* Kategorie (Pflichtfeld) */}
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">
+                          Kategorie <span className="text-destructive">*</span>
+                        </Label>
+                        <div className="flex rounded-md overflow-hidden border border-border h-9 text-xs font-medium">
+                          {WARE_KATEGORIEN.map(k => (
+                            <button
+                              key={k}
+                              type="button"
+                              onClick={() => setForm(f => ({ ...f, kategorie: k }))}
+                              className={cn(
+                                'px-3 transition-colors border-l border-border first:border-l-0',
+                                form.kategorie === k
+                                  ? k === 'Food' ? 'bg-emerald-600 text-white'
+                                    : k === 'Beverage' ? 'bg-blue-600 text-white'
+                                    : 'bg-foreground text-background'
+                                  : 'text-muted-foreground hover:bg-muted',
+                              )}
+                            >{k}</button>
+                          ))}
+                        </div>
+                      </div>
 
                       {/* Split-Toggle */}
                       <div className="space-y-1">
@@ -1220,6 +1251,7 @@ export default function WarenrechnungenPage() {
                           <tr className="border-b border-border bg-muted/10 text-xs text-muted-foreground">
                             <th className="px-4 py-2.5 text-left font-medium w-[110px]">Datum</th>
                             <th className="px-4 py-2.5 text-left font-medium">Lieferant</th>
+                            <th className="px-4 py-2.5 text-left font-medium w-[110px]">Kategorie</th>
                             <th className="px-4 py-2.5 text-right font-medium">Netto CHF</th>
                             <th className="px-4 py-2.5 text-right font-medium text-muted-foreground/70">Brutto CHF</th>
                             <th className="px-4 py-2.5 text-center font-medium w-[70px]">MWST</th>
@@ -1234,6 +1266,19 @@ export default function WarenrechnungenPage() {
                             <tr key={e.id} className={cn('border-b border-border/40 hover:bg-muted/20 transition-colors', i % 2 === 1 && 'bg-muted/10')}>
                               <td className="px-4 py-2.5 text-sm text-muted-foreground">{formatDateLong(e.date)}</td>
                               <td className="px-4 py-2.5 font-medium">{e.supplierName}</td>
+                              <td className="px-4 py-2.5">
+                                {(() => {
+                                  const kat = e.kategorie ?? 'Sonstiges';
+                                  return (
+                                    <span className={cn(
+                                      'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                                      kat === 'Food'     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                      : kat === 'Beverage' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'
+                                      : 'bg-muted text-muted-foreground',
+                                    )}>{kat}</span>
+                                  );
+                                })()}
+                              </td>
                               <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{fmtChf(e.amountNet)}</td>
                               <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(e.amountGross)}</td>
                               <td className="px-4 py-2.5 text-center text-xs text-muted-foreground">{e.vatRate} %</td>
@@ -2054,6 +2099,27 @@ export default function WarenrechnungenPage() {
                       {VAT_RATES.map(r => <SelectItem key={r} value={r}>{r} %</SelectItem>)}
                     </SelectContent>
                   </Select>
+                </div>
+              </div>
+              {/* Kategorie */}
+              <div className="space-y-1">
+                <Label className="text-xs">Kategorie</Label>
+                <div className="flex rounded-md overflow-hidden border border-border h-9 text-xs font-medium">
+                  {WARE_KATEGORIEN.map(k => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setEditEntry(x => x ? { ...x, kategorie: k as WarenKategorie } : x)}
+                      className={cn(
+                        'px-3 flex-1 transition-colors border-l border-border first:border-l-0',
+                        (editEntry?.kategorie ?? 'Sonstiges') === k
+                          ? k === 'Food' ? 'bg-emerald-600 text-white'
+                            : k === 'Beverage' ? 'bg-blue-600 text-white'
+                            : 'bg-foreground text-background'
+                          : 'text-muted-foreground hover:bg-muted',
+                      )}
+                    >{k}</button>
+                  ))}
                 </div>
               </div>
               {/* Warenkonto (einfach) – nur wenn kein Split */}

@@ -36,7 +36,7 @@ import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
 import { kvSet } from '@/lib/supabase-kv';
-import { loadMonthInvoices } from '@/lib/waren-db';
+import { loadMonthInvoices, type WarenKategorie } from '@/lib/waren-db';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import {
   loadScheduleForMonth,
@@ -50,19 +50,33 @@ import { getEffectiveWageBatch } from '@/lib/wage-history';
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
 type Period = 'woche' | 'monat' | 'jahr';
+type WarenFilter = 'total' | 'food' | 'beverage';
 
 interface EmployeeLite {
   id: string;
   hourlyWage: number;
 }
 
+/** Strukturierter Warenkosteneintrags pro Tag (netto und brutto, aufgeteilt nach Kategorie) */
+interface WarenkostenDay {
+  totalNet:  number; totalGross:  number;
+  foodNet:   number; foodGross:   number;
+  bevNet:    number; bevGross:    number;
+}
+
 interface ControllingRow {
   date:       string;    // yyyy-MM-dd
   day:        Date;
-  umsatz:     number;    // Ist-Umsatz Brutto
+  umsatz:     number;    // Ist-Umsatz (gemäss warenFilter + showNetRevenue)
+  umsatzFood: number;    // Food-Umsatz (roh, für Filter)
+  umsatzBev:  number;    // Beverage-Umsatz (roh, für Filter)
+  umsatzTotal: number;   // Total-Umsatz (für Filter)
   pkPlanChf:  number;    // Personalkosten Plan CHF
   pkIstChf:   number;    // Personalkosten Ist CHF
-  wesChf:     number;    // Wareneinsatz CHF (pro-rata aus Monatswert)
+  wesChf:     number;    // Wareneinsatz CHF (gemäss warenFilter + showNetRevenue)
+  wesTotal:   number;    // Total WES (Netto oder Brutto je nach showNetRevenue)
+  wesFood:    number;    // Food WES
+  wesBev:     number;    // Beverage WES
 }
 
 interface MonthRow {
@@ -192,19 +206,29 @@ function buildActualCostFromHours(
 /**
  * Lädt echte Warenkosten (Tageswerte) aus den manuell erfassten
  * Lieferantenrechnungen (waren-db: supplier_invoice_entries).
- * Rückgabe: Map { 'yyyy-MM-dd' → netto CHF Summe des Tages }
- *
- * Ersetzt den alten buildWesMap (pro-rata aus Lieferantendoks / Buchhaltung).
+ * Rückgabe: Map { 'yyyy-MM-dd' → WarenkostenDay (aufgeteilt nach Kategorie, netto+brutto) }
  */
 async function loadWarenkostenMap(
   tenantId: import('@/contexts/TenantContext').TenantId,
   monthKeys: string[],
-): Promise<Record<string, number>> {
-  const map: Record<string, number> = {};
+): Promise<Record<string, WarenkostenDay>> {
+  const map: Record<string, WarenkostenDay> = {};
   for (const mk of monthKeys) {
     const entries = await loadMonthInvoices(tenantId, mk);
     for (const e of entries) {
-      map[e.date] = (map[e.date] ?? 0) + e.amountNet;
+      if (!map[e.date]) {
+        map[e.date] = { totalNet: 0, totalGross: 0, foodNet: 0, foodGross: 0, bevNet: 0, bevGross: 0 };
+      }
+      const kat: WarenKategorie = e.kategorie ?? 'Sonstiges';
+      map[e.date].totalNet   += e.amountNet;
+      map[e.date].totalGross += e.amountGross;
+      if (kat === 'Food') {
+        map[e.date].foodNet   += e.amountNet;
+        map[e.date].foodGross += e.amountGross;
+      } else if (kat === 'Beverage') {
+        map[e.date].bevNet   += e.amountNet;
+        map[e.date].bevGross += e.amountGross;
+      }
     }
   }
   return map;
@@ -297,7 +321,8 @@ export default function TagesControllingPage() {
   const [scheduleMap, setScheduleMap] = useState<Record<string, DaySchedule>>({});
   const [actualHoursMap, setActualHoursMap] = useState<Record<string, ActualHourEntry>>({});
   const [loadingPK, setLoadingPK]           = useState(false);
-  const [warenkostenMap, setWarenkostenMap] = useState<Record<string, number>>({});
+  const [warenkostenMap, setWarenkostenMap] = useState<Record<string, WarenkostenDay>>({});
+  const [warenFilter,    setWarenFilter]    = useState<WarenFilter>('total');
   const loadGenRef = useRef(0);
   const warenGenRef = useRef(0);
 
@@ -511,16 +536,36 @@ export default function TagesControllingPage() {
   // Zeilenberechnung (wesChf = echte Warenkosten aus supplier_invoice_entries)
   const rows = useMemo((): ControllingRow[] => {
     return dates.map(day => {
-      const d   = format(day, 'yyyy-MM-dd');
+      const d         = format(day, 'yyyy-MM-dd');
       const grossRev  = dailyBudgets[d]?.actualRevenue   ?? 0;
       const takeaway  = dailyBudgets[d]?.takeawayRevenue ?? 0;
-      const umsatz    = showNetRevenue ? grossToNet(grossRev, takeaway) : grossRev;
-      const pkPlanChf = planMap[d]       ?? 0;
-      const pkIstChf  = actualMap[d]     ?? 0;
-      const wesChf    = warenkostenMap[d] ?? 0;
-      return { date: d, day, umsatz, pkPlanChf, pkIstChf, wesChf };
+      const foodGross = dailyBudgets[d]?.foodRevenue     ?? 0;
+      const bevGross  = dailyBudgets[d]?.beverageRevenue ?? 0;
+
+      // Umsätze (netto oder brutto)
+      const umsatzTotal = showNetRevenue ? grossToNet(grossRev, takeaway) : grossRev;
+      const umsatzFood  = showNetRevenue ? foodGross / (1 + 0.081) : foodGross;
+      const umsatzBev   = showNetRevenue ? bevGross  / (1 + 0.081) : bevGross;
+
+      // Warenkosten
+      const wk        = warenkostenMap[d] ?? { totalNet: 0, totalGross: 0, foodNet: 0, foodGross: 0, bevNet: 0, bevGross: 0 };
+      const wesTotal  = showNetRevenue ? wk.totalNet : wk.totalGross;
+      const wesFood   = showNetRevenue ? wk.foodNet  : wk.foodGross;
+      const wesBev    = showNetRevenue ? wk.bevNet   : wk.bevGross;
+
+      // Gefilterte Werte für die Anzeige
+      const umsatz = warenFilter === 'food' ? umsatzFood
+        : warenFilter === 'beverage'        ? umsatzBev
+        : umsatzTotal;
+      const wesChf = warenFilter === 'food' ? wesFood
+        : warenFilter === 'beverage'        ? wesBev
+        : wesTotal;
+
+      const pkPlanChf = planMap[d]   ?? 0;
+      const pkIstChf  = actualMap[d] ?? 0;
+      return { date: d, day, umsatz, umsatzFood, umsatzBev, umsatzTotal, pkPlanChf, pkIstChf, wesChf, wesTotal, wesFood, wesBev };
     });
-  }, [dates, dailyBudgets, planMap, actualMap, warenkostenMap, showNetRevenue]);
+  }, [dates, dailyBudgets, planMap, actualMap, warenkostenMap, showNetRevenue, warenFilter]);
 
   // Total-Zeile (gewichtete Prozente; bei aktivem Pro-Rata nur bis Stichtag)
   const total = useMemo(() => {
@@ -628,14 +673,14 @@ export default function TagesControllingPage() {
     // ── KPI-Block ──────────────────────────────────────────────────────────
     let y = 28;
     const kpis: { label: string; value: string; accent: [number, number, number] }[] = [
-      { label: 'Ist-Umsatz Total',  value: fmtCHF(total.sumUmsatz),  accent: C_BLUE_TXT },
+      { label: warenFilter === 'food' ? 'Food-Umsatz Total' : warenFilter === 'beverage' ? 'Bev-Umsatz Total' : 'Ist-Umsatz Total',  value: fmtCHF(total.sumUmsatz),  accent: C_BLUE_TXT },
       { label: 'PK Plan Total',     value: fmtCHF(total.sumPkPlan),  accent: C_BLUE_TXT },
       { label: 'PK Ist Total',      value: total.sumPkIst > 0 ? fmtCHF(total.sumPkIst) : '–', accent: total.sumPkIst > 0 ? C_BLUE_TXT : C_MUTED },
       { label: 'PK Plan %',         value: fmtP(total.pkPlanPct, total.sumUmsatz > 0),  accent: C_MUTED },
       { label: 'PK Ist %',          value: fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), accent: total.pkIstPct > total.pkPlanPct && total.sumPkIst > 0 ? C_RED_TXT : C_GREEN_TXT },
       ...(showWesInExport ? [
-        { label: 'Warenkosten Total', value: total.sumWes > 0 ? fmtCHF(total.sumWes) : '–', accent: C_TEAL_TXT },
-        { label: 'Warenkosten %',     value: fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0), accent: C_TEAL_TXT },
+        { label: warenFilter === 'food' ? 'WK Food Total' : warenFilter === 'beverage' ? 'WK Bev Total' : 'Warenkosten Total', value: total.sumWes > 0 ? fmtCHF(total.sumWes) : '–', accent: C_TEAL_TXT },
+        { label: warenFilter === 'food' ? 'WK Food %' : warenFilter === 'beverage' ? 'WK Bev %' : 'Warenkosten %', value: fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0), accent: C_TEAL_TXT },
       ] : []),
     ];
     const kW = (W - 2 * M - (kpis.length - 1) * 3) / kpis.length;
@@ -965,6 +1010,26 @@ export default function TagesControllingPage() {
             Heute
           </Button>
 
+          {/* Food/Bev/Total Filter */}
+          <div className="flex rounded-lg border border-border overflow-hidden text-xs font-medium">
+            {(['total', 'food', 'beverage'] as WarenFilter[]).map(f => (
+              <button
+                key={f}
+                onClick={() => setWarenFilter(f)}
+                className={cn(
+                  'px-2.5 py-1.5 transition-colors border-l border-border first:border-l-0',
+                  warenFilter === f
+                    ? f === 'food'     ? 'bg-emerald-600 text-white'
+                      : f === 'beverage' ? 'bg-blue-600 text-white'
+                      : 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-muted',
+                )}
+              >
+                {f === 'total' ? 'Total' : f === 'food' ? 'Food' : 'Beverage'}
+              </button>
+            ))}
+          </div>
+
           {/* Export-Buttons */}
           <div className="flex items-center gap-1.5">
             <button
@@ -1072,7 +1137,12 @@ export default function TagesControllingPage() {
                       </th>
                     )}
                     <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('umsatz')} title="Klicken zum Bearbeiten (Brutto CHF)">
-                      <span className="inline-flex items-center gap-1 justify-end">Ist-Umsatz CHF<Pencil className="h-2.5 w-2.5 opacity-40" /></span>
+                      <span className="inline-flex items-center gap-1 justify-end">
+                        {warenFilter === 'food' ? 'Food-Umsatz CHF'
+                          : warenFilter === 'beverage' ? 'Bev-Umsatz CHF'
+                          : 'Ist-Umsatz CHF'}
+                        <Pencil className="h-2.5 w-2.5 opacity-40" />
+                      </span>
                       <ResizeHandle col="umsatz" />
                     </th>
                     <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('pkPlan')}>
@@ -1096,11 +1166,19 @@ export default function TagesControllingPage() {
                       <ResizeHandle col="pkIstPct" />
                     </th>
                     <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('wesChf')}>
-                      <span>Warenkosten CHF</span>
+                      <span>
+                        {warenFilter === 'food' ? 'WK Food CHF'
+                          : warenFilter === 'beverage' ? 'WK Bev CHF'
+                          : 'Warenkosten CHF'}
+                      </span>
                       <ResizeHandle col="wesChf" />
                     </th>
                     <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('wesPct')}>
-                      <span>Warenkosten %</span>
+                      <span>
+                        {warenFilter === 'food' ? 'WK Food %'
+                          : warenFilter === 'beverage' ? 'WK Bev %'
+                          : 'Warenkosten %'}
+                      </span>
                       <ResizeHandle col="wesPct" />
                     </th>
                   </tr>

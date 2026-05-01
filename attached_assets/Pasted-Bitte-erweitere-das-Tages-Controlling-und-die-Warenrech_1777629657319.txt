@@ -1,0 +1,57 @@
+Bitte erweitere das Tages Controlling und die Warenrechnungen wie folgt:
+
+1. Warenrechnungen erfassen
+Füge bei jeder Warenrechnung ein neues Pflichtfeld "Kategorie" hinzu.
+Optionen:
+Food
+Beverage
+Sonstiges
+
+Die Kategorie muss beim Speichern in der Datenbank gespeichert werden.
+
+2. Tages Controlling
+Füge oberhalb oder neben der bestehenden Ansicht einen Umschalter hinzu:
+Total
+Food
+Beverage
+
+Standard bleibt Total.
+
+3. Umsatzlogik
+Die hochgeladenen Ist Umsätze enthalten bereits Total Umsatz, Food Umsatz und Beverage Umsatz.
+Bei Auswahl Total wird der gesamte Ist Umsatz angezeigt.
+Bei Auswahl Food wird nur der Food Umsatz angezeigt.
+Bei Auswahl Beverage wird nur der Beverage Umsatz angezeigt.
+
+4. Warenkostenlogik
+Die Spalten "Warenkosten CHF" und "Warenkosten %" müssen sich je nach gewähltem Umschalter ändern.
+
+Bei Total:
+Alle Warenrechnungen des Tages oder Monats summieren.
+
+Bei Food:
+Nur Warenrechnungen mit Kategorie Food summieren.
+Warenkosten % = Warenkosten Food / Umsatz Food * 100.
+
+Bei Beverage:
+Nur Warenrechnungen mit Kategorie Beverage summieren.
+Warenkosten % = Warenkosten Beverage / Umsatz Beverage * 100.
+
+5. Netto / Brutto Logik
+Wenn die Umsätze im Tages Controlling netto angezeigt werden, dann für Warenkosten CHF den Nettobetrag der Warenrechnungen verwenden.
+Wenn die Umsätze brutto inkl. MWST angezeigt werden, dann für Warenkosten CHF den Bruttobetrag der Warenrechnungen verwenden.
+
+Die Prozentberechnung muss immer auf gleicher Basis erfolgen:
+Netto Umsatz mit Netto Warenkosten.
+Brutto Umsatz mit Brutto Warenkosten.
+
+6. Tabellen und Totalzeile
+Die Tageszeilen sowie die Totalzeile müssen den aktuell gewählten Modus berücksichtigen.
+Wenn Food aktiv ist, zeigt auch die Totalzeile nur Food Umsatz, Food Warenkosten und Food Warenkosten %.
+Wenn Beverage aktiv ist, entsprechend Beverage.
+Wenn Total aktiv ist, wie bisher Gesamtwerte.
+
+7. Bestehende Daten
+Falls bestehende Warenrechnungen noch keine Kategorie haben, setze sie vorerst auf "Sonstiges" oder behandle sie nur im Total Modus, aber nicht in Food oder Beverage.
+
+Bitte prüfe alle betroffenen Berechnungen, Monatsansicht, Tagesansicht, PDF Export und Excel Export, damit überall dieselbe Logik verwendet wird.
