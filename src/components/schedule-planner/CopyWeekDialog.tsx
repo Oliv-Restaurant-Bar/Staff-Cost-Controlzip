@@ -110,8 +110,27 @@ export const CopyWeekDialog = ({
     return weeks;
   };
 
-  const sourceWeeks = getSourceWeeks();
+  const rawSourceWeeks = getSourceWeeks();
   const targetWeeks = getTargetWeeks();
+
+  // Ergänze Quell-Wochen: Wochen des aktuellen Monats mit >20 Einträgen,
+  // die noch nicht in der rückwärts-Liste enthalten sind.
+  const sourceWeeks = (() => {
+    const merged = [...rawSourceWeeks];
+    const existing = new Set(merged.map(w => w.value));
+    for (const tw of targetWeeks) {
+      if (!existing.has(tw.value)) {
+        const count = countEntriesInWeek(tw.value, extendedScheduleData);
+        if (count > 20) {
+          merged.push(tw);
+          existing.add(tw.value);
+        }
+      }
+    }
+    // Neueste Woche zuerst
+    merged.sort((a, b) => b.value.localeCompare(a.value));
+    return merged;
+  })();
 
   // Pre-select on open + load previous month data for cross-month copy
   useEffect(() => {
