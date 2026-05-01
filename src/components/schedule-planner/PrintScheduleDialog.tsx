@@ -17,6 +17,11 @@ interface PrintScheduleDialogProps {
   scheduleData: Record<string, DaySchedule>;
   currentMonth: Date;
   department: Department | 'all';
+  /**
+   * Per-cell color map.  Key: `${empId}-${yyyy-MM-dd}-früh` / `…-spät`.
+   * When present the cell background is overridden (visual only — no effect on hours/costs).
+   */
+  cellColors?: Record<string, string>;
 }
 
 type ViewMode = 'month' | 'week';
@@ -29,6 +34,7 @@ export const PrintScheduleDialog = ({
   scheduleData,
   currentMonth,
   department,
+  cellColors = {},
 }: PrintScheduleDialogProps) => {
   const { shiftMap, absenceShifts } = useShiftConfig();
   const printRef = useRef<HTMLDivElement>(null);
@@ -436,16 +442,23 @@ export const PrintScheduleDialog = ({
                       const spätClass = daySchedule.spätAbsence 
                         ? `slot-absence ${daySchedule.spätAbsence === 'FE' ? 'shift-ferien' : daySchedule.spätAbsence === 'K' ? 'shift-krank' : 'shift-frei'}`
                         : daySchedule.spät ? 'slot-spät' : '';
-                      
+
+                      // Custom cell colors (visual only — no effect on hours/costs)
+                      const frühColorKey = `${emp.id}-${dateStr}-früh`;
+                      const spätColorKey  = `${emp.id}-${dateStr}-spät`;
+                      const frühColor = !daySchedule.frühAbsence && cellColors[frühColorKey];
+                      const spätColor  = !daySchedule.spätAbsence  && cellColors[spätColorKey];
+
                       return (
                         <>
                           <td 
                             key={`${day.toISOString()}-früh`}
                             className={cn(
                               'shift-cell',
-                              isWeekend && !frühClass && 'weekend',
-                              frühClass
+                              isWeekend && !frühClass && !frühColor && 'weekend',
+                              !frühColor && frühClass
                             )}
+                            style={frühColor ? { backgroundColor: frühColor, color: '#1e3a5f' } : undefined}
                           >
                             {frühContent}
                           </td>
@@ -453,10 +466,13 @@ export const PrintScheduleDialog = ({
                             key={`${day.toISOString()}-spät`}
                             className={cn(
                               'shift-cell',
-                              isWeekend && !spätClass && 'weekend',
-                              spätClass
+                              isWeekend && !spätClass && !spätColor && 'weekend',
+                              !spätColor && spätClass
                             )}
-                            style={showWeekSum ? { borderRight: '3px solid #1e40af' } : undefined}
+                            style={{
+                              ...(showWeekSum ? { borderRight: '3px solid #1e40af' } : {}),
+                              ...(spätColor ? { backgroundColor: spätColor, color: '#1e3a5f' } : {}),
+                            }}
                           >
                             {spätContent}
                           </td>

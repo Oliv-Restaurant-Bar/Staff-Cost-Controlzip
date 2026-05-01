@@ -1844,6 +1844,7 @@ const SchedulePlanner = () => {
 
   // ── Reihenfolge-Handler ────────────────────────────────────────────────────
   const handleMoveEmployee = (empId: string, dept: 'service' | 'küche', direction: 'up' | 'down') => {
+    console.log(`[SORT] employee moved ${direction}: empId=${empId} dept=${dept}`);
     setEmployeeSortOrder(prev => {
       const deptEmployees = activeEmployees.filter(e => e.department === dept);
       // If no order saved yet, start from current display order
@@ -1861,7 +1862,9 @@ const SchedulePlanner = () => {
         return prev;
       }
       // Persist asynchronously (fire-and-forget)
-      saveEmployeeSortOrder(tenantId, dept, next).catch(() => {});
+      saveEmployeeSortOrder(tenantId, dept, next)
+        .then(() => console.log(`[SORT] order saved: dept=${dept} tenant=${tenantId}`))
+        .catch(() => {});
       return { ...prev, [dept]: next };
     });
   };
@@ -1869,6 +1872,16 @@ const SchedulePlanner = () => {
   // ── Zellfarben-Handler ────────────────────────────────────────────────────
   const handleCellColorChange = (key: string, color: string | null) => {
     const monthKey = format(currentMonth, 'yyyy-MM');
+    // key format: "empId-yyyy-MM-dd-früh" or "empId-yyyy-MM-dd-spät"
+    const parts = key.split('-');
+    const slot  = parts[parts.length - 1];           // früh | spät
+    const date  = parts.slice(-4, -1).join('-');      // yyyy-MM-dd
+    const empId = parts.slice(0, -4).join('-');       // employee id
+    console.log(`[CELL-COLOR] employee: ${empId}`);
+    console.log(`[CELL-COLOR] date: ${date}`);
+    console.log(`[CELL-COLOR] slot: ${slot}`);
+    console.log(`[CELL-COLOR] color: ${color ?? 'null (reset)'}`);
+    console.log(`[CELL-COLOR] visual only: true`);
     setCellColors(prev => {
       const next = { ...prev };
       if (color === null) {
@@ -3671,6 +3684,7 @@ const SchedulePlanner = () => {
         scheduleData={scheduleData}
         currentMonth={currentMonth}
         department={activeDepartment}
+        cellColors={cellColors}
       />
 
       {/* Day Detail Dialog (Plan view) */}

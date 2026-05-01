@@ -1,0 +1,95 @@
+Bitte den Dienstplan um zwei Funktionen erweitern:
+
+1. Mitarbeiter-Reihenfolge nur mit Pfeilen hoch/runter sortierbar machen
+2. Manuell eingegebene Uhrzeiten optional nur visuell farblich markieren
+
+Wichtig:
+Bitte KEIN Drag and Drop einbauen.
+
+1. Mitarbeiter-Reihenfolge mit Pfeilen
+
+Im Dienstplan soll im Bearbeiten-Modus neben jedem Mitarbeiter kleine Pfeile angezeigt werden:
+
+- Pfeil hoch
+- Pfeil runter
+
+Damit kann ich die Reihenfolge innerhalb der jeweiligen Abteilung ändern.
+
+Anforderungen:
+- nur im Bearbeiten-Modus sichtbar
+- pro Abteilung getrennt
+- pro Mandant getrennt
+- dauerhaft in Supabase speichern
+- nach Reload gleiche Reihenfolge
+- PDF Export übernimmt dieselbe Reihenfolge
+- Plan, Ist und Vergleich nutzen dieselbe Reihenfolge
+
+Speicherung:
+Bitte entweder employees.sort_order verwenden oder eine separate Tabelle employee_display_order.
+
+Wichtig:
+- restaurant_id speichern
+- department speichern
+- employee_id speichern
+- sort_order speichern
+- keine reine localStorage-Lösung
+
+2. Farbe für einzelne Zellen nur visuell
+
+Wenn ich manuell eine Uhrzeit in eine Zelle eintrage, möchte ich optional eine Farbe für genau dieses Kästchen setzen.
+
+Wichtig:
+- Farbe ist nur visuell
+- Farbe verändert keine Stunden
+- Farbe verändert keine Kosten
+- Farbe verändert keine Abwesenheitslogik
+- Farbe verändert keine Soll/Ist-Berechnung
+- Farbe gilt nur für diese eine Zelle
+
+Farben:
+- Standard
+- Gelb
+- Blau
+- Grün
+- Orange
+- Rot
+- Grau
+
+Speicherung:
+- custom_color oder cell_color direkt beim Schedule-Eintrag speichern
+- tenant-korrekt
+- reload-sicher
+- Supabase als Source of Truth
+
+3. Verhältnis zur Legende
+
+- Legenden-Schichten behalten ihre bestehende Farbe
+- manuelle Uhrzeiten können optional eigene Zellfarbe bekommen
+- wenn keine Farbe gewählt wird, bleibt Standarddesign
+- custom_color überschreibt nur die Darstellung der Zelle
+
+4. PDF Export
+
+Bitte sicherstellen:
+- Mitarbeiter-Reihenfolge wie im Dienstplan
+- visuelle Zellfarben im PDF sichtbar
+- keine Kostenlogik dadurch ändern
+
+5. Debug Logs
+
+Bitte loggen:
+[SORT] order loaded
+[SORT] employee moved up/down
+[SORT] order saved
+[CELL-COLOR] employee: ...
+[CELL-COLOR] date: ...
+[CELL-COLOR] color: ...
+[CELL-COLOR] visual only: true
+
+6. Bitte danach kurz sagen:
+- welche Datei(en) geändert wurden
+- wie die Reihenfolge gespeichert wird
+- wie die Pfeile funktionieren
+- wie die Zellfarbe gespeichert wird
+- ob Stunden/Kosten unverändert bleiben
+- ob PDF Reihenfolge und Farben übernimmt
