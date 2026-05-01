@@ -64,13 +64,18 @@ export const CopyWeekDialog = ({
   const [extendedScheduleData, setExtendedScheduleData] =
     useState<Record<string, DaySchedule>>(scheduleData);
 
-  // ── Source weeks: today's week + last 4 weeks (covers previous month too) ──
+  // ── Source weeks: viewed week + 5 previous weeks ───────────────────────────
+  // Anchored on currentWeekStart (the week the user is currently viewing), NOT
+  // on "today", so future weeks within the month always appear in the list.
   const getSourceWeeks = () => {
-    const today = new Date();
-    const thisWeek = startOfWeek(today, { weekStartsOn: 1 });
+    // Anchor: the week being viewed (or today's week as fallback)
+    const anchor = currentWeekStart
+      ? startOfWeek(currentWeekStart, { weekStartsOn: 1 })
+      : startOfWeek(new Date(), { weekStartsOn: 1 });
     const weeks: { start: Date; end: Date; label: string; value: string }[] = [];
-    for (let i = 0; i <= 4; i++) {
-      const weekStart = subWeeks(thisWeek, i);
+    // i=0: the currently-viewed week; i=1..5: the 5 weeks before it
+    for (let i = 0; i <= 5; i++) {
+      const weekStart = subWeeks(anchor, i);
       const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
       weeks.push({
         start: weekStart,
@@ -128,11 +133,16 @@ export const CopyWeekDialog = ({
     } catch { /* ignore */ }
     setExtendedScheduleData(merged);
 
-    // Pre-select: try to match currentWeekStart in source list, else first week
+    // Pre-select source: default to the week BEFORE the currently-viewed week
+    // (most common use-case: copy KW 19 → KW 20).
+    // Fall back to the first available source week if the previous week isn't in the list.
     if (currentWeekStart) {
-      const key = format(currentWeekStart, 'yyyy-MM-dd');
-      const inList = sourceWeeks.some(w => w.value === key);
-      setSourceWeek(inList ? key : (sourceWeeks[0]?.value ?? ''));
+      const prevWeekKey = format(
+        subWeeks(startOfWeek(currentWeekStart, { weekStartsOn: 1 }), 1),
+        'yyyy-MM-dd',
+      );
+      const inList = sourceWeeks.some(w => w.value === prevWeekKey);
+      setSourceWeek(inList ? prevWeekKey : (sourceWeeks[0]?.value ?? ''));
     } else {
       setSourceWeek(sourceWeeks[0]?.value ?? '');
     }
