@@ -23,8 +23,10 @@ import {
   computeDailyBudgetRevenue,
   computeMonthStats,
   calcAmounts,
+  WARENKONTO_LIST,
   type Supplier,
   type InvoiceEntry,
+  type KontoSplit,
 } from '@/lib/waren-db';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -65,6 +67,12 @@ interface EntryForm {
   vatRate: string;
   reference: string;
   note: string;
+  warenkonto: string;
+  splitEnabled: boolean;
+  split1Warenkonto: string;
+  split1Amount: string;
+  split2Warenkonto: string;
+  split2Amount: string;
 }
 
 const EMPTY_FORM: EntryForm = {
@@ -72,9 +80,15 @@ const EMPTY_FORM: EntryForm = {
   supplierName: '',
   amount: '',
   vatIncluded: true,
-  vatRate: '8.1',
+  vatRate: '2.6',
   reference: '',
   note: '',
+  warenkonto: '',
+  splitEnabled: false,
+  split1Warenkonto: '',
+  split1Amount: '',
+  split2Warenkonto: '',
+  split2Amount: '',
 };
 
 const VAT_RATES = ['8.1', '2.6', '3.8', '0'];
@@ -369,9 +383,21 @@ export default function WarenrechnungenPage() {
   }, [year, month, todayStr]);
 
   const liveAmounts = useMemo(() => {
+    const r = Number(form.vatRate);
+    if (form.splitEnabled) {
+      const a1 = Number(form.split1Amount);
+      const a2 = Number(form.split2Amount);
+      if (isNaN(a1) && isNaN(a2)) return null;
+      const v1 = !isNaN(a1) && a1 > 0 ? calcAmounts(a1, form.vatIncluded, r) : null;
+      const v2 = !isNaN(a2) && a2 > 0 ? calcAmounts(a2, form.vatIncluded, r) : null;
+      const gross = (v1?.amountGross ?? 0) + (v2?.amountGross ?? 0);
+      const net   = (v1?.amountNet   ?? 0) + (v2?.amountNet   ?? 0);
+      if (gross === 0 && net === 0) return null;
+      return { amountGross: gross, amountNet: net };
+    }
     if (!form.amount || isNaN(Number(form.amount))) return null;
-    return calcAmounts(Number(form.amount), form.vatIncluded, Number(form.vatRate));
-  }, [form.amount, form.vatIncluded, form.vatRate]);
+    return calcAmounts(Number(form.amount), form.vatIncluded, r);
+  }, [form.amount, form.vatIncluded, form.vatRate, form.splitEnabled, form.split1Amount, form.split2Amount]);
 
   const activeSuppliers    = suppliers.filter(s => s.active);
   const suppliersWithEntries = stats.supplierTotals.length;
@@ -698,23 +724,58 @@ export default function WarenrechnungenPage() {
   async function handleSave() {
     if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
     if (!form.supplierName) { toast.error('Bitte Lieferant wählen.'); return; }
-    if (!form.amount || isNaN(Number(form.amount)) || Number(form.amount) <= 0) {
-      toast.error('Bitte gültigen Betrag eingeben.'); return;
+
+    let entry: InvoiceEntry;
+
+    if (form.splitEnabled) {
+      const a1 = Number(form.split1Amount);
+      const a2 = Number(form.split2Amount);
+      if (!form.split1Warenkonto || !form.split2Warenkonto) {
+        toast.error('Bitte beide Warenkonten auswählen.'); return;
+      }
+      if (!form.split1Amount || isNaN(a1) || a1 <= 0) {
+        toast.error('Bitte gültigen Betrag für Konto 1 eingeben.'); return;
+      }
+      if (!form.split2Amount || isNaN(a2) || a2 <= 0) {
+        toast.error('Bitte gültigen Betrag für Konto 2 eingeben.'); return;
+      }
+      const r = Number(form.vatRate);
+      const amounts1 = calcAmounts(a1, form.vatIncluded, r);
+      const amounts2 = calcAmounts(a2, form.vatIncluded, r);
+      const splits: KontoSplit[] = [
+        { warenkonto: form.split1Warenkonto, amountGross: amounts1.amountGross, amountNet: amounts1.amountNet },
+        { warenkonto: form.split2Warenkonto, amountGross: amounts2.amountGross, amountNet: amounts2.amountNet },
+      ];
+      entry = {
+        id: generateId(), date: form.date, supplierName: form.supplierName,
+        amountGross: amounts1.amountGross + amounts2.amountGross,
+        amountNet:   amounts1.amountNet   + amounts2.amountNet,
+        vatIncluded: form.vatIncluded, vatRate: r,
+        reference: form.reference || undefined, note: form.note || undefined,
+        kontoSplits: splits,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+    } else {
+      if (!form.amount || isNaN(Number(form.amount)) || Number(form.amount) <= 0) {
+        toast.error('Bitte gültigen Betrag eingeben.'); return;
+      }
+      const amounts = calcAmounts(Number(form.amount), form.vatIncluded, Number(form.vatRate));
+      entry = {
+        id: generateId(), date: form.date, supplierName: form.supplierName,
+        amountGross: amounts.amountGross, amountNet: amounts.amountNet,
+        vatIncluded: form.vatIncluded, vatRate: Number(form.vatRate),
+        reference: form.reference || undefined, note: form.note || undefined,
+        warenkonto: form.warenkonto || undefined,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
     }
-    const amounts = calcAmounts(Number(form.amount), form.vatIncluded, Number(form.vatRate));
+
     setSaving(true);
-    const entry: InvoiceEntry = {
-      id: generateId(), date: form.date, supplierName: form.supplierName,
-      amountGross: amounts.amountGross, amountNet: amounts.amountNet,
-      vatIncluded: form.vatIncluded, vatRate: Number(form.vatRate),
-      reference: form.reference || undefined, note: form.note || undefined,
-      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    };
     await saveInvoiceEntry(tenantId, entry);
-    console.log(`[WAREN] entry saved: ${entry.supplierName} · ${entry.date} · net CHF ${entry.amountNet.toFixed(2)}`);
+    console.log(`[WAREN] entry saved: ${entry.supplierName} · ${entry.date} · net CHF ${entry.amountNet.toFixed(2)}${entry.kontoSplits ? ' (split)' : entry.warenkonto ? ` · konto ${entry.warenkonto}` : ''}`);
     await loadData();
     setForm(f => ({ ...EMPTY_FORM, date: f.date, supplierName: f.supplierName, vatRate: f.vatRate, vatIncluded: f.vatIncluded }));
-    toast.success(`${form.supplierName} · CHF ${fmtChf(amounts.amountNet)} netto gespeichert`);
+    toast.success(`${form.supplierName} · CHF ${fmtChf(entry.amountNet)} netto gespeichert`);
     setSaving(false);
   }
 
@@ -938,7 +999,8 @@ export default function WarenrechnungenPage() {
                         </Select>
                       </div>
 
-                      {/* Betrag */}
+                      {/* Betrag – nur wenn kein Split */}
+                      {!form.splitEnabled && (
                       <div className="space-y-1 col-span-1">
                         <Label className="text-xs text-muted-foreground">Betrag (CHF)</Label>
                         <Input
@@ -949,6 +1011,7 @@ export default function WarenrechnungenPage() {
                           onKeyDown={e => e.key === 'Enter' && handleSave()}
                         />
                       </div>
+                      )}
 
                       {/* MWST Toggle */}
                       <div className="space-y-1 col-span-1">
@@ -993,7 +1056,12 @@ export default function WarenrechnungenPage() {
                         <Label className="text-xs">&nbsp;</Label>
                         <Button
                           onClick={handleSave}
-                          disabled={saving || !form.supplierName || !form.amount}
+                          disabled={
+                            saving || !form.supplierName ||
+                            (form.splitEnabled
+                              ? (!form.split1Warenkonto || !form.split2Warenkonto || !form.split1Amount || !form.split2Amount)
+                              : !form.amount)
+                          }
                           className="h-9 w-full gap-1.5 font-semibold"
                           style={{ backgroundColor: tenant.color }}
                         >
@@ -1001,6 +1069,99 @@ export default function WarenrechnungenPage() {
                           {saving ? 'Speichern…' : 'Speichern'}
                         </Button>
                       </div>
+                    </div>
+
+                    {/* ── Warenkonto-Zeile ───────────────────────────────────────── */}
+                    <div className="flex flex-wrap items-end gap-3 pt-1">
+
+                      {/* Split-Toggle */}
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Kontozuweisung</Label>
+                        <div className="flex rounded-md overflow-hidden border border-border h-9 text-xs font-medium">
+                          <button
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, splitEnabled: false }))}
+                            className={cn(
+                              'px-3 transition-colors',
+                              !form.splitEnabled ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted',
+                            )}
+                          >1 Konto</button>
+                          <button
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, splitEnabled: true, amount: '' }))}
+                            className={cn(
+                              'px-3 transition-colors border-l border-border',
+                              form.splitEnabled ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted',
+                            )}
+                          >2 Konten (Split)</button>
+                        </div>
+                      </div>
+
+                      {/* Einzel-Konto */}
+                      {!form.splitEnabled && (
+                        <div className="space-y-1 min-w-[220px]">
+                          <Label className="text-xs text-muted-foreground">Warenkonto (optional)</Label>
+                          <Select value={form.warenkonto} onValueChange={v => setForm(f => ({ ...f, warenkonto: v === '__none__' ? '' : v }))}>
+                            <SelectTrigger className="h-9 text-sm">
+                              <SelectValue placeholder="Kein Konto" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">— kein Konto —</SelectItem>
+                              {WARENKONTO_LIST.map(k => (
+                                <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {/* Split-Felder */}
+                      {form.splitEnabled && (
+                        <div className="flex flex-wrap gap-3 flex-1">
+                          {/* Konto 1 */}
+                          <div className="space-y-1 min-w-[200px]">
+                            <Label className="text-xs text-muted-foreground">Konto 1</Label>
+                            <Select value={form.split1Warenkonto} onValueChange={v => setForm(f => ({ ...f, split1Warenkonto: v }))}>
+                              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Konto wählen…" /></SelectTrigger>
+                              <SelectContent>
+                                {WARENKONTO_LIST.map(k => (
+                                  <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1 w-[130px]">
+                            <Label className="text-xs text-muted-foreground">Betrag Konto 1 (CHF)</Label>
+                            <Input
+                              type="number" step="0.01" min="0" placeholder="0.00"
+                              value={form.split1Amount}
+                              onChange={e => setForm(f => ({ ...f, split1Amount: e.target.value }))}
+                              className="h-9 text-sm"
+                            />
+                          </div>
+                          {/* Konto 2 */}
+                          <div className="space-y-1 min-w-[200px]">
+                            <Label className="text-xs text-muted-foreground">Konto 2</Label>
+                            <Select value={form.split2Warenkonto} onValueChange={v => setForm(f => ({ ...f, split2Warenkonto: v }))}>
+                              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Konto wählen…" /></SelectTrigger>
+                              <SelectContent>
+                                {WARENKONTO_LIST.map(k => (
+                                  <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1 w-[130px]">
+                            <Label className="text-xs text-muted-foreground">Betrag Konto 2 (CHF)</Label>
+                            <Input
+                              type="number" step="0.01" min="0" placeholder="0.00"
+                              value={form.split2Amount}
+                              onChange={e => setForm(f => ({ ...f, split2Amount: e.target.value }))}
+                              className="h-9 text-sm"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Live-Berechnung */}
@@ -1062,6 +1223,7 @@ export default function WarenrechnungenPage() {
                             <th className="px-4 py-2.5 text-right font-medium">Netto CHF</th>
                             <th className="px-4 py-2.5 text-right font-medium text-muted-foreground/70">Brutto CHF</th>
                             <th className="px-4 py-2.5 text-center font-medium w-[70px]">MWST</th>
+                            <th className="px-4 py-2.5 text-left font-medium w-[160px]">Warenkonto</th>
                             <th className="px-4 py-2.5 text-left font-medium">Referenz</th>
                             <th className="px-4 py-2.5 text-left font-medium">Bemerkung</th>
                             <th className="px-4 py-2.5 w-[88px]"></th>
@@ -1075,6 +1237,22 @@ export default function WarenrechnungenPage() {
                               <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{fmtChf(e.amountNet)}</td>
                               <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(e.amountGross)}</td>
                               <td className="px-4 py-2.5 text-center text-xs text-muted-foreground">{e.vatRate} %</td>
+                              <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                                {e.kontoSplits && e.kontoSplits.length > 0 ? (
+                                  <div className="flex flex-col gap-0.5">
+                                    {e.kontoSplits.map((s, si) => (
+                                      <span key={si} className="inline-flex items-center gap-1">
+                                        <span className="font-mono font-semibold text-foreground/80">{s.warenkonto}</span>
+                                        <span className="text-muted-foreground/60">CHF {fmtChf(s.amountNet)}</span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : e.warenkonto ? (
+                                  <span className="font-mono font-semibold text-foreground/80">{e.warenkonto}</span>
+                                ) : (
+                                  <span className="opacity-30">–</span>
+                                )}
+                              </td>
                               <td className="px-4 py-2.5 text-xs text-muted-foreground">{e.reference ?? <span className="opacity-30">–</span>}</td>
                               <td className="px-4 py-2.5 text-xs text-muted-foreground max-w-[140px] truncate">{e.note ?? <span className="opacity-30">–</span>}</td>
                               <td className="px-4 py-2.5">
@@ -1878,6 +2056,39 @@ export default function WarenrechnungenPage() {
                   </Select>
                 </div>
               </div>
+              {/* Warenkonto (einfach) – nur wenn kein Split */}
+              {(!editEntry.kontoSplits || editEntry.kontoSplits.length === 0) && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Warenkonto (optional)</Label>
+                  <Select
+                    value={editEntry.warenkonto ?? '__none__'}
+                    onValueChange={v => setEditEntry(x => x ? { ...x, warenkonto: v === '__none__' ? undefined : v } : x)}
+                  >
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— kein Konto —</SelectItem>
+                      {WARENKONTO_LIST.map(k => (
+                        <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {/* Split-Konten – nur lesen, kein Bearbeiten der Split-Aufteilung im Edit-Dialog */}
+              {editEntry.kontoSplits && editEntry.kontoSplits.length > 0 && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Kontoaufteilung (Split)</Label>
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 space-y-1">
+                    {editEntry.kontoSplits.map((s, i) => (
+                      <div key={i} className="flex items-center justify-between text-xs">
+                        <span className="font-mono font-semibold">{s.warenkonto}</span>
+                        <span className="text-muted-foreground">Netto CHF {fmtChf(s.amountNet)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground/60">Split-Aufteilung kann nur beim Erstellen geändert werden.</p>
+                </div>
+              )}
               <div className="space-y-1">
                 <Label className="text-xs">Referenz (optional)</Label>
                 <Input value={editEntry.reference ?? ''}

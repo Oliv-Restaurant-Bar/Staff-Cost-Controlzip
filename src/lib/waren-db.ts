@@ -24,19 +24,46 @@ export interface Supplier {
   createdAt: string;
 }
 
+/**
+ * Zuordnung eines Rechnungsbetrags zu einem Warenkonto.
+ * Wird für die optionale Kontoaufteilung (Split auf 2 Konten) verwendet.
+ */
+export interface KontoSplit {
+  warenkonto: string;   // Kontonummer, z.B. "4000"
+  amountGross: number;
+  amountNet: number;
+}
+
 export interface InvoiceEntry {
   id: string;
   date: string;          // YYYY-MM-DD
   supplierName: string;
-  amountGross: number;   // Betrag inkl. MWST
-  amountNet: number;     // Betrag exkl. MWST
+  amountGross: number;   // Betrag inkl. MWST (Gesamtbetrag)
+  amountNet: number;     // Betrag exkl. MWST (Gesamtbetrag)
   vatIncluded: boolean;  // true = Eingabe war Brutto, false = Netto
   vatRate: number;       // z.B. 8.1 oder 2.6
   reference?: string;    // Rechnungs- oder Lieferscheinnummer
   note?: string;
+  /** Optionales Warenkonto (einfache Zuweisung, kein Split) */
+  warenkonto?: string;
+  /** Optionale Kontoaufteilung auf 2 Konten (überschreibt warenkonto wenn vorhanden) */
+  kontoSplits?: KontoSplit[];
   createdAt: string;
   updatedAt: string;
 }
+
+// ─── Warenkonto Schnellauswahl ────────────────────────────────────────────────
+
+export const WARENKONTO_LIST: { value: string; label: string }[] = [
+  { value: '4000', label: '4000 – Warenaufwand Lebensmittel' },
+  { value: '4020', label: '4020 – Warenaufwand Getränke' },
+  { value: '4030', label: '4030 – Warenaufwand Tiefkühl' },
+  { value: '4040', label: '4040 – Warenaufwand Tabakwaren' },
+  { value: '4050', label: '4050 – Warenaufwand Reinigung' },
+  { value: '4060', label: '4060 – Warenaufwand Diverses' },
+  { value: '4071', label: '4071 – Eigenverbrauch' },
+  { value: '6040', label: '6040 – Betriebsaufwand' },
+];
 
 // ─── Standard-Lieferanten ─────────────────────────────────────────────────────
 
