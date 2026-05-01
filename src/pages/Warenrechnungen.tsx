@@ -24,6 +24,7 @@ import {
   computeMonthStats,
   calcAmounts,
   WARENKONTO_LIST,
+  kategorieFromKonto,
   type Supplier,
   type InvoiceEntry,
   type KontoSplit,
@@ -1132,7 +1133,11 @@ export default function WarenrechnungenPage() {
                       {!form.splitEnabled && (
                         <div className="space-y-1 min-w-[220px]">
                           <Label className="text-xs text-muted-foreground">Warenkonto (optional)</Label>
-                          <Select value={form.warenkonto} onValueChange={v => setForm(f => ({ ...f, warenkonto: v === '__none__' ? '' : v }))}>
+                          <Select value={form.warenkonto} onValueChange={v => setForm(f => {
+                            const konto = v === '__none__' ? '' : v;
+                            return { ...f, warenkonto: konto, kategorie: kategorieFromKonto(konto) };
+                          })}>
+
                             <SelectTrigger className="h-9 text-sm">
                               <SelectValue placeholder="Kein Konto" />
                             </SelectTrigger>
@@ -1268,7 +1273,10 @@ export default function WarenrechnungenPage() {
                               <td className="px-4 py-2.5 font-medium">{e.supplierName}</td>
                               <td className="px-4 py-2.5">
                                 {(() => {
-                                  const kat = e.kategorie ?? 'Sonstiges';
+                                  // Warenkonto hat Priorität, dann gespeicherte Kategorie, dann Sonstiges
+                                  const kat = e.warenkonto
+                                    ? kategorieFromKonto(e.warenkonto)
+                                    : (e.kategorie ?? 'Sonstiges');
                                   return (
                                     <span className={cn(
                                       'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
@@ -2128,7 +2136,11 @@ export default function WarenrechnungenPage() {
                   <Label className="text-xs">Warenkonto (optional)</Label>
                   <Select
                     value={editEntry.warenkonto ?? '__none__'}
-                    onValueChange={v => setEditEntry(x => x ? { ...x, warenkonto: v === '__none__' ? undefined : v } : x)}
+                    onValueChange={v => setEditEntry(x => {
+                      if (!x) return x;
+                      const konto = v === '__none__' ? undefined : v;
+                      return { ...x, warenkonto: konto, kategorie: kategorieFromKonto(konto) };
+                    })}
                   >
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>

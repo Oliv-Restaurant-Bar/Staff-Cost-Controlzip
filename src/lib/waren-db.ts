@@ -72,6 +72,22 @@ export const WARENKONTO_LIST: { value: string; label: string }[] = [
   { value: '6040', label: '6040 – Betriebsaufwand' },
 ];
 
+/**
+ * Leitet die WarenKategorie automatisch vom Warenkonto ab.
+ *
+ * Mapping (gemäss Budget / Erfolgsrechnung):
+ *   4000–4050  → Beverage
+ *   4060       → Food
+ *   4071, 6040 → Sonstiges
+ */
+export function kategorieFromKonto(konto: string | undefined): WarenKategorie {
+  if (!konto) return 'Sonstiges';
+  const n = parseInt(konto, 10);
+  if (n >= 4000 && n <= 4050) return 'Beverage';
+  if (n === 4060)              return 'Food';
+  return 'Sonstiges';
+}
+
 // ─── Standard-Lieferanten ─────────────────────────────────────────────────────
 
 export const DEFAULT_SUPPLIERS: string[] = [

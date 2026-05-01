@@ -36,7 +36,7 @@ import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
 import { kvSet } from '@/lib/supabase-kv';
-import { loadMonthInvoices, type WarenKategorie } from '@/lib/waren-db';
+import { loadMonthInvoices, kategorieFromKonto, type WarenKategorie } from '@/lib/waren-db';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import {
   loadScheduleForMonth,
@@ -203,10 +203,35 @@ function buildActualCostFromHours(
   return map;
 }
 
+/** Hilfsfunktion: Kategorie-Bucket für einen Tag initialisieren wenn nötig */
+function ensureDayBucket(map: Record<string, WarenkostenDay>, date: string) {
+  if (!map[date]) {
+    map[date] = { totalNet: 0, totalGross: 0, foodNet: 0, foodGross: 0, bevNet: 0, bevGross: 0 };
+  }
+}
+
+/** Hilfsfunktion: Betrag in den richtigen Kategorie-Bucket addieren */
+function addToBucket(bucket: WarenkostenDay, kat: WarenKategorie, net: number, gross: number) {
+  bucket.totalNet   += net;
+  bucket.totalGross += gross;
+  if (kat === 'Food') {
+    bucket.foodNet   += net;
+    bucket.foodGross += gross;
+  } else if (kat === 'Beverage') {
+    bucket.bevNet   += net;
+    bucket.bevGross += gross;
+  }
+}
+
 /**
  * Lädt echte Warenkosten (Tageswerte) aus den manuell erfassten
  * Lieferantenrechnungen (waren-db: supplier_invoice_entries).
- * Rückgabe: Map { 'yyyy-MM-dd' → WarenkostenDay (aufgeteilt nach Kategorie, netto+brutto) }
+ *
+ * Kategorie-Quelle (Priorität):
+ *   1. kontoSplits → jeder Split einzeln via kategorieFromKonto(split.warenkonto)
+ *   2. Einzel-Rechnung → kategorieFromKonto(e.warenkonto), Fallback auf e.kategorie
+ *
+ * Rückgabe: Map { 'yyyy-MM-dd' → WarenkostenDay (Food/Bev/Total, netto+brutto) }
  */
 async function loadWarenkostenMap(
   tenantId: import('@/contexts/TenantContext').TenantId,
@@ -216,18 +241,20 @@ async function loadWarenkostenMap(
   for (const mk of monthKeys) {
     const entries = await loadMonthInvoices(tenantId, mk);
     for (const e of entries) {
-      if (!map[e.date]) {
-        map[e.date] = { totalNet: 0, totalGross: 0, foodNet: 0, foodGross: 0, bevNet: 0, bevGross: 0 };
-      }
-      const kat: WarenKategorie = e.kategorie ?? 'Sonstiges';
-      map[e.date].totalNet   += e.amountNet;
-      map[e.date].totalGross += e.amountGross;
-      if (kat === 'Food') {
-        map[e.date].foodNet   += e.amountNet;
-        map[e.date].foodGross += e.amountGross;
-      } else if (kat === 'Beverage') {
-        map[e.date].bevNet   += e.amountNet;
-        map[e.date].bevGross += e.amountGross;
+      ensureDayBucket(map, e.date);
+
+      if (e.kontoSplits && e.kontoSplits.length > 0) {
+        // Split-Rechnung: jeder Split hat eigenes Warenkonto → einzeln auswerten
+        for (const split of e.kontoSplits) {
+          const kat = kategorieFromKonto(split.warenkonto);
+          addToBucket(map[e.date], kat, split.amountNet, split.amountGross);
+        }
+      } else {
+        // Einfache Rechnung: Kategorie aus Warenkonto ableiten, Fallback auf gespeicherte Kategorie
+        const kat = e.warenkonto
+          ? kategorieFromKonto(e.warenkonto)
+          : (e.kategorie ?? 'Sonstiges');
+        addToBucket(map[e.date], kat, e.amountNet, e.amountGross);
       }
     }
   }
