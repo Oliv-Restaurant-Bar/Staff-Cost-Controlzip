@@ -3445,18 +3445,13 @@ const SchedulePlanner = () => {
                     </thead>
                     <tbody>
                       {visibleEmployees.map((emp) => {
-                        const empPlannedH = daysInMonth.reduce((sum, d) => {
-                          const cell = scheduleData[emp.id]?.[format(d, 'yyyy-MM-dd')];
-                          if (!cell || cell.isAbsent) return sum;
-                          return sum + (cell.hours ?? emp.defaultHours ?? 8.4);
-                        }, 0);
+                        const empPlannedH = calculateEmployeeHours(emp.id);
                         const empActualH = daysInMonth.reduce((sum, d) => {
-                          const cell = scheduleData[emp.id]?.[format(d, 'yyyy-MM-dd')];
-                          if (!cell?.actualHours) return sum;
-                          return sum + cell.actualHours;
+                          const key = `${emp.id}-${format(d, 'yyyy-MM-dd')}`;
+                          return sum + (actualHoursData[key]?.hours ?? 0);
                         }, 0);
                         const diffH = empActualH - empPlannedH;
-                        const hrRate = emp.hourlyRate ?? 0;
+                        const hrRate = emp.hourlyWage ?? 0;
                         const plannedCost = empPlannedH * hrRate;
                         if (empPlannedH === 0 && empActualH === 0) return null;
                         return (

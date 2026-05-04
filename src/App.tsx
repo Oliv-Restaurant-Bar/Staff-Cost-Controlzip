@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useSyncStore } from "@/hooks/useSyncStore";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -153,6 +154,7 @@ const AppContent = () => {
           {/* Tenant-Lock für beaulieu_manager — läuft auf jeder Seite */}
           <TenantLockEnforcer />
           <div className="flex-1 min-h-0 overflow-auto" key={tenantId}>
+          <ErrorBoundary label="Seite">
           <Routes>
             {/* Routen mit Rollenprüfung */}
             <Route path="/"
@@ -250,6 +252,7 @@ const AppContent = () => {
 
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </ErrorBoundary>
           </div>
         </div>
       </div>
