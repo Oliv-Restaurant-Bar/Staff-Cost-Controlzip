@@ -46,6 +46,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const EMAIL_ROLE_MAP: Record<string, UserRole> = {
     'admin@olivbern.ch':            'admin',
+    'berat@malenas.ch':             'admin',
     'service@olivbern.ch':          'service_manager',
     'kueche@olivbern.ch':           'kueche_manager',
     'info@restaurantbeaulieu.ch':   'beaulieu_manager',
