@@ -62,7 +62,7 @@ VITE_SUPABASE_ANON_KEY = "sb_publishable_QXf-21IX_EQ_cwLGqNc24w_-fFS23ht"
 VITE_SUPABASE_PROJECT_ID = "ajflrvuzmkfspsxkdyfe"
 
 [deployment]
-deploymentTarget = "autoscale"
+deploymentTarget = "static"
 build = ["npm", "run", "build"]
 publicDir = "dist"
 run = ["node", "server.js"]
