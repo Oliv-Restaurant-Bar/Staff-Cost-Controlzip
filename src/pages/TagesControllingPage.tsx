@@ -242,7 +242,7 @@ function addToBucket(bucket: WarenkostenDay, kat: WarenKategorie, net: number, g
  *
  * Kategorie-Quelle (Priorität):
  *   1. kontoSplits → jeder Split einzeln via kategorieFromKonto(split.warenkonto)
- *   2. Einzel-Rechnung → kategorieFromKonto(e.warenkonto), Fallback auf e.kategorie
+ *   2. Einzel-Rechnung → e.kategorie (explizit gespeichert), Fallback auf kategorieFromKonto(warenkonto)
  *
  * Rückgabe: Map { 'yyyy-MM-dd' → WarenkostenDay (Food/Bev/Total, netto+brutto) }
  */
@@ -257,16 +257,14 @@ async function loadWarenkostenMap(
       ensureDayBucket(map, e.date);
 
       if (e.kontoSplits && e.kontoSplits.length > 0) {
-        // Split-Rechnung: jeder Split hat eigenes Warenkonto → einzeln auswerten
+        // Split-Rechnung: jeder Split hat eigenes Warenkonto → Kategorie daraus ableiten
         for (const split of e.kontoSplits) {
           const kat = kategorieFromKonto(split.warenkonto);
           addToBucket(map[e.date], kat, split.amountNet, split.amountGross);
         }
       } else {
-        // Einfache Rechnung: Kategorie aus Warenkonto ableiten, Fallback auf gespeicherte Kategorie
-        const kat = e.warenkonto
-          ? kategorieFromKonto(e.warenkonto)
-          : (e.kategorie ?? 'Sonstiges');
+        // Einfache Rechnung: explizite Kategorie hat Vorrang, dann Konto-Ableitung
+        const kat: WarenKategorie = e.kategorie ?? kategorieFromKonto(e.warenkonto);
         addToBucket(map[e.date], kat, e.amountNet, e.amountGross);
       }
     }

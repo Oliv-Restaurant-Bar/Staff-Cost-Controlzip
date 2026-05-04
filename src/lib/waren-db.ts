@@ -73,18 +73,19 @@ export const WARENKONTO_LIST: { value: string; label: string }[] = [
 ];
 
 /**
- * Leitet die WarenKategorie automatisch vom Warenkonto ab.
+ * Leitet die WarenKategorie automatisch vom Warenkonto ab (Fallback-Hilfe).
+ * Wichtig: Die explizit gespeicherte `InvoiceEntry.kategorie` hat immer Vorrang.
  *
- * Mapping (gemäss Budget / Erfolgsrechnung):
- *   4000–4050  → Beverage
- *   4060       → Food
- *   4071, 6040 → Sonstiges
+ * Mapping:
+ *   4000 (Lebensmittel), 4030 (Tiefkühl) → Food
+ *   4020 (Getränke)                       → Beverage
+ *   alle anderen                          → Sonstiges
  */
 export function kategorieFromKonto(konto: string | undefined): WarenKategorie {
   if (!konto) return 'Sonstiges';
   const n = parseInt(konto, 10);
-  if (n >= 4000 && n <= 4050) return 'Beverage';
-  if (n === 4060)              return 'Food';
+  if (n === 4000 || n === 4030) return 'Food';
+  if (n === 4020)               return 'Beverage';
   return 'Sonstiges';
 }
 

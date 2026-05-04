@@ -1273,10 +1273,8 @@ export default function WarenrechnungenPage() {
                               <td className="px-4 py-2.5 font-medium">{e.supplierName}</td>
                               <td className="px-4 py-2.5">
                                 {(() => {
-                                  // Warenkonto hat Priorität, dann gespeicherte Kategorie, dann Sonstiges
-                                  const kat = e.warenkonto
-                                    ? kategorieFromKonto(e.warenkonto)
-                                    : (e.kategorie ?? 'Sonstiges');
+                                  // Explizite Kategorie hat Vorrang, dann Konto-Ableitung, dann Sonstiges
+                                  const kat: WarenKategorie = e.kategorie ?? kategorieFromKonto(e.warenkonto);
                                   return (
                                     <span className={cn(
                                       'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
