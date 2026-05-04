@@ -65,4 +65,3 @@ VITE_SUPABASE_PROJECT_ID = "ajflrvuzmkfspsxkdyfe"
 deploymentTarget = "static"
 build = ["npm", "run", "build"]
 publicDir = "dist"
-run = ["node", "server.js"]
