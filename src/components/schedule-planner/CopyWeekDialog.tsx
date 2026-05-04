@@ -110,6 +110,29 @@ export const CopyWeekDialog = ({
     return weeks;
   };
 
+  // Count entries in a week using the extended (cross-month) schedule data
+  const countEntriesInWeek = (weekValue: string, data: Record<string, DaySchedule>) => {
+    if (!weekValue) return 0;
+    const weekStart = parseLocalDate(weekValue);
+    const days = eachDayOfInterval({
+      start: weekStart,
+      end: endOfWeek(weekStart, { weekStartsOn: 1 }),
+    });
+    let count = 0;
+    employeeIds.forEach(empId => {
+      days.forEach(day => {
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const key = `${empId}-${dateStr}`;
+        const daySchedule = data[key];
+        if (daySchedule) {
+          if (daySchedule.früh || daySchedule.frühAbsence) count++;
+          if (daySchedule.spät || daySchedule.spätAbsence) count++;
+        }
+      });
+    });
+    return count;
+  };
+
   const rawSourceWeeks = getSourceWeeks();
   const targetWeeks = getTargetWeeks();
 
@@ -168,29 +191,6 @@ export const CopyWeekDialog = ({
     setTargetWeek('');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-
-  // Count entries in a week using the extended (cross-month) schedule data
-  const countEntriesInWeek = (weekValue: string, data: Record<string, DaySchedule>) => {
-    if (!weekValue) return 0;
-    const weekStart = parseLocalDate(weekValue);
-    const days = eachDayOfInterval({
-      start: weekStart,
-      end: endOfWeek(weekStart, { weekStartsOn: 1 }),
-    });
-    let count = 0;
-    employeeIds.forEach(empId => {
-      days.forEach(day => {
-        const dateStr = format(day, 'yyyy-MM-dd');
-        const key = `${empId}-${dateStr}`;
-        const daySchedule = data[key];
-        if (daySchedule) {
-          if (daySchedule.früh || daySchedule.frühAbsence) count++;
-          if (daySchedule.spät || daySchedule.spätAbsence) count++;
-        }
-      });
-    });
-    return count;
-  };
 
   const handleCopy = () => {
     if (!sourceWeek || !targetWeek) return;
