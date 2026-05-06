@@ -76,7 +76,7 @@ import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { formatCurrency } from '@/lib/personnel-utils';
+import { formatCurrency, getEmployeeDisplayName } from '@/lib/personnel-utils';
 import {
   DropdownMenu,
   DropdownMenuContent,
