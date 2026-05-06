@@ -143,19 +143,23 @@ export function IstDayDetailDialog({
   const istRevenue = (actualRevenue ?? 0) > 0 ? (actualRevenue as number) : null;
   const hasRevenue = istRevenue !== null;
 
-  // Stats for the active department filter
+  // Gesamt-Stats (Küche + Service zusammen) — immer Basis für Hero, Status-Banner und Zielprüfung
+  const gesamtStats = computeStats('all', employees, actualHoursData, scheduleData, dateStr);
+
+  // Stats für den Drilldown (Abteilungs-Detail-Tabelle)
   const stats = computeStats(dept, employees, actualHoursData, scheduleData, dateStr);
 
-  // PKQ: dept costs / total revenue (additive: küche + service = gesamt)
-  const pkqPct = hasRevenue ? (stats.cost / istRevenue!) * 100 : null;
+  // PKQ immer auf Basis Gesamt (Küche + Service / Gesamtumsatz)
+  const pkqPct = hasRevenue ? (gesamtStats.cost / istRevenue!) * 100 : null;
   const diffPP  = pkqPct !== null ? pkqPct - laborCostThreshold : null;
 
   const allowedCost = hasRevenue ? istRevenue! * (laborCostThreshold / 100) : null;
-  // For dept views: allowed is proportional to dept cost share vs total costs
-  const totalCost = computeStats('all', employees, actualHoursData, scheduleData, dateStr).cost;
-  const deptShare = totalCost > 0 ? stats.cost / totalCost : 1;
+  const devCHF = allowedCost !== null ? gesamtStats.cost - allowedCost : null;
+
+  // Für Drilldown-Detail: erlaubte Kosten anteilig zur gewählten Abteilung
+  const deptShare = gesamtStats.cost > 0 ? stats.cost / gesamtStats.cost : 1;
   const deptAllowedCost = allowedCost !== null ? allowedCost * (dept === 'all' ? 1 : deptShare) : null;
-  const devCHF = deptAllowedCost !== null ? stats.cost - deptAllowedCost : null;
+  const deptDevCHF = deptAllowedCost !== null ? stats.cost - deptAllowedCost : null;
 
   // For avg-wage based extra hours estimate (use all employees)
   const avgWage = (() => {
@@ -236,19 +240,20 @@ export function IstDayDetailDialog({
 
         <div className="px-5 pb-5 space-y-4 pt-4">
 
-          {/* ── 1. Hero KPI Block ──────────────────────────────────────────── */}
+          {/* ── 1. Hero KPI Block — immer Gesamt (Küche + Service) ────────── */}
           <div className={cn(
             'rounded-xl border px-5 py-4 space-y-4',
             sc.borderCls, sc.bgCls,
           )}>
-            {/* IST PKQ — Hauptzahl */}
+            {/* IST PKQ Gesamt — Hauptzahl */}
             <div className="text-center space-y-0.5">
               <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
-                IST Personalquote · {deptLabel}
+                IST Personalquote Gesamt
               </p>
               <p className={cn('text-6xl font-black tabular-nums leading-none tracking-tight', sc.heroCls)}>
                 {pkqPct !== null ? `${pkqPct.toFixed(1)}%` : '—'}
               </p>
+              <p className="text-[10px] text-muted-foreground/60">Küche + Service / Gesamtumsatz</p>
             </div>
 
             {/* Ziel + Abweichung — tabellarisch */}
@@ -285,11 +290,11 @@ export function IstDayDetailDialog({
               </div>
             )}
 
-            {/* Umsatz · Kosten · Stunden */}
+            {/* Umsatz · Gesamtkosten · Gesamtstunden */}
             <div className="grid grid-cols-3 gap-2 pt-1 border-t border-border/40 text-center">
               <MetaKpi label="Umsatz" value={hasRevenue ? `CHF ${fmtChf(istRevenue!)}` : '—'} />
-              <MetaKpi label="Kosten" value={`CHF ${fmtChf(stats.cost)}`} />
-              <MetaKpi label="Stunden" value={`${fmtH(stats.hours)} h`} />
+              <MetaKpi label="PK Gesamt" value={`CHF ${fmtChf(gesamtStats.cost)}`} />
+              <MetaKpi label="Std. Gesamt" value={`${fmtH(gesamtStats.hours)} h`} />
             </div>
           </div>
 
@@ -327,35 +332,13 @@ export function IstDayDetailDialog({
             )}
           </div>
 
-          {/* ── 3. Abteilungs-Toggle ───────────────────────────────────────── */}
-          <div className="space-y-2.5">
-            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">Abteilung</p>
-
-            <div className="flex rounded-lg border overflow-hidden text-sm font-semibold h-9">
-              {(['all', 'küche', 'service'] as DeptFilter[]).map((key, i) => {
-                const label = key === 'all' ? 'Gesamt' : key === 'küche' ? 'Küche' : 'Service';
-                return (
-                  <button
-                    key={key}
-                    onClick={() => { setDept(key); setDetailsOpen(false); }}
-                    className={cn(
-                      'flex-1 transition-colors text-xs',
-                      dept === key
-                        ? 'bg-foreground text-background'
-                        : 'bg-background text-muted-foreground hover:bg-muted',
-                      i > 0 && 'border-l border-border',
-                    )}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Split-Übersicht — immer sichtbar bei Gesamt */}
-            {dept === 'all' && splitTotal > 0 && (
+          {/* ── 3. Küche / Service Aufschlüsselung (immer sichtbar) ────────── */}
+          {splitTotal > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
+                Aufschlüsselung · Küche + Service
+              </p>
               <div className="rounded-lg border divide-y text-xs overflow-hidden">
-                {/* Küche */}
                 <DeptSplitRow
                   color="bg-orange-400"
                   label="Küche"
@@ -363,10 +346,9 @@ export function IstDayDetailDialog({
                   cost={kücheSt.cost}
                   hours={kücheSt.hours}
                   share={kShare}
-                  isOver={kPkq !== null && kPkq > laborCostThreshold * kShare / 100}
-                  onDrill={() => { setDept('küche'); setDetailsOpen(false); }}
+                  isOver={false}
+                  onDrill={() => { setDept('küche'); setDetailsOpen(true); }}
                 />
-                {/* Service */}
                 <DeptSplitRow
                   color="bg-blue-400"
                   label="Service"
@@ -374,10 +356,9 @@ export function IstDayDetailDialog({
                   cost={serviceSt.cost}
                   hours={serviceSt.hours}
                   share={sShare}
-                  isOver={sPkq !== null && sPkq > laborCostThreshold * sShare / 100}
-                  onDrill={() => { setDept('service'); setDetailsOpen(false); }}
+                  isOver={false}
+                  onDrill={() => { setDept('service'); setDetailsOpen(true); }}
                 />
-                {/* Balken */}
                 {(kShare > 0 || sShare > 0) && (
                   <div className="flex h-1.5">
                     <div className="bg-orange-400 transition-all" style={{ width: `${kShare}%` }} />
@@ -385,10 +366,13 @@ export function IstDayDetailDialog({
                   </div>
                 )}
               </div>
-            )}
-          </div>
+              <p className="text-[10px] text-muted-foreground/50">
+                Küche % + Service % = Gesamt PKQ (Drilldown: Details anzeigen)
+              </p>
+            </div>
+          )}
 
-          {/* ── 4. Details (collapsed) ─────────────────────────────────────── */}
+          {/* ── 4. Abteilungs-Drilldown (Details, collapsed) ───────────────── */}
           <div className="border rounded-lg overflow-hidden">
             <button
               onClick={() => setDetailsOpen(p => !p)}
@@ -397,21 +381,46 @@ export function IstDayDetailDialog({
               <span className="flex items-center gap-1.5">
                 {detailsOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                 Details {detailsOpen ? 'ausblenden' : 'anzeigen'}
-                {!detailsOpen && stats.empBreakdown.length > 0 && (
+                {!detailsOpen && gesamtStats.empBreakdown.length > 0 && (
                   <span className="font-normal text-muted-foreground/70">
-                    ({stats.empBreakdown.length} Mitarbeitende)
+                    ({gesamtStats.empBreakdown.length} Mitarbeitende)
                   </span>
                 )}
               </span>
-              {!detailsOpen && deptAllowedCost !== null && (
+              {!detailsOpen && allowedCost !== null && (
                 <span className="font-normal text-muted-foreground/70">
-                  Erlaubt: CHF {fmtChf(deptAllowedCost)}
+                  Erlaubt: CHF {fmtChf(allowedCost)}
                 </span>
               )}
             </button>
 
             {detailsOpen && (
               <div className="border-t divide-y text-xs">
+
+                {/* Abteilungs-Filter für Tabelle */}
+                <div className="px-3 py-2 bg-muted/30">
+                  <p className="text-[10px] font-semibold text-muted-foreground mb-1.5">Mitarbeiter filtern nach Abteilung</p>
+                  <div className="flex rounded-md border overflow-hidden text-xs font-medium h-7">
+                    {(['all', 'küche', 'service'] as DeptFilter[]).map((key, i) => {
+                      const label = key === 'all' ? 'Alle' : key === 'küche' ? 'Küche' : 'Service';
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => setDept(key)}
+                          className={cn(
+                            'flex-1 transition-colors',
+                            dept === key
+                              ? 'bg-foreground text-background'
+                              : 'bg-background text-muted-foreground hover:bg-muted',
+                            i > 0 && 'border-l border-border',
+                          )}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 {/* Kennzahlen */}
                 <div className="divide-y">
@@ -420,17 +429,22 @@ export function IstDayDetailDialog({
                       <span className="font-mono text-muted-foreground">CHF {fmtChf(plannedRevenue)}</span>
                     </KVRow>
                   )}
-                  {deptAllowedCost !== null && (
-                    <KVRow label={dept === 'all' ? 'Erlaubte Kosten' : `Erlaubte Kosten (${deptLabel})`}>
+                  {allowedCost !== null && (
+                    <KVRow label="Erlaubte Gesamtkosten">
+                      <span className="font-mono">CHF {fmtChf(allowedCost)}</span>
+                    </KVRow>
+                  )}
+                  {deptAllowedCost !== null && dept !== 'all' && (
+                    <KVRow label={`Erlaubte Kosten (${deptLabel})`}>
                       <span className="font-mono">CHF {fmtChf(deptAllowedCost)}</span>
                     </KVRow>
                   )}
-                  {devCHF !== null && (
-                    <KVRow label="Abweichung CHF">
+                  {deptDevCHF !== null && (
+                    <KVRow label={dept === 'all' ? 'Abweichung Gesamt CHF' : `Abweichung (${deptLabel}) CHF`}>
                       <span className={cn('font-mono font-semibold',
-                        devCHF > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'
+                        deptDevCHF > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'
                       )}>
-                        {devCHF > 0 ? '+' : ''}CHF {fmtChf(devCHF)}
+                        {deptDevCHF > 0 ? '+' : ''}CHF {fmtChf(deptDevCHF)}
                       </span>
                     </KVRow>
                   )}

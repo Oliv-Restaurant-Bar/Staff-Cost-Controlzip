@@ -2016,6 +2016,52 @@ const SchedulePlanner = () => {
     return sum + hrs * emp.hourlyWage;
   }, 0);
 
+  // ── Gesamt-Personalkosten (immer Küche + Service, unabhängig vom Dept-Filter) ──────
+  const gesamtMonthlyPlannedLaborCost = activeEmployees.reduce((sum, emp) => {
+    if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
+      return sum + emp.monthlySalary;
+    }
+    const hrs = calculateCostableHours(emp.id);
+    return sum + hrs * emp.hourlyWage;
+  }, 0);
+
+  const gesamtWeeklyPlannedLaborCost = activeEmployees.reduce((sum, emp) => {
+    if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
+      return sum + emp.monthlySalary * (displayDays.length / daysInMonth.length);
+    }
+    const hrs = displayDays.reduce((h, day) => {
+      const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
+      return h + (ds ? calculateDayHours(ds) : 0);
+    }, 0);
+    return sum + hrs * emp.hourlyWage;
+  }, 0);
+
+  const gesamtWeeklyIstLaborCost = activeEmployees.reduce((sum, emp) => {
+    const hrs = displayDays.reduce((h, day) => {
+      const entry = actualHoursData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
+      return h + (entry?.hours || 0);
+    }, 0);
+    return sum + hrs * emp.hourlyWage;
+  }, 0);
+
+  const gesamtMonthlyIstLaborCost = activeEmployees.reduce((sum, emp) => {
+    const hrs = daysInMonth.reduce((h, day) => {
+      const entry = actualHoursData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
+      return h + (entry?.hours || 0);
+    }, 0);
+    return sum + hrs * emp.hourlyWage;
+  }, 0);
+
+  const gesamtActiveLaborCost = scheduleMode === 'ist'
+    ? (calendarView === 'month' ? gesamtMonthlyIstLaborCost : gesamtWeeklyIstLaborCost)
+    : (calendarView === 'month' ? gesamtMonthlyPlannedLaborCost : gesamtWeeklyPlannedLaborCost);
+
+  const gesamtCostRatio = activeRevenue > 0 ? (gesamtActiveLaborCost / activeRevenue) * 100 : null;
+  const gesamtCostRatioStatus: 'good' | 'ok' | 'high' | 'unknown' =
+    gesamtCostRatio === null ? 'unknown' :
+    gesamtCostRatio <= laborCostThreshold ? 'good' :
+    gesamtCostRatio <= laborCostThreshold + 5 ? 'ok' : 'high';
+
   // ── Ist-Umsatz ─────────────────────────────────────────────────────────────
   const monthlyActualRevenue = Object.entries(dailyBudgets)
     .filter(([date]) => monthDateSet.has(date))
@@ -2653,14 +2699,14 @@ const SchedulePlanner = () => {
             ════════════════════════════════════════════════════════════ */}
         <div className={cn(
           "shrink-0 rounded-xl border-2 px-4 py-2 flex flex-col gap-1.5",
-          costRatioStatus === 'good'    && "border-green-500 bg-green-50 dark:bg-green-950/30",
-          costRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
-          costRatioStatus === 'high'    && "border-red-500 bg-red-50 dark:bg-red-950/30",
-          costRatioStatus === 'unknown' && "border-slate-300 bg-slate-50 dark:bg-slate-800/40"
+          gesamtCostRatioStatus === 'good'    && "border-green-500 bg-green-50 dark:bg-green-950/30",
+          gesamtCostRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
+          gesamtCostRatioStatus === 'high'    && "border-red-500 bg-red-50 dark:bg-red-950/30",
+          gesamtCostRatioStatus === 'unknown' && "border-slate-300 bg-slate-50 dark:bg-slate-800/40"
         )}>
           <div className="flex items-center justify-between">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Personalkostenquote
+              Personalquote Gesamt (Küche + Service)
             </p>
             <p className="text-xs text-muted-foreground">{pkqPeriodLabel}</p>
           </div>
@@ -2670,35 +2716,35 @@ const SchedulePlanner = () => {
             <div className="flex items-center gap-2">
               <div className={cn(
                 "w-9 h-9 rounded-full flex items-center justify-center text-white text-base font-black shrink-0",
-                costRatioStatus === 'good'    && "bg-green-500",
-                costRatioStatus === 'ok'      && "bg-yellow-400",
-                costRatioStatus === 'high'    && "bg-red-500",
-                costRatioStatus === 'unknown' && "bg-slate-400"
+                gesamtCostRatioStatus === 'good'    && "bg-green-500",
+                gesamtCostRatioStatus === 'ok'      && "bg-yellow-400",
+                gesamtCostRatioStatus === 'high'    && "bg-red-500",
+                gesamtCostRatioStatus === 'unknown' && "bg-slate-400"
               )}>
-                {costRatioStatus === 'good'    && '✓'}
-                {costRatioStatus === 'ok'      && '!'}
-                {costRatioStatus === 'high'    && '✗'}
-                {costRatioStatus === 'unknown' && '?'}
+                {gesamtCostRatioStatus === 'good'    && '✓'}
+                {gesamtCostRatioStatus === 'ok'      && '!'}
+                {gesamtCostRatioStatus === 'high'    && '✗'}
+                {gesamtCostRatioStatus === 'unknown' && '?'}
               </div>
               <div>
                 <button
                   onClick={() => setPkDetailOpen(true)}
                   className={cn(
                     "text-2xl font-black leading-none underline-offset-4 hover:underline cursor-pointer",
-                    costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
-                    costRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
-                    costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
-                    costRatioStatus === 'unknown' && "text-slate-500"
+                    gesamtCostRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
+                    gesamtCostRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
+                    gesamtCostRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
+                    gesamtCostRatioStatus === 'unknown' && "text-slate-500"
                   )}
                   title="Details anzeigen"
                 >
-                  {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '– %'}
+                  {gesamtCostRatio !== null ? `${gesamtCostRatio.toFixed(1)} %` : '– %'}
                 </button>
                 <p className="text-xs mt-0.5">
-                  {costRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {effectiveLaborCostThreshold}% erreicht</span>}
-                  {costRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({effectiveLaborCostThreshold}%)</span>}
-                  {costRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {effectiveLaborCostThreshold}% überschritten <span className="text-xs font-normal cursor-pointer underline" onClick={() => setPkDetailOpen(true)}>→ Details</span></span>}
-                  {costRatioStatus === 'unknown' && <span className="text-muted-foreground">Kein Umsatzbudget – Quote noch nicht berechenbar</span>}
+                  {gesamtCostRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {laborCostThreshold}% erreicht</span>}
+                  {gesamtCostRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({laborCostThreshold}%)</span>}
+                  {gesamtCostRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {laborCostThreshold}% überschritten <span className="text-xs font-normal cursor-pointer underline" onClick={() => setPkDetailOpen(true)}>→ Details</span></span>}
+                  {gesamtCostRatioStatus === 'unknown' && <span className="text-muted-foreground">Kein Umsatzbudget – Quote noch nicht berechenbar</span>}
                 </p>
               </div>
             </div>
@@ -2706,10 +2752,10 @@ const SchedulePlanner = () => {
             <div className="flex gap-4 flex-wrap sm:flex-nowrap">
               <div className="text-center">
                 <p className="text-base font-bold tabular-nums leading-tight">
-                  {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
+                  {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(gesamtActiveLaborCost)}
                 </p>
                 <p className="text-[10px] text-muted-foreground leading-tight">
-                  Personalkosten / {pkqPeriodName}
+                  PK Gesamt / {pkqPeriodName}
                 </p>
               </div>
               <div className="text-center">
@@ -2723,10 +2769,8 @@ const SchedulePlanner = () => {
                 </p>
               </div>
               <div className="text-center">
-                <p className="text-base font-bold tabular-nums leading-tight">{effectiveLaborCostThreshold} %</p>
-                <p className="text-[10px] text-muted-foreground leading-tight">
-                  Zielwert{activeDepartment !== 'all' && <span className="block text-[10px] text-muted-foreground/70">(pro Abt.)</span>}
-                </p>
+                <p className="text-base font-bold tabular-nums leading-tight">{laborCostThreshold} %</p>
+                <p className="text-[10px] text-muted-foreground leading-tight">Zielwert Gesamt</p>
               </div>
             </div>
           </div>
@@ -3365,27 +3409,27 @@ const SchedulePlanner = () => {
               <DialogTitle className="flex items-center gap-2">
                 <span className={cn(
                   "inline-flex w-7 h-7 rounded-full items-center justify-center text-white text-sm font-black shrink-0",
-                  costRatioStatus === 'good'    && "bg-green-500",
-                  costRatioStatus === 'ok'      && "bg-yellow-400",
-                  costRatioStatus === 'high'    && "bg-red-500",
-                  costRatioStatus === 'unknown' && "bg-slate-400"
+                  gesamtCostRatioStatus === 'good'    && "bg-green-500",
+                  gesamtCostRatioStatus === 'ok'      && "bg-yellow-400",
+                  gesamtCostRatioStatus === 'high'    && "bg-red-500",
+                  gesamtCostRatioStatus === 'unknown' && "bg-slate-400"
                 )}>
-                  {costRatioStatus === 'good' ? '✓' : costRatioStatus === 'ok' ? '!' : costRatioStatus === 'high' ? '✗' : '?'}
+                  {gesamtCostRatioStatus === 'good' ? '✓' : gesamtCostRatioStatus === 'ok' ? '!' : gesamtCostRatioStatus === 'high' ? '✗' : '?'}
                 </span>
-                Personalkostenquote – Details
+                Personalquote Gesamt – Details
               </DialogTitle>
               <DialogDescription>
-                {pkqPeriodLabel} · Ziel: {effectiveLaborCostThreshold}%
-                {plannedCostRatio !== null && ` · Aktuell: ${plannedCostRatio.toFixed(1)}%`}
+                {pkqPeriodLabel} · Zielquote Gesamt: {laborCostThreshold}%
+                {gesamtCostRatio !== null && ` · Aktuell: ${gesamtCostRatio.toFixed(1)}%`}
               </DialogDescription>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto min-h-0 space-y-4 pr-1">
               {/* Summary row */}
               <div className="grid grid-cols-3 gap-3 text-center">
                 <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground mb-1">Personalkosten</p>
+                  <p className="text-xs text-muted-foreground mb-1">PK Gesamt (Küche + Service)</p>
                   <p className="text-lg font-bold tabular-nums">
-                    {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeLaborCost)}
+                    {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(gesamtActiveLaborCost)}
                   </p>
                 </div>
                 <div className="rounded-lg border p-3">
@@ -3397,33 +3441,33 @@ const SchedulePlanner = () => {
                   </p>
                 </div>
                 <div className={cn("rounded-lg border p-3",
-                  costRatioStatus === 'good'    && "border-green-400 bg-green-50 dark:bg-green-950/30",
-                  costRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
-                  costRatioStatus === 'high'    && "border-red-400 bg-red-50 dark:bg-red-950/30",
+                  gesamtCostRatioStatus === 'good'    && "border-green-400 bg-green-50 dark:bg-green-950/30",
+                  gesamtCostRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
+                  gesamtCostRatioStatus === 'high'    && "border-red-400 bg-red-50 dark:bg-red-950/30",
                 )}>
-                  <p className="text-xs text-muted-foreground mb-1">Quote (Ist/Budget)</p>
+                  <p className="text-xs text-muted-foreground mb-1">Gesamt-PKQ</p>
                   <p className={cn("text-lg font-black tabular-nums",
-                    costRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
-                    costRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
-                    costRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
+                    gesamtCostRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
+                    gesamtCostRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
+                    gesamtCostRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
                   )}>
-                    {plannedCostRatio !== null ? `${plannedCostRatio.toFixed(1)} %` : '–'}
+                    {gesamtCostRatio !== null ? `${gesamtCostRatio.toFixed(1)} %` : '–'}
                   </p>
                 </div>
               </div>
 
               {/* Cost delta if over target */}
-              {plannedCostRatio !== null && activeRevenue > 0 && plannedCostRatio > effectiveLaborCostThreshold && (
+              {gesamtCostRatio !== null && activeRevenue > 0 && gesamtCostRatio > laborCostThreshold && (
                 <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 p-3 flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-semibold text-red-700 dark:text-red-400">Mehrkosten gegenüber Ziel ({effectiveLaborCostThreshold}%)</p>
+                    <p className="text-sm font-semibold text-red-700 dark:text-red-400">Mehrkosten gegenüber Ziel ({laborCostThreshold}%)</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Bei Ziel wären Personalkosten: {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue * effectiveLaborCostThreshold / 100)}
+                      Bei Ziel wären PK Gesamt: {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue * laborCostThreshold / 100)}
                     </p>
                   </div>
                   <p className="text-2xl font-black text-red-700 dark:text-red-400 tabular-nums">
                     + {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(
-                      activeLaborCost - (activeRevenue * effectiveLaborCostThreshold / 100)
+                      gesamtActiveLaborCost - (activeRevenue * laborCostThreshold / 100)
                     )}
                   </p>
                 </div>
@@ -3707,7 +3751,7 @@ const SchedulePlanner = () => {
         actualHoursData={actualHoursData}
         actualRevenue={selectedIstDay ? dailyBudgets[format(selectedIstDay, 'yyyy-MM-dd')]?.actualRevenue : undefined}
         plannedRevenue={selectedIstDay ? dailyBudgets[format(selectedIstDay, 'yyyy-MM-dd')]?.plannedRevenue : undefined}
-        laborCostThreshold={gridLaborCostThreshold}
+        laborCostThreshold={laborCostThreshold}
         scheduleData={scheduleData}
         activeDepartment={activeDepartment === 'service' || activeDepartment === 'küche' ? activeDepartment : 'all'}
       />
