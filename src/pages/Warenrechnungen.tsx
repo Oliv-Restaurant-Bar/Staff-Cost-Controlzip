@@ -50,7 +50,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import {
-  ShoppingCart, Plus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
+  ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -274,6 +274,20 @@ export default function WarenrechnungenPage() {
   const [rangeRevenue, setRangeRevenue] = useState<Record<string, number>>({});
   const [monthlyRevBudget, setMonthlyRevBudget] = useState<Record<string, number>>({}); // YYYY-MM → CHF
   const [rangeLoading, setRangeLoading] = useState(false);
+
+  // ─── Forecast Umsatz (per Zeitraum, localStorage) ─────────────────────────
+  const [forecastRevs, setForecastRevs] = useState<Record<string, number>>({});
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`waren_analyse_forecasts_${tenantId}`);
+      setForecastRevs(stored ? JSON.parse(stored) : {});
+    } catch { setForecastRevs({}); }
+  }, [tenantId]);
+  const updateForecastRev = (key: string, value: number) => {
+    const updated = { ...forecastRevs, [key]: Math.max(0, Math.round(value)) };
+    setForecastRevs(updated);
+    localStorage.setItem(`waren_analyse_forecasts_${tenantId}`, JSON.stringify(updated));
+  };
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -726,6 +740,28 @@ export default function WarenrechnungenPage() {
     if (analyseMode === 'ytd')         return `YTD ${aRangeYear} (Jan – heute)`;
     return `Jahr ${aRangeYear}`;
   })();
+
+  // ─── Forecast-Abgeleitete Werte ────────────────────────────────────────────
+  const forecastKey = (() => {
+    if (analyseMode === 'week')        return `week_${aYear}-W${String(aWeekNum).padStart(2,'0')}`;
+    if (analyseMode === 'month')       return `month_${aYear}-${String(aMonth).padStart(2,'0')}`;
+    if (analyseMode === 'multi_month') return `multi_${aFromYear}-${aFromMonth}_${aToYear}-${aToMonth}`;
+    if (analyseMode === 'ytd')         return `ytd_${aRangeYear}`;
+    return `year_${aRangeYear}`;
+  })();
+  const forecastRev  = forecastRevs[forecastKey] ?? 0;
+  const forecastPct  = forecastRev > 0 && analyseKPIs.totalCost > 0
+    ? (analyseKPIs.totalCost / forecastRev) * 100 : null;
+  const forecastLabel = analyseMode === 'week'        ? `Forecast Umsatz Ende Woche (${analyseRangeLabel})`
+    : analyseMode === 'month'       ? `Forecast Umsatz Ende Monat (${analyseRangeLabel})`
+    : analyseMode === 'year'        ? `Forecast Umsatz Ende Jahr ${aRangeYear}`
+    : analyseMode === 'ytd'         ? `Forecast Umsatz YTD ${aRangeYear}`
+    : `Forecast Umsatz Zeitraum (${analyseRangeLabel})`;
+  const forecastQuickValues = analyseMode === 'week'
+    ? [10000, 15000, 20000, 25000, 30000, 35000]
+    : analyseMode === 'year' || analyseMode === 'ytd'
+    ? [500000, 600000, 700000, 800000, 900000, 1000000]
+    : [50000, 60000, 70000, 80000, 90000, 100000, 120000];
 
   async function handleSave() {
     if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
@@ -1441,6 +1477,94 @@ export default function WarenrechnungenPage() {
                   </div>
                 </div>
 
+                {/* ── Forecast Umsatz ──────────────────────────────────────── */}
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-semibold text-foreground">{forecastLabel}</span>
+                    {forecastRev > 0 && (
+                      <button
+                        onClick={() => updateForecastRev(forecastKey, 0)}
+                        className="ml-auto text-xs text-muted-foreground hover:text-foreground underline"
+                      >zurücksetzen</button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* +/- Steuerung */}
+                    <div className="flex items-center border border-border rounded-lg overflow-hidden bg-background h-9">
+                      <button
+                        onClick={() => updateForecastRev(forecastKey, forecastRev - 1000)}
+                        className="h-9 w-9 flex items-center justify-center hover:bg-muted transition-colors border-r border-border"
+                      >
+                        <Minus className="h-3.5 w-3.5" />
+                      </button>
+                      <span className="text-xs text-muted-foreground px-2 select-none">CHF</span>
+                      <input
+                        type="number"
+                        step="1000"
+                        min="0"
+                        value={forecastRev === 0 ? '' : forecastRev}
+                        placeholder="–"
+                        onChange={e => {
+                          const v = Number(e.target.value);
+                          if (!isNaN(v) && v >= 0) updateForecastRev(forecastKey, v);
+                          else if (e.target.value === '') updateForecastRev(forecastKey, 0);
+                        }}
+                        className="w-28 h-9 text-sm font-semibold tabular-nums text-center bg-transparent border-none focus:outline-none"
+                      />
+                      <button
+                        onClick={() => updateForecastRev(forecastKey, forecastRev + 1000)}
+                        className="h-9 w-9 flex items-center justify-center hover:bg-muted transition-colors border-l border-border"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Schnellwahl */}
+                    <div className="flex gap-1.5 flex-wrap">
+                      {forecastQuickValues.map(v => (
+                        <button
+                          key={v}
+                          onClick={() => updateForecastRev(forecastKey, v)}
+                          className={cn(
+                            'h-8 px-2.5 rounded-md text-xs font-medium border transition-colors tabular-nums',
+                            forecastRev === v
+                              ? 'bg-foreground text-background border-foreground'
+                              : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground/40',
+                          )}
+                        >
+                          {v >= 100000 ? `${(v / 1000).toFixed(0)}k` : `${(v / 1000).toFixed(0)}k`}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Forecast % Ergebnis */}
+                    {forecastPct !== null && (
+                      <div className={cn(
+                        'ml-auto flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold border',
+                        forecastPct > targetPct + 2
+                          ? 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/20 dark:text-red-400 dark:border-red-800'
+                          : forecastPct > targetPct
+                          ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-800'
+                          : 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-800',
+                      )}>
+                        <TrendingUp className="h-3.5 w-3.5 flex-shrink-0" />
+                        <span>Forecast {fmtPct(forecastPct)}</span>
+                        <span className="text-xs font-normal opacity-70">
+                          {forecastPct <= targetPct ? '✓ Im Ziel' : '↑ Über Ziel'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {forecastRev === 0 && (
+                    <p className="text-xs text-muted-foreground mt-2 opacity-70">
+                      Erwarteten Umsatz eingeben, um die Forecast-Warenkostenquote zu berechnen.
+                    </p>
+                  )}
+                </div>
+
                 {/* ── KPI-Karten ──────────────────────────────────────────── */}
                 {!rangeLoading && (
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -1455,10 +1579,11 @@ export default function WarenrechnungenPage() {
                       variant="default"
                     />
                     <KpiBox
-                      label="Warenkosten %" Icon={BarChart3}
+                      label="Warenkosten % · Stand aktuell" Icon={BarChart3}
                       value={analyseKPIs.pct !== null ? fmtPct(analyseKPIs.pct) : '–'}
                       variant={analyseKPIs.pct === null ? 'muted' : analyseKPIs.pct > targetPct + 2 ? 'alert' : analyseKPIs.pct > targetPct ? 'warn' : 'ok'}
                       sub={analyseKPIs.pct !== null ? `Ziel: ${targetPct} %` : 'Kein Umsatz'}
+                      sub2={forecastPct !== null ? `Forecast Endwert: ${fmtPct(forecastPct)}` : undefined}
                     />
                     <KpiBox
                       label="Lieferanten aktiv" Icon={Package}

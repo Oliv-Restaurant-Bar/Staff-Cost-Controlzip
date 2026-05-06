@@ -1,0 +1,144 @@
+Bitte ergänze die Forecast Funktion in der Analyse-Ansicht der Warenrechnungen sauber und sichtbar.
+
+Aktuell ist nicht klar ersichtlich, wo der Forecast Umsatz eingegeben werden kann.
+
+Ziel:
+Der Benutzer soll einen erwarteten zukünftigen Umsatz für den gewählten Zeitraum eingeben können, damit die Warenkostenquote realistisch bis Periodenende simuliert werden kann.
+
+Wichtig:
+Die aktuelle Warenkostenquote bleibt bestehen.
+Zusätzlich soll eine Forecast Warenkostenquote berechnet werden.
+
+---
+
+1. Positionierung
+
+Füge oberhalb der Analyse KPI Karten einen neuen Forecast Bereich ein.
+
+Position:
+Unter den Zeitraum-Tabs:
+- Woche
+- Monat
+- Mehrere Monate
+- Jahr
+- YTD
+
+und oberhalb der KPI Karten:
+- Umsatz Zeitraum
+- Warenkosten netto
+- Warenkosten %
+- Lieferanten aktiv
+
+---
+
+2. Neue Forecast Eingabe
+
+Neue Box oder Eingabefeld:
+
+"Forecast Umsatz Zeitraum"
+
+Beispiele:
+- Woche → Forecast Umsatz Ende Woche
+- Monat → Forecast Umsatz Ende Monat
+- Jahr → Forecast Umsatz Ende Jahr
+
+Eingabe:
+- CHF Wert
+- einfache +/- Steuerung
+- Schritte in 1’000 CHF
+- alternativ direkte Eingabe möglich
+
+Beispiel:
+[ - ] CHF 25’000 [ + ]
+
+---
+
+3. Neue Kennzahl
+
+Zusätzlich anzeigen:
+
+"Forecast Warenkosten %"
+
+Berechnung:
+Forecast Warenkosten % =
+aktuelle Warenkosten netto / Forecast Umsatz Zeitraum * 100
+
+Beispiel:
+Warenkosten netto = CHF 6’719
+Forecast Umsatz = CHF 25’000
+
+= 26.9 %
+
+---
+
+4. Bestehende Warenkosten % NICHT ersetzen
+
+Wichtig:
+Die aktuelle Warenkostenquote (z.B. 40.4 %) bleibt bestehen.
+
+Diese zeigt:
+"Stand aktuell"
+
+Zusätzlich:
+Forecast Warenkosten %
+
+Diese zeigt:
+"Erwarteter Endwert"
+
+Beide Werte sollen gleichzeitig sichtbar sein.
+
+---
+
+5. Zielvergleich
+
+Vergleiche auch die Forecast Warenkostenquote mit dem Zielwert.
+
+Beispiel:
+Ziel 30 %
+Forecast 26.9 %
+
+→ Status:
+Im Ziel
+
+Oder:
+Über Ziel
+
+---
+
+6. Zeitraumlogik
+
+Der Forecast Umsatz soll abhängig vom gewählten Zeitraum separat gespeichert werden:
+
+- Woche
+- Monat
+- Jahr
+
+Beispiel:
+KW 19 hat eigenen Forecast Umsatz
+Mai 2026 hat eigenen Forecast Umsatz
+
+---
+
+7. UI Ziel
+
+Die Funktion soll sehr einfach bleiben.
+
+Keine komplexe Planung.
+
+Nur:
+- erwarteter Umsatz
+- daraus berechnete Forecast Warenkostenquote
+
+Das Ganze soll operativ schnell verständlich sein.
+
+---
+
+8. Tests
+
+Bitte prüfen:
+- Forecast Eingabe sichtbar
+- +/- 1’000 funktioniert
+- direkte Eingabe funktioniert
+- Forecast Prozent aktualisiert live
+- bestehende Prozentanzeige bleibt erhalten
+- Zeitraumwechsel speichert separate Werte
