@@ -32,6 +32,7 @@ export interface ResolvedZielwert {
 const STORAGE_KEY = 'zielwerte_v1';
 const LEGACY_KEY  = 'labor_cost_threshold';
 const DEFAULT_PCT = 40;
+const DEFAULT_PCT_DEPT = 20; // Default für Service / Küche einzeln
 
 // ── Persistenz ──────────────────────────────────────────────────────────────
 
@@ -141,11 +142,12 @@ export function resolveZielwert(
     return { targetPercent: foundYG.targetPercent, targetChf: foundYG.targetChf, source: 'year+global' };
   }
 
-  // 5. Fallback → legacy labor_cost_threshold
-  const legacy = Number(localStorage.getItem(LEGACY_KEY) || DEFAULT_PCT);
+  // 5. Fallback: Global → legacy localStorage-Wert (oder 40%), Abteilung → 20%
+  const legacyGlobal = Number(localStorage.getItem(LEGACY_KEY) || DEFAULT_PCT);
+  const fallbackPct  = dept === 'all' ? legacyGlobal : DEFAULT_PCT_DEPT;
   if (debug) {
-    console.log(`[ZIELWERTE] resolved target for department '${dept}': ${legacy}% (fallback)`);
-    console.log(`[ZIELWERTE] source: fallback (labor_cost_threshold)`);
+    console.log(`[ZIELWERTE] resolved target for department '${dept}': ${fallbackPct}% (fallback)`);
+    console.log(`[ZIELWERTE] source: fallback`);
   }
-  return { targetPercent: legacy, targetChf: undefined, source: 'fallback' };
+  return { targetPercent: fallbackPct, targetChf: undefined, source: 'fallback' };
 }

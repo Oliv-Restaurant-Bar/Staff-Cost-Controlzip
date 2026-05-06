@@ -29,7 +29,7 @@ import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDo
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
-import { resolveZielwert } from '@/lib/zielwerte-store';
+import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
 import { MobileDayView } from '@/components/schedule-planner/MobileDayView';
@@ -257,6 +257,8 @@ const SchedulePlanner = () => {
   const [dataLoading, setDataLoading]                         = useState(false);
   const [proRataDay, setProRataDay]                           = useState<string>('');
   const [pkDetailOpen, setPkDetailOpen]                       = useState(false);
+  const [zielwertEditOpen, setZielwertEditOpen]               = useState(false);
+  const [zielwertDraft, setZielwertDraft]                     = useState<{ service: string; küche: string; global: string; autoGlobal: boolean }>({ service: '20.0', küche: '20.0', global: '40.0', autoGlobal: true });
 
   // ── Sortierungsmodus & Zellfarben ────────────────────────────────────────
   const [sortModeActive, setSortModeActive]                   = useState(false);
@@ -1612,6 +1614,42 @@ const SchedulePlanner = () => {
   };
 
   // Küchen-Plan PDF Import: delta-merge, küche-only, no full replace
+  // ── Zielwert-Bearbeitung ─────────────────────────────────────────────────
+  const handleOpenZielwertEdit = () => {
+    const svc = resolveZielwert(_planYear, _planMonth, 'service', false).targetPercent;
+    const kue = resolveZielwert(_planYear, _planMonth, 'küche',   false).targetPercent;
+    const glb = resolveZielwert(_planYear, _planMonth, undefined,  false).targetPercent;
+    setZielwertDraft({ service: svc.toFixed(1), küche: kue.toFixed(1), global: glb.toFixed(1), autoGlobal: false });
+    setZielwertEditOpen(true);
+  };
+
+  const updateZielwertDraft = (field: 'service' | 'küche' | 'global', value: string) => {
+    setZielwertDraft(prev => {
+      const next = { ...prev, [field]: value };
+      if (prev.autoGlobal && field !== 'global') {
+        const svc = parseFloat(field === 'service' ? value : prev.service) || 0;
+        const kue = parseFloat(field === 'küche'   ? value : prev.küche)   || 0;
+        next.global = (svc + kue).toFixed(1);
+      }
+      return next;
+    });
+  };
+
+  const handleSaveZielwerte = () => {
+    const svcPct = parseFloat(zielwertDraft.service);
+    const kuePct = parseFloat(zielwertDraft.küche);
+    const glbPct = parseFloat(zielwertDraft.global);
+    if (isNaN(svcPct) || isNaN(kuePct) || isNaN(glbPct)) return;
+    const existingEntries = loadZielwerte();
+    const findExistingId = (dept: ZielwertDepartment) =>
+      existingEntries.find(e => e.year === _planYear && e.month === _planMonth && e.department === dept)?.id;
+    saveZielwert({ year: _planYear, month: _planMonth, department: 'service', targetPercent: svcPct }, findExistingId('service'));
+    saveZielwert({ year: _planYear, month: _planMonth, department: 'küche',   targetPercent: kuePct }, findExistingId('küche'));
+    saveZielwert({ year: _planYear, month: _planMonth, department: 'all',     targetPercent: glbPct }, findExistingId('all'));
+    setZielwertEditOpen(false);
+    toast.success(`Zielwerte für ${format(currentMonth, 'MMMM yyyy', { locale: de })} gespeichert`);
+  };
+
   const handleKüchenplanImport = (delta: Record<string, DaySchedule>, count: number) => {
     setScheduleData(prev => {
       const merged = { ...prev };
@@ -2141,22 +2179,18 @@ const SchedulePlanner = () => {
   const _serviceResolved = resolveZielwert(_planYear, _planMonth, 'service', false);
   const _kücheResolved   = resolveZielwert(_planYear, _planMonth, 'küche',   false);
 
-  // Wenn kein abteilungsspezifischer Zielwert hinterlegt: altes Verhalten (global / 2)
-  const serviceThreshold = _serviceResolved.source !== 'fallback' && _serviceResolved.source !== 'month+global' && _serviceResolved.source !== 'year+global'
-    ? _serviceResolved.targetPercent
-    : laborCostThreshold / 2;
-  const kücheThreshold = _kücheResolved.source !== 'fallback' && _kücheResolved.source !== 'month+global' && _kücheResolved.source !== 'year+global'
-    ? _kücheResolved.targetPercent
-    : laborCostThreshold / 2;
+  // Zielwerte direkt aus dem Store (Fallback im Store bereits dept-spezifisch: 20 % je Abt.)
+  const serviceThreshold = _serviceResolved.targetPercent;
+  const kücheThreshold   = _kücheResolved.targetPercent;
 
   const effectiveLaborCostThreshold = activeDepartment === 'service'
     ? serviceThreshold
     : activeDepartment === 'küche'
       ? kücheThreshold
-      : laborCostThreshold;
+      : laborCostThreshold; // global für 'all'
 
-  // Jedes ScheduleGrid zeigt immer nur eine Abteilung → Durchschnitt der dept-Zielwerte
-  const gridLaborCostThreshold = Math.round((serviceThreshold + kücheThreshold) / 2);
+  // ScheduleGrid-Schwellwert: abteilungsspezifisch oder global bei Gesamtansicht
+  const gridLaborCostThreshold = effectiveLaborCostThreshold;
 
   // ── Label für die aktive Periode ─────────────────────────────────────────
   const pkqPeriodLabel = useMemo(() => {
@@ -2786,6 +2820,14 @@ const SchedulePlanner = () => {
                 </span>
               ))}
               <span className="text-[10px] text-muted-foreground/50 ml-0.5">für {pkqPeriodLabel}</span>
+              <button
+                onClick={handleOpenZielwertEdit}
+                className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/60 hover:text-foreground transition-colors ml-1 px-1.5 py-0.5 rounded border border-transparent hover:border-border"
+                title="Zielwerte bearbeiten"
+              >
+                <Pencil className="h-2.5 w-2.5" />
+                <span>bearbeiten</span>
+              </button>
             </div>
           );
         })()}
@@ -3983,6 +4025,115 @@ const SchedulePlanner = () => {
         scheduleData={scheduleData}
         onImport={handleKüchenplanImport}
       />
+
+      {/* ── Zielwerte bearbeiten Dialog ──────────────────────────────────── */}
+      <Dialog open={zielwertEditOpen} onOpenChange={setZielwertEditOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Target className="h-4 w-4 text-primary" />
+              Zielwerte bearbeiten
+            </DialogTitle>
+            <DialogDescription>
+              Personalkosten-Zielquoten für {format(currentMonth, 'MMMM yyyy', { locale: de })}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-1">
+            {/* Service */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 w-20 shrink-0">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0" />
+                <label className="text-sm font-medium">Service</label>
+              </div>
+              <div className="flex items-center gap-1.5 flex-1">
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  value={zielwertDraft.service}
+                  onChange={e => updateZielwertDraft('service', e.target.value)}
+                  className="h-8 text-sm"
+                />
+                <span className="text-sm text-muted-foreground w-4">%</span>
+              </div>
+            </div>
+
+            {/* Küche */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 w-20 shrink-0">
+                <span className="w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0" />
+                <label className="text-sm font-medium">Küche</label>
+              </div>
+              <div className="flex items-center gap-1.5 flex-1">
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  value={zielwertDraft.küche}
+                  onChange={e => updateZielwertDraft('küche', e.target.value)}
+                  className="h-8 text-sm"
+                />
+                <span className="text-sm text-muted-foreground w-4">%</span>
+              </div>
+            </div>
+
+            <div className="border-t pt-3 space-y-3">
+              {/* Auto-Global-Checkbox */}
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="zw-auto-global"
+                  checked={zielwertDraft.autoGlobal}
+                  onCheckedChange={v => {
+                    const isAuto = !!v;
+                    setZielwertDraft(prev => {
+                      const svc = parseFloat(prev.service) || 0;
+                      const kue = parseFloat(prev.küche)   || 0;
+                      return { ...prev, autoGlobal: isAuto, global: isAuto ? (svc + kue).toFixed(1) : prev.global };
+                    });
+                  }}
+                  className="h-3.5 w-3.5"
+                />
+                <label htmlFor="zw-auto-global" className="text-xs text-muted-foreground cursor-pointer select-none">
+                  Global automatisch = Service + Küche
+                </label>
+              </div>
+
+              {/* Global */}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 w-20 shrink-0">
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-400 shrink-0" />
+                  <label className={cn("text-sm font-medium", zielwertDraft.autoGlobal && "text-muted-foreground")}>Global</label>
+                </div>
+                <div className="flex items-center gap-1.5 flex-1">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.5}
+                    value={zielwertDraft.global}
+                    onChange={e => updateZielwertDraft('global', e.target.value)}
+                    disabled={zielwertDraft.autoGlobal}
+                    className={cn("h-8 text-sm", zielwertDraft.autoGlobal && "text-muted-foreground")}
+                  />
+                  <span className="text-sm text-muted-foreground w-4">%</span>
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground leading-snug">
+                Die globale Zielquote gilt für KPI-Karten und Gesamtbewertung (Küche + Service zusammen).
+                Abteilungs-Zielquoten steuern die farbige Markierung pro Abteilung.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setZielwertEditOpen(false)}>Abbrechen</Button>
+            <Button onClick={handleSaveZielwerte}>Speichern</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
