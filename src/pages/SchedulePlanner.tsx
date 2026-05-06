@@ -74,6 +74,7 @@ import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatCurrency } from '@/lib/personnel-utils';
 import {
@@ -199,7 +200,8 @@ const SchedulePlanner = () => {
     return defaultEmployees;
   });
   const [scheduleData, setScheduleData] = useState<{[key: string]: DaySchedule}>({});
-  const [activeDepartment, setActiveDepartment] = useState<ViewMode>('service');
+  const [activeDepartment, setActiveDepartment] = useState<ViewMode>('all');
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [calendarView, setCalendarView] = useState<CalendarView>('month');
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
   const [visibleWeekInMonth, setVisibleWeekInMonth] = useState(0);
@@ -288,6 +290,11 @@ const SchedulePlanner = () => {
     if (isServiceManager) setActiveDepartment('service');
     else if (isKuecheManager) setActiveDepartment('küche');
   }, [isServiceManager, isKuecheManager]);
+
+  // Beim Abteilungswechsel Einzelmitarbeiter-Filter zurücksetzen
+  useEffect(() => {
+    setSelectedEmployeeId(null);
+  }, [activeDepartment]);
 
   // ── Sortierreihenfolge laden (pro Mandant & Abteilung) ─────────────────────
   useEffect(() => {
@@ -1837,10 +1844,30 @@ const SchedulePlanner = () => {
     });
   };
 
-  // Filter employees by active department (sorted by saved order)
-  const filteredEmployees = activeDepartment === 'all'
-    ? activeEmployees
+  // Optionen für das Mitarbeiter-Dropdown (ohne selectedEmployeeId-Filter)
+  const dropdownEmployeeOptions: Employee[] = activeDepartment === 'all'
+    ? [
+        ...applySort(activeEmployees.filter(e => e.department === 'service'), 'service'),
+        ...applySort(activeEmployees.filter(e => e.department === 'küche'), 'küche'),
+      ]
     : applySort(activeEmployees.filter(e => e.department === activeDepartment), activeDepartment as 'service' | 'küche');
+
+  // Filter employees by active department (sorted by saved order) + optional single-employee focus
+  const filteredEmployees = (() => {
+    let base: Employee[];
+    if (activeDepartment === 'all') {
+      // In Gesamtansicht: Service zuerst, dann Küche (je nach gespeicherter Reihenfolge)
+      const svcEmps = applySort(activeEmployees.filter(e => e.department === 'service'), 'service');
+      const kueEmps = applySort(activeEmployees.filter(e => e.department === 'küche'), 'küche');
+      base = [...svcEmps, ...kueEmps];
+    } else {
+      base = applySort(activeEmployees.filter(e => e.department === activeDepartment), activeDepartment as 'service' | 'küche');
+    }
+    if (selectedEmployeeId) {
+      base = base.filter(e => e.id === selectedEmployeeId);
+    }
+    return base;
+  })();
 
   // ── Reihenfolge-Handler ────────────────────────────────────────────────────
   const handleMoveEmployee = (empId: string, dept: 'service' | 'küche', direction: 'up' | 'down') => {
@@ -2501,37 +2528,62 @@ const SchedulePlanner = () => {
 
             {/* Abteilung */}
             {canSwitchDepartment ? (
-              <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
-                {([
-                  { key: 'service', label: 'Service', dot: 'bg-blue-500' },
-                  { key: 'küche',   label: 'Küche',   dot: 'bg-orange-500' },
-                ] as const).map(({ key, label, dot }) => (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
                   <button
-                    key={key}
-                    onClick={() => setActiveDepartment(key as Department)}
+                    onClick={() => setActiveDepartment('all' as Department)}
                     className={cn(
                       "h-7 px-2.5 text-xs font-medium rounded-md flex items-center gap-1.5 transition-colors",
-                      activeDepartment === key
+                      activeDepartment === 'all'
                         ? "bg-background text-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground"
                     )}
                   >
-                    <span className={cn("w-2 h-2 rounded-full shrink-0", dot)} />
-                    {label}
+                    <Users className="h-3 w-3 shrink-0" />
+                    Alle ({employees.length})
                   </button>
-                ))}
-                <button
-                  onClick={() => setActiveDepartment('all' as Department)}
-                  className={cn(
-                    "h-7 px-2.5 text-xs font-medium rounded-md flex items-center gap-1.5 transition-colors",
-                    activeDepartment === 'all'
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
+                  {([
+                    { key: 'service', label: 'Service', dot: 'bg-blue-500' },
+                    { key: 'küche',   label: 'Küche',   dot: 'bg-orange-500' },
+                  ] as const).map(({ key, label, dot }) => (
+                    <button
+                      key={key}
+                      onClick={() => setActiveDepartment(key as Department)}
+                      className={cn(
+                        "h-7 px-2.5 text-xs font-medium rounded-md flex items-center gap-1.5 transition-colors",
+                        activeDepartment === key
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      <span className={cn("w-2 h-2 rounded-full shrink-0", dot)} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {/* Einzelmitarbeiter-Filter */}
+                <Select
+                  value={selectedEmployeeId ?? '__all__'}
+                  onValueChange={v => setSelectedEmployeeId(v === '__all__' ? null : v)}
                 >
-                  <Users className="h-3 w-3 shrink-0" />
-                  Alle ({employees.length})
-                </button>
+                  <SelectTrigger className="h-7 text-xs w-[160px]">
+                    <SelectValue placeholder="Alle Mitarbeiter" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Alle Mitarbeiter</SelectItem>
+                    {dropdownEmployeeOptions.map(e => (
+                      <SelectItem key={e.id} value={e.id}>
+                        {activeDepartment === 'all' && (
+                          <span className={cn(
+                            "inline-block w-1.5 h-1.5 rounded-full mr-1.5 shrink-0",
+                            e.department === 'service' ? "bg-blue-500" : "bg-orange-500"
+                          )} />
+                        )}
+                        {getEmployeeDisplayName(e)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             ) : (
               <div className={cn(
@@ -2807,7 +2859,12 @@ const SchedulePlanner = () => {
                     </>
                   )}
                 </CardTitle>
-                {activeDepartment !== 'all' && (
+                {activeDepartment === 'all' ? (
+                  <div className="flex gap-1">
+                    <AddAushilfeDialog department="service" onAdd={handleAddAushilfe} />
+                    <AddAushilfeDialog department="küche" onAdd={handleAddAushilfe} />
+                  </div>
+                ) : (
                   <AddAushilfeDialog department={activeDepartment} onAdd={handleAddAushilfe} />
                 )}
               </div>
@@ -2897,140 +2954,65 @@ const SchedulePlanner = () => {
               ) : scheduleMode === 'plan' ? (
                 // Plan-Dienstplan (existing schedule grid)
                 <>
-                  {activeDepartment === 'all' ? (
-                    <div className="space-y-8">
-                      {/* Service Section */}
-                      <div>
-                        <div className="flex items-center gap-2 mb-3 pb-2 border-b">
-                          <span className="w-3 h-3 rounded-full bg-blue-500" />
-                          <h3 className="font-semibold">Service ({employees.filter(e => e.department === 'service').length} Mitarbeiter)</h3>
-                        </div>
-                        {calendarView === 'week' && (
-                          <StaffingStatusBar
-                            targets={staffingTargets}
-                            employees={employees}
-                            scheduleData={scheduleData}
-                            displayDays={displayDays}
-                            department="service"
-                          />
-                        )}
-                        <ScheduleGrid
-                          employees={applySort(employees.filter(e => e.department === 'service'), 'service')}
-                          days={displayDays}
-                          scheduleData={scheduleData}
-                          onSlotChange={handleSlotChange}
-                          onRemoveEmployee={handleRemoveEmployee}
-                          onConfigureDaysOff={handleConfigureDaysOff}
-                          onOpen8HoursDialog={handleOpen8HoursDialog}
-                          getEmployeeHours={calculateEmployeeHours}
-                          getTargetHours={getMonthlyTargetHours}
-                          getWeeklyHours={calculateWeeklyHours}
-                          getWeeklyTargetHours={getWeeklyTargetHours}
-                          onDayClick={handleDayClick}
-                          showFooter={showFooter}
-                          showCosts={effectiveShowCosts}
-                          dailyBudgets={dailyBudgets}
-                          laborCostThreshold={gridLaborCostThreshold}
-                          externalActiveTool={paintTool}
-                          onExternalToolChange={setPaintTool}
-                          highlightedEmployeeId={highlightedEmpId}
-                          patternWarnings={patternWarnings}
-                          copiedShift={copiedShift}
-                          onCopyShift={handleCopyShift}
-                          onMoveEmployee={sortModeActive ? (id, dir) => handleMoveEmployee(id, 'service', dir) : undefined}
-                          cellColors={cellColors}
-                          onCellColorChange={handleCellColorChange}
-                        />
-                      </div>
-                      
-                      {/* Küche Section */}
-                      <div>
-                        <div className="flex items-center gap-2 mb-3 pb-2 border-b">
-                          <span className="w-3 h-3 rounded-full bg-orange-500" />
-                          <h3 className="font-semibold">Küche ({employees.filter(e => e.department === 'küche').length} Mitarbeiter)</h3>
-                        </div>
-                        {calendarView === 'week' && (
-                          <StaffingStatusBar
-                            targets={staffingTargets}
-                            employees={employees}
-                            scheduleData={scheduleData}
-                            displayDays={displayDays}
-                            department="küche"
-                          />
-                        )}
-                        <ScheduleGrid
-                          employees={applySort(employees.filter(e => e.department === 'küche'), 'küche')}
-                          days={displayDays}
-                          scheduleData={scheduleData}
-                          onSlotChange={handleSlotChange}
-                          onRemoveEmployee={handleRemoveEmployee}
-                          onConfigureDaysOff={handleConfigureDaysOff}
-                          onOpen8HoursDialog={handleOpen8HoursDialog}
-                          getEmployeeHours={calculateEmployeeHours}
-                          getTargetHours={getMonthlyTargetHours}
-                          getWeeklyHours={calculateWeeklyHours}
-                          getWeeklyTargetHours={getWeeklyTargetHours}
-                          onDayClick={handleDayClick}
-                          showFooter={showFooter}
-                          showCosts={effectiveShowCosts}
-                          dailyBudgets={dailyBudgets}
-                          laborCostThreshold={gridLaborCostThreshold}
-                          externalActiveTool={paintTool}
-                          onExternalToolChange={setPaintTool}
-                          highlightedEmployeeId={highlightedEmpId}
-                          patternWarnings={patternWarnings}
-                          copiedShift={copiedShift}
-                          onCopyShift={handleCopyShift}
-                          onMoveEmployee={sortModeActive ? (id, dir) => handleMoveEmployee(id, 'küche', dir) : undefined}
-                          cellColors={cellColors}
-                          onCellColorChange={handleCellColorChange}
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      {calendarView === 'week' && activeDepartment !== 'all' && (
+                  {calendarView === 'week' && activeDepartment === 'all' && (
+                      <div className="space-y-1 mb-3">
                         <StaffingStatusBar
                           targets={staffingTargets}
                           employees={employees}
                           scheduleData={scheduleData}
                           displayDays={displayDays}
-                          department={activeDepartment as 'service' | 'küche'}
+                          department="service"
                         />
-                      )}
-                      <ScheduleGrid
-                        employees={filteredEmployees}
-                        days={displayDays}
+                        <StaffingStatusBar
+                          targets={staffingTargets}
+                          employees={employees}
+                          scheduleData={scheduleData}
+                          displayDays={displayDays}
+                          department="küche"
+                        />
+                      </div>
+                    )}
+                    {calendarView === 'week' && activeDepartment !== 'all' && (
+                      <StaffingStatusBar
+                        targets={staffingTargets}
+                        employees={employees}
                         scheduleData={scheduleData}
-                        onSlotChange={handleSlotChange}
-                        onRemoveEmployee={handleRemoveEmployee}
-                        onConfigureDaysOff={handleConfigureDaysOff}
-                        onOpen8HoursDialog={handleOpen8HoursDialog}
-                        getEmployeeHours={calculateEmployeeHours}
-                        getTargetHours={getMonthlyTargetHours}
-                        getWeeklyHours={calculateWeeklyHours}
-                        getWeeklyTargetHours={getWeeklyTargetHours}
-                        onDayClick={handleDayClick}
-                        showFooter={showFooter}
-                        showCosts={effectiveShowCosts}
-                        dailyBudgets={dailyBudgets}
-                        laborCostThreshold={gridLaborCostThreshold}
-                        externalActiveTool={paintTool}
-                        onExternalToolChange={setPaintTool}
-                        highlightedEmployeeId={highlightedEmpId}
-                        patternWarnings={patternWarnings}
-                        copiedShift={copiedShift}
-                        onCopyShift={handleCopyShift}
-                        onMoveEmployee={
-                          sortModeActive && activeDepartment !== 'all'
-                            ? (id, dir) => handleMoveEmployee(id, activeDepartment as 'service' | 'küche', dir)
-                            : undefined
-                        }
-                        cellColors={cellColors}
-                        onCellColorChange={handleCellColorChange}
+                        displayDays={displayDays}
+                        department={activeDepartment as 'service' | 'küche'}
                       />
-                    </>
-                  )}
+                    )}
+                    <ScheduleGrid
+                      employees={filteredEmployees}
+                      days={displayDays}
+                      scheduleData={scheduleData}
+                      onSlotChange={handleSlotChange}
+                      onRemoveEmployee={handleRemoveEmployee}
+                      onConfigureDaysOff={handleConfigureDaysOff}
+                      onOpen8HoursDialog={handleOpen8HoursDialog}
+                      getEmployeeHours={calculateEmployeeHours}
+                      getTargetHours={getMonthlyTargetHours}
+                      getWeeklyHours={calculateWeeklyHours}
+                      getWeeklyTargetHours={getWeeklyTargetHours}
+                      onDayClick={handleDayClick}
+                      showFooter={showFooter}
+                      showCosts={effectiveShowCosts}
+                      dailyBudgets={dailyBudgets}
+                      laborCostThreshold={gridLaborCostThreshold}
+                      externalActiveTool={paintTool}
+                      onExternalToolChange={setPaintTool}
+                      highlightedEmployeeId={highlightedEmpId}
+                      patternWarnings={patternWarnings}
+                      copiedShift={copiedShift}
+                      onCopyShift={handleCopyShift}
+                      onMoveEmployee={
+                        sortModeActive && activeDepartment !== 'all'
+                          ? (id, dir) => handleMoveEmployee(id, activeDepartment as 'service' | 'küche', dir)
+                          : undefined
+                      }
+                      cellColors={cellColors}
+                      onCellColorChange={handleCellColorChange}
+                      showDepartmentBadge={activeDepartment === 'all'}
+                    />
                 </>
               ) : (
                 // Ist-Dienstplan (actual hours grid)
@@ -3047,62 +3029,18 @@ const SchedulePlanner = () => {
                     />
                   </div>
 
-                  {activeDepartment === 'all' ? (
-                    <div className="space-y-8">
-                      {/* Service Section */}
-                      <div>
-                        <div className="flex items-center gap-2 mb-3 pb-2 border-b">
-                          <span className="w-3 h-3 rounded-full bg-blue-500" />
-                          <h3 className="font-semibold">Service ({employees.filter(e => e.department === 'service').length} Mitarbeiter)</h3>
-                        </div>
-                        <ActualHoursGrid
-                          employees={employees.filter(e => e.department === 'service')}
-                          days={displayDays}
-                          actualHoursData={actualHoursData}
-                          onHoursChange={handleActualHoursChange}
-                          getEmployeeActualHours={calculateEmployeeActualHours}
-                          getTargetHours={getMonthlyTargetHours}
-                          showCosts={effectiveShowCosts}
-                          dailyBudgets={dailyBudgets}
-                          laborCostThreshold={gridLaborCostThreshold}
-                          onDayClick={handleIstDayClick}
-                        />
-                      </div>
-                      
-                      {/* Küche Section */}
-                      <div>
-                        <div className="flex items-center gap-2 mb-3 pb-2 border-b">
-                          <span className="w-3 h-3 rounded-full bg-orange-500" />
-                          <h3 className="font-semibold">Küche ({employees.filter(e => e.department === 'küche').length} Mitarbeiter)</h3>
-                        </div>
-                        <ActualHoursGrid
-                          employees={employees.filter(e => e.department === 'küche')}
-                          days={displayDays}
-                          actualHoursData={actualHoursData}
-                          onHoursChange={handleActualHoursChange}
-                          getEmployeeActualHours={calculateEmployeeActualHours}
-                          getTargetHours={getMonthlyTargetHours}
-                          showCosts={effectiveShowCosts}
-                          dailyBudgets={dailyBudgets}
-                          laborCostThreshold={gridLaborCostThreshold}
-                          onDayClick={handleIstDayClick}
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <ActualHoursGrid
-                      employees={filteredEmployees}
-                      days={displayDays}
-                      actualHoursData={actualHoursData}
-                      onHoursChange={handleActualHoursChange}
-                      getEmployeeActualHours={calculateEmployeeActualHours}
-                      getTargetHours={getMonthlyTargetHours}
-                      showCosts={effectiveShowCosts}
-                      dailyBudgets={dailyBudgets}
-                      laborCostThreshold={gridLaborCostThreshold}
-                      onDayClick={handleIstDayClick}
-                    />
-                  )}
+                  <ActualHoursGrid
+                    employees={filteredEmployees}
+                    days={displayDays}
+                    actualHoursData={actualHoursData}
+                    onHoursChange={handleActualHoursChange}
+                    getEmployeeActualHours={calculateEmployeeActualHours}
+                    getTargetHours={getMonthlyTargetHours}
+                    showCosts={effectiveShowCosts}
+                    dailyBudgets={dailyBudgets}
+                    laborCostThreshold={gridLaborCostThreshold}
+                    onDayClick={handleIstDayClick}
+                  />
                 </>
               )}
             </div>

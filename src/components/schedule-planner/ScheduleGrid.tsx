@@ -81,6 +81,8 @@ interface ScheduleGridProps {
    */
   cellColors?: Record<string, string>;
   onCellColorChange?: (key: string, color: string | null) => void;
+  /** Show a coloured dept dot next to each employee name (blue=Service, orange=Küche) */
+  showDepartmentBadge?: boolean;
 }
 
 function patternShortLabel(type: PatternType): string {
@@ -265,6 +267,7 @@ export const ScheduleGrid = ({
   onMoveEmployee,
   cellColors = {},
   onCellColorChange,
+  showDepartmentBadge = false,
 }: ScheduleGridProps) => {
   const { shiftMap, absenceShifts } = useShiftConfig();
   
@@ -856,7 +859,15 @@ export const ScheduleGrid = ({
                   )}>
                     <div className="flex items-center justify-between gap-0.5">
                       <div className="flex-1 min-w-0 overflow-hidden">
-                        <div className="font-medium text-xs truncate" title={getEmployeeDisplayName(employee)}>{getEmployeeDisplayName(employee)}</div>
+                        <div className="flex items-center gap-1 font-medium text-xs truncate" title={getEmployeeDisplayName(employee)}>
+                          {showDepartmentBadge && (
+                            <span className={cn(
+                              "w-1.5 h-1.5 rounded-full shrink-0",
+                              employee.department === 'service' ? "bg-blue-500" : "bg-orange-500"
+                            )} />
+                          )}
+                          <span className="truncate">{getEmployeeDisplayName(employee)}</span>
+                        </div>
                         <div className="text-[10px] text-muted-foreground truncate">
                           {employee.employmentType === 'vollzeit' && 'VZ'}
                           {employee.employmentType === 'teilzeit' && 'TZ'}
