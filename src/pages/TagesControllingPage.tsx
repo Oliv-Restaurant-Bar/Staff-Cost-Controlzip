@@ -533,11 +533,12 @@ export default function TagesControllingPage() {
     loadWarenkostenMap(tenantId, monthKeys).then(map => {
       if (warenGenRef.current !== gen) return;
       setWarenkostenMap(map);
-      const totalChf = Object.values(map).reduce((s, v) => s + v, 0);
-      const days = Object.keys(map).filter(d => map[d] > 0).length;
+      const totalChf = Object.values(map).reduce((s, v) => s + v.totalGross, 0);
+      const days = Object.keys(map).filter(d => map[d].totalGross > 0).length;
       console.log(`[TAGES-CONTROLLING] wes columns replaced: yes`);
       console.log(`[WAREN] day total chf: ${totalChf.toFixed(2)} CHF über ${days} Tage`);
-    }).catch(() => {
+    }).catch((err) => {
+      console.error('[WAREN] loadWarenkostenMap failed:', err);
       if (warenGenRef.current === gen) setWarenkostenMap({});
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
