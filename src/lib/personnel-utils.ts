@@ -6,9 +6,15 @@ import { format, parse, addDays, endOfMonth } from 'date-fns';
  * Kanonischer Anzeigename eines Mitarbeiters aus dem Personalstamm.
  * Einzige Quelle der Wahrheit für alle Namensanzeigen im Dienstplan.
  * Niemals Roh-Importnamen (z.B. aus Mirus-Exporten) direkt anzeigen.
+ * Robust gegen null / undefined / fehlende Felder.
  */
-export function getEmployeeDisplayName(emp: { name: string }): string {
-  return emp.name;
+export function getEmployeeDisplayName(
+  emp: { name?: string | null; display_name?: string | null } | null | undefined
+): string {
+  if (!emp) return 'Unbekannter Mitarbeiter';
+  const name = (emp as { display_name?: string | null }).display_name?.trim()
+    || emp.name?.trim();
+  return name || 'Unbekannter Mitarbeiter';
 }
 
 export const formatCurrency = (value: number): string => {
