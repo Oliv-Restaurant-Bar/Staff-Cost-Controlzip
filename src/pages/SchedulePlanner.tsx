@@ -2056,12 +2056,6 @@ const SchedulePlanner = () => {
     ? (calendarView === 'month' ? gesamtMonthlyIstLaborCost : gesamtWeeklyIstLaborCost)
     : (calendarView === 'month' ? gesamtMonthlyPlannedLaborCost : gesamtWeeklyPlannedLaborCost);
 
-  const gesamtCostRatio = activeRevenue > 0 ? (gesamtActiveLaborCost / activeRevenue) * 100 : null;
-  const gesamtCostRatioStatus: 'good' | 'ok' | 'high' | 'unknown' =
-    gesamtCostRatio === null ? 'unknown' :
-    gesamtCostRatio <= laborCostThreshold ? 'good' :
-    gesamtCostRatio <= laborCostThreshold + 5 ? 'ok' : 'high';
-
   // ── Ist-Umsatz ─────────────────────────────────────────────────────────────
   const monthlyActualRevenue = Object.entries(dailyBudgets)
     .filter(([date]) => monthDateSet.has(date))
@@ -2078,6 +2072,12 @@ const SchedulePlanner = () => {
   const activeIstRevenue =
     calendarView === 'month' ? monthlyActualRevenue : weeklyActualRevenue;
   const activeRevenue = scheduleMode === 'ist' ? activeIstRevenue : activePlannedRevenue;
+
+  const gesamtCostRatio = activeRevenue > 0 ? (gesamtActiveLaborCost / activeRevenue) * 100 : null;
+  const gesamtCostRatioStatus: 'good' | 'ok' | 'high' | 'unknown' =
+    gesamtCostRatio === null ? 'unknown' :
+    gesamtCostRatio <= laborCostThreshold ? 'good' :
+    gesamtCostRatio <= laborCostThreshold + 5 ? 'ok' : 'high';
 
   // Im Ist-Modus: Kosten aus erfassten Ist-Stunden, nicht aus Planung
   const activeLaborCost = scheduleMode === 'ist'

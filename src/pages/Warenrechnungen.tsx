@@ -749,19 +749,15 @@ export default function WarenrechnungenPage() {
     if (analyseMode === 'ytd')         return `ytd_${aRangeYear}`;
     return `year_${aRangeYear}`;
   })();
-  const forecastRev  = forecastRevs[forecastKey] ?? 0;
-  const forecastPct  = forecastRev > 0 && analyseKPIs.totalCost > 0
-    ? (analyseKPIs.totalCost / forecastRev) * 100 : null;
-  const forecastLabel = analyseMode === 'week'        ? `Forecast Umsatz Ende Woche (${analyseRangeLabel})`
-    : analyseMode === 'month'       ? `Forecast Umsatz Ende Monat (${analyseRangeLabel})`
-    : analyseMode === 'year'        ? `Forecast Umsatz Ende Jahr ${aRangeYear}`
-    : analyseMode === 'ytd'         ? `Forecast Umsatz YTD ${aRangeYear}`
-    : `Forecast Umsatz Zeitraum (${analyseRangeLabel})`;
+  const forecastRev      = forecastRevs[forecastKey] ?? 0;         // nur der Zusatzumsatz
+  const forecastTotal    = analyseKPIs.totalRev + forecastRev;     // aktuell + zusatz
+  const forecastPct      = forecastRev > 0 && analyseKPIs.totalCost > 0 && forecastTotal > 0
+    ? (analyseKPIs.totalCost / forecastTotal) * 100 : null;
   const forecastQuickValues = analyseMode === 'week'
-    ? [10000, 15000, 20000, 25000, 30000, 35000]
+    ? [1000, 2000, 3000, 5000, 7500, 10000]
     : analyseMode === 'year' || analyseMode === 'ytd'
-    ? [500000, 600000, 700000, 800000, 900000, 1000000]
-    : [50000, 60000, 70000, 80000, 90000, 100000, 120000];
+    ? [25000, 50000, 75000, 100000, 150000, 200000]
+    : [2000, 5000, 10000, 15000, 20000, 25000, 30000];
 
   async function handleSave() {
     if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
@@ -1477,19 +1473,21 @@ export default function WarenrechnungenPage() {
                   </div>
                 </div>
 
-                {/* ── Forecast Umsatz ──────────────────────────────────────── */}
-                <div className="bg-card border border-border rounded-xl p-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-semibold text-foreground">{forecastLabel}</span>
+                {/* ── Forecast Zusatzumsatz ────────────────────────────────── */}
+                <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+                  {/* Header */}
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                    <span className="text-sm font-semibold text-foreground">Erwarteter Zusatzumsatz bis Ende {analyseMode === 'week' ? 'Woche' : analyseMode === 'month' ? 'Monat' : analyseMode === 'year' ? 'Jahr' : 'Zeitraum'}</span>
                     {forecastRev > 0 && (
                       <button
                         onClick={() => updateForecastRev(forecastKey, 0)}
-                        className="ml-auto text-xs text-muted-foreground hover:text-foreground underline"
+                        className="ml-auto text-xs text-muted-foreground hover:text-foreground underline flex-shrink-0"
                       >zurücksetzen</button>
                     )}
                   </div>
 
+                  {/* Eingabe-Zeile */}
                   <div className="flex items-center gap-2 flex-wrap">
                     {/* +/- Steuerung */}
                     <div className="flex items-center border border-border rounded-lg overflow-hidden bg-background h-9">
@@ -1499,13 +1497,13 @@ export default function WarenrechnungenPage() {
                       >
                         <Minus className="h-3.5 w-3.5" />
                       </button>
-                      <span className="text-xs text-muted-foreground px-2 select-none">CHF</span>
+                      <span className="text-xs text-muted-foreground px-2 select-none">+ CHF</span>
                       <input
                         type="number"
                         step="1000"
                         min="0"
                         value={forecastRev === 0 ? '' : forecastRev}
-                        placeholder="–"
+                        placeholder="0"
                         onChange={e => {
                           const v = Number(e.target.value);
                           if (!isNaN(v) && v >= 0) updateForecastRev(forecastKey, v);
@@ -1534,33 +1532,54 @@ export default function WarenrechnungenPage() {
                               : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground/40',
                           )}
                         >
-                          {v >= 100000 ? `${(v / 1000).toFixed(0)}k` : `${(v / 1000).toFixed(0)}k`}
+                          +{v >= 1000 ? `${(v / 1000 % 1 === 0 ? (v / 1000).toFixed(0) : (v / 1000).toFixed(1))}k` : v}
                         </button>
                       ))}
                     </div>
-
-                    {/* Forecast % Ergebnis */}
-                    {forecastPct !== null && (
-                      <div className={cn(
-                        'ml-auto flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold border',
-                        forecastPct > targetPct + 2
-                          ? 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/20 dark:text-red-400 dark:border-red-800'
-                          : forecastPct > targetPct
-                          ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-800'
-                          : 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-800',
-                      )}>
-                        <TrendingUp className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span>Forecast {fmtPct(forecastPct)}</span>
-                        <span className="text-xs font-normal opacity-70">
-                          {forecastPct <= targetPct ? '✓ Im Ziel' : '↑ Über Ziel'}
-                        </span>
-                      </div>
-                    )}
                   </div>
 
+                  {/* Aufschlüsselung + Ergebnis (nur wenn Zusatz eingegeben) */}
+                  {forecastRev > 0 && (
+                    <div className="flex items-start gap-4 flex-wrap pt-1 border-t border-border/50">
+                      {/* Rechenweg */}
+                      <div className="text-xs text-muted-foreground space-y-1 tabular-nums min-w-[220px]">
+                        <div className="flex justify-between gap-6">
+                          <span>Aktueller Umsatz</span>
+                          <span className="font-medium text-foreground">CHF {fmtChf(analyseKPIs.totalRev)}</span>
+                        </div>
+                        <div className="flex justify-between gap-6">
+                          <span>+ Erwarteter Zusatz</span>
+                          <span className="font-medium text-foreground">CHF {fmtChf(forecastRev)}</span>
+                        </div>
+                        <div className="flex justify-between gap-6 border-t border-border/50 pt-1">
+                          <span className="font-semibold text-foreground">= Forecast Gesamtumsatz</span>
+                          <span className="font-bold text-foreground">CHF {fmtChf(forecastTotal)}</span>
+                        </div>
+                      </div>
+
+                      {/* Forecast % Badge */}
+                      {forecastPct !== null && (
+                        <div className={cn(
+                          'ml-auto flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold border self-end',
+                          forecastPct > targetPct + 2
+                            ? 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/20 dark:text-red-400 dark:border-red-800'
+                            : forecastPct > targetPct
+                            ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-800'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-800',
+                        )}>
+                          <TrendingUp className="h-3.5 w-3.5 flex-shrink-0" />
+                          <span>Forecast {fmtPct(forecastPct)}</span>
+                          <span className="text-xs font-normal opacity-70">
+                            {forecastPct <= targetPct ? '✓ Im Ziel' : '↑ Über Ziel'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {forecastRev === 0 && (
-                    <p className="text-xs text-muted-foreground mt-2 opacity-70">
-                      Erwarteten Umsatz eingeben, um die Forecast-Warenkostenquote zu berechnen.
+                    <p className="text-xs text-muted-foreground opacity-70">
+                      Noch erwarteten Zusatzumsatz eingeben — das System rechnet ihn auf den aktuellen Umsatz drauf und berechnet die Forecast-Quote.
                     </p>
                   )}
                 </div>
