@@ -38,6 +38,7 @@ import {
   Truck, Plus, Trash2, Edit3, Info, AlertTriangle, ChevronDown,
   ShoppingCart, Package, Wine, ArrowUpDown, CheckCircle2, Scale,
   BookOpen, ChevronRight, Building2, Hash, Star, Link2, Link2Off, Sparkles, Tag,
+  Minus, TrendingUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -190,6 +191,250 @@ function SummaryCards({ foodCost, beverageCost, otherCost, totalCost, docCount }
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// ─── Forecast-Helpers ────────────────────────────────────────────────────────
+
+function forecastRevenueKey(year: number, month: number): string {
+  return `waren_forecast_rev_${year}-${String(month).padStart(2, '0')}`;
+}
+
+const FORECAST_TARGET_KEY = 'waren_forecast_target_pct';
+
+function loadForecastRevenue(year: number, month: number): number | null {
+  try {
+    const raw = localStorage.getItem(forecastRevenueKey(year, month));
+    if (!raw) return null;
+    const n = Number(raw);
+    return isFinite(n) && n > 0 ? n : null;
+  } catch { return null; }
+}
+
+function saveForecastRevenue(year: number, month: number, value: number | null): void {
+  try {
+    const key = forecastRevenueKey(year, month);
+    if (value === null || value <= 0) localStorage.removeItem(key);
+    else localStorage.setItem(key, String(value));
+  } catch { /* silent */ }
+}
+
+function loadForecastTarget(): number | null {
+  try {
+    const raw = localStorage.getItem(FORECAST_TARGET_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return isFinite(n) && n > 0 ? n : null;
+  } catch { return null; }
+}
+
+function saveForecastTarget(value: number | null): void {
+  try {
+    if (value === null || value <= 0) localStorage.removeItem(FORECAST_TARGET_KEY);
+    else localStorage.setItem(FORECAST_TARGET_KEY, String(value));
+  } catch { /* silent */ }
+}
+
+// ─── Forecast-Karte ──────────────────────────────────────────────────────────
+
+const QUICK_VALUES = [50000, 60000, 70000, 80000, 90000, 100000, 120000, 150000];
+
+function ForecastCard({
+  totalCost,
+  forecastRevenue,
+  onForecastChange,
+  forecastTarget,
+  onTargetChange,
+}: {
+  totalCost: number;
+  forecastRevenue: number | null;
+  onForecastChange: (v: number | null) => void;
+  forecastTarget: number | null;
+  onTargetChange: (v: number | null) => void;
+}) {
+  const [rawInput, setRawInput] = useState(
+    forecastRevenue !== null ? String(forecastRevenue) : '',
+  );
+
+  useEffect(() => {
+    setRawInput(forecastRevenue !== null ? String(forecastRevenue) : '');
+  }, [forecastRevenue]);
+
+  function step(delta: number) {
+    const current = forecastRevenue ?? 0;
+    const next = Math.max(0, current + delta);
+    onForecastChange(next === 0 ? null : next);
+  }
+
+  function handleInputBlur() {
+    const n = parseInt(rawInput.replace(/[^0-9]/g, ''), 10);
+    if (!isNaN(n) && n > 0) {
+      onForecastChange(n);
+      setRawInput(String(n));
+    } else {
+      onForecastChange(null);
+      setRawInput('');
+    }
+  }
+
+  const forecastPct = forecastRevenue && forecastRevenue > 0
+    ? (totalCost / forecastRevenue) * 100
+    : null;
+
+  const isOnTarget = forecastTarget !== null && forecastPct !== null
+    ? forecastPct <= forecastTarget
+    : null;
+
+  const statusColor = isOnTarget === null
+    ? 'border-slate-300 bg-slate-50 dark:bg-slate-800/40 dark:border-slate-600'
+    : isOnTarget
+      ? 'border-green-400 bg-green-50 dark:bg-green-950/30'
+      : 'border-red-400 bg-red-50 dark:bg-red-950/30';
+
+  const pctColor = isOnTarget === null
+    ? 'text-slate-700 dark:text-slate-300'
+    : isOnTarget ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400';
+
+  return (
+    <Card className="border-dashed border-2 border-slate-300 dark:border-slate-600">
+      <CardContent className="pt-4 pb-4 space-y-3">
+
+        {/* Header */}
+        <div className="flex items-center gap-2">
+          <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+            Forecast Umsatz Monat
+          </p>
+          <span className="text-[10px] text-muted-foreground">
+            — Warenkostenquote hochrechnen ohne echte Umsatzdaten zu überschreiben
+          </span>
+        </div>
+
+        {/* Input row */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline" size="icon" className="h-8 w-8 shrink-0"
+            onClick={() => step(-1000)}
+            disabled={!forecastRevenue || forecastRevenue <= 1000}
+          >
+            <Minus className="h-3.5 w-3.5" />
+          </Button>
+
+          <Input
+            type="text"
+            inputMode="numeric"
+            className="h-8 w-32 text-center font-mono text-sm"
+            value={rawInput}
+            placeholder="z.B. 90000"
+            onChange={e => setRawInput(e.target.value)}
+            onBlur={handleInputBlur}
+            onKeyDown={e => e.key === 'Enter' && handleInputBlur()}
+          />
+
+          <Button
+            variant="outline" size="icon" className="h-8 w-8 shrink-0"
+            onClick={() => step(+1000)}
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+
+          <span className="text-[10px] text-muted-foreground">CHF · ±1'000</span>
+
+          {forecastRevenue !== null && (
+            <button
+              className="text-[10px] text-muted-foreground hover:text-foreground underline ml-1"
+              onClick={() => { onForecastChange(null); setRawInput(''); }}
+            >
+              zurücksetzen
+            </button>
+          )}
+        </div>
+
+        {/* Schnellauswahl */}
+        <div className="flex flex-wrap gap-1.5">
+          {QUICK_VALUES.map(v => (
+            <button
+              key={v}
+              onClick={() => { onForecastChange(v); setRawInput(String(v)); }}
+              className={cn(
+                'text-[11px] px-2 py-0.5 rounded-full border font-medium transition-colors',
+                forecastRevenue === v
+                  ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-200 dark:text-slate-900 dark:border-slate-200'
+                  : 'bg-muted text-muted-foreground border-border hover:border-foreground hover:text-foreground',
+              )}
+            >
+              {(v / 1000).toFixed(0)}'000
+            </button>
+          ))}
+        </div>
+
+        {/* Result + Zielvergleich */}
+        {forecastRevenue && forecastRevenue > 0 ? (
+          <div className="flex flex-wrap gap-3 pt-1">
+            <div className="rounded-lg border bg-muted/40 px-4 py-2 text-center">
+              <p className="text-[10px] text-muted-foreground mb-0.5">Forecast Umsatz</p>
+              <p className="text-base font-bold tabular-nums">{chf(forecastRevenue)}</p>
+            </div>
+            <div className="rounded-lg border bg-muted/40 px-4 py-2 text-center">
+              <p className="text-[10px] text-muted-foreground mb-0.5">Warenkosten bisher</p>
+              <p className="text-base font-bold tabular-nums">{chf(totalCost)}</p>
+            </div>
+            <div className={cn('rounded-lg border-2 px-4 py-2 text-center', statusColor)}>
+              <p className="text-[10px] text-muted-foreground mb-0.5">Forecast Warenkosten %</p>
+              <p className={cn('text-xl font-black tabular-nums', pctColor)}>
+                {forecastPct !== null ? `${forecastPct.toFixed(1)} %` : '–'}
+              </p>
+              {isOnTarget !== null && (
+                <p className={cn('text-[10px] font-semibold mt-0.5', pctColor)}>
+                  {isOnTarget
+                    ? `✓ Im Ziel (≤ ${forecastTarget}%)`
+                    : `↑ Ziel ${forecastTarget}% überschritten`}
+                </p>
+              )}
+              {isOnTarget === null && forecastTarget === null && (
+                <p className="text-[10px] text-muted-foreground mt-0.5">Ziel unten eingeben</p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground italic flex items-center gap-1.5">
+            <Info className="h-3.5 w-3.5 shrink-0" />
+            Forecast Umsatz eingeben um die Warenkostenquote zu berechnen
+          </p>
+        )}
+
+        {/* Zielwert-Input */}
+        <div className="flex items-center gap-2 pt-2 border-t">
+          <p className="text-xs text-muted-foreground">Zielwert Warenkosten %:</p>
+          <Input
+            type="number"
+            min="1"
+            max="100"
+            step="0.5"
+            className="h-7 w-20 text-xs"
+            placeholder="z.B. 30"
+            value={forecastTarget !== null ? forecastTarget : ''}
+            onChange={e => {
+              const v = parseFloat(e.target.value);
+              onTargetChange(!isNaN(v) && v > 0 ? v : null);
+            }}
+          />
+          <span className="text-xs text-muted-foreground">%</span>
+          {forecastTarget !== null && (
+            <button
+              className="text-[10px] text-muted-foreground hover:text-foreground underline"
+              onClick={() => onTargetChange(null)}
+            >
+              löschen
+            </button>
+          )}
+          <span className="text-[10px] text-muted-foreground ml-1">
+            (gilt für alle Monate, wird gespeichert)
+          </span>
+        </div>
+
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1144,6 +1389,26 @@ export default function SupplierDocumentsPage() {
     setYear(y);
     setMonth(m);
     reload(y, m);
+    setForecastRevenue(loadForecastRevenue(y, m));
+  }
+
+  // ── Forecast-Umsatz ─────────────────────────────────────────────────────────
+
+  const [forecastRevenue, setForecastRevenue] = useState<number | null>(() =>
+    loadForecastRevenue(CURRENT_YEAR, CURRENT_MONTH),
+  );
+  const [forecastTarget, setForecastTarget] = useState<number | null>(() =>
+    loadForecastTarget(),
+  );
+
+  function handleForecastChange(v: number | null) {
+    setForecastRevenue(v);
+    saveForecastRevenue(year, month, v);
+  }
+
+  function handleTargetChange(v: number | null) {
+    setForecastTarget(v);
+    saveForecastTarget(v);
   }
 
   // ── Match-Vorschläge nach dem Speichern ─────────────────────────────────────
@@ -1413,6 +1678,15 @@ export default function SupplierDocumentsPage() {
         otherCost={summary.otherCost}
         totalCost={summary.totalCost}
         docCount={summary.documentCount}
+      />
+
+      {/* Forecast-Karte */}
+      <ForecastCard
+        totalCost={summary.totalCost}
+        forecastRevenue={forecastRevenue}
+        onForecastChange={handleForecastChange}
+        forecastTarget={forecastTarget}
+        onTargetChange={handleTargetChange}
       />
 
       {/* ── Match-Vorschläge Panel ─────────────────────────────────────────── */}
