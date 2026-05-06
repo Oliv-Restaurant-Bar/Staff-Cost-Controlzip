@@ -1,0 +1,53 @@
+Erweitere die Ansicht Tages-Controlling so, dass Umsatz und Warenkosten nach Bereichen getrennt ausgewertet werden können.
+
+Ziel:
+Die bestehende Tabelle soll weiterhin eine Total-Ansicht haben, zusätzlich aber nach Food und Beverage separiert werden können.
+
+Neue Umschaltung:
+Oben bei den bestehenden Buttons Personal, Warenkosten, Waren soll eine zweite Filterlogik ergänzt werden:
+Total
+Food
+Beverage
+
+Funktionalität:
+1. In der Total-Ansicht bleibt alles wie bisher.
+2. In der Food-Ansicht sollen nur Food-Umsätze und Food-Warenkosten berücksichtigt werden.
+3. In der Beverage-Ansicht sollen nur Beverage-Umsätze und Beverage-Warenkosten berücksichtigt werden.
+4. Einträge aus Warenrechnungen mit Kategorie Diverses dürfen nicht in die Warenkostenquote einfliessen.
+5. Diverses soll optional separat angezeigt werden, aber nicht als Warenkosten bewertet werden.
+
+Umsatzlogik:
+Prüfe, ob Umsätze bereits nach Food und Beverage gespeichert werden können.
+Falls noch nicht vorhanden, erweitere die Umsatzdatenstruktur so, dass pro Tag folgende Werte möglich sind:
+food_revenue_chf
+beverage_revenue_chf
+other_revenue_chf optional
+total_revenue_chf
+
+Warenkostenlogik:
+Die Warenrechnungen haben bereits Kategorien wie Food, Beverage und Diverses.
+Nutze diese Kategorien für die Auswertung:
+Food Warenkosten = Summe aller Warenrechnungen Kategorie Food pro Tag oder Monat
+Beverage Warenkosten = Summe aller Warenrechnungen Kategorie Beverage pro Tag oder Monat
+Diverses = separat, nicht in Warenkostenquote einrechnen
+
+Tabelle:
+Je nach gewähltem Bereich sollen die Spalten angepasst berechnet werden:
+Ist Umsatz CHF
+PK Plan CHF
+PK Ist CHF
+Delta PK CHF
+PK Plan %
+PK Ist %
+Warenkosten CHF
+Warenkosten %
+
+Bei Food oder Beverage soll die Warenkostenquote so berechnet werden:
+Warenkosten % = Warenkosten Bereich / Umsatz Bereich * 100
+
+Wichtig:
+Keine bestehende Funktion kaputt machen.
+Die bisherige Total-Ansicht muss unverändert funktionieren.
+Die Filter müssen auch für Woche, Monat und Jahr funktionieren.
+PDF und Excel Export sollen den gewählten Bereich ebenfalls berücksichtigen.
+Falls Umsatz nach Food und Beverage noch nicht erfasst wird, bitte Datenmodell und UI sauber vorbereiten, aber bestehende Total-Umsätze weiterhin anzeigen.

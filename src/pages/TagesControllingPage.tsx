@@ -51,6 +51,7 @@ import { getEffectiveWageBatch } from '@/lib/wage-history';
 
 type Period = 'woche' | 'monat' | 'jahr';
 type ViewMode = 'personal' | 'waren';
+type CategoryFilter = 'total' | 'food' | 'beverage';
 
 interface EmployeeLite {
   id: string;
@@ -366,6 +367,7 @@ export default function TagesControllingPage() {
   const [loadingPK, setLoadingPK]           = useState(false);
   const [warenkostenMap, setWarenkostenMap] = useState<Record<string, WarenkostenDay>>({});
   const [viewMode,       setViewMode]       = useState<ViewMode>('personal');
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('total');
   const loadGenRef = useRef(0);
   const warenGenRef = useRef(0);
 
@@ -381,9 +383,13 @@ export default function TagesControllingPage() {
   const [editingValue, setEditingValue] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
 
-  const startEditUmsatz = (date: string, currentGross: number) => {
+  const startEditUmsatz = (date: string) => {
+    const db = dailyBudgets[date] as Record<string, number> | undefined;
+    const current = categoryFilter === 'food'     ? (db?.foodRevenue     ?? 0)
+      : categoryFilter === 'beverage'  ? (db?.beverageRevenue ?? 0)
+      : (db?.actualRevenue   ?? 0);
     setEditingDate(date);
-    setEditingValue(currentGross > 0 ? String(Math.round(currentGross)) : '');
+    setEditingValue(current > 0 ? String(Math.round(current)) : '');
     setTimeout(() => { editInputRef.current?.select(); }, 30);
   };
 
@@ -391,9 +397,12 @@ export default function TagesControllingPage() {
     const raw = editingValue.replace(/['''`\s]/g, '').replace(',', '.');
     const gross = parseFloat(raw);
     if (!isNaN(gross) && gross >= 0) {
+      const field = categoryFilter === 'food'    ? 'foodRevenue'
+        : categoryFilter === 'beverage' ? 'beverageRevenue'
+        : 'actualRevenue';
       const updated = {
         ...dailyBudgets,
-        [date]: { ...dailyBudgets[date], actualRevenue: gross },
+        [date]: { ...dailyBudgets[date], [field]: gross },
       };
       setDailyBudgets(updated);
       localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(updated));
@@ -597,15 +606,19 @@ export default function TagesControllingPage() {
       const wesFood   = showNetRevenue ? wk.foodNet  : wk.foodGross;
       const wesBev    = showNetRevenue ? wk.bevNet   : wk.bevGross;
 
-      // Gefilterte Werte für die Anzeige
-      const umsatz = umsatzTotal;
-      const wesChf = wesTotal;
+      // Gefilterte Werte für die Anzeige (abhängig von categoryFilter)
+      const umsatz = categoryFilter === 'food'     ? umsatzFood
+        : categoryFilter === 'beverage' ? umsatzBev
+        : umsatzTotal;
+      const wesChf = categoryFilter === 'food'     ? wesFood
+        : categoryFilter === 'beverage' ? wesBev
+        : wesTotal;
 
       const pkPlanChf = planMap[d]   ?? 0;
       const pkIstChf  = actualMap[d] ?? 0;
       return { date: d, day, umsatz, umsatzFood, umsatzBev, umsatzTotal, pkPlanChf, pkIstChf, wesChf, wesTotal, wesFood, wesBev };
     });
-  }, [dates, dailyBudgets, planMap, actualMap, warenkostenMap, showNetRevenue, viewMode]);
+  }, [dates, dailyBudgets, planMap, actualMap, warenkostenMap, showNetRevenue, viewMode, categoryFilter]);
 
   // Total-Zeile (gewichtete Prozente; bei aktivem Pro-Rata nur bis Stichtag)
   const total = useMemo(() => {
@@ -712,10 +725,15 @@ export default function TagesControllingPage() {
     doc.setFontSize(8);
     doc.setTextColor(...C_HEADER_TXT);
     doc.text(getPeriodLabel(period, anchor), W / 2, 10, { align: 'center' });
+    const catSuffix = categoryFilter === 'food' ? ' · Food' : categoryFilter === 'beverage' ? ' · Beverage' : '';
     if (viewMode === 'waren') {
       doc.setFontSize(6.5);
       doc.setTextColor(45, 212, 191);
-      doc.text('Warenkostenansicht', W / 2, 16, { align: 'center' });
+      doc.text(`Warenkostenansicht${catSuffix}`, W / 2, 16, { align: 'center' });
+    } else if (categoryFilter !== 'total') {
+      doc.setFontSize(6.5);
+      doc.setTextColor(categoryFilter === 'food' ? 34 : 59, categoryFilter === 'food' ? 197 : 130, categoryFilter === 'food' ? 94 : 246);
+      doc.text(`Kategorie: ${categoryFilter === 'food' ? 'Food' : 'Beverage'}`, W / 2, 16, { align: 'center' });
     } else if (showWesInExport) {
       doc.setFontSize(6.5);
       doc.setTextColor(180, 210, 180);
@@ -903,7 +921,7 @@ export default function TagesControllingPage() {
     const filename = `tages-controlling-${format(anchor, 'yyyy-MM')}${viewMode === 'waren' ? '-warenkosten' : showWesInExport ? '-mit-WES' : ''}.pdf`;
     console.log('[PDF-EXPORT] Speichern:', filename, '| Seiten:', pageCount);
     doc.save(filename);
-  }, [period, anchor, rows, monthRows, total, showWesInExport, viewMode]);
+  }, [period, anchor, rows, monthRows, total, showWesInExport, viewMode, categoryFilter]);
 
   // ── Export Excel ─────────────────────────────────────────────────────────────
 
@@ -1109,7 +1127,7 @@ export default function TagesControllingPage() {
     a.href = url; a.download = `tages-controlling-${format(anchor, 'yyyy-MM')}${viewMode === 'waren' ? '-warenkosten' : ''}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [period, anchor, rows, monthRows, total, viewMode]);
+  }, [period, anchor, rows, monthRows, total, viewMode, categoryFilter]);
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -1201,6 +1219,31 @@ export default function TagesControllingPage() {
                 className={cn(
                   'px-2.5 py-1.5 transition-colors border-l border-border first:border-l-0',
                   viewMode === btn.key ? btn.active : 'text-muted-foreground hover:bg-muted',
+                )}
+              >
+                {btn.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Kategorie-Filter: Total | Food | Beverage */}
+          <div className="flex rounded-lg border border-border overflow-hidden text-xs font-medium">
+            {([
+              { key: 'total',    label: 'Total',    active: 'bg-slate-700 text-white' },
+              { key: 'food',     label: 'Food',     active: 'bg-emerald-600 text-white' },
+              { key: 'beverage', label: 'Beverage', active: 'bg-blue-600 text-white' },
+            ] as { key: CategoryFilter; label: string; active: string }[]).map(btn => (
+              <button
+                key={btn.key}
+                onClick={() => setCategoryFilter(btn.key)}
+                title={
+                  btn.key === 'total'    ? 'Alle Kategorien (Total-Umsatz + Total-Warenkosten)'
+                  : btn.key === 'food'  ? 'Nur Food: Food-Umsatz + Food-Warenkosten (ohne Diverses)'
+                  : 'Nur Beverage: Bev-Umsatz + Bev-Warenkosten (ohne Diverses)'
+                }
+                className={cn(
+                  'px-2.5 py-1.5 transition-colors border-l border-border first:border-l-0',
+                  categoryFilter === btn.key ? btn.active : 'text-muted-foreground hover:bg-muted',
                 )}
               >
                 {btn.label}
@@ -1317,7 +1360,10 @@ export default function TagesControllingPage() {
                     {viewMode === 'personal' ? (<>
                       {/* ── Personal-Ansicht: Umsatz + PK + WES ─────────────────── */}
                       <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('umsatz')} title="Klicken zum Bearbeiten (Brutto CHF)">
-                        <span className="inline-flex items-center gap-1 justify-end">Ist-Umsatz CHF<Pencil className="h-2.5 w-2.5 opacity-40" /></span>
+                        <span className="inline-flex items-center gap-1 justify-end">
+                          {categoryFilter === 'food' ? 'Ist-Umsatz Food' : categoryFilter === 'beverage' ? 'Ist-Umsatz Bev' : 'Ist-Umsatz CHF'}
+                          <Pencil className="h-2.5 w-2.5 opacity-40" />
+                        </span>
                         <ResizeHandle col="umsatz" />
                       </th>
                       <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('pkPlan')}>
@@ -1336,10 +1382,16 @@ export default function TagesControllingPage() {
                         <span>PK Ist %</span><ResizeHandle col="pkIstPct" />
                       </th>
                       <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('wesChf')}>
-                        <span>Warenkosten CHF</span><ResizeHandle col="wesChf" />
+                        <span>
+                          {categoryFilter === 'food' ? 'WK Food CHF' : categoryFilter === 'beverage' ? 'WK Bev CHF' : 'Warenkosten CHF'}
+                        </span>
+                        <ResizeHandle col="wesChf" />
                       </th>
                       <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('wesPct')}>
-                        <span>Warenkosten %</span><ResizeHandle col="wesPct" />
+                        <span>
+                          {categoryFilter === 'food' ? 'WK Food %' : categoryFilter === 'beverage' ? 'WK Bev %' : 'Warenkosten %'}
+                        </span>
+                        <ResizeHandle col="wesPct" />
                       </th>
                     </>) : (<>
                       {/* ── Waren-Ansicht: Umsatz-Split + WK Food/Bev ────────── */}
@@ -1572,7 +1624,7 @@ export default function TagesControllingPage() {
                                 />
                               ) : (
                                 <button
-                                  onClick={() => startEditUmsatz(row.date, dailyBudgets[row.date]?.actualRevenue ?? 0)}
+                                  onClick={() => startEditUmsatz(row.date)}
                                   title="Klicken zum Bearbeiten (Brutto CHF)"
                                   className="w-full px-3 py-1.5 text-right hover:bg-blue-50 dark:hover:bg-blue-950/20 rounded transition-colors cursor-text"
                                 >
