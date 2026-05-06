@@ -5,12 +5,15 @@
  * Modi: Monatsansicht · Mehrere Monate · Jahresansicht · Kumuliert
  * Anzeigeoptionen: Top 10 · Top 20 · Alle
  * Sortierung: Umsatz absteigend · Anzahl absteigend
+ * Kategorie: Alle · Food · Beverage  (via source-Feld)
+ * Flop 20: umsatzschwächste / anzahlschwächste Produkte
  * Produkte ausblenden: per Klick auf Mülleimer, mit Reset-Button
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
-  BarChart3, RefreshCw, TrendingUp, Hash, Trash2, RotateCcw, EyeOff, Search, X,
+  BarChart3, RefreshCw, TrendingUp, Hash, Trash2, RotateCcw, EyeOff,
+  Search, X, TrendingDown, ChevronDown, ChevronUp, Utensils, Wine, Layers,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -64,9 +67,149 @@ type RankRow = {
   total_qty: number;
 };
 
-type SortKey = 'revenue' | 'qty';
-type LimitKey = 10 | 20 | 0;
-type ModeKey = 'month' | 'multimonth' | 'year' | 'cumulative';
+type SortKey       = 'revenue' | 'qty';
+type LimitKey      = 10 | 20 | 0;
+type ModeKey       = 'month' | 'multimonth' | 'year' | 'cumulative';
+type CategoryFilter = 'all' | 'food' | 'beverage';
+type FlopSortKey   = 'revenue' | 'qty';
+
+// Maps source string → CategoryFilter
+const SOURCE_CATEGORY: Record<string, CategoryFilter> = {
+  food_csv_export:     'food',
+  beverage_csv_export: 'beverage',
+};
+
+// ─── RankTable: wiederverwendbare Tabelle ─────────────────────────────────────
+
+function RankTable({
+  rows,
+  totalRevenue,
+  totalQty,
+  sortBy,
+  flop = false,
+  onHide,
+}: {
+  rows: RankRow[];
+  totalRevenue: number;
+  totalQty: number;
+  sortBy: SortKey;
+  flop?: boolean;
+  onHide?: (name: string) => void;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b bg-muted/40">
+            <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground w-10">#</th>
+            <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground">Produkt</th>
+            <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
+              <span className={cn(sortBy === 'revenue' && 'text-primary')}>Umsatz (CHF)</span>
+            </th>
+            <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
+              <span className={cn(sortBy === 'revenue' && 'text-muted-foreground')}>% Umsatz</span>
+            </th>
+            <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
+              <span className={cn(sortBy === 'qty' && 'text-primary')}>Anzahl</span>
+            </th>
+            <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
+              <span className={cn(sortBy === 'qty' && 'text-muted-foreground')}>% Anzahl</span>
+            </th>
+            {onHide && <th className="px-3 py-2.5 w-8" />}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => {
+            const rank = idx + 1;
+            const isTop3 = !flop && rank <= 3;
+            return (
+              <tr
+                key={row.product_name}
+                className={cn(
+                  'border-b last:border-0 transition-colors group',
+                  flop
+                    ? 'hover:bg-red-50/40 dark:hover:bg-red-900/10'
+                    : isTop3
+                      ? 'bg-primary/5 hover:bg-primary/10'
+                      : 'hover:bg-muted/40'
+                )}
+              >
+                {/* Rank */}
+                <td className="px-4 py-2.5 text-center">
+                  {!flop && rank === 1 && (
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-yellow-400 text-white text-xs font-black">1</span>
+                  )}
+                  {!flop && rank === 2 && (
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-300 text-slate-700 text-xs font-black">2</span>
+                  )}
+                  {!flop && rank === 3 && (
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-600 text-white text-xs font-black">3</span>
+                  )}
+                  {(flop || rank > 3) && (
+                    <span className={cn('tabular-nums', flop ? 'text-red-400 dark:text-red-500 font-medium' : 'text-muted-foreground')}>
+                      {flop ? `–${rank}` : rank}
+                    </span>
+                  )}
+                </td>
+                {/* Name */}
+                <td className={cn('px-4 py-2.5', isTop3 ? 'font-semibold' : 'font-medium')}>
+                  {row.product_name}
+                </td>
+                {/* Revenue */}
+                <td className={cn('px-4 py-2.5 text-right tabular-nums', sortBy === 'revenue' && 'font-semibold')}>
+                  {fmtChf(row.total_revenue)}
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
+                  {pct(row.total_revenue, totalRevenue)}
+                </td>
+                {/* Qty */}
+                <td className={cn('px-4 py-2.5 text-right tabular-nums', sortBy === 'qty' && 'font-semibold')}>
+                  {fmtNum(row.total_qty)}
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
+                  {pct(row.total_qty, totalQty)}
+                </td>
+                {/* Hide */}
+                {onHide && (
+                  <td className="px-3 py-2.5 text-center">
+                    <button
+                      onClick={() => onHide(row.product_name)}
+                      title={`"${row.product_name}" aus Rangliste entfernen`}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr className="border-t-2 bg-muted/50 font-semibold">
+            <td className="px-4 py-2.5" />
+            <td className="px-4 py-2.5 text-xs uppercase tracking-wide text-muted-foreground">
+              Total ({rows.length} Produkte)
+            </td>
+            <td className="px-4 py-2.5 text-right tabular-nums">
+              {fmtChf(rows.reduce((s, r) => s + r.total_revenue, 0))}
+            </td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
+              {pct(rows.reduce((s, r) => s + r.total_revenue, 0), totalRevenue)}
+            </td>
+            <td className="px-4 py-2.5 text-right tabular-nums">
+              {fmtNum(rows.reduce((s, r) => s + r.total_qty, 0))}
+            </td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
+              {pct(rows.reduce((s, r) => s + r.total_qty, 0), totalQty)}
+            </td>
+            {onHide && <td className="px-3 py-2.5" />}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
 
 // ─── Hauptkomponente ──────────────────────────────────────────────────────────
 
@@ -81,7 +224,6 @@ export default function ProduktAnalyse() {
   const [mode, setMode]           = useState<ModeKey>('month');
   const [year, setYear]           = useState(currentYear);
   const [month, setMonth]         = useState(currentMonth);
-  // Mehrere Monate: Set der ausgewählten Monatsnummern (1–12) im gewählten Jahr
   const [multiYear, setMultiYear] = useState(currentYear);
   const [selectedMonths, setSelectedMonths] = useState<Set<number>>(
     new Set([currentMonth])
@@ -93,10 +235,18 @@ export default function ProduktAnalyse() {
   const [sortBy, setSortBy]       = useState<SortKey>('revenue');
   const [limit, setLimit]         = useState<LimitKey>(10);
 
-  // Ausgeblendete Produkte (nur client-seitig, kein Supabase-Delete)
+  // NEU: Kategorie-Filter
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
+
+  // NEU: Flop-Bereich
+  const [flopOpen, setFlopOpen]       = useState(false);
+  const [flopSort, setFlopSort]       = useState<FlopSortKey>('revenue');
+  const FLOP_COUNT = 20;
+
+  // Ausgeblendete Produkte
   const [hiddenProducts, setHiddenProducts] = useState<Set<string>>(new Set());
 
-  // Produktsuche / -filter
+  // Produktsuche
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -117,12 +267,12 @@ export default function ProduktAnalyse() {
 
   const years = useMemo(() => availableYears(allRows), [allRows]);
 
-  // Monate umschalten (Mehrere-Monate-Modus)
+  // Monate umschalten
   const toggleMonth = (m: number) => {
     setSelectedMonths(prev => {
       const next = new Set(prev);
       if (next.has(m)) {
-        if (next.size === 1) return prev; // mind. 1 Monat immer ausgewählt
+        if (next.size === 1) return prev;
         next.delete(m);
       } else {
         next.add(m);
@@ -131,14 +281,15 @@ export default function ProduktAnalyse() {
     });
   };
 
-  const selectAllMonths = () => setSelectedMonths(new Set([1,2,3,4,5,6,7,8,9,10,11,12]));
-  const selectOnlyMonth = (m: number) => setSelectedMonths(new Set([m]));
+  const selectAllMonths  = () => setSelectedMonths(new Set([1,2,3,4,5,6,7,8,9,10,11,12]));
+  const selectOnlyMonth  = (m: number) => setSelectedMonths(new Set([m]));
 
-  // ── Gefilterte + aggregierte Rangliste ───────────────────────────────────
+  // ── Gefilterte + aggregierte Rangliste ────────────────────────────────────
 
   const ranked = useMemo<RankRow[]>(() => {
     let filtered = allRows;
 
+    // Zeitraum-Filter
     if (mode === 'month') {
       const prefix = `${year}-${String(month).padStart(2, '0')}`;
       filtered = filtered.filter(r => r.sale_date.startsWith(prefix));
@@ -152,18 +303,24 @@ export default function ProduktAnalyse() {
     } else if (mode === 'year') {
       filtered = filtered.filter(r => r.sale_date.startsWith(String(year)));
     } else {
-      // cumulative
       const from = `${yearFrom}-${String(monthFrom).padStart(2, '0')}-01`;
       const lastDay = new Date(yearTo, monthTo, 0).getDate();
       const to = `${yearTo}-${String(monthTo).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
       filtered = filtered.filter(r => r.sale_date >= from && r.sale_date <= to);
     }
 
+    // NEU: Kategorie-Filter (via source-Feld)
+    if (categoryFilter !== 'all') {
+      filtered = filtered.filter(r => {
+        const cat = r.source ? (SOURCE_CATEGORY[r.source] ?? null) : null;
+        return cat === categoryFilter;
+      });
+    }
+
+    // Aggregieren
     const map = new Map<string, RankRow>();
     for (const r of filtered) {
-      // Ausgeblendete Produkte überspringen
       if (hiddenProducts.has(r.product_name)) continue;
-
       const existing = map.get(r.product_name);
       if (existing) {
         existing.total_revenue += Number(r.revenue ?? 0);
@@ -184,11 +341,12 @@ export default function ProduktAnalyse() {
         : b.total_qty - a.total_qty
     );
     return arr;
-  }, [allRows, mode, year, month, multiYear, selectedMonths, yearFrom, monthFrom, yearTo, monthTo, sortBy, hiddenProducts]);
+  }, [allRows, mode, year, month, multiYear, selectedMonths, yearFrom, monthFrom, yearTo, monthTo, sortBy, hiddenProducts, categoryFilter]);
 
+  // Top-Liste (mit Limit)
   const displayed = limit === 0 ? ranked : ranked.slice(0, limit);
 
-  // Suchergebnisse: filtert die angezeigte Liste nach Produktname
+  // Suchfilter
   const q = searchQuery.trim().toLowerCase();
   const filteredDisplayed = q
     ? displayed.filter(r => r.product_name.toLowerCase().includes(q))
@@ -197,7 +355,18 @@ export default function ProduktAnalyse() {
   const totalRevenue = ranked.reduce((s, r) => s + r.total_revenue, 0);
   const totalQty     = ranked.reduce((s, r) => s + r.total_qty, 0);
 
-  // ── Perioden-Label ───────────────────────────────────────────────────────
+  // NEU: Flop 20 — aufsteigend sortiert nach flopSort
+  const flop20 = useMemo<RankRow[]>(() => {
+    const copy = [...ranked];
+    copy.sort((a, b) =>
+      flopSort === 'revenue'
+        ? a.total_revenue - b.total_revenue
+        : a.total_qty - b.total_qty
+    );
+    return copy.slice(0, FLOP_COUNT);
+  }, [ranked, flopSort]);
+
+  // ── Perioden-Label ────────────────────────────────────────────────────────
 
   const periodLabel = useMemo(() => {
     if (mode === 'month') return `${MONTH_NAMES[month - 1]} ${year}`;
@@ -212,16 +381,21 @@ export default function ProduktAnalyse() {
     return `${MONTH_NAMES[monthFrom - 1]} ${yearFrom} – ${MONTH_NAMES[monthTo - 1]} ${yearTo}`;
   }, [mode, year, month, multiYear, selectedMonths, yearFrom, monthFrom, yearTo, monthTo]);
 
-  const hideProduct = (name: string) => {
-    setHiddenProducts(prev => new Set([...prev, name]));
+  const hideProduct  = (name: string) => setHiddenProducts(prev => new Set([...prev, name]));
+  const resetHidden  = () => setHiddenProducts(new Set());
+
+  // Kategorie-Label für Badges
+  const catLabel: Record<CategoryFilter, string> = {
+    all:      'Alle',
+    food:     'Food',
+    beverage: 'Beverage',
   };
 
-  const resetHidden = () => setHiddenProducts(new Set());
-
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-4xl mx-auto">
+
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -250,6 +424,7 @@ export default function ProduktAnalyse() {
       {/* Controls */}
       <Card>
         <CardContent className="pt-4 pb-3 flex flex-wrap gap-3 items-end">
+
           {/* Mode */}
           <div className="flex flex-col gap-1">
             <span className="text-xs text-muted-foreground font-medium">Ansicht</span>
@@ -266,15 +441,13 @@ export default function ProduktAnalyse() {
             </Select>
           </div>
 
-          {/* Single month controls */}
+          {/* Single month */}
           {mode === 'month' && (
             <>
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground font-medium">Jahr</span>
                 <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
-                  <SelectTrigger className="h-8 w-[90px] text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger className="h-8 w-[90px] text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {(years.length ? years : [currentYear]).map(y => (
                       <SelectItem key={y} value={String(y)}>{y}</SelectItem>
@@ -285,9 +458,7 @@ export default function ProduktAnalyse() {
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground font-medium">Monat</span>
                 <Select value={String(month)} onValueChange={v => setMonth(Number(v))}>
-                  <SelectTrigger className="h-8 w-[130px] text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger className="h-8 w-[130px] text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {MONTH_NAMES.map((name, i) => (
                       <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
@@ -298,31 +469,23 @@ export default function ProduktAnalyse() {
             </>
           )}
 
-          {/* Multi-month controls */}
+          {/* Multi-month */}
           {mode === 'multimonth' && (
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground font-medium">Jahr</span>
                 <Select value={String(multiYear)} onValueChange={v => setMultiYear(Number(v))}>
-                  <SelectTrigger className="h-7 w-[80px] text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger className="h-7 w-[80px] text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {(years.length ? years : [currentYear]).map(y => (
                       <SelectItem key={y} value={String(y)}>{y}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-xs px-2 text-muted-foreground"
-                  onClick={selectAllMonths}
-                >
+                <Button size="sm" variant="ghost" className="h-7 text-xs px-2 text-muted-foreground" onClick={selectAllMonths}>
                   Alle
                 </Button>
               </div>
-              {/* Month toggle grid */}
               <div className="flex flex-wrap gap-1">
                 {MONTH_SHORT.map((short, i) => {
                   const m = i + 1;
@@ -348,14 +511,12 @@ export default function ProduktAnalyse() {
             </div>
           )}
 
-          {/* Year controls */}
+          {/* Year */}
           {mode === 'year' && (
             <div className="flex flex-col gap-1">
               <span className="text-xs text-muted-foreground font-medium">Jahr</span>
               <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
-                <SelectTrigger className="h-8 w-[90px] text-sm">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger className="h-8 w-[90px] text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {(years.length ? years : [currentYear]).map(y => (
                     <SelectItem key={y} value={String(y)}>{y}</SelectItem>
@@ -365,16 +526,14 @@ export default function ProduktAnalyse() {
             </div>
           )}
 
-          {/* Cumulative controls */}
+          {/* Cumulative */}
           {mode === 'cumulative' && (
             <>
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground font-medium">Von Monat</span>
                 <div className="flex gap-1">
                   <Select value={String(monthFrom)} onValueChange={v => setMonthFrom(Number(v))}>
-                    <SelectTrigger className="h-8 w-[120px] text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger className="h-8 w-[120px] text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {MONTH_NAMES.map((name, i) => (
                         <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
@@ -382,9 +541,7 @@ export default function ProduktAnalyse() {
                     </SelectContent>
                   </Select>
                   <Select value={String(yearFrom)} onValueChange={v => setYearFrom(Number(v))}>
-                    <SelectTrigger className="h-8 w-[80px] text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger className="h-8 w-[80px] text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {(years.length ? years : [currentYear]).map(y => (
                         <SelectItem key={y} value={String(y)}>{y}</SelectItem>
@@ -397,9 +554,7 @@ export default function ProduktAnalyse() {
                 <span className="text-xs text-muted-foreground font-medium">Bis Monat</span>
                 <div className="flex gap-1">
                   <Select value={String(monthTo)} onValueChange={v => setMonthTo(Number(v))}>
-                    <SelectTrigger className="h-8 w-[120px] text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger className="h-8 w-[120px] text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {MONTH_NAMES.map((name, i) => (
                         <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
@@ -407,9 +562,7 @@ export default function ProduktAnalyse() {
                     </SelectContent>
                   </Select>
                   <Select value={String(yearTo)} onValueChange={v => setYearTo(Number(v))}>
-                    <SelectTrigger className="h-8 w-[80px] text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger className="h-8 w-[80px] text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {(years.length ? years : [currentYear]).map(y => (
                         <SelectItem key={y} value={String(y)}>{y}</SelectItem>
@@ -464,7 +617,41 @@ export default function ProduktAnalyse() {
             </div>
           </div>
 
-          {/* Suche — volle Breite */}
+          {/* ── NEU: Kategorie-Filter ── */}
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground font-medium">Kategorie</span>
+            <div className="flex gap-1">
+              <Button
+                size="sm"
+                variant={categoryFilter === 'all' ? 'default' : 'outline'}
+                className="h-8 gap-1 text-xs px-3"
+                onClick={() => setCategoryFilter('all')}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                Alle
+              </Button>
+              <Button
+                size="sm"
+                variant={categoryFilter === 'food' ? 'default' : 'outline'}
+                className="h-8 gap-1 text-xs px-3"
+                onClick={() => setCategoryFilter('food')}
+              >
+                <Utensils className="h-3.5 w-3.5" />
+                Food
+              </Button>
+              <Button
+                size="sm"
+                variant={categoryFilter === 'beverage' ? 'default' : 'outline'}
+                className="h-8 gap-1 text-xs px-3"
+                onClick={() => setCategoryFilter('beverage')}
+              >
+                <Wine className="h-3.5 w-3.5" />
+                Beverage
+              </Button>
+            </div>
+          </div>
+
+          {/* Suche */}
           <div className="w-full pt-1 border-t border-border/60">
             <div className="relative max-w-sm">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
@@ -493,7 +680,7 @@ export default function ProduktAnalyse() {
         <div className="grid grid-cols-3 gap-3">
           <Card>
             <CardContent className="pt-4 pb-3 text-center">
-              <p className="text-xs text-muted-foreground mb-1">Produkte gesamt</p>
+              <p className="text-xs text-muted-foreground mb-1">Produkte{categoryFilter !== 'all' ? ` (${catLabel[categoryFilter]})` : ''}</p>
               <p className="text-2xl font-bold tabular-nums">{fmtNum(ranked.length)}</p>
               <p className="text-xs text-muted-foreground mt-0.5">{periodLabel}</p>
             </CardContent>
@@ -515,17 +702,24 @@ export default function ProduktAnalyse() {
         </div>
       )}
 
-      {/* Table */}
+      {/* ── Top-Tabelle ───────────────────────────────────────────────────── */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-semibold flex items-center justify-between">
-            <span>
+          <CardTitle className="text-sm font-semibold flex items-center justify-between flex-wrap gap-2">
+            <span className="flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 text-primary" />
               {q
                 ? `Suche: "${searchQuery}" – ${filteredDisplayed.length} Treffer`
                 : limit === 0 ? 'Alle Produkte' : `Top ${limit} Produkte`}
               {!q && ` – sortiert nach ${sortBy === 'revenue' ? 'Umsatz' : 'Anzahl'}`}
             </span>
             <div className="flex items-center gap-2">
+              {categoryFilter !== 'all' && (
+                <Badge variant="secondary" className="gap-1 text-xs">
+                  {categoryFilter === 'food' ? <Utensils className="h-3 w-3" /> : <Wine className="h-3 w-3" />}
+                  {catLabel[categoryFilter]}
+                </Badge>
+              )}
               {hiddenProducts.size > 0 && (
                 <button
                   onClick={resetHidden}
@@ -536,9 +730,7 @@ export default function ProduktAnalyse() {
                   {hiddenProducts.size} ausgeblendet
                 </button>
               )}
-              <Badge variant="secondary" className="text-xs font-normal">
-                {periodLabel}
-              </Badge>
+              <Badge variant="secondary" className="text-xs font-normal">{periodLabel}</Badge>
             </div>
           </CardTitle>
         </CardHeader>
@@ -558,148 +750,116 @@ export default function ProduktAnalyse() {
           {!loading && !error && filteredDisplayed.length === 0 && (
             <div className="p-8 text-center text-sm text-muted-foreground">
               {ranked.length === 0
-                ? 'Keine Daten für diesen Zeitraum gefunden.'
+                ? 'Keine Daten für diesen Zeitraum / diese Kategorie gefunden.'
                 : q
                   ? `Kein Produkt enthält "${searchQuery}".`
                   : 'Alle Produkte ausgeblendet.'}
             </div>
           )}
           {!loading && !error && filteredDisplayed.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/40">
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground w-10">#</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground">Produkt</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
-                      <span className={cn(sortBy === 'revenue' && 'text-primary')}>Umsatz (CHF)</span>
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
-                      <span className={cn(sortBy === 'revenue' && 'text-muted-foreground')}>% Umsatz</span>
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
-                      <span className={cn(sortBy === 'qty' && 'text-primary')}>Anzahl</span>
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground">
-                      <span className={cn(sortBy === 'qty' && 'text-muted-foreground')}>% Anzahl</span>
-                    </th>
-                    <th className="px-3 py-2.5 w-8" title="Produkt ausblenden" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredDisplayed.map((row) => {
-                    const rank = displayed.indexOf(row) + 1;
-                    const isTop3 = rank <= 3;
-                    return (
-                      <tr
-                        key={row.product_name}
-                        className={cn(
-                          'border-b last:border-0 transition-colors group',
-                          isTop3
-                            ? 'bg-primary/5 hover:bg-primary/10'
-                            : 'hover:bg-muted/40'
-                        )}
-                      >
-                        {/* Rank */}
-                        <td className="px-4 py-2.5 text-center">
-                          {rank === 1 && (
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-yellow-400 text-white text-xs font-black">1</span>
-                          )}
-                          {rank === 2 && (
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-300 text-slate-700 text-xs font-black">2</span>
-                          )}
-                          {rank === 3 && (
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-600 text-white text-xs font-black">3</span>
-                          )}
-                          {rank > 3 && (
-                            <span className="text-muted-foreground tabular-nums">{rank}</span>
-                          )}
-                        </td>
-                        {/* Name */}
-                        <td className={cn('px-4 py-2.5 font-medium', isTop3 && 'font-semibold')}>
-                          {row.product_name}
-                        </td>
-                        {/* Revenue */}
-                        <td className={cn(
-                          'px-4 py-2.5 text-right tabular-nums',
-                          sortBy === 'revenue' && 'font-semibold'
-                        )}>
-                          {fmtChf(row.total_revenue)}
-                        </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
-                          {pct(row.total_revenue, totalRevenue)}
-                        </td>
-                        {/* Qty */}
-                        <td className={cn(
-                          'px-4 py-2.5 text-right tabular-nums',
-                          sortBy === 'qty' && 'font-semibold'
-                        )}>
-                          {fmtNum(row.total_qty)}
-                        </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
-                          {pct(row.total_qty, totalQty)}
-                        </td>
-                        {/* Hide button */}
-                        <td className="px-3 py-2.5 text-center">
-                          <button
-                            onClick={() => hideProduct(row.product_name)}
-                            title={`"${row.product_name}" aus Rangliste entfernen`}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                {/* Total footer */}
-                <tfoot>
-                  <tr className="border-t-2 bg-muted/50 font-semibold">
-                    <td className="px-4 py-2.5" />
-                    <td className="px-4 py-2.5 text-xs uppercase tracking-wide text-muted-foreground">
-                      {q
-                        ? `${filteredDisplayed.length} Treffer von ${displayed.length}`
-                        : limit === 0 ? 'Total' : `Top ${displayed.length} von ${ranked.length}`}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">
-                      {fmtChf(filteredDisplayed.reduce((s, r) => s + r.total_revenue, 0))}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
-                      {pct(filteredDisplayed.reduce((s, r) => s + r.total_revenue, 0), totalRevenue)}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">
-                      {fmtNum(filteredDisplayed.reduce((s, r) => s + r.total_qty, 0))}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
-                      {pct(filteredDisplayed.reduce((s, r) => s + r.total_qty, 0), totalQty)}
-                    </td>
-                    <td className="px-3 py-2.5" />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+            <RankTable
+              rows={filteredDisplayed}
+              totalRevenue={totalRevenue}
+              totalQty={totalQty}
+              sortBy={sortBy}
+              onHide={hideProduct}
+            />
           )}
         </CardContent>
       </Card>
 
-      {/* Ausgeblendete Produkte – Info-Leiste */}
+      {/* ── NEU: Flop 20 ─────────────────────────────────────────────────── */}
+      {!loading && !error && ranked.length > 0 && (
+        <Card className="border-red-200 dark:border-red-900/40">
+          <CardHeader className="pb-0 pt-3 px-4">
+            <button
+              onClick={() => setFlopOpen(p => !p)}
+              className="flex w-full items-center justify-between group"
+            >
+              <CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-600 dark:text-red-400">
+                <TrendingDown className="h-4 w-4" />
+                Flop {Math.min(FLOP_COUNT, ranked.length)} – schwächste Produkte
+                {categoryFilter !== 'all' && (
+                  <Badge variant="secondary" className="gap-1 text-xs ml-1">
+                    {categoryFilter === 'food' ? <Utensils className="h-3 w-3" /> : <Wine className="h-3 w-3" />}
+                    {catLabel[categoryFilter]}
+                  </Badge>
+                )}
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="text-xs font-normal">{periodLabel}</Badge>
+                {flopOpen
+                  ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                  : <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                }
+              </div>
+            </button>
+
+            {/* Flop-Sort Toggle — immer sichtbar wenn offen */}
+            {flopOpen && (
+              <div className="flex items-center gap-2 pt-2 pb-1">
+                <span className="text-xs text-muted-foreground font-medium">Sortierung:</span>
+                <div className="flex gap-1">
+                  <Button
+                    size="sm"
+                    variant={flopSort === 'revenue' ? 'default' : 'outline'}
+                    className="h-7 gap-1 text-xs px-2.5"
+                    onClick={() => setFlopSort('revenue')}
+                  >
+                    <TrendingDown className="h-3 w-3" />
+                    Umsatz schwächste
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={flopSort === 'qty' ? 'default' : 'outline'}
+                    className="h-7 gap-1 text-xs px-2.5"
+                    onClick={() => setFlopSort('qty')}
+                  >
+                    <Hash className="h-3 w-3" />
+                    Anzahl schwächste
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardHeader>
+
+          {flopOpen && (
+            <CardContent className="p-0 mt-1">
+              {flop20.length === 0 ? (
+                <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+                  Keine Daten vorhanden.
+                </p>
+              ) : (
+                <RankTable
+                  rows={flop20}
+                  totalRevenue={totalRevenue}
+                  totalQty={totalQty}
+                  sortBy={flopSort}
+                  flop
+                />
+              )}
+              <p className="px-4 py-2 text-[11px] text-muted-foreground border-t">
+                Flop-Produkte werden {flopSort === 'revenue' ? 'nach tiefstem Umsatz' : 'nach niedrigster Verkaufsanzahl'} aufsteigend sortiert.
+                {categoryFilter !== 'all' && ` Nur Kategorie: ${catLabel[categoryFilter]}.`}
+              </p>
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+      {/* Ausgeblendete Produkte — Info-Leiste */}
       {hiddenProducts.size > 0 && (
         <div className="flex items-center justify-between rounded-lg border border-dashed px-4 py-2.5 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
             <EyeOff className="h-4 w-4" />
             <span>
-              <strong>{hiddenProducts.size}</strong> {hiddenProducts.size === 1 ? 'Produkt ausgeblendet' : 'Produkte ausgeblendet'}
+              <strong>{hiddenProducts.size}</strong>{' '}
+              {hiddenProducts.size === 1 ? 'Produkt ausgeblendet' : 'Produkte ausgeblendet'}
               {': '}
               <span className="italic">{Array.from(hiddenProducts).join(', ')}</span>
             </span>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={resetHidden}
-            className="gap-1.5 h-7 text-xs"
-          >
+          <Button variant="ghost" size="sm" onClick={resetHidden} className="gap-1.5 h-7 text-xs">
             <RotateCcw className="h-3.5 w-3.5" />
             Alle einblenden
           </Button>
