@@ -1,0 +1,118 @@
+Bitte passe die Produktanalyse wie folgt an.
+
+1. Produkte mit 0 Umsatz ausblenden
+
+Produkte mit Umsatz = 0 CHF sollen standardmässig nicht angezeigt werden.
+
+Wichtig:
+Diese Produkte sollen weder in Top 10, Top 20, Alle noch in Flop 20 erscheinen.
+
+Nur Produkte mit Umsatz > 0 anzeigen.
+
+---
+
+2. Flop 20 hinzufügen
+
+Neben den bestehenden Buttons:
+
+Top 10
+Top 20
+Alle
+
+bitte zusätzlich ergänzen:
+
+Flop 20
+
+Logik:
+Flop 20 zeigt die 20 Produkte mit dem tiefsten Umsatz,
+aber nur Produkte mit Umsatz > 0.
+
+Sortierung:
+aufsteigend nach Umsatz.
+
+Beispiel:
+Produkt A CHF 5
+Produkt B CHF 12
+Produkt C CHF 18
+
+Produkte mit 0 CHF Umsatz dürfen nicht erscheinen.
+
+---
+
+3. Direkte Spaltenfilter in der Tabelle
+
+Bitte füge direkt unter den Tabellenüberschriften Filterfelder ein.
+
+Spalten:
+- Produkt
+- Umsatz CHF
+- % Umsatz
+- Anzahl
+- % Anzahl
+
+Gewünscht:
+
+Unter Produkt:
+Suchfeld, z.B. Produktname eingeben
+
+Unter Umsatz CHF:
+Filter oder Sortierung:
+- min Umsatz
+- max Umsatz
+- aufsteigend / absteigend
+
+Unter Anzahl:
+Filter oder Sortierung:
+- min Anzahl
+- max Anzahl
+- aufsteigend / absteigend
+
+Ziel:
+Ich möchte direkt in der Tabelle Produkte selber filtern, sortieren oder ausblenden können.
+
+---
+
+4. Ausblenden einzelner Produkte
+
+Optional, aber wenn einfach möglich:
+Pro Tabellenzeile ein kleines Ausblenden Icon oder Checkbox hinzufügen.
+
+Wenn ich ein Produkt ausblende, soll es nur in dieser Ansicht nicht mehr angezeigt werden.
+
+Button:
+"Ausgeblendete zurücksetzen"
+
+---
+
+5. Bestehende Filter behalten
+
+Die bestehenden Filter sollen weiterhin funktionieren:
+- Jahr
+- Monat
+- Kategorie Food / Beverage / Alle
+- Sortierung Umsatz / Anzahl
+- Top 10 / Top 20 / Alle
+
+Die neuen Filter dürfen diese Logik nicht kaputt machen.
+
+---
+
+6. KPI Karten korrekt anpassen
+
+Die KPI Karten sollen weiterhin die Gesamtwerte der gewählten Periode zeigen.
+
+Aber die Tabelle selbst soll 0 Umsatz Produkte standardmässig ausblenden.
+
+---
+
+7. Tests
+
+Bitte testen:
+- Produkte mit 0 Umsatz erscheinen nicht
+- Top 10 funktioniert
+- Top 20 funktioniert
+- Alle zeigt nur Umsatz > 0
+- Flop 20 zeigt die 20 tiefsten Produkte mit Umsatz > 0
+- Suche nach Produkt funktioniert
+- Spaltenfilter funktionieren
+- Food / Beverage Filter funktioniert weiterhin

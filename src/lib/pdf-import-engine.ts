@@ -201,15 +201,49 @@ function isSageKontoblatt(rawLines: string[]): boolean {
  *   Alte Logik: findLastAmount("4060 Küche Warenaufwand  Seite 2") → "2" → hasAmount=true → Header nicht erkannt
  *   Neue Logik: hasCHFAmount("Küche Warenaufwand  Seite 2") → false → Header korrekt erkannt
  */
+/**
+ * Sage Kontoblatt Parser (stabilisierte Version)
+ *
+ * ROBUSTE MONATSWERT-FORMEL:
+ *   monatswert = finalSaldo − saldoVortrag
+ *
+ * Warum robuster als Total Soll − Total Haben:
+ *   - Im PDF-Text kann die "0.00"-Spalte auf der Total-Haben-Zeile fehlen
+ *     (Y-Koordinaten-Split zwischen Label und Betrag), wodurch
+ *     allAmts[0] fälschlicherweise den kumulativen Saldo statt den Haben-Wert liest.
+ *   - finalSaldo (= letzter/rechtester Wert auf Total-Haben-Zeile) und
+ *     saldoVortrag (= erster Betrag nach dem Konto-Header) sind immer eindeutig.
+ *   - Formel gilt auch bei Konten mit Haben > Soll (z.B. Retouren-Überhang).
+ *   - Bei mehrseitigen Konten: saldoVortrag wird nur EINMAL gesetzt (Seite 1);
+ *     Seitenanfang-Wiederholungen werden ignoriert.
+ *
+ * LOOKAHEAD bei Total-Zeilen:
+ *   Falls Label (z.B. "Total Soll") und Betrag durch Y-Toleranz-Grenze getrennt
+ *   landen, wird die Folgezeile in die Suche einbezogen.
+ *
+ * FALLBACK:
+ *   Falls saldoVortrag oder finalSaldo fehlen → totalSoll − totalHaben (alte Formel)
+ */
 function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
   interface AccountEntry {
     name: string;
+    saldoVortrag: number | null;  // Eröffnungssaldo (nur erstes Auftreten, Seite-2-Wiederholung ignorieren)
     totalSoll: number;
     totalHaben: number;
-    saldo: number;       // Monatswert = letzter Betrag auf "Total Haben"-Zeile (= Soll − Haben)
+    finalSaldo: number | null;    // Letzter Betrag auf "Total Haben"-Zeile = kumulativer Endsaldo
+    saldo: number;                // Monatswert = finalSaldo − saldoVortrag (oder Fallback totalSoll − totalHaben)
+    usedFallback: boolean;        // true wenn Fallback-Formel verwendet wurde (für Debug-Log)
     lineIndex: number;
     raw: string;
-    pageCount: number;   // Wie oft dieses Konto auf einer neuen Seite fortgesetzt wurde
+    pageCount: number;
+  }
+
+  /** Gibt kombinierten Text dieser Zeile + ggf. nächster Zeile zurück (Lookahead bei Betrag fehlt). */
+  function textWithLookahead(idx: number): string {
+    const base = lines[idx].text;
+    if (findLastAmount(base) !== null) return base;          // Betrag schon auf dieser Zeile → OK
+    const next = idx + 1 < lines.length ? lines[idx + 1].text.trim() : '';
+    return next ? `${base} ${next}` : base;
   }
 
   const accountData = new Map<string, AccountEntry>();
@@ -217,99 +251,120 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
 
   for (let i = 0; i < lines.length; i++) {
     const { text } = lines[i];
-    const trimmed = text.trim();
+    const trimmed  = text.trim();
 
-    // "Total Soll X" → Debit-Summe des Monats festhalten (für Debug-Log)
+    // ── "Saldo Vortrag X" → Eröffnungssaldo (nur einmal pro Konto, nicht bei Seitenanfang-Wiederholungen)
+    if (/^saldo\s+vortrag\b/i.test(trimmed) && currentAccount) {
+      const prev = accountData.get(currentAccount.number);
+      if (!prev || prev.saldoVortrag === null) {
+        const combined = textWithLookahead(i);
+        const lastAmt  = findLastAmount(combined);
+        const sv       = lastAmt ? (parseAmount(lastAmt.raw) ?? null) : 0; // 0 bei neuen Konten ohne Saldo-Vortrag-Angabe
+
+        accountData.set(currentAccount.number, {
+          ...(prev ?? {
+            name: currentAccount.name, totalSoll: 0, totalHaben: 0,
+            finalSaldo: null, saldo: 0, usedFallback: false, lineIndex: i + 1, raw: '', pageCount: 0,
+          }),
+          saldoVortrag: sv !== null ? Math.abs(sv) : 0,
+        });
+      }
+      continue;
+    }
+
+    // ── "Total Soll X" → Debit-Summe des Monats (kumulativ: späterer Wert überschreibt)
     if (/^total\s+soll\b/i.test(trimmed) && currentAccount) {
-      const lastAmt = findLastAmount(text);
+      const combined = textWithLookahead(i);
+      const lastAmt  = findLastAmount(combined);
       if (lastAmt) {
         const soll = parseAmount(lastAmt.raw);
         if (soll !== null) {
           const prev = accountData.get(currentAccount.number);
           accountData.set(currentAccount.number, {
             ...(prev ?? {
-              name: currentAccount.name, totalSoll: 0, totalHaben: 0,
-              saldo: 0, lineIndex: i + 1, raw: '', pageCount: 0,
+              name: currentAccount.name, saldoVortrag: null, totalSoll: 0, totalHaben: 0,
+              finalSaldo: null, saldo: 0, usedFallback: false, lineIndex: i + 1, raw: '', pageCount: 0,
             }),
-            totalSoll: Math.abs(soll), // Überschreiben: späterer Wert ist kumulativ
+            totalSoll: Math.abs(soll),
           });
         }
       }
       continue;
     }
 
-    // "Total Haben   [haben-spalte]   [kumulativer-saldo]"
+    // ── "Total Haben [haben] [kumulativer-Endsaldo]"
     //
-    // Sage Kontoblatt-Format auf der "Total Haben"-Zeile:
-    //   Spalte 1: Haben-Summe (Gutschriften / Aufwandsminderungen im Monat)
-    //   Spalte 2: Kumulativer Endsaldo (Saldo Vortrag + Soll - Haben, periodenübergreifend)
+    // Spaltenformat:  Total Haben | Haben-Spalte | Saldo-Spalte
+    //   ≥2 Beträge: allAmts[0] = Haben, allAmts[last] = kumulativer Endsaldo
+    //   1 Betrag:   Haben=0.00 fehlt in PDF-Extraktion → einziger Wert = kumulativer Endsaldo
     //
-    // KORREKTE Monatswert-Formel:
-    //   Monatswert = Total Soll − Total Haben  (nur die Monatsbewegung, NICHT der kumul. Saldo!)
+    // PRIMÄRE FORMEL:  monatswert = finalSaldo − saldoVortrag
+    //   Beispiel 4020: 44'599.40 − 32'816.68 = 11'782.72 ✓
+    //   Beispiel 4040: 1'164.67  −  1'577.62 = −412.95   ✓ (Retouren-Überhang)
+    //   Beispiel 4060: 191'738.42 − 147'446.88 = 44'291.54 ✓ (mehrseitig, 3 Seiten)
     //
-    // Beispiel 4020 Wein:
-    //   Total Soll:  14'577.94
-    //   Total Haben:      0.00      36'002.68   ← 36'002.68 ist der kumulierte Saldo seit Kontoeröffnung
-    //   Monatswert = 14'577.94 − 0.00 = 14'577.94 ✓
-    //
-    // Beispiel 4030 Bier:
-    //   Total Soll:   9'022.43
-    //   Total Haben:     20.35      26'127.52
-    //   Monatswert = 9'022.43 − 20.35 = 9'002.08 ✓
-    //
-    // currentAccount wird NICHT zurückgesetzt → Konto läuft auf nächster Seite weiter
+    // FALLBACK: totalSoll − haben  (wenn saldoVortrag/finalSaldo nicht verfügbar)
     if (/^total\s+haben\b/i.test(trimmed) && currentAccount) {
-      const allAmts = findAllAmounts(text);
-      // Ersten Betrag = Haben-Spalte (kann 0.00 sein); letzter Betrag = kumulativer Saldo (ignorieren)
-      const habenRaw = allAmts.length > 0 ? allAmts[0] : '0.00';
-      const haben    = parseAmount(habenRaw) ?? 0;
+      const combined = textWithLookahead(i);
+      const allAmts  = findAllAmounts(combined);
 
-      const prev       = accountData.get(currentAccount.number);
-      const totalSoll  = prev?.totalSoll ?? 0;
-      const monatswert = totalSoll - Math.abs(haben); // Netto-Monatsbewegung
+      // letzter Wert = kumulativer Endsaldo (finalSaldo); erster Wert (wenn ≥2) = Haben-Spalte
+      const finalSaldo = allAmts.length > 0
+        ? Math.abs(parseAmount(allAmts[allAmts.length - 1]) ?? 0)
+        : null;
+      const habenRaw   = allAmts.length >= 2 ? allAmts[0] : '0';
+      const haben      = Math.abs(parseAmount(habenRaw) ?? 0);
+
+      const prev         = accountData.get(currentAccount.number);
+      const totalSoll    = prev?.totalSoll ?? 0;
+      const saldoVortrag = prev?.saldoVortrag ?? null;
+
+      let monatswert: number;
+      let usedFallback = false;
+      if (finalSaldo !== null && saldoVortrag !== null) {
+        monatswert = finalSaldo - saldoVortrag;      // Robuste Primärformel
+      } else {
+        monatswert   = totalSoll - haben;            // Fallback
+        usedFallback = true;
+      }
 
       accountData.set(currentAccount.number, {
         ...(prev ?? {
-          name: currentAccount.name, totalSoll: 0, totalHaben: 0,
-          lineIndex: i + 1, raw: habenRaw, pageCount: 0,
+          name: currentAccount.name, saldoVortrag: null,
+          lineIndex: i + 1, raw: '', pageCount: 0,
         }),
-        name:       currentAccount.name,
-        totalHaben: Math.abs(haben),
-        saldo:      monatswert,  // = Total Soll − Total Haben (Monatswert, nicht kumulativer Saldo)
-        lineIndex:  i + 1,
-        raw:        habenRaw,
+        name:        currentAccount.name,
+        totalHaben:  haben,
+        finalSaldo,
+        saldo:       monatswert,
+        usedFallback,
+        lineIndex:   i + 1,
+        raw:         allAmts.join(' / '),
       });
       // currentAccount bleibt aktiv für mehrseitige Konten
       continue;
     }
 
-    // Konto-Header: 4-stellige Zahl am Anfang, gefolgt von Name
-    // Erkennung schlägt fehl wenn "afterNum" eine echte CHF-Zahl enthält (Betragszeile)
-    // Seitenzahlen wie "Seite 2" werden mit hasCHFAmount() korrekt herausgefiltert
+    // ── Konto-Header: 4-stellige Zahl am Anfang, gefolgt von Name (kein echter CHF-Betrag)
     const accM = /^\s*(\d{4})\s+(.+)/.exec(text);
     if (accM) {
       const accountNum = accM[1];
       const afterNum   = accM[2].trim();
 
-      // Nur als Header erkennen wenn KEIN echter CHF-Betrag vorhanden (kein Apostroph/Dezimal)
       if (!hasCHFAmount(afterNum)) {
-        // Name bereinigen: bare Einzel-/Zweistellige Ziffern (Seitenzahlen) entfernen
         const cleanName = afterNum
           .split(/\s+/)
-          .filter(t => !/^\d{1,3}$/.test(t)) // Seitenzahlen wie "2", "12" entfernen
+          .filter(t => !/^\d{1,3}$/.test(t))   // Seitenzahlen ("2", "12") entfernen
           .join(' ')
           .trim();
 
         if (cleanName.length >= 2 && !/^\d+$/.test(cleanName)) {
           if (accountNum !== currentAccount?.number) {
-            // Neues Konto
             currentAccount = { number: accountNum, name: cleanName };
           } else {
-            // Dasselbe Konto auf nächster Seite → Fortsetzung
+            // Dasselbe Konto auf nächster Seite → Fortsetzung (saldoVortrag NICHT überschreiben)
             const prev = accountData.get(accountNum);
-            if (prev) {
-              accountData.set(accountNum, { ...prev, pageCount: prev.pageCount + 1 });
-            }
+            if (prev) accountData.set(accountNum, { ...prev, pageCount: prev.pageCount + 1 });
             currentAccount = { number: accountNum, name: cleanName };
           }
         }
@@ -317,23 +372,22 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
     }
   }
 
-  // Debug-Log: alle erkannten Konten mit Total Soll / Total Haben / Monatswert
-  console.group('[PDF Import] Sage Kontoblatt – erkannte Konten (Monatswerte = Total Soll − Total Haben)');
+  // ── Debug-Log
+  console.group('[PDF Import] Sage Kontoblatt – Monatswerte');
   for (const [num, d] of accountData.entries()) {
     const multiPage = d.pageCount > 0 ? ` ⚠ mehrseitig (${d.pageCount + 1} Seiten)` : '';
-    console.log(
-      `Konto ${num} "${d.name}": ` +
-      `Total Soll ${d.totalSoll.toFixed(2)} − Total Haben ${d.totalHaben.toFixed(2)} ` +
-      `= Monatswert ${d.saldo.toFixed(2)}${multiPage}`,
-    );
+    const formula   = !d.usedFallback && d.finalSaldo !== null && d.saldoVortrag !== null
+      ? `Endsaldo(${d.finalSaldo.toFixed(2)}) − SaldoVortrag(${d.saldoVortrag!.toFixed(2)})`
+      : `TotalSoll(${d.totalSoll.toFixed(2)}) − TotalHaben(${d.totalHaben.toFixed(2)}) [Fallback]`;
+    console.log(`  ${num} "${d.name}": ${formula} = ${d.saldo.toFixed(2)}${multiPage}`);
   }
   console.groupEnd();
 
   return Array.from(accountData.entries())
-    .filter(([, v]) => v.totalSoll > 0 || v.totalHaben > 0) // Konten ohne jede Bewegung ausschliessen
+    .filter(([, v]) => Math.abs(v.saldo) > 0.005 || v.totalSoll > 0 || v.totalHaben > 0)
     .map(([accNum, v]) => ({
       lineIndex:     v.lineIndex,
-      rawLine:       `${accNum} ${v.name}  TotalSoll:${v.totalSoll.toFixed(2)} − TotalHaben:${v.totalHaben.toFixed(2)} = Monatswert:${v.saldo.toFixed(2)}`,
+      rawLine:       `${accNum} ${v.name}  SaldoVortrag:${(v.saldoVortrag ?? 0).toFixed(2)} Endsaldo:${(v.finalSaldo ?? 0).toFixed(2)} = Monatswert:${v.saldo.toFixed(2)}`,
       accountNumber: accNum.padStart(4, '0'),
       accountName:   v.name,
       rawAmount:     v.saldo.toFixed(2),
