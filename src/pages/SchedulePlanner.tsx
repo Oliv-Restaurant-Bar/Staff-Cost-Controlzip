@@ -25,7 +25,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -74,7 +74,8 @@ import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatCurrency, getEmployeeDisplayName } from '@/lib/personnel-utils';
 import {
@@ -201,7 +202,9 @@ const SchedulePlanner = () => {
   });
   const [scheduleData, setScheduleData] = useState<{[key: string]: DaySchedule}>({});
   const [activeDepartment, setActiveDepartment] = useState<ViewMode>('all');
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
+  const [empFilterOpen, setEmpFilterOpen] = useState(false);
+  const [empSearchQuery, setEmpSearchQuery] = useState('');
   const [calendarView, setCalendarView] = useState<CalendarView>('month');
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
   const [visibleWeekInMonth, setVisibleWeekInMonth] = useState(0);
@@ -291,9 +294,10 @@ const SchedulePlanner = () => {
     else if (isKuecheManager) setActiveDepartment('küche');
   }, [isServiceManager, isKuecheManager]);
 
-  // Beim Abteilungswechsel Einzelmitarbeiter-Filter zurücksetzen
+  // Beim Abteilungswechsel Mitarbeiter-Filter zurücksetzen
   useEffect(() => {
-    setSelectedEmployeeId(null);
+    setSelectedEmployeeIds([]);
+    setEmpSearchQuery('');
   }, [activeDepartment]);
 
   // ── Sortierreihenfolge laden (pro Mandant & Abteilung) ─────────────────────
@@ -1844,7 +1848,7 @@ const SchedulePlanner = () => {
     });
   };
 
-  // Optionen für das Mitarbeiter-Dropdown (ohne selectedEmployeeId-Filter)
+  // Optionen für das Mitarbeiter-Dropdown (ohne Filter – Basis für Checkboxen)
   const dropdownEmployeeOptions: Employee[] = activeDepartment === 'all'
     ? [
         ...applySort(activeEmployees.filter(e => e.department === 'service'), 'service'),
@@ -1852,7 +1856,28 @@ const SchedulePlanner = () => {
       ]
     : applySort(activeEmployees.filter(e => e.department === activeDepartment), activeDepartment as 'service' | 'küche');
 
-  // Filter employees by active department (sorted by saved order) + optional single-employee focus
+  // Gefilterte Optionen für das Suchfeld im Dropdown
+  const empSearchLower = empSearchQuery.toLowerCase();
+  const filteredDropdownOptions = empSearchLower
+    ? dropdownEmployeeOptions.filter(e =>
+        getEmployeeDisplayName(e).toLowerCase().includes(empSearchLower)
+      )
+    : dropdownEmployeeOptions;
+
+  // Anzeigetext für den Trigger-Button
+  const empFilterLabel = (() => {
+    if (selectedEmployeeIds.length === 0) return 'Alle Mitarbeiter';
+    if (selectedEmployeeIds.length <= 2) {
+      return selectedEmployeeIds
+        .map(id => dropdownEmployeeOptions.find(e => e.id === id))
+        .filter(Boolean)
+        .map(e => getEmployeeDisplayName(e!))
+        .join(', ');
+    }
+    return `${selectedEmployeeIds.length} Mitarbeiter`;
+  })();
+
+  // Filter employees by active department (sorted by saved order) + optional multi-employee focus
   const filteredEmployees = (() => {
     let base: Employee[];
     if (activeDepartment === 'all') {
@@ -1863,8 +1888,9 @@ const SchedulePlanner = () => {
     } else {
       base = applySort(activeEmployees.filter(e => e.department === activeDepartment), activeDepartment as 'service' | 'küche');
     }
-    if (selectedEmployeeId) {
-      base = base.filter(e => e.id === selectedEmployeeId);
+    if (selectedEmployeeIds.length > 0) {
+      const idSet = new Set(selectedEmployeeIds);
+      base = base.filter(e => idSet.has(e.id));
     }
     return base;
   })();
@@ -2561,29 +2587,98 @@ const SchedulePlanner = () => {
                     </button>
                   ))}
                 </div>
-                {/* Einzelmitarbeiter-Filter */}
-                <Select
-                  value={selectedEmployeeId ?? '__all__'}
-                  onValueChange={v => setSelectedEmployeeId(v === '__all__' ? null : v)}
-                >
-                  <SelectTrigger className="h-7 text-xs w-[160px]">
-                    <SelectValue placeholder="Alle Mitarbeiter" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">Alle Mitarbeiter</SelectItem>
-                    {dropdownEmployeeOptions.map(e => (
-                      <SelectItem key={e.id} value={e.id}>
-                        {activeDepartment === 'all' && (
-                          <span className={cn(
-                            "inline-block w-1.5 h-1.5 rounded-full mr-1.5 shrink-0",
-                            e.department === 'service' ? "bg-blue-500" : "bg-orange-500"
-                          )} />
-                        )}
-                        {getEmployeeDisplayName(e)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {/* Mitarbeiter Multi-Filter */}
+                <Popover open={empFilterOpen} onOpenChange={setEmpFilterOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      className={cn(
+                        "h-7 pl-2.5 pr-2 text-xs font-medium rounded-md border flex items-center gap-1.5 transition-colors min-w-[130px] max-w-[220px]",
+                        selectedEmployeeIds.length > 0
+                          ? "bg-primary/10 border-primary/40 text-primary dark:bg-primary/20"
+                          : "bg-background hover:bg-muted border-input text-foreground"
+                      )}
+                    >
+                      <Users className="h-3 w-3 shrink-0 opacity-60" />
+                      <span className="truncate flex-1 text-left">{empFilterLabel}</span>
+                      {selectedEmployeeIds.length > 0 ? (
+                        <span
+                          role="button"
+                          onClick={e => { e.stopPropagation(); setSelectedEmployeeIds([]); }}
+                          className="opacity-60 hover:opacity-100 shrink-0"
+                          title="Auswahl löschen"
+                        >
+                          <X className="h-3 w-3" />
+                        </span>
+                      ) : (
+                        <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+                      )}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 p-2" align="start" sideOffset={4}>
+                    {/* Suchfeld */}
+                    <div className="relative mb-2">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+                      <Input
+                        placeholder="Suchen…"
+                        value={empSearchQuery}
+                        onChange={e => setEmpSearchQuery(e.target.value)}
+                        className="h-7 text-xs pl-6 pr-2"
+                      />
+                    </div>
+                    {/* Schnellaktionen */}
+                    <div className="flex items-center gap-2 mb-2 pb-2 border-b">
+                      <button
+                        className="text-xs text-primary hover:underline"
+                        onClick={() => setSelectedEmployeeIds(dropdownEmployeeOptions.map(e => e.id))}
+                      >
+                        Alle auswählen
+                      </button>
+                      <span className="text-muted-foreground text-xs">·</span>
+                      <button
+                        className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+                        onClick={() => { setSelectedEmployeeIds([]); setEmpSearchQuery(''); }}
+                      >
+                        Auswahl löschen
+                      </button>
+                      {selectedEmployeeIds.length > 0 && (
+                        <span className="ml-auto text-[10px] text-muted-foreground">
+                          {selectedEmployeeIds.length} ausgewählt
+                        </span>
+                      )}
+                    </div>
+                    {/* Mitarbeiter-Liste */}
+                    <div className="max-h-52 overflow-y-auto space-y-0.5">
+                      {filteredDropdownOptions.length === 0 ? (
+                        <p className="text-xs text-muted-foreground text-center py-3">Keine Treffer</p>
+                      ) : filteredDropdownOptions.map(e => {
+                        const checked = selectedEmployeeIds.includes(e.id);
+                        return (
+                          <label
+                            key={e.id}
+                            className="flex items-center gap-2 px-1.5 py-1.5 rounded-md hover:bg-muted cursor-pointer text-xs select-none"
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={v => {
+                                setSelectedEmployeeIds(prev =>
+                                  v ? [...prev, e.id] : prev.filter(id => id !== e.id)
+                                );
+                              }}
+                              className="h-3.5 w-3.5 shrink-0"
+                            />
+                            {activeDepartment === 'all' && (
+                              <span className={cn(
+                                "w-1.5 h-1.5 rounded-full shrink-0",
+                                e.department === 'service' ? "bg-blue-500" : "bg-orange-500"
+                              )} />
+                            )}
+                            <span className="truncate leading-tight">{getEmployeeDisplayName(e)}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
             ) : (
               <div className={cn(

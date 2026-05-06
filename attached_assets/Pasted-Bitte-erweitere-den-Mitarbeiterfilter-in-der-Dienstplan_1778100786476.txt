@@ -1,0 +1,100 @@
+Bitte erweitere den Mitarbeiterfilter in der Dienstplanung.
+
+Aktuell kann nur ein einzelner Mitarbeiter ausgewählt werden.
+
+Gewünscht:
+Es sollen mehrere Mitarbeiter gleichzeitig ausgewählt und angezeigt werden können.
+
+Anforderungen:
+
+1. Mitarbeiterfilter als Multi-Select umbauen
+
+Statt:
+"Alle Mitarbeiter" Dropdown mit Einzelauswahl
+
+Neu:
+Multi-Select Dropdown mit Checkboxen
+
+Optionen:
+- Alle Mitarbeiter
+- einzelne Mitarbeiter auswählbar
+- mehrere Mitarbeiter gleichzeitig auswählbar
+
+Beispiel:
+☑ Burkhalter
+☑ Doni
+☑ Krebs Marcel
+☐ Filovic Maja
+
+2. Anzeige Logik
+
+Wenn kein einzelner Mitarbeiter gewählt ist:
+zeige alle Mitarbeiter.
+
+Wenn mehrere Mitarbeiter gewählt sind:
+zeige nur diese ausgewählten Mitarbeiter.
+
+Wenn "Alle Mitarbeiter" aktiv ist:
+zeige alle Mitarbeiter.
+
+3. Auswahl sichtbar machen
+
+Im geschlossenen Dropdown soll stehen:
+
+- "Alle Mitarbeiter"
+- "1 Mitarbeiter ausgewählt"
+- "3 Mitarbeiter ausgewählt"
+- oder bei wenigen Namen direkt:
+"Burkhalter, Doni"
+
+4. Filter kombinieren
+
+Der Multi-Select muss mit den Abteilungsfiltern funktionieren:
+
+Beispiele:
+Abteilung = Alle, Mitarbeiter = Burkhalter + Doni
+→ zeigt Burkhalter und Doni
+
+Abteilung = Service, Mitarbeiter = Burkhalter + Doni
+→ zeigt nur ausgewählte Service Mitarbeiter
+
+Abteilung = Küche, Mitarbeiter = 3 ausgewählte Personen
+→ zeigt nur diese Küchenmitarbeiter
+
+5. Planung weiterhin editierbar
+
+Auch bei mehreren gefilterten Mitarbeitern muss alles weiterhin funktionieren:
+- Schichten eintragen
+- Schichten ändern
+- Ferien/Krank setzen
+- Speichern
+- Kostenberechnung
+
+6. Schnellaktionen
+
+Bitte ergänzen:
+- "Alle auswählen"
+- "Auswahl löschen"
+
+Optional:
+- Suchfeld im Dropdown, wenn viele Mitarbeiter vorhanden sind
+
+7. KPI Logik
+
+Wichtig:
+Die Gesamtpersonalquote oben bleibt unverändert Küche + Service zusammen.
+
+Der Mitarbeiterfilter beeinflusst nur die angezeigte Planungsliste,
+nicht die globale KPI Berechnung oben.
+
+8. Tests
+
+Bitte testen:
+- 1 Mitarbeiter auswählen
+- mehrere Mitarbeiter auswählen
+- Auswahl löschen
+- Alle auswählen
+- Service + mehrere Mitarbeiter
+- Küche + mehrere Mitarbeiter
+- Speichern nach gefilterter Bearbeitung
+- Seite neu laden
