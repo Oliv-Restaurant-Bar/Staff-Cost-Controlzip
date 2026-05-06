@@ -81,17 +81,23 @@ interface ControllingRow {
 }
 
 interface MonthRow {
-  monthKey:   string;   // yyyy-MM
-  label:      string;   // "Januar 2025"
-  umsatz:     number;   // gemäss viewMode
-  umsatzTotal: number;
-  umsatzFood: number;
-  umsatzBev:  number;
-  pkPlanChf:  number;
-  pkIstChf:   number;
-  wesChf:     number;   // gemäss viewMode
-  wesFood:    number;
-  wesBev:     number;
+  monthKey:     string;   // yyyy-MM
+  label:        string;   // "Januar 2025"
+  umsatz:       number;   // gemäss viewMode
+  umsatzTotal:  number;
+  umsatzFood:   number;
+  umsatzBev:    number;
+  pkPlanChf:    number;   // CHF gesamt (alle Tage)
+  pkIstChf:     number;
+  wesChf:       number;   // gemäss viewMode
+  wesFood:      number;
+  wesBev:       number;
+  // Nur Tage mit Umsatz > 0 (für korrekte %-Berechnung)
+  pkPlanChfRev: number;
+  pkIstChfRev:  number;
+  wesChfRev:    number;
+  wesFoodRev:   number;
+  wesBevRev:    number;
 }
 
 // ── Konstanten ────────────────────────────────────────────────────────────────
@@ -283,10 +289,15 @@ function buildMonthRows(rows: ControllingRow[]): MonthRow[] {
     if (!map.has(mk)) {
       const [y, m] = mk.split('-').map(Number);
       const label = format(new Date(y, m - 1, 1), 'MMMM yyyy', { locale: de });
-      map.set(mk, { monthKey: mk, label, umsatz: 0, umsatzTotal: 0, umsatzFood: 0, umsatzBev: 0, pkPlanChf: 0, pkIstChf: 0, wesChf: 0, wesFood: 0, wesBev: 0 });
+      map.set(mk, {
+        monthKey: mk, label,
+        umsatz: 0, umsatzTotal: 0, umsatzFood: 0, umsatzBev: 0,
+        pkPlanChf: 0, pkIstChf: 0, wesChf: 0, wesFood: 0, wesBev: 0,
+        pkPlanChfRev: 0, pkIstChfRev: 0, wesChfRev: 0, wesFoodRev: 0, wesBevRev: 0,
+      });
     }
     const mr = map.get(mk)!;
-    mr.umsatz     += r.umsatz;
+    mr.umsatz      += r.umsatz;
     mr.umsatzTotal += r.umsatzTotal;
     mr.umsatzFood  += r.umsatzFood;
     mr.umsatzBev   += r.umsatzBev;
@@ -295,6 +306,14 @@ function buildMonthRows(rows: ControllingRow[]): MonthRow[] {
     mr.wesChf      += r.wesChf;
     mr.wesFood     += r.wesFood;
     mr.wesBev      += r.wesBev;
+    // Nur Tage mit Umsatz für %-Berechnung
+    if (r.umsatz > 0) {
+      mr.pkPlanChfRev += r.pkPlanChf;
+      mr.pkIstChfRev  += r.pkIstChf;
+      mr.wesChfRev    += r.wesChf;
+    }
+    if (r.umsatzFood > 0) mr.wesFoodRev += r.wesFood;
+    if (r.umsatzBev  > 0) mr.wesBevRev  += r.wesBev;
   }
   return Array.from(map.values()).sort((a, b) => a.monthKey.localeCompare(b.monthKey));
 }
@@ -621,6 +640,8 @@ export default function TagesControllingPage() {
   }, [dates, dailyBudgets, planMap, actualMap, warenkostenMap, showNetRevenue, viewMode, categoryFilter]);
 
   // Total-Zeile (gewichtete Prozente; bei aktivem Pro-Rata nur bis Stichtag)
+  // Wichtig: %-Werte nur auf Basis von Tagen mit vorhandenem Umsatz berechnen,
+  // damit zukünftige Tage mit PK-Plan aber ohne Umsatz die Quote nicht verfälschen.
   const total = useMemo(() => {
     const baseRows = effectiveCutoffDay !== null
       ? rows.filter(r => parseInt(r.date.slice(8), 10) <= effectiveCutoffDay)
@@ -634,11 +655,23 @@ export default function TagesControllingPage() {
     const sumWes        = baseRows.reduce((s, r) => s + r.wesChf, 0);
     const sumWesFood    = baseRows.reduce((s, r) => s + r.wesFood, 0);
     const sumWesBev     = baseRows.reduce((s, r) => s + r.wesBev, 0);
-    const pkPlanPct     = sumUmsatz > 0 ? (sumPkPlan / sumUmsatz) * 100 : 0;
-    const pkIstPct      = sumUmsatz > 0 ? (sumPkIst  / sumUmsatz) * 100 : 0;
-    const wesPct        = sumUmsatz > 0 ? (sumWes    / sumUmsatz) * 100 : 0;
-    const wesFoodPct    = sumUmsatzFood > 0 ? (sumWesFood / sumUmsatzFood) * 100 : 0;
-    const wesBevPct     = sumUmsatzBev  > 0 ? (sumWesBev  / sumUmsatzBev)  * 100 : 0;
+    // Nur Tage mit Umsatz für %-Berechnung
+    const revRows       = baseRows.filter(r => r.umsatz > 0);
+    const revUmsatz     = revRows.reduce((s, r) => s + r.umsatz, 0);
+    const revPkPlan     = revRows.reduce((s, r) => s + r.pkPlanChf, 0);
+    const revPkIst      = revRows.reduce((s, r) => s + r.pkIstChf, 0);
+    const revWes        = revRows.reduce((s, r) => s + r.wesChf, 0);
+    const revRowsFood   = baseRows.filter(r => r.umsatzFood > 0);
+    const revUmsatzFood = revRowsFood.reduce((s, r) => s + r.umsatzFood, 0);
+    const revWesFood    = revRowsFood.reduce((s, r) => s + r.wesFood, 0);
+    const revRowsBev    = baseRows.filter(r => r.umsatzBev > 0);
+    const revUmsatzBev  = revRowsBev.reduce((s, r) => s + r.umsatzBev, 0);
+    const revWesBev     = revRowsBev.reduce((s, r) => s + r.wesBev, 0);
+    const pkPlanPct     = revUmsatz > 0 ? (revPkPlan / revUmsatz) * 100 : 0;
+    const pkIstPct      = revUmsatz > 0 ? (revPkIst  / revUmsatz) * 100 : 0;
+    const wesPct        = revUmsatz > 0 ? (revWes    / revUmsatz) * 100 : 0;
+    const wesFoodPct    = revUmsatzFood > 0 ? (revWesFood / revUmsatzFood) * 100 : 0;
+    const wesBevPct     = revUmsatzBev  > 0 ? (revWesBev  / revUmsatzBev)  * 100 : 0;
     return {
       sumUmsatz, sumUmsatzTotal, sumUmsatzFood, sumUmsatzBev,
       sumPkPlan, sumPkIst, sumWes, sumWesFood, sumWesBev,
@@ -817,16 +850,14 @@ export default function TagesControllingPage() {
       } else {
         // ── Total-Ansicht Jahrestabelle ────────────────────────────────────
         const head = [['Monat', 'Ist-Umsatz', 'PK Plan CHF', 'PK Ist CHF', 'Δ PK CHF', 'PK Plan %', 'PK Ist %', ...(showWesInExport ? ['Warenkosten CHF', 'Warenkosten %'] : [])]];
-        const totalPkPlanPct = total.sumUmsatz > 0 ? (total.sumPkPlan / total.sumUmsatz) * 100 : 0;
-        const totalPkIstPct  = total.sumUmsatz > 0 && total.sumPkIst > 0 ? (total.sumPkIst / total.sumUmsatz) * 100 : 0;
-        const totalWesPct    = total.sumUmsatz > 0 && total.sumWes > 0 ? (total.sumWes / total.sumUmsatz) * 100 : 0;
         const body: string[][] = [
-          ['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), fmtD(total.sumPkIst, total.sumPkPlan), fmtP(totalPkPlanPct, total.sumUmsatz > 0), fmtP(totalPkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), ...(showWesInExport ? [fmtV(total.sumWes), fmtP(totalWesPct, total.sumWes > 0 && total.sumUmsatz > 0)] : [])],
+          // %-Werte aus total (bereits auf Umsatz-Tage beschränkt)
+          ['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), fmtD(total.sumPkIst, total.sumPkPlan), fmtP(total.pkPlanPct, total.sumUmsatz > 0), fmtP(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0), ...(showWesInExport ? [fmtV(total.sumWes), fmtP(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)] : [])],
           ...monthRows.map(mr => {
-            const pp = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
-            const pi = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
-            const wp = mr.umsatz > 0 && mr.wesChf   > 0 ? (mr.wesChf   / mr.umsatz) * 100 : 0;
-            return [mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), fmtV(mr.pkIstChf), fmtD(mr.pkIstChf, mr.pkPlanChf), fmtP(pp, mr.umsatz > 0 && mr.pkPlanChf > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChf > 0), ...(showWesInExport ? [fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChf > 0)] : [])];
+            const pp = mr.umsatz > 0 ? (mr.pkPlanChfRev / mr.umsatz) * 100 : 0;
+            const pi = mr.umsatz > 0 && mr.pkIstChfRev > 0 ? (mr.pkIstChfRev / mr.umsatz) * 100 : 0;
+            const wp = mr.umsatz > 0 && mr.wesChfRev   > 0 ? (mr.wesChfRev   / mr.umsatz) * 100 : 0;
+            return [mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), fmtV(mr.pkIstChf), fmtD(mr.pkIstChf, mr.pkPlanChf), fmtP(pp, mr.umsatz > 0 && mr.pkPlanChfRev > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChfRev > 0), ...(showWesInExport ? [fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChfRev > 0)] : [])];
           }),
         ];
         autoTable(doc, {
@@ -1014,19 +1045,17 @@ export default function TagesControllingPage() {
         addHeaderStyle(hRow);
         hRow.getCell(1).alignment = { horizontal: 'left' };
 
-        const totalPkPlanPct = total.sumUmsatz > 0 ? (total.sumPkPlan / total.sumUmsatz) * 100 : 0;
-        const totalPkIstPct  = total.sumUmsatz > 0 && total.sumPkIst > 0 ? (total.sumPkIst / total.sumUmsatz) * 100 : 0;
-        const totalWesPct    = total.sumUmsatz > 0 && total.sumWes > 0 ? (total.sumWes / total.sumUmsatz) * 100 : 0;
-        const tRow = ws.addRow(['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), Math.round(total.sumPkIst - total.sumPkPlan), Math.round(totalPkPlanPct * 10) / 10, Math.round(totalPkIstPct * 10) / 10, fmtV(total.sumWes), Math.round(totalWesPct * 10) / 10]);
+        // %-Werte aus total (bereits auf Umsatz-Tage beschränkt)
+        const tRow = ws.addRow(['TOTAL', fmtV(total.sumUmsatz), fmtV(total.sumPkPlan), fmtV(total.sumPkIst), Math.round(total.sumPkIst - total.sumPkPlan), Math.round(total.pkPlanPct * 10) / 10, Math.round(total.pkIstPct * 10) / 10, fmtV(total.sumWes), Math.round(total.wesPct * 10) / 10]);
         addTotalStyle(tRow);
         tRow.getCell(1).alignment = { horizontal: 'left' };
 
         monthRows.forEach((mr, idx) => {
-          const pp = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
-          const pi = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
-          const wp = mr.umsatz > 0 && mr.wesChf   > 0 ? (mr.wesChf   / mr.umsatz) * 100 : 0;
+          const pp = mr.umsatz > 0 ? (mr.pkPlanChfRev / mr.umsatz) * 100 : 0;
+          const pi = mr.umsatz > 0 && mr.pkIstChfRev > 0 ? (mr.pkIstChfRev / mr.umsatz) * 100 : 0;
+          const wp = mr.umsatz > 0 && mr.wesChfRev   > 0 ? (mr.wesChfRev   / mr.umsatz) * 100 : 0;
           const delta = mr.pkIstChf > 0 && mr.pkPlanChf > 0 ? Math.round(mr.pkIstChf - mr.pkPlanChf) : 0;
-          const r = ws.addRow([mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), mr.pkIstChf > 0 ? fmtV(mr.pkIstChf) : 0, delta, fmtP(pp, mr.umsatz > 0 && mr.pkPlanChf > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChf > 0), fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChf > 0)]);
+          const r = ws.addRow([mr.label, fmtV(mr.umsatz), fmtV(mr.pkPlanChf), mr.pkIstChf > 0 ? fmtV(mr.pkIstChf) : 0, delta, fmtP(pp, mr.umsatz > 0 && mr.pkPlanChfRev > 0), fmtP(pi, mr.umsatz > 0 && mr.pkIstChfRev > 0), fmtV(mr.wesChf), fmtP(wp, mr.umsatz > 0 && mr.wesChfRev > 0)]);
           if (idx % 2 === 0) r.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + ALT_BG } }; });
           r.getCell(5).font = { color: { argb: 'FF' + (delta > 0 ? RED_FG : delta < 0 ? GREEN_FG : TOTAL_FG) } };
           r.eachCell(c => { c.alignment = { horizontal: 'right' }; });
@@ -1499,11 +1528,12 @@ export default function TagesControllingPage() {
                   {period === 'jahr'
                     /* ── Jahresansicht: 12 Monatszeilen ──────────────────────── */
                     ? monthRows.map(mr => {
-                        const pkPlanPct  = mr.umsatz > 0 ? (mr.pkPlanChf / mr.umsatz) * 100 : 0;
-                        const pkIstPct   = mr.umsatz > 0 && mr.pkIstChf > 0 ? (mr.pkIstChf / mr.umsatz) * 100 : 0;
-                        const wesPct     = mr.umsatz > 0 && mr.wesChf > 0 ? (mr.wesChf / mr.umsatz) * 100 : 0;
-                        const wesFoodPct = mr.umsatzFood > 0 && mr.wesFood > 0 ? (mr.wesFood / mr.umsatzFood) * 100 : 0;
-                        const wesBevPct  = mr.umsatzBev  > 0 && mr.wesBev  > 0 ? (mr.wesBev  / mr.umsatzBev)  * 100 : 0;
+                        // Nur Tage mit Umsatz für %-Berechnung verwenden
+                        const pkPlanPct  = mr.umsatz > 0 ? (mr.pkPlanChfRev / mr.umsatz) * 100 : 0;
+                        const pkIstPct   = mr.umsatz > 0 && mr.pkIstChfRev > 0 ? (mr.pkIstChfRev / mr.umsatz) * 100 : 0;
+                        const wesPct     = mr.umsatz > 0 && mr.wesChfRev > 0 ? (mr.wesChfRev / mr.umsatz) * 100 : 0;
+                        const wesFoodPct = mr.umsatzFood > 0 && mr.wesFoodRev > 0 ? (mr.wesFoodRev / mr.umsatzFood) * 100 : 0;
+                        const wesBevPct  = mr.umsatzBev  > 0 && mr.wesBevRev  > 0 ? (mr.wesBevRev  / mr.umsatzBev)  * 100 : 0;
                         const isCurrentMonth = mr.monthKey === format(today, 'yyyy-MM');
                         return (
                           <tr
