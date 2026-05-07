@@ -1,0 +1,283 @@
+Bitte überarbeite das Design der Erfolgsrechnung / Reporting vollständig nach dem neuen gewünschten Stil.
+
+Referenz:
+Das Reporting soll so aussehen wie die zuletzt gezeigte Version mit:
+- hellem Hintergrund
+- grünem Tabellenkopf
+- beigen Ergebniszeilen
+- klaren schwarzen CHF Zahlen
+- dezenten grauen Prozentwerten
+- roten negativen Werten
+- grünen positiven Werten
+- insgesamt viel lesefreundlicher und weniger dunkel
+
+Dieses Design soll überall übernommen werden:
+1. Webapp Erfolgsrechnung
+2. Bearbeitungsansicht im UI
+3. PDF Export
+4. alle Reporting Darstellungen:
+   - Budget P&L
+   - Klassisch
+   - Jahresübersicht
+   - Monatsvergleich
+   - kumulierte Übersicht
+   - ausgewählte Monate / Monatsvergleich
+   - KPI Kennzahlenblöcke
+
+---
+
+1. Neues Farbschema
+
+Bitte den dunklen blauen Tabellenblock entfernen.
+
+Neu:
+
+Tabellenkopf:
+- gedecktes Grün
+- weisse Schrift
+
+Beispiel:
+#4F6F52 oder ähnlicher eleganter Grünton
+
+Normale Tabellenzeilen:
+- weiss
+- sehr helles Grau alternierend
+
+Ergebniszeilen wie EBITDA / EBIT:
+- helles Beige / Creme
+- keine dunkelblaue Fläche mehr
+
+Beispiel:
+#F7F0E3 oder ähnlich
+
+Positive Werte:
+- gut lesbares dunkles Grün
+- nicht Neon
+
+Negative Werte:
+- gut lesbares Dunkelrot / Bordeaux
+- nicht grell
+
+Prozentwerte:
+- grau
+- kleiner
+- dezenter
+
+---
+
+2. Typografie
+
+Bitte eine gut lesbare moderne Business-Schrift verwenden.
+
+CHF Beträge:
+- fett
+- gut lesbar
+- schwarz oder sehr dunkel
+- wichtiger als Prozentwerte
+
+Prozentwerte:
+- kleiner
+- dezenter
+- niemals dominanter als CHF Beträge
+
+Tabellentitel:
+- klar und ruhig
+
+Abschnittstitel:
+- grün
+- gross genug
+- aber nicht zu dominant
+
+---
+
+3. Prozentwerte dürfen nie umbrechen
+
+Sehr wichtig:
+Prozentwerte wie -16.3 % dürfen NIE auf zwei Zeilen umbrechen.
+
+Falsch:
+-16.3
+%
+
+Richtig:
+-16.3 %
+
+Bitte überall no-wrap anwenden:
+- Webapp Tabellen
+- PDF Tabellen
+- Export Tabellen
+- KPI Bereiche
+- Monatsvergleich
+- kumulierte Übersicht
+
+---
+
+4. Monatsvergleich Design
+
+Bitte Monatsvergleich genau nach diesem Stil aufbauen:
+
+Titel:
+MONATSVERGLEICH
+Januar bis April 2026
+
+Tabelle:
+Kennzahl | Jan | Feb | Mär | Apr | Total
+
+Keine dunklen Ergebnisblöcke.
+
+EBITDA und EBIT:
+- beige Hintergrundzeile
+- CHF Werte deutlich sichtbar
+- Prozentzeilen direkt darunter
+- Prozentwerte kleiner und grau
+
+Total Spalte:
+- leicht beige hinterlegt
+- klar rechtsbündig
+- kein weisser Strich
+- kein Rendering Artefakt
+
+---
+
+5. Vormonatsvergleich Design
+
+Auch Vormonatsvergleich soll gleich aussehen:
+
+- grüner Tabellenkopf
+- weisse / hellgraue Zeilen
+- EBITDA / EBIT beige
+- keine dunkelblauen Zeilen
+- klare CHF Werte
+- dezente Prozentwerte
+
+---
+
+6. Kumulierte Übersicht Design
+
+Auch kumulierte Übersicht gleich:
+
+- grüner Tabellenkopf
+- helle Zeilen
+- EBITDA / EBIT beige
+- positive Werte grün
+- negative Werte rot
+- CHF Zahlen stark
+- Prozentzahlen dezent
+
+---
+
+7. Haupttabelle Budget P&L
+
+Auch die grosse Erfolgsrechnungstabelle soll das neue helle Design erhalten.
+
+Keine dunkelblauen Balken mehr.
+
+Abschnittsüberschriften:
+BETRIEBSERTRAG
+DIREKTER WARENAUFWAND
+PERSONAL
+RAUM- & BETRIEBSAUFWAND
+ABSCHREIBUNGEN
+ERGEBNIS
+
+sollen sauber getrennt sein:
+- grüner oder hellgrüner Abschnittsbalken
+- gut lesbar
+- nicht zu dunkel
+
+Totalzeilen:
+- leicht hervorgehoben
+- fett
+- helles Grau oder Beige
+
+EBITDA / EBIT:
+- beige Hintergrund
+- besonders gut lesbar
+
+---
+
+8. KPI Kennzahlen oben
+
+Die KPI Kennzahlen oben sollen ebenfalls im neuen Stil sein:
+
+- helle Karten oder helle Tabelle
+- grüner Kopf
+- CHF Beträge fett
+- Prozentwerte kleiner
+- negative Ergebniswerte rot
+- positive Ergebniswerte grün
+
+Keine dunkelblauen Flächen.
+
+---
+
+9. Webapp übernehmen
+
+Bitte dieses Design nicht nur im PDF Export verwenden.
+
+Auch in der Webapp Erfolgsrechnung:
+- Tabellen
+- KPI Blöcke
+- Bearbeitungsmodus
+- Detaildialoge
+- Vergleichsansicht
+- Jahresansicht
+
+sollen visuell daran angepasst werden.
+
+Ziel:
+Webapp und PDF Export sollen dieselbe Designsprache haben.
+
+---
+
+10. Export übernehmen
+
+PDF Export:
+- Hochformat bleibt
+- maximal 2 Seiten wenn möglich
+- neues Farbschema überall
+- keine dunklen blauen Ergebnisblöcke
+- keine Prozentumbrüche
+- keine abgeschnittenen Spalten
+- keine weissen Linien/Artefakte
+
+---
+
+11. Zahlenlogik bleibt unverändert
+
+Bitte nur Design/UX anpassen.
+
+Keine Berechnungslogik verändern.
+
+Die bestehenden Werte, Summen, Vorjahr, Budget, Ist, Prozentwerte und Abweichungen müssen unverändert bleiben.
+
+---
+
+12. Tests
+
+Bitte testen:
+
+Webapp:
+- Budget P&L Ansicht
+- Klassisch Ansicht
+- Jahresansicht
+- Bearbeiten von Werten
+- Detaildialoge
+- Konto hinzufügen
+
+PDF:
+- Budget P&L Export
+- Klassisch Export
+- Jahresübersicht
+- Monatsvergleich
+- kumulierte Übersicht
+- Vormonatsvergleich
+
+Prüfen:
+- keine dunkelblauen Blöcke mehr
+- CHF Werte gut lesbar
+- Prozentwerte kleiner und dezent
+- Prozentwerte brechen nie um
+- positive/negative Werte gut lesbar
+- Total Spalte sauber ohne weissen Strich
+- Design ist einheitlich in Webapp und Export
