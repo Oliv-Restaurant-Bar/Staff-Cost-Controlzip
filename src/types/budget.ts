@@ -282,6 +282,11 @@ export interface BudgetPLLineItem {
    * Kann über "Einblenden" im Konto-hinzufügen-Dialog reaktiviert werden.
    */
   isHidden?: boolean;
+  /**
+   * Explizit eingeblendet: Konto wird immer angezeigt, auch wenn Ist/Budget/VJ alle 0 sind.
+   * Wird gesetzt wenn der Benutzer ein Konto aktiv hinzufügt oder einblendet.
+   */
+  isForceVisible?: boolean;
 }
 
 // ─── Standard P&L Kategorien – Oliv Gastro AG (Kontoplan 2026) ───────────────

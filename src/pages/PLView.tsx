@@ -813,7 +813,10 @@ function computeBPLRows(
           ? (catP[cat.id] ?? 0)
           : iP_ec;
 
-        if (!item.isInternal && iA === 0 && iB === 0 && iP === 0) continue;
+        // Zeige immer: intern (INTERN-Badge), explizit eingeblendet (isForceVisible), oder user-added (isDefault=false).
+        // Verstecke nur Default-Items die in allen drei Spalten 0 haben (kein Sage-Wert, kein Budget, kein VJ).
+        const alwaysShow = item.isInternal || item.isForceVisible || item.isDefault === false;
+        if (!alwaysShow && iA === 0 && iB === 0 && iP === 0) continue;
         rows.push({
           catId: cat.id, catLabel: cat.label, catType: 'items',
           isExpense: cat.isExpense, isCategory: false,
@@ -1168,13 +1171,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
             onCancel={() => setEditingIst(false)}
           />
         ) : (
-          v.actual !== 0 ? (
-            <span className={v.actual < 0 ? 'text-red-600 dark:text-red-400' : undefined}>
-              {fmt(v.actual)}
-            </span>
-          ) : (
-            <span className="text-muted-foreground/40">—</span>
-          )
+          v.actual !== 0 ? fmt(v.actual) : <span className="text-muted-foreground/40">—</span>
         )}
       </td>
       {pctMode !== 'off' && (
@@ -1829,6 +1826,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
         sortOrder: 9999,
         isInternal,
         isHidden: false,
+        isForceVisible: true,
       }, storeKey);
       toast.success(`Konto ${num} «${lbl}» hinzugefügt`);
       onSaved();
@@ -1855,6 +1853,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
         categoryId: cat,
         isInternal,
         isHidden: false,
+        isForceVisible: true,
       }, storeKey);
       toast.success(`Konto ${conflict.item.accountNumber} «${lbl}» eingeblendet`);
       onSaved();
@@ -1880,6 +1879,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
         label: lbl,
         categoryId: cat,
         isInternal,
+        isForceVisible: true,
       }, storeKey);
       toast.success(`Konto ${conflict.item.accountNumber} aktualisiert`);
       onSaved();
