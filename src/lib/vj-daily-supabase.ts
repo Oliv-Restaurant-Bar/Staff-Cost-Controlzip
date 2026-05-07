@@ -175,6 +175,46 @@ export async function loadVjDailyDate(
   }
 }
 
+// ── Lesen: Ganzes Jahr ────────────────────────────────────────────────────────
+
+/**
+ * Lädt alle VJ-Tageswerte eines Jahres aus Supabase in einem einzigen Query.
+ * Gibt eine Map { "2025-04-03": VjDayRecord } zurück (Key = Datum ohne Prefix).
+ * Leere Map wenn nichts gefunden oder Fehler.
+ *
+ * Wird von PLView verwendet, um alle 12 Monate auf einmal zu laden.
+ */
+export async function loadVjDailyYear(
+  year:      number,
+  tenantId?: string,
+): Promise<Record<string, VjDayRecord>> {
+  const prefix = `${tenantPrefix(tenantId)}${year}-`;
+  try {
+    const { data, error } = await (supabase as any)
+      .from('app_settings')
+      .select('key, value')
+      .like('key', `${prefix}%`);
+
+    if (error || !data || data.length === 0) {
+      console.log(`[VJ-SUPABASE][${tenantId ?? 'oliv'}] loaded year ${year}: 0 rows from supabase`);
+      return {};
+    }
+
+    console.log(`[VJ-SUPABASE][${tenantId ?? 'oliv'}] loaded year ${year}: ${data.length} rows from supabase`);
+
+    const result: Record<string, VjDayRecord> = {};
+    for (const row of data as Array<{ key: string; value: unknown }>) {
+      const rec  = row.value as VjDayRecord;
+      const date = row.key.replace(tenantPrefix(tenantId), '');
+      result[date] = { ...rec, date };
+    }
+    return result;
+  } catch (e) {
+    console.warn(`[VJ-SUPABASE][${tenantId ?? 'oliv'}] loadVjDailyYear error:`, String(e));
+    return {};
+  }
+}
+
 // ── Status: Prüfen ob VJ-Daten vorhanden ──────────────────────────────────────
 
 /**

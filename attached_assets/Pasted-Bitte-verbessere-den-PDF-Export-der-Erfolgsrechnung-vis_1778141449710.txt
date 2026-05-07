@@ -1,0 +1,217 @@
+Bitte verbessere den PDF Export der Erfolgsrechnung visuell und inhaltlich.
+
+Ziel:
+Der PDF Export soll professioneller, übersichtlicher und managementtauglich werden.
+
+Wichtig:
+Nebst CHF Werten sollen auch die relevanten Prozentwerte (%) sichtbar und korrekt berechnet werden.
+
+---
+
+1. Vorjahr direkt integrieren
+
+Aktuell zeigt der Budget P&L Export nur:
+Ist
+Budget
+Abweichung Budget
+
+Neu zusätzlich:
+Vorjahr CHF
+Abweichung Vorjahr CHF
+Abweichung Vorjahr %
+
+Neue Tabellenstruktur:
+
+Position
+Ist CHF
+Ist %
+Budget CHF
+Budget %
+Abw. Budget CHF
+Abw. Budget %
+Vorjahr CHF
+Vorjahr %
+Abw. VJ CHF
+Abw. VJ %
+
+---
+
+2. Prozentlogik
+
+Die Prozentwerte sollen logisch zur jeweiligen Position berechnet werden.
+
+Beispiele:
+
+BETRIEBSERTRAG:
+Umsatz = 100 %
+
+WARENAUFWAND:
+Warenaufwand % =
+Warenaufwand / Umsatz * 100
+
+PERSONAL:
+Personalaufwand % =
+Personalaufwand / Umsatz * 100
+
+RAUMAUFWAND:
+Raumaufwand / Umsatz * 100
+
+EBITDA %:
+EBITDA / Umsatz * 100
+
+EBIT %:
+EBIT / Umsatz * 100
+
+Die Prozentwerte sollen für:
+- Ist
+- Budget
+- Vorjahr
+
+berechnet und angezeigt werden.
+
+---
+
+3. Prozentwerte auch in Jahresübersicht
+
+Die Jahresübersicht soll zusätzlich Prozentinformationen enthalten.
+
+Beispiel:
+Unter oder neben den CHF Werten:
+
+Umsatz:
+CHF 89’963
+
+Personal:
+CHF 43’806
+48.7 %
+
+Warenaufwand:
+CHF 68’384
+76.0 %
+
+EBITDA:
+CHF -48’667
+-54.1 %
+
+Ziel:
+Nicht nur absolute Zahlen,
+sondern direkte Margen- und Kostenquoten sichtbar machen.
+
+---
+
+4. Visuelles Design verbessern
+
+Bitte das PDF deutlich professioneller gestalten:
+
+- Querformat wenn nötig
+- klare Tabellenstruktur
+- moderne Farben
+- Gruppentitel farbig hinterlegt
+- Totalzeilen fett
+- EBITDA / EBIT visuell hervorgehoben
+- bessere Abstände
+- modernes Schriftbild
+- KPI Gefühl statt einfacher Tabellenexport
+
+---
+
+5. Farb-Logik intelligent machen
+
+Farben abhängig von Kontotyp:
+
+UMSATZ:
+höher = grün
+tiefer = rot
+
+AUFWAND:
+höher = rot
+tiefer = grün
+
+ERGEBNIS:
+höher/besser = grün
+tiefer/schlechter = rot
+
+Dies gilt für:
+- Budgetvergleich
+- Vorjahresvergleich
+- Prozentabweichungen
+
+---
+
+6. KPI Bereich oben ergänzen
+
+Oben im Export schöne KPI Karten oder hervorgehobene Kennzahlen:
+
+- Betriebsertrag netto
+- Bruttogewinn 1
+- Deckungsbeitrag
+- EBITDA
+- EBIT
+- Warenkosten %
+- Personalquote %
+
+inkl.:
+Ist
+Budget
+Vorjahr
+
+und jeweilige Abweichungen.
+
+---
+
+7. Einheitliches Zahlenformat
+
+Bitte überall einheitlich:
+
+CHF 89’963
+CHF -48’667
+
+Prozent:
+24.3 %
+-59.1 %
+
+Keine gemischten Formate.
+
+---
+
+8. PDF Export soll aktuelle Ansicht berücksichtigen
+
+Wenn aktuell:
+- Budget P&L
+- Klassisch
+- Jahresübersicht
+
+aktiv ist,
+soll genau diese Ansicht exportiert werden,
+aber mit:
+- Vorjahr
+- Prozentwerten
+- verbessertem Design
+
+---
+
+9. Wichtig
+
+Die Prozentwerte müssen synchron mit der Erfolgsrechnung berechnet werden
+und dieselbe Datenquelle verwenden wie:
+- Tagesansicht
+- Umsatzdaten
+- Warenrechnungen
+- Personalkosten
+
+Keine separaten Berechnungen im PDF.
+
+---
+
+10. Tests
+
+Bitte prüfen:
+
+- Budget P&L Export enthält Vorjahr + %
+- Klassisch enthält CHF + %
+- Jahresübersicht enthält Margen/Kostenquoten
+- Farben logisch korrekt
+- Querformat funktioniert
+- PDF nicht abgeschnitten
+- Zahlen stimmen exakt mit UI überein
+- Vorjahreswerte stimmen mit Tagesansicht überein

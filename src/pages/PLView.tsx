@@ -48,6 +48,9 @@ import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
 import { exportPLToPDF } from '@/lib/pl-export';
 import { toast } from 'sonner';
+import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
+import type { VjDayRecord } from '@/lib/vj-daily-supabase';
+import { computeMonthlyIstNet, computeMonthlyVjNet } from '@/lib/revenue-sync';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -1820,22 +1823,6 @@ const years = [currentYear - 1, currentYear, currentYear + 1];
 
 type ViewMode = 'monthly' | 'yearly' | 'budget_pl';
 
-/** Summiert ein Feld aus dailyBudgets für einen bestimmten Monat */
-function sumDailyBudgetField(
-  db: Record<string, Record<string, number>>,
-  yr: number,
-  mo: number,
-  field: string,
-): number {
-  const daysInMonth = new Date(yr, mo, 0).getDate();
-  let sum = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const key = `${yr}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    sum += (db[key]?.[field] as number) ?? 0;
-  }
-  return sum;
-}
-
 const PLViewPage = () => {
   const { tenantId, tenantKey } = useTenant();
   const { isAdmin } = usePermissions();
@@ -1877,6 +1864,15 @@ const PLViewPage = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
+  // VJ-Supabase-Daten für das Vorjahr laden (einmaliger Query für alle 12 Monate)
+  const [vjDailyData, setVjDailyData] = useState<Record<string, VjDayRecord>>({});
+  useEffect(() => {
+    loadVjDailyYear(year - 1, tenantId).then(data => {
+      console.log(`[REVENUE-SYNC] VJ Supabase-Daten geladen: ${Object.keys(data).length} Tage für ${year - 1}`);
+      setVjDailyData(data);
+    });
+  }, [year, tenantId]);
+
   // Sage Journal für das gewählte Jahr aus Supabase laden (auto-migration)
   useEffect(() => {
     syncJournalYearFromDB(year).then(() => setRefreshKey(k => k + 1));
@@ -1887,36 +1883,62 @@ const PLViewPage = () => {
   const prevYearRecords = useMemo(() => loadYear(year - 1, tenantKey(REPORTING_STORAGE_KEY)), [year, tenantId]);
 
   // Gastronovi-Tagesdaten aus localStorage laden (gecacht für alle Berechnungen)
-  const dailyBudgetsData = useMemo<Record<string, Record<string, number>>>(() => {
+  const dailyBudgetsData = useMemo<Record<string, { actualRevenue?: number; takeawayRevenue?: number; previousYearRevenue?: number }>>(() => {
     try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
     catch { return {}; }
-  }, [refreshKey]);
+  }, [refreshKey, tenantId]);
 
   // Budget P&L laden (vor den Overrides benötigt)
   const budgetData = useMemo(() => loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)), [year, refreshKey, tenantId]);
 
-  // Effektive Records für alle 12 Monate: wendet Gastronovi-Tagesdaten-Fallback an
-  // (revenueActual + revenuePreviousYear) – damit auch Jahresansicht korrekte Werte zeigt
+  // Effektive Records für alle 12 Monate:
+  // Tagesansicht (dailyBudgets + VJ-Supabase) ist die authoritative Umsatz-Quelle.
+  // Regeln:
+  //   IST-Umsatz: Tagesansicht-NETTO schlägt reporting_v1, ausser wenn Sage 3xxx-Konten vorhanden.
+  //   VJ-Umsatz:  Tagesansicht-VJ-NETTO schlägt reporting_v1, ausser wenn Sage 3xxx-PY-Konten vorhanden.
+  // → Garantiert: PLView-Umsatz ≡ Tagesansicht-Umsatz
   const effectiveAllRecords = useMemo(() => {
     return records.map((rec, idx) => {
       const m = idx + 1;
       let r = rec;
-      if (!r.revenueActual) {
-        const dailyRev = sumDailyBudgetField(dailyBudgetsData, year, m, 'actualRevenue');
-        if (dailyRev > 0) r = { ...r, revenueActual: dailyRev };
-      }
-      if (!r.revenuePreviousYear) {
-        const fromCurrent = sumDailyBudgetField(dailyBudgetsData, year, m, 'previousYearRevenue');
-        if (fromCurrent > 0) {
-          r = { ...r, revenuePreviousYear: fromCurrent };
-        } else if (!prevYearRecords[idx]?.revenueActual) {
-          const dailyPY = sumDailyBudgetField(dailyBudgetsData, year - 1, m, 'actualRevenue');
-          if (dailyPY > 0) r = { ...r, revenuePreviousYear: dailyPY };
+
+      // ── IST-Umsatz ────────────────────────────────────────────────────────
+      const hasIndivRev = r.expenseCategories.some(c => {
+        const n = parseInt(c.categoryId);
+        return !isNaN(n) && n >= 3000 && n <= 3999;
+      });
+      if (!hasIndivRev) {
+        const tagesansichtRev = computeMonthlyIstNet(year, m, dailyBudgetsData);
+        if (tagesansichtRev > 0) {
+          if (r.revenueActual && Math.abs(r.revenueActual - tagesansichtRev) > 1) {
+            console.warn(
+              `[REVENUE-SYNC] ${year}-${String(m).padStart(2,'0')}: ` +
+              `reporting_v1=${r.revenueActual.toFixed(0)} vs tagesansicht_net=${tagesansichtRev.toFixed(0)} ` +
+              `(diff=${(tagesansichtRev - r.revenueActual).toFixed(0)}) → verwende Tagesansicht`,
+            );
+          }
+          r = { ...r, revenueActual: tagesansichtRev };
         }
       }
+
+      // ── VJ-Umsatz ─────────────────────────────────────────────────────────
+      const hasIndivPYRev = (r.expenseCategoriesPreviousYear ?? []).some(c => {
+        const n = parseInt(c.categoryId);
+        return !isNaN(n) && n >= 3000 && n <= 3999;
+      });
+      if (!hasIndivPYRev) {
+        const tagesansichtVj = computeMonthlyVjNet(year, m, dailyBudgetsData, vjDailyData);
+        if (tagesansichtVj > 0) {
+          r = { ...r, revenuePreviousYear: tagesansichtVj };
+        } else if (!r.revenuePreviousYear) {
+          const prevActual = prevYearRecords[idx]?.revenueActual;
+          if (prevActual) r = { ...r, revenuePreviousYear: prevActual };
+        }
+      }
+
       return r;
     });
-  }, [records, prevYearRecords, year, dailyBudgetsData]);
+  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData]);
 
   // Effektiver Datensatz für den ausgewählten Monat
   const effectiveMonthRecord = useMemo(
@@ -1948,8 +1970,18 @@ const PLViewPage = () => {
       const prevYearByRow = new Map<string, number>();
       const prevRec = prevYearRecords[idx];
       const effRec  = effectiveAllRecords[idx];
+
+      // ── VJ-Umsatz: Tagesansicht hat höchste Priorität (Klassisch-Ansicht) ─
+      // effRec.revenuePreviousYear wurde bereits in effectiveAllRecords auf
+      // Tagesansicht-Netto gesetzt (computeMonthlyVjNet). Daher hat dieser Wert
+      // Vorrang vor prevRec.revenueActual (reporting_v1 für das Vorjahr).
+      if (effRec?.revenuePreviousYear) {
+        prevYearByRow.set('revenue_total', effRec.revenuePreviousYear);
+      } else if (prevRec?.revenueActual) {
+        prevYearByRow.set('revenue_total', prevRec.revenueActual);
+      }
+
       if (prevRec) {
-        if (prevRec.revenueActual) prevYearByRow.set('revenue_total', prevRec.revenueActual);
         if (prevRec.personnelCostActual) prevYearByRow.set('personnel_wages', prevRec.personnelCostActual);
         for (const cat of (prevRec.expenseCategories ?? [])) {
           if (!cat.categoryId || !cat.amount) continue;
@@ -1957,16 +1989,14 @@ const PLViewPage = () => {
             const res = lookupAccount(cat.categoryId);
             if (res.mapping) {
               const rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
-              if (rowId) prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
+              if (rowId && rowId !== 'revenue_total') {
+                prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
+              }
             }
           }
         }
       }
-      // Fallback: revenuePreviousYear / personnelCostPreviousYear aus den effektiven Records
-      // (z.B. manuell eingetragen oder aus Gastronovi-Tagesdaten)
-      if (!prevYearByRow.has('revenue_total') && effRec?.revenuePreviousYear) {
-        prevYearByRow.set('revenue_total', effRec.revenuePreviousYear);
-      }
+      // Fallback: personnelCostPreviousYear aus den effektiven Records
       if (!prevYearByRow.has('personnel_wages') && effRec?.personnelCostPreviousYear) {
         prevYearByRow.set('personnel_wages', effRec.personnelCostPreviousYear);
       }
@@ -1978,7 +2008,9 @@ const PLViewPage = () => {
             const res = lookupAccount(cat.categoryId);
             if (res.mapping) {
               const rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
-              if (rowId) prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
+              if (rowId && rowId !== 'revenue_total') {
+                prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
+              }
             }
           }
         }

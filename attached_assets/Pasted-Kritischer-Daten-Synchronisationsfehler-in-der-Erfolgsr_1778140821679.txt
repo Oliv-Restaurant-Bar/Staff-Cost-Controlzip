@@ -1,0 +1,135 @@
+Kritischer Daten-Synchronisationsfehler in der Erfolgsrechnung / P&L.
+
+Aktuell stimmen die Ist-Umsätze und Vorjahreswerte in der Erfolgsrechnung nicht mit der Tagesansicht überein.
+
+Das ist falsch.
+
+Grundsatz:
+Die Tagesansicht ist die zentrale Quelle für Umsätze.
+Alle Module müssen dieselben Umsatzdaten verwenden.
+
+---
+
+1. Ist-Umsatz synchronisieren
+
+Die Erfolgsrechnung darf den Ist-Umsatz nicht aus einer separaten oder alten Quelle berechnen.
+
+Für Betriebsertrag / Umsatz Ist muss exakt derselbe Wert verwendet werden wie in der Tagesansicht für denselben Zeitraum.
+
+Beispiel:
+April 2026 in Tagesansicht = Umsatz April 2026
+Dann muss Erfolgsrechnung April 2026 exakt denselben Ist-Umsatz anzeigen.
+
+Bitte prüfen:
+- Monatsfilter
+- Jahr
+- Brutto / Netto Logik
+- MWST Behandlung
+- Rundungen
+- Storno / Korrekturen
+- Food / Beverage Zuordnung
+
+---
+
+2. Vorjahr synchronisieren
+
+Die Vorjahreswerte in der Erfolgsrechnung stimmen aktuell nicht.
+
+Auch Vorjahr muss aus der gleichen Umsatzlogik kommen wie die Tagesansicht.
+
+Beispiel:
+April 2026 Vergleich Vorjahr =
+April 2025 aus Tagesansicht / Sales Daten
+
+Nicht aus alten P&L Importwerten, nicht aus Budgetwerten, nicht aus manuell gespeicherten Dummywerten.
+
+---
+
+3. Klare Datenquelle definieren
+
+Bitte zentralisieren:
+
+Umsatz Ist:
+Quelle = Tagesansicht / Sales Daily Data
+
+Umsatz Vorjahr:
+Quelle = Tagesansicht / Sales Daily Data gleicher Zeitraum Vorjahr
+
+Budget:
+Quelle = Budgetmodul
+
+Warenaufwand Ist:
+Quelle = Warenrechnungen / Kontoblätter je nach bestehender Logik
+
+Warenaufwand Vorjahr:
+Quelle = Vorjahr Import / Kontoblätter Vorjahr, falls vorhanden
+
+---
+
+4. Keine doppelte Umsatzberechnung
+
+Bitte alle Stellen entfernen oder korrigieren, wo die Erfolgsrechnung Umsatzwerte selbst berechnet oder aus separaten Tabellen zieht.
+
+Es soll eine zentrale Helper-Funktion geben, z.B.:
+
+getRevenueForPeriod(year, month)
+getPreviousYearRevenueForPeriod(year, month)
+
+Diese Funktionen sollen in Tagesansicht, Dashboard und Erfolgsrechnung identisch verwendet werden.
+
+---
+
+5. Prüflogik einbauen
+
+Bitte in der Erfolgsrechnung intern prüfen:
+
+Wenn Umsatz Ist P&L != Umsatz Tagesansicht:
+zeige Warnung oder logge Fehler.
+
+Wenn Umsatz Vorjahr P&L != Vorjahr Tagesansicht:
+zeige Warnung oder logge Fehler.
+
+Ziel:
+Solche Abweichungen sollen künftig sofort sichtbar sein.
+
+---
+
+6. Anzeige in Erfolgsrechnung
+
+Bei Betriebsertrag Netto muss stehen:
+
+Ist CHF = exakt Umsatz Netto aus Tagesansicht
+Vorjahr CHF = exakt Umsatz Netto Vorjahr aus Tagesansicht
+
+Wenn Tagesansicht brutto/netto unterscheidet:
+Die Erfolgsrechnung soll standardmässig Netto verwenden.
+
+---
+
+7. Tests
+
+Bitte konkret testen:
+
+April 2026:
+- Tagesansicht Umsatz Netto April 2026
+- Erfolgsrechnung Betriebsertrag Netto Ist April 2026
+Diese müssen exakt gleich sein.
+
+April 2025:
+- Tagesansicht Umsatz Netto April 2025
+- Erfolgsrechnung Vorjahr April 2026
+Diese müssen exakt gleich sein.
+
+Auch testen:
+- Mai 2026
+- Jahr 2026
+- Monatswechsel
+- PDF Export
+- Budgetvergleich
+- Abweichung Vorjahr
+
+---
+
+Wichtig:
+Die Erfolgsrechnung darf nie eigene Umsatzwerte anzeigen, die nicht mit der Tagesansicht synchronisiert sind.
+Die Tagesansicht / Sales Daten sind die zentrale Wahrheit für Umsatz Ist und Umsatz Vorjahr.
