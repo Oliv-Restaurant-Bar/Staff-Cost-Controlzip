@@ -2,20 +2,19 @@
  * pl-export.ts – Professioneller PDF-Export für die Erfolgsrechnung
  * ==================================================================
  *
- * Drei Seiten (alle Landscape A4):
- *   1. Budget P&L:       Ist | Ist% | Budget | Bud% | Abw.Bud CHF | Abw.Bud% | VJ | VJ% | Abw.VJ CHF | Abw.VJ%
- *   2. Klassisch:        Ist | Ist% | VJ | VJ% | Abw.VJ CHF | Abw.VJ%
- *   3. Jahresübersicht:  12 Monate + Total, CHF + % pro Kennzahl
+ * Exportiert NUR die aktive Ansicht (eine Seite):
+ *   budget_pl: Budget P&L  – Ist | Ist% | Budget | Bud% | Abw.Bud CHF | VJ | VJ% | Abw.VJ CHF
+ *   monthly:   Klassisch   – Ist | Ist% | VJ | VJ% | Abw.VJ CHF
+ *   yearly:    Jahresübersicht – 12 Monate + Total, CHF + % pro Kennzahl
  *
- * Prozentwerte = Anteil am Betriebsertrag netto (Ist / Budget / Vorjahr).
- * Farblogik:   Ertrag/Ergebnis: positiv = grün / negativ = rot.
- *              Aufwand:          positiv = rot  / negativ = grün.
+ * Farblogik:  Ertrag/Ergebnis: positiv = grün, negativ = rot.
+ *             Aufwand-Abweichung: günstiger = grün, teurer = rot.
  */
 
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PLMonthResult, PLYearResult, PLComputedRow } from '@/types/pl';
-import { MONTH_NAMES_SHORT_DE } from '@/types/reporting';
+import { MONTH_NAMES_SHORT_DE, MONTH_NAMES_DE } from '@/types/reporting';
 
 // ── Farb-Palette ──────────────────────────────────────────────────────────────
 
@@ -28,16 +27,14 @@ const C = {
   green:      [22,  115,  60] as [number, number, number],
   red:        [185,  35,  35] as [number, number, number],
   gray:       [140, 145, 155] as [number, number, number],
-  grayLight:  [215, 218, 225] as [number, number, number],
-  amber:      [175,  95,   0] as [number, number, number],
-  gold:       [200, 155,   0] as [number, number, number],
+  navyHeader: [200, 210, 230] as [number, number, number],
 };
 
 // ── Zahlenformate ─────────────────────────────────────────────────────────────
 
 function swissNum(v: number): string {
-  const abs  = Math.round(Math.abs(v));
-  const s    = abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "'");
+  const abs = Math.round(Math.abs(v));
+  const s   = abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "'");
   return v < 0 ? `-${s}` : s;
 }
 
@@ -47,21 +44,15 @@ function fmtCHF(v: number | undefined | null): string {
 }
 
 function fmtPctRatio(value: number | undefined | null, base: number | undefined | null): string {
-  if (!value || !base || base === 0) return '–';
+  if (value == null || !base || base === 0) return '–';
   const p = (value / base) * 100;
   if (!isFinite(p)) return '–';
   return `${p.toFixed(1)} %`;
 }
 
-function fmtPctVar(v: number | undefined | null): string {
-  if (v == null) return '–';
-  const sign = v > 0 ? '+' : '';
-  return `${sign}${v.toFixed(1)} %`;
-}
+// ── Farblogik ─────────────────────────────────────────────────────────────────
 
-// ── Farblogik für Abweichungen ────────────────────────────────────────────────
-
-/** Farbwert für eine Abweichungszelle (Ertrag/Ergebnis vs. Aufwand) */
+/** Farbe für Abweichungszellen */
 function varColor(
   value: number | undefined | null,
   isExpense: boolean,
@@ -71,12 +62,22 @@ function varColor(
   return (positive !== isExpense) ? C.green : C.red;
 }
 
-/** isExpense aus PLComputedRow */
+/**
+ * Farbe für Ist-Wert in Ergebnis- / Totalzeilen.
+ * Nur für result/subtotal: positiv = grün, negativ = rot.
+ */
+function resultActualColor(
+  actual: number | undefined | null,
+  isResult: boolean,
+  isSubtotal: boolean,
+): [number, number, number] | undefined {
+  if ((!isResult && !isSubtotal) || actual == null || Math.abs(actual) < 0.5) return undefined;
+  return actual >= 0 ? C.green : C.red;
+}
+
 function isExpenseRow(row: PLComputedRow): boolean {
   return row.def.valueRole === 'negative';
 }
-
-// ── Zeilen-Metadaten ──────────────────────────────────────────────────────────
 
 function indent(row: PLComputedRow): string {
   return '  '.repeat(Math.max(0, row.def.indent - 1));
@@ -84,33 +85,47 @@ function indent(row: PLComputedRow): string {
 
 // ── Seitenkopf ────────────────────────────────────────────────────────────────
 
+/**
+ * Prominenter Header: dunkler Navy-Block mit großem Monat/Jahr.
+ * Returns y-position after the header.
+ */
 function addPageHeader(
   doc: jsPDF,
   title: string,
-  sub: string,
+  subtitle: string,
+  month: number,
+  year: number,
   pageW: number,
   y = 8,
 ): number {
+  const blockH = 24;
   doc.setFillColor(...C.navy);
-  doc.rect(10, y, pageW - 20, 11, 'F');
+  doc.rect(10, y, pageW - 20, blockH, 'F');
 
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...C.white);
-  doc.text('Oliv Gastro AG', 14, y + 7.2);
-
+  // Kleine Kategorie-Zeile oben
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.text(`– ${title}`, 14 + 32, y + 7.2);
+  doc.setFontSize(8);
+  doc.setTextColor(...C.navyHeader);
+  doc.text(title.toUpperCase(), 15, y + 7);
 
+  // Monat + Jahr – groß und fett
+  const mFull = (MONTH_NAMES_DE[month] ?? MONTH_NAMES_SHORT_DE[month] ?? '').toUpperCase();
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(...C.white);
+  doc.text(`${mFull} ${year}`, 15, y + 17);
+
+  // Untertitel rechts (Firma + Datum)
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(7);
-  doc.text(sub, pageW - 12, y + 7.2, { align: 'right' });
+  doc.setTextColor(...C.navyHeader);
+  doc.text(subtitle, pageW - 12, y + 10, { align: 'right' });
 
   doc.setTextColor(0, 0, 0);
-  return y + 15;
+  return y + blockH + 5;
 }
 
-// ── KPI-Tabelle ───────────────────────────────────────────────────────────────
+// ── KPI-Sektion ───────────────────────────────────────────────────────────────
 
 function addKpiSection(
   doc: jsPDF,
@@ -121,8 +136,6 @@ function addKpiSection(
   const get = (id: string) => monthResult.rows.find(r => r.def.id === id);
 
   const revRow    = get('net_revenue');
-  const gp1Row    = get('gross_profit_1');
-  const gp2Row    = get('gross_profit_2');
   const ebitdaRow = get('ebitda');
   const ebitRow   = get('ebit');
   const cogsRow   = get('total_cogs');
@@ -132,80 +145,45 @@ function addKpiSection(
   const revB  = revRow?.values.budget;
   const revPY = revRow?.values.prevYear;
 
-  const ppDiff = (a: number | undefined, b: number | undefined, baseA: number | undefined, baseB: number | undefined): string => {
-    if (!a || !b || !baseA || !baseB || baseA === 0 || baseB === 0) return '–';
-    const pA = (a / baseA) * 100;
-    const pB = (b / baseB) * 100;
-    const diff = pA - pB;
-    return `${diff >= 0 ? '+' : ''}${diff.toFixed(1)} pp`;
+  type KpiEntry = {
+    label:    string;
+    istCHF:   string;  istPct:  string;
+    budCHF:   string;  budPct:  string;
+    vjCHF:    string;  vjPct:   string;
+    istColor: [number, number, number];
   };
 
-  type KpiRow = {
-    label: string; ist: string; bud: string; vj: string;
-    abwBud: string; abwVJ: string;
-    budC: [number,number,number]; vjC: [number,number,number];
-    isExpense: boolean;
+  const makeEntry = (
+    label: string,
+    row: PLComputedRow | undefined,
+    isExpense: boolean,
+    showPct: boolean,
+  ): KpiEntry => {
+    const v  = row?.values;
+    const a  = v?.actual;
+    const b  = v?.budget;
+    const py = v?.prevYear;
+    const istColor: [number, number, number] = isExpense
+      ? C.gray
+      : (a == null || Math.abs(a) < 0.5 ? C.gray : a >= 0 ? C.green : C.red);
+    return {
+      label,
+      istCHF:  fmtCHF(a),
+      istPct:  showPct ? fmtPctRatio(a,  revA) : '–',
+      budCHF:  fmtCHF(b),
+      budPct:  showPct ? fmtPctRatio(b,  revB) : '–',
+      vjCHF:   fmtCHF(py),
+      vjPct:   showPct ? fmtPctRatio(py, revPY) : '–',
+      istColor,
+    };
   };
 
-  const kpis: KpiRow[] = [
-    {
-      label: 'Betriebsertrag netto', isExpense: false,
-      ist:    fmtCHF(revA),   bud: fmtCHF(revB),   vj: fmtCHF(revPY),
-      abwBud: fmtPctVar(revRow?.values.vsBudgetPct),
-      abwVJ:  fmtPctVar(revRow?.values.vsPrevYearPct),
-      budC: varColor(revRow?.values.vsBudget, false),
-      vjC:  varColor(revRow?.values.vsPrevYear, false),
-    },
-    {
-      label: 'Bruttogewinn 1', isExpense: false,
-      ist:    fmtCHF(gp1Row?.values.actual),   bud: fmtCHF(gp1Row?.values.budget),   vj: fmtCHF(gp1Row?.values.prevYear),
-      abwBud: fmtPctVar(gp1Row?.values.vsBudgetPct),
-      abwVJ:  fmtPctVar(gp1Row?.values.vsPrevYearPct),
-      budC: varColor(gp1Row?.values.vsBudget, false),
-      vjC:  varColor(gp1Row?.values.vsPrevYear, false),
-    },
-    {
-      label: 'Deckungsbeitrag', isExpense: false,
-      ist:    fmtCHF(gp2Row?.values.actual),   bud: fmtCHF(gp2Row?.values.budget),   vj: fmtCHF(gp2Row?.values.prevYear),
-      abwBud: fmtPctVar(gp2Row?.values.vsBudgetPct),
-      abwVJ:  fmtPctVar(gp2Row?.values.vsPrevYearPct),
-      budC: varColor(gp2Row?.values.vsBudget, false),
-      vjC:  varColor(gp2Row?.values.vsPrevYear, false),
-    },
-    {
-      label: 'EBITDA', isExpense: false,
-      ist:    fmtCHF(ebitdaRow?.values.actual), bud: fmtCHF(ebitdaRow?.values.budget), vj: fmtCHF(ebitdaRow?.values.prevYear),
-      abwBud: fmtPctVar(ebitdaRow?.values.vsBudgetPct),
-      abwVJ:  fmtPctVar(ebitdaRow?.values.vsPrevYearPct),
-      budC: varColor(ebitdaRow?.values.vsBudget, false),
-      vjC:  varColor(ebitdaRow?.values.vsPrevYear, false),
-    },
-    {
-      label: 'EBIT', isExpense: false,
-      ist:    fmtCHF(ebitRow?.values.actual),   bud: fmtCHF(ebitRow?.values.budget),   vj: fmtCHF(ebitRow?.values.prevYear),
-      abwBud: fmtPctVar(ebitRow?.values.vsBudgetPct),
-      abwVJ:  fmtPctVar(ebitRow?.values.vsPrevYearPct),
-      budC: varColor(ebitRow?.values.vsBudget, false),
-      vjC:  varColor(ebitRow?.values.vsPrevYear, false),
-    },
-    {
-      label: 'Warenkosten %', isExpense: true,
-      ist:    fmtPctRatio(cogsRow?.values.actual,   revA),
-      bud:    fmtPctRatio(cogsRow?.values.budget,   revB),
-      vj:     fmtPctRatio(cogsRow?.values.prevYear, revPY),
-      abwBud: ppDiff(cogsRow?.values.actual, cogsRow?.values.budget, revA, revB),
-      abwVJ:  ppDiff(cogsRow?.values.actual, cogsRow?.values.prevYear, revA, revPY),
-      budC: C.gray, vjC: C.gray,
-    },
-    {
-      label: 'Personalquote %', isExpense: true,
-      ist:    fmtPctRatio(persRow?.values.actual,   revA),
-      bud:    fmtPctRatio(persRow?.values.budget,   revB),
-      vj:     fmtPctRatio(persRow?.values.prevYear, revPY),
-      abwBud: ppDiff(persRow?.values.actual, persRow?.values.budget, revA, revB),
-      abwVJ:  ppDiff(persRow?.values.actual, persRow?.values.prevYear, revA, revPY),
-      budC: C.gray, vjC: C.gray,
-    },
+  const kpis: KpiEntry[] = [
+    makeEntry('Betriebsertrag netto',  revRow,    false, false),
+    makeEntry('Warenaufwand total',    cogsRow,   true,  true),
+    makeEntry('Personalaufwand total', persRow,   true,  true),
+    makeEntry('EBITDA',                ebitdaRow, false, true),
+    makeEntry('EBIT',                  ebitRow,   false, true),
   ];
 
   doc.setFontSize(6.5);
@@ -216,36 +194,44 @@ function addKpiSection(
 
   autoTable(doc, {
     startY: startY + 5,
-    head: [['KPI', 'Ist (CHF)', 'Budget (CHF)', 'Vorjahr (CHF)', 'Abw. Budget', 'Abw. Vorjahr']],
+    head: [[
+      'Kennzahl',
+      'Ist CHF', 'Ist %',
+      'Budget CHF', 'Bud %',
+      'Vorjahr CHF', 'VJ %',
+    ]],
     body: kpis.map(k => [
-      { content: k.label, styles: { fontStyle: 'bold' as const } },
-      { content: k.ist,    styles: { halign: 'right' as const, fontStyle: 'bold' as const } },
-      { content: k.bud,    styles: { halign: 'right' as const } },
-      { content: k.vj,     styles: { halign: 'right' as const } },
-      { content: k.abwBud, styles: { halign: 'right' as const, textColor: k.budC } },
-      { content: k.abwVJ,  styles: { halign: 'right' as const, textColor: k.vjC } },
+      { content: k.label,   styles: { fontStyle: 'bold' as const } },
+      { content: k.istCHF,  styles: { halign: 'right' as const, fontStyle: 'bold' as const, textColor: k.istColor } },
+      { content: k.istPct,  styles: { halign: 'right' as const, textColor: C.gray } },
+      { content: k.budCHF,  styles: { halign: 'right' as const } },
+      { content: k.budPct,  styles: { halign: 'right' as const, textColor: C.gray } },
+      { content: k.vjCHF,   styles: { halign: 'right' as const } },
+      { content: k.vjPct,   styles: { halign: 'right' as const, textColor: C.gray } },
     ]),
     theme: 'plain',
     headStyles: {
       fillColor: C.navyLight, textColor: C.white,
-      fontStyle: 'bold', fontSize: 7, cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+      fontStyle: 'bold', fontSize: 7,
+      cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
     },
-    bodyStyles: { fontSize: 7, cellPadding: { top: 1.3, bottom: 1.3, left: 2, right: 2 } },
+    bodyStyles: { fontSize: 7.5, cellPadding: { top: 1.6, bottom: 1.6, left: 2, right: 2 } },
     alternateRowStyles: { fillColor: C.slateLight },
     columnStyles: {
-      0: { cellWidth: 44 },
-      1: { halign: 'right', cellWidth: 30 },
-      2: { halign: 'right', cellWidth: 30 },
-      3: { halign: 'right', cellWidth: 30 },
-      4: { halign: 'right', cellWidth: 28 },
+      0: { cellWidth: 50 },
+      1: { halign: 'right', cellWidth: 28 },
+      2: { halign: 'right', cellWidth: 18 },
+      3: { halign: 'right', cellWidth: 28 },
+      4: { halign: 'right', cellWidth: 18 },
       5: { halign: 'right', cellWidth: 28 },
+      6: { halign: 'right', cellWidth: 18 },
     },
   });
 
-  return (doc as any).lastAutoTable.finalY + 5;
+  return (doc as any).lastAutoTable.finalY + 6;
 }
 
-// ── Budget P&L Tabellenkörper ─────────────────────────────────────────────────
+// ── Budget P&L Tabellenkörper (9 Spalten: ohne Abw.% Spalten) ─────────────────
 
 function buildBPLBody(
   rows: PLComputedRow[],
@@ -254,6 +240,7 @@ function buildBPLBody(
   revPY: number | undefined,
 ) {
   type CellDef = string | { content: string; styles: Record<string, unknown> };
+  const NCOLS = 9;
   const body: CellDef[][] = [];
 
   for (const row of rows) {
@@ -264,10 +251,9 @@ function buildBPLBody(
     const isExp = isExpenseRow(row);
 
     if (t === 'section') {
-      const fill = C.navy;
       body.push([
-        { content: row.def.label.toUpperCase(), styles: { fontStyle: 'bold', fillColor: fill, textColor: C.white, colSpan: 11 } },
-        '', '', '', '', '', '', '', '', '', '',
+        { content: row.def.label.toUpperCase(), styles: { fontStyle: 'bold', fillColor: C.navy, textColor: C.white, colSpan: NCOLS } },
+        ...Array(NCOLS - 1).fill(''),
       ]);
       continue;
     }
@@ -276,43 +262,43 @@ function buildBPLBody(
     const isSubtotal = t === 'subtotal';
     const bold       = isResult || isSubtotal ? 'bold' : 'normal';
     const fillColor  = isResult   ? C.navyMid
-                     : isSubtotal ? [235, 238, 248] as [number,number,number]
+                     : isSubtotal ? [235, 238, 248] as [number, number, number]
                      : undefined;
-    const textColor  = isResult ? C.white : undefined;
+    const baseTxtColor = isResult ? C.white : undefined;
 
-    const pctA  = fmtPctRatio(v.actual,   revA);
-    const pctB  = fmtPctRatio(v.budget,   revB);
-    const pctPY = fmtPctRatio(v.prevYear, revPY);
-    const abwBudC  = varColor(v.vsBudget,    isExp);
-    const abwVJC   = varColor(v.vsPrevYear,  isExp);
+    const istValColor = resultActualColor(v.actual, isResult, isSubtotal);
+    const istColor    = istValColor ?? baseTxtColor;
+    const abwBudC     = varColor(v.vsBudget,   isExp);
+    const abwVJC      = varColor(v.vsPrevYear, isExp);
 
-    const cellStyle = (extra: Record<string, unknown> = {}) => ({
+    const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
       fontStyle: bold,
-      ...(fillColor ? { fillColor } : {}),
-      ...(textColor ? { textColor } : {}),
+      ...(fillColor     ? { fillColor }               : {}),
+      ...(baseTxtColor  ? { textColor: baseTxtColor } : {}),
       ...extra,
     });
 
     const label = indent(row) + row.def.label;
+    const pctA  = fmtPctRatio(v.actual,   revA);
+    const pctB  = fmtPctRatio(v.budget,   revB);
+    const pctPY = fmtPctRatio(v.prevYear, revPY);
 
     body.push([
-      { content: label,          styles: cellStyle() },
-      { content: fmtCHF(v.actual),   styles: cellStyle({ halign: 'right', fontStyle: 'bold' }) },
-      { content: pctA,           styles: cellStyle({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
-      { content: fmtCHF(v.budget),   styles: cellStyle({ halign: 'right' }) },
-      { content: pctB,           styles: cellStyle({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
-      { content: fmtCHF(v.vsBudget), styles: cellStyle({ halign: 'right', textColor: isResult ? C.white : abwBudC }) },
-      { content: fmtPctVar(v.vsBudgetPct), styles: cellStyle({ halign: 'right', textColor: isResult ? C.white : abwBudC }) },
-      { content: fmtCHF(v.prevYear),  styles: cellStyle({ halign: 'right' }) },
-      { content: pctPY,           styles: cellStyle({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
-      { content: fmtCHF(v.vsPrevYear), styles: cellStyle({ halign: 'right', textColor: isResult ? C.white : abwVJC }) },
-      { content: fmtPctVar(v.vsPrevYearPct), styles: cellStyle({ halign: 'right', textColor: isResult ? C.white : abwVJC }) },
+      { content: label,              styles: cs() },
+      { content: fmtCHF(v.actual),   styles: cs({ halign: 'right', fontStyle: 'bold', ...(istColor ? { textColor: istColor } : {}) }) },
+      { content: pctA,               styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: fmtCHF(v.budget),   styles: cs({ halign: 'right' }) },
+      { content: pctB,               styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: fmtCHF(v.vsBudget), styles: cs({ halign: 'right', textColor: isResult ? C.white : abwBudC }) },
+      { content: fmtCHF(v.prevYear), styles: cs({ halign: 'right' }) },
+      { content: pctPY,              styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: fmtCHF(v.vsPrevYear), styles: cs({ halign: 'right', textColor: isResult ? C.white : abwVJC }) },
     ]);
   }
   return body;
 }
 
-// ── Klassisch Tabellenkörper ──────────────────────────────────────────────────
+// ── Klassisch Tabellenkörper (6 Spalten: ohne Abw.VJ%) ───────────────────────
 
 function buildKlassischBody(
   rows: PLComputedRow[],
@@ -320,6 +306,7 @@ function buildKlassischBody(
   revPY: number | undefined,
 ) {
   type CellDef = string | { content: string; styles: Record<string, unknown> };
+  const NCOLS = 6;
   const body: CellDef[][] = [];
 
   for (const row of rows) {
@@ -331,8 +318,8 @@ function buildKlassischBody(
 
     if (t === 'section') {
       body.push([
-        { content: row.def.label.toUpperCase(), styles: { fontStyle: 'bold', fillColor: C.navy, textColor: C.white, colSpan: 7 } },
-        '', '', '', '', '', '',
+        { content: row.def.label.toUpperCase(), styles: { fontStyle: 'bold', fillColor: C.navy, textColor: C.white, colSpan: NCOLS } },
+        ...Array(NCOLS - 1).fill(''),
       ]);
       continue;
     }
@@ -341,31 +328,32 @@ function buildKlassischBody(
     const isSubtotal = t === 'subtotal';
     const bold       = isResult || isSubtotal ? 'bold' : 'normal';
     const fillColor  = isResult   ? C.navyMid
-                     : isSubtotal ? [235, 238, 248] as [number,number,number]
+                     : isSubtotal ? [235, 238, 248] as [number, number, number]
                      : undefined;
-    const textColor  = isResult ? C.white : undefined;
+    const baseTxtColor = isResult ? C.white : undefined;
 
-    const pctA  = fmtPctRatio(v.actual,   revA);
-    const pctPY = fmtPctRatio(v.prevYear, revPY);
-    const abwVJC = varColor(v.vsPrevYear, isExp);
+    const istValColor = resultActualColor(v.actual, isResult, isSubtotal);
+    const istColor    = istValColor ?? baseTxtColor;
+    const abwVJC      = varColor(v.vsPrevYear, isExp);
 
-    const cellStyle = (extra: Record<string, unknown> = {}) => ({
+    const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
       fontStyle: bold,
-      ...(fillColor ? { fillColor } : {}),
-      ...(textColor ? { textColor } : {}),
+      ...(fillColor    ? { fillColor }               : {}),
+      ...(baseTxtColor ? { textColor: baseTxtColor } : {}),
       ...extra,
     });
 
     const label = indent(row) + row.def.label;
+    const pctA  = fmtPctRatio(v.actual,   revA);
+    const pctPY = fmtPctRatio(v.prevYear, revPY);
 
     body.push([
-      { content: label,               styles: cellStyle() },
-      { content: fmtCHF(v.actual),    styles: cellStyle({ halign: 'right', fontStyle: 'bold' }) },
-      { content: pctA,                styles: cellStyle({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
-      { content: fmtCHF(v.prevYear),  styles: cellStyle({ halign: 'right' }) },
-      { content: pctPY,               styles: cellStyle({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
-      { content: fmtCHF(v.vsPrevYear),      styles: cellStyle({ halign: 'right', textColor: isResult ? C.white : abwVJC }) },
-      { content: fmtPctVar(v.vsPrevYearPct), styles: cellStyle({ halign: 'right', textColor: isResult ? C.white : abwVJC }) },
+      { content: label,                styles: cs() },
+      { content: fmtCHF(v.actual),     styles: cs({ halign: 'right', fontStyle: 'bold', ...(istColor ? { textColor: istColor } : {}) }) },
+      { content: pctA,                 styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: fmtCHF(v.prevYear),   styles: cs({ halign: 'right' }) },
+      { content: pctPY,                styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: fmtCHF(v.vsPrevYear), styles: cs({ halign: 'right', textColor: isResult ? C.white : abwVJC }) },
     ]);
   }
   return body;
@@ -380,250 +368,210 @@ export function exportPLToPDF(
   month:       number,
   mode: 'budget_pl' | 'monthly' | 'yearly' = 'budget_pl',
 ): void {
-  const doc  = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-  const now  = new Date().toLocaleDateString('de-CH');
-  const mLabel = MONTH_NAMES_SHORT_DE[month] + ' ' + year;
-  const PAGE_W = 297;
+  const doc      = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const now      = new Date().toLocaleDateString('de-CH');
+  const subtitle = `Oliv Gastro AG · Exportiert am ${now}`;
+  const PAGE_W   = 297;
 
-  // Revenue bases für % Berechnungen
   const revA  = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.actual;
   const revB  = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.budget;
   const revPY = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.prevYear;
 
-  // Welche Seite zuerst (aktive Ansicht)
-  const pageOrder: Array<'budget_pl' | 'monthly' | 'yearly'> =
-    mode === 'yearly'  ? ['yearly', 'budget_pl', 'monthly'] :
-    mode === 'monthly' ? ['monthly', 'budget_pl', 'yearly'] :
-                         ['budget_pl', 'monthly', 'yearly'];
+  // ──── Budget P&L ─────────────────────────────────────────────────────────
+  if (mode === 'budget_pl') {
+    const yH = addPageHeader(doc, 'Erfolgsrechnung – Budget P&L', subtitle, month, year, PAGE_W);
+    const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
 
-  let firstPage = true;
+    const body = buildBPLBody(monthResult.rows, revA, revB, revPY);
 
-  for (const page of pageOrder) {
-
-    // ──── Budget P&L ─────────────────────────────────────────────────────────
-    if (page === 'budget_pl') {
-      if (!firstPage) doc.addPage('a4', 'landscape');
-      firstPage = false;
-
-      const yH = addPageHeader(doc, `Erfolgsrechnung – Budget P&L`, `${mLabel} · Exportiert ${now}`, PAGE_W);
-      const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
-
-      const bplBody = buildBPLBody(monthResult.rows, revA, revB, revPY);
-
-      autoTable(doc, {
-        startY: yK,
-        head: [[
-          'Position',
-          'Ist (CHF)', 'Ist %',
-          'Budget (CHF)', 'Bud %',
-          'Abw. Bud CHF', 'Abw. Bud %',
-          'VJ (CHF)', 'VJ %',
-          'Abw. VJ CHF', 'Abw. VJ %',
-        ]],
-        body: bplBody as string[][],
-        theme: 'plain',
-        headStyles: {
-          fillColor: C.navyLight, textColor: C.white,
-          fontStyle: 'bold', fontSize: 7,
-          cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
-        },
-        bodyStyles: { fontSize: 6.5, cellPadding: { top: 1.1, bottom: 1.1, left: 2, right: 1.5 } },
-        alternateRowStyles: { fillColor: C.slateLight },
-        columnStyles: {
-          0:  { cellWidth: 55 },
-          1:  { halign: 'right', cellWidth: 22 },
-          2:  { halign: 'right', cellWidth: 13 },
-          3:  { halign: 'right', cellWidth: 22 },
-          4:  { halign: 'right', cellWidth: 13 },
-          5:  { halign: 'right', cellWidth: 22 },
-          6:  { halign: 'right', cellWidth: 15 },
-          7:  { halign: 'right', cellWidth: 22 },
-          8:  { halign: 'right', cellWidth: 13 },
-          9:  { halign: 'right', cellWidth: 22 },
-          10: { halign: 'right', cellWidth: 15 },
-        },
-        didParseCell: (data) => {
-          // Spacer-Zeilen (section mit colSpan) sauber darstellen
-          if (data.row.raw && Array.isArray(data.row.raw) && data.column.index > 0) {
-            const first = (data.row.raw as any[])[0];
-            if (first?.styles?.colSpan === 11) {
-              data.cell.styles.fillColor = C.navy;
-            }
-          }
-        },
-      });
-    }
-
-    // ──── Klassisch ──────────────────────────────────────────────────────────
-    else if (page === 'monthly') {
-      if (!firstPage) doc.addPage('a4', 'landscape');
-      firstPage = false;
-
-      const yH = addPageHeader(doc, `Erfolgsrechnung – Monatsansicht`, `${mLabel} · Exportiert ${now}`, PAGE_W);
-      const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
-
-      const klassBody = buildKlassischBody(monthResult.rows, revA, revPY);
-
-      autoTable(doc, {
-        startY: yK,
-        head: [['Position', 'Ist (CHF)', 'Ist %', 'Vorjahr (CHF)', 'VJ %', 'Abw. VJ CHF', 'Abw. VJ %']],
-        body: klassBody as string[][],
-        theme: 'plain',
-        headStyles: {
-          fillColor: C.navyLight, textColor: C.white,
-          fontStyle: 'bold', fontSize: 7,
-          cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
-        },
-        bodyStyles: { fontSize: 6.5, cellPadding: { top: 1.1, bottom: 1.1, left: 2, right: 1.5 } },
-        alternateRowStyles: { fillColor: C.slateLight },
-        columnStyles: {
-          0: { cellWidth: 70 },
-          1: { halign: 'right', cellWidth: 30 },
-          2: { halign: 'right', cellWidth: 16 },
-          3: { halign: 'right', cellWidth: 30 },
-          4: { halign: 'right', cellWidth: 16 },
-          5: { halign: 'right', cellWidth: 28 },
-          6: { halign: 'right', cellWidth: 18 },
-        },
-      });
-    }
-
-    // ──── Jahresübersicht ────────────────────────────────────────────────────
-    else if (page === 'yearly') {
-      if (!firstPage) doc.addPage('a4', 'landscape');
-      firstPage = false;
-
-      const yH = addPageHeader(doc, `Jahresübersicht ${year}`, `Exportiert ${now}`, PAGE_W);
-
-      // Key-Zeilen für die Jahresübersicht
-      const KEY_ROWS: { id: string; isPct?: boolean; pctLabel?: string }[] = [
-        { id: 'revenue_total' },
-        { id: 'total_cogs',      isPct: true, pctLabel: 'Warenkosten %' },
-        { id: 'gross_profit_1',  isPct: true, pctLabel: 'Bruttogewinn 1 %' },
-        { id: 'personnel_wages', isPct: true, pctLabel: 'Personalquote %' },
-        { id: 'total_personnel', isPct: true, pctLabel: 'Total Personal %' },
-        { id: 'gross_profit_2',  isPct: true, pctLabel: 'Deckungsbeitrag %' },
-        { id: 'total_opex' },
-        { id: 'ebitda',          isPct: true, pctLabel: 'EBITDA %' },
-        { id: 'ebit',            isPct: true, pctLabel: 'EBIT %' },
-      ];
-
-      const months = yearResult.months;
-      const monthCols = months.map((_, i) => MONTH_NAMES_SHORT_DE[i + 1]);
-
-      // Revenue pro Monat (für % Berechnung)
-      const monthRevenues = months.map(mr =>
-        mr.rows.find(r => r.def.id === 'net_revenue')?.values.actual
-      );
-      const totalRevenue = yearResult.total.rows.find(r => r.def.id === 'net_revenue')?.values.actual;
-
-      type YearCell = string | { content: string; styles: Record<string, unknown> };
-      const yearBody: YearCell[][] = [];
-
-      for (const keyRow of KEY_ROWS) {
-        const template = monthResult.rows.find(r => r.def.id === keyRow.id);
-        if (!template) continue;
-
-        const isResult   = template.def.type === 'result';
-        const isSubtotal = template.def.type === 'subtotal';
-        const isExp      = isExpenseRow(template);
-        const bold       = isResult || isSubtotal ? 'bold' : 'normal';
-        const fillColor  = isResult   ? C.navyMid
-                         : isSubtotal ? [235, 238, 248] as [number,number,number]
-                         : undefined;
-        const textColor  = isResult ? C.white : undefined;
-
-        const label = indent(template) + template.def.label;
-
-        const cellStyle = (extra: Record<string, unknown> = {}) => ({
-          fontStyle: bold,
-          ...(fillColor ? { fillColor } : {}),
-          ...(textColor ? { textColor } : {}),
-          ...extra,
-        });
-
-        // CHF-Zeile
-        const chfCells: YearCell[] = months.map((mr, i) => {
-          const row = mr.rows.find(r => r.def.id === keyRow.id);
-          const v   = row?.values.actual;
-          const prevY = row?.values.prevYear;
-          const abwVJ = (v != null && prevY != null) ? v - prevY : undefined;
-          const color  = varColor(abwVJ, isExp);
-          const cell = { content: fmtCHF(v), styles: cellStyle({ halign: 'right' }) };
-          return cell;
-        });
-
-        const totalRow = yearResult.total.rows.find(r => r.def.id === keyRow.id);
-        const totalV   = totalRow?.values.actual;
-
-        yearBody.push([
-          { content: label, styles: cellStyle() },
-          ...chfCells,
-          { content: fmtCHF(totalV), styles: cellStyle({ halign: 'right', fontStyle: 'bold' }) },
-        ]);
-
-        // %-Zeile (direkt darunter)
-        if (keyRow.isPct) {
-          const pctCells: YearCell[] = months.map((mr, i) => {
-            const row   = mr.rows.find(r => r.def.id === keyRow.id);
-            const v     = row?.values.actual;
-            const revBase = monthRevenues[i];
-            const pct   = fmtPctRatio(v, revBase);
-            return {
-              content: pct,
-              styles: {
-                halign: 'right', fontStyle: 'normal' as const,
-                fontSize: 6, textColor: isResult ? C.white : C.gray,
-                fillColor: isResult ? C.navyMid : [248, 249, 253] as [number,number,number],
-              },
-            };
-          });
-
-          const totalPct = fmtPctRatio(totalV, totalRevenue);
-
-          yearBody.push([
-            {
-              content: `  ${keyRow.pctLabel ?? '% Umsatz'}`,
-              styles: {
-                fontStyle: 'italic' as const, fontSize: 6,
-                textColor: isResult ? C.white : C.gray,
-                fillColor: isResult ? C.navyMid : [248, 249, 253] as [number,number,number],
-              },
-            },
-            ...pctCells,
-            {
-              content: totalPct,
-              styles: {
-                halign: 'right', fontStyle: 'bold' as const, fontSize: 6,
-                textColor: isResult ? C.white : C.gray,
-                fillColor: isResult ? C.navyMid : [248, 249, 253] as [number,number,number],
-              },
-            },
-          ]);
+    autoTable(doc, {
+      startY: yK,
+      head: [[
+        'Position',
+        'Ist CHF', 'Ist %',
+        'Budget CHF', 'Bud %',
+        'Abw. Budget',
+        'Vorjahr CHF', 'VJ %',
+        'Abw. VJ',
+      ]],
+      body: body as string[][],
+      theme: 'plain',
+      headStyles: {
+        fillColor: C.navyLight, textColor: C.white,
+        fontStyle: 'bold', fontSize: 7,
+        cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+      },
+      bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
+      alternateRowStyles: { fillColor: C.slateLight },
+      columnStyles: {
+        0: { cellWidth: 62 },
+        1: { halign: 'right', cellWidth: 24 },
+        2: { halign: 'right', cellWidth: 14 },
+        3: { halign: 'right', cellWidth: 24 },
+        4: { halign: 'right', cellWidth: 14 },
+        5: { halign: 'right', cellWidth: 24 },
+        6: { halign: 'right', cellWidth: 24 },
+        7: { halign: 'right', cellWidth: 14 },
+        8: { halign: 'right', cellWidth: 24 },
+      },
+      didParseCell: (data) => {
+        if (data.row.raw && Array.isArray(data.row.raw) && data.column.index > 0) {
+          const first = (data.row.raw as any[])[0];
+          if (first?.styles?.colSpan === 9) data.cell.styles.fillColor = C.navy;
         }
-      }
+      },
+    });
+  }
 
-      const labelW = 46;
-      const colW   = 17;
-      autoTable(doc, {
-        startY: yH,
-        head: [['Position', ...monthCols, 'Total']],
-        body: yearBody as string[][],
-        theme: 'plain',
-        headStyles: {
-          fillColor: C.navyLight, textColor: C.white,
-          fontStyle: 'bold', fontSize: 7,
-          cellPadding: { top: 2, bottom: 2, left: 1.5, right: 1.5 },
-        },
-        bodyStyles: { fontSize: 6.5, cellPadding: { top: 1, bottom: 1, left: 1.5, right: 1.5 } },
-        columnStyles: {
-          0: { cellWidth: labelW },
-          ...Object.fromEntries(
-            Array.from({ length: 13 }, (_, i) => [i + 1, { halign: 'right', cellWidth: colW }])
-          ),
-        },
+  // ──── Klassisch ──────────────────────────────────────────────────────────
+  else if (mode === 'monthly') {
+    const yH = addPageHeader(doc, 'Erfolgsrechnung – Monatsansicht', subtitle, month, year, PAGE_W);
+    const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
+
+    const body = buildKlassischBody(monthResult.rows, revA, revPY);
+
+    autoTable(doc, {
+      startY: yK,
+      head: [['Position', 'Ist CHF', 'Ist %', 'Vorjahr CHF', 'VJ %', 'Abw. VJ']],
+      body: body as string[][],
+      theme: 'plain',
+      headStyles: {
+        fillColor: C.navyLight, textColor: C.white,
+        fontStyle: 'bold', fontSize: 7,
+        cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+      },
+      bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
+      alternateRowStyles: { fillColor: C.slateLight },
+      columnStyles: {
+        0: { cellWidth: 90 },
+        1: { halign: 'right', cellWidth: 34 },
+        2: { halign: 'right', cellWidth: 18 },
+        3: { halign: 'right', cellWidth: 34 },
+        4: { halign: 'right', cellWidth: 18 },
+        5: { halign: 'right', cellWidth: 34 },
+      },
+      didParseCell: (data) => {
+        if (data.row.raw && Array.isArray(data.row.raw) && data.column.index > 0) {
+          const first = (data.row.raw as any[])[0];
+          if (first?.styles?.colSpan === 6) data.cell.styles.fillColor = C.navy;
+        }
+      },
+    });
+  }
+
+  // ──── Jahresübersicht ────────────────────────────────────────────────────
+  else if (mode === 'yearly') {
+    const blockH = 24;
+    doc.setFillColor(...C.navy);
+    doc.rect(10, 8, PAGE_W - 20, blockH, 'F');
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(...C.navyHeader);
+    doc.text('JAHRESÜBERSICHT', 15, 15);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.setTextColor(...C.white);
+    doc.text(String(year), 15, 24);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(...C.navyHeader);
+    doc.text(subtitle, PAGE_W - 12, 18, { align: 'right' });
+    doc.setTextColor(0, 0, 0);
+    const yH = 8 + blockH + 5;
+
+    const KEY_ROWS: { id: string; isPct?: boolean; pctLabel?: string }[] = [
+      { id: 'revenue_total' },
+      { id: 'total_cogs',      isPct: true, pctLabel: 'Warenkosten %' },
+      { id: 'total_personnel', isPct: true, pctLabel: 'Personalquote %' },
+      { id: 'total_opex' },
+      { id: 'ebitda',          isPct: true, pctLabel: 'EBITDA %' },
+      { id: 'ebit',            isPct: true, pctLabel: 'EBIT %' },
+    ];
+
+    const months       = yearResult.months;
+    const monthCols    = months.map((_, i) => MONTH_NAMES_SHORT_DE[i + 1]);
+    const monthRevs    = months.map(mr => mr.rows.find(r => r.def.id === 'net_revenue')?.values.actual);
+    const totalRevenue = yearResult.total.rows.find(r => r.def.id === 'net_revenue')?.values.actual;
+
+    type YearCell = string | { content: string; styles: Record<string, unknown> };
+    const yearBody: YearCell[][] = [];
+
+    for (const keyRow of KEY_ROWS) {
+      const template = monthResult.rows.find(r => r.def.id === keyRow.id);
+      if (!template) continue;
+
+      const isResult   = template.def.type === 'result';
+      const isSubtotal = template.def.type === 'subtotal';
+      const bold       = isResult || isSubtotal ? 'bold' : 'normal';
+      const fillColor  = isResult   ? C.navyMid
+                       : isSubtotal ? [235, 238, 248] as [number, number, number]
+                       : undefined;
+      const baseTxtColor = isResult ? C.white : undefined;
+      const label = indent(template) + template.def.label;
+
+      const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+        fontStyle: bold,
+        ...(fillColor    ? { fillColor }               : {}),
+        ...(baseTxtColor ? { textColor: baseTxtColor } : {}),
+        ...extra,
       });
+
+      const totalRow   = yearResult.total.rows.find(r => r.def.id === keyRow.id);
+      const totalV     = totalRow?.values.actual;
+      const totalColor = resultActualColor(totalV, isResult, isSubtotal);
+
+      const chfCells: YearCell[] = months.map((mr) => {
+        const r    = mr.rows.find(row => row.def.id === keyRow.id);
+        const v    = r?.values.actual;
+        const vCol = resultActualColor(v, isResult, isSubtotal);
+        return { content: fmtCHF(v), styles: cs({ halign: 'right', ...(vCol ? { textColor: vCol } : {}) }) };
+      });
+
+      yearBody.push([
+        { content: label, styles: cs() },
+        ...chfCells,
+        { content: fmtCHF(totalV), styles: cs({ halign: 'right', fontStyle: 'bold', ...(totalColor ? { textColor: totalColor } : {}) }) },
+      ]);
+
+      if (keyRow.isPct) {
+        const pctRowStyle: Record<string, unknown> = {
+          fontStyle: 'italic' as const, fontSize: 6,
+          textColor: isResult ? C.white : C.gray,
+          fillColor: isResult ? C.navyMid : [248, 249, 253] as [number, number, number],
+        };
+        const pctCells: YearCell[] = months.map((mr, i) => {
+          const r   = mr.rows.find(row => row.def.id === keyRow.id);
+          const v   = r?.values.actual;
+          return { content: fmtPctRatio(v, monthRevs[i]), styles: { ...pctRowStyle, halign: 'right', fontStyle: 'normal' as const } };
+        });
+        yearBody.push([
+          { content: `  ${keyRow.pctLabel ?? '% Umsatz'}`, styles: pctRowStyle },
+          ...pctCells,
+          { content: fmtPctRatio(totalV, totalRevenue), styles: { ...pctRowStyle, halign: 'right', fontStyle: 'bold' as const } },
+        ]);
+      }
     }
+
+    const labelW = 46;
+    const colW   = 17;
+    autoTable(doc, {
+      startY: yH,
+      head: [['Position', ...monthCols, 'Total']],
+      body: yearBody as string[][],
+      theme: 'plain',
+      headStyles: {
+        fillColor: C.navyLight, textColor: C.white,
+        fontStyle: 'bold', fontSize: 7,
+        cellPadding: { top: 2, bottom: 2, left: 1.5, right: 1.5 },
+      },
+      bodyStyles: { fontSize: 6.5, cellPadding: { top: 1, bottom: 1, left: 1.5, right: 1.5 } },
+      columnStyles: {
+        0: { cellWidth: labelW },
+        ...Object.fromEntries(
+          Array.from({ length: 13 }, (_, i) => [i + 1, { halign: 'right', cellWidth: colW }])
+        ),
+      },
+    });
   }
 
   // Seitenzahlen

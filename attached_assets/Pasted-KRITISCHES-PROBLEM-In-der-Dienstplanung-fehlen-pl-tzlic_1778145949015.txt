@@ -1,0 +1,154 @@
+KRITISCHES PROBLEM:
+In der Dienstplanung fehlen plötzlich alle bereits erfassten Schichten für Mai 2026.
+
+Vorher vorhandene Planungsdaten werden nicht mehr angezeigt.
+
+Wichtig:
+Bitte NICHTS löschen oder überschreiben.
+Zuerst nur analysieren und die bestehende Datenanzeige reparieren.
+
+Wahrscheinliche Ursache:
+Der Fehler ist nach dem Umbau entstanden:
+- Alle Abteilungen Ansicht
+- Multi-Mitarbeiter Filter
+- neue Gruppenlogik
+- neue Renderingstruktur
+
+Sehr wahrscheinlich existieren die Daten noch in der Datenbank,
+werden aber nicht mehr korrekt geladen oder dargestellt.
+
+---
+
+1. Sofort prüfen
+
+Bitte zuerst prüfen:
+
+- Sind die Mai 2026 Schichten noch in der Datenbank vorhanden?
+- Werden sie von der Query geladen?
+- Werden sie im Frontend verworfen/gefiltert?
+- Gibt es Probleme mit:
+  - selectedEmployees
+  - selectedDepartments
+  - combined view
+  - plan/ist mode
+  - month filter
+  - employee mapping
+  - rendering keys
+
+---
+
+2. Keine destruktiven Änderungen
+
+Wichtig:
+- Keine Tabellen leeren
+- Keine Migrationen löschen
+- Keine Daten neu initialisieren
+- Keine Auto-Resets
+- Keine Defaultdaten überschreiben
+
+Bestehende Daten haben Priorität.
+
+---
+
+3. Debugging einbauen
+
+Bitte Console Logs ergänzen:
+
+- Anzahl geladene Schichten
+- Anzahl Mitarbeiter
+- aktueller Monat/Jahr
+- aktive Filter
+- Anzahl sichtbare Schichten nach Filterung
+
+Beispiel:
+Loaded shifts: 248
+Visible shifts after filters: 0
+
+Dann sehen wir sofort, wo die Daten verschwinden.
+
+---
+
+4. Filterlogik prüfen
+
+Sehr wahrscheinlich werden die Daten nach dem Laden weggefiltert.
+
+Bitte prüfen:
+- department filter
+- employee filter
+- ALL departments logic
+- multiple employee selection
+- "Alle Mitarbeiter"
+- Plan/Ist Modus
+
+Besonders:
+Die neue Multi-Select-Logik darf nicht alle Daten ausblenden.
+
+---
+
+5. Fallback einbauen
+
+Wenn:
+- keine Mitarbeiter ausgewählt
+oder
+- "Alle Mitarbeiter"
+
+dann MUSS die vollständige Planung angezeigt werden.
+
+Es darf niemals:
+0 sichtbare Daten
+geben, obwohl Daten existieren.
+
+---
+
+6. Alte Schichten kompatibel halten
+
+Bitte prüfen:
+ob alte Schichten andere Feldnamen haben als die neue Logik erwartet.
+
+Beispiele:
+department vs team
+employee_id vs user_id
+shift_type vs legend_id
+
+Die neue Ansicht muss rückwärtskompatibel mit bestehenden Daten sein.
+
+---
+
+7. Rendering prüfen
+
+Bitte prüfen:
+Werden die Schichten geladen,
+aber wegen React keys oder Mappingfehlern nicht gerendert?
+
+Besonders:
+- employee row mapping
+- grouped employee rendering
+- combined department rendering
+- filtered arrays
+
+---
+
+8. Tests
+
+Bitte konkret testen:
+
+- Mai 2026 öffnen
+- bestehende Schichten sichtbar
+- Service sichtbar
+- Küche sichtbar
+- Alle sichtbar
+- Einzelmitarbeiter sichtbar
+- Multi-Mitarbeiter sichtbar
+- Reload funktioniert
+- Speichern funktioniert weiterhin
+
+---
+
+9. Wichtig
+
+Die bestehende Planung darf NIE verschwinden,
+nur weil neue Filter oder Ansichten eingeführt wurden.
+
+Die Datenbankdaten haben Priorität.
+Neue UI Logik muss sich an bestehende Daten anpassen,
+nicht umgekehrt.

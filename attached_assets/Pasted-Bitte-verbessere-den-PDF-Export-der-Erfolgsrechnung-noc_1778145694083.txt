@@ -1,0 +1,221 @@
+Bitte verbessere den PDF Export der Erfolgsrechnung nochmals deutlich.
+
+Ziel:
+Der Export soll kompakter, lesefreundlicher und managementtauglicher werden.
+
+1. Kopfbereich verbessern
+
+Der Monat und das Jahr müssen viel grösser und klarer sichtbar sein.
+
+Aktuell ist "Apr 2026" zu klein und zu weit rechts.
+
+Neu:
+Oben prominent anzeigen:
+
+ERFOLGSRECHNUNG
+APRIL 2026
+
+Darunter kleiner:
+Oliv Gastro AG
+Exportiert am 7.5.2026
+
+Der Monat muss sofort erkennbar sein.
+
+---
+
+2. KPI Bereich anpassen
+
+Im KPI Bereich bitte nicht mehr anzeigen:
+- Bruttogewinn 1
+- Deckungsbeitrag
+
+Stattdessen anzeigen:
+
+- Betriebsertrag netto
+  Ist CHF / Budget CHF / Vorjahr CHF
+
+- Warenaufwand total
+  Ist CHF / Ist %
+  Budget CHF / Budget %
+  Vorjahr CHF / Vorjahr %
+
+- Personalaufwand total
+  Ist CHF / Ist %
+  Budget CHF / Budget %
+  Vorjahr CHF / Vorjahr %
+
+- EBITDA
+  Ist CHF / Ist %
+  Budget CHF / Budget %
+  Vorjahr CHF / Vorjahr %
+
+- EBIT
+  Ist CHF / Ist %
+  Budget CHF / Budget %
+  Vorjahr CHF / Vorjahr %
+
+Wichtig:
+Warenaufwand und Personalaufwand sollen als absolute Beträge und als Prozent vom Umsatz angezeigt werden.
+
+---
+
+3. Haupttabelle kompakter machen
+
+Ist, Budget und Vorjahr sollen in EINER einzigen Tabelle erscheinen.
+
+Keine separate zweite Tabelle oder zweite Darstellung.
+
+Neue Spalten:
+
+Position
+Ist CHF
+Ist %
+Budget CHF
+Budget %
+Abw. Budget CHF
+Vorjahr CHF
+VJ %
+Abw. VJ CHF
+
+Bitte die Abweichung in Prozent entfernen.
+
+Also nicht mehr:
+Abw. Budget %
+Abw. VJ %
+
+Diese Spalten sollen weg, damit die Tabelle kompakter und besser lesbar wird.
+
+---
+
+4. Prozentwerte behalten, aber nur bei Ist / Budget / Vorjahr
+
+Die Prozentwerte sollen weiterhin angezeigt werden bei:
+- Ist %
+- Budget %
+- VJ %
+
+Aber nicht mehr bei den Abweichungen.
+
+Beispiel:
+Warenaufwand:
+Ist CHF 68’384 | Ist 25.5 %
+Budget CHF 55’000 | Budget 25.0 %
+Abw. Budget CHF 13’384
+Vorjahr CHF 77’514 | VJ 38.8 %
+Abw. VJ CHF -9’130
+
+---
+
+5. Farben verbessern
+
+Negative Beträge in Totalen und Ergebniszeilen müssen rot angezeigt werden.
+
+Beispiel:
+EBIT negativ = rot
+EBITDA negativ = rot
+Betriebsergebnis negativ = rot
+
+Positive Ergebniswerte = grün.
+
+Bei Aufwand:
+Höher als Budget = rot
+Tiefer als Budget = grün
+
+Bei Umsatz / Ertrag:
+Höher als Budget = grün
+Tiefer als Budget = rot
+
+Wichtig:
+Minusbeträge dürfen nie neutral schwarz erscheinen, wenn sie eine kritische Total- oder Ergebniszeile betreffen.
+
+---
+
+6. Lesbarkeit verbessern
+
+Bitte die visuelle Darstellung benutzerfreundlicher machen:
+
+- Mehr Weissraum zwischen KPI Bereich und Tabelle
+- Grössere Schrift für Haupttitel und Monat
+- Nicht zu kleine Schrift in der Tabelle
+- Weniger Spalten
+- Sektionen klar trennen
+- Totalzeilen stärker hervorheben
+- EBIT und EBITDA visuell besonders hervorheben
+- Keine abgeschnittenen Tabellen
+- Querformat beibehalten
+
+---
+
+7. Tabellenstruktur
+
+Die Tabelle soll so aufgebaut sein:
+
+BETRIEBSERTRAG
+- Umsatz netto
+- Betriebsertrag netto
+
+DIREKTER WARENAUFWAND
+- Wareneinsatz Küche
+- Wareneinsatz Getränke
+- Warenaufwand Diverses
+- Total Warenaufwand
+
+PERSONAL
+- Löhne Total
+- Sozialleistungen
+- Übriger Personalaufwand
+- Total Personal
+
+RAUM- UND BETRIEBSAUFWAND
+- einzelne Positionen
+- Total Betriebskosten
+
+ERGEBNIS
+- EBITDA
+- Abschreibungen
+- EBIT
+
+---
+
+8. Keine doppelte Exportlogik
+
+Der Export soll nicht zwei Varianten im gleichen PDF ausgeben.
+
+Wenn Budget P&L aktiv ist:
+Nur Budget P&L exportieren, aber mit Ist, Budget und Vorjahr in einer Tabelle.
+
+Wenn Klassisch aktiv ist:
+Nur Klassisch exportieren.
+
+Wenn Jahr aktiv ist:
+Nur Jahresübersicht exportieren.
+
+---
+
+9. Zahlenformat
+
+Bitte einheitlich:
+
+CHF 267’920
+CHF -20’370
+25.5 %
+
+Keine langen Dezimalzahlen.
+Keine gemischten Formate.
+Keine unnötigen Kommastellen.
+
+---
+
+10. Tests
+
+Bitte testen:
+
+- April 2026 Export zeigt Monat gross und klar
+- KPI Bereich enthält Warenaufwand total und Personalaufwand total mit CHF und %
+- Bruttogewinn 1 und Deckungsbeitrag sind im KPI Bereich entfernt
+- Haupttabelle enthält Ist, Budget und Vorjahr zusammen
+- Abweichungs-Prozente sind entfernt
+- Minusbeträge in Totalen und EBIT/EBITDA werden rot dargestellt
+- PDF ist kompakt und lesbar
+- Keine zweite doppelte Darstellung im gleichen PDF
+- Zahlen stimmen exakt mit dem UI überein
