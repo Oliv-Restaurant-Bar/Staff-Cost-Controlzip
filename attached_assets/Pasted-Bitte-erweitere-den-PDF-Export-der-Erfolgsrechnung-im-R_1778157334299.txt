@@ -1,0 +1,213 @@
+Bitte erweitere den PDF Export der Erfolgsrechnung im Reporting.
+
+Ziel:
+Im Reporting Export sollen zusätzliche Kennzahlen-Blöcke möglich sein:
+1. Monatskennzahlen aktueller Monat
+2. Vergleich mit Vormonat
+3. optional kumulierte Kennzahlen über ausgewählte Monate
+
+---
+
+1. Vormonat bei Kennzahlen anzeigen
+
+Im oberen Kennzahlenbereich soll zusätzlich der Vormonat angezeigt werden.
+
+Beispiel:
+Aktueller Monat: April 2026
+Vormonat: März 2026
+
+Kennzahlen oben sollen dann enthalten:
+
+Kennzahl
+Aktueller Monat Ist CHF
+Aktueller Monat %
+Vormonat CHF
+Vormonat %
+Abw. Vormonat CHF
+Budget CHF
+Budget %
+Vorjahr CHF
+Vorjahr %
+
+Kennzahlen:
+- Betriebsertrag netto
+- Warenaufwand total
+- Warenaufwand %
+- Personalaufwand total
+- Personalaufwand %
+- EBITDA
+- EBITDA %
+- EBIT
+- EBIT %
+
+---
+
+2. Separater Block für Vormonat
+
+Bitte nicht alles in eine unübersichtliche Tabelle quetschen.
+
+Erstelle einen separaten Block:
+
+"Kennzahlen Vergleich Vormonat"
+
+Darin:
+- Aktueller Monat
+- Vormonat
+- Abweichung CHF
+- Abweichung %
+
+Beispiel:
+April 2026 vs März 2026
+
+---
+
+3. Export Auswahl per Häkchen
+
+Vor dem PDF Export soll der Benutzer auswählen können, welche Monate im kumulierten Vergleich berücksichtigt werden.
+
+Beispiel Checkboxen:
+☑ Januar
+☑ Februar
+☑ März
+☑ April
+☐ Mai
+☐ Juni
+...
+
+Standard:
+Alle Monate von Januar bis aktuell ausgewähltem Monat sind aktiviert.
+
+Wenn April ausgewählt ist:
+Standard = Januar, Februar, März, April
+
+Der Benutzer kann einzelne Monate abwählen.
+
+---
+
+4. Neuer separater Block für ausgewählte Monate
+
+Wenn mehrere Monate ausgewählt sind, soll unten ein separater Block erscheinen:
+
+"Kennzahlen ausgewählte Monate"
+
+Beispiel:
+Auswahl: Januar, März, April
+
+Dann berechnen:
+Summe Januar + März + April
+
+Anzeigen:
+- Betriebsertrag netto
+- Warenaufwand total
+- Warenaufwand %
+- Personalaufwand total
+- Personalaufwand %
+- EBITDA
+- EBITDA %
+- EBIT
+- EBIT %
+
+Jeweils mit:
+Ist CHF
+Ist %
+Budget CHF
+Budget %
+Vorjahr CHF
+VJ %
+Abw. Budget CHF
+Abw. VJ CHF
+
+---
+
+5. Kumulierte Übersicht bleibt möglich
+
+Die bisherige kumulierte Übersicht Januar bis April soll weiterhin möglich bleiben.
+
+Aber zusätzlich soll der Benutzer über Checkboxen bestimmen können, welche Monate in die kumulierte Kennzahlen-Aufstellung einfliessen.
+
+---
+
+6. Export Dialog
+
+Beim Klick auf PDF soll ein kleiner Export Dialog erscheinen:
+
+Titel:
+"PDF Export konfigurieren"
+
+Optionen:
+☑ Monatsreport aktueller Monat
+☑ Kennzahlen Vergleich Vormonat
+☑ Kumulierte Übersicht
+☑ Ausgewählte Monate
+
+Monatsauswahl:
+☑ Jan
+☑ Feb
+☑ Mär
+☑ Apr
+☐ Mai
+☐ Jun
+...
+
+Button:
+"PDF erstellen"
+
+---
+
+7. Design im PDF
+
+Die Blöcke sollen klar getrennt sein:
+
+Block 1:
+Monatsreport April 2026
+
+Block 2:
+Kennzahlen Vergleich Vormonat März 2026
+
+Block 3:
+Kumulierte Übersicht Januar bis April 2026
+
+Block 4:
+Kennzahlen ausgewählte Monate
+
+Bitte jeden Block mit Titel und kurzem Zeitraum versehen.
+
+---
+
+8. Prozentlogik
+
+Alle Prozentwerte müssen korrekt auf Basis des jeweiligen Umsatzes berechnet werden.
+
+Beispiele:
+Warenaufwand % =
+Warenaufwand / Betriebsertrag netto * 100
+
+Personalaufwand % =
+Personalaufwand / Betriebsertrag netto * 100
+
+EBITDA % =
+EBITDA / Betriebsertrag netto * 100
+
+EBIT % =
+EBIT / Betriebsertrag netto * 100
+
+Für ausgewählte Monate:
+zuerst CHF Werte summieren,
+danach Prozent auf Basis der Summe berechnen.
+
+Nicht:
+Durchschnitt der Monatsprozente bilden.
+
+---
+
+9. Tests
+
+Bitte prüfen:
+- April 2026 Export zeigt Vormonat März 2026
+- Vormonatsblock zeigt CHF und %
+- Checkbox Monatsauswahl funktioniert
+- ausgewählte Monate werden korrekt summiert
+- Prozentwerte werden aus Summen berechnet
+- PDF bleibt Hochformat
+- Seitenumbrüche sauber
+- keine doppelten oder unnötigen Tabellen

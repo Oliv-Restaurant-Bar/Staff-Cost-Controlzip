@@ -9,6 +9,9 @@
  *
  * Farblogik:  Ertrag/Ergebnis: positiv = grün, negativ = rot.
  *             Aufwand-Abweichung: günstiger = grün, teurer = rot.
+ *
+ * Format: A4 Hochformat (210 × 297 mm)
+ * Kumulierte Übersicht wird für budget_pl und monthly Modus am Ende angehängt.
  */
 
 import jsPDF from 'jspdf';
@@ -102,20 +105,17 @@ function addPageHeader(
   doc.setFillColor(...C.navy);
   doc.rect(10, y, pageW - 20, blockH, 'F');
 
-  // Kleine Kategorie-Zeile oben
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(...C.navyHeader);
   doc.text(title.toUpperCase(), 15, y + 7);
 
-  // Monat + Jahr – groß und fett
   const mFull = (MONTH_NAMES_DE[month] ?? MONTH_NAMES_SHORT_DE[month] ?? '').toUpperCase();
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.setTextColor(...C.white);
   doc.text(`${mFull} ${year}`, 15, y + 17);
 
-  // Untertitel rechts (Firma + Datum)
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7);
   doc.setTextColor(...C.navyHeader);
@@ -219,12 +219,12 @@ function addKpiSection(
     alternateRowStyles: { fillColor: C.slateLight },
     columnStyles: {
       0: { cellWidth: 50 },
-      1: { halign: 'right', cellWidth: 28 },
-      2: { halign: 'right', cellWidth: 18 },
-      3: { halign: 'right', cellWidth: 28 },
-      4: { halign: 'right', cellWidth: 18 },
-      5: { halign: 'right', cellWidth: 28 },
-      6: { halign: 'right', cellWidth: 18 },
+      1: { halign: 'right', cellWidth: 22 },
+      2: { halign: 'right', cellWidth: 14 },
+      3: { halign: 'right', cellWidth: 22 },
+      4: { halign: 'right', cellWidth: 14 },
+      5: { halign: 'right', cellWidth: 22 },
+      6: { halign: 'right', cellWidth: 14 },
     },
   });
 
@@ -359,6 +359,155 @@ function buildKlassischBody(
   return body;
 }
 
+// ── Kumulierte Übersicht ───────────────────────────────────────────────────────
+
+/**
+ * Rendert die kumulierte Übersicht (Jan bis gewählter Monat) unter dem Monatsreport.
+ * Startet auf neuer Seite, wenn nicht mehr genug Platz vorhanden.
+ */
+function addCumulativeSection(
+  doc: jsPDF,
+  yearResult: PLYearResult,
+  month: number,
+  year: number,
+  afterY: number,
+  pageW: number,
+): void {
+  const PAGE_H        = 297;
+  const MARGIN_BOTTOM = 15;
+  const SECTION_H     = 80; // geschätzte Mindesthöhe für Titelblock + Tabelle
+
+  let y = afterY + 10;
+  if (y + SECTION_H > PAGE_H - MARGIN_BOTTOM) {
+    doc.addPage();
+    y = 10;
+  }
+
+  // Summiere Jan bis gewählten Monat
+  const cumMonths = yearResult.months.slice(0, month);
+
+  const sumKpi = (id: string) => {
+    let actual = 0, budget = 0, prevYear = 0;
+    for (const m of cumMonths) {
+      const r = m.rows.find(row => row.def.id === id);
+      actual   += r?.values.actual   ?? 0;
+      budget   += r?.values.budget   ?? 0;
+      prevYear += r?.values.prevYear ?? 0;
+    }
+    return { actual, budget, prevYear };
+  };
+
+  const rev    = sumKpi('net_revenue');
+  const cogs   = sumKpi('total_cogs');
+  const pers   = sumKpi('total_personnel');
+  const ebitda = sumKpi('ebitda');
+  const ebit   = sumKpi('ebit');
+
+  const monthNameFull = MONTH_NAMES_DE[month] ?? '';
+
+  // ── Titelblock ────────────────────────────────────────────────────────────
+  const blockH = 16;
+  doc.setFillColor(...C.navy);
+  doc.rect(10, y, pageW - 20, blockH, 'F');
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...C.navyHeader);
+  doc.text('KUMULIERTE ÜBERSICHT', 15, y + 5.5);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(...C.white);
+  doc.text(`Januar bis ${monthNameFull} ${year}`, 15, y + 12.5);
+  doc.setTextColor(0, 0, 0);
+
+  // ── Tabelle ───────────────────────────────────────────────────────────────
+  type CellDef = string | { content: string; styles: Record<string, unknown> };
+
+  const makeRow = (
+    label: string,
+    vals: { actual: number; budget: number; prevYear: number },
+    isResult: boolean,
+    isExpense: boolean,
+  ): CellDef[] => {
+    const revA  = rev.actual;
+    const revB  = rev.budget;
+    const revPY = rev.prevYear;
+
+    const abwBudRaw = vals.actual - vals.budget;
+    const abwVJRaw  = vals.actual - vals.prevYear;
+
+    const fillColor    = isResult ? C.navyMid : undefined;
+    const baseTxtColor = isResult ? C.white   : undefined;
+
+    // Für Ergebniszeilen: Ist-Wert grün/rot. Für Aufwand: neutral (grau).
+    const istColor = isResult
+      ? (vals.actual >= 0 ? C.green : C.red)
+      : isExpense ? undefined : (vals.actual >= 0 ? C.green : C.red);
+
+    const abwBudColor = isResult ? C.white : varColor(abwBudRaw, isExpense);
+    const abwVJColor  = isResult ? C.white : varColor(abwVJRaw,  isExpense);
+
+    const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+      fontStyle: 'bold',
+      ...(fillColor    ? { fillColor }               : {}),
+      ...(baseTxtColor ? { textColor: baseTxtColor } : {}),
+      ...extra,
+    });
+
+    return [
+      { content: label,                      styles: cs() },
+      { content: fmtCHF(vals.actual),        styles: cs({ halign: 'right', ...(istColor ? { textColor: istColor } : {}) }) },
+      { content: fmtPctRatio(vals.actual,   revA),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray, fontStyle: 'normal' }) },
+      { content: fmtCHF(vals.budget),        styles: cs({ halign: 'right', fontStyle: 'normal' }) },
+      { content: fmtPctRatio(vals.budget,   revB),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray, fontStyle: 'normal' }) },
+      { content: fmtCHF(vals.prevYear),      styles: cs({ halign: 'right', fontStyle: 'normal' }) },
+      { content: fmtPctRatio(vals.prevYear, revPY), styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray, fontStyle: 'normal' }) },
+      { content: fmtCHF(abwBudRaw),          styles: cs({ halign: 'right', textColor: abwBudColor, fontStyle: 'normal' }) },
+      { content: fmtCHF(abwVJRaw),           styles: cs({ halign: 'right', textColor: abwVJColor,  fontStyle: 'normal' }) },
+    ];
+  };
+
+  const body: CellDef[][] = [
+    makeRow('Betriebsertrag netto',  rev,    false, false),
+    makeRow('Warenaufwand total',    cogs,   false, true),
+    makeRow('Personalaufwand total', pers,   false, true),
+    makeRow('EBITDA',                ebitda, true,  false),
+    makeRow('EBIT',                  ebit,   true,  false),
+  ];
+
+  autoTable(doc, {
+    startY: y + blockH + 2,
+    head: [[
+      'Kennzahl',
+      'Ist CHF',    'Ist %',
+      'Budget CHF', 'Bud %',
+      'VJ CHF',     'VJ %',
+      'Abw. Budget', 'Abw. VJ',
+    ]],
+    body: body as string[][],
+    theme: 'plain',
+    headStyles: {
+      fillColor: C.navyLight, textColor: C.white,
+      fontStyle: 'bold', fontSize: 7,
+      cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+    },
+    bodyStyles: { fontSize: 7.5, cellPadding: { top: 2.2, bottom: 2.2, left: 2, right: 2 } },
+    alternateRowStyles: { fillColor: C.slateLight },
+    columnStyles: {
+      0: { cellWidth: 50 },
+      1: { halign: 'right', cellWidth: 17 },
+      2: { halign: 'right', cellWidth: 13 },
+      3: { halign: 'right', cellWidth: 17 },
+      4: { halign: 'right', cellWidth: 13 },
+      5: { halign: 'right', cellWidth: 17 },
+      6: { halign: 'right', cellWidth: 13 },
+      7: { halign: 'right', cellWidth: 18 },
+      8: { halign: 'right', cellWidth: 18 },
+    },
+  });
+}
+
 // ── Hauptfunktion ─────────────────────────────────────────────────────────────
 
 export function exportPLToPDF(
@@ -368,10 +517,10 @@ export function exportPLToPDF(
   month:       number,
   mode: 'budget_pl' | 'monthly' | 'yearly' = 'budget_pl',
 ): void {
-  const doc      = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const doc      = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const now      = new Date().toLocaleDateString('de-CH');
   const subtitle = `Oliv Gastro AG · Exportiert am ${now}`;
-  const PAGE_W   = 297;
+  const PAGE_W   = 210;
 
   const revA  = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.actual;
   const revB  = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.budget;
@@ -404,15 +553,15 @@ export function exportPLToPDF(
       bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
       alternateRowStyles: { fillColor: C.slateLight },
       columnStyles: {
-        0: { cellWidth: 62 },
-        1: { halign: 'right', cellWidth: 24 },
-        2: { halign: 'right', cellWidth: 14 },
-        3: { halign: 'right', cellWidth: 24 },
-        4: { halign: 'right', cellWidth: 14 },
-        5: { halign: 'right', cellWidth: 24 },
-        6: { halign: 'right', cellWidth: 24 },
-        7: { halign: 'right', cellWidth: 14 },
-        8: { halign: 'right', cellWidth: 24 },
+        0: { cellWidth: 52 },
+        1: { halign: 'right', cellWidth: 18 },
+        2: { halign: 'right', cellWidth: 11 },
+        3: { halign: 'right', cellWidth: 18 },
+        4: { halign: 'right', cellWidth: 11 },
+        5: { halign: 'right', cellWidth: 18 },
+        6: { halign: 'right', cellWidth: 18 },
+        7: { halign: 'right', cellWidth: 11 },
+        8: { halign: 'right', cellWidth: 18 },
       },
       didParseCell: (data) => {
         if (data.row.raw && Array.isArray(data.row.raw) && data.column.index > 0) {
@@ -421,6 +570,10 @@ export function exportPLToPDF(
         }
       },
     });
+
+    // Kumulierte Übersicht anhängen
+    const mainFinalY = (doc as any).lastAutoTable.finalY;
+    addCumulativeSection(doc, yearResult, month, year, mainFinalY, PAGE_W);
   }
 
   // ──── Klassisch ──────────────────────────────────────────────────────────
@@ -443,12 +596,12 @@ export function exportPLToPDF(
       bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
       alternateRowStyles: { fillColor: C.slateLight },
       columnStyles: {
-        0: { cellWidth: 90 },
-        1: { halign: 'right', cellWidth: 34 },
-        2: { halign: 'right', cellWidth: 18 },
-        3: { halign: 'right', cellWidth: 34 },
-        4: { halign: 'right', cellWidth: 18 },
-        5: { halign: 'right', cellWidth: 34 },
+        0: { cellWidth: 75 },
+        1: { halign: 'right', cellWidth: 26 },
+        2: { halign: 'right', cellWidth: 15 },
+        3: { halign: 'right', cellWidth: 26 },
+        4: { halign: 'right', cellWidth: 15 },
+        5: { halign: 'right', cellWidth: 26 },
       },
       didParseCell: (data) => {
         if (data.row.raw && Array.isArray(data.row.raw) && data.column.index > 0) {
@@ -457,6 +610,10 @@ export function exportPLToPDF(
         }
       },
     });
+
+    // Kumulierte Übersicht anhängen
+    const mainFinalY = (doc as any).lastAutoTable.finalY;
+    addCumulativeSection(doc, yearResult, month, year, mainFinalY, PAGE_W);
   }
 
   // ──── Jahresübersicht ────────────────────────────────────────────────────
@@ -540,8 +697,8 @@ export function exportPLToPDF(
           fillColor: isResult ? C.navyMid : [248, 249, 253] as [number, number, number],
         };
         const pctCells: YearCell[] = months.map((mr, i) => {
-          const r   = mr.rows.find(row => row.def.id === keyRow.id);
-          const v   = r?.values.actual;
+          const r = mr.rows.find(row => row.def.id === keyRow.id);
+          const v = r?.values.actual;
           return { content: fmtPctRatio(v, monthRevs[i]), styles: { ...pctRowStyle, halign: 'right', fontStyle: 'normal' as const } };
         });
         yearBody.push([
@@ -552,8 +709,9 @@ export function exportPLToPDF(
       }
     }
 
-    const labelW = 46;
-    const colW   = 17;
+    // Portrait: labelW=34, colW=12 → 34+13×12=190mm
+    const labelW = 34;
+    const colW   = 12;
     autoTable(doc, {
       startY: yH,
       head: [['Position', ...monthCols, 'Total']],
@@ -561,10 +719,10 @@ export function exportPLToPDF(
       theme: 'plain',
       headStyles: {
         fillColor: C.navyLight, textColor: C.white,
-        fontStyle: 'bold', fontSize: 7,
-        cellPadding: { top: 2, bottom: 2, left: 1.5, right: 1.5 },
+        fontStyle: 'bold', fontSize: 6,
+        cellPadding: { top: 2, bottom: 2, left: 1, right: 1 },
       },
-      bodyStyles: { fontSize: 6.5, cellPadding: { top: 1, bottom: 1, left: 1.5, right: 1.5 } },
+      bodyStyles: { fontSize: 6, cellPadding: { top: 1, bottom: 1, left: 1, right: 1 } },
       columnStyles: {
         0: { cellWidth: labelW },
         ...Object.fromEntries(
@@ -574,15 +732,15 @@ export function exportPLToPDF(
     });
   }
 
-  // Seitenzahlen
+  // ── Seitenzahlen ──────────────────────────────────────────────────────────
   const totalPages = (doc as any).internal.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
     doc.setFontSize(6.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...C.gray);
-    doc.text(`Seite ${p} / ${totalPages}`, PAGE_W - 12, 205, { align: 'right' });
-    doc.text(`Oliv Gastro AG · Erfolgsrechnung ${year} · ${now}`, 12, 205);
+    doc.text(`Seite ${p} / ${totalPages}`, PAGE_W - 12, 290, { align: 'right' });
+    doc.text(`Oliv Gastro AG · Erfolgsrechnung ${year} · ${now}`, 12, 290);
   }
 
   doc.save(`Erfolgsrechnung_${year}_${MONTH_NAMES_SHORT_DE[month]}.pdf`);
