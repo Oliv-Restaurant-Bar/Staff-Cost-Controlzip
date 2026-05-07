@@ -33,6 +33,11 @@ import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { importEmployeesFromExcel, downloadEmployeeTemplate } from '@/lib/employee-excel-export-import';
 import { Users, FileDown } from 'lucide-react';
 import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue-import';
+import {
+  parseAnnualPersonnelCostXLSX,
+  generatePersonnelCostTemplate,
+  type AnnualPersonnelCostResult,
+} from '@/lib/annual-personnel-cost-import';
 import { parseAnnualSageKontoblattByMonth, AnnualKostenResult } from '@/lib/pdf-import-engine';
 import { matchCSVRows, buildMonthRecord } from '@/lib/csv-import-engine';
 import { saveMonth } from '@/lib/reporting-store';
@@ -1389,6 +1394,316 @@ function BeaulieuBudgetImportSection() {
   );
 }
 
+// ─── Personalkosten Vorjahr – Monats-Upload ───────────────────────────────────
+
+const MONTH_LABELS_SHORT = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+
+const AnnualPersonnelCostImportSection = () => {
+  const { tenantId } = useTenant();
+  const { isAdmin }  = usePermissions();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [importYear, setImportYear]   = useState(currentYear - 1);
+  const [parsing, setParsing]         = useState(false);
+  const [result, setResult]           = useState<AnnualPersonnelCostResult | null>(null);
+  const [fileName, setFileName]       = useState('');
+  const [saving, setSaving]           = useState(false);
+  const [saved, setSaved]             = useState(false);
+  const [error, setError]             = useState('');
+  const [lockState, setLockState]     = useState<PriorYearLockState>({ locked: false });
+  const [lockLoading, setLockLoading] = useState(false);
+
+  useEffect(() => {
+    getLockState(tenantId ?? 'oliv', importYear).then(s => setLockState(s));
+  }, [importYear, tenantId]);
+
+  const handleFile = async (file: File) => {
+    if (!file.name.match(/\.(xlsx|xls)$/i)) {
+      setError('Nur Excel-Dateien (.xlsx/.xls) werden unterstützt.');
+      return;
+    }
+    setParsing(true);
+    setError('');
+    setResult(null);
+    setSaved(false);
+    setFileName(file.name);
+    try {
+      const buf = await file.arrayBuffer();
+      const res = parseAnnualPersonnelCostXLSX(buf);
+      setResult(res);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Unbekannter Fehler beim Parsen.');
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  };
+
+  const handleDownloadTemplate = () => {
+    const buf = generatePersonnelCostTemplate(importYear);
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Personalkosten_Vorjahr_${importYear}_Vorlage.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSave = () => {
+    if (!result) return;
+    const tid = tenantId ?? 'oliv';
+    if (lockState.locked) {
+      toast.error(`VJ ${importYear} ist gesperrt. Bitte zuerst entsperren (nur Admin).`);
+      return;
+    }
+    setSaving(true);
+    // personnelCostPreviousYear is stored in the *following* year's record,
+    // so it appears in the P&L "Vorjahr" column for that year.
+    const saveYear = importYear + 1;
+    let savedCount = 0;
+    for (const row of result.months) {
+      if (row.amount === 0) continue;
+      saveMonth(
+        { year: saveYear, month: row.month, personnelCostPreviousYear: row.amount },
+        'csv_previous_year',
+        'update',
+        { fileName, note: `Personalkosten-Vorjahr-Import ${importYear} → P&L ${saveYear}` },
+      );
+      savedCount++;
+    }
+    setSaving(false);
+    setSaved(true);
+    console.log(`[PRIOR-YEAR-COST] saved | tenant: ${tid} | year: ${importYear} | months: ${savedCount}`);
+    toast.success(`${savedCount} Monate Personalkosten VJ ${importYear} gespeichert (sichtbar in P&L ${saveYear})`);
+  };
+
+  const handleLock = async () => {
+    const tid = tenantId ?? 'oliv';
+    setLockLoading(true);
+    try {
+      const { error: lockErr } = await lockYear(tid, importYear, { source: 'personnel_cost_xlsx_import' });
+      if (lockErr) { toast.error('Sperren fehlgeschlagen: ' + lockErr); return; }
+      setLockState(await getLockState(tid, importYear));
+      toast.success(`VJ ${importYear} gesperrt`);
+    } finally {
+      setLockLoading(false);
+    }
+  };
+
+  const handleUnlock = async () => {
+    const tid = tenantId ?? 'oliv';
+    setLockLoading(true);
+    try {
+      const { error: lockErr } = await unlockYear(tid, importYear);
+      if (lockErr) { toast.error('Entsperren fehlgeschlagen: ' + lockErr); return; }
+      setLockState({ locked: false });
+      toast.success(`VJ ${importYear} entsperrt`);
+    } finally {
+      setLockLoading(false);
+    }
+  };
+
+  const fmt = (v: number) =>
+    v === 0 ? '—' : new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 }).format(v);
+
+  return (
+    <div className="space-y-3">
+
+      {/* Jahresauswahl + Template-Download */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <label className="text-xs text-muted-foreground whitespace-nowrap">Für Jahr:</label>
+        <Select
+          value={String(importYear)}
+          onValueChange={v => { setImportYear(Number(v)); setResult(null); setSaved(false); }}
+        >
+          <SelectTrigger className="h-7 text-xs w-28">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {[currentYear - 2, currentYear - 1, currentYear].map(y => (
+              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span className="text-[10px] text-muted-foreground">
+          → erscheint als Vorjahr-Spalte in P&L {importYear + 1}
+        </span>
+        <Button
+          size="sm" variant="outline"
+          className="h-7 px-2 text-[10px] gap-1 ml-auto"
+          onClick={handleDownloadTemplate}
+        >
+          <FileDown className="h-3 w-3" />
+          Vorlage (.xlsx)
+        </Button>
+      </div>
+
+      {/* Lock-Status */}
+      {lockState.locked ? (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-[11px]">
+          <Lock className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span className="text-amber-800 dark:text-amber-300 flex-1">
+            <strong>VJ {importYear} gesperrt</strong> — Import blockiert.
+            {lockState.lockedAt && <> Fixiert am {formatLockedAt(lockState.lockedAt)}.</>}
+          </span>
+          {isAdmin && (
+            <Button
+              size="sm" variant="outline"
+              className="h-6 px-2 text-[10px] gap-1 border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:border-amber-600"
+              onClick={handleUnlock}
+              disabled={lockLoading}
+            >
+              {lockLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <LockOpen className="h-3 w-3" />}
+              Entsperren
+            </Button>
+          )}
+        </div>
+      ) : saved ? (
+        <div className="flex items-center gap-2 rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/20 px-3 py-2 text-[11px]">
+          <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-teal-600 dark:text-teal-400" />
+          <span className="text-teal-700 dark:text-teal-400 flex-1">
+            VJ {importYear} importiert. Fixieren um versehentliches Überschreiben zu verhindern.
+          </span>
+          {isAdmin && (
+            <Button
+              size="sm" variant="outline"
+              className="h-6 px-2 text-[10px] gap-1 border-teal-400 text-teal-700 hover:bg-teal-100 dark:text-teal-300 dark:border-teal-600"
+              onClick={handleLock}
+              disabled={lockLoading}
+            >
+              {lockLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
+              Fixieren
+            </Button>
+          )}
+        </div>
+      ) : null}
+
+      {/* Hinweis: Format */}
+      {!result && !parsing && !lockState.locked && (
+        <p className="text-[10px] text-muted-foreground leading-relaxed">
+          Erwartet: Spalte A = Monatsname (Januar–Dezember), Spalte B = Betrag CHF.
+          Alternativ: Kopfzeile mit Monats-Abkürzungen und Beträge darunter.
+          Kein passendes Format? <button className="underline" onClick={handleDownloadTemplate}>Vorlage herunterladen</button>.
+        </p>
+      )}
+
+      {/* Upload-Fläche */}
+      {!result && !parsing && !lockState.locked && (
+        <div
+          className="border-2 border-dashed border-orange-300 dark:border-orange-700 rounded-lg p-5 text-center cursor-pointer hover:bg-orange-50/50 dark:hover:bg-orange-950/20 transition-colors"
+          onClick={() => fileRef.current?.click()}
+          onDrop={handleDrop}
+          onDragOver={e => e.preventDefault()}
+        >
+          <Upload className="h-6 w-6 mx-auto mb-2 text-orange-400" />
+          <p className="text-xs font-medium text-orange-700 dark:text-orange-300">
+            Excel-Datei hierher ziehen oder klicken
+          </p>
+          <p className="text-[10px] text-muted-foreground mt-1">.xlsx · Monatsname + Betrag CHF</p>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
+          />
+        </div>
+      )}
+
+      {parsing && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground py-3">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Datei wird analysiert…
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {/* Vorschau */}
+      {result && !saved && (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            <strong>{result.months.filter(r => r.amount > 0).length}</strong> Monate erkannt
+            aus <em>{fileName}</em>
+            {result.detectedYear && <> · Quell-Jahr {result.detectedYear}</>}
+          </p>
+
+          {result.warnings.map((w, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              {w}
+            </div>
+          ))}
+
+          <div className="rounded border text-[11px] overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-muted/60">
+                <tr>
+                  {MONTH_LABELS_SHORT.map(m => (
+                    <th key={m} className="text-center py-1 px-1 font-medium">{m}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  {result.months.map(r => (
+                    <td key={r.month} className={cn(
+                      'text-center py-1 px-1 tabular-nums',
+                      r.amount === 0 && 'text-muted-foreground',
+                    )}>
+                      {fmt(r.amount)}
+                    </td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p className="text-[10px] text-muted-foreground">
+            Jahrestotal: <strong>{fmt(result.yearTotal)}</strong> CHF
+            · wird als <strong>Personalkosten VJ {importYear}</strong> in P&L {importYear + 1} gespeichert
+          </p>
+
+          <div className="flex gap-2">
+            <Button size="sm" className="h-8 text-xs" onClick={handleSave} disabled={saving}>
+              {saving
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                : <CheckCircle2 className="h-3.5 w-3.5 mr-1" />}
+              Als Personalkosten VJ {importYear} speichern
+            </Button>
+            <Button
+              size="sm" variant="outline" className="h-8 text-xs"
+              onClick={() => { setResult(null); setFileName(''); setError(''); }}
+            >
+              Abbrechen
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {saved && (
+        <div className="flex items-center gap-2 text-xs text-green-700 dark:text-green-400">
+          <CheckCircle2 className="h-4 w-4" />
+          Personalkosten VJ {importYear} gespeichert — sichtbar in P&L {importYear + 1}.{' '}
+          <button className="underline" onClick={() => { setResult(null); setFileName(''); setSaved(false); }}>
+            Erneut importieren
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── Hauptseite ───────────────────────────────────────────────────────────────
 
 const ImportHub = () => {
@@ -1521,6 +1836,19 @@ const ImportHub = () => {
           badgeColor="border-gray-300 text-gray-700 bg-gray-50 dark:bg-gray-950/20"
         >
           <AnnualCostImportSection />
+        </Section>
+
+        {/* ── 5b. Personalkosten Vorjahr ────────────────────────────────── */}
+        <Section
+          id="personalkosten-vorjahr"
+          title="Personalkosten Vorjahr"
+          subtitle="Monatliche Personalkosten des Vorjahres hochladen — erscheinen als VJ-Spalte in der P&L"
+          icon={<TrendingUp className="h-4 w-4" />}
+          color="border-orange-400 dark:border-orange-600"
+          badge="Excel .xlsx"
+          badgeColor="border-orange-300 text-orange-700 bg-orange-50 dark:bg-orange-950/20"
+        >
+          <AnnualPersonnelCostImportSection />
         </Section>
 
         {/* ── Beaulieu: Mitarbeiter-Import ──────────────────────────────── */}
