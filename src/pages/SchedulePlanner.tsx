@@ -2619,11 +2619,15 @@ const SchedulePlanner = () => {
               )}
               {/* ── Debug Pill ─────────────────────────────────────── */}
               <span
-                title={`Quelle: ${scheduleSource} | Einträge beim Laden: ${loadedEntryCount} | Aktuell im State: ${Object.keys(scheduleData).length}`}
-                className="hidden lg:flex items-center gap-0.5 text-[10px] text-muted-foreground bg-muted border rounded px-1 py-0.5 cursor-default select-none"
+                title={`Quelle: ${scheduleSource} | Geladen: ${loadedEntryCount} | Im State: ${Object.keys(scheduleData).length}`}
+                className={`hidden lg:flex items-center gap-0.5 text-[10px] border rounded px-1 py-0.5 cursor-default select-none ${
+                  scheduleSource !== 'loading' && loadedEntryCount === 0
+                    ? 'text-amber-700 bg-amber-50 border-amber-300 font-medium'
+                    : 'text-muted-foreground bg-muted'
+                }`}
               >
                 <span>{scheduleSource === 'loading' ? '⏳' : scheduleSource === 'supabase' ? '☁' : '💾'}</span>
-                <span>{Object.keys(scheduleData).length}</span>
+                <span>{loadedEntryCount}</span>
               </span>
               <Button onClick={handleSave} disabled={isSaving} size="sm" className="gap-1.5 h-8">
                 <Save className="h-3.5 w-3.5" />
@@ -3232,6 +3236,29 @@ const SchedulePlanner = () => {
                 <a href="/import-hub" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium transition-colors">
                   Zum Import-Hub → Beaulieu Mitarbeiter
                 </a>
+              </div>
+            )}
+            {/* ── Warnung: Schichtdaten fehlen nach dem Laden ──────────────── */}
+            {scheduleSource !== 'loading' && loadedEntryCount === 0 && filteredEmployees.length > 0 && !dataLoading && (
+              <div className="mx-6 mt-4 mb-2 flex items-start gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm dark:border-amber-700 dark:bg-amber-950/30">
+                <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-amber-800 dark:text-amber-300">
+                    Keine Schichtdaten für {format(currentMonth, 'MMMM yyyy', { locale: de })} geladen
+                  </p>
+                  <p className="text-amber-700 dark:text-amber-400 mt-0.5">
+                    Supabase hat 0 Einträge zurückgegeben (Quelle: {scheduleSource}). Mögliche Ursachen: Datenverlust durch früheren Speicher-Fehler, oder ein temporäres Auth-Problem.
+                    Bitte <strong>«Erneut laden»</strong> versuchen – falls Daten weiterhin fehlen, im Supabase Dashboard prüfen.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 border-amber-400 text-amber-800 hover:bg-amber-100"
+                  onClick={() => loadMonthData()}
+                >
+                  Erneut laden
+                </Button>
               </div>
             )}
             <div ref={scheduleGridRef} className="overflow-x-auto px-6 pb-4">

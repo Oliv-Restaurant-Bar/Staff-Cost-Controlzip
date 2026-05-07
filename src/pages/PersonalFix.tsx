@@ -1391,13 +1391,28 @@ export default function PersonalFixPage() {
     const scheduleMonthDate = new Date(selectedYear, selectedMonth - 1, 1);
     loadScheduleForMonth(scheduleMonthDate).then(supabaseSchedule => {
       if (!supabaseSchedule) return; // Supabase error – keep local result
+      const totalEntries = Object.keys(supabaseSchedule).length;
+      console.log(`[PLAN] personal-fix schedule loaded from Supabase: ${totalEntries} Einträge für ${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
+      if (totalEntries === 0) {
+        // Guard: never overwrite a populated localStorage cache with an empty Supabase result.
+        // An empty result can mean transient RLS/auth timing issues (not a genuinely empty month).
+        const scheduleKey = tenantKey(`schedule-v2-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
+        try {
+          const existing = localStorage.getItem(scheduleKey);
+          const existingCount = existing ? Object.keys(JSON.parse(existing)).length : 0;
+          if (existingCount > 0) {
+            console.warn(`[PLAN] personal-fix: Supabase returned 0 rows but localStorage has ${existingCount} entries – skipping overwrite`);
+            return;
+          }
+        } catch { /* ignore parse errors */ }
+        // Both empty – ok to skip write (no point writing {})
+        return;
+      }
       const scheduleKey = tenantKey(`schedule-v2-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
       try { localStorage.setItem(scheduleKey, JSON.stringify(supabaseSchedule)); } catch { /* quota exceeded */ }
       // Re-read plan hours and ferien plan from the freshly written cache
       setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth, tenantKey));
       setFerienPlanDays(loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey));
-      const totalPlanEntries = Object.keys(supabaseSchedule).length;
-      console.log(`[PLAN] personal-fix schedule loaded from Supabase: ${totalPlanEntries} Einträge für ${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
     });
 
     // Fast local read first
