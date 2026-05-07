@@ -83,6 +83,11 @@ interface ScheduleGridProps {
   onCellColorChange?: (key: string, color: string | null) => void;
   /** Show a coloured dept dot next to each employee name (blue=Service, orange=Küche) */
   showDepartmentBadge?: boolean;
+  /**
+   * When provided, "Auch ins IST übernehmen" checkbox appears in each TimeInputCell popover.
+   * Called with employeeId, date (yyyy-MM-dd), slotType, and the selected TimeSlot.
+   */
+  onCopyToIst?: (employeeId: string, date: string, slotType: 'früh' | 'spät', slot: TimeSlot) => void;
 }
 
 function patternShortLabel(type: PatternType): string {
@@ -268,6 +273,7 @@ export const ScheduleGrid = ({
   cellColors = {},
   onCellColorChange,
   showDepartmentBadge = false,
+  onCopyToIst,
 }: ScheduleGridProps) => {
   const { shiftMap, absenceShifts } = useShiftConfig();
   
@@ -1121,6 +1127,7 @@ export const ScheduleGrid = ({
                                   onCopyShift={onCopyShift}
                                   cellColor={frühCellColor}
                                   onCellColorChange={onCellColorChange ? (c) => onCellColorChange(frühInlineKey, c) : undefined}
+                                  onCopyToIst={onCopyToIst ? (slot) => onCopyToIst(employee.id, dateStr, 'früh', slot) : undefined}
                                 />
                               </div>
                               {isSuggestedFrüh && !isOverlapping && frühSuggestion && (
@@ -1185,6 +1192,7 @@ export const ScheduleGrid = ({
                                   onCopyShift={onCopyShift}
                                   cellColor={spätCellColor}
                                   onCellColorChange={onCellColorChange ? (c) => onCellColorChange(spätInlineKey, c) : undefined}
+                                  onCopyToIst={onCopyToIst ? (slot) => onCopyToIst(employee.id, dateStr, 'spät', slot) : undefined}
                                 />
                               </div>
                               {isSuggestedSpät && !isOverlapping && spätSuggestion && (

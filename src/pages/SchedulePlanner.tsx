@@ -266,6 +266,10 @@ const SchedulePlanner = () => {
   const [employeeSortOrder, setEmployeeSortOrder]             = useState<{ service: string[]; küche: string[] }>({ service: [], küche: [] });
   const [cellColors, setCellColors]                           = useState<Record<string, string>>({});
 
+  // ── Plan → IST Übernahme ─────────────────────────────────────────────────
+  // Set of "employeeId-date" keys whose IST entry was automatically copied from the plan
+  const [planCopiedKeys, setPlanCopiedKeys] = useState<Set<string>>(new Set());
+
   // ── Save / Dirty state ────────────────────────────────────────────────────
   const [isDirty,       setIsDirty]       = useState(false);
   const [isSaving,      setIsSaving]      = useState(false);
@@ -839,6 +843,18 @@ const SchedulePlanner = () => {
     return () => window.removeEventListener('schedule-updated', handleScheduleUpdated);
   }, [currentMonth]);
 
+  // Load plan-copied IST keys from localStorage whenever the month changes
+  useEffect(() => {
+    const mk = format(currentMonth, 'yyyy-MM');
+    try {
+      const stored = JSON.parse(localStorage.getItem(tenantKey(`actual-hours-source-${mk}`)) || '{}');
+      const keys = Object.keys(stored).filter(k => stored[k] === 'plan_auto_copy');
+      setPlanCopiedKeys(new Set(keys));
+    } catch {
+      setPlanCopiedKeys(new Set());
+    }
+  }, [currentMonth, tenantKey]);
+
   // Get days in current month
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
@@ -1148,6 +1164,18 @@ const SchedulePlanner = () => {
     absenceType?: string | null
   ) => {
     const cellKey = `${employeeId}-${date}`;
+
+    // Pre-check: will this change empty the entire cell?
+    const currentEntry = scheduleData[cellKey] || {};
+    const futureEntry = {
+      ...currentEntry,
+      ...(slotType === 'früh'
+        ? { früh: value, frühAbsence: absenceType || null }
+        : { spät: value, spätAbsence: absenceType || null }),
+    };
+    const willBeEmpty =
+      !futureEntry.früh && !futureEntry.spät &&
+      !futureEntry.frühAbsence && !futureEntry.spätAbsence;
     
     setScheduleData(prev => {
       const current = prev[cellKey] || {};
@@ -1256,7 +1284,100 @@ const SchedulePlanner = () => {
       }
     }
     // ── Ende Auto-Kopie ────────────────────────────────────────────────────
+
+    // ── Angebot: IST-Eintrag löschen wenn er aus Plan übernommen wurde ──────
+    if (willBeEmpty && planCopiedKeys.has(cellKey)) {
+      toast('Plan-Schicht gelöscht', {
+        description: 'Soll auch der automatisch übernommene IST-Eintrag gelöscht werden?',
+        action: {
+          label: 'IST löschen',
+          onClick: () => {
+            setActualHoursData(prev => {
+              const next = { ...prev };
+              delete next[cellKey];
+              const mk = format(currentMonth, 'yyyy-MM');
+              localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify(next));
+              return next;
+            });
+            saveActualHourEntry(employeeId, date, null).catch(console.error);
+            setPlanCopiedKeys(prev => {
+              const next = new Set(prev);
+              next.delete(cellKey);
+              const mk = format(currentMonth, 'yyyy-MM');
+              try {
+                const stored = JSON.parse(localStorage.getItem(tenantKey(`actual-hours-source-${mk}`)) || '{}');
+                delete stored[cellKey];
+                localStorage.setItem(tenantKey(`actual-hours-source-${mk}`), JSON.stringify(stored));
+              } catch { /* ignore */ }
+              return next;
+            });
+            toast.success('IST-Eintrag gelöscht');
+          },
+        },
+      });
+    }
   };
+
+  // ── Plan → IST Übernahme ─────────────────────────────────────────────────
+
+  const doSavePlanToIst = useCallback((
+    employeeId: string,
+    date: string,
+    cellKey: string,
+    entry: ActualHoursEntry,
+  ) => {
+    setActualHoursData(prev => ({ ...prev, [cellKey]: entry }));
+    saveActualHourEntry(employeeId, date, entry).catch(err =>
+      console.error('[PLAN→IST] saveActualHourEntry error:', err)
+    );
+    const mk = format(currentMonth, 'yyyy-MM');
+    const sourceKey = tenantKey(`actual-hours-source-${mk}`);
+    try {
+      const stored = JSON.parse(localStorage.getItem(sourceKey) || '{}');
+      stored[cellKey] = 'plan_auto_copy';
+      localStorage.setItem(sourceKey, JSON.stringify(stored));
+    } catch { /* ignore */ }
+    try {
+      const prev = JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${mk}`)) || '{}');
+      localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify({ ...prev, [cellKey]: entry }));
+    } catch { /* ignore */ }
+    setPlanCopiedKeys(prev => new Set([...prev, cellKey]));
+    toast.success('Schicht auch im IST gespeichert');
+  }, [currentMonth, tenantKey]);
+
+  const handleCopyPlanToIst = useCallback((
+    employeeId: string,
+    date: string,
+    _slotType: 'früh' | 'spät',
+    slot: TimeSlot,
+  ) => {
+    const cellKey = `${employeeId}-${date}`;
+    const [sh, sm] = slot.start.split(':').map(Number);
+    const [eh, em] = slot.end.split(':').map(Number);
+    let h = eh - sh + (em - sm) / 60;
+    if (h < 0) h += 24;
+    const hours = Math.round(h * 100) / 100;
+    const entry: ActualHoursEntry = { hours, start: slot.start, end: slot.end };
+
+    const existing = actualHoursData[cellKey];
+    const hasRealIst =
+      existing &&
+      (existing.hours > 0 || existing.absenceType) &&
+      !planCopiedKeys.has(cellKey);
+
+    if (hasRealIst) {
+      toast('IST-Eintrag existiert bereits', {
+        description: `${employeeId} am ${date} hat bereits einen IST-Eintrag. Überschreiben?`,
+        action: {
+          label: 'Überschreiben',
+          onClick: () => doSavePlanToIst(employeeId, date, cellKey, entry),
+        },
+      });
+      return;
+    }
+
+    doSavePlanToIst(employeeId, date, cellKey, entry);
+  }, [actualHoursData, planCopiedKeys, doSavePlanToIst]);
 
   const handleAddAushilfe = (employee: Omit<Employee, 'id'>) => {
     const newEmployee: Employee = {
@@ -3159,6 +3280,7 @@ const SchedulePlanner = () => {
                       cellColors={cellColors}
                       onCellColorChange={handleCellColorChange}
                       showDepartmentBadge={activeDepartment === 'all'}
+                      onCopyToIst={handleCopyPlanToIst}
                     />
                 </>
               ) : (

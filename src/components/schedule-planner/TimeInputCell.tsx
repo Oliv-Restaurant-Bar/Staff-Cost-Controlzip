@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Popover,
   PopoverContent,
@@ -41,6 +42,8 @@ interface TimeInputCellProps {
   cellColor?: string | null;
   /** Called when the user selects/deselects a color; null = reset to default */
   onCellColorChange?: (color: string | null) => void;
+  /** When provided, shows "Auch ins IST übernehmen" checkbox in the popover */
+  onCopyToIst?: (slot: TimeSlot) => void;
 }
 
 // Quick time presets for each slot type (fallback)
@@ -74,9 +77,14 @@ export const TimeInputCell = ({
   onCopyShift,
   cellColor,
   onCellColorChange,
+  onCopyToIst,
 }: TimeInputCellProps) => {
   // For blocked days: require explicit override before showing inputs
   const [blockedOverride, setBlockedOverride] = useState(false);
+  // Plan → IST copy checkbox
+  const [copyToIst, setCopyToIst] = useState(false);
+  // Prevents double-trigger when quick-preset already fired onCopyToIst before popover closes
+  const copiedInSession = useRef(false);
   const { shiftMap, absenceShifts, workShifts } = useShiftConfig();
   
   // Filter absence shifts by department if specified
@@ -132,6 +140,10 @@ export const TimeInputCell = ({
     setStart(preset.start);
     setEnd(preset.end);
     onChange({ start: preset.start, end: preset.end }, null);
+    if (copyToIst && onCopyToIst) {
+      onCopyToIst({ start: preset.start, end: preset.end });
+      copiedInSession.current = true;
+    }
     setOpen(false);
   };
 
@@ -253,9 +265,17 @@ export const TimeInputCell = ({
   const isEmptyRequestedFree = isRequestedFree && !value?.start && !absenceType && !isDayOff;
   const isEmptyBlocked       = isBlocked && !value?.start && !absenceType && !isDayOff;
 
-  // Reset blocked override when popover closes
+  // Reset blocked override when popover closes; trigger IST copy on close for manual times
   const handleOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen) setBlockedOverride(false);
+    if (nextOpen) {
+      copiedInSession.current = false;
+    }
+    if (!nextOpen) {
+      setBlockedOverride(false);
+      if (copyToIst && onCopyToIst && start && end && !copiedInSession.current) {
+        onCopyToIst({ start, end });
+      }
+    }
     setOpen(nextOpen);
   };
 
@@ -478,6 +498,27 @@ export const TimeInputCell = ({
                   </button>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Plan → IST Checkbox */}
+          {onCopyToIst && !absenceType && (
+            <div
+              className="flex items-center gap-2 pt-1.5 border-t"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Checkbox
+                id="copy-to-ist-cb"
+                checked={copyToIst}
+                onCheckedChange={(checked) => setCopyToIst(!!checked)}
+                className="h-3.5 w-3.5 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600"
+              />
+              <label
+                htmlFor="copy-to-ist-cb"
+                className="text-[10px] text-foreground cursor-pointer select-none leading-tight"
+              >
+                Auch ins IST übernehmen
+              </label>
             </div>
           )}
 
