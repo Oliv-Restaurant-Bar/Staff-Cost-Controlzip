@@ -35,10 +35,12 @@ export interface PLExportOptions {
 // ── Farb-Palette ──────────────────────────────────────────────────────────────
 
 const C = {
-  navy:       [15,  30,  75]  as [number, number, number],
-  navyMid:    [30,  60, 120]  as [number, number, number],
-  navyLight:  [55,  90, 155]  as [number, number, number],
-  slateLight: [242, 245, 252] as [number, number, number],
+  // Balken / Hintergründe: warmes Dunkelschiefer – farblich neutral,
+  // maximaler Kontrast zu Petrolgrün UND Bordeaux-Rot
+  navy:       [36,  38,  52]  as [number, number, number], // fast Schwarz, leicht violett
+  navyMid:    [56,  62,  85]  as [number, number, number], // mittleres Schiefer – Ergebnis-Zeilen
+  navyLight:  [88,  96, 130]  as [number, number, number], // helles Schiefer – Tabellenköpfe
+  slateLight: [244, 244, 247] as [number, number, number], // fast weiss, nahezu neutral
   white:      [255, 255, 255] as [number, number, number],
   // Petrolgrün – professionelles Controlling-Grün (kein Neon)
   green:      [13,  92,  64]  as [number, number, number],
@@ -46,7 +48,7 @@ const C = {
   red:        [138, 28,  52]  as [number, number, number],
   // Dezentes Grau für Prozentwerte – klar sekundär
   gray:       [162, 166, 178] as [number, number, number],
-  navyHeader: [200, 210, 230] as [number, number, number],
+  navyHeader: [200, 204, 222] as [number, number, number],
 };
 
 // ── Zahlenformate ─────────────────────────────────────────────────────────────
@@ -418,7 +420,7 @@ function buildBPLBody(
     const isSubtotal = t === 'subtotal';
     const bold       = isResult || isSubtotal ? 'bold' : 'normal';
     const fillColor  = isResult   ? C.navyMid
-                     : isSubtotal ? [235, 238, 248] as [number, number, number]
+                     : isSubtotal ? [228, 228, 238] as [number, number, number]
                      : undefined;
     const baseTxtColor = isResult ? C.white : undefined;
     const istValColor  = resultActualColor(v.actual, isResult, isSubtotal);
@@ -478,7 +480,7 @@ function buildKlassischBody(
     const isSubtotal = t === 'subtotal';
     const bold       = isResult || isSubtotal ? 'bold' : 'normal';
     const fillColor  = isResult   ? C.navyMid
-                     : isSubtotal ? [235, 238, 248] as [number, number, number]
+                     : isSubtotal ? [228, 228, 238] as [number, number, number]
                      : undefined;
     const baseTxtColor = isResult ? C.white : undefined;
     const istValColor  = resultActualColor(v.actual, isResult, isSubtotal);
@@ -766,12 +768,13 @@ function addMonthComparisonBlock(
   if (selectedMonths.length === 0) return;
 
   // ── Farben ───────────────────────────────────────────────────────────────
-  const DARK_TEXT:       [number, number, number] = [18, 28, 62];
+  const DARK_TEXT:       [number, number, number] = [28, 30, 42];
   const PCT_TEXT:        [number, number, number] = [162, 166, 178]; // dezent grau, klar sekundär
-  const RESULT_BG:       [number, number, number] = [36, 66, 125];   // leicht heller → besser lesbar
-  const RESULT_PCT:      [number, number, number] = [175, 195, 232]; // helles Grau auf navy
-  const TOTAL_BG:        [number, number, number] = [224, 230, 246];
-  const TOTAL_RESULT_BG: [number, number, number] = [22, 48, 105];
+  // Warmes Dunkelschiefer – passend zu navyMid, klar von Grün+Rot verschieden
+  const RESULT_BG:       [number, number, number] = [56, 62, 85];    // = C.navyMid
+  const RESULT_PCT:      [number, number, number] = [188, 192, 216]; // hell auf Schiefer
+  const TOTAL_BG:        [number, number, number] = [228, 228, 238]; // nahezu neutral
+  const TOTAL_RESULT_BG: [number, number, number] = [40, 44, 64];   // dunkler Schiefer für Total
   // Professionelles Petrolgrün – Controlling-Stil, kein Neon
   const PETROL_GREEN:    [number, number, number] = [13, 92, 64];
   // Bordeaux – elegantes Dunkelrot, gut druckbar
@@ -1223,7 +1226,7 @@ export async function exportPLToPDF(
       const isSubtotal = template.def.type === 'subtotal';
       const bold       = isResult || isSubtotal ? 'bold' : 'normal';
       const fillColor  = isResult   ? C.navyMid
-                       : isSubtotal ? [235, 238, 248] as [number, number, number]
+                       : isSubtotal ? [228, 228, 238] as [number, number, number]
                        : undefined;
       const baseTxtColor = isResult ? C.white : undefined;
       const label = indent(template) + template.def.label;
@@ -1256,7 +1259,7 @@ export async function exportPLToPDF(
         const pctRowStyle: Record<string, unknown> = {
           fontStyle: 'italic' as const, fontSize: 6,
           textColor: isResult ? C.white : C.gray,
-          fillColor: isResult ? C.navyMid : [248, 249, 253] as [number, number, number],
+          fillColor: isResult ? C.navyMid : [244, 244, 247] as [number, number, number],
         };
         const pctCells: YearCell[] = months.map((mr, i) => {
           const r = mr.rows.find(row => row.def.id === keyRow.id);
