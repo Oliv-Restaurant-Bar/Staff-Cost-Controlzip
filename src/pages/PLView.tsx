@@ -893,6 +893,7 @@ const InlineIstCell = ({
   onSaved: () => void;
   onCancel: () => void;
 }) => {
+  const { tenantKey } = useTenant();
   const [input, setInput] = useState(value !== 0 ? String(value) : '');
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
@@ -902,17 +903,24 @@ const InlineIstCell = ({
     const num = parseFloat(raw);
     if (isNaN(num)) { onCancel(); return; }
 
-    const account = row.itemAccountNumber;
-    if (row.catId === 'pl_revenue') {
-      saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, tenantKey(REPORTING_STORAGE_KEY));
-    } else if (row.catId === 'pl_wages' && row.isCategory) {
-      saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, tenantKey(REPORTING_STORAGE_KEY));
-    } else if (!row.isCategory && account) {
-      const existing = loadYear(year)[month - 1];
-      const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
-      cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? account });
-      saveMonth({ year, month, expenseCategories: cats }, 'manual_entry', 'update', { note: `Manuelle Eingabe Konto ${account}` });
-    } else {
+    const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+    const account  = row.itemAccountNumber;
+    try {
+      if (row.catId === 'pl_revenue') {
+        saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, storeKey);
+      } else if (row.catId === 'pl_wages' && row.isCategory) {
+        saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, storeKey);
+      } else if (!row.isCategory && account) {
+        const existing = loadYear(year, storeKey)[month - 1];
+        const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
+        cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? account });
+        saveMonth({ year, month, expenseCategories: cats }, 'manual_entry', 'update', { note: `Manuelle Eingabe Konto ${account}` }, storeKey);
+      } else {
+        onCancel();
+        return;
+      }
+    } catch (err) {
+      console.error('[InlineIstCell] Speicherfehler:', err);
       onCancel();
       return;
     }
@@ -940,6 +948,7 @@ const InlineIstCell = ({
 const InlineRevenueEntry = ({
   year, month, onSaved,
 }: { year: number; month: number; onSaved: () => void }) => {
+  const { tenantKey } = useTenant();
   const [input, setInput] = useState('');
   const [saving, setSaving] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
@@ -949,10 +958,17 @@ const InlineRevenueEntry = ({
     const num = parseFloat(raw);
     if (isNaN(num) || num <= 0) return;
     setSaving(true);
-    saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Schnelleingabe Ist-Umsatz' }, tenantKey(REPORTING_STORAGE_KEY));
-    setSaving(false);
-    onSaved();
-    setInput('');
+    try {
+      saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Schnelleingabe Ist-Umsatz' }, tenantKey(REPORTING_STORAGE_KEY));
+      toast.success(`Ist-Umsatz ${MONTH_NAMES_DE[month]} ${year} gespeichert`);
+      onSaved();
+      setInput('');
+    } catch (err) {
+      console.error('[InlineRevenueEntry] Speicherfehler:', err);
+      toast.error('Konnte Wert nicht speichern');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -1264,52 +1280,77 @@ const BudgetPLDrilldownDialog = ({
   onClose: () => void;
   onSaved: () => void;
 }) => {
+  const { tenantKey } = useTenant();
   const label   = row.itemLabel ?? row.catLabel;
   const account = row.itemAccountNumber;
   const v       = row.values;
 
-  const [istInput,      setIstInput]      = useState(v.actual !== 0 ? String(v.actual) : '');
-  const [saved,         setSaved]         = useState(false);
-  const [vjInput,       setVjInput]       = useState(v.prevYear !== 0 ? String(v.prevYear) : '');
-  const [vjSaved,       setVjSaved]       = useState(false);
+  const [istInput,  setIstInput]  = useState(v.actual   !== 0 ? String(v.actual)   : '');
+  const [saved,     setSaved]     = useState(false);
+  const [istError,  setIstError]  = useState<string | null>(null);
+  const [vjInput,   setVjInput]   = useState(v.prevYear !== 0 ? String(v.prevYear) : '');
+  const [vjSaved,   setVjSaved]   = useState(false);
+  const [vjError,   setVjError]   = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const canEdit = row.catType !== 'result';
+  const canEdit        = row.catType !== 'result';
   const canEditVorjahr = row.catId === 'pl_revenue';
 
   useEffect(() => {
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
+  const parseInput = (raw: string): number | null => {
+    const cleaned = raw.replace(/['\s]/g, '').replace(',', '.');
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? null : num;
+  };
+
   const handleSave = () => {
-    const raw = istInput.replace(/['\s]/g, '').replace(',', '.');
-    const num = parseFloat(raw);
-    if (isNaN(num)) return;
+    const num = parseInput(istInput);
+    if (num === null) { setIstError('Bitte eine gültige Zahl eingeben (z.B. 267920 oder 267\'920).'); return; }
+    setIstError(null);
 
-    if (row.catId === 'pl_revenue') {
-      saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, tenantKey(REPORTING_STORAGE_KEY));
-    } else if (row.catId === 'pl_wages' && row.isCategory) {
-      saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, tenantKey(REPORTING_STORAGE_KEY));
-    } else if (!row.isCategory && account) {
-      const existing = loadYear(year)[month - 1];
-      const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
-      cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? label });
-      saveMonth({ year, month, expenseCategories: cats }, 'manual_entry', 'update', { note: `Manuelle Eingabe Konto ${account}` });
-    } else {
-      return;
+    const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+    try {
+      if (row.catId === 'pl_revenue') {
+        saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, storeKey);
+      } else if (row.catId === 'pl_wages' && row.isCategory) {
+        saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, storeKey);
+      } else if (!row.isCategory && account) {
+        const existing = loadYear(year, storeKey)[month - 1];
+        const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
+        cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? label });
+        saveMonth({ year, month, expenseCategories: cats }, 'manual_entry', 'update', { note: `Manuelle Eingabe Konto ${account}` }, storeKey);
+      } else {
+        return;
+      }
+      toast.success(`Ist-Wert gespeichert (${MONTH_NAMES_DE[month]} ${year})`);
+      setSaved(true);
+      setTimeout(() => { onSaved(); }, 600);
+    } catch (err) {
+      console.error('[BPLDrilldown] Speicherfehler Ist-Wert:', err);
+      setIstError('Konnte Ist-Wert nicht speichern. Details in der Konsole.');
+      toast.error('Konnte Ist-Wert nicht speichern');
     }
-
-    setSaved(true);
-    setTimeout(() => { onSaved(); }, 600);
   };
 
   const handleSaveVorjahr = () => {
-    const raw = vjInput.replace(/['\s]/g, '').replace(',', '.');
-    const num = parseFloat(raw);
-    if (isNaN(num)) return;
-    saveMonth({ year, month, revenuePreviousYear: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe Vorjahr-Umsatz' }, tenantKey(REPORTING_STORAGE_KEY));
-    setVjSaved(true);
-    setTimeout(() => { onSaved(); }, 600);
+    const num = parseInput(vjInput);
+    if (num === null) { setVjError('Bitte eine gültige Zahl eingeben (z.B. 296018 oder 296\'018).'); return; }
+    setVjError(null);
+
+    const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+    try {
+      saveMonth({ year, month, revenuePreviousYear: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe Vorjahr-Umsatz' }, storeKey);
+      toast.success(`Vorjahreswert gespeichert (${MONTH_NAMES_DE[month]} ${year - 1})`);
+      setVjSaved(true);
+      setTimeout(() => { onSaved(); }, 600);
+    } catch (err) {
+      console.error('[BPLDrilldown] Speicherfehler Vorjahr-Wert:', err);
+      setVjError('Konnte Vorjahreswert nicht speichern. Details in der Konsole.');
+      toast.error('Konnte Vorjahreswert nicht speichern');
+    }
   };
 
   return (
@@ -1366,6 +1407,11 @@ const BudgetPLDrilldownDialog = ({
                   )}
                 </Button>
               </div>
+              {istError && (
+                <p className="text-xs text-red-600 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3 flex-shrink-0" />{istError}
+                </p>
+              )}
               {row.isCategory && row.catId !== 'pl_revenue' && row.catId !== 'pl_wages' && (
                 <p className="text-[10px] text-amber-600">
                   Hinweis: Kategorie-Summen werden aus Einzelkonten berechnet. Bitte die Unterkonten einzeln eingeben.
@@ -1407,6 +1453,11 @@ const BudgetPLDrilldownDialog = ({
                   )}
                 </Button>
               </div>
+              {vjError && (
+                <p className="text-xs text-red-600 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3 flex-shrink-0" />{vjError}
+                </p>
+              )}
               <p className="text-[10px] text-muted-foreground">
                 Dieser Wert erscheint in der Vorjahr-Spalte und im Dashboard-Vergleich.
               </p>
@@ -1504,6 +1555,7 @@ const AccountActionDialog = ({
   onRefresh: () => void;
   onOpenDrilldown: () => void;
 }) => {
+  const { tenantKey } = useTenant();
   const accountNum = row.itemAccountNumber ?? '';
   const result     = lookupAccount(accountNum);
   const mapping    = result.mapping;

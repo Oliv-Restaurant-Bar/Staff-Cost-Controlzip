@@ -1,0 +1,142 @@
+Bitte korrigiere die Erfolgsrechnung bezüglich negativer Ist Werte.
+
+Aktuell werden negative Beträge zwar teilweise eingegeben oder angezeigt, aber offenbar nicht überall korrekt in den Summen und Prozentwerten berücksichtigt.
+
+Beispiel:
+Konto 4040 Spirituosen hat Ist CHF -412.95.
+Dieser Betrag muss:
+- sichtbar als Minuswert angezeigt werden
+- in der Summe Warenaufwand korrekt abgezogen werden
+- in Budgetabweichung korrekt berücksichtigt werden
+- in Vorjahresabweichung korrekt berücksichtigt werden
+- im PDF Export korrekt erscheinen
+
+---
+
+1. Negative Werte erlauben
+
+Die direkte Bearbeitung in der Tabelle und im Detaildialog muss negative CHF Werte erlauben.
+
+Akzeptierte Eingaben:
+-412.95
+-412,95
+CHF -412.95
+CHF -412,95
+
+Diese müssen korrekt als negative Zahl gespeichert werden.
+
+---
+
+2. Anzeige
+
+Negative Werte sollen klar sichtbar angezeigt werden:
+
+CHF -413
+
+oder:
+-413 CHF
+
+Bitte einheitlich mit dem bestehenden Zahlenformat.
+
+Wichtig:
+Nicht als leer, 0 oder Gedankenstrich anzeigen.
+
+---
+
+3. Summenlogik
+
+Negative Werte müssen mathematisch korrekt in alle Summen einfliessen.
+
+Beispiel Warenaufwand:
+Wein 11’783
+Bier 8’380
+Spirituosen -413
+Küche 44’292
+
+Total Warenaufwand =
+11’783 + 8’380 - 413 + 44’292 ...
+
+Nicht:
+negative Werte ignorieren
+Nicht:
+negative Werte als 0 behandeln
+Nicht:
+negative Werte in positive Werte umwandeln
+
+---
+
+4. Prozentlogik
+
+Auch Prozentwerte müssen negative Werte berücksichtigen.
+
+Beispiel:
+Spirituosen Ist CHF -413
+Umsatz CHF 267’920
+
+% Umsatz =
+-413 / 267’920 * 100
+= -0.2 %
+
+Diese -0.2 % sollen angezeigt werden.
+
+---
+
+5. Abweichungslogik
+
+Negative Ist Werte müssen korrekt in Abweichungen berücksichtigt werden.
+
+Für Aufwand-Konten:
+Abweichung Budget =
+Budget - Ist oder bestehende Logik beibehalten,
+aber mit echten negativen Zahlen rechnen.
+
+Bitte keine abs(), Math.max(0, value) oder Fallback auf 0 verwenden.
+
+---
+
+6. Datenbank / Parsing prüfen
+
+Bitte prüfen:
+- parseCurrency
+- formatCurrency
+- sumCategory
+- calculateTotals
+- PDF Export
+- Excel Export
+- KPI Karten
+
+Entferne alle Logiken wie:
+Math.abs()
+Math.max(0, value)
+value || 0 falls dadurch negative Werte verloren gehen
+if (value < 0) return null
+
+Negative Werte müssen gültige Werte sein.
+
+---
+
+7. Manuelle Overrides
+
+Wenn ein negativer manueller Ist Wert gespeichert wird:
+- muss er nach Reload erhalten bleiben
+- muss in Tabelle sichtbar sein
+- muss in Summen enthalten sein
+- muss im PDF Export enthalten sein
+
+---
+
+8. Tests
+
+Bitte konkret testen:
+
+Konto 4040 Spirituosen:
+Ist = -412.95
+
+Erwartung:
+- Tabelle zeigt CHF -413
+- % Umsatz zeigt ca. -0.2 %
+- Total Warenaufwand reduziert sich um 413
+- Bruttogewinn erhöht sich entsprechend
+- EBITDA / EBIT wird korrekt neu berechnet
+- PDF Export zeigt den negativen Wert
+- Nach Reload bleibt der Wert erhalten
