@@ -46,23 +46,35 @@ const OLIV_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 56" w
     font-size="7.5" fill="#b8d098" letter-spacing="3.8">RESTAURANT &amp; BAR</text>
 </svg>`;
 
-const BEAULIEU_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 56" width="220" height="56">
-  <!-- Fleur / emblem -->
-  <g transform="translate(8,14)">
-    <polygon points="6,0 7.5,5 12,5 8.5,8 9.8,13 6,10.2 2.2,13 3.5,8 0,5 4.5,5"
-      fill="#c8a048" opacity="0.92"/>
-    <rect x="5" y="13" width="2" height="4" fill="#c8a048" opacity="0.7" rx="1"/>
-    <ellipse cx="6" cy="18" rx="4" ry="1.5" fill="#c8a048" opacity="0.5"/>
+// Beaulieu Gold: #C09A34 → RGB [192, 154, 52]
+// Warm heraldic gold – the same tone used for "DE HEIME IR LÄNGGASS" lettering.
+// Sits between amber and classic gold: not too yellow, not bronze.
+const BEAULIEU_GOLD = '#C09A34';
+
+const BEAULIEU_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 56" width="240" height="56">
+  <!-- Fleur-de-lis style emblem -->
+  <g transform="translate(8,8)">
+    <!-- Centre petal -->
+    <ellipse cx="7" cy="4" rx="2.2" ry="5.5" fill="${BEAULIEU_GOLD}" opacity="0.95"/>
+    <!-- Left petal -->
+    <ellipse cx="7" cy="5" rx="4.5" ry="2.0" transform="rotate(-30 7 5)" fill="${BEAULIEU_GOLD}" opacity="0.78"/>
+    <!-- Right petal -->
+    <ellipse cx="7" cy="5" rx="4.5" ry="2.0" transform="rotate(30 7 5)" fill="${BEAULIEU_GOLD}" opacity="0.78"/>
+    <!-- Stem -->
+    <rect x="6.1" y="9" width="1.8" height="5" fill="${BEAULIEU_GOLD}" opacity="0.65" rx="0.9"/>
+    <!-- Base bar -->
+    <rect x="3" y="13.5" width="8" height="1.4" fill="${BEAULIEU_GOLD}" opacity="0.5" rx="0.7"/>
   </g>
   <!-- BEAULIEU wordmark -->
-  <text x="26" y="34"
+  <text x="26" y="33"
     font-family="Georgia,'Times New Roman',serif"
     font-size="22" font-weight="bold"
     fill="#ffffff" letter-spacing="4">BEAULIEU</text>
-  <!-- Tagline -->
-  <text x="27" y="50"
+  <!-- Tagline: exact text from restaurant identity -->
+  <text x="27" y="48"
     font-family="Georgia,'Times New Roman',serif"
-    font-size="7.5" fill="#d4c4a0" letter-spacing="4.2">RESTAURANT</text>
+    font-size="7" fill="${BEAULIEU_GOLD}"
+    letter-spacing="2.8">DE HEIME IR LÄNGGASS</text>
 </svg>`;
 
 // ── Branding-Konfiguration ────────────────────────────────────────────────────
@@ -82,10 +94,18 @@ export const RESTAURANT_BRANDING: Record<string, RestaurantBranding> = {
     id:           'beaulieu',
     displayName:  'Beaulieu Restaurant',
     companyLine:  'Beaulieu Restaurant',
-    headerBg:     [91, 68, 40],    // #5b4428 – warmes Dunkelbraun
-    accentColor:  [200, 168, 88],  // warmes Gold
+    //
+    // Hintergrund: warmes dunkles Tannengrün → Fine-Dining / Boutique-Hotel
+    // [33, 52, 42] = #213428 — nicht schwarz, hat Tiefe, harmoniert mit Gold
+    headerBg:     [33, 52, 42],
+    //
+    // Akzentgold: #C09A34 = [192, 154, 52]
+    // Warmes, heraldisches Gold — exakt der Ton aus "DE HEIME IR LÄNGGASS"
+    // Weder zu gelb (kein Neon-Gelb) noch Bronze (kein Braun-Anteil)
+    accentColor:  [192, 154, 52],
+    //
     textPrimary:  [255, 255, 255],
-    textSecondary:[218, 200, 168], // warmes Beige
+    textSecondary:[220, 200, 158], // warmes Creme, harmoniert mit dem Gold
     logoSvg:      BEAULIEU_SVG,
   },
 };
@@ -104,7 +124,7 @@ export function getBranding(tenantId: string): RestaurantBranding {
  */
 export async function renderLogoDataUrl(
   branding: RestaurantBranding,
-  w = 220,
+  w = 240,
   h = 56,
 ): Promise<string> {
   try {
