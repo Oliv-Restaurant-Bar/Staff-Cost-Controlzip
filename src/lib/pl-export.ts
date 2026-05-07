@@ -626,10 +626,14 @@ function addKpiSummaryBlock(
 
 /**
  * Zeigt ausgewählte Monate nebeneinander als Spalten.
- * Keine kumulierte Summe – jeder Monat ist ein einzelner Wert.
- * Max. 6 Monate pro Tabelle; bei mehr wird eine zweite Tabelle angehängt.
+ * Keine kumulierte Summe – jeder Monat einzeln.
+ * Max. 6 Monate pro Tabelle; bei mehr folgt eine zweite Tabelle.
  *
- * @param selectedMonths  1-basiert, sortiert (z.B. [1,2,3,4])
+ * Visuelles Konzept:
+ *  - CHF-Zeilen:   8pt bold, dunkles Navy  – dominant, sofort lesbar
+ *  - %-Zeilen:     6.5pt normal, grau       – dezent, direkt unter CHF
+ *  - Trendspalte:  CHF-Delta / pp-Delta     – grün/rot, keine Doppelinfo
+ *  - Gruppen:      Umsatz / Waren / Personal / Ergebnis – durch Padding getrennt
  */
 function addMonthComparisonBlock(
   doc: jsPDF,
@@ -641,47 +645,66 @@ function addMonthComparisonBlock(
 ): void {
   if (selectedMonths.length === 0) return;
 
+  // ── lokale Farbkonstanten ────────────────────────────────────────────────
+  const DARK_TEXT:  [number, number, number] = [22, 32, 68];   // dunkles Navy für CHF
+  const PCT_TEXT:   [number, number, number] = [130, 138, 155]; // grau für %
+  const RESULT_BG:  [number, number, number] = [28, 55, 115];   // Ergebnisblock
+  const RESULT_PCT: [number, number, number] = [175, 195, 230]; // % auf Ergebnisblock
+  const SOFT_GREEN: [number, number, number] = [18, 110, 55];   // etwas weniger grell
+  const SOFT_RED:   [number, number, number] = [175, 30, 30];
+
+  // ── lokales %-Format (kein Leerzeichen vor %) ────────────────────────────
+  const pctStr = (v: number | null | undefined, base: number | null | undefined): string => {
+    if (v == null || !base || base === 0) return '–';
+    const p = (v / base) * 100;
+    return isFinite(p) ? `${p.toFixed(1)}%` : '–';
+  };
+
   const CHUNK_SIZE = 6;
-  const indices = selectedMonths.map(m => m - 1); // 0-basiert
+  const indices = selectedMonths.map(m => m - 1);
 
   // Titel
-  const isConsecutive = selectedMonths.every((m, i) => i === 0 || m === selectedMonths[i - 1] + 1);
-  const title = isConsecutive && selectedMonths.length > 1
+  const isConsec = selectedMonths.every((m, i) => i === 0 || m === selectedMonths[i - 1] + 1);
+  const title = isConsec && selectedMonths.length > 1
     ? `${MONTH_NAMES_DE[selectedMonths[0]]} bis ${MONTH_NAMES_DE[selectedMonths[selectedMonths.length - 1]]} ${year}`
     : `${selectedMonths.map(m => MONTH_NAMES_SHORT_DE[m]).filter(Boolean).join(', ')} ${year}`;
 
-  const y = ensureSpace(doc, afterY, 90);
+  const y = ensureSpace(doc, afterY, 100);
   const headerEndY = addSectionHeader(doc, 'MONATSVERGLEICH', title, y, pageW);
 
-  // Kennzahlen-Definitionen
+  // ── Kennzahlen-Definitionen ──────────────────────────────────────────────
   interface RowDef {
-    id:        string;
-    label:     string;
-    isExpense: boolean;
-    isPctRow:  boolean;
-    isResult:  boolean;
+    id:           string;
+    label:        string;
+    isExpense:    boolean;
+    isPctRow:     boolean;
+    isResult:     boolean;
+    groupStart:   boolean;   // extra Abstand vor dieser Zeile
   }
   const ROW_DEFS: RowDef[] = [
-    { id: 'net_revenue',     label: 'Betriebsertrag netto',  isExpense: false, isPctRow: false, isResult: false },
-    { id: 'total_cogs',      label: 'Warenaufwand total',    isExpense: true,  isPctRow: false, isResult: false },
-    { id: 'total_cogs',      label: 'Warenaufwand %',        isExpense: true,  isPctRow: true,  isResult: false },
-    { id: 'total_personnel', label: 'Personalaufwand total', isExpense: true,  isPctRow: false, isResult: false },
-    { id: 'total_personnel', label: 'Personalaufwand %',     isExpense: true,  isPctRow: true,  isResult: false },
-    { id: 'ebitda',          label: 'EBITDA',                isExpense: false, isPctRow: false, isResult: true  },
-    { id: 'ebitda',          label: 'EBITDA %',              isExpense: false, isPctRow: true,  isResult: true  },
-    { id: 'ebit',            label: 'EBIT',                  isExpense: false, isPctRow: false, isResult: true  },
-    { id: 'ebit',            label: 'EBIT %',                isExpense: false, isPctRow: true,  isResult: true  },
+    // Gruppe Umsatz
+    { id: 'net_revenue',     label: 'Betriebsertrag netto',  isExpense: false, isPctRow: false, isResult: false, groupStart: false },
+    // Gruppe Waren
+    { id: 'total_cogs',      label: 'Warenaufwand',          isExpense: true,  isPctRow: false, isResult: false, groupStart: true  },
+    { id: 'total_cogs',      label: 'Warenaufwand %',        isExpense: true,  isPctRow: true,  isResult: false, groupStart: false },
+    // Gruppe Personal
+    { id: 'total_personnel', label: 'Personalaufwand',       isExpense: true,  isPctRow: false, isResult: false, groupStart: true  },
+    { id: 'total_personnel', label: 'Personalaufwand %',     isExpense: true,  isPctRow: true,  isResult: false, groupStart: false },
+    // Gruppe Ergebnis
+    { id: 'ebitda',          label: 'EBITDA',                isExpense: false, isPctRow: false, isResult: true,  groupStart: true  },
+    { id: 'ebitda',          label: 'EBITDA %',              isExpense: false, isPctRow: true,  isResult: true,  groupStart: false },
+    { id: 'ebit',            label: 'EBIT',                  isExpense: false, isPctRow: false, isResult: true,  groupStart: false },
+    { id: 'ebit',            label: 'EBIT %',                isExpense: false, isPctRow: true,  isResult: true,  groupStart: false },
   ];
 
-  const getVal = (monthIdx: number, id: string): number =>
-    yearResult.months[monthIdx]?.rows.find(r => r.def.id === id)?.values.actual ?? 0;
-  const getRevVal = (monthIdx: number): number => getVal(monthIdx, 'net_revenue');
+  const getVal    = (idx: number, id: string): number =>
+    yearResult.months[idx]?.rows.find(r => r.def.id === id)?.values.actual ?? 0;
+  const getRevVal = (idx: number): number => getVal(idx, 'net_revenue');
 
-  // Trend-Referenz: letzter vs. erster ausgewählter Monat
   const firstIdx = indices[0];
   const lastIdx  = indices[indices.length - 1];
 
-  // Chunks bilden (max. 6 Monate pro Tabelle)
+  // Chunks bilden
   const chunks: number[][] = [];
   for (let i = 0; i < indices.length; i += CHUNK_SIZE) {
     chunks.push(indices.slice(i, i + CHUNK_SIZE));
@@ -693,13 +716,13 @@ function addMonthComparisonBlock(
     const chunk = chunks[chunkIdx];
     const n     = chunk.length;
 
-    // Spaltenbreiten: Label (42) + n×Monate + Trend (24) ≤ 190mm
-    const LABEL_W = 42;
-    const TREND_W = 24;
+    // Spaltenbreiten (usable = pageW - 20 margins = 190mm)
+    const LABEL_W   = 46;
+    const TREND_W   = 22;
     const perMonthW = Math.floor((pageW - 20 - LABEL_W - TREND_W) / n);
 
     const head = [
-      'Kennzahl',
+      '',   // Kennzahl-Spalte (kein Kopftext nötig)
       ...chunk.map(idx => MONTH_NAMES_SHORT_DE[idx + 1] ?? ''),
       'Trend',
     ];
@@ -708,87 +731,133 @@ function addMonthComparisonBlock(
     const body: CellDef[][] = [];
 
     for (const rowDef of ROW_DEFS) {
-      const { id, label, isExpense, isPctRow, isResult } = rowDef;
-      const fillColor    = isResult ? C.navyMid : undefined;
-      const baseTxtColor = isResult ? C.white   : undefined;
+      const { id, label, isExpense, isPctRow, isResult, groupStart } = rowDef;
 
-      const labelStyle: Record<string, unknown> = {
-        fontStyle: isResult ? 'bold' : isPctRow ? 'italic' : 'normal',
-        fontSize:  isPctRow ? 6.5 : 7.5,
-        ...(fillColor    ? { fillColor }               : {}),
-        ...(baseTxtColor ? { textColor: baseTxtColor } : {}),
+      // ── Padding: Gruppenstart bekommt extra Abstand oben ────────────────
+      const topPad    = groupStart ? 5 : 1.5;
+      const bottomPad = 1.5;
+
+      // ── Farben je Zeilentyp ──────────────────────────────────────────────
+      let rowFill:   [number, number, number] | undefined;
+      let labelTxt:  [number, number, number];
+      let valueTxt:  [number, number, number];
+      let valueFontStyle: 'bold' | 'normal';
+      let valueFontSize: number;
+
+      if (isResult) {
+        rowFill        = RESULT_BG;
+        labelTxt       = isPctRow ? RESULT_PCT : [220, 230, 245] as [number, number, number];
+        valueTxt       = isPctRow ? RESULT_PCT : C.white;
+        valueFontStyle = isPctRow ? 'normal' : 'bold';
+        valueFontSize  = isPctRow ? 6.5 : 8;
+      } else if (isPctRow) {
+        rowFill        = undefined;
+        labelTxt       = PCT_TEXT;
+        valueTxt       = PCT_TEXT;
+        valueFontStyle = 'normal';
+        valueFontSize  = 6.5;
+      } else {
+        rowFill        = undefined;
+        labelTxt       = DARK_TEXT;
+        valueTxt       = DARK_TEXT;
+        valueFontStyle = 'bold';
+        valueFontSize  = 8;
+      }
+
+      const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+        cellPadding: { top: topPad, bottom: bottomPad, left: 3, right: 3 },
+        ...(rowFill ? { fillColor: rowFill } : {}),
+        ...extra,
+      });
+
+      // ── Label-Zelle ──────────────────────────────────────────────────────
+      const labelCell: CellDef = {
+        content: label,
+        styles: cs({
+          fontStyle: isPctRow ? 'italic' : isResult ? 'bold' : 'bold',
+          fontSize:  isPctRow ? 6.5 : 8,
+          textColor: labelTxt,
+        }),
       };
 
-      // Monatsspalten
+      // ── Monatszellen ─────────────────────────────────────────────────────
       const monthCells: CellDef[] = chunk.map(monthIdx => {
         const revV = getRevVal(monthIdx);
         const v    = getVal(monthIdx, id);
+
         let content: string;
-        let textColor: [number, number, number] | undefined;
+        let cellTxtColor: [number, number, number] = valueTxt;
 
         if (isPctRow) {
-          content   = fmtPctRatio(v, revV);
-          textColor = isResult ? C.white : C.gray;
+          content = pctStr(v, revV);
         } else {
-          content   = fmtCHF(v);
-          textColor = isResult ? (v >= 0 ? C.green : C.red) : undefined;
+          content = fmtCHF(v);
+          // Ergebniszellen: grün/rot je nach Vorzeichen
+          if (isResult) {
+            cellTxtColor = v >= 0 ? SOFT_GREEN : SOFT_RED;
+            // auf dunklem Hintergrund helle Varianten
+            cellTxtColor = v >= 0
+              ? [100, 210, 140] as [number, number, number]
+              : [245, 130, 130] as [number, number, number];
+          }
         }
 
         return {
           content,
-          styles: {
+          styles: cs({
             halign:    'right',
-            fontStyle: isPctRow ? 'normal' : isResult ? 'bold' : 'normal',
-            fontSize:  isPctRow ? 6.5 : 7.5,
-            ...(fillColor    ? { fillColor }               : {}),
-            ...(baseTxtColor ? { textColor: baseTxtColor } : {}),
-            ...(textColor    ? { textColor }               : {}),
-          },
+            fontStyle: valueFontStyle,
+            fontSize:  valueFontSize,
+            textColor: cellTxtColor,
+          }),
         };
       });
 
-      // Trendspalte (letzter vs. erster Monat der Gesamtauswahl)
-      const firstV    = getVal(firstIdx,  id);
-      const lastV     = getVal(lastIdx,   id);
+      // ── Trendspalte ──────────────────────────────────────────────────────
+      const firstV    = getVal(firstIdx, id);
+      const lastV     = getVal(lastIdx,  id);
       const firstRevV = getRevVal(firstIdx);
       const lastRevV  = getRevVal(lastIdx);
 
       let trendContent: string;
-      let trendColor:   [number, number, number];
+      let trendTxtColor: [number, number, number];
 
       if (isPctRow) {
-        const firstPct = firstRevV !== 0 ? (firstV / firstRevV) * 100 : 0;
-        const lastPct  = lastRevV  !== 0 ? (lastV  / lastRevV)  * 100 : 0;
-        const diff     = lastPct - firstPct;
+        // pp-Delta: letzter Monat-% minus erster Monat-%
+        const fp   = firstRevV !== 0 ? (firstV / firstRevV) * 100 : 0;
+        const lp   = lastRevV  !== 0 ? (lastV  / lastRevV)  * 100 : 0;
+        const diff = lp - fp;
         trendContent   = `${diff >= 0 ? '+' : ''}${diff.toFixed(1)} pp`;
-        trendColor     = isExpense ? (diff <= 0 ? C.green : C.red) : (diff >= 0 ? C.green : C.red);
+        const better   = isExpense ? diff <= 0 : diff >= 0;
+        trendTxtColor  = isResult
+          ? (better ? [100, 210, 140] as [number, number, number] : [245, 130, 130] as [number, number, number])
+          : (better ? SOFT_GREEN : SOFT_RED);
       } else {
-        const diff    = lastV - firstV;
-        const diffPct = firstV !== 0 ? (diff / Math.abs(firstV)) * 100 : 0;
-        trendContent  = `${diff >= 0 ? '+' : ''}${swissNum(diff)}`;
-        if (Math.abs(firstV) > 0.5) {
-          trendContent += `  ${diff >= 0 ? '+' : ''}${diffPct.toFixed(1)} %`;
-        }
-        trendColor = isExpense ? (diff <= 0 ? C.green : C.red) : (diff >= 0 ? C.green : C.red);
+        // CHF-Delta
+        const diff = lastV - firstV;
+        trendContent   = `${diff >= 0 ? '+' : ''}${swissNum(diff)}`;
+        const better   = isExpense ? diff <= 0 : diff >= 0;
+        trendTxtColor  = isResult
+          ? (better ? [100, 210, 140] as [number, number, number] : [245, 130, 130] as [number, number, number])
+          : (better ? SOFT_GREEN : SOFT_RED);
       }
 
       body.push([
-        { content: label, styles: labelStyle },
+        labelCell,
         ...monthCells,
         {
           content: trendContent,
-          styles: {
+          styles: cs({
             halign:    'right',
             fontStyle: 'bold',
-            fontSize:  isPctRow ? 6.5 : 7,
-            textColor: isResult ? C.white : trendColor,
-            ...(fillColor ? { fillColor } : {}),
-          },
+            fontSize:  isPctRow ? 6.5 : 7.5,
+            textColor: trendTxtColor,
+          }),
         },
       ]);
     }
 
-    // Spaltenbreiten für autoTable
+    // ── Spaltenbreiten ────────────────────────────────────────────────────
     const colStyles: Record<number, Record<string, unknown>> = {
       0: { cellWidth: LABEL_W },
     };
@@ -797,7 +866,6 @@ function addMonthComparisonBlock(
     }
     colStyles[n + 1] = { halign: 'right', cellWidth: TREND_W };
 
-    // Bei Chunk 2+ sicherstellen, dass genug Platz ist
     if (chunkIdx > 0) {
       currentY = ensureSpace(doc, (doc as any).lastAutoTable?.finalY ?? currentY, 80);
     }
@@ -809,12 +877,21 @@ function addMonthComparisonBlock(
       theme:  'plain',
       headStyles: {
         fillColor: C.navyLight, textColor: C.white,
-        fontStyle: 'bold', fontSize: 7,
-        cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+        fontStyle: 'bold', fontSize: 7.5,
+        cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 },
       },
-      bodyStyles: { fontSize: 7.5, cellPadding: { top: 1.8, bottom: 1.8, left: 2, right: 2 } },
-      alternateRowStyles: { fillColor: C.slateLight },
+      // bodyStyles dienen nur als Fallback; jede Zelle hat eigene Styles
+      bodyStyles: {
+        fontSize: 8,
+        cellPadding: { top: 1.5, bottom: 1.5, left: 3, right: 3 },
+        textColor: DARK_TEXT,
+        overflow: 'ellipsize',
+      },
+      // kein alternateRowStyles – jede Zeile hat ihre eigene Farbe
+      alternateRowStyles: {},
       columnStyles: colStyles,
+      tableLineColor: [220, 225, 235] as unknown as number,
+      tableLineWidth: 0.15,
     });
 
     currentY = (doc as any).lastAutoTable?.finalY ?? currentY;

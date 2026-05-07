@@ -1,0 +1,174 @@
+Bitte passe beim PDF Export der Erfolgsrechnung nur die Darstellung des Blocks "Monatsvergleich" an.
+
+Die Logik ist bereits korrekt:
+- ausgewählte Monate werden nebeneinander angezeigt
+- Trend wird angezeigt
+- CHF und Prozentwerte sind vorhanden
+
+Jetzt soll nur die visuelle Darstellung verbessert werden.
+
+---
+
+1. Bessere Lesbarkeit
+
+Die CHF Beträge sollen klarer und stärker lesbar sein:
+- etwas grössere Schrift
+- fett oder halb-fett
+- dunklere Farbe
+- sauber rechtsbündig pro Monat
+
+Die Prozentwerte sollen dezenter sein:
+- kleinere Schrift
+- grauer Ton
+- nicht zu dominant
+- ebenfalls sauber rechtsbündig
+
+---
+
+2. CHF und Prozentwerte klar trennen
+
+Bitte CHF Werte und Prozentwerte optisch klar unterscheiden.
+
+Beispiel:
+Warenaufwand total = normale/fette CHF-Zeile
+Warenaufwand % = kleinere, dezente Prozent-Zeile direkt darunter
+
+Personalaufwand total = normale/fette CHF-Zeile
+Personalaufwand % = kleinere, dezente Prozent-Zeile direkt darunter
+
+EBITDA = starke CHF-Zeile
+EBITDA % = kleinere Prozent-Zeile direkt darunter
+
+EBIT = starke CHF-Zeile
+EBIT % = kleinere Prozent-Zeile direkt darunter
+
+---
+
+3. Saubere Ausrichtung
+
+Alle Monatswerte müssen exakt untereinander ausgerichtet sein.
+
+Spalten:
+Kennzahl
+Jan
+Feb
+Mär
+Apr
+Trend
+
+Jede Zahl muss rechtsbündig stehen.
+
+Prozentwerte dürfen nicht umbrechen.
+Beispiel falsch:
+260.8
+%
+
+Richtig:
+260.8 %
+
+---
+
+4. Gruppierung verbessern
+
+Bitte die Zeilen visuell besser gruppieren:
+
+Gruppe Umsatz:
+- Betriebsertrag netto
+
+Gruppe Waren:
+- Warenaufwand total
+- Warenaufwand %
+
+Gruppe Personal:
+- Personalaufwand total
+- Personalaufwand %
+
+Gruppe Ergebnis:
+- EBITDA
+- EBITDA %
+- EBIT
+- EBIT %
+
+Zwischen den Gruppen etwas mehr Abstand oder dezente Trennlinie.
+
+---
+
+5. Farbgebung dezenter machen
+
+Negative CHF Werte:
+rot
+
+Positive Ergebniswerte:
+grün
+
+Normale Aufwand CHF Werte:
+neutral dunkel
+
+Prozentwerte:
+neutral grau, ausser bei Trend
+
+Trend:
+- grün wenn Verbesserung
+- rot wenn Verschlechterung
+
+Aber bitte nicht zu grell.
+
+---
+
+6. Dunkler Ergebnisblock verbessern
+
+Der dunkelblaue Block für EBITDA / EBIT ist grundsätzlich gut,
+aber die Lesbarkeit soll verbessert werden:
+
+- CHF Werte gut sichtbar
+- Prozentwerte kleiner und sauber darunter
+- kein Zeilenumbruch bei Prozentwerten
+- Trend sauber rechtsbündig
+
+Falls nötig:
+Dunklen Block etwas weniger hoch oder typografisch sauberer machen.
+
+---
+
+7. Schriftart / Schriftgrössen
+
+Bitte eine moderne, gut lesbare Schrift verwenden und die Grössen optimieren:
+
+Titel "MONATSVERGLEICH":
+klein, uppercase
+
+Zeitraum "Januar bis April 2026":
+gross und klar
+
+Tabellenkopf:
+klar, aber nicht zu gross
+
+CHF Werte:
+wichtig und gut lesbar
+
+Prozentwerte:
+kleiner und dezenter
+
+---
+
+8. Ziel
+
+Der Monatsvergleich soll auf einen Blick zeigen:
+
+- Wie entwickeln sich Umsatz, Warenkosten, Personal und Ergebnis?
+- Welche CHF Beträge sind relevant?
+- Welche Prozentquoten gehören dazu?
+
+Es soll nicht gedrängt wirken und die Werte müssen sauber zuordenbar sein.
+
+---
+
+9. Tests
+
+Bitte prüfen:
+- CHF Werte sind besser lesbar
+- Prozentwerte sind dezenter
+- alle Zahlen sind sauber untereinander ausgerichtet
+- keine Prozentwerte brechen um
+- Trendspalte ist sauber rechtsbündig
+- Monatsvergleich bleibt im Hochformat lesbar
