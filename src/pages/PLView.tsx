@@ -46,7 +46,8 @@ import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem, savePLLineItem
 import { BudgetYear, BudgetPLCategory, BudgetPLLineItem } from '@/types/budget';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
-import { exportPLToPDF } from '@/lib/pl-export';
+import { exportPLToPDF, PLExportOptions } from '@/lib/pl-export';
+import { PDFExportDialog } from '@/components/PDFExportDialog';
 import { toast } from 'sonner';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
@@ -2318,11 +2319,18 @@ const PLViewPage = () => {
     if (dd) setDrilldown(dd);
   }, [monthResult]);
 
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+
   const handleExportPDF = useCallback(() => {
+    setPdfDialogOpen(true);
+  }, []);
+
+  const handlePdfExport = useCallback((opts: PLExportOptions) => {
     try {
-      exportPLToPDF(monthResult, yearResult, year, month, mode);
-      toast.success('PDF exportiert (3 Ansichten)');
-    } catch {
+      exportPLToPDF(monthResult, yearResult, year, month, mode, opts);
+      toast.success('PDF erstellt');
+    } catch (e) {
+      console.error(e);
       toast.error('PDF-Export fehlgeschlagen');
     }
   }, [monthResult, yearResult, year, month, mode]);
@@ -2769,6 +2777,16 @@ const PLViewPage = () => {
         categories={budgetData.plCategories ?? []}
         existingItems={budgetData.plLineItems ?? []}
         onSaved={() => setRefreshKey(k => k + 1)}
+      />
+
+      {/* PDF Export Dialog */}
+      <PDFExportDialog
+        open={pdfDialogOpen}
+        onClose={() => setPdfDialogOpen(false)}
+        year={year}
+        month={month}
+        mode={mode}
+        onExport={handlePdfExport}
       />
     </div>
   );

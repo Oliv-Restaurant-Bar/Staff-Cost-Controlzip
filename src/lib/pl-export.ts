@@ -2,22 +2,34 @@
  * pl-export.ts – Professioneller PDF-Export für die Erfolgsrechnung
  * ==================================================================
  *
- * Exportiert NUR die aktive Ansicht (eine Seite):
+ * Modi:
  *   budget_pl: Budget P&L  – Ist | Ist% | Budget | Bud% | Abw.Bud CHF | VJ | VJ% | Abw.VJ CHF
  *   monthly:   Klassisch   – Ist | Ist% | VJ | VJ% | Abw.VJ CHF
- *   yearly:    Jahresübersicht – 12 Monate + Total, CHF + % pro Kennzahl
+ *   yearly:    Jahresübersicht – 12 Monate + Total
  *
- * Farblogik:  Ertrag/Ergebnis: positiv = grün, negativ = rot.
- *             Aufwand-Abweichung: günstiger = grün, teurer = rot.
+ * Optionale Blöcke (PLExportOptions):
+ *   1. Monatsreport – vollständige Erfolgsrechnung für den gewählten Monat
+ *   2. Vormonatsvergleich – Kennzahlen aktueller Monat vs. Vormonat
+ *   3. Kumulierte Übersicht – Jan bis gewählter Monat
+ *   4. Ausgewählte Monate – Summe über benutzerdefinierte Monatsauswahl
  *
  * Format: A4 Hochformat (210 × 297 mm)
- * Kumulierte Übersicht wird für budget_pl und monthly Modus am Ende angehängt.
  */
 
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PLMonthResult, PLYearResult, PLComputedRow } from '@/types/pl';
 import { MONTH_NAMES_SHORT_DE, MONTH_NAMES_DE } from '@/types/reporting';
+
+// ── Export-Optionen ───────────────────────────────────────────────────────────
+
+export interface PLExportOptions {
+  includeMonthReport:    boolean;
+  includePrevMonth:      boolean;
+  includeCumulative:     boolean;
+  includeSelectedMonths: boolean;
+  selectedMonths:        number[];  // 1-basiert (1 = Jan … 12 = Dez)
+}
 
 // ── Farb-Palette ──────────────────────────────────────────────────────────────
 
@@ -40,12 +52,10 @@ function swissNum(v: number): string {
   const s   = abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "'");
   return v < 0 ? `-${s}` : s;
 }
-
 function fmtCHF(v: number | undefined | null): string {
   if (v == null || v === 0) return '–';
   return swissNum(v);
 }
-
 function fmtPctRatio(value: number | undefined | null, base: number | undefined | null): string {
   if (value == null || !base || base === 0) return '–';
   const p = (value / base) * 100;
@@ -55,20 +65,12 @@ function fmtPctRatio(value: number | undefined | null, base: number | undefined 
 
 // ── Farblogik ─────────────────────────────────────────────────────────────────
 
-/** Farbe für Abweichungszellen */
-function varColor(
-  value: number | undefined | null,
-  isExpense: boolean,
-): [number, number, number] {
+function varColor(value: number | undefined | null, isExpense: boolean): [number, number, number] {
   if (value == null || Math.abs(value) < 0.5) return C.gray;
   const positive = value > 0;
   return (positive !== isExpense) ? C.green : C.red;
 }
 
-/**
- * Farbe für Ist-Wert in Ergebnis- / Totalzeilen.
- * Nur für result/subtotal: positiv = grün, negativ = rot.
- */
 function resultActualColor(
   actual: number | undefined | null,
   isResult: boolean,
@@ -81,17 +83,25 @@ function resultActualColor(
 function isExpenseRow(row: PLComputedRow): boolean {
   return row.def.valueRole === 'negative';
 }
-
 function indent(row: PLComputedRow): string {
   return '  '.repeat(Math.max(0, row.def.indent - 1));
 }
 
+// ── Hilfsfunktion: neue Seite wenn nötig ─────────────────────────────────────
+
+function ensureSpace(doc: jsPDF, afterY: number, neededH: number, gap = 10): number {
+  const PAGE_H = 297;
+  const MARGIN = 15;
+  const y = afterY + gap;
+  if (y + neededH > PAGE_H - MARGIN) {
+    doc.addPage();
+    return 10;
+  }
+  return y;
+}
+
 // ── Seitenkopf ────────────────────────────────────────────────────────────────
 
-/**
- * Prominenter Header: dunkler Navy-Block mit großem Monat/Jahr.
- * Returns y-position after the header.
- */
 function addPageHeader(
   doc: jsPDF,
   title: string,
@@ -125,7 +135,32 @@ function addPageHeader(
   return y + blockH + 5;
 }
 
-// ── KPI-Sektion ───────────────────────────────────────────────────────────────
+/** Kleiner Abschnitts-Header (navy-Block, kein großes Datum) */
+function addSectionHeader(
+  doc: jsPDF,
+  category: string,   // z.B. "VORMONATSVERGLEICH"
+  title: string,      // z.B. "April vs. März 2026"
+  y: number,
+  pageW: number,
+): number {
+  const blockH = 16;
+  doc.setFillColor(...C.navy);
+  doc.rect(10, y, pageW - 20, blockH, 'F');
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...C.navyHeader);
+  doc.text(category.toUpperCase(), 15, y + 5.5);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(...C.white);
+  doc.text(title, 15, y + 12.5);
+  doc.setTextColor(0, 0, 0);
+  return y + blockH + 2;
+}
+
+// ── KPI-Sektion (Monatskennzahlen oben) ──────────────────────────────────────
 
 function addKpiSection(
   doc: jsPDF,
@@ -146,10 +181,10 @@ function addKpiSection(
   const revPY = revRow?.values.prevYear;
 
   type KpiEntry = {
-    label:    string;
-    istCHF:   string;  istPct:  string;
-    budCHF:   string;  budPct:  string;
-    vjCHF:    string;  vjPct:   string;
+    label: string;
+    istCHF: string; istPct: string;
+    budCHF: string; budPct: string;
+    vjCHF:  string; vjPct:  string;
     istColor: [number, number, number];
   };
 
@@ -168,12 +203,12 @@ function addKpiSection(
       : (a == null || Math.abs(a) < 0.5 ? C.gray : a >= 0 ? C.green : C.red);
     return {
       label,
-      istCHF:  fmtCHF(a),
-      istPct:  showPct ? fmtPctRatio(a,  revA) : '–',
-      budCHF:  fmtCHF(b),
-      budPct:  showPct ? fmtPctRatio(b,  revB) : '–',
-      vjCHF:   fmtCHF(py),
-      vjPct:   showPct ? fmtPctRatio(py, revPY) : '–',
+      istCHF: fmtCHF(a),
+      istPct: showPct ? fmtPctRatio(a, revA) : '–',
+      budCHF: fmtCHF(b),
+      budPct: showPct ? fmtPctRatio(b, revB) : '–',
+      vjCHF:  fmtCHF(py),
+      vjPct:  showPct ? fmtPctRatio(py, revPY) : '–',
       istColor,
     };
   };
@@ -194,12 +229,7 @@ function addKpiSection(
 
   autoTable(doc, {
     startY: startY + 5,
-    head: [[
-      'Kennzahl',
-      'Ist CHF', 'Ist %',
-      'Budget CHF', 'Bud %',
-      'Vorjahr CHF', 'VJ %',
-    ]],
+    head: [['Kennzahl', 'Ist CHF', 'Ist %', 'Budget CHF', 'Bud %', 'Vorjahr CHF', 'VJ %']],
     body: kpis.map(k => [
       { content: k.label,   styles: { fontStyle: 'bold' as const } },
       { content: k.istCHF,  styles: { halign: 'right' as const, fontStyle: 'bold' as const, textColor: k.istColor } },
@@ -231,12 +261,12 @@ function addKpiSection(
   return (doc as any).lastAutoTable.finalY + 6;
 }
 
-// ── Budget P&L Tabellenkörper (9 Spalten: ohne Abw.% Spalten) ─────────────────
+// ── Budget P&L Tabellenkörper ─────────────────────────────────────────────────
 
 function buildBPLBody(
   rows: PLComputedRow[],
-  revA:  number | undefined,
-  revB:  number | undefined,
+  revA: number | undefined,
+  revB: number | undefined,
   revPY: number | undefined,
 ) {
   type CellDef = string | { content: string; styles: Record<string, unknown> };
@@ -246,7 +276,6 @@ function buildBPLBody(
   for (const row of rows) {
     const t = row.def.type;
     if (t === 'spacer' || t === 'percent_line') continue;
-
     const v     = row.values;
     const isExp = isExpenseRow(row);
 
@@ -265,40 +294,35 @@ function buildBPLBody(
                      : isSubtotal ? [235, 238, 248] as [number, number, number]
                      : undefined;
     const baseTxtColor = isResult ? C.white : undefined;
-
-    const istValColor = resultActualColor(v.actual, isResult, isSubtotal);
-    const istColor    = istValColor ?? baseTxtColor;
-    const abwBudC     = varColor(v.vsBudget,   isExp);
-    const abwVJC      = varColor(v.vsPrevYear, isExp);
+    const istValColor  = resultActualColor(v.actual, isResult, isSubtotal);
+    const istColor     = istValColor ?? baseTxtColor;
+    const abwBudC      = varColor(v.vsBudget,   isExp);
+    const abwVJC       = varColor(v.vsPrevYear, isExp);
 
     const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
       fontStyle: bold,
-      ...(fillColor     ? { fillColor }               : {}),
-      ...(baseTxtColor  ? { textColor: baseTxtColor } : {}),
+      ...(fillColor    ? { fillColor }               : {}),
+      ...(baseTxtColor ? { textColor: baseTxtColor } : {}),
       ...extra,
     });
 
     const label = indent(row) + row.def.label;
-    const pctA  = fmtPctRatio(v.actual,   revA);
-    const pctB  = fmtPctRatio(v.budget,   revB);
-    const pctPY = fmtPctRatio(v.prevYear, revPY);
-
     body.push([
-      { content: label,              styles: cs() },
-      { content: fmtCHF(v.actual),   styles: cs({ halign: 'right', fontStyle: 'bold', ...(istColor ? { textColor: istColor } : {}) }) },
-      { content: pctA,               styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
-      { content: fmtCHF(v.budget),   styles: cs({ halign: 'right' }) },
-      { content: pctB,               styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
-      { content: fmtCHF(v.vsBudget), styles: cs({ halign: 'right', textColor: isResult ? C.white : abwBudC }) },
-      { content: fmtCHF(v.prevYear), styles: cs({ halign: 'right' }) },
-      { content: pctPY,              styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: label,               styles: cs() },
+      { content: fmtCHF(v.actual),    styles: cs({ halign: 'right', fontStyle: 'bold', ...(istColor ? { textColor: istColor } : {}) }) },
+      { content: fmtPctRatio(v.actual,   revA),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: fmtCHF(v.budget),    styles: cs({ halign: 'right' }) },
+      { content: fmtPctRatio(v.budget,   revB),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: fmtCHF(v.vsBudget),  styles: cs({ halign: 'right', textColor: isResult ? C.white : abwBudC }) },
+      { content: fmtCHF(v.prevYear),  styles: cs({ halign: 'right' }) },
+      { content: fmtPctRatio(v.prevYear, revPY), styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
       { content: fmtCHF(v.vsPrevYear), styles: cs({ halign: 'right', textColor: isResult ? C.white : abwVJC }) },
     ]);
   }
   return body;
 }
 
-// ── Klassisch Tabellenkörper (6 Spalten: ohne Abw.VJ%) ───────────────────────
+// ── Klassisch Tabellenkörper ──────────────────────────────────────────────────
 
 function buildKlassischBody(
   rows: PLComputedRow[],
@@ -312,7 +336,6 @@ function buildKlassischBody(
   for (const row of rows) {
     const t = row.def.type;
     if (t === 'spacer' || t === 'percent_line') continue;
-
     const v     = row.values;
     const isExp = isExpenseRow(row);
 
@@ -331,10 +354,9 @@ function buildKlassischBody(
                      : isSubtotal ? [235, 238, 248] as [number, number, number]
                      : undefined;
     const baseTxtColor = isResult ? C.white : undefined;
-
-    const istValColor = resultActualColor(v.actual, isResult, isSubtotal);
-    const istColor    = istValColor ?? baseTxtColor;
-    const abwVJC      = varColor(v.vsPrevYear, isExp);
+    const istValColor  = resultActualColor(v.actual, isResult, isSubtotal);
+    const istColor     = istValColor ?? baseTxtColor;
+    const abwVJC       = varColor(v.vsPrevYear, isExp);
 
     const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
       fontStyle: bold,
@@ -344,52 +366,153 @@ function buildKlassischBody(
     });
 
     const label = indent(row) + row.def.label;
-    const pctA  = fmtPctRatio(v.actual,   revA);
-    const pctPY = fmtPctRatio(v.prevYear, revPY);
-
     body.push([
       { content: label,                styles: cs() },
       { content: fmtCHF(v.actual),     styles: cs({ halign: 'right', fontStyle: 'bold', ...(istColor ? { textColor: istColor } : {}) }) },
-      { content: pctA,                 styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: fmtPctRatio(v.actual,   revA),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
       { content: fmtCHF(v.prevYear),   styles: cs({ halign: 'right' }) },
-      { content: pctPY,                styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: fmtPctRatio(v.prevYear, revPY), styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
       { content: fmtCHF(v.vsPrevYear), styles: cs({ halign: 'right', textColor: isResult ? C.white : abwVJC }) },
     ]);
   }
   return body;
 }
 
-// ── Kumulierte Übersicht ───────────────────────────────────────────────────────
+// ── Block 2: Vormonatsvergleich ───────────────────────────────────────────────
 
-/**
- * Rendert die kumulierte Übersicht (Jan bis gewählter Monat) unter dem Monatsreport.
- * Startet auf neuer Seite, wenn nicht mehr genug Platz vorhanden.
- */
-function addCumulativeSection(
+function addPrevMonthComparison(
   doc: jsPDF,
   yearResult: PLYearResult,
-  month: number,
+  month: number,   // 1-basiert, aktueller Monat
   year: number,
   afterY: number,
   pageW: number,
 ): void {
-  const PAGE_H        = 297;
-  const MARGIN_BOTTOM = 15;
-  const SECTION_H     = 80; // geschätzte Mindesthöhe für Titelblock + Tabelle
+  if (month < 2) return;
+  const curIdx  = month - 1;   // 0-basiert
+  const prevIdx = month - 2;
 
-  let y = afterY + 10;
-  if (y + SECTION_H > PAGE_H - MARGIN_BOTTOM) {
-    doc.addPage();
-    y = 10;
-  }
+  const curResult  = yearResult.months[curIdx];
+  const prevResult = yearResult.months[prevIdx];
+  if (!curResult || !prevResult) return;
 
-  // Summiere Jan bis gewählten Monat
-  const cumMonths = yearResult.months.slice(0, month);
+  const y = ensureSpace(doc, afterY, 75);
+
+  const curName  = MONTH_NAMES_DE[month]      ?? '';
+  const prevName = MONTH_NAMES_DE[month - 1]  ?? '';
+
+  const tableStartY = addSectionHeader(
+    doc,
+    'VORMONATSVERGLEICH',
+    `${curName} vs. ${prevName} ${year}`,
+    y,
+    pageW,
+  );
+
+  // KPI-Daten holen
+  const getKpi = (result: PLMonthResult, id: string) =>
+    result.rows.find(r => r.def.id === id)?.values.actual ?? 0;
+
+  const curRev  = getKpi(curResult,  'net_revenue');
+  const prevRev = getKpi(prevResult, 'net_revenue');
+
+  interface VmRow { label: string; curV: number; prevV: number; isResult: boolean; isExpense: boolean; }
+
+  const rows: VmRow[] = [
+    { label: 'Betriebsertrag netto',  curV: curRev,                              prevV: prevRev,                              isResult: false, isExpense: false },
+    { label: 'Warenaufwand total',    curV: getKpi(curResult, 'total_cogs'),      prevV: getKpi(prevResult, 'total_cogs'),      isResult: false, isExpense: true },
+    { label: 'Personalaufwand total', curV: getKpi(curResult, 'total_personnel'), prevV: getKpi(prevResult, 'total_personnel'), isResult: false, isExpense: true },
+    { label: 'EBITDA',                curV: getKpi(curResult, 'ebitda'),          prevV: getKpi(prevResult, 'ebitda'),          isResult: true,  isExpense: false },
+    { label: 'EBIT',                  curV: getKpi(curResult, 'ebit'),            prevV: getKpi(prevResult, 'ebit'),            isResult: true,  isExpense: false },
+  ];
+
+  type CellDef = string | { content: string; styles: Record<string, unknown> };
+
+  const body: CellDef[][] = rows.map(({ label, curV, prevV, isResult, isExpense }) => {
+    const abwCHF = curV - prevV;
+    const abwPct = prevV !== 0 ? (abwCHF / Math.abs(prevV)) * 100 : 0;
+    const abwPctStr = prevV !== 0 ? `${abwPct > 0 ? '+' : ''}${abwPct.toFixed(1)} %` : '–';
+
+    const fillColor    = isResult ? C.navyMid : undefined;
+    const baseTxt      = isResult ? C.white   : undefined;
+    const istColor     = isResult ? (curV >= 0 ? C.green : C.red) : undefined;
+    const abwColor     = isResult ? C.white : varColor(abwCHF, isExpense);
+
+    const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+      fontStyle: 'bold' as const,
+      ...(fillColor ? { fillColor }           : {}),
+      ...(baseTxt   ? { textColor: baseTxt }  : {}),
+      ...extra,
+    });
+
+    return [
+      { content: label,               styles: cs() },
+      { content: fmtCHF(curV),        styles: cs({ halign: 'right', ...(istColor ? { textColor: istColor } : {}) }) },
+      { content: fmtPctRatio(curV,  curRev),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray, fontStyle: 'normal' }) },
+      { content: fmtCHF(prevV),       styles: cs({ halign: 'right', fontStyle: 'normal' }) },
+      { content: fmtPctRatio(prevV, prevRev), styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray, fontStyle: 'normal' }) },
+      { content: fmtCHF(abwCHF),      styles: cs({ halign: 'right', textColor: abwColor, fontStyle: 'normal' }) },
+      { content: abwPctStr,            styles: cs({ halign: 'right', textColor: abwColor, fontStyle: 'normal' }) },
+    ];
+  });
+
+  autoTable(doc, {
+    startY: tableStartY,
+    head: [[
+      'Kennzahl',
+      `${MONTH_NAMES_SHORT_DE[month]} CHF`,    `${MONTH_NAMES_SHORT_DE[month]} %`,
+      `${MONTH_NAMES_SHORT_DE[month - 1]} CHF`, `${MONTH_NAMES_SHORT_DE[month - 1]} %`,
+      'Abw. CHF', 'Abw. %',
+    ]],
+    body: body as string[][],
+    theme: 'plain',
+    headStyles: {
+      fillColor: C.navyLight, textColor: C.white,
+      fontStyle: 'bold', fontSize: 7,
+      cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+    },
+    bodyStyles: { fontSize: 7.5, cellPadding: { top: 2.2, bottom: 2.2, left: 2, right: 2 } },
+    alternateRowStyles: { fillColor: C.slateLight },
+    columnStyles: {
+      0: { cellWidth: 50 },
+      1: { halign: 'right', cellWidth: 20 },
+      2: { halign: 'right', cellWidth: 13 },
+      3: { halign: 'right', cellWidth: 20 },
+      4: { halign: 'right', cellWidth: 13 },
+      5: { halign: 'right', cellWidth: 20 },
+      6: { halign: 'right', cellWidth: 20 },
+    },
+  });
+}
+
+// ── Block 3 + 4: Kumulierte / Ausgewählte Monate ─────────────────────────────
+
+/**
+ * Summiert Kennzahlen über beliebige Monate aus yearResult und rendert einen Block.
+ * @param monthIndices  0-basierte Indizes in yearResult.months
+ * @param category      Kopfzeile (z.B. "KUMULIERTE ÜBERSICHT")
+ * @param title         Untertitel (z.B. "Januar bis April 2026")
+ */
+function addKpiSummaryBlock(
+  doc: jsPDF,
+  yearResult: PLYearResult,
+  monthIndices: number[],
+  category: string,
+  title: string,
+  afterY: number,
+  pageW: number,
+): void {
+  if (monthIndices.length === 0) return;
+
+  const y = ensureSpace(doc, afterY, 80);
+  const tableStartY = addSectionHeader(doc, category, title, y, pageW);
 
   const sumKpi = (id: string) => {
     let actual = 0, budget = 0, prevYear = 0;
-    for (const m of cumMonths) {
-      const r = m.rows.find(row => row.def.id === id);
+    for (const idx of monthIndices) {
+      const mr = yearResult.months[idx];
+      if (!mr) continue;
+      const r = mr.rows.find(row => row.def.id === id);
       actual   += r?.values.actual   ?? 0;
       budget   += r?.values.budget   ?? 0;
       prevYear += r?.values.prevYear ?? 0;
@@ -403,25 +526,6 @@ function addCumulativeSection(
   const ebitda = sumKpi('ebitda');
   const ebit   = sumKpi('ebit');
 
-  const monthNameFull = MONTH_NAMES_DE[month] ?? '';
-
-  // ── Titelblock ────────────────────────────────────────────────────────────
-  const blockH = 16;
-  doc.setFillColor(...C.navy);
-  doc.rect(10, y, pageW - 20, blockH, 'F');
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(...C.navyHeader);
-  doc.text('KUMULIERTE ÜBERSICHT', 15, y + 5.5);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(12);
-  doc.setTextColor(...C.white);
-  doc.text(`Januar bis ${monthNameFull} ${year}`, 15, y + 12.5);
-  doc.setTextColor(0, 0, 0);
-
-  // ── Tabelle ───────────────────────────────────────────────────────────────
   type CellDef = string | { content: string; styles: Record<string, unknown> };
 
   const makeRow = (
@@ -439,14 +543,11 @@ function addCumulativeSection(
 
     const fillColor    = isResult ? C.navyMid : undefined;
     const baseTxtColor = isResult ? C.white   : undefined;
-
-    // Für Ergebniszeilen: Ist-Wert grün/rot. Für Aufwand: neutral (grau).
-    const istColor = isResult
-      ? (vals.actual >= 0 ? C.green : C.red)
-      : isExpense ? undefined : (vals.actual >= 0 ? C.green : C.red);
-
-    const abwBudColor = isResult ? C.white : varColor(abwBudRaw, isExpense);
-    const abwVJColor  = isResult ? C.white : varColor(abwVJRaw,  isExpense);
+    const istColor     = isResult ? (vals.actual >= 0 ? C.green : C.red)
+                       : isExpense ? undefined
+                       : (vals.actual >= 0 ? C.green : C.red);
+    const abwBudColor  = isResult ? C.white : varColor(abwBudRaw, isExpense);
+    const abwVJColor   = isResult ? C.white : varColor(abwVJRaw,  isExpense);
 
     const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
       fontStyle: 'bold',
@@ -477,14 +578,8 @@ function addCumulativeSection(
   ];
 
   autoTable(doc, {
-    startY: y + blockH + 2,
-    head: [[
-      'Kennzahl',
-      'Ist CHF',    'Ist %',
-      'Budget CHF', 'Bud %',
-      'VJ CHF',     'VJ %',
-      'Abw. Budget', 'Abw. VJ',
-    ]],
+    startY: tableStartY,
+    head: [['Kennzahl', 'Ist CHF', 'Ist %', 'Budget CHF', 'Bud %', 'VJ CHF', 'VJ %', 'Abw. Budget', 'Abw. VJ']],
     body: body as string[][],
     theme: 'plain',
     headStyles: {
@@ -516,7 +611,17 @@ export function exportPLToPDF(
   year:        number,
   month:       number,
   mode: 'budget_pl' | 'monthly' | 'yearly' = 'budget_pl',
+  options?: PLExportOptions,
 ): void {
+  // Defaults: alles eingeschlossen (Rückwärtskompatibilität)
+  const opts: PLExportOptions = options ?? {
+    includeMonthReport:    true,
+    includePrevMonth:      month > 1,
+    includeCumulative:     month > 1,
+    includeSelectedMonths: false,
+    selectedMonths:        Array.from({ length: month }, (_, i) => i + 1),
+  };
+
   const doc      = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const now      = new Date().toLocaleDateString('de-CH');
   const subtitle = `Oliv Gastro AG · Exportiert am ${now}`;
@@ -527,93 +632,103 @@ export function exportPLToPDF(
   const revPY = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.prevYear;
 
   // ──── Budget P&L ─────────────────────────────────────────────────────────
-  if (mode === 'budget_pl') {
-    const yH = addPageHeader(doc, 'Erfolgsrechnung – Budget P&L', subtitle, month, year, PAGE_W);
-    const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
+  if (mode === 'budget_pl' || mode === 'monthly') {
+    const isBPL = mode === 'budget_pl';
 
-    const body = buildBPLBody(monthResult.rows, revA, revB, revPY);
+    if (opts.includeMonthReport) {
+      const title = isBPL ? 'Erfolgsrechnung – Budget P&L' : 'Erfolgsrechnung – Monatsansicht';
+      const yH = addPageHeader(doc, title, subtitle, month, year, PAGE_W);
+      const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
 
-    autoTable(doc, {
-      startY: yK,
-      head: [[
-        'Position',
-        'Ist CHF', 'Ist %',
-        'Budget CHF', 'Bud %',
-        'Abw. Budget',
-        'Vorjahr CHF', 'VJ %',
-        'Abw. VJ',
-      ]],
-      body: body as string[][],
-      theme: 'plain',
-      headStyles: {
-        fillColor: C.navyLight, textColor: C.white,
-        fontStyle: 'bold', fontSize: 7,
-        cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
-      },
-      bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
-      alternateRowStyles: { fillColor: C.slateLight },
-      columnStyles: {
-        0: { cellWidth: 52 },
-        1: { halign: 'right', cellWidth: 18 },
-        2: { halign: 'right', cellWidth: 11 },
-        3: { halign: 'right', cellWidth: 18 },
-        4: { halign: 'right', cellWidth: 11 },
-        5: { halign: 'right', cellWidth: 18 },
-        6: { halign: 'right', cellWidth: 18 },
-        7: { halign: 'right', cellWidth: 11 },
-        8: { halign: 'right', cellWidth: 18 },
-      },
-      didParseCell: (data) => {
-        if (data.row.raw && Array.isArray(data.row.raw) && data.column.index > 0) {
-          const first = (data.row.raw as any[])[0];
-          if (first?.styles?.colSpan === 9) data.cell.styles.fillColor = C.navy;
-        }
-      },
-    });
+      if (isBPL) {
+        const body = buildBPLBody(monthResult.rows, revA, revB, revPY);
+        autoTable(doc, {
+          startY: yK,
+          head: [['Position', 'Ist CHF', 'Ist %', 'Budget CHF', 'Bud %', 'Abw. Budget', 'Vorjahr CHF', 'VJ %', 'Abw. VJ']],
+          body: body as string[][],
+          theme: 'plain',
+          headStyles: { fillColor: C.navyLight, textColor: C.white, fontStyle: 'bold', fontSize: 7, cellPadding: { top: 2, bottom: 2, left: 2, right: 2 } },
+          bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
+          alternateRowStyles: { fillColor: C.slateLight },
+          columnStyles: {
+            0: { cellWidth: 52 },
+            1: { halign: 'right', cellWidth: 18 },
+            2: { halign: 'right', cellWidth: 11 },
+            3: { halign: 'right', cellWidth: 18 },
+            4: { halign: 'right', cellWidth: 11 },
+            5: { halign: 'right', cellWidth: 18 },
+            6: { halign: 'right', cellWidth: 18 },
+            7: { halign: 'right', cellWidth: 11 },
+            8: { halign: 'right', cellWidth: 18 },
+          },
+          didParseCell: (data) => {
+            if (data.row.raw && Array.isArray(data.row.raw) && data.column.index > 0) {
+              const first = (data.row.raw as any[])[0];
+              if (first?.styles?.colSpan === 9) data.cell.styles.fillColor = C.navy;
+            }
+          },
+        });
+      } else {
+        const body = buildKlassischBody(monthResult.rows, revA, revPY);
+        autoTable(doc, {
+          startY: yK,
+          head: [['Position', 'Ist CHF', 'Ist %', 'Vorjahr CHF', 'VJ %', 'Abw. VJ']],
+          body: body as string[][],
+          theme: 'plain',
+          headStyles: { fillColor: C.navyLight, textColor: C.white, fontStyle: 'bold', fontSize: 7, cellPadding: { top: 2, bottom: 2, left: 2, right: 2 } },
+          bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
+          alternateRowStyles: { fillColor: C.slateLight },
+          columnStyles: {
+            0: { cellWidth: 75 },
+            1: { halign: 'right', cellWidth: 26 },
+            2: { halign: 'right', cellWidth: 15 },
+            3: { halign: 'right', cellWidth: 26 },
+            4: { halign: 'right', cellWidth: 15 },
+            5: { halign: 'right', cellWidth: 26 },
+          },
+          didParseCell: (data) => {
+            if (data.row.raw && Array.isArray(data.row.raw) && data.column.index > 0) {
+              const first = (data.row.raw as any[])[0];
+              if (first?.styles?.colSpan === 6) data.cell.styles.fillColor = C.navy;
+            }
+          },
+        });
+      }
+    }
 
-    // Kumulierte Übersicht anhängen
-    const mainFinalY = (doc as any).lastAutoTable.finalY;
-    addCumulativeSection(doc, yearResult, month, year, mainFinalY, PAGE_W);
-  }
+    // ── Block 2: Vormonatsvergleich ──────────────────────────────────────
+    if (opts.includePrevMonth && month > 1) {
+      const prevAfterY = (doc as any).lastAutoTable?.finalY ?? 10;
+      addPrevMonthComparison(doc, yearResult, month, year, prevAfterY, PAGE_W);
+    }
 
-  // ──── Klassisch ──────────────────────────────────────────────────────────
-  else if (mode === 'monthly') {
-    const yH = addPageHeader(doc, 'Erfolgsrechnung – Monatsansicht', subtitle, month, year, PAGE_W);
-    const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
+    // ── Block 3: Kumulierte Übersicht Jan bis aktueller Monat ───────────
+    if (opts.includeCumulative && month > 1) {
+      const cumAfterY  = (doc as any).lastAutoTable?.finalY ?? 10;
+      const cumIndices = Array.from({ length: month }, (_, i) => i);
+      const monthName  = MONTH_NAMES_DE[month] ?? '';
+      addKpiSummaryBlock(
+        doc, yearResult, cumIndices,
+        'KUMULIERTE ÜBERSICHT',
+        `Januar bis ${monthName} ${year}`,
+        cumAfterY, PAGE_W,
+      );
+    }
 
-    const body = buildKlassischBody(monthResult.rows, revA, revPY);
-
-    autoTable(doc, {
-      startY: yK,
-      head: [['Position', 'Ist CHF', 'Ist %', 'Vorjahr CHF', 'VJ %', 'Abw. VJ']],
-      body: body as string[][],
-      theme: 'plain',
-      headStyles: {
-        fillColor: C.navyLight, textColor: C.white,
-        fontStyle: 'bold', fontSize: 7,
-        cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
-      },
-      bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
-      alternateRowStyles: { fillColor: C.slateLight },
-      columnStyles: {
-        0: { cellWidth: 75 },
-        1: { halign: 'right', cellWidth: 26 },
-        2: { halign: 'right', cellWidth: 15 },
-        3: { halign: 'right', cellWidth: 26 },
-        4: { halign: 'right', cellWidth: 15 },
-        5: { halign: 'right', cellWidth: 26 },
-      },
-      didParseCell: (data) => {
-        if (data.row.raw && Array.isArray(data.row.raw) && data.column.index > 0) {
-          const first = (data.row.raw as any[])[0];
-          if (first?.styles?.colSpan === 6) data.cell.styles.fillColor = C.navy;
-        }
-      },
-    });
-
-    // Kumulierte Übersicht anhängen
-    const mainFinalY = (doc as any).lastAutoTable.finalY;
-    addCumulativeSection(doc, yearResult, month, year, mainFinalY, PAGE_W);
+    // ── Block 4: Ausgewählte Monate ──────────────────────────────────────
+    if (opts.includeSelectedMonths && opts.selectedMonths.length > 0) {
+      const selAfterY  = (doc as any).lastAutoTable?.finalY ?? 10;
+      const selIndices = opts.selectedMonths.map(m => m - 1).filter(i => i >= 0 && i < 12);
+      const selNames   = opts.selectedMonths
+        .map(m => MONTH_NAMES_SHORT_DE[m])
+        .filter(Boolean).join(', ');
+      addKpiSummaryBlock(
+        doc, yearResult, selIndices,
+        'AUSGEWÄHLTE MONATE',
+        `${selNames} ${year}`,
+        selAfterY, PAGE_W,
+      );
+    }
   }
 
   // ──── Jahresübersicht ────────────────────────────────────────────────────
@@ -709,7 +824,6 @@ export function exportPLToPDF(
       }
     }
 
-    // Portrait: labelW=34, colW=12 → 34+13×12=190mm
     const labelW = 34;
     const colW   = 12;
     autoTable(doc, {
@@ -717,17 +831,11 @@ export function exportPLToPDF(
       head: [['Position', ...monthCols, 'Total']],
       body: yearBody as string[][],
       theme: 'plain',
-      headStyles: {
-        fillColor: C.navyLight, textColor: C.white,
-        fontStyle: 'bold', fontSize: 6,
-        cellPadding: { top: 2, bottom: 2, left: 1, right: 1 },
-      },
+      headStyles: { fillColor: C.navyLight, textColor: C.white, fontStyle: 'bold', fontSize: 6, cellPadding: { top: 2, bottom: 2, left: 1, right: 1 } },
       bodyStyles: { fontSize: 6, cellPadding: { top: 1, bottom: 1, left: 1, right: 1 } },
       columnStyles: {
         0: { cellWidth: labelW },
-        ...Object.fromEntries(
-          Array.from({ length: 13 }, (_, i) => [i + 1, { halign: 'right', cellWidth: colW }])
-        ),
+        ...Object.fromEntries(Array.from({ length: 13 }, (_, i) => [i + 1, { halign: 'right', cellWidth: colW }])),
       },
     });
   }
