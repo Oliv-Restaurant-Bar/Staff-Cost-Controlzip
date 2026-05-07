@@ -909,15 +909,18 @@ const InlineIstCell = ({
     const storeKey = tenantKey(REPORTING_STORAGE_KEY);
     const account  = row.itemAccountNumber;
     try {
-      if (row.catId === 'pl_revenue') {
-        saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, storeKey);
-      } else if (row.catId === 'pl_wages' && row.isCategory) {
+      // Lohnaufwand-Kategorie → personnelCostActual
+      if (row.catId === 'pl_wages' && row.isCategory) {
         saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, storeKey);
+      // Alle Item-Zeilen mit Kontonummer (inkl. Betriebsertrag-Konten) → expenseCategories
       } else if (!row.isCategory && account) {
         const existing = loadYear(year, storeKey)[month - 1];
         const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
         cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? account });
         saveMonth({ year, month, expenseCategories: cats }, 'manual_entry', 'update', { note: `Manuelle Eingabe Konto ${account}` }, storeKey);
+      // Betriebsertrag-Kategorie ohne einzelne Konten → revenueActual
+      } else if (row.catId === 'pl_revenue' && row.isCategory) {
+        saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe Umsatz' }, storeKey);
       } else {
         onCancel();
         return;
@@ -1352,15 +1355,18 @@ const BudgetPLDrilldownDialog = ({
 
     const storeKey = tenantKey(REPORTING_STORAGE_KEY);
     try {
-      if (row.catId === 'pl_revenue') {
-        saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, storeKey);
-      } else if (row.catId === 'pl_wages' && row.isCategory) {
+      // Lohnaufwand-Kategorie → personnelCostActual
+      if (row.catId === 'pl_wages' && row.isCategory) {
         saveMonth({ year, month, personnelCostActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe' }, storeKey);
+      // Alle Item-Zeilen mit Kontonummer (inkl. Betriebsertrag-Konten) → expenseCategories
       } else if (!row.isCategory && account) {
         const existing = loadYear(year, storeKey)[month - 1];
         const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
         cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? label });
         saveMonth({ year, month, expenseCategories: cats }, 'manual_entry', 'update', { note: `Manuelle Eingabe Konto ${account}` }, storeKey);
+      // Betriebsertrag-Kategorie (kein einzelnes Konto) → revenueActual
+      } else if (row.catId === 'pl_revenue' && row.isCategory) {
+        saveMonth({ year, month, revenueActual: num }, 'manual_entry', 'update', { note: 'Manuelle Eingabe Umsatz' }, storeKey);
       } else {
         return;
       }
