@@ -79,7 +79,7 @@ const fmtCHF = (v: number | undefined): string => {
 const ROW_STYLE: Record<string, string> = {
   section:     'bg-[#4F6F52] text-white dark:bg-[#3d5640]',
   subtotal:    'bg-slate-100 dark:bg-slate-800/60 font-semibold border-t border-b border-slate-300 dark:border-slate-600',
-  result:      'bg-[#F7F0E3] dark:bg-slate-800/60 font-bold text-base border-t-2 border-[#4F6F52] dark:border-[#3d5640]',
+  result:      'bg-[#F7F0E3] dark:bg-slate-800/60 font-bold text-base border-t-2 border-[#4F6F52] dark:border-[#3d5640] text-gray-900 dark:text-gray-100',
   line:        'hover:bg-muted/30 cursor-pointer border-b border-slate-100 dark:border-slate-800',
   percent_line:'bg-transparent text-muted-foreground text-xs italic',
   spacer:      'h-2 bg-transparent',
@@ -1064,7 +1064,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
     const isPos = v.actual >= 0;
     const p = pctVal(v.actual);
     return (
-      <tr className="bg-[#F7F0E3] dark:bg-slate-800/80 font-bold border-t-2 border-b border-[#4F6F52] dark:border-[#3d5640]">
+      <tr className="bg-[#F7F0E3] dark:bg-slate-800/80 font-bold border-t-2 border-b border-[#4F6F52] dark:border-[#3d5640] text-gray-900 dark:text-gray-100">
         <td className={cn('px-3 text-sm', pyResult)} colSpan={2}>{row.catLabel}</td>
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums font-bold', pyResult,
           isPos ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600'
