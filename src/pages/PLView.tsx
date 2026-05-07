@@ -1084,15 +1084,20 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
     return (
       <tr
         className="bg-slate-700 text-white dark:bg-slate-800 cursor-pointer hover:bg-slate-600 transition-colors select-none"
-        onClick={() => onToggleCollapse ? onToggleCollapse() : onClick()}
-        title={isCollapsed ? `${row.catLabel} – ausklappen` : `${row.catLabel} – einklappen`}
+        onClick={onClick}
       >
         <td className={cn('px-3 text-xs font-bold tracking-wider', py)} colSpan={2}>
           <span className="inline-flex items-center gap-1.5">
-            {isCollapsed
-              ? <ChevronRight className="h-3 w-3 opacity-70 shrink-0" />
-              : <ChevronDown  className="h-3 w-3 opacity-70 shrink-0" />
-            }
+            <span
+              onClick={e => { e.stopPropagation(); onToggleCollapse?.(); }}
+              title={isCollapsed ? `${row.catLabel} – ausklappen` : `${row.catLabel} – einklappen`}
+              className="hover:opacity-100 opacity-60 transition-opacity cursor-pointer p-0.5 -m-0.5 rounded"
+            >
+              {isCollapsed
+                ? <ChevronRight className="h-3 w-3 shrink-0" />
+                : <ChevronDown  className="h-3 w-3 shrink-0" />
+              }
+            </span>
             {row.catLabel}
           </span>
         </td>
