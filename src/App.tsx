@@ -190,7 +190,7 @@ const AppContent = () => {
               element={isBeaulieuManager ? <BlockedRoute path="/erfolgsrechnung" /> : <PLViewPage />}
             />
             <Route path="/csv-import"
-              element={isBeaulieuManager ? <BlockedRoute path="/csv-import" /> : <CSVImportPage />}
+              element={<CSVImportPage />}
             />
             <Route path="/import"
               element={<ImportHub />}

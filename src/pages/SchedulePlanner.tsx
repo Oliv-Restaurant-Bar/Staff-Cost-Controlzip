@@ -180,6 +180,7 @@ const SchedulePlanner = () => {
     isAdmin,
     isServiceManager,
     isKuecheManager,
+    isBeaulieuManager,
     canSeeHourlyWages,
     canSeePersonnelCostTotals,
     canToggleCostView,
@@ -2767,10 +2768,19 @@ const SchedulePlanner = () => {
                   variant={showCosts ? 'default' : 'outline'}
                   size="sm"
                   className="h-7 gap-1.5 text-xs px-2.5"
-                  onClick={() => showCosts ? setShowCosts(false) : setCostPasswordDialogOpen(true)}
-                  title={showCosts ? 'Kosten ausblenden' : 'Kosten einblenden (Passwort erforderlich)'}
+                  onClick={() => {
+                    if (showCosts) {
+                      setShowCosts(false);
+                    } else if (isBeaulieuManager) {
+                      setShowCosts(true);
+                      setShowFooter(true);
+                    } else {
+                      setCostPasswordDialogOpen(true);
+                    }
+                  }}
+                  title={showCosts ? 'Kosten ausblenden' : 'Kosten einblenden'}
                 >
-                  {showCosts ? <Euro className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+                  {showCosts ? <Euro className="h-3.5 w-3.5" /> : <Euro className="h-3.5 w-3.5" />}
                   <span className="hidden sm:inline">Kosten</span>
                 </Button>
               </>
