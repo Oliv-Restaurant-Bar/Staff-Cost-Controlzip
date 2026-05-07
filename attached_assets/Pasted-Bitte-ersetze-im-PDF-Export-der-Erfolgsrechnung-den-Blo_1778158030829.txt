@@ -1,0 +1,153 @@
+Bitte ersetze im PDF Export der Erfolgsrechnung den Block "Ausgewählte Monate".
+
+Aktuell:
+Der Block "Ausgewählte Monate" summiert alle ausgewählten Monate kumuliert zusammen.
+
+Das ist nicht gewünscht.
+
+Neu:
+Der Block soll die ausgewählten Monate miteinander vergleichen, damit der monatliche Verlauf sichtbar wird.
+
+---
+
+1. Neuer Titel
+
+Statt:
+"AUSGEWÄHLTE MONATE"
+"Jan, Feb, Mär, Apr 2026"
+
+Neu:
+"MONATSVERGLEICH"
+"Januar bis April 2026"
+
+---
+
+2. Neue Tabellenlogik
+
+Die ausgewählten Monate sollen nebeneinander als Spalten angezeigt werden.
+
+Beispiel:
+
+Kennzahl | Jan | Feb | Mär | Apr | Entwicklung
+
+Zeilen:
+- Betriebsertrag netto
+- Warenaufwand total
+- Warenaufwand %
+- Personalaufwand total
+- Personalaufwand %
+- EBITDA
+- EBITDA %
+- EBIT
+- EBIT %
+
+---
+
+3. Keine kumulierte Summe in diesem Block
+
+Wichtig:
+In diesem Block keine Summe der Monate bilden.
+
+Jeder Monat soll einzeln angezeigt werden.
+
+Beispiel:
+
+Betriebsertrag netto:
+Jan CHF 256’003
+Feb CHF 227’396
+Mär CHF 290’014
+Apr CHF 267’920
+
+Warenaufwand %:
+Jan 29.6 %
+Feb 29.6 %
+Mär 27.2 %
+Apr 25.5 %
+
+---
+
+4. Entwicklungsspalte
+
+Optional aber gewünscht:
+Ganz rechts eine Spalte "Trend" oder "Entwicklung".
+
+Beispiele:
+- Umsatz Apr vs Jan
+- oder letzter Monat vs erster Monat
+
+Anzeige:
++CHF 11’917
++4.7 %
+
+Bei Prozentkennzahlen:
+-4.1 pp
+
+---
+
+5. Farblogik
+
+Bei Umsatz:
+steigend = grün
+sinkend = rot
+
+Bei Aufwand %:
+sinkend = grün
+steigend = rot
+
+Bei Personalquote:
+sinkend = grün
+steigend = rot
+
+Bei EBITDA / EBIT:
+besser = grün
+schlechter = rot
+
+---
+
+6. Monatsauswahl bleibt bestehen
+
+Die Checkboxen im PDF Export bleiben erhalten.
+
+Wenn der Benutzer Jan, Mär, Apr auswählt:
+Dann zeigt der Monatsvergleich nur:
+Jan | Mär | Apr
+
+Wenn der Benutzer Jan bis Apr auswählt:
+Dann zeigt:
+Jan | Feb | Mär | Apr
+
+---
+
+7. Hochformat beachten
+
+Der Export soll weiterhin Hochformat bleiben.
+
+Wenn zu viele Monate ausgewählt werden:
+Bitte kompakter darstellen oder automatisch auf mehrere Zeilen/Seiten umbrechen.
+
+Empfehlung:
+Maximal 6 Monate pro Tabelle.
+Bei mehr als 6 Monaten:
+zweite Tabelle auf neuer Seite oder darunter.
+
+---
+
+8. Wichtig
+
+Die bisherige kumulierte Übersicht Januar bis April kann zusätzlich bestehen bleiben,
+aber dieser Block "Ausgewählte Monate" soll NICHT kumuliert sein.
+
+Er soll ein Monatsvergleich / Verlauf sein.
+
+---
+
+9. Tests
+
+Bitte testen:
+- Jan bis Apr ausgewählt
+- Tabelle zeigt Jan, Feb, Mär, Apr einzeln
+- Keine kumulierte Summe in diesem Block
+- Prozentwerte pro Monat korrekt
+- Trendspalte korrekt
+- Farben logisch
+- Hochformat bleibt lesbar

@@ -603,6 +603,205 @@ function addKpiSummaryBlock(
   });
 }
 
+// ── Block 4: Monatsvergleich (Monate als Spalten) ─────────────────────────────
+
+/**
+ * Zeigt ausgewählte Monate nebeneinander als Spalten.
+ * Keine kumulierte Summe – jeder Monat ist ein einzelner Wert.
+ * Max. 6 Monate pro Tabelle; bei mehr wird eine zweite Tabelle angehängt.
+ *
+ * @param selectedMonths  1-basiert, sortiert (z.B. [1,2,3,4])
+ */
+function addMonthComparisonBlock(
+  doc: jsPDF,
+  yearResult: PLYearResult,
+  selectedMonths: number[],
+  year: number,
+  afterY: number,
+  pageW: number,
+): void {
+  if (selectedMonths.length === 0) return;
+
+  const CHUNK_SIZE = 6;
+  const indices = selectedMonths.map(m => m - 1); // 0-basiert
+
+  // Titel
+  const isConsecutive = selectedMonths.every((m, i) => i === 0 || m === selectedMonths[i - 1] + 1);
+  const title = isConsecutive && selectedMonths.length > 1
+    ? `${MONTH_NAMES_DE[selectedMonths[0]]} bis ${MONTH_NAMES_DE[selectedMonths[selectedMonths.length - 1]]} ${year}`
+    : `${selectedMonths.map(m => MONTH_NAMES_SHORT_DE[m]).filter(Boolean).join(', ')} ${year}`;
+
+  const y = ensureSpace(doc, afterY, 90);
+  const headerEndY = addSectionHeader(doc, 'MONATSVERGLEICH', title, y, pageW);
+
+  // Kennzahlen-Definitionen
+  interface RowDef {
+    id:        string;
+    label:     string;
+    isExpense: boolean;
+    isPctRow:  boolean;
+    isResult:  boolean;
+  }
+  const ROW_DEFS: RowDef[] = [
+    { id: 'net_revenue',     label: 'Betriebsertrag netto',  isExpense: false, isPctRow: false, isResult: false },
+    { id: 'total_cogs',      label: 'Warenaufwand total',    isExpense: true,  isPctRow: false, isResult: false },
+    { id: 'total_cogs',      label: 'Warenaufwand %',        isExpense: true,  isPctRow: true,  isResult: false },
+    { id: 'total_personnel', label: 'Personalaufwand total', isExpense: true,  isPctRow: false, isResult: false },
+    { id: 'total_personnel', label: 'Personalaufwand %',     isExpense: true,  isPctRow: true,  isResult: false },
+    { id: 'ebitda',          label: 'EBITDA',                isExpense: false, isPctRow: false, isResult: true  },
+    { id: 'ebitda',          label: 'EBITDA %',              isExpense: false, isPctRow: true,  isResult: true  },
+    { id: 'ebit',            label: 'EBIT',                  isExpense: false, isPctRow: false, isResult: true  },
+    { id: 'ebit',            label: 'EBIT %',                isExpense: false, isPctRow: true,  isResult: true  },
+  ];
+
+  const getVal = (monthIdx: number, id: string): number =>
+    yearResult.months[monthIdx]?.rows.find(r => r.def.id === id)?.values.actual ?? 0;
+  const getRevVal = (monthIdx: number): number => getVal(monthIdx, 'net_revenue');
+
+  // Trend-Referenz: letzter vs. erster ausgewählter Monat
+  const firstIdx = indices[0];
+  const lastIdx  = indices[indices.length - 1];
+
+  // Chunks bilden (max. 6 Monate pro Tabelle)
+  const chunks: number[][] = [];
+  for (let i = 0; i < indices.length; i += CHUNK_SIZE) {
+    chunks.push(indices.slice(i, i + CHUNK_SIZE));
+  }
+
+  let currentY = headerEndY;
+
+  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+    const chunk = chunks[chunkIdx];
+    const n     = chunk.length;
+
+    // Spaltenbreiten: Label (42) + n×Monate + Trend (24) ≤ 190mm
+    const LABEL_W = 42;
+    const TREND_W = 24;
+    const perMonthW = Math.floor((pageW - 20 - LABEL_W - TREND_W) / n);
+
+    const head = [
+      'Kennzahl',
+      ...chunk.map(idx => MONTH_NAMES_SHORT_DE[idx + 1] ?? ''),
+      'Trend',
+    ];
+
+    type CellDef = string | { content: string; styles: Record<string, unknown> };
+    const body: CellDef[][] = [];
+
+    for (const rowDef of ROW_DEFS) {
+      const { id, label, isExpense, isPctRow, isResult } = rowDef;
+      const fillColor    = isResult ? C.navyMid : undefined;
+      const baseTxtColor = isResult ? C.white   : undefined;
+
+      const labelStyle: Record<string, unknown> = {
+        fontStyle: isResult ? 'bold' : isPctRow ? 'italic' : 'normal',
+        fontSize:  isPctRow ? 6.5 : 7.5,
+        ...(fillColor    ? { fillColor }               : {}),
+        ...(baseTxtColor ? { textColor: baseTxtColor } : {}),
+      };
+
+      // Monatsspalten
+      const monthCells: CellDef[] = chunk.map(monthIdx => {
+        const revV = getRevVal(monthIdx);
+        const v    = getVal(monthIdx, id);
+        let content: string;
+        let textColor: [number, number, number] | undefined;
+
+        if (isPctRow) {
+          content   = fmtPctRatio(v, revV);
+          textColor = isResult ? C.white : C.gray;
+        } else {
+          content   = fmtCHF(v);
+          textColor = isResult ? (v >= 0 ? C.green : C.red) : undefined;
+        }
+
+        return {
+          content,
+          styles: {
+            halign:    'right',
+            fontStyle: isPctRow ? 'normal' : isResult ? 'bold' : 'normal',
+            fontSize:  isPctRow ? 6.5 : 7.5,
+            ...(fillColor    ? { fillColor }               : {}),
+            ...(baseTxtColor ? { textColor: baseTxtColor } : {}),
+            ...(textColor    ? { textColor }               : {}),
+          },
+        };
+      });
+
+      // Trendspalte (letzter vs. erster Monat der Gesamtauswahl)
+      const firstV    = getVal(firstIdx,  id);
+      const lastV     = getVal(lastIdx,   id);
+      const firstRevV = getRevVal(firstIdx);
+      const lastRevV  = getRevVal(lastIdx);
+
+      let trendContent: string;
+      let trendColor:   [number, number, number];
+
+      if (isPctRow) {
+        const firstPct = firstRevV !== 0 ? (firstV / firstRevV) * 100 : 0;
+        const lastPct  = lastRevV  !== 0 ? (lastV  / lastRevV)  * 100 : 0;
+        const diff     = lastPct - firstPct;
+        trendContent   = `${diff >= 0 ? '+' : ''}${diff.toFixed(1)} pp`;
+        trendColor     = isExpense ? (diff <= 0 ? C.green : C.red) : (diff >= 0 ? C.green : C.red);
+      } else {
+        const diff    = lastV - firstV;
+        const diffPct = firstV !== 0 ? (diff / Math.abs(firstV)) * 100 : 0;
+        trendContent  = `${diff >= 0 ? '+' : ''}${swissNum(diff)}`;
+        if (Math.abs(firstV) > 0.5) {
+          trendContent += `  ${diff >= 0 ? '+' : ''}${diffPct.toFixed(1)} %`;
+        }
+        trendColor = isExpense ? (diff <= 0 ? C.green : C.red) : (diff >= 0 ? C.green : C.red);
+      }
+
+      body.push([
+        { content: label, styles: labelStyle },
+        ...monthCells,
+        {
+          content: trendContent,
+          styles: {
+            halign:    'right',
+            fontStyle: 'bold',
+            fontSize:  isPctRow ? 6.5 : 7,
+            textColor: isResult ? C.white : trendColor,
+            ...(fillColor ? { fillColor } : {}),
+          },
+        },
+      ]);
+    }
+
+    // Spaltenbreiten für autoTable
+    const colStyles: Record<number, Record<string, unknown>> = {
+      0: { cellWidth: LABEL_W },
+    };
+    for (let i = 0; i < n; i++) {
+      colStyles[i + 1] = { halign: 'right', cellWidth: perMonthW };
+    }
+    colStyles[n + 1] = { halign: 'right', cellWidth: TREND_W };
+
+    // Bei Chunk 2+ sicherstellen, dass genug Platz ist
+    if (chunkIdx > 0) {
+      currentY = ensureSpace(doc, (doc as any).lastAutoTable?.finalY ?? currentY, 80);
+    }
+
+    autoTable(doc, {
+      startY: currentY,
+      head:   [head],
+      body:   body as string[][],
+      theme:  'plain',
+      headStyles: {
+        fillColor: C.navyLight, textColor: C.white,
+        fontStyle: 'bold', fontSize: 7,
+        cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+      },
+      bodyStyles: { fontSize: 7.5, cellPadding: { top: 1.8, bottom: 1.8, left: 2, right: 2 } },
+      alternateRowStyles: { fillColor: C.slateLight },
+      columnStyles: colStyles,
+    });
+
+    currentY = (doc as any).lastAutoTable?.finalY ?? currentY;
+  }
+}
+
 // ── Hauptfunktion ─────────────────────────────────────────────────────────────
 
 export function exportPLToPDF(
@@ -715,19 +914,11 @@ export function exportPLToPDF(
       );
     }
 
-    // ── Block 4: Ausgewählte Monate ──────────────────────────────────────
+    // ── Block 4: Monatsvergleich (Monate als Spalten) ───────────────────
     if (opts.includeSelectedMonths && opts.selectedMonths.length > 0) {
-      const selAfterY  = (doc as any).lastAutoTable?.finalY ?? 10;
-      const selIndices = opts.selectedMonths.map(m => m - 1).filter(i => i >= 0 && i < 12);
-      const selNames   = opts.selectedMonths
-        .map(m => MONTH_NAMES_SHORT_DE[m])
-        .filter(Boolean).join(', ');
-      addKpiSummaryBlock(
-        doc, yearResult, selIndices,
-        'AUSGEWÄHLTE MONATE',
-        `${selNames} ${year}`,
-        selAfterY, PAGE_W,
-      );
+      const selAfterY = (doc as any).lastAutoTable?.finalY ?? 10;
+      const validMonths = opts.selectedMonths.filter(m => m >= 1 && m <= 12);
+      addMonthComparisonBlock(doc, yearResult, validMonths, year, selAfterY, PAGE_W);
     }
   }
 

@@ -144,8 +144,8 @@ export function PDFExportDialog({
                   className="mt-0.5"
                 />
                 <div>
-                  <p className="text-sm font-medium leading-tight">Ausgewählte Monate</p>
-                  <p className="text-xs text-muted-foreground">Eigene Monatsauswahl summieren</p>
+                  <p className="text-sm font-medium leading-tight">Monatsvergleich</p>
+                  <p className="text-xs text-muted-foreground">Ausgewählte Monate nebeneinander als Verlauf</p>
                 </div>
               </label>
             </div>
