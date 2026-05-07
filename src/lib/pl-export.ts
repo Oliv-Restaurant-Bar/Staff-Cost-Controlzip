@@ -35,29 +35,29 @@ export interface PLExportOptions {
 // ── Farb-Palette ──────────────────────────────────────────────────────────────
 
 const C = {
-  // Dunkelblau – nur für Tabellenzeilen-Sektionskopf (weisse Schrift)
-  navy:        [22,  40,  90]  as [number, number, number],
-  // Dunkelgrau – Ergebnis-Zeilen (EBITDA / EBIT)
-  navyMid:     [78,  85, 106]  as [number, number, number],
-  // Klares Blau – Tabellen-Spaltenköpfe (bleibt blau)
-  navyLight:   [55, 105, 190]  as [number, number, number],
+  // Waldgrün – Tabellenzeilen-Sektionskopf (weisse Schrift)
+  navy:        [79, 111,  82]  as [number, number, number],
+  // Creme/Beige – Ergebnis-Zeilen (EBITDA / EBIT)
+  navyMid:     [247, 240, 227] as [number, number, number],
+  // Waldgrün – Tabellen-Spaltenköpfe
+  navyLight:   [79, 111,  82]  as [number, number, number],
   // Hellgrau – Abschnitts-Balken über jeder Tabelle
   sectionBar:  [218, 220, 230] as [number, number, number],
   // Dezentes Hellgrau – alternating rows
   slateLight:  [245, 245, 248] as [number, number, number],
   white:       [255, 255, 255] as [number, number, number],
-  // Petrolgrün – professionelles Controlling-Grün (auf weissem Hintergrund)
+  // Petrolgrün – professionelles Controlling-Grün (auf hellem Hintergrund)
   green:       [13,  92,  64]  as [number, number, number],
-  // Helles Aqua-Mint – positive Ergebnisse auf dunklem Grau-Hintergrund
-  resultGreen: [92, 220, 162]  as [number, number, number],
-  // Knallrot – vivid Crimson für Minuszahlen (auf weissem Hintergrund)
-  red:         [210, 30,  48]  as [number, number, number],
-  // Helles Rot – negative Ergebnisse auf dunklem Grau-Hintergrund
-  resultRed:   [255, 135, 145] as [number, number, number],
+  // Alias – positive Ergebnisse (auf Beige-Hintergrund: dunkles Grün)
+  resultGreen: [13,  92,  64]  as [number, number, number],
+  // Dunkelrot/Bordeaux – Minuszahlen (auf hellem Hintergrund)
+  red:         [160,  30,  40]  as [number, number, number],
+  // Alias – negative Ergebnisse (auf Beige-Hintergrund: dunkles Rot)
+  resultRed:   [160,  30,  40]  as [number, number, number],
   // Dezentes Grau für Prozentwerte – klar sekundär
-  gray:        [162, 166, 178] as [number, number, number],
-  // Dunkeltext für Abschnitts-Label auf hellgrauem Balken
-  navyHeader:  [72,  80, 102]  as [number, number, number],
+  gray:        [140, 145, 155] as [number, number, number],
+  // Dunkeltext für Labels auf hellem/beige Hintergrund
+  navyHeader:  [50,  60,  50]  as [number, number, number],
 };
 
 // ── Zahlenformate ─────────────────────────────────────────────────────────────
@@ -691,13 +691,13 @@ function addKpiSummaryBlock(
     const abwBudRaw = vals.actual - vals.budget;
     const abwVJRaw  = vals.actual - vals.prevYear;
 
-    const fillColor    = isResult ? C.navyMid : undefined;
-    const baseTxtColor = isResult ? C.white   : undefined;
+    const fillColor    = isResult ? C.navyMid   : undefined;
+    const baseTxtColor = isResult ? C.navyHeader : undefined;
     const istColor     = isResult ? (vals.actual >= 0 ? C.green : C.red)
                        : isExpense ? undefined
                        : (vals.actual >= 0 ? C.green : C.red);
-    const abwBudColor  = isResult ? C.white : varColor(abwBudRaw, isExpense);
-    const abwVJColor   = isResult ? C.white : varColor(abwVJRaw,  isExpense);
+    const abwBudColor  = varColor(abwBudRaw, isExpense);
+    const abwVJColor   = varColor(abwVJRaw,  isExpense);
 
     const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
       fontStyle: 'bold',
@@ -709,11 +709,11 @@ function addKpiSummaryBlock(
     return [
       { content: label,                      styles: cs() },
       { content: fmtCHF(vals.actual),        styles: cs({ halign: 'right', ...(istColor ? { textColor: istColor } : {}) }) },
-      { content: fmtPctRatio(vals.actual,   revA),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray, fontStyle: 'normal' }) },
+      { content: fmtPctRatio(vals.actual,   revA),  styles: cs({ halign: 'right', textColor: C.gray, fontStyle: 'normal' }) },
       { content: fmtCHF(vals.budget),        styles: cs({ halign: 'right', fontStyle: 'normal' }) },
-      { content: fmtPctRatio(vals.budget,   revB),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray, fontStyle: 'normal' }) },
+      { content: fmtPctRatio(vals.budget,   revB),  styles: cs({ halign: 'right', textColor: C.gray, fontStyle: 'normal' }) },
       { content: fmtCHF(vals.prevYear),      styles: cs({ halign: 'right', fontStyle: 'normal' }) },
-      { content: fmtPctRatio(vals.prevYear, revPY), styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray, fontStyle: 'normal' }) },
+      { content: fmtPctRatio(vals.prevYear, revPY), styles: cs({ halign: 'right', textColor: C.gray, fontStyle: 'normal' }) },
       { content: fmtCHF(abwBudRaw),          styles: cs({ halign: 'right', textColor: abwBudColor, fontStyle: 'normal' }) },
       { content: fmtCHF(abwVJRaw),           styles: cs({ halign: 'right', textColor: abwVJColor,  fontStyle: 'normal' }) },
     ];
@@ -783,20 +783,20 @@ function addMonthComparisonBlock(
   if (selectedMonths.length === 0) return;
 
   // ── Farben ───────────────────────────────────────────────────────────────
-  const DARK_TEXT:       [number, number, number] = [22, 40, 90];    // = C.navy
-  const PCT_TEXT:        [number, number, number] = [162, 166, 178]; // dezent grau, klar sekundär
-  // Dunkelgrau – Ergebnis-Zeilen (identisch mit C.navyMid)
-  const RESULT_BG:       [number, number, number] = [78, 85, 106];
-  const RESULT_PCT:      [number, number, number] = [188, 192, 215]; // hell auf Grau
+  const DARK_TEXT:       [number, number, number] = [50, 60, 50];    // dunkelgrüner Text
+  const PCT_TEXT:        [number, number, number] = [140, 145, 155]; // dezent grau, klar sekundär
+  // Creme/Beige – Ergebnis-Zeilen
+  const RESULT_BG:       [number, number, number] = [247, 240, 227];
+  const RESULT_PCT:      [number, number, number] = [140, 145, 155]; // grau auf Beige
   const TOTAL_BG:        [number, number, number] = [228, 228, 238]; // nahezu neutral
-  const TOTAL_RESULT_BG: [number, number, number] = [55, 62, 82];    // dunkleres Grau für Total
-  // Petrolgrün – Controlling-Stil, kein Neon
+  const TOTAL_RESULT_BG: [number, number, number] = [232, 222, 202]; // dunkleres Beige für Total
+  // Petrolgrün – Controlling-Stil
   const PETROL_GREEN:    [number, number, number] = [13, 92, 64];
-  // Knallrot – vivid Crimson
-  const BORDEAUX:        [number, number, number] = [210, 30, 48];
-  // Auf dunklem Grau: helle, gut lesbare Varianten (= C.resultGreen / C.resultRed)
-  const RESULT_GREEN:    [number, number, number] = [92, 220, 162];
-  const RESULT_RED:      [number, number, number] = [255, 135, 145];
+  // Dunkelrot/Bordeaux
+  const BORDEAUX:        [number, number, number] = [160, 30, 40];
+  // Auf Beige-Hintergrund: dunkle, gut lesbare Varianten
+  const RESULT_GREEN:    [number, number, number] = [13, 92, 64];
+  const RESULT_RED:      [number, number, number] = [160, 30, 40];
 
   // ── %-Format ohne Leerzeichen (kein Umbruch) ─────────────────────────────
   const pctStr = (v: number | null | undefined, base: number | null | undefined): string => {
@@ -899,7 +899,7 @@ function addMonthComparisonBlock(
       // Farben je Zeilentyp
       const rowFill       = isResult ? RESULT_BG : undefined;
       const labelTxtColor = isResult
-        ? (isPctRow ? RESULT_PCT : ([215, 228, 248] as [number, number, number]))
+        ? (isPctRow ? RESULT_PCT : DARK_TEXT)
         : (isPctRow ? PCT_TEXT   : DARK_TEXT);
       const valueFontStyle: 'bold' | 'normal' = isPctRow ? 'normal' : 'bold';
       // CHF dominant (8.5pt), % sekundär (5.5pt)
@@ -1243,7 +1243,7 @@ export async function exportPLToPDF(
       const fillColor  = isResult   ? C.navyMid
                        : isSubtotal ? [228, 228, 238] as [number, number, number]
                        : undefined;
-      const baseTxtColor = isResult ? C.white : undefined;
+      const baseTxtColor = isResult ? C.navyHeader : undefined;
       const label = indent(template) + template.def.label;
 
       const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -1273,7 +1273,7 @@ export async function exportPLToPDF(
       if (keyRow.isPct) {
         const pctRowStyle: Record<string, unknown> = {
           fontStyle: 'italic' as const, fontSize: 6,
-          textColor: isResult ? C.white : C.gray,
+          textColor: C.gray,
           fillColor: isResult ? C.navyMid : [244, 244, 247] as [number, number, number],
         };
         const pctCells: YearCell[] = months.map((mr, i) => {

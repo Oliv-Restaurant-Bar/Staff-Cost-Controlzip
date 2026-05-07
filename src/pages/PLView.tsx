@@ -77,9 +77,9 @@ const fmtCHF = (v: number | undefined): string => {
 // ─── Zeilenstile ─────────────────────────────────────────────────────────────
 
 const ROW_STYLE: Record<string, string> = {
-  section:     'bg-slate-700 text-white dark:bg-slate-800',
+  section:     'bg-[#4F6F52] text-white dark:bg-[#3d5640]',
   subtotal:    'bg-slate-100 dark:bg-slate-800/60 font-semibold border-t border-b border-slate-300 dark:border-slate-600',
-  result:      'bg-slate-50 dark:bg-slate-900/40 font-bold text-base border-t-2 border-slate-400 dark:border-slate-500',
+  result:      'bg-[#F7F0E3] dark:bg-slate-800/60 font-bold text-base border-t-2 border-[#4F6F52] dark:border-[#3d5640]',
   line:        'hover:bg-muted/30 cursor-pointer border-b border-slate-100 dark:border-slate-800',
   percent_line:'bg-transparent text-muted-foreground text-xs italic',
   spacer:      'h-2 bg-transparent',
@@ -209,7 +209,7 @@ const YearRow = ({
   if (def.type === 'section') {
     return (
       <tr className={ROW_STYLE.section}>
-        <td colSpan={colCount} className="px-3 py-2 text-xs font-bold tracking-wider sticky left-0 bg-slate-700 dark:bg-slate-800">
+        <td colSpan={colCount} className="px-3 py-2 text-xs font-bold tracking-wider sticky left-0 bg-[#4F6F52] dark:bg-[#3d5640]">
           {def.label}
         </td>
       </tr>
@@ -444,7 +444,7 @@ const MonthlyView = ({
     <div className="overflow-x-auto">
       <table className="w-full text-sm border-collapse min-w-[700px]">
         <thead>
-          <tr className="bg-slate-800 text-white text-xs">
+          <tr className="bg-[#4F6F52] text-white text-xs">
             <th className="text-left px-3 py-2 min-w-[200px]">Position</th>
             <th className="text-right px-2 py-2">Ist (CHF)</th>
             <th className="text-right px-2 py-2">% Umsatz</th>
@@ -488,18 +488,18 @@ const YearView = ({
     <div className="overflow-x-auto">
       <table className="w-full text-sm border-collapse" style={{ minWidth: '1200px' }}>
         <thead>
-          <tr className="bg-slate-800 text-white text-xs">
-            <th className="text-left px-3 py-2 sticky left-0 bg-slate-800 z-10 min-w-[180px]">Position</th>
+          <tr className="bg-[#4F6F52] text-white text-xs">
+            <th className="text-left px-3 py-2 sticky left-0 bg-[#4F6F52] z-10 min-w-[180px]">Position</th>
             <th className={cn(
-              'text-right px-2 py-2 whitespace-nowrap font-bold bg-slate-700',
-              pctMode === 'off' && 'border-r-2 border-slate-500',
+              'text-right px-2 py-2 whitespace-nowrap font-bold bg-[#3d5640]',
+              pctMode === 'off' && 'border-r-2 border-[#3d5640]',
             )}>
               Total
             </th>
             {pctMode !== 'off' && (
               <th className={cn(
-                'text-right px-2 py-2 whitespace-nowrap border-r-2 border-slate-500 bg-slate-700',
-                pctMode === 'subtle' ? 'opacity-50 italic text-[10px]' : 'text-amber-300',
+                'text-right px-2 py-2 whitespace-nowrap border-r-2 border-[#3d5640] bg-[#3d5640]',
+                pctMode === 'subtle' ? 'opacity-50 italic text-[10px]' : 'text-[#d4e8c4]',
               )} title="% vom Jahres-Umsatz">
                 % Ums.
               </th>
@@ -507,7 +507,7 @@ const YearView = ({
             {MONTH_NAMES_SHORT_DE.slice(1).map((m, i) => (
               <React.Fragment key={i}>
                 <th
-                  className="text-right px-2 py-2 cursor-pointer hover:bg-slate-700 whitespace-nowrap"
+                  className="text-right px-2 py-2 cursor-pointer hover:bg-[#3d5640] whitespace-nowrap"
                   onClick={() => onClickMonth(i + 1)}
                   title={`Zu ${MONTH_NAMES_DE[i + 1]} wechseln`}
                 >
@@ -517,7 +517,7 @@ const YearView = ({
                   <th
                     className={cn(
                       'text-right px-1.5 py-2 whitespace-nowrap text-[10px]',
-                      pctMode === 'subtle' ? 'opacity-50 italic' : 'text-amber-300',
+                      pctMode === 'subtle' ? 'opacity-50 italic' : 'text-[#d4e8c4]',
                     )}
                     title={`% Umsatz ${MONTH_NAMES_DE[i + 1]}`}
                   >
@@ -1064,7 +1064,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
     const isPos = v.actual >= 0;
     const p = pctVal(v.actual);
     return (
-      <tr className="bg-slate-100 dark:bg-slate-800/80 font-bold border-t-2 border-b border-slate-400 dark:border-slate-500">
+      <tr className="bg-[#F7F0E3] dark:bg-slate-800/80 font-bold border-t-2 border-b border-[#4F6F52] dark:border-[#3d5640]">
         <td className={cn('px-3 text-sm', pyResult)} colSpan={2}>{row.catLabel}</td>
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums font-bold', pyResult,
           isPos ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600'
@@ -1088,7 +1088,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
     const p = pctVal(v.actual);
     return (
       <tr
-        className="bg-slate-700 text-white dark:bg-slate-800 cursor-pointer hover:bg-slate-600 transition-colors select-none"
+        className="bg-[#4F6F52] text-white dark:bg-[#3d5640] cursor-pointer hover:bg-[#3d5640] transition-colors select-none"
         onClick={onClick}
       >
         <td className={cn('px-3 text-xs font-bold tracking-wider', py)} colSpan={2}>
@@ -1112,16 +1112,16 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
             py,
             pctMode === 'subtle'
               ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-white/40'
-              : 'px-2 text-right font-mono tabular-nums text-xs text-amber-300 font-bold',
+              : 'px-2 text-right font-mono tabular-nums text-xs text-[#d4e8c4] font-bold',
           )}>
             {p ?? <span className="opacity-30">—</span>}
           </td>
         )}
         {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-75', py)}>{fmt(v.budget)}</td>}
-        {showBudget && pctMode !== 'off' && <td className={cn(py, pctMode === 'subtle' ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-white/30' : 'px-2 text-right font-mono tabular-nums text-xs text-slate-300 font-bold')}>{pctValBudget(v.budget) ?? <span className="opacity-30">—</span>}</td>}
+        {showBudget && pctMode !== 'off' && <td className={cn(py, pctMode === 'subtle' ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-white/30' : 'px-2 text-right font-mono tabular-nums text-xs text-[#c8d9b8] font-bold')}>{pctValBudget(v.budget) ?? <span className="opacity-30">—</span>}</td>}
         {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
         {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-65', py)}>{fmt(v.prevYear)}</td>}
-        {showPrevYear && pctMode !== 'off' && <td className={cn(py, pctMode === 'subtle' ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-white/30' : 'px-2 text-right font-mono tabular-nums text-xs text-slate-300 font-bold')}>{pctValPY(v.prevYear) ?? <span className="opacity-30">—</span>}</td>}
+        {showPrevYear && pctMode !== 'off' && <td className={cn(py, pctMode === 'subtle' ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-white/30' : 'px-2 text-right font-mono tabular-nums text-xs text-[#c8d9b8] font-bold')}>{pctValPY(v.prevYear) ?? <span className="opacity-30">—</span>}</td>}
         {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
       </tr>
     );
@@ -1257,22 +1257,22 @@ const BudgetPLView = ({
   <div className="overflow-x-auto">
     <table className="w-full text-sm border-collapse min-w-[600px]">
       <thead>
-        <tr className="bg-slate-900 text-white text-xs">
+        <tr className="bg-[#4F6F52] text-white text-xs">
           <th className={cn('text-left px-3 min-w-[230px]', compact ? 'py-1.5' : 'py-2.5')}>Position</th>
           <th className={cn('w-5', compact ? 'py-1.5' : 'py-2.5')} />
           <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')} title="Klick auf Ist-Wert = direkt bearbeiten">Ist (CHF) ✎</th>
           {pctMode !== 'off' && (
             <th className={cn('text-right px-2 min-w-[60px]', compact ? 'py-1.5' : 'py-2.5',
-              pctMode === 'subtle' ? 'opacity-50 italic text-[10px]' : pctIsBudgetBased ? 'text-slate-300' : 'text-amber-300',
+              pctMode === 'subtle' ? 'opacity-50 italic text-[10px]' : 'text-[#d4e8c4]',
             )} title={pctIsBudgetBased ? '% vom Budget-Umsatz (kein Ist-Umsatz erfasst)' : '% vom Ist-Umsatz'}>
               {pctIsBudgetBased ? '% Bud.' : '% Ums.'}
             </th>
           )}
           {showBudget && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Budget (CHF)</th>}
-          {showBudget && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', compact ? 'py-1.5' : 'py-2.5', 'text-slate-400')} title="% vom Budget-Umsatz">% Bud.</th>}
+          {showBudget && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', compact ? 'py-1.5' : 'py-2.5', 'text-[#c8d9b8]')} title="% vom Budget-Umsatz">% Bud.</th>}
           {showBudget && <th className={cn('text-right px-2 min-w-[130px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. Budget</th>}
           {showPrevYear && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Vorjahr (CHF)</th>}
-          {showPrevYear && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', compact ? 'py-1.5' : 'py-2.5', 'text-slate-400')} title="% vom Vorjahr-Umsatz">% VJ</th>}
+          {showPrevYear && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', compact ? 'py-1.5' : 'py-2.5', 'text-[#c8d9b8]')} title="% vom Vorjahr-Umsatz">% VJ</th>}
           {showPrevYear && <th className={cn('text-right px-2 min-w-[120px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. VJ</th>}
         </tr>
       </thead>
