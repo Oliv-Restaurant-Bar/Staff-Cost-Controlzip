@@ -1,0 +1,76 @@
+Bitte erweitere die Dienstplanung im Plan-Modus für Aushilfen.
+
+Ziel:
+Wenn ich bei einer Aushilfe eine Schicht im Plan-Modus eintrage, soll ich optional direkt festlegen können, dass diese Schicht auch im IST-Plan übernommen wird.
+
+1. Neue Checkbox beim Erfassen/Bearbeiten einer Aushilfen-Schicht
+
+Füge im Schicht-Dialog oder Eingabefeld eine Checkbox hinzu:
+
+"Auch ins IST übernehmen"
+
+oder:
+"Plan = IST für diese Schicht"
+
+2. Verhalten
+
+Wenn Checkbox aktiviert ist:
+- Schicht wird im Plan gespeichert
+- dieselbe Schicht wird gleichzeitig im IST gespeichert
+- Startzeit, Endzeit, Pause, Stunden, Kosten und Mitarbeiter bleiben identisch
+
+Wenn Checkbox nicht aktiviert ist:
+- Schicht wird nur im Plan gespeichert
+- IST bleibt leer oder unverändert
+
+3. Nur für Aushilfen
+
+Diese Funktion soll primär bei Aushilfen verfügbar sein.
+
+Falls technisch einfacher:
+Kann sie bei allen Mitarbeitern angezeigt werden, aber der Fokus liegt auf Aushilfen.
+
+4. Bestehende IST-Werte schützen
+
+Wenn für denselben Mitarbeiter, denselben Tag und dieselbe Zelle bereits ein IST-Eintrag existiert:
+- nicht einfach überschreiben
+- stattdessen Rückfrage oder Hinweis anzeigen:
+  "Für diesen Tag existiert bereits ein IST-Eintrag. Überschreiben?"
+
+5. Bearbeitung
+
+Wenn eine geplante Schicht mit aktivierter Checkbox später geändert wird:
+- optional auch IST aktualisieren
+- aber nur, wenn der IST-Eintrag ursprünglich aus dem Plan übernommen wurde
+
+Bitte dafür ein Flag speichern, z.B.:
+copied_from_plan = true
+oder
+source = "plan_auto_copy"
+
+6. Löschen
+
+Wenn eine Plan-Schicht gelöscht wird:
+- IST nicht automatisch löschen, ausser der IST-Eintrag wurde automatisch aus dieser Plan-Schicht erstellt
+- falls copied_from_plan = true, darf ein Hinweis erscheinen:
+  "Auch automatisch übernommenen IST-Eintrag löschen?"
+
+7. UI
+
+Die Checkbox soll einfach und verständlich sein.
+Am besten direkt dort, wo die Schicht ausgewählt oder eingetragen wird.
+
+Beispiel:
+Schicht: 10–14 / 17:30–23
+☑ Auch ins IST übernehmen
+
+8. Tests
+
+Bitte prüfen:
+- Aushilfe im Plan-Modus eintragen mit Checkbox aktiv
+- Schicht erscheint im Plan
+- Schicht erscheint automatisch im IST
+- Checkbox inaktiv → nur Plan
+- bestehender IST-Eintrag wird nicht unbemerkt überschrieben
+- Änderung einer übernommenen Plan-Schicht aktualisiert IST korrekt
+- Löschen verhält sich sicher

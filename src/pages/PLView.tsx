@@ -2061,12 +2061,12 @@ const PLViewPage = () => {
 
   const handleExportPDF = useCallback(() => {
     try {
-      exportPLToPDF(monthResult, yearResult, year, month);
+      exportPLToPDF(monthResult, yearResult, year, month, mode);
       toast.success('PDF exportiert (3 Ansichten)');
     } catch {
       toast.error('PDF-Export fehlgeschlagen');
     }
-  }, [monthResult, yearResult, year, month]);
+  }, [monthResult, yearResult, year, month, mode]);
 
   const handleYearMonthClick = useCallback((m: number) => {
     setMonth(m);
