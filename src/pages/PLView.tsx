@@ -2326,14 +2326,15 @@ const PLViewPage = () => {
   }, []);
 
   const handlePdfExport = useCallback((opts: PLExportOptions) => {
+    const name = tenantId === 'beaulieu' ? 'Beaulieu Restaurant' : 'Oliv Restaurant & Bar';
     try {
-      exportPLToPDF(monthResult, yearResult, year, month, mode, opts);
+      exportPLToPDF(monthResult, yearResult, year, month, mode, opts, name);
       toast.success('PDF erstellt');
     } catch (e) {
       console.error(e);
       toast.error('PDF-Export fehlgeschlagen');
     }
-  }, [monthResult, yearResult, year, month, mode]);
+  }, [monthResult, yearResult, year, month, mode, tenantId]);
 
   const handleYearMonthClick = useCallback((m: number) => {
     setMonth(m);

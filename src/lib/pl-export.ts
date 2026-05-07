@@ -102,34 +102,53 @@ function ensureSpace(doc: jsPDF, afterY: number, neededH: number, gap = 10): num
 
 // ── Seitenkopf ────────────────────────────────────────────────────────────────
 
+/**
+ * Haupt-Seitenkopf: Restaurant prominent · Monat/Jahr gross · Typ klein · Datum diskret
+ *
+ * Hierarchie:
+ *   1. RESTAURANTNAME  – 14pt bold white      ← wichtigste Info
+ *   2. MONAT JAHR      – 12pt bold white      ← zweitwichtigste Info
+ *   3. Berichtstyp     – 8pt normal slate     ← Kontext
+ *   4. Exportiert am … – 6.5pt right slate    ← Metadaten
+ */
 function addPageHeader(
   doc: jsPDF,
-  title: string,
-  subtitle: string,
+  reportType: string,      // z.B. "Erfolgsrechnung – Budget P&L"
+  restaurantName: string,  // z.B. "Oliv Restaurant & Bar"
+  exportDate: string,      // z.B. "07.05.2026"
   month: number,
   year: number,
   pageW: number,
   y = 8,
 ): number {
-  const blockH = 24;
+  const blockH = 34;
   doc.setFillColor(...C.navy);
   doc.rect(10, y, pageW - 20, blockH, 'F');
 
+  // Exportdatum – oben rechts, diskret
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
+  doc.setFontSize(6.5);
   doc.setTextColor(...C.navyHeader);
-  doc.text(title.toUpperCase(), 15, y + 7);
+  doc.text(`Exportiert am ${exportDate}`, pageW - 13, y + 7, { align: 'right' });
 
+  // 1. Restaurantname – gross, prominent
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(...C.white);
+  doc.text(restaurantName.toUpperCase(), 15, y + 12);
+
+  // 2. Monat / Jahr – gross, prominent
   const mFull = (MONTH_NAMES_DE[month] ?? MONTH_NAMES_SHORT_DE[month] ?? '').toUpperCase();
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
+  doc.setFontSize(11);
   doc.setTextColor(...C.white);
-  doc.text(`${mFull} ${year}`, 15, y + 17);
+  doc.text(`${mFull} ${year}`, 15, y + 21);
 
+  // 3. Berichtstyp – kleiner, diskret unter Monat
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
+  doc.setFontSize(7.5);
   doc.setTextColor(...C.navyHeader);
-  doc.text(subtitle, pageW - 12, y + 10, { align: 'right' });
+  doc.text(reportType, 15, y + 29);
 
   doc.setTextColor(0, 0, 0);
   return y + blockH + 5;
@@ -811,6 +830,7 @@ export function exportPLToPDF(
   month:       number,
   mode: 'budget_pl' | 'monthly' | 'yearly' = 'budget_pl',
   options?: PLExportOptions,
+  restaurantName = 'Oliv Restaurant & Bar',
 ): void {
   // Defaults: alles eingeschlossen (Rückwärtskompatibilität)
   const opts: PLExportOptions = options ?? {
@@ -821,10 +841,9 @@ export function exportPLToPDF(
     selectedMonths:        Array.from({ length: month }, (_, i) => i + 1),
   };
 
-  const doc      = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const now      = new Date().toLocaleDateString('de-CH');
-  const subtitle = `Oliv Gastro AG · Exportiert am ${now}`;
-  const PAGE_W   = 210;
+  const doc    = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const now    = new Date().toLocaleDateString('de-CH');
+  const PAGE_W = 210;
 
   const revA  = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.actual;
   const revB  = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.budget;
@@ -835,8 +854,8 @@ export function exportPLToPDF(
     const isBPL = mode === 'budget_pl';
 
     if (opts.includeMonthReport) {
-      const title = isBPL ? 'Erfolgsrechnung – Budget P&L' : 'Erfolgsrechnung – Monatsansicht';
-      const yH = addPageHeader(doc, title, subtitle, month, year, PAGE_W);
+      const reportType = isBPL ? 'Erfolgsrechnung – Budget P&L' : 'Erfolgsrechnung – Monatsansicht';
+      const yH = addPageHeader(doc, reportType, restaurantName, now, month, year, PAGE_W);
       const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
 
       if (isBPL) {
@@ -924,21 +943,34 @@ export function exportPLToPDF(
 
   // ──── Jahresübersicht ────────────────────────────────────────────────────
   else if (mode === 'yearly') {
-    const blockH = 24;
+    const blockH = 34;
     doc.setFillColor(...C.navy);
     doc.rect(10, 8, PAGE_W - 20, blockH, 'F');
+
+    // Exportdatum – oben rechts, diskret
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
+    doc.setFontSize(6.5);
     doc.setTextColor(...C.navyHeader);
-    doc.text('JAHRESÜBERSICHT', 15, 15);
+    doc.text(`Exportiert am ${now}`, PAGE_W - 13, 15, { align: 'right' });
+
+    // 1. Restaurantname – gross
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(16);
+    doc.setFontSize(14);
     doc.setTextColor(...C.white);
-    doc.text(String(year), 15, 24);
+    doc.text(restaurantName.toUpperCase(), 15, 20);
+
+    // 2. Jahr – gross
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(...C.white);
+    doc.text(String(year), 15, 29);
+
+    // 3. Berichtstyp – klein
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
+    doc.setFontSize(7.5);
     doc.setTextColor(...C.navyHeader);
-    doc.text(subtitle, PAGE_W - 12, 18, { align: 'right' });
+    doc.text('Jahresübersicht', 15, 37);
+
     doc.setTextColor(0, 0, 0);
     const yH = 8 + blockH + 5;
 
