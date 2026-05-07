@@ -276,6 +276,12 @@ export interface BudgetPLLineItem {
    * Nützlich z.B. für interne Verrechnungen oder Kalkulationshilfen.
    */
   isInternal?: boolean;
+  /**
+   * Ausgeblendet: Konto existiert im Datenspeicher, wird aber weder in der
+   * Erfolgsrechnung angezeigt noch in Summen berücksichtigt.
+   * Kann über "Einblenden" im Konto-hinzufügen-Dialog reaktiviert werden.
+   */
+  isHidden?: boolean;
 }
 
 // ─── Standard P&L Kategorien – Oliv Gastro AG (Kontoplan 2026) ───────────────

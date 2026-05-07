@@ -42,7 +42,7 @@ import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMont
 import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
-import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem, STORAGE_KEY as BUDGET_STORAGE_KEY } from '@/lib/budget-store';
+import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem, savePLLineItem, STORAGE_KEY as BUDGET_STORAGE_KEY } from '@/lib/budget-store';
 import { BudgetYear, BudgetPLCategory, BudgetPLLineItem } from '@/types/budget';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
@@ -756,8 +756,8 @@ function computeBPLRows(
 
   for (const cat of cats) {
     if (cat.type === 'items') {
-      // Interne Positionen werden aus den Kategorie-Summen ausgeschlossen
-      const its = items.filter(i => i.categoryId === cat.id && !i.isInternal);
+      // Interne und ausgeblendete Positionen werden aus den Kategorie-Summen ausgeschlossen
+      const its = items.filter(i => i.categoryId === cat.id && !i.isInternal && !i.isHidden);
       catB[cat.id] = its.reduce((s, i) => s + (i.monthlyValues[mIdx] ?? 0), 0);
       catA[cat.id] = getCatActual(cat.id, rec);
       catP[cat.id] = getCatPY(cat.id, rec, prevRec);
@@ -790,7 +790,7 @@ function computeBPLRows(
         (rec?.expenseCategoriesPreviousYear ?? []).some(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= 3000 && n <= 3999; })
       );
 
-      const its = items.filter(i => i.categoryId === cat.id).sort((a, b) => a.sortOrder - b.sortOrder);
+      const its = items.filter(i => i.categoryId === cat.id && !i.isHidden).sort((a, b) => a.sortOrder - b.sortOrder);
       for (const item of its) {
         if (item.accountNumber) {
           const acc = lookupAccount(item.accountNumber);
@@ -1755,6 +1755,10 @@ interface AddKontoDialogProps {
   onSaved: () => void;
 }
 
+type ConflictState =
+  | { kind: 'hidden';  item: BudgetPLLineItem }   // exists but isHidden=true → offer to show
+  | { kind: 'visible'; item: BudgetPLLineItem };   // exists and is already visible → can only update
+
 const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSaved }: AddKontoDialogProps) => {
   const { tenantKey } = useTenant();
   const [accountNumber, setAccountNumber] = useState('');
@@ -1763,6 +1767,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
   const [isInternal,    setIsInternal]    = useState(false);
   const [error,         setError]         = useState<string | null>(null);
   const [isSaving,      setIsSaving]      = useState(false);
+  const [conflict,      setConflict]      = useState<ConflictState | null>(null);
 
   const itemCats = categories.filter(c => c.type === 'items');
 
@@ -1774,6 +1779,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
       setIsInternal(false);
       setError(null);
       setIsSaving(false);
+      setConflict(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -1785,19 +1791,26 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
     setIsInternal(false);
     setError(null);
     setIsSaving(false);
+    setConflict(null);
   }
 
   function handleSave() {
     const num = accountNumber.trim();
     const lbl = label.trim();
-    if (!num)                         { setError('Kontonummer ist erforderlich.'); return; }
-    if (!/^\d{4}$/.test(num))         { setError('Kontonummer muss genau 4 Ziffern sein.'); return; }
-    if (!lbl)                         { setError('Bezeichnung ist erforderlich.'); return; }
-    if (!categoryId)                  { setError('Bitte eine Kategorie auswählen.'); return; }
+    if (!num)                 { setError('Kontonummer ist erforderlich.'); return; }
+    if (!/^\d{4}$/.test(num)) { setError('Kontonummer muss genau 4 Ziffern sein.'); return; }
+    if (!lbl)                 { setError('Bezeichnung ist erforderlich.'); return; }
+    if (!categoryId)          { setError('Bitte eine Kategorie auswählen.'); return; }
 
-    const duplicate = existingItems.some(i => i.accountNumber === num);
-    if (duplicate) {
-      setError(`Konto ${num} ist bereits vorhanden.`);
+    // Check for duplicate by account number
+    const existing = existingItems.find(i => i.accountNumber === num);
+    if (existing) {
+      // Populate form fields with existing data so user can see/adjust
+      if (!label.trim() || label === existing.label) setLabel(existing.label);
+      if (!categoryId || categoryId === itemCats[0]?.id) setCategoryId(existing.categoryId);
+      setIsInternal(existing.isInternal ?? false);
+      setConflict(existing.isHidden ? { kind: 'hidden', item: existing } : { kind: 'visible', item: existing });
+      setError(null);
       return;
     }
 
@@ -1815,6 +1828,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
         monthlyValues: zeroMonths,
         sortOrder: 9999,
         isInternal,
+        isHidden: false,
       }, storeKey);
       toast.success(`Konto ${num} «${lbl}» hinzugefügt`);
       onSaved();
@@ -1828,6 +1842,60 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
     }
   }
 
+  function handleShowExisting() {
+    if (!conflict) return;
+    const lbl = label.trim() || conflict.item.label;
+    const cat = categoryId || conflict.item.categoryId;
+    setIsSaving(true);
+    try {
+      const storeKey = tenantKey(BUDGET_STORAGE_KEY);
+      savePLLineItem(year, {
+        ...conflict.item,
+        label: lbl,
+        categoryId: cat,
+        isInternal,
+        isHidden: false,
+      }, storeKey);
+      toast.success(`Konto ${conflict.item.accountNumber} «${lbl}» eingeblendet`);
+      onSaved();
+      reset();
+      onClose();
+    } catch (err) {
+      console.error('[AddKonto] Fehler beim Einblenden:', err);
+      setError('Konto konnte nicht eingeblendet werden. Details in der Konsole.');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function handleUpdateExisting() {
+    if (!conflict) return;
+    const lbl = label.trim() || conflict.item.label;
+    const cat = categoryId || conflict.item.categoryId;
+    setIsSaving(true);
+    try {
+      const storeKey = tenantKey(BUDGET_STORAGE_KEY);
+      savePLLineItem(year, {
+        ...conflict.item,
+        label: lbl,
+        categoryId: cat,
+        isInternal,
+      }, storeKey);
+      toast.success(`Konto ${conflict.item.accountNumber} aktualisiert`);
+      onSaved();
+      reset();
+      onClose();
+    } catch (err) {
+      console.error('[AddKonto] Fehler beim Aktualisieren:', err);
+      setError('Konto konnte nicht aktualisiert werden. Details in der Konsole.');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  const num = accountNumber.trim();
+  const isFormDisabled = isSaving;
+
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) { reset(); onClose(); } }}>
       <DialogContent className="max-w-sm">
@@ -1840,15 +1908,42 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
         </DialogHeader>
 
         <div className="space-y-3 py-1">
+          {/* ── Konflikt-Banner ──────────────────────────────────────── */}
+          {conflict && (
+            <div className={`rounded-md border px-3 py-2.5 text-sm ${
+              conflict.kind === 'hidden'
+                ? 'bg-amber-50 border-amber-300 text-amber-800 dark:bg-amber-950/30 dark:border-amber-700 dark:text-amber-300'
+                : 'bg-blue-50 border-blue-300 text-blue-800 dark:bg-blue-950/30 dark:border-blue-700 dark:text-blue-300'
+            }`}>
+              {conflict.kind === 'hidden' ? (
+                <>
+                  <p className="font-medium">Konto {num} ist bereits vorhanden, aber ausgeblendet.</p>
+                  <p className="text-xs mt-1 opacity-80">
+                    Aktuelle Bezeichnung: «{conflict.item.label}» · Kategorie: {categories.find(c => c.id === conflict.item.categoryId)?.label ?? conflict.item.categoryId}
+                  </p>
+                  <p className="text-xs mt-1">Du kannst die Felder unten anpassen und das Konto dann einblenden.</p>
+                </>
+              ) : (
+                <>
+                  <p className="font-medium">Konto {num} ist bereits in der Erfolgsrechnung sichtbar.</p>
+                  <p className="text-xs mt-1 opacity-80">
+                    Aktuelle Bezeichnung: «{conflict.item.label}» · Kategorie: {categories.find(c => c.id === conflict.item.categoryId)?.label ?? conflict.item.categoryId}
+                  </p>
+                  <p className="text-xs mt-1">Du kannst Bezeichnung und Kategorie anpassen und aktualisieren.</p>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground">Kontonummer</label>
             <Input
               placeholder="z.B. 5850"
               value={accountNumber}
               maxLength={4}
-              onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ''))}
+              onChange={e => { setAccountNumber(e.target.value.replace(/\D/g, '')); setConflict(null); setError(null); }}
               className="h-8 text-sm font-mono"
-              disabled={isSaving}
+              disabled={isFormDisabled}
             />
           </div>
 
@@ -1859,13 +1954,13 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
               value={label}
               onChange={e => setLabel(e.target.value)}
               className="h-8 text-sm"
-              disabled={isSaving}
+              disabled={isFormDisabled}
             />
           </div>
 
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground">Kategorie</label>
-            <Select value={categoryId} onValueChange={setCategoryId} disabled={isSaving}>
+            <Select value={categoryId} onValueChange={setCategoryId} disabled={isFormDisabled}>
               <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Kategorie wählen" /></SelectTrigger>
               <SelectContent>
                 {itemCats.map(c => (
@@ -1881,7 +1976,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
               checked={isInternal}
               onChange={e => setIsInternal(e.target.checked)}
               className="mt-0.5 accent-violet-600"
-              disabled={isSaving}
+              disabled={isFormDisabled}
             />
             <div>
               <span className="text-sm font-medium">Nur intern</span>
@@ -1902,12 +1997,35 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
           <Button variant="ghost" size="sm" onClick={() => { reset(); onClose(); }} disabled={isSaving}>
             Abbrechen
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={isSaving}>
-            {isSaving
-              ? <span className="flex items-center gap-1"><span className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />Speichern…</span>
-              : <><Plus className="h-3.5 w-3.5 mr-1" />Hinzufügen</>
-            }
-          </Button>
+
+          {/* ── Aktions-Buttons je nach Zustand ──────────────────────── */}
+          {!conflict && (
+            <Button size="sm" onClick={handleSave} disabled={isSaving}>
+              {isSaving
+                ? <span className="flex items-center gap-1"><span className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />Speichern…</span>
+                : <><Plus className="h-3.5 w-3.5 mr-1" />Hinzufügen</>
+              }
+            </Button>
+          )}
+
+          {conflict?.kind === 'hidden' && (
+            <Button size="sm" onClick={handleShowExisting} disabled={isSaving}
+              className="bg-amber-600 hover:bg-amber-700 text-white">
+              {isSaving
+                ? <span className="flex items-center gap-1"><span className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />Einblenden…</span>
+                : 'Einblenden'
+              }
+            </Button>
+          )}
+
+          {conflict?.kind === 'visible' && (
+            <Button size="sm" onClick={handleUpdateExisting} disabled={isSaving}>
+              {isSaving
+                ? <span className="flex items-center gap-1"><span className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />Speichern…</span>
+                : 'Aktualisieren'
+              }
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

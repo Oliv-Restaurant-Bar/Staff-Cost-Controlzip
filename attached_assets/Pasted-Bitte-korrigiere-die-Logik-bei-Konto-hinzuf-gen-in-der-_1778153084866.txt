@@ -1,0 +1,115 @@
+Bitte korrigiere die Logik bei "Konto hinzufügen" in der Erfolgsrechnung.
+
+Aktuell erscheint die Meldung:
+"Konto 3500 ist bereits vorhanden."
+
+Das ist grundsätzlich korrekt, aber für den Benutzer nicht hilfreich.
+
+Gewünschtes Verhalten:
+
+Wenn ein Konto bereits vorhanden ist, aber aktuell nicht in der Erfolgsrechnung sichtbar ist, soll es nicht blockieren, sondern eingeblendet oder reaktiviert werden können.
+
+---
+
+1. Bestehendes Konto erkennen
+
+Wenn Kontonummer bereits existiert:
+- prüfe, ob das Konto aktiv/sichtbar ist
+- prüfe, ob es ausgeblendet, deaktiviert oder nicht der aktuellen P&L Struktur zugeordnet ist
+
+---
+
+2. Neue Benutzeroption anzeigen
+
+Statt nur Fehlermeldung:
+
+"Konto 3500 ist bereits vorhanden."
+
+soll angezeigt werden:
+
+"Konto 3500 ist bereits vorhanden. Möchtest du es in der Erfolgsrechnung einblenden?"
+
+Buttons:
+- Einblenden
+- Abbrechen
+
+---
+
+3. Einblenden / Reaktivieren
+
+Wenn Benutzer auf "Einblenden" klickt:
+
+- Konto sichtbar machen
+- Konto der gewählten Kategorie zuordnen
+- Konto in der Erfolgsrechnung anzeigen
+- Tabelle neu laden
+- Dialog schliessen
+- Toast anzeigen: "Konto eingeblendet"
+
+---
+
+4. Konto aktualisieren
+
+Falls das bestehende Konto eine andere Bezeichnung oder Kategorie hat:
+
+Beispiel:
+Bestehend:
+3500, andere Bezeichnung
+
+Neu eingegeben:
+3500, Ertrag Personalverpflegung, Betriebsertrag
+
+Dann soll optional angeboten werden:
+
+"Bestehendes Konto aktualisieren?"
+
+oder mindestens:
+- Bezeichnung aktualisieren
+- Kategorie aktualisieren
+- sichtbar setzen
+
+---
+
+5. Sichtbarkeit prüfen
+
+Bitte prüfe die Felder/Logik wie:
+- is_active
+- is_visible
+- hidden
+- internal_only
+- category
+- account_mapping
+- pnl_structure
+- business_id / tenant_id
+
+Das Konto darf nicht in der Datenbank existieren, aber im UI unerreichbar sein.
+
+---
+
+6. Nur intern Logik
+
+Wenn "Nur intern" nicht aktiviert ist:
+- Konto soll offiziell sichtbar sein
+- Konto soll in Summen einfliessen
+
+Wenn "Nur intern" aktiviert ist:
+- Konto soll mit INTERN Badge sichtbar sein
+- aber nicht in offiziellen Summen enthalten sein
+
+---
+
+7. Tests
+
+Bitte testen:
+
+- Konto 3500 hinzufügen, wenn es bereits existiert
+- statt Blockade erscheint Option "Einblenden"
+- Einblenden macht Konto sichtbar
+- Konto erscheint unter Betriebsertrag
+- Konto bleibt nach Reload sichtbar
+- Konto fliesst korrekt in Summen ein, falls nicht intern
+- Konto kann später wieder ausgeblendet werden, falls diese Funktion existiert
+
+Wichtig:
+Ein bereits vorhandenes Konto darf nicht einfach blockieren.
+Der Benutzer muss es einblenden, reaktivieren oder aktualisieren können.

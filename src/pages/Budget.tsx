@@ -451,7 +451,7 @@ function BudgetContent() {
                   .sort((a, b) => a.sortOrder - b.sortOrder)
                   .map(cat => {
                     const style     = CAT_STYLE[cat.color] ?? CAT_STYLE.gray;
-                    const items     = lineItems.filter(i => i.categoryId === cat.id).sort((a, b) => a.sortOrder - b.sortOrder);
+                    const items     = lineItems.filter(i => i.categoryId === cat.id && !i.isHidden).sort((a, b) => a.sortOrder - b.sortOrder);
                     const monthly   = getMonthly(cat.id);
                     const yearTotal = monthly.reduce((s, v) => s + v, 0);
                     const isColl    = collapsed.has(cat.id);
