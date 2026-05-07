@@ -513,23 +513,65 @@ const SchedulePlanner = () => {
       }
 
       if (supabaseSchedule !== null) {
-        // Safety: don't silently erase an existing plan with an empty result.
-        // An empty result here means either "genuinely no entries" or "RLS returned
-        // 0 rows due to a timing issue".  We only skip the overwrite if this gen
-        // is not the very first fetch for this mount (gen > 1 means a re-fetch).
+        // Safety: never silently erase an existing plan with an empty result.
+        //
+        // An empty Supabase result can mean:
+        //   (a) genuinely no entries for the month, OR
+        //   (b) RLS returned 0 rows due to an auth-timing issue
+        //
+        // Strategy:
+        //  1. If Supabase returned 0 rows, first check localStorage for a non-empty
+        //     cached version (written on every successful load / cell change).
+        //     If localStorage has data, treat it as the canonical source to avoid
+        //     data-loss from a transient Supabase hiccup at gen=1.
+        //  2. If prevKeys > 0 and newKeys === 0 on a re-fetch (gen > 1), keep prev.
+        //  3. Never overwrite localStorage with an empty result.
         setScheduleData(prev => {
           const prevKeys = Object.keys(prev).length;
           const newKeys  = Object.keys(supabaseSchedule).length;
-          if (prevKeys > 0 && newKeys === 0 && gen > 1) {
-            console.warn('[PLAN] state set: skipping overwrite – prev had', prevKeys, 'entries, new result empty (gen=' + gen + ')');
-            // scheduleSource stays 'supabase' but we keep prev data
-            return prev;
+
+          if (newKeys === 0) {
+            // Try localStorage before accepting "empty from Supabase"
+            try {
+              const cached = localStorage.getItem(tenantKey(`schedule-v2-${monthKey}`));
+              if (cached) {
+                const localData: Record<string, unknown> = JSON.parse(cached);
+                const localKeys = Object.keys(localData).length;
+                if (localKeys > 0) {
+                  console.warn(
+                    `[PLAN] Supabase returned 0 rows but localStorage has ${localKeys} entries` +
+                    ` (gen=${gen}) – using localStorage to prevent data-loss`
+                  );
+                  setScheduleSource('cache');
+                  setLoadedEntryCount(localKeys);
+                  return localData as Record<string, DaySchedule>;
+                }
+              }
+            } catch { /* ignore parse errors */ }
+
+            // localStorage also empty – if prev already has data (re-fetch case), keep it
+            if (prevKeys > 0) {
+              console.warn(
+                `[PLAN] Supabase returned 0 rows and localStorage empty; keeping prev` +
+                ` ${prevKeys} entries (gen=${gen})`
+              );
+              return prev;
+            }
+
+            // Both Supabase and localStorage empty → month has no entries yet
+            console.log('[PLAN] state set – genuinely empty month', { gen, prevKeys });
+            setScheduleSource('supabase');
+            setLoadedEntryCount(0);
+            return supabaseSchedule;
           }
+
+          // Supabase returned real data – use it and update localStorage cache
           console.log('[PLAN] state set', { gen, newKeys, prevKeys });
           setScheduleSource('supabase');
           setLoadedEntryCount(newKeys);
           // Cache Supabase plan data to localStorage so PersonalFix can read
           // plan hours without requiring the user to click "Speichern" first.
+          // Only write non-empty results to avoid nuking the cache with a stale 0-row response.
           try {
             localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(supabaseSchedule));
           } catch { /* quota exceeded – ignore */ }
