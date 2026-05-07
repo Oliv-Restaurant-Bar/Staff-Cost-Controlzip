@@ -90,13 +90,13 @@ function indent(row: PLComputedRow): string {
 
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────────
 
-function ensureSpace(doc: jsPDF, afterY: number, neededH: number, gap = 10): number {
+function ensureSpace(doc: jsPDF, afterY: number, neededH: number, gap = 5): number {
   const PAGE_H = 297;
-  const MARGIN = 15;
+  const MARGIN = 12;
   const y = afterY + gap;
   if (y + neededH > PAGE_H - MARGIN) {
     doc.addPage();
-    return 22; // Platz für Mini-Header auf Folgeseiten (≈ 4+10+8mm)
+    return 20; // Platz für Mini-Header auf Folgeseiten
   }
   return y;
 }
@@ -147,7 +147,7 @@ function addPageHeader(
   pageW: number,
   y = 8,
 ): number {
-  const blockH = 36;
+  const blockH = 28;
   const x      = 10;
   const w      = pageW - 20;
 
@@ -166,9 +166,9 @@ function addPageHeader(
   doc.line(x, y + blockH, x + w, y + blockH);
 
   // ── Logo rechts, vertikal zentriert ───────────────────────────────────
-  const logoW = 46;
-  const logoH = Math.round(logoW / (220 / 56)); // Seitenverhältnis beibehalten ≈ 11.7mm
-  const logoX = pageW - 14 - logoW;
+  const logoW = 40;
+  const logoH = Math.round(logoW / (240 / 56)); // Seitenverhältnis beibehalten ≈ 9.3mm
+  const logoX = pageW - 13 - logoW;
   const logoY = y + (blockH - logoH) / 2;       // vertikal zentriert
   if (logoDataUrl) {
     doc.addImage(logoDataUrl, 'PNG', logoX, logoY, logoW, logoH);
@@ -176,31 +176,31 @@ function addPageHeader(
 
   // ── Exportdatum – ganz unten rechts, sehr dezent ───────────────────────
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(5.5);
+  doc.setFontSize(5);
   doc.setTextColor(...branding.textSecondary);
-  doc.text(`Exportiert am ${exportDate}`, pageW - 14, y + blockH - 3, { align: 'right' });
+  doc.text(`Exportiert am ${exportDate}`, pageW - 13, y + blockH - 2.5, { align: 'right' });
 
   // ── 1. Restaurantname ─────────────────────────────────────────────────
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
+  doc.setFontSize(14);
   doc.setTextColor(...branding.textPrimary);
-  doc.text(branding.displayName.toUpperCase(), 15, y + 13);
+  doc.text(branding.displayName.toUpperCase(), 15, y + 10);
 
   // ── 2. Monat / Jahr ───────────────────────────────────────────────────
   const mFull = (MONTH_NAMES_DE[month] ?? MONTH_NAMES_SHORT_DE[month] ?? '').toUpperCase();
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10.5);
+  doc.setFontSize(9.5);
   doc.setTextColor(...branding.textPrimary);
-  doc.text(`${mFull} ${year}`, 15, y + 22);
+  doc.text(`${mFull} ${year}`, 15, y + 18);
 
   // ── 3. Berichtstyp ────────────────────────────────────────────────────
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
+  doc.setFontSize(6.5);
   doc.setTextColor(...branding.textSecondary);
-  doc.text(reportType, 15, y + 30);
+  doc.text(reportType, 15, y + 24.5);
 
   doc.setTextColor(0, 0, 0);
-  return y + blockH + 6;
+  return y + blockH + 3;
 }
 
 /**
@@ -215,8 +215,8 @@ function addMiniHeader(
   monthLabel: string,
   pageW: number,
 ): void {
-  const miniH = 9;
-  const y     = 3;
+  const miniH = 8;
+  const y     = 2;
   const x     = 10;
   const w     = pageW - 20;
 
@@ -235,9 +235,9 @@ function addMiniHeader(
   doc.line(x, y + miniH, x + w, y + miniH);
 
   // Logo mini – vertikal zentriert
-  const logoW = 22;
-  const logoH = Math.round(logoW / (220 / 56)); // ≈ 5.6mm
-  const logoX = pageW - 14 - logoW;
+  const logoW = 20;
+  const logoH = Math.round(logoW / (240 / 56)); // ≈ 4.7mm
+  const logoX = pageW - 13 - logoW;
   const logoY = y + (miniH - logoH) / 2;
   if (logoDataUrl) {
     doc.addImage(logoDataUrl, 'PNG', logoX, logoY, logoW, logoH);
@@ -245,15 +245,15 @@ function addMiniHeader(
 
   // Restaurantname
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
+  doc.setFontSize(6);
   doc.setTextColor(...branding.textPrimary);
-  doc.text(branding.displayName.toUpperCase(), 14, y + 4.5);
+  doc.text(branding.displayName.toUpperCase(), 14, y + 4);
 
   // Monat dezent
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(5.5);
+  doc.setFontSize(5);
   doc.setTextColor(...branding.textSecondary);
-  doc.text(monthLabel, 14, y + 8);
+  doc.text(monthLabel, 14, y + 7);
 
   doc.setTextColor(0, 0, 0);
 }
@@ -266,21 +266,21 @@ function addSectionHeader(
   y: number,
   pageW: number,
 ): number {
-  const blockH = 16;
+  const blockH = 12;
   doc.setFillColor(...C.navy);
   doc.rect(10, y, pageW - 20, blockH, 'F');
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
+  doc.setFontSize(6.5);
   doc.setTextColor(...C.navyHeader);
-  doc.text(category.toUpperCase(), 15, y + 5.5);
+  doc.text(category.toUpperCase(), 15, y + 4);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(12);
+  doc.setFontSize(10);
   doc.setTextColor(...C.white);
-  doc.text(title, 15, y + 12.5);
+  doc.text(title, 15, y + 9.5);
   doc.setTextColor(0, 0, 0);
-  return y + blockH + 2;
+  return y + blockH + 1;
 }
 
 // ── KPI-Sektion (Monatskennzahlen oben) ──────────────────────────────────────
@@ -344,14 +344,14 @@ function addKpiSection(
     makeEntry('EBIT',                  ebitRow,   false, true),
   ];
 
-  doc.setFontSize(6.5);
+  doc.setFontSize(6);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...C.navyMid);
-  doc.text('KENNZAHLEN', 12, startY + 3.5);
+  doc.text('KENNZAHLEN', 12, startY + 3);
   doc.setTextColor(0, 0, 0);
 
   autoTable(doc, {
-    startY: startY + 5,
+    startY: startY + 4,
     head: [['Kennzahl', 'Ist CHF', 'Ist %', 'Budget CHF', 'Bud %', 'Vorjahr CHF', 'VJ %']],
     body: kpis.map(k => [
       { content: k.label,   styles: { fontStyle: 'bold' as const } },
@@ -365,10 +365,10 @@ function addKpiSection(
     theme: 'plain',
     headStyles: {
       fillColor: C.navyLight, textColor: C.white,
-      fontStyle: 'bold', fontSize: 7,
-      cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+      fontStyle: 'bold', fontSize: 6.5,
+      cellPadding: { top: 1.5, bottom: 1.5, left: 2, right: 2 },
     },
-    bodyStyles: { fontSize: 7.5, cellPadding: { top: 1.6, bottom: 1.6, left: 2, right: 2 } },
+    bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 2 } },
     alternateRowStyles: { fillColor: C.slateLight },
     columnStyles: {
       0: { cellWidth: 50 },
@@ -381,7 +381,7 @@ function addKpiSection(
     },
   });
 
-  return (doc as any).lastAutoTable.finalY + 6;
+  return (doc as any).lastAutoTable.finalY + 3;
 }
 
 // ── Budget P&L Tabellenkörper ─────────────────────────────────────────────────
@@ -519,7 +519,7 @@ function addPrevMonthComparison(
   const prevResult = yearResult.months[prevIdx];
   if (!curResult || !prevResult) return;
 
-  const y = ensureSpace(doc, afterY, 75);
+  const y = ensureSpace(doc, afterY, 55);
 
   const curName  = MONTH_NAMES_DE[month]      ?? '';
   const prevName = MONTH_NAMES_DE[month - 1]  ?? '';
@@ -591,10 +591,10 @@ function addPrevMonthComparison(
     theme: 'plain',
     headStyles: {
       fillColor: C.navyLight, textColor: C.white,
-      fontStyle: 'bold', fontSize: 7,
-      cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+      fontStyle: 'bold', fontSize: 6.5,
+      cellPadding: { top: 1.5, bottom: 1.5, left: 2, right: 2 },
     },
-    bodyStyles: { fontSize: 7.5, cellPadding: { top: 2.2, bottom: 2.2, left: 2, right: 2 } },
+    bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 2 } },
     alternateRowStyles: { fillColor: C.slateLight },
     columnStyles: {
       0: { cellWidth: 50 },
@@ -627,7 +627,7 @@ function addKpiSummaryBlock(
 ): void {
   if (monthIndices.length === 0) return;
 
-  const y = ensureSpace(doc, afterY, 80);
+  const y = ensureSpace(doc, afterY, 55);
   const tableStartY = addSectionHeader(doc, category, title, y, pageW);
 
   const sumKpi = (id: string) => {
@@ -707,10 +707,10 @@ function addKpiSummaryBlock(
     theme: 'plain',
     headStyles: {
       fillColor: C.navyLight, textColor: C.white,
-      fontStyle: 'bold', fontSize: 7,
-      cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+      fontStyle: 'bold', fontSize: 6.5,
+      cellPadding: { top: 1.5, bottom: 1.5, left: 2, right: 2 },
     },
-    bodyStyles: { fontSize: 7.5, cellPadding: { top: 2.2, bottom: 2.2, left: 2, right: 2 } },
+    bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 2 } },
     alternateRowStyles: { fillColor: C.slateLight },
     columnStyles: {
       0: { cellWidth: 50 },
@@ -790,7 +790,7 @@ function addMonthComparisonBlock(
     ? `${MONTH_NAMES_DE[selectedMonths[0]]} bis ${MONTH_NAMES_DE[selectedMonths[selectedMonths.length - 1]]} ${year}`
     : `${selectedMonths.map(m => MONTH_NAMES_SHORT_DE[m]).filter(Boolean).join(', ')} ${year}`;
 
-  const y = ensureSpace(doc, afterY, 100);
+  const y = ensureSpace(doc, afterY, 70);
   const headerEndY = addSectionHeader(doc, 'MONATSVERGLEICH', title, y, pageW);
 
   // ── Kennzahlen-Definitionen ──────────────────────────────────────────────
@@ -857,8 +857,8 @@ function addMonthComparisonBlock(
       const { id, label, isPctRow, isResult, groupStart, totalChf, totalBase } = rowDef;
 
       // Padding: Gruppenstart → extra Abstand
-      const topPad    = groupStart ? 5 : 1.5;
-      const bottomPad = 1.5;
+      const topPad    = groupStart ? 3.5 : 1.0;
+      const bottomPad = 1.0;
 
       // Farben je Zeilentyp
       const rowFill       = isResult ? RESULT_BG : undefined;
@@ -866,7 +866,7 @@ function addMonthComparisonBlock(
         ? (isPctRow ? RESULT_PCT : ([215, 228, 248] as [number, number, number]))
         : (isPctRow ? PCT_TEXT   : DARK_TEXT);
       const valueFontStyle: 'bold' | 'normal' = isPctRow ? 'normal' : 'bold';
-      const valueFontSize  = isPctRow ? 6.5 : 8;
+      const valueFontSize  = isPctRow ? 6 : 7.5;
 
       const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
         cellPadding: { top: topPad, bottom: bottomPad, left: 3, right: 3 },
@@ -972,13 +972,13 @@ function addMonthComparisonBlock(
       theme:  'plain',
       headStyles: {
         fillColor: C.navyLight, textColor: C.white,
-        fontStyle: 'bold', fontSize: 7.5,
-        cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 },
+        fontStyle: 'bold', fontSize: 7,
+        cellPadding: { top: 2, bottom: 2, left: 2.5, right: 2.5 },
         halign: 'right',
       },
       bodyStyles: {
-        fontSize: 8,
-        cellPadding: { top: 1.5, bottom: 1.5, left: 3, right: 3 },
+        fontSize: 7.5,
+        cellPadding: { top: 1.0, bottom: 1.0, left: 2.5, right: 2.5 },
         textColor: DARK_TEXT,
         overflow:  'ellipsize',
       },
@@ -1129,7 +1129,7 @@ export async function exportPLToPDF(
 
   // ──── Jahresübersicht ────────────────────────────────────────────────────
   else if (mode === 'yearly') {
-    const blockH = 36;
+    const blockH = 28;
     const bg     = activeBranding.headerBg;
     const colorL: [number, number, number] = [
       Math.min(255, Math.round(bg[0] * 1.45)),
@@ -1142,34 +1142,34 @@ export async function exportPLToPDF(
     doc.setLineWidth(0.35);
     doc.line(10, 8 + blockH, PAGE_W - 10, 8 + blockH);
 
-    const logoW = 46;
-    const logoH = Math.round(logoW / (220 / 56));
+    const logoW = 40;
+    const logoH = Math.round(logoW / (240 / 56));
     if (logoDataUrl) {
-      doc.addImage(logoDataUrl, 'PNG', PAGE_W - 14 - logoW, 8 + (blockH - logoH) / 2, logoW, logoH);
+      doc.addImage(logoDataUrl, 'PNG', PAGE_W - 13 - logoW, 8 + (blockH - logoH) / 2, logoW, logoH);
     }
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(5.5);
+    doc.setFontSize(5);
     doc.setTextColor(...activeBranding.textSecondary);
-    doc.text(`Exportiert am ${now}`, PAGE_W - 14, 8 + blockH - 3, { align: 'right' });
+    doc.text(`Exportiert am ${now}`, PAGE_W - 13, 8 + blockH - 2.5, { align: 'right' });
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(16);
+    doc.setFontSize(14);
     doc.setTextColor(...activeBranding.textPrimary);
-    doc.text(activeBranding.displayName.toUpperCase(), 15, 21);
+    doc.text(activeBranding.displayName.toUpperCase(), 15, 18);
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10.5);
+    doc.setFontSize(9.5);
     doc.setTextColor(...activeBranding.textPrimary);
-    doc.text(String(year), 15, 30);
+    doc.text(String(year), 15, 26);
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
+    doc.setFontSize(6.5);
     doc.setTextColor(...activeBranding.textSecondary);
-    doc.text('Jahresübersicht', 15, 38);
+    doc.text('Jahresübersicht', 15, 32.5);
 
     doc.setTextColor(0, 0, 0);
-    const yH = 8 + blockH + 6;
+    const yH = 8 + blockH + 3;
 
     const KEY_ROWS: { id: string; isPct?: boolean; pctLabel?: string }[] = [
       { id: 'revenue_total' },

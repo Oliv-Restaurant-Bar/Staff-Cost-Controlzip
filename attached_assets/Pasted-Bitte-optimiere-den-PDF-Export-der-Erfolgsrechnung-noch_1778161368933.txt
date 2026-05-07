@@ -1,0 +1,125 @@
+Bitte optimiere den PDF Export der Erfolgsrechnung nochmals kompakter.
+
+Ziel:
+Der komplette Report soll möglichst auf maximal 2 Seiten passen,
+ohne unleserlich zu werden.
+
+Aktuell:
+Zu viel vertikaler Abstand und zu grosse Blöcke.
+
+Bitte kompakter gestalten.
+
+---
+
+1. Vertikale Abstände reduzieren
+
+Bitte reduzieren:
+- Padding in Tabellen
+- Zeilenhöhen
+- Abstände zwischen Blöcken
+- Abstand unter Titeln
+- Abstand zwischen Kennzahlenzeilen
+
+Aber:
+nicht gequetscht oder unleserlich.
+
+---
+
+2. Header kompakter machen
+
+Der grosse obere Header braucht aktuell zu viel Höhe.
+
+Bitte:
+- Headerhöhe reduzieren
+- Logo etwas kleiner
+- weniger Leerraum oben/unten
+- Monat und Restaurantname kompakter anordnen
+
+Wichtig:
+CI/CD Look trotzdem hochwertig behalten.
+
+---
+
+3. Kennzahlenblock kompakter
+
+Die oberen KPI Blöcke:
+- kleinere Höhe
+- kompaktere Tabellen
+- Prozentwerte kleiner
+- weniger Leerraum
+
+---
+
+4. Monatsvergleich kompakter
+
+Beim Monatsvergleich:
+- kleinere Zeilenhöhe
+- Prozentwerte dezenter
+- weniger vertikale Abstände
+- EBITDA/EBIT Block weniger hoch
+
+Aber:
+CHF Beträge weiterhin gut lesbar.
+
+---
+
+5. Tabellen optimieren
+
+Bitte:
+- kompaktere Tabellenstruktur
+- sauber ausgerichtet
+- weniger unnötige Leerräume
+
+Spaltenbreiten besser optimieren.
+
+---
+
+6. Seitenumbrüche optimieren
+
+Aktuell entstehen unnötige Umbrüche.
+
+Bitte:
+- Blöcke besser zusammenhalten
+- keine halbleeren Seiten
+- möglichst intelligente Seitenaufteilung
+
+Ziel:
+Monatsreport + Monatsvergleich möglichst Seite 1
+Kumulierte Übersicht + restliche Tabellen Seite 2
+
+---
+
+7. Schriftgrössen fein optimieren
+
+Bitte:
+CHF Werte weiterhin dominant,
+aber etwas kompakter.
+
+Prozentwerte:
+kleiner und dezenter.
+
+Titel:
+minimal kompakter.
+
+---
+
+8. Wichtig
+
+Nicht:
+alles zusammenschieben.
+
+Sondern:
+hochwertig, professionell, aber effizienter genutzt.
+
+Wie ein modernes Controlling/Board Reporting.
+
+---
+
+9. Tests
+
+Bitte prüfen:
+- maximal 2 Seiten bei normalem Monatsreport
+- keine abgeschnittenen Inhalte
+- keine überlappenden Elemente
+- weiterhin gut lesbar
+- Hochformat bleibt professionell
