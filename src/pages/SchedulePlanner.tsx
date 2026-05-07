@@ -847,13 +847,17 @@ const SchedulePlanner = () => {
   useEffect(() => {
     const mk = format(currentMonth, 'yyyy-MM');
     try {
-      const stored = JSON.parse(localStorage.getItem(tenantKey(`actual-hours-source-${mk}`)) || '{}');
+      const storageKey = tenantId === 'oliv'
+        ? `actual-hours-source-${mk}`
+        : `${tenantId}:actual-hours-source-${mk}`;
+      const stored = JSON.parse(localStorage.getItem(storageKey) || '{}');
       const keys = Object.keys(stored).filter(k => stored[k] === 'plan_auto_copy');
       setPlanCopiedKeys(new Set(keys));
     } catch {
       setPlanCopiedKeys(new Set());
     }
-  }, [currentMonth, tenantKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMonth, tenantId]);
 
   // Get days in current month
   const monthStart = startOfMonth(currentMonth);
@@ -1331,19 +1335,22 @@ const SchedulePlanner = () => {
       console.error('[PLAN→IST] saveActualHourEntry error:', err)
     );
     const mk = format(currentMonth, 'yyyy-MM');
-    const sourceKey = tenantKey(`actual-hours-source-${mk}`);
+    const prefix = tenantId === 'oliv' ? '' : `${tenantId}:`;
+    const sourceKey = `${prefix}actual-hours-source-${mk}`;
+    const hoursKey  = `${prefix}actual-hours-${mk}`;
     try {
       const stored = JSON.parse(localStorage.getItem(sourceKey) || '{}');
       stored[cellKey] = 'plan_auto_copy';
       localStorage.setItem(sourceKey, JSON.stringify(stored));
     } catch { /* ignore */ }
     try {
-      const prev = JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${mk}`)) || '{}');
-      localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify({ ...prev, [cellKey]: entry }));
+      const prev = JSON.parse(localStorage.getItem(hoursKey) || '{}');
+      localStorage.setItem(hoursKey, JSON.stringify({ ...prev, [cellKey]: entry }));
     } catch { /* ignore */ }
     setPlanCopiedKeys(prev => new Set([...prev, cellKey]));
     toast.success('Schicht auch im IST gespeichert');
-  }, [currentMonth, tenantKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMonth, tenantId]);
 
   const handleCopyPlanToIst = useCallback((
     employeeId: string,
