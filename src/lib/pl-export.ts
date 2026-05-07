@@ -836,10 +836,12 @@ function addMonthComparisonBlock(
     const chunk = chunks[chunkIdx];
     const n     = chunk.length;
 
-    // Spaltenbreiten: Label (46) + n × Monate + Total (26) ≤ 190mm
-    const LABEL_W   = 46;
-    const TOTAL_W   = 26;
-    const perMonthW = Math.floor((pageW - 20 - LABEL_W - TOTAL_W) / n);
+    // Spaltenbreiten: Label + n × Monate + Total = exakt 190mm
+    // Kein Math.floor – Remainder geht in die Label-Spalte damit keine
+    // Pixel-Lücke rechts entsteht (weisser Streifen).
+    const TOTAL_W    = 26;
+    const perMonthW  = Math.floor((pageW - 20 - TOTAL_W) / (n + 1.6)); // ~1.6× breiter als Monat
+    const LABEL_W    = (pageW - 20) - n * perMonthW - TOTAL_W;          // Rest → Label
 
     // Tabellenkopf
     const head: string[] = [
@@ -988,8 +990,8 @@ function addMonthComparisonBlock(
           data.cell.styles.halign = data.column.index === 0 ? 'left' : 'right';
         }
       },
-      tableLineColor: [215, 222, 238] as unknown as number,
-      tableLineWidth: 0.15,
+      // tableLineWidth: 0 → kein Aussenrahmen, verhindert weissen Streifen rechts
+      tableLineWidth: 0,
     });
 
     currentY = (doc as any).lastAutoTable?.finalY ?? currentY;
