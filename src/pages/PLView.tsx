@@ -1008,7 +1008,7 @@ const InlineRevenueEntry = ({
   );
 };
 
-const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode = 'off', revenueActual = 0, revenueBudget = 0, revenuePrevYear = 0, compareMode = 'all' }: {
+const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode = 'off', revenueActual = 0, revenueBudget = 0, revenuePrevYear = 0, compareMode = 'all', isCollapsed, onToggleCollapse }: {
   row: BPLRowWithValues;
   onClick: () => void;
   compact: boolean;
@@ -1022,6 +1022,8 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   revenueBudget?: number;
   revenuePrevYear?: number;
   compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr';
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
 }) => {
   const [editingIst, setEditingIst] = useState(false);
   const { values: v } = row;
@@ -1081,11 +1083,19 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
     const p = pctVal(v.actual);
     return (
       <tr
-        className="bg-slate-700 text-white dark:bg-slate-800 cursor-pointer hover:bg-slate-600 transition-colors"
-        onClick={onClick}
-        title="Klicken für Details"
+        className="bg-slate-700 text-white dark:bg-slate-800 cursor-pointer hover:bg-slate-600 transition-colors select-none"
+        onClick={() => onToggleCollapse ? onToggleCollapse() : onClick()}
+        title={isCollapsed ? `${row.catLabel} – ausklappen` : `${row.catLabel} – einklappen`}
       >
-        <td className={cn('px-3 text-xs font-bold tracking-wider', py)} colSpan={2}>{row.catLabel}</td>
+        <td className={cn('px-3 text-xs font-bold tracking-wider', py)} colSpan={2}>
+          <span className="inline-flex items-center gap-1.5">
+            {isCollapsed
+              ? <ChevronRight className="h-3 w-3 opacity-70 shrink-0" />
+              : <ChevronDown  className="h-3 w-3 opacity-70 shrink-0" />
+            }
+            {row.catLabel}
+          </span>
+        </td>
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums', py)}>{fmt(v.actual)}</td>
         {pctMode !== 'off' && (
           <td className={cn(
@@ -1222,6 +1232,17 @@ const BudgetPLView = ({
 }) => {
   const showBudget   = compareMode !== 'ist_vorjahr';
   const showPrevYear = compareMode !== 'ist_budget';
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+
+  function toggleCat(catId: string) {
+    setCollapsedCats(prev => {
+      const next = new Set(prev);
+      if (next.has(catId)) next.delete(catId);
+      else next.add(catId);
+      return next;
+    });
+  }
+
   return (
   <div className="overflow-x-auto">
     <table className="w-full text-sm border-collapse min-w-[600px]">
@@ -1246,24 +1267,34 @@ const BudgetPLView = ({
         </tr>
       </thead>
       <tbody>
-        {rows.map((row, i) => (
-          <BPLRowComp
-            key={`${row.catId}-${row.itemId ?? 'cat'}-${i}`}
-            row={row}
-            onClick={() => onRowClick(row)}
-            compact={compact}
-            onDelete={onDeleteItem}
-            month={month}
-            year={year}
-            onSaved={onSaved}
-            highlightVariance={highlightVariance}
-            pctMode={pctMode}
-            revenueActual={revenueActual}
-            revenueBudget={revenueBudget}
-            revenuePrevYear={revenuePrevYear}
-            compareMode={compareMode}
-          />
-        ))}
+        {rows.map((row, i) => {
+          // Zeilen unterhalb einer eingeklappten Kategorie ausblenden.
+          // result-Zeilen (Bruttogewinn, etc.) und andere Kategorie-Header immer zeigen.
+          const isHiddenByCollapse =
+            !row.isCategory && row.catType !== 'result' && collapsedCats.has(row.catId);
+          if (isHiddenByCollapse) return null;
+
+          return (
+            <BPLRowComp
+              key={`${row.catId}-${row.itemId ?? 'cat'}-${i}`}
+              row={row}
+              onClick={() => onRowClick(row)}
+              compact={compact}
+              onDelete={onDeleteItem}
+              month={month}
+              year={year}
+              onSaved={onSaved}
+              highlightVariance={highlightVariance}
+              pctMode={pctMode}
+              revenueActual={revenueActual}
+              revenueBudget={revenueBudget}
+              revenuePrevYear={revenuePrevYear}
+              compareMode={compareMode}
+              isCollapsed={row.isCategory ? collapsedCats.has(row.catId) : undefined}
+              onToggleCollapse={row.isCategory ? () => toggleCat(row.catId) : undefined}
+            />
+          );
+        })}
       </tbody>
     </table>
   </div>
