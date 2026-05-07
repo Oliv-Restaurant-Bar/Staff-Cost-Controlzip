@@ -1,0 +1,213 @@
+Bitte optimiere die Typografie und Farbgestaltung des PDF Reportings nochmals grundlegend.
+
+Aktuell wirkt das Reporting zwar professionell,
+aber die Lesbarkeit ist noch nicht optimal.
+
+Die wichtigsten Probleme:
+
+1. Schriftart wirkt technisch/unruhig
+2. Prozentwerte sind zu dominant
+3. CHF Beträge gehen optisch unter
+4. Rot/Grün Farbschema ist schwer lesbar
+5. Prozentwerte umbrechen teilweise auf zwei Zeilen
+6. EBITDA/EBIT Blöcke wirken typografisch unruhig
+
+Bitte alles sauber und lesefreundlich optimieren.
+
+---
+
+1. Neue moderne Schriftart verwenden
+
+Bitte eine elegantere, modernere und besser leserliche Schrift verwenden.
+
+Aktuell wirkt die Schrift:
+- zu technisch
+- zu schmal
+- unruhig im PDF
+
+Gewünscht:
+- moderne Business/Reporting Schrift
+- klar lesbar im Druck
+- elegante Zahlen
+- bessere Tabellenwirkung
+
+Geeignete Richtungen:
+- Inter
+- Source Sans
+- IBM Plex Sans
+- Helvetica Neue
+- Manrope
+- ähnlicher moderner Reporting Stil
+
+Wichtig:
+Die Zahlen müssen sauber lesbar sein.
+
+---
+
+2. CHF Beträge stärker hervorheben
+
+CHF Werte sind die wichtigste Information.
+
+Bitte:
+- grösser
+- stärker/fetter
+- dunkler
+- besser lesbar
+
+Besonders:
+- Umsatz
+- EBITDA
+- EBIT
+- Totalwerte
+
+Diese sollen visuell dominieren.
+
+---
+
+3. Prozentwerte deutlich dezenter machen
+
+Die Prozentwerte sollen:
+- kleiner
+- dezenter
+- sekundäre Information
+
+Aktuell wirken sie fast stärker als CHF Beträge.
+
+Bitte:
+- kleinere Schrift
+- hellerer Grauton
+- weniger fett
+- niemals dominant
+
+Beispiel:
+CHF Wert:
+kräftig
+
+%
+kleiner und zurückhaltender
+
+---
+
+4. Niemals Prozent-Umbruch erlauben
+
+Sehr wichtig:
+
+Aktuell:
+-16.3
+%
+
+Das darf NIE passieren.
+
+Bitte sicherstellen:
+- Prozentwerte immer in einer Zeile
+- no-wrap verwenden
+- genügend Spaltenbreite
+- sauberes Tabellenlayout
+
+Richtig:
+-16.3 %
+
+---
+
+5. Rot/Grün Farben optimieren
+
+Aktuell:
+das Rot/Grün ist schlecht lesbar.
+
+Besonders:
+- auf dunklem Hintergrund
+- bei EBITDA/EBIT
+- bei kleinen Zahlen
+
+Bitte professionelleres Farbschema verwenden.
+
+Positive Werte:
+nicht Neon-Grün.
+
+Sondern:
+- dunkles Petrolgrün
+- gedecktes Smaragdgrün
+- hochwertiger Controlling-Stil
+
+Negative Werte:
+nicht aggressiv rot.
+
+Sondern:
+- gedecktes Bordeaux
+- elegantes Dunkelrot
+- bessere Lesbarkeit
+
+Wichtig:
+Farben müssen auch im Ausdruck gut lesbar bleiben.
+
+---
+
+6. EBITDA / EBIT Blöcke verbessern
+
+Aktuell:
+zu viele Farben konkurrieren miteinander.
+
+Bitte:
+- Hintergrund etwas ruhiger
+- Zahlen klarer
+- weniger grelle Farben
+- mehr Fokus auf Lesbarkeit
+
+Optional:
+leicht hellerer dunkler Hintergrund.
+
+---
+
+7. Tabellenhierarchie verbessern
+
+Bitte visuelle Hierarchie stärker machen:
+
+Wichtigste Information:
+CHF Werte
+
+Sekundär:
+%
+
+Tertiär:
+Abweichungen
+
+Dadurch erkennt man den Report schneller.
+
+---
+
+8. Tabellenabstände optimieren
+
+Bitte:
+- mehr horizontale Luft zwischen Zahlen
+- bessere vertikale Ausrichtung
+- sauber mittig
+- weniger gedrängt
+
+---
+
+9. Gesamtziel
+
+Das Reporting soll wirken wie:
+- hochwertiges Verwaltungsratsreporting
+- professionelle Gastrogruppe
+- modernes Finanzreporting
+- sehr gut druckbar
+- sehr schnell lesbar
+
+Nicht wie:
+- Excel Export
+- technische Tabelle
+- Dashboard Screenshot
+
+---
+
+10. Tests
+
+Bitte prüfen:
+- Prozentwerte umbrechen niemals
+- CHF Werte dominant und gut lesbar
+- Rot/Grün auch im Druck lesbar
+- Tabellen ruhiger und eleganter
+- EBITDA/EBIT Block besser lesbar
+- Schriftbild professioneller
+- keine überladenen Farben

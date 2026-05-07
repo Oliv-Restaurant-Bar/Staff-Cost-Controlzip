@@ -40,9 +40,12 @@ const C = {
   navyLight:  [55,  90, 155]  as [number, number, number],
   slateLight: [242, 245, 252] as [number, number, number],
   white:      [255, 255, 255] as [number, number, number],
-  green:      [22,  115,  60] as [number, number, number],
-  red:        [185,  35,  35] as [number, number, number],
-  gray:       [140, 145, 155] as [number, number, number],
+  // Petrolgrün – professionelles Controlling-Grün (kein Neon)
+  green:      [13,  92,  64]  as [number, number, number],
+  // Bordeaux – elegantes Dunkelrot (kein aggressives Rot)
+  red:        [138, 28,  52]  as [number, number, number],
+  // Dezentes Grau für Prozentwerte – klar sekundär
+  gray:       [162, 166, 178] as [number, number, number],
   navyHeader: [200, 210, 230] as [number, number, number],
 };
 
@@ -61,7 +64,8 @@ function fmtPctRatio(value: number | undefined | null, base: number | undefined 
   if (value == null || !base || base === 0) return '–';
   const p = (value / base) * 100;
   if (!isFinite(p)) return '–';
-  return `${p.toFixed(1)} %`;
+  // Kein Leerzeichen vor % → verhindert Zeilenumbruch in engen Spalten
+  return `${p.toFixed(1)}%`;
 }
 
 // ── Farblogik ─────────────────────────────────────────────────────────────────
@@ -594,16 +598,22 @@ function addPrevMonthComparison(
       fontStyle: 'bold', fontSize: 6.5,
       cellPadding: { top: 1.5, bottom: 1.5, left: 2, right: 2 },
     },
-    bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 2 } },
+    bodyStyles: { fontSize: 8, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 2 } },
     alternateRowStyles: { fillColor: C.slateLight },
     columnStyles: {
       0: { cellWidth: 50 },
-      1: { halign: 'right', cellWidth: 20 },
-      2: { halign: 'right', cellWidth: 13 },
-      3: { halign: 'right', cellWidth: 20 },
-      4: { halign: 'right', cellWidth: 13 },
-      5: { halign: 'right', cellWidth: 20 },
-      6: { halign: 'right', cellWidth: 20 },
+      1: { halign: 'right', cellWidth: 21 },
+      2: { halign: 'right', cellWidth: 12 },   // % – schmal
+      3: { halign: 'right', cellWidth: 21 },
+      4: { halign: 'right', cellWidth: 12 },
+      5: { halign: 'right', cellWidth: 21 },
+      6: { halign: 'right', cellWidth: 19 },   // Abw.%
+    },
+    didParseCell: (data) => {
+      // %-Spalten sekundär
+      if (data.section === 'body' && [2, 4, 6].includes(data.column.index)) {
+        data.cell.styles.fontSize = 5.5;
+      }
     },
   });
 }
@@ -710,18 +720,23 @@ function addKpiSummaryBlock(
       fontStyle: 'bold', fontSize: 6.5,
       cellPadding: { top: 1.5, bottom: 1.5, left: 2, right: 2 },
     },
-    bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 2 } },
+    bodyStyles: { fontSize: 8, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 2 } },
     alternateRowStyles: { fillColor: C.slateLight },
     columnStyles: {
       0: { cellWidth: 50 },
-      1: { halign: 'right', cellWidth: 17 },
-      2: { halign: 'right', cellWidth: 13 },
-      3: { halign: 'right', cellWidth: 17 },
-      4: { halign: 'right', cellWidth: 13 },
-      5: { halign: 'right', cellWidth: 17 },
-      6: { halign: 'right', cellWidth: 13 },
-      7: { halign: 'right', cellWidth: 18 },
-      8: { halign: 'right', cellWidth: 18 },
+      1: { halign: 'right', cellWidth: 18 },
+      2: { halign: 'right', cellWidth: 12 },   // % – schmal
+      3: { halign: 'right', cellWidth: 18 },
+      4: { halign: 'right', cellWidth: 12 },
+      5: { halign: 'right', cellWidth: 18 },
+      6: { halign: 'right', cellWidth: 12 },
+      7: { halign: 'right', cellWidth: 19 },
+      8: { halign: 'right', cellWidth: 19 },
+    },
+    didParseCell: (data) => {
+      if (data.section === 'body' && [2, 4, 6].includes(data.column.index)) {
+        data.cell.styles.fontSize = 5.5;
+      }
     },
   });
 }
@@ -751,16 +766,19 @@ function addMonthComparisonBlock(
   if (selectedMonths.length === 0) return;
 
   // ── Farben ───────────────────────────────────────────────────────────────
-  const DARK_TEXT:       [number, number, number] = [20, 30, 65];
-  const PCT_TEXT:        [number, number, number] = [120, 130, 150];
-  const RESULT_BG:       [number, number, number] = [28, 55, 115];
-  const RESULT_PCT:      [number, number, number] = [168, 190, 228];
-  const TOTAL_BG:        [number, number, number] = [225, 232, 248];
-  const TOTAL_RESULT_BG: [number, number, number] = [20, 44, 98];
-  const SOFT_GREEN:      [number, number, number] = [15, 105, 48];   // dunkles Grün auf weiss
-  const SOFT_RED:        [number, number, number] = [168, 38, 38];   // eleganteres Rot
-  const LIGHT_GREEN:     [number, number, number] = [140, 240, 175]; // heller auf dunklem BG
-  const LIGHT_RED:       [number, number, number] = [248, 138, 138]; // harmonischeres Rot
+  const DARK_TEXT:       [number, number, number] = [18, 28, 62];
+  const PCT_TEXT:        [number, number, number] = [162, 166, 178]; // dezent grau, klar sekundär
+  const RESULT_BG:       [number, number, number] = [36, 66, 125];   // leicht heller → besser lesbar
+  const RESULT_PCT:      [number, number, number] = [175, 195, 232]; // helles Grau auf navy
+  const TOTAL_BG:        [number, number, number] = [224, 230, 246];
+  const TOTAL_RESULT_BG: [number, number, number] = [22, 48, 105];
+  // Professionelles Petrolgrün – Controlling-Stil, kein Neon
+  const PETROL_GREEN:    [number, number, number] = [13, 92, 64];
+  // Bordeaux – elegantes Dunkelrot, gut druckbar
+  const BORDEAUX:        [number, number, number] = [138, 28, 52];
+  // Auf dunklem RESULT_BG: gedämpfte, helle Varianten
+  const RESULT_GREEN:    [number, number, number] = [88, 210, 158];  // Aqua-Mint auf navy
+  const RESULT_RED:      [number, number, number] = [232, 118, 132]; // Rosé auf navy
 
   // ── %-Format ohne Leerzeichen (kein Umbruch) ─────────────────────────────
   const pctStr = (v: number | null | undefined, base: number | null | undefined): string => {
@@ -866,7 +884,8 @@ function addMonthComparisonBlock(
         ? (isPctRow ? RESULT_PCT : ([215, 228, 248] as [number, number, number]))
         : (isPctRow ? PCT_TEXT   : DARK_TEXT);
       const valueFontStyle: 'bold' | 'normal' = isPctRow ? 'normal' : 'bold';
-      const valueFontSize  = isPctRow ? 6 : 7.5;
+      // CHF dominant (8.5pt), % sekundär (5.5pt)
+      const valueFontSize  = isPctRow ? 5.5 : 8.5;
 
       const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
         cellPadding: { top: topPad, bottom: bottomPad, left: 3, right: 3 },
@@ -898,9 +917,9 @@ function addMonthComparisonBlock(
         } else {
           content = fmtCHF(v);
           if (isResult) {
-            cellColor = v >= 0 ? LIGHT_GREEN : LIGHT_RED;
+            cellColor = v >= 0 ? RESULT_GREEN : RESULT_RED;
           } else {
-            cellColor = v < 0 ? SOFT_RED : DARK_TEXT;
+            cellColor = v < 0 ? BORDEAUX : DARK_TEXT;
           }
         }
 
@@ -929,9 +948,9 @@ function addMonthComparisonBlock(
       } else {
         totalContent = fmtCHF(totalChf);
         if (isResult) {
-          totalTxtColor = totalChf >= 0 ? LIGHT_GREEN : LIGHT_RED;
+          totalTxtColor = totalChf >= 0 ? RESULT_GREEN : RESULT_RED;
         } else {
-          totalTxtColor = totalChf < 0 ? SOFT_RED : DARK_TEXT;
+          totalTxtColor = totalChf < 0 ? BORDEAUX : DARK_TEXT;
         }
       }
 
@@ -1051,20 +1070,25 @@ export async function exportPLToPDF(
           body: body as string[][],
           theme: 'plain',
           headStyles: { fillColor: C.navyLight, textColor: C.white, fontStyle: 'bold', fontSize: 7, cellPadding: { top: 2, bottom: 2, left: 2, right: 2 } },
-          bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
+          bodyStyles: { fontSize: 8, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
           alternateRowStyles: { fillColor: C.slateLight },
           columnStyles: {
-            0: { cellWidth: 52 },
-            1: { halign: 'right', cellWidth: 18 },
-            2: { halign: 'right', cellWidth: 11 },
-            3: { halign: 'right', cellWidth: 18 },
-            4: { halign: 'right', cellWidth: 11 },
-            5: { halign: 'right', cellWidth: 18 },
-            6: { halign: 'right', cellWidth: 18 },
-            7: { halign: 'right', cellWidth: 11 },
+            0: { cellWidth: 50 },
+            1: { halign: 'right', cellWidth: 19 },
+            2: { halign: 'right', cellWidth: 12 },   // % – schmal, weil 5.5pt
+            3: { halign: 'right', cellWidth: 19 },
+            4: { halign: 'right', cellWidth: 12 },
+            5: { halign: 'right', cellWidth: 19 },
+            6: { halign: 'right', cellWidth: 19 },
+            7: { halign: 'right', cellWidth: 12 },
             8: { halign: 'right', cellWidth: 18 },
           },
           didParseCell: (data) => {
+            // %-Spalten: dezenter Font, sekundäre Hierarchie
+            if (data.section === 'body' && [2, 4, 7].includes(data.column.index)) {
+              data.cell.styles.fontSize = 5.5;
+            }
+            // Section-Header Zeilen: navy Hintergrund für alle Zellen
             if (data.row.raw && Array.isArray(data.row.raw) && data.column.index > 0) {
               const first = (data.row.raw as any[])[0];
               if (first?.styles?.colSpan === 9) data.cell.styles.fillColor = C.navy;
@@ -1080,17 +1104,20 @@ export async function exportPLToPDF(
           body: body as string[][],
           theme: 'plain',
           headStyles: { fillColor: C.navyLight, textColor: C.white, fontStyle: 'bold', fontSize: 7, cellPadding: { top: 2, bottom: 2, left: 2, right: 2 } },
-          bodyStyles: { fontSize: 7, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
+          bodyStyles: { fontSize: 8, cellPadding: { top: 1.2, bottom: 1.2, left: 2, right: 1.5 } },
           alternateRowStyles: { fillColor: C.slateLight },
           columnStyles: {
-            0: { cellWidth: 75 },
-            1: { halign: 'right', cellWidth: 26 },
-            2: { halign: 'right', cellWidth: 15 },
-            3: { halign: 'right', cellWidth: 26 },
-            4: { halign: 'right', cellWidth: 15 },
-            5: { halign: 'right', cellWidth: 26 },
+            0: { cellWidth: 73 },
+            1: { halign: 'right', cellWidth: 27 },
+            2: { halign: 'right', cellWidth: 13 },   // % – schmal
+            3: { halign: 'right', cellWidth: 27 },
+            4: { halign: 'right', cellWidth: 13 },
+            5: { halign: 'right', cellWidth: 27 },
           },
           didParseCell: (data) => {
+            if (data.section === 'body' && [2, 4].includes(data.column.index)) {
+              data.cell.styles.fontSize = 5.5;
+            }
             if (data.row.raw && Array.isArray(data.row.raw) && data.column.index > 0) {
               const first = (data.row.raw as any[])[0];
               if (first?.styles?.colSpan === 6) data.cell.styles.fillColor = C.navy;
