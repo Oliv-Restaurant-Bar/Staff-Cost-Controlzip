@@ -1,0 +1,201 @@
+Bitte verbessere den PDF Export Header der Erfolgsrechnung nochmals deutlich professioneller und CI/CD-konform pro Restaurant.
+
+Ziel:
+Jedes Restaurant soll im PDF Export sofort visuell erkennbar sein anhand:
+- Logo
+- Farbwelt
+- Header Design
+
+Der obere Header/Balken soll automatisch je nach Restaurant unterschiedlich gestaltet werden.
+
+---
+
+1. Restaurant-spezifischer Header
+
+Für jedes Restaurant:
+- eigene Hintergrundfarbe
+- eigenes Logo
+- passende Schriftfarben
+
+Beispiele:
+
+OLIV:
+- dunkles Olivgrün / elegant dunkel
+- Logo rechts oben integriert
+- Schrift weiss oder hell
+
+BEAULIEU:
+- Beaulieu Farbwelt verwenden
+- dunkles Grün/Braun passend zum Logo
+- goldene/beige Akzente möglich
+- Logo rechts oben integriert
+
+---
+
+2. Header Aufbau
+
+Der obere Balken soll enthalten:
+
+LINKS:
+Restaurantname gross
+Monat/Jahr gross
+Dokumenttitel kleiner
+
+RECHTS:
+Restaurant Logo
+Exportdatum klein
+
+Beispiel:
+
+OLIV RESTAURANT & BAR
+APRIL 2026
+Erfolgsrechnung – Budget P&L
+
+rechts oben:
+OLIV Logo
+Exportiert am 07.05.2026
+
+---
+
+3. Logo Integration
+
+Bitte das jeweilige Restaurantlogo sauber im Header integrieren.
+
+Nicht:
+- zu gross
+- verzerrt
+- verpixelt
+
+Sondern:
+- professionell eingebettet
+- oben rechts
+- mit genügend Abstand
+- proportional skaliert
+
+Bitte PNG transparent sauber unterstützen.
+
+---
+
+4. Dynamische Restaurant-Erkennung
+
+Der Export soll automatisch erkennen:
+welches Restaurant aktuell geöffnet/exportiert wird.
+
+Beispiele:
+- OLIV
+- Beaulieu
+
+Und dann automatisch:
+- Logo laden
+- Farbwelt laden
+- Headerfarbe setzen
+
+Bitte zentral konfigurieren:
+
+restaurantBranding = {
+  oliv: {
+    primaryColor: ...
+    secondaryColor: ...
+    logo: ...
+  },
+  beaulieu: {
+    primaryColor: ...
+    secondaryColor: ...
+    logo: ...
+  }
+}
+
+---
+
+5. Farbwelt je Restaurant
+
+OLIV:
+- elegant
+- modern
+- dunkel
+- olivgrün / dunkelgrün
+
+BEAULIEU:
+- etwas wärmer
+- klassisch
+- braun/grün/gold passend zum Logo
+
+Die Tabellen darunter dürfen neutral bleiben.
+Nur der Header soll stark CI/CD geprägt sein.
+
+---
+
+6. Typografie verbessern
+
+Im Header:
+
+Restaurantname:
+- gross
+- fett
+- dominant
+
+Monat:
+- gross
+- klar sichtbar
+
+Dokumenttyp:
+- kleiner
+- sekundär
+
+Exportdatum:
+- klein oben rechts
+
+---
+
+7. Schatten / Design
+
+Der Header soll hochwertiger wirken:
+- sauberer Abstand
+- keine harten Kanten
+- professioneller PDF Look
+
+Optional:
+- leichter Farbverlauf
+- dezente Linien
+- feine Trennlinie unten
+
+Aber nicht überladen.
+
+---
+
+8. PDF Seiten
+
+Der Header soll:
+- auf der ersten Seite gross erscheinen
+- auf Folgeseiten kleiner als Mini-Header wiederholt werden
+
+Mini-Header Folgeseiten:
+- Restaurantname
+- Monat
+- kleines Logo rechts
+
+---
+
+9. Wichtig
+
+Das soll professionell wie ein echtes Management Reporting aussehen.
+
+Nicht wie ein einfacher Tabellenexport.
+
+Es muss direkt erkennbar sein:
+- welches Restaurant
+- welcher Monat
+- welches Reporting
+
+---
+
+10. Tests
+
+Bitte prüfen:
+- OLIV Export zeigt korrektes Logo und Farben
+- Beaulieu Export zeigt korrektes Logo und Farben
+- Logos nicht verzerrt
+- Header sauber im Hochformat
+- Folgeseiten haben kleinen Header
+- PDF bleibt performant
+- keine abgeschnittenen Logos

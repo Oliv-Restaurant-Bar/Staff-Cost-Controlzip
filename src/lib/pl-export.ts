@@ -20,6 +20,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PLMonthResult, PLYearResult, PLComputedRow } from '@/types/pl';
 import { MONTH_NAMES_SHORT_DE, MONTH_NAMES_DE } from '@/types/reporting';
+import { RestaurantBranding } from '@/lib/pl-branding';
 
 // ── Export-Optionen ───────────────────────────────────────────────────────────
 
@@ -103,55 +104,113 @@ function ensureSpace(doc: jsPDF, afterY: number, neededH: number, gap = 10): num
 // ── Seitenkopf ────────────────────────────────────────────────────────────────
 
 /**
- * Haupt-Seitenkopf: Restaurant prominent · Monat/Jahr gross · Typ klein · Datum diskret
+ * Haupt-Seitenkopf (Seite 1):
+ *   LINKS  – Restaurantname gross · Monat/Jahr · Berichtstyp
+ *   RECHTS – Logo (SVG-Wordmark) · Exportdatum
+ *   UNTEN  – dünne Akzentlinie in Restaurantfarbe
  *
- * Hierarchie:
- *   1. RESTAURANTNAME  – 14pt bold white      ← wichtigste Info
- *   2. MONAT JAHR      – 12pt bold white      ← zweitwichtigste Info
- *   3. Berichtstyp     – 8pt normal slate     ← Kontext
- *   4. Exportiert am … – 6.5pt right slate    ← Metadaten
+ * Branding-spezifisch: Hintergrundfarbe + Textfarben + Logo aus RestaurantBranding.
  */
 function addPageHeader(
   doc: jsPDF,
-  reportType: string,      // z.B. "Erfolgsrechnung – Budget P&L"
-  restaurantName: string,  // z.B. "Oliv Restaurant & Bar"
-  exportDate: string,      // z.B. "07.05.2026"
+  reportType: string,        // z.B. "Erfolgsrechnung – Budget P&L"
+  branding: RestaurantBranding,
+  logoDataUrl: string,       // base64-PNG aus renderLogoDataUrl()
+  exportDate: string,        // z.B. "07.05.2026"
   month: number,
   year: number,
   pageW: number,
   y = 8,
 ): number {
-  const blockH = 34;
-  doc.setFillColor(...C.navy);
+  const blockH  = 36;
+  const logoW   = 44;        // mm
+  const logoH   = 13;        // mm — Seitenverhältnis 220:56 ≈ 3.9:1
+  const logoX   = pageW - 12 - logoW;
+  const logoY   = y + 4;
+
+  // ── Hintergrund ────────────────────────────────────────────────────────
+  doc.setFillColor(...branding.headerBg);
   doc.rect(10, y, pageW - 20, blockH, 'F');
 
-  // Exportdatum – oben rechts, diskret
+  // ── Akzentlinie unten ──────────────────────────────────────────────────
+  doc.setDrawColor(...branding.accentColor);
+  doc.setLineWidth(0.6);
+  doc.line(10, y + blockH, pageW - 10, y + blockH);
+
+  // ── Logo rechts ────────────────────────────────────────────────────────
+  if (logoDataUrl) {
+    doc.addImage(logoDataUrl, 'PNG', logoX, logoY, logoW, logoH);
+  }
+
+  // ── Exportdatum (unterhalb Logo, rechtsbündig) ─────────────────────────
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(...C.navyHeader);
-  doc.text(`Exportiert am ${exportDate}`, pageW - 13, y + 7, { align: 'right' });
+  doc.setFontSize(6);
+  doc.setTextColor(...branding.textSecondary);
+  doc.text(`Exportiert am ${exportDate}`, pageW - 13, y + blockH - 4, { align: 'right' });
 
-  // 1. Restaurantname – gross, prominent
+  // ── 1. Restaurantname – gross, dominant ───────────────────────────────
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.setTextColor(...C.white);
-  doc.text(restaurantName.toUpperCase(), 15, y + 12);
+  doc.setFontSize(15);
+  doc.setTextColor(...branding.textPrimary);
+  doc.text(branding.displayName.toUpperCase(), 15, y + 13);
 
-  // 2. Monat / Jahr – gross, prominent
+  // ── 2. Monat / Jahr – gross ────────────────────────────────────────────
   const mFull = (MONTH_NAMES_DE[month] ?? MONTH_NAMES_SHORT_DE[month] ?? '').toUpperCase();
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.setTextColor(...C.white);
-  doc.text(`${mFull} ${year}`, 15, y + 21);
+  doc.setTextColor(...branding.textPrimary);
+  doc.text(`${mFull} ${year}`, 15, y + 22);
 
-  // 3. Berichtstyp – kleiner, diskret unter Monat
+  // ── 3. Berichtstyp – dezent ────────────────────────────────────────────
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
-  doc.setTextColor(...C.navyHeader);
-  doc.text(reportType, 15, y + 29);
+  doc.setTextColor(...branding.textSecondary);
+  doc.text(reportType, 15, y + 30);
 
   doc.setTextColor(0, 0, 0);
   return y + blockH + 5;
+}
+
+/**
+ * Mini-Header für Folgeseiten (≈ 12mm hoch):
+ *   LINKS  – Restaurantname · Monat/Jahr klein
+ *   RECHTS – kleines Logo
+ *   UNTEN  – Akzentlinie
+ */
+function addMiniHeader(
+  doc: jsPDF,
+  branding: RestaurantBranding,
+  logoDataUrl: string,
+  monthLabel: string,        // z.B. "APRIL 2026"
+  pageW: number,
+): void {
+  const miniH  = 10;
+  const y      = 4;
+  const logoW  = 24;
+  const logoH  = 6;
+
+  doc.setFillColor(...branding.headerBg);
+  doc.rect(10, y, pageW - 20, miniH, 'F');
+
+  doc.setDrawColor(...branding.accentColor);
+  doc.setLineWidth(0.45);
+  doc.line(10, y + miniH, pageW - 10, y + miniH);
+
+  if (logoDataUrl) {
+    doc.addImage(logoDataUrl, 'PNG', pageW - 12 - logoW, y + 1.8, logoW, logoH);
+  }
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(...branding.textPrimary);
+  doc.text(branding.displayName.toUpperCase(), 14, y + 5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6);
+  doc.setTextColor(...branding.textSecondary);
+  doc.text(monthLabel, 14, y + 9);
+
+  doc.setTextColor(0, 0, 0);
 }
 
 /** Kleiner Abschnitts-Header (navy-Block, kein großes Datum) */
@@ -894,16 +953,21 @@ function addMonthComparisonBlock(
 
 // ── Hauptfunktion ─────────────────────────────────────────────────────────────
 
-export function exportPLToPDF(
+export async function exportPLToPDF(
   monthResult: PLMonthResult,
   yearResult:  PLYearResult,
   year:        number,
   month:       number,
   mode: 'budget_pl' | 'monthly' | 'yearly' = 'budget_pl',
   options?: PLExportOptions,
-  restaurantName = 'Oliv Restaurant & Bar',
-): void {
-  // Defaults: alles eingeschlossen (Rückwärtskompatibilität)
+  branding?: RestaurantBranding,
+): Promise<void> {
+  // ── Branding laden ──────────────────────────────────────────────────────
+  const { getBranding: _getBranding, renderLogoDataUrl } = await import('@/lib/pl-branding');
+  const activeBranding = branding ?? _getBranding('oliv');
+  const logoDataUrl    = await renderLogoDataUrl(activeBranding);
+
+  // ── Defaults ─────────────────────────────────────────────────────────────
   const opts: PLExportOptions = options ?? {
     includeMonthReport:    true,
     includePrevMonth:      month > 1,
@@ -915,6 +979,8 @@ export function exportPLToPDF(
   const doc    = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const now    = new Date().toLocaleDateString('de-CH');
   const PAGE_W = 210;
+  const mFull  = (MONTH_NAMES_DE[month] ?? MONTH_NAMES_SHORT_DE[month] ?? '').toUpperCase();
+  const miniLabel = `${mFull} ${year}`;
 
   const revA  = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.actual;
   const revB  = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.budget;
@@ -926,7 +992,7 @@ export function exportPLToPDF(
 
     if (opts.includeMonthReport) {
       const reportType = isBPL ? 'Erfolgsrechnung – Budget P&L' : 'Erfolgsrechnung – Monatsansicht';
-      const yH = addPageHeader(doc, reportType, restaurantName, now, month, year, PAGE_W);
+      const yH = addPageHeader(doc, reportType, activeBranding, logoDataUrl, now, month, year, PAGE_W);
       const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
 
       if (isBPL) {
@@ -1014,33 +1080,40 @@ export function exportPLToPDF(
 
   // ──── Jahresübersicht ────────────────────────────────────────────────────
   else if (mode === 'yearly') {
-    const blockH = 34;
-    doc.setFillColor(...C.navy);
+    const blockH = 36;
+    const logoW  = 44;
+    const logoH  = 13;
+
+    doc.setFillColor(...activeBranding.headerBg);
     doc.rect(10, 8, PAGE_W - 20, blockH, 'F');
 
-    // Exportdatum – oben rechts, diskret
+    doc.setDrawColor(...activeBranding.accentColor);
+    doc.setLineWidth(0.6);
+    doc.line(10, 8 + blockH, PAGE_W - 10, 8 + blockH);
+
+    if (logoDataUrl) {
+      doc.addImage(logoDataUrl, 'PNG', PAGE_W - 12 - logoW, 8 + 4, logoW, logoH);
+    }
+
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(...C.navyHeader);
-    doc.text(`Exportiert am ${now}`, PAGE_W - 13, 15, { align: 'right' });
+    doc.setFontSize(6);
+    doc.setTextColor(...activeBranding.textSecondary);
+    doc.text(`Exportiert am ${now}`, PAGE_W - 13, 8 + blockH - 4, { align: 'right' });
 
-    // 1. Restaurantname – gross
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.setTextColor(...C.white);
-    doc.text(restaurantName.toUpperCase(), 15, 20);
+    doc.setFontSize(15);
+    doc.setTextColor(...activeBranding.textPrimary);
+    doc.text(activeBranding.displayName.toUpperCase(), 15, 21);
 
-    // 2. Jahr – gross
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
-    doc.setTextColor(...C.white);
-    doc.text(String(year), 15, 29);
+    doc.setTextColor(...activeBranding.textPrimary);
+    doc.text(String(year), 15, 30);
 
-    // 3. Berichtstyp – klein
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);
-    doc.setTextColor(...C.navyHeader);
-    doc.text('Jahresübersicht', 15, 37);
+    doc.setTextColor(...activeBranding.textSecondary);
+    doc.text('Jahresübersicht', 15, 38);
 
     doc.setTextColor(0, 0, 0);
     const yH = 8 + blockH + 5;
@@ -1134,15 +1207,21 @@ export function exportPLToPDF(
     });
   }
 
-  // ── Seitenzahlen ──────────────────────────────────────────────────────────
+  // ── Seitenzahlen + Mini-Header auf Folgeseiten ────────────────────────────
   const totalPages = (doc as any).internal.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
+
+    // Mini-Header ab Seite 2
+    if (p > 1) {
+      addMiniHeader(doc, activeBranding, logoDataUrl, miniLabel, PAGE_W);
+    }
+
     doc.setFontSize(6.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...C.gray);
     doc.text(`Seite ${p} / ${totalPages}`, PAGE_W - 12, 290, { align: 'right' });
-    doc.text(`Oliv Gastro AG · Erfolgsrechnung ${year} · ${now}`, 12, 290);
+    doc.text(`${activeBranding.companyLine} · Erfolgsrechnung ${year} · ${now}`, 12, 290);
   }
 
   doc.save(`Erfolgsrechnung_${year}_${MONTH_NAMES_SHORT_DE[month]}.pdf`);

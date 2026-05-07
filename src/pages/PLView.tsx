@@ -47,6 +47,7 @@ import { BudgetYear, BudgetPLCategory, BudgetPLLineItem } from '@/types/budget';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
 import { exportPLToPDF, PLExportOptions } from '@/lib/pl-export';
+import { getBranding } from '@/lib/pl-branding';
 import { PDFExportDialog } from '@/components/PDFExportDialog';
 import { toast } from 'sonner';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
@@ -2325,10 +2326,10 @@ const PLViewPage = () => {
     setPdfDialogOpen(true);
   }, []);
 
-  const handlePdfExport = useCallback((opts: PLExportOptions) => {
-    const name = tenantId === 'beaulieu' ? 'Beaulieu Restaurant' : 'Oliv Restaurant & Bar';
+  const handlePdfExport = useCallback(async (opts: PLExportOptions) => {
+    const branding = getBranding(tenantId);
     try {
-      exportPLToPDF(monthResult, yearResult, year, month, mode, opts, name);
+      await exportPLToPDF(monthResult, yearResult, year, month, mode, opts, branding);
       toast.success('PDF erstellt');
     } catch (e) {
       console.error(e);
