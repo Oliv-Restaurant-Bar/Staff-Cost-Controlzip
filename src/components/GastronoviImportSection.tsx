@@ -24,7 +24,7 @@ import { DailyBudget } from '@/types/personnel';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { kvSet } from '@/lib/supabase-kv';
+import { safeUpsertDailyBudgets } from '@/lib/supabase-kv';
 import { useTenant } from '@/contexts/TenantContext';
 
 const DAILY_BUDGETS_BASE = 'dailyBudgets';
@@ -121,7 +121,7 @@ function ManualEntryCard({ storageKey }: { storageKey: string }) {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const totalNum = parseFloat(total.replace(',', '.'));
     if (!date || isNaN(totalNum) || totalNum < 0) {
       toast.error('Bitte gültiges Datum und Betrag eingeben');
@@ -130,29 +130,15 @@ function ManualEntryCard({ storageKey }: { storageKey: string }) {
     const foodNum = parseFloat(food.replace(',', '.')) || 0;
     const bevNum  = parseFloat(beverage.replace(',', '.')) || 0;
 
-    const budgets = loadBudgets(storageKey);
-    const prev = budgets[date] ?? {
-      date,
-      plannedRevenue: 0,
-      actualRevenue: 0,
-      previousYearRevenue: 0,
-      plannedLaborCost: 0,
-      actualLaborCost: 0,
-    };
+    const fields: Record<string, unknown> = target === 'actual'
+      ? { actualRevenue: totalNum, actualFood: foodNum, actualBeverage: bevNum }
+      : { previousYearRevenue: totalNum, previousYearFood: foodNum, previousYearBeverage: bevNum };
 
-    if (target === 'actual') {
-      budgets[date] = { ...prev, actualRevenue: totalNum, actualFood: foodNum, actualBeverage: bevNum };
-    } else {
-      budgets[date] = { ...prev, previousYearRevenue: totalNum, previousYearFood: foodNum, previousYearBeverage: bevNum };
-    }
-
-    saveBudgets(budgets, storageKey);
-    // Sync to Supabase KV (uses prefixed key → korrekte Mandanten-Isolation)
-    console.log(`[UMSATZ] saved persistently: ${date} field=${target} total=${totalNum} key=${storageKey}`);
-    kvSet(storageKey, budgets).then(() => {
-      console.log(`[UMSATZ] kvSet ok: ${storageKey} now has ${Object.keys(budgets).length} Tage`);
-      window.dispatchEvent(new Event('supabase-kv-synced'));
-    }).catch(err => console.error('[UMSATZ] kvSet failed:', err));
+    // Sicherer Upsert: immer KV-Stand holen, dann mergen — kein Blob-Overwrite
+    console.log(`[UMSATZ] safe-upsert: ${date} field=${target} total=${totalNum} key=${storageKey}`);
+    const merged = await safeUpsertDailyBudgets(storageKey, { [date]: fields }, false);
+    console.log(`[UMSATZ] safe-upsert ok: ${storageKey} now has ${Object.keys(merged).length} Tage`);
+    window.dispatchEvent(new Event('supabase-kv-synced'));
     setSaved(true);
     toast.success(`Umsatz für ${format(parseLocalDate(date), 'dd. MMM yyyy', { locale: de })} gespeichert`);
     setTimeout(() => setSaved(false), 3000);
@@ -471,17 +457,26 @@ export function GastronoviImportSection() {
     if (file) handleFile(file);
   }, [handleFile]);
 
-  const handleImportClick = () => {
+  const handleImportClick = async () => {
     if (!results) return;
 
-    const budgets = loadBudgets(storageKey);
+    // Prüfe Konflikte immer gegen KV (Master), nicht nur localStorage
+    const { kvGet } = await import('@/lib/supabase-kv');
+    const remoteRaw = await kvGet(storageKey);
+    const remote = (remoteRaw && typeof remoteRaw === 'object' && !Array.isArray(remoteRaw))
+      ? remoteRaw as Record<string, Record<string, unknown>>
+      : {};
+    const localData = loadBudgets(storageKey);
+
     const field = target === 'actual' ? 'actualRevenue' : 'previousYearRevenue';
 
     const foundConflicts: ConflictRow[] = [];
     let fresh = 0;
 
     for (const r of results) {
-      const oldVal = (budgets[r.date]?.[field] ?? 0) as number;
+      const remoteVal = (remote[r.date]?.[field] ?? 0) as number;
+      const localVal  = (localData[r.date]?.[field]  ?? 0) as number;
+      const oldVal    = Math.max(remoteVal, localVal);
       if (oldVal > 0) {
         foundConflicts.push({
           date: r.date,
@@ -501,52 +496,58 @@ export function GastronoviImportSection() {
       setFreshCount(fresh);
       setConflictOpen(true);
     } else {
-      // No conflicts — import all directly
-      commitImport(results, new Set(results.map(r => r.date)));
+      void commitImport(results, new Set(results.map(r => r.date)));
     }
   };
 
-  const commitImport = (rows: GastronoviDayResult[], datesToReplace: Set<string>) => {
-    const budgets = loadBudgets(storageKey);
+  const commitImport = async (rows: GastronoviDayResult[], datesToReplace: Set<string>) => {
     const field   = target === 'actual' ? 'actualRevenue'      : 'previousYearRevenue';
     const foodKey = target === 'actual' ? 'actualFood'         : 'previousYearFood';
     const bevKey  = target === 'actual' ? 'actualBeverage'     : 'previousYearBeverage';
 
+    // Sichere Basis: KV (Master) + localStorage mergen, damit keine bestehenden
+    // Monate durch stale localStorage-Daten überschrieben werden.
+    // safeUpsertDailyBudgets übernimmt den Fetch+Merge+Write intern.
+    const { safeUpsertDailyBudgets } = await import('@/lib/supabase-kv');
+
+    const updates: Record<string, Record<string, unknown>> = {};
     let count = 0;
+    const dates = rows.map(r => r.date).sort();
+
+    // Zuerst existierenden KV-Stand holen um Konflikterkennung korrekt zu machen
+    const { kvGet } = await import('@/lib/supabase-kv');
+    const remoteRaw = await kvGet(storageKey);
+    const remote = (remoteRaw && typeof remoteRaw === 'object' && !Array.isArray(remoteRaw))
+      ? remoteRaw as Record<string, Record<string, unknown>>
+      : {};
+    const localData = loadBudgets(storageKey);
+
     for (const r of rows) {
-      const existingVal = (budgets[r.date]?.[field] ?? 0) as number;
+      // Prüfe auf bestehenden Wert aus KV (master) oder localStorage
+      const existingRemote = (remote[r.date]?.[field] ?? 0) as number;
+      const existingLocal  = (localData[r.date]?.[field] ?? 0) as number;
+      const existingVal    = Math.max(existingRemote, existingLocal);
+
       if (existingVal > 0 && !datesToReplace.has(r.date)) continue;
 
-      const prev = budgets[r.date] ?? {
-        date: r.date,
-        plannedRevenue: 0,
-        actualRevenue: 0,
-        previousYearRevenue: 0,
-        plannedLaborCost: 0,
-        actualLaborCost: 0,
-      };
-
-      budgets[r.date] = {
-        ...prev,
-        [field]:   r.total,
-        [foodKey]: r.food,
-        [bevKey]:  r.beverage,
-      };
+      updates[r.date] = { [field]: r.total, [foodKey]: r.food, [bevKey]: r.beverage };
       count++;
     }
 
-    saveBudgets(budgets, storageKey);
+    if (count === 0) {
+      setImported(true);
+      toast.success('Keine neuen Tage zu importieren (alle bereits vorhanden)');
+      return;
+    }
 
-    // Sync to Supabase KV immediately — mandantenkorrekter Key
-    const dates = rows.map(r => r.date).sort();
-    console.log(`[REVENUE-BEAULIEU] tenant: ${tenantId}`);
-    console.log(`[REVENUE-BEAULIEU] saved rows: ${count} Tage, Bereich ${dates[0] ?? '?'} bis ${dates.at(-1) ?? '?'}`);
-    console.log(`[REVENUE-BEAULIEU] storage key: ${storageKey}`);
-    kvSet(storageKey, budgets).then(() => {
-      console.log(`[REVENUE-BEAULIEU] loaded rows: ${Object.keys(budgets).length} Tage in Supabase (key: ${storageKey})`);
-      window.dispatchEvent(new Event('supabase-kv-synced'));
-    }).catch(err => console.error('[UMSATZ] kvSet failed:', err));
+    // onlyIfZero=false → explizit ausgewählte Tage dürfen überschrieben werden
+    const merged = await safeUpsertDailyBudgets(storageKey, updates, false);
 
+    console.log(`[REVENUE] tenant: ${tenantId} | storageKey: ${storageKey}`);
+    console.log(`[REVENUE] saved rows: ${count} Tage, Bereich ${dates[0] ?? '?'} bis ${dates.at(-1) ?? '?'}`);
+    console.log(`[REVENUE] Gesamtstand nach Merge: ${Object.keys(merged).length} Tage in KV`);
+
+    window.dispatchEvent(new Event('supabase-kv-synced'));
     setImported(true);
     const label = target === 'actual' ? 'Ist-Umsätze' : 'Vorjahresumsätze';
     toast.success(`${count} Tage importiert als ${label}`);
@@ -555,7 +556,7 @@ export function GastronoviImportSection() {
   const handleConflictConfirm = (datesToReplace: string[]) => {
     if (!results) return;
     setConflictOpen(false);
-    commitImport(results, new Set(datesToReplace));
+    void commitImport(results, new Set(datesToReplace));
   };
 
   const totalFood     = results?.reduce((s, r) => s + r.food, 0)     ?? 0;

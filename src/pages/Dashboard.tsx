@@ -377,20 +377,24 @@ const Dashboard = () => {
 
   const saveRevenue = useCallback(() => {
     const amount = parseFloat(pendingRevenue.replace(/[^0-9.]/g, '')) || 0;
-    const updated = {
+    // Optimistisches UI-Update sofort
+    const optimistic = {
       ...dailyBudgets,
-      [refDateStr]: {
-        plannedRevenue: dailyBudgets[refDateStr]?.plannedRevenue ?? 0,
-        previousYearRevenue: dailyBudgets[refDateStr]?.previousYearRevenue ?? 0,
-        ...dailyBudgets[refDateStr],
-        actualRevenue: amount,
-      },
+      [refDateStr]: { ...dailyBudgets[refDateStr], actualRevenue: amount },
     };
-    localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(updated));
-    import('@/lib/supabase-kv').then(({ kvSet }) => kvSet(tenantKey('dailyBudgets'), updated).catch(() => {}));
-    setDailyBudgets(updated);
+    setDailyBudgets(optimistic);
     setEditingRevenue(false);
     setPendingRevenue('');
+    // Sicherer Upsert: KV (Master) lesen → mergen → zurückschreiben
+    import('@/lib/supabase-kv').then(({ safeUpsertDailyBudgets }) => {
+      safeUpsertDailyBudgets(
+        tenantKey('dailyBudgets'),
+        { [refDateStr]: { actualRevenue: amount } },
+        false,
+      ).then(merged => {
+        setDailyBudgets(merged as typeof dailyBudgets);
+      }).catch(() => {});
+    });
   }, [dailyBudgets, refDateStr, pendingRevenue]);
 
   const cancelRevenueEdit = useCallback(() => {

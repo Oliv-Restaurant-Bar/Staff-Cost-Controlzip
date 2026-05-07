@@ -592,11 +592,28 @@ export const usePersonnelData = () => {
     }
   }, [employees, isInitialized]);
 
-  // Sync daily budgets to localStorage and Supabase
+  // Sync daily budgets to localStorage and Supabase.
+  // WICHTIG: Nur schreiben wenn der Blob tatsächlich Daten enthält.
+  // Ein leerer Blob (frischer Login) darf den bestehenden Supabase-Stand NICHT überschreiben.
   useEffect(() => {
-    if (isInitialized) {
+    if (isInitialized && Object.keys(dailyBudgets).length > 0) {
       localStorage.setItem(DAILY_BUDGETS_KEY, JSON.stringify(dailyBudgets));
-      import('@/lib/supabase-kv').then(({ kvSet }) => kvSet(DAILY_BUDGETS_KEY, dailyBudgets).catch(() => {}));
+      // Kein vollständiger Blob-Overwrite: nur Sync via merge (kein Datenverlust durch stale State)
+      // Dieses useEffect synct hauptsächlich Personalkosten-Felder (plannedLaborCost, actualLaborCost).
+      // Umsätze werden separat via safeUpsertDailyBudgets aus GastronoviImportSection / TagesansichtPage geschrieben.
+      import('@/lib/supabase-kv').then(({ kvGet, kvSet }) => {
+        kvGet(DAILY_BUDGETS_KEY).then(remote => {
+          const base = (remote && typeof remote === 'object' && !Array.isArray(remote))
+            ? remote as Record<string, Record<string, unknown>>
+            : {};
+          // Merge: base (KV) als Fundament, lokale Werte > 0 gewinnen
+          const merged = { ...base };
+          for (const [day, data] of Object.entries(dailyBudgets)) {
+            merged[day] = { ...(base[day] ?? {}), ...data };
+          }
+          kvSet(DAILY_BUDGETS_KEY, merged).catch(() => {});
+        }).catch(() => {});
+      });
     }
   }, [dailyBudgets, isInitialized]);
 

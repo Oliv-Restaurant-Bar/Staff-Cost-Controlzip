@@ -350,16 +350,26 @@ export default function TagesansichtPage() {
   const saveManualIst = useCallback(async (dateKey: string, rawInput: string) => {
     const parsed = parseFloat(rawInput.replace(/['''\s]/g, '').replace(',', '.'));
     if (isNaN(parsed) || parsed < 0) { setEditingDate(null); return; }
-    // Immer als Brutto speichern (gleich wie Import)
     const grossValue = parsed;
-    const updated = { ...readDailyBudgets(tenantKey), [dateKey]: { ...readDailyBudgets(tenantKey)[dateKey], actualRevenue: grossValue } };
-    localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(updated));
-    setDailyBudgets(updated);
     setEditingDate(null);
+
+    // Sicherer Upsert: immer KV-Stand holen, dann per-Tag mergen.
+    // Verhindert, dass stale localStorage andere Monate überschreibt.
     try {
-      const { kvSet } = await import('@/lib/supabase-kv');
-      await kvSet(tenantKey('dailyBudgets'), updated);
-    } catch { /* lokaler Stand bleibt */ }
+      const { safeUpsertDailyBudgets } = await import('@/lib/supabase-kv');
+      const storageKey = tenantKey('dailyBudgets');
+      const merged = await safeUpsertDailyBudgets(
+        storageKey,
+        { [dateKey]: { actualRevenue: grossValue } },
+        false,
+      );
+      setDailyBudgets(merged as Record<string, DailyEntry>);
+    } catch {
+      // Fallback: wenigstens localStorage aktualisieren
+      const updated = { ...readDailyBudgets(tenantKey), [dateKey]: { ...readDailyBudgets(tenantKey)[dateKey], actualRevenue: grossValue } };
+      localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(updated));
+      setDailyBudgets(updated);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 

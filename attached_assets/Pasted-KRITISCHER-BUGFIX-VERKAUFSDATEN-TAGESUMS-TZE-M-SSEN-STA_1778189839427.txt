@@ -1,0 +1,276 @@
+KRITISCHER BUGFIX — VERKAUFSDATEN / TAGESUMSÄTZE MÜSSEN STABIL UND PERMANENT GESPEICHERT WERDEN
+
+Aktuelles Problem:
+Die hochgeladenen Umsatzdaten verändern sich nachträglich oder verschwinden teilweise.
+
+Beispiele:
+- April wurde bereits mehrfach korrekt hochgeladen
+- plötzlich fehlen Tage
+- manche Tage zeigen 0 Umsatz
+- Werte ändern sich ohne Eingriff
+- Vorjahr / Tagesansicht / Tages-Controlling stimmen nicht mehr
+- Reports und Erfolgsrechnung werden dadurch falsch
+
+Das darf NIEMALS passieren.
+
+Diese Umsatzdaten sind die zentrale Grundlage der ganzen App.
+Sie müssen absolut stabil, persistent und nachvollziehbar gespeichert werden.
+
+---
+
+ZIEL
+
+Ein hochgeladener Umsatzwert MUSS:
+- dauerhaft gespeichert bleiben
+- exakt reproduzierbar bleiben
+- niemals automatisch überschrieben werden
+- niemals verschwinden
+- synchron in allen Modulen erscheinen
+
+Die Daten müssen sich wie Buchhaltungsdaten verhalten:
+stabil und revisionssicher.
+
+---
+
+1. Single Source of Truth einführen
+
+Es darf nur EINE zentrale Tabelle geben für Tagesumsätze.
+
+Beispiel:
+daily_sales
+
+Diese Tabelle ist die einzige Quelle für:
+- Tagesansicht
+- Tages-Controlling
+- Dashboard
+- Erfolgsrechnung
+- Produktanalyse
+- WES
+- Forecasts
+- Vorjahresvergleich
+- kumulierte Werte
+- Budgetvergleich
+
+Keine Berechnungen aus temporären States.
+Keine parallelen Tabellen.
+Keine lokalen Cachewerte.
+
+Alles MUSS aus derselben Tabelle kommen.
+
+---
+
+2. Upload darf Daten nicht zerstören
+
+Aktuell scheint:
+ein neuer Upload alte Daten teilweise zu löschen oder falsch zu überschreiben.
+
+Das muss korrigiert werden.
+
+Gewünschte Logik:
+
+Wenn Datum + Restaurant bereits existiert:
+→ UPDATE exakt dieses Tages
+
+Wenn Datum noch nicht existiert:
+→ INSERT neuen Tag
+
+Aber:
+niemals andere Tage löschen.
+
+---
+
+3. Keine automatische Nullsetzung
+
+Tage ohne Upload dürfen NICHT automatisch:
+- auf 0 gesetzt werden
+- überschrieben werden
+- gelöscht werden
+
+Wenn kein neuer Wert vorhanden:
+→ bestehenden Wert behalten.
+
+---
+
+4. Upload muss transaktional sein
+
+Bitte Uploads nur noch transaktional speichern.
+
+Ablauf:
+
+BEGIN TRANSACTION
+→ alle Datensätze prüfen
+→ validieren
+→ speichern
+→ erst dann committen
+
+Wenn Fehler:
+ROLLBACK
+
+Keine halbfertigen Uploads.
+
+---
+
+5. Historisierung / Audit Log
+
+Bitte Upload-Historie einführen.
+
+Neue Tabelle:
+sales_upload_history
+
+Speichern:
+- Upload Zeitpunkt
+- User
+- Datei
+- Anzahl Datensätze
+- Restaurant
+- Monat
+- geänderte Tage
+
+Damit nachvollziehbar bleibt:
+wer wann welche Daten verändert hat.
+
+---
+
+6. Duplicate Upload Handling
+
+Wenn derselbe Monat erneut hochgeladen wird:
+
+System soll fragen:
+- bestehende Werte ersetzen?
+- nur fehlende Werte ergänzen?
+- Duplikate ignorieren?
+
+Aber niemals stillschweigend mischen oder löschen.
+
+---
+
+7. Datenintegrität prüfen
+
+Bitte prüfen:
+- warum April plötzlich andere Zahlen zeigt
+- warum Tage fehlen
+- warum 03.04–06.04 plötzlich leer sind
+- warum Vorjahr abweicht
+- warum kumulierte Werte springen
+
+Bitte gesamte Datenpipeline prüfen:
+- Upload
+- Parsing
+- Speicherung
+- Aggregation
+- Tagesansicht
+- Reporting
+- Vorjahresvergleich
+- Dashboard
+
+---
+
+8. Synchronisierung reparieren
+
+Alle Module müssen dieselben Zahlen zeigen.
+
+Beispiel:
+01.04.2026 Umsatz
+muss identisch sein in:
+- Tagesansicht
+- Tages-Controlling
+- Dashboard
+- Erfolgsrechnung
+- Monatsvergleich
+- kumulierte Ansicht
+
+Keine unterschiedlichen Berechnungen.
+
+---
+
+9. Supabase Stabilität
+
+Bitte sicherstellen:
+
+Die Daten werden dauerhaft in Supabase gespeichert.
+Nicht:
+- nur im Frontend State
+- nicht im Cache
+- nicht temporär
+- nicht im Browser Storage
+
+Bitte echte persistente Speicherung prüfen.
+
+---
+
+10. Schutz gegen unbeabsichtigtes Überschreiben
+
+Bitte Sicherheitslogik einbauen:
+
+Wenn bestehender Monat bereits Daten hat:
+→ Warnung anzeigen vor Überschreiben.
+
+Beispiel:
+"Für April 2026 existieren bereits 30 Tageswerte.
+Möchten Sie:
+- ersetzen
+- ergänzen
+- abbrechen"
+
+---
+
+11. Recovery / Datenrettung
+
+Bitte prüfen:
+ob die alten korrekten Aprildaten noch irgendwo existieren:
+- Supabase Backups
+- alte Uploads
+- Upload History
+- Raw Import Tabellen
+- Browser Cache
+- temporäre Tabellen
+
+Falls möglich:
+April wiederherstellen.
+
+---
+
+12. Technische Anforderungen
+
+Bitte:
+- stabile UPSERT Logik
+- eindeutige Constraints:
+  restaurant_id + date
+- keine mehrfachen Datensätze pro Tag
+- keine race conditions
+- keine lokalen Überschreibungen
+
+---
+
+13. Tests
+
+Bitte konkret testen:
+
+1. April Upload importieren
+2. Seite neu laden
+3. Browser neu starten
+4. anderer User Login
+5. Monatswechsel
+6. Tagesansicht öffnen
+7. Dashboard öffnen
+8. Reporting öffnen
+
+Prüfen:
+- Werte identisch
+- keine fehlenden Tage
+- keine Nullwerte
+- keine spontanen Änderungen
+- kumulierte Werte stabil
+- Vorjahr stabil
+- Tages-Controlling stabil
+
+---
+
+14. Wichtig
+
+Das ist kein UI Problem.
+Das ist ein kritisches Datenintegritätsproblem.
+
+Die App MUSS sich wie ein stabiles ERP/Controlling System verhalten.
+
+Umsatzdaten dürfen sich niemals spontan ändern oder verschwinden.

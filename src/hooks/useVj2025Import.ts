@@ -56,25 +56,21 @@ export function useVj2025Import(tenantId?: string, onDone?: () => void) {
           return;
         }
 
-        const db = readDailyBudgets();
+        // Sichere Schreiboperation: immer zuerst KV-Stand laden, dann mergen.
+        // So können VJ-2025-Seeds niemals bestehende 2026-Umsätze überschreiben.
+        const { safeUpsertDailyBudgets } = await import('@/lib/supabase-kv');
+
+        const updates: Record<string, Record<string, unknown>> = {};
         let count = 0;
         for (const [iso, revenue] of Object.entries(VJ2025_DAILY)) {
-          // Nur leere / fehlende Einträge befüllen; nicht manuell gesetzte überschreiben
-          const cur = db[iso];
-          if (!cur || (cur.actualRevenue ?? 0) === 0) {
-            db[iso] = { ...(cur ?? {}), actualRevenue: revenue };
-            count++;
-          }
+          updates[iso] = { actualRevenue: revenue };
+          count++;
         }
         if (count === 0) { sessionStorage.setItem(IMPORT_DONE_KEY, '1'); return; }
 
-        localStorage.setItem('dailyBudgets', JSON.stringify(db));
-        console.log(`[VJ2025 IMPORT] ${count} Tage in dailyBudgets gesetzt (tenant: oliv)`);
-
-        // Supabase-Sync (async, fire-and-forget)
-        const { kvSet } = await import('@/lib/supabase-kv');
-        await kvSet('dailyBudgets', db);
-        console.log('[VJ2025 IMPORT] Supabase sync abgeschlossen');
+        // onlyIfZero=true → nur Tage setzen die noch 0 sind (schützt manuelle Einträge)
+        await safeUpsertDailyBudgets('dailyBudgets', updates, true);
+        console.log(`[VJ2025 IMPORT] ${count} VJ-Tage sicher in dailyBudgets gesetzt (onlyIfZero, nie 2026 überschrieben)`);
 
         sessionStorage.setItem(IMPORT_DONE_KEY, '1');
 

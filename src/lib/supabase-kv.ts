@@ -69,6 +69,84 @@ export async function kvSet(key: string, value: unknown): Promise<void> {
 }
 
 /**
+ * Sicherer Tages-Upsert für dailyBudgets.
+ * =========================================
+ * PROBLEM: Alle naiven Schreibpfade lesen aus localStorage, ergänzen Tage,
+ *          und schreiben den ganzen Blob zurück. Wenn localStorage stale ist
+ *          (frischer Login, anderer Browser, gelöschter Cache), werden dabei
+ *          bestehende Supabase-Daten überschrieben – Umsätze verschwinden.
+ *
+ * LÖSUNG: Immer zuerst den aktuellen Stand aus Supabase KV laden,
+ *         dann per-Tag mergen, dann zurückschreiben.
+ *
+ * Ablauf:
+ *   1. localStorage lesen (schnell, Offline-Fallback)
+ *   2. KV lesen (Master – enthält den korrekten Stand aller Geräte)
+ *   3. Merge: KV als Basis, localStorage-Werte > 0 gewinnen
+ *   4. Updates anwenden (nur die übergebenen Tage, onlyIfZero optional)
+ *   5. Zurückschreiben: localStorage + KV
+ *
+ * @param storageKey  Vollständiger localStorage-/KV-Schlüssel (inkl. Tenant-Prefix)
+ * @param updates     Map { 'YYYY-MM-DD' → DailyBudget-Felder } – nur diese Tage werden geändert
+ * @param onlyIfZero  Wenn true: Tag wird nur gesetzt wenn kein Wert (> 0) vorhanden
+ */
+export async function safeUpsertDailyBudgets(
+  storageKey: string,
+  updates: Record<string, Record<string, unknown>>,
+  onlyIfZero = false,
+): Promise<Record<string, Record<string, unknown>>> {
+  type Blob = Record<string, Record<string, unknown>>;
+
+  // 1. localStorage (Schnellpfad)
+  let local: Blob = {};
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (raw) local = JSON.parse(raw) as Blob;
+  } catch { /* ignore */ }
+
+  // 2. KV (Master-Stand)
+  let remote: Blob = {};
+  try {
+    const kv = await kvGet(storageKey);
+    if (kv && typeof kv === 'object' && !Array.isArray(kv)) {
+      remote = kv as Blob;
+    }
+  } catch { /* ignore – localStorage bleibt Fallback */ }
+
+  // 3. Merge: KV als Basis, Local-Werte > 0 gewinnen
+  const base = mergeDailyBudgets(local, remote);
+
+  // 4. Updates anwenden
+  for (const [date, data] of Object.entries(updates)) {
+    const existing = base[date] ?? ({} as Record<string, unknown>);
+    if (onlyIfZero) {
+      const patched: Record<string, unknown> = { ...existing };
+      for (const [field, value] of Object.entries(data)) {
+        const cur = existing[field];
+        const curNum = typeof cur === 'number' ? cur : 0;
+        if (curNum > 0) continue;
+        patched[field] = value;
+      }
+      base[date] = patched;
+    } else {
+      base[date] = { ...existing, ...data };
+    }
+  }
+
+  // 5. Zurückschreiben
+  const merged = base;
+  try { localStorage.setItem(storageKey, JSON.stringify(merged)); } catch { /* ignore */ }
+  await kvSet(storageKey, merged);
+
+  console.log(
+    `[SAFE-UPSERT] ${storageKey}: ${Object.keys(updates).length} Tage aktualisiert` +
+    ` (total im Blob: ${Object.keys(merged).length}, onlyIfZero=${onlyIfZero})`,
+  );
+
+  return merged;
+}
+
+/**
  * Tages-Level-Merge zweier dailyBudgets-Objekte.
  * Für jeden Tag gewinnt local wenn ein Feld > 0 ist — dadurch werden
  * neue Importe nie durch ältere Supabase-Daten überschrieben.

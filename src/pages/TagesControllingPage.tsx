@@ -35,7 +35,7 @@ import { cn } from '@/lib/utils';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
-import { kvSet } from '@/lib/supabase-kv';
+import { safeUpsertDailyBudgets } from '@/lib/supabase-kv';
 import { loadMonthInvoices, kategorieFromKonto, type WarenKategorie } from '@/lib/waren-db';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import {
@@ -419,13 +419,14 @@ export default function TagesControllingPage() {
       const field = categoryFilter === 'food'    ? 'foodRevenue'
         : categoryFilter === 'beverage' ? 'beverageRevenue'
         : 'actualRevenue';
-      const updated = {
-        ...dailyBudgets,
-        [date]: { ...dailyBudgets[date], [field]: gross },
-      };
-      setDailyBudgets(updated);
-      localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(updated));
-      kvSet(tenantKey('dailyBudgets'), updated).catch(() => {});
+      // Optimistisches UI-Update sofort
+      const optimistic = { ...dailyBudgets, [date]: { ...dailyBudgets[date], [field]: gross } };
+      setDailyBudgets(optimistic);
+      // Sicherer Upsert: KV (Master) holen → mergen → zurückschreiben
+      const storageKey = tenantKey('dailyBudgets');
+      safeUpsertDailyBudgets(storageKey, { [date]: { [field]: gross } }, false)
+        .then(merged => setDailyBudgets(merged as typeof dailyBudgets))
+        .catch(() => {});
     }
     setEditingDate(null);
   };
