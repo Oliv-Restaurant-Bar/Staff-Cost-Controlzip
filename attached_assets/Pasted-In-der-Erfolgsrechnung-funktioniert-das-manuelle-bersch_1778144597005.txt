@@ -1,0 +1,102 @@
+In der Erfolgsrechnung funktioniert das manuelle Überschreiben/Speichern von Ist-Werten und Vorjahreswerten nicht zuverlässig.
+
+Beispiel:
+Dialog "Betriebsertrag – April 2026"
+Feld:
+"Ist-Wert manuell eingeben"
+"Vorjahr-Umsatz manuell eingeben"
+
+Beim Klick auf "Speichern" wird der Wert nicht gespeichert oder nach Reload nicht übernommen.
+
+Bitte behebe das vollständig.
+
+Anforderungen:
+
+1. Speicherfunktion prüfen
+
+Die Speichern Buttons müssen echte Persistierung auslösen:
+- Ist-Wert speichern
+- Vorjahr-Wert speichern
+
+Nicht nur UI aktualisieren.
+
+2. Datenbank prüfen
+
+Bitte prüfen:
+- Welche Tabelle speichert manuelle Overrides?
+- Werden year, month, account/category und value korrekt gespeichert?
+- Wird zwischen Ist Override und Vorjahr Override unterschieden?
+- Gibt es Konflikte mit RLS Policies?
+- Werden Upserts korrekt verwendet?
+
+3. Upsert Logik
+
+Wenn für denselben Monat und dieselbe Position bereits ein Override existiert:
+- bestehenden Wert aktualisieren
+
+Wenn noch keiner existiert:
+- neuen Datensatz erstellen
+
+Key sollte mindestens enthalten:
+- business_id / tenant_id
+- year
+- month
+- account_id oder position_key
+- value_type: ist oder previous_year
+- value
+
+4. Nach Speichern neu berechnen
+
+Nach erfolgreichem Speichern:
+- Erfolgsrechnung neu laden
+- KPI Karten aktualisieren
+- Tabelle aktualisieren
+- Abweichung Budget aktualisieren
+- Abweichung Vorjahr aktualisieren
+- Prozentwerte aktualisieren
+
+5. Anzeige
+
+Nach Speichern Toast anzeigen:
+"Ist-Wert gespeichert"
+oder
+"Vorjahreswert gespeichert"
+
+Falls Fehler:
+"Konnte Wert nicht speichern"
+und technische Fehlermeldung in der Console ausgeben.
+
+6. Manuelle Werte müssen Vorrang haben
+
+Wenn ein manueller Override gespeichert ist:
+- dieser Wert muss in der Erfolgsrechnung verwendet werden
+- auch nach Reload
+- auch im PDF Export
+- auch im Jahresvergleich
+
+Aber:
+Falls Umsatzdaten aus der Tagesansicht synchronisiert werden, bitte klar regeln:
+- Standardwert kommt aus Tagesansicht
+- manueller Override überschreibt nur bewusst und sichtbar
+- manuelle Werte sollen als "manuell überschrieben" markiert werden
+
+7. Formatierung
+
+Bitte Eingabe korrekt behandeln:
+- CHF 267’920
+- 267920
+- 267920.44
+
+Alle Eingaben sollen sauber als Zahl gespeichert werden.
+
+8. Tests
+
+Bitte testen:
+- Ist-Wert Betriebsertrag April 2026 ändern und speichern
+- Reload: Wert bleibt
+- Vorjahr-Wert April 2025 ändern und speichern
+- Reload: Wert bleibt
+- KPI Karten ändern sich
+- Abweichungen ändern sich
+- PDF Export übernimmt gespeicherte Werte
+- Konto hinzufügen funktioniert weiterhin

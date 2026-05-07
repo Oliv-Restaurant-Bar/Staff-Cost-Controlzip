@@ -43,7 +43,7 @@ import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
 import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem, STORAGE_KEY as BUDGET_STORAGE_KEY } from '@/lib/budget-store';
-import { BudgetYear, BudgetPLCategory } from '@/types/budget';
+import { BudgetYear, BudgetPLCategory, BudgetPLLineItem } from '@/types/budget';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
 import { exportPLToPDF } from '@/lib/pl-export';
@@ -1693,48 +1693,81 @@ interface AddKontoDialogProps {
   onClose: () => void;
   year: number;
   categories: BudgetPLCategory[];
+  existingItems: BudgetPLLineItem[];
   onSaved: () => void;
 }
 
-const AddKontoDialog = ({ open, onClose, year, categories, onSaved }: AddKontoDialogProps) => {
+const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSaved }: AddKontoDialogProps) => {
+  const { tenantKey } = useTenant();
   const [accountNumber, setAccountNumber] = useState('');
   const [label,         setLabel]         = useState('');
   const [categoryId,    setCategoryId]    = useState('');
-  const [isInternal,    setIsInternal]    = useState(true);
+  const [isInternal,    setIsInternal]    = useState(false);
   const [error,         setError]         = useState<string | null>(null);
+  const [isSaving,      setIsSaving]      = useState(false);
 
   const itemCats = categories.filter(c => c.type === 'items');
+
+  React.useEffect(() => {
+    if (open) {
+      setAccountNumber('');
+      setLabel('');
+      setCategoryId(itemCats[0]?.id ?? '');
+      setIsInternal(false);
+      setError(null);
+      setIsSaving(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   function reset() {
     setAccountNumber('');
     setLabel('');
     setCategoryId(itemCats[0]?.id ?? '');
-    setIsInternal(true);
+    setIsInternal(false);
     setError(null);
+    setIsSaving(false);
   }
 
   function handleSave() {
     const num = accountNumber.trim();
     const lbl = label.trim();
-    if (!num) { setError('Kontonummer eingeben.'); return; }
-    if (!/^\d{4}$/.test(num)) { setError('Kontonummer muss 4-stellig sein.'); return; }
-    if (!lbl) { setError('Bezeichnung eingeben.'); return; }
-    if (!categoryId) { setError('Kategorie auswählen.'); return; }
+    if (!num)                         { setError('Kontonummer ist erforderlich.'); return; }
+    if (!/^\d{4}$/.test(num))         { setError('Kontonummer muss genau 4 Ziffern sein.'); return; }
+    if (!lbl)                         { setError('Bezeichnung ist erforderlich.'); return; }
+    if (!categoryId)                  { setError('Bitte eine Kategorie auswählen.'); return; }
 
-    const zeroMonths: [number,number,number,number,number,number,number,number,number,number,number,number]
-      = [0,0,0,0,0,0,0,0,0,0,0,0];
-    addCustomPLLineItem(year, {
-      categoryId,
-      accountNumber: num,
-      label: lbl,
-      valueType: 'chf',
-      monthlyValues: zeroMonths,
-      sortOrder: 9999,
-      isInternal,
-    }, tenantKey(BUDGET_STORAGE_KEY));
-    onSaved();
-    reset();
-    onClose();
+    const duplicate = existingItems.some(i => i.accountNumber === num);
+    if (duplicate) {
+      setError(`Konto ${num} ist bereits vorhanden.`);
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      const storeKey = tenantKey(BUDGET_STORAGE_KEY);
+      const zeroMonths: BudgetPLLineItem['monthlyValues'] = [0,0,0,0,0,0,0,0,0,0,0,0];
+      addCustomPLLineItem(year, {
+        categoryId,
+        accountNumber: num,
+        label: lbl,
+        valueType: 'chf',
+        monthlyValues: zeroMonths,
+        sortOrder: 9999,
+        isInternal,
+      }, storeKey);
+      toast.success(`Konto ${num} «${lbl}» hinzugefügt`);
+      onSaved();
+      reset();
+      onClose();
+    } catch (err) {
+      console.error('[AddKonto] Fehler beim Speichern:', err);
+      setError('Konto konnte nicht hinzugefügt werden. Details in der Konsole.');
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -1757,6 +1790,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, onSaved }: AddKontoDi
               maxLength={4}
               onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ''))}
               className="h-8 text-sm font-mono"
+              disabled={isSaving}
             />
           </div>
 
@@ -1767,12 +1801,13 @@ const AddKontoDialog = ({ open, onClose, year, categories, onSaved }: AddKontoDi
               value={label}
               onChange={e => setLabel(e.target.value)}
               className="h-8 text-sm"
+              disabled={isSaving}
             />
           </div>
 
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground">Kategorie</label>
-            <Select value={categoryId} onValueChange={setCategoryId}>
+            <Select value={categoryId} onValueChange={setCategoryId} disabled={isSaving}>
               <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Kategorie wählen" /></SelectTrigger>
               <SelectContent>
                 {itemCats.map(c => (
@@ -1788,6 +1823,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, onSaved }: AddKontoDi
               checked={isInternal}
               onChange={e => setIsInternal(e.target.checked)}
               className="mt-0.5 accent-violet-600"
+              disabled={isSaving}
             />
             <div>
               <span className="text-sm font-medium">Nur intern</span>
@@ -1805,9 +1841,14 @@ const AddKontoDialog = ({ open, onClose, year, categories, onSaved }: AddKontoDi
         </div>
 
         <div className="flex justify-end gap-2 pt-1">
-          <Button variant="ghost" size="sm" onClick={() => { reset(); onClose(); }}>Abbrechen</Button>
-          <Button size="sm" onClick={handleSave}>
-            <Plus className="h-3.5 w-3.5 mr-1" />Hinzufügen
+          <Button variant="ghost" size="sm" onClick={() => { reset(); onClose(); }} disabled={isSaving}>
+            Abbrechen
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={isSaving}>
+            {isSaving
+              ? <span className="flex items-center gap-1"><span className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />Speichern…</span>
+              : <><Plus className="h-3.5 w-3.5 mr-1" />Hinzufügen</>
+            }
           </Button>
         </div>
       </DialogContent>
@@ -2508,6 +2549,7 @@ const PLViewPage = () => {
         onClose={() => setAddKontoOpen(false)}
         year={year}
         categories={budgetData.plCategories ?? []}
+        existingItems={budgetData.plLineItems ?? []}
         onSaved={() => setRefreshKey(k => k + 1)}
       />
     </div>
