@@ -72,20 +72,20 @@ export const RESTAURANT_BRANDING: Record<string, RestaurantBranding> = {
     id:           'oliv',
     displayName:  'Oliv Restaurant & Bar',
     companyLine:  'Oliv Gastro AG',
-    headerBg:     [18, 44, 22],
-    accentColor:  [164, 138, 55],
+    headerBg:     [35, 59, 47],    // #233b2f – echtes Olivgrün
+    accentColor:  [182, 152, 72],  // gedämpftes Olive-Gold
     textPrimary:  [255, 255, 255],
-    textSecondary:[182, 200, 165],
+    textSecondary:[188, 208, 182], // warmes Hellgrün
     logoSvg:      OLIV_SVG,
   },
   beaulieu: {
     id:           'beaulieu',
     displayName:  'Beaulieu Restaurant',
     companyLine:  'Beaulieu Restaurant',
-    headerBg:     [40, 32, 18],
-    accentColor:  [192, 158, 68],
+    headerBg:     [91, 68, 40],    // #5b4428 – warmes Dunkelbraun
+    accentColor:  [200, 168, 88],  // warmes Gold
     textPrimary:  [255, 255, 255],
-    textSecondary:[210, 195, 160],
+    textSecondary:[218, 200, 168], // warmes Beige
     logoSvg:      BEAULIEU_SVG,
   },
 };

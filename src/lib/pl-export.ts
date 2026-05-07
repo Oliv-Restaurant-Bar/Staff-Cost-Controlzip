@@ -88,7 +88,7 @@ function indent(row: PLComputedRow): string {
   return '  '.repeat(Math.max(0, row.def.indent - 1));
 }
 
-// ── Hilfsfunktion: neue Seite wenn nötig ─────────────────────────────────────
+// ── Hilfsfunktionen ───────────────────────────────────────────────────────────
 
 function ensureSpace(doc: jsPDF, afterY: number, neededH: number, gap = 10): number {
   const PAGE_H = 297;
@@ -96,9 +96,34 @@ function ensureSpace(doc: jsPDF, afterY: number, neededH: number, gap = 10): num
   const y = afterY + gap;
   if (y + neededH > PAGE_H - MARGIN) {
     doc.addPage();
-    return 10;
+    return 22; // Platz für Mini-Header auf Folgeseiten (≈ 4+10+8mm)
   }
   return y;
+}
+
+/**
+ * Simulierter horizontaler Gradient via N schmale Farbstreifen.
+ * colorL = linke Farbe (heller), colorR = rechte Farbe (Basis).
+ */
+function drawGradientBlock(
+  doc:    jsPDF,
+  x:      number,
+  y:      number,
+  w:      number,
+  h:      number,
+  colorL: [number, number, number],
+  colorR: [number, number, number],
+  steps = 32,
+): void {
+  const sw = w / steps;
+  for (let i = 0; i < steps; i++) {
+    const t = i / (steps - 1);
+    const r = Math.round(colorL[0] + t * (colorR[0] - colorL[0]));
+    const g = Math.round(colorL[1] + t * (colorR[1] - colorL[1]));
+    const b = Math.round(colorL[2] + t * (colorR[2] - colorL[2]));
+    doc.setFillColor(r, g, b);
+    doc.rect(x + i * sw, y, sw + 0.3, h, 'F'); // +0.3 verhindert sichtbare Lücken
+  }
 }
 
 // ── Seitenkopf ────────────────────────────────────────────────────────────────
@@ -113,102 +138,122 @@ function ensureSpace(doc: jsPDF, afterY: number, neededH: number, gap = 10): num
  */
 function addPageHeader(
   doc: jsPDF,
-  reportType: string,        // z.B. "Erfolgsrechnung – Budget P&L"
+  reportType: string,
   branding: RestaurantBranding,
-  logoDataUrl: string,       // base64-PNG aus renderLogoDataUrl()
-  exportDate: string,        // z.B. "07.05.2026"
+  logoDataUrl: string,
+  exportDate: string,
   month: number,
   year: number,
   pageW: number,
   y = 8,
 ): number {
-  const blockH  = 36;
-  const logoW   = 44;        // mm
-  const logoH   = 13;        // mm — Seitenverhältnis 220:56 ≈ 3.9:1
-  const logoX   = pageW - 12 - logoW;
-  const logoY   = y + 4;
+  const blockH = 36;
+  const x      = 10;
+  const w      = pageW - 20;
 
-  // ── Hintergrund ────────────────────────────────────────────────────────
-  doc.setFillColor(...branding.headerBg);
-  doc.rect(10, y, pageW - 20, blockH, 'F');
+  // ── Gradient: links 18% heller → rechts Basis ─────────────────────────
+  const bg     = branding.headerBg;
+  const colorL: [number, number, number] = [
+    Math.min(255, Math.round(bg[0] * 1.45)),
+    Math.min(255, Math.round(bg[1] * 1.35)),
+    Math.min(255, Math.round(bg[2] * 1.30)),
+  ];
+  drawGradientBlock(doc, x, y, w, blockH, colorL, bg);
 
-  // ── Akzentlinie unten ──────────────────────────────────────────────────
+  // ── Akzentlinie unten (dezent) ─────────────────────────────────────────
   doc.setDrawColor(...branding.accentColor);
-  doc.setLineWidth(0.6);
-  doc.line(10, y + blockH, pageW - 10, y + blockH);
+  doc.setLineWidth(0.35);
+  doc.line(x, y + blockH, x + w, y + blockH);
 
-  // ── Logo rechts ────────────────────────────────────────────────────────
+  // ── Logo rechts, vertikal zentriert ───────────────────────────────────
+  const logoW = 46;
+  const logoH = Math.round(logoW / (220 / 56)); // Seitenverhältnis beibehalten ≈ 11.7mm
+  const logoX = pageW - 14 - logoW;
+  const logoY = y + (blockH - logoH) / 2;       // vertikal zentriert
   if (logoDataUrl) {
     doc.addImage(logoDataUrl, 'PNG', logoX, logoY, logoW, logoH);
   }
 
-  // ── Exportdatum (unterhalb Logo, rechtsbündig) ─────────────────────────
+  // ── Exportdatum – ganz unten rechts, sehr dezent ───────────────────────
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6);
+  doc.setFontSize(5.5);
   doc.setTextColor(...branding.textSecondary);
-  doc.text(`Exportiert am ${exportDate}`, pageW - 13, y + blockH - 4, { align: 'right' });
+  doc.text(`Exportiert am ${exportDate}`, pageW - 14, y + blockH - 3, { align: 'right' });
 
-  // ── 1. Restaurantname – gross, dominant ───────────────────────────────
+  // ── 1. Restaurantname ─────────────────────────────────────────────────
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
+  doc.setFontSize(16);
   doc.setTextColor(...branding.textPrimary);
   doc.text(branding.displayName.toUpperCase(), 15, y + 13);
 
-  // ── 2. Monat / Jahr – gross ────────────────────────────────────────────
+  // ── 2. Monat / Jahr ───────────────────────────────────────────────────
   const mFull = (MONTH_NAMES_DE[month] ?? MONTH_NAMES_SHORT_DE[month] ?? '').toUpperCase();
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
+  doc.setFontSize(10.5);
   doc.setTextColor(...branding.textPrimary);
   doc.text(`${mFull} ${year}`, 15, y + 22);
 
-  // ── 3. Berichtstyp – dezent ────────────────────────────────────────────
+  // ── 3. Berichtstyp ────────────────────────────────────────────────────
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
+  doc.setFontSize(7);
   doc.setTextColor(...branding.textSecondary);
   doc.text(reportType, 15, y + 30);
 
   doc.setTextColor(0, 0, 0);
-  return y + blockH + 5;
+  return y + blockH + 6;
 }
 
 /**
- * Mini-Header für Folgeseiten (≈ 12mm hoch):
- *   LINKS  – Restaurantname · Monat/Jahr klein
- *   RECHTS – kleines Logo
- *   UNTEN  – Akzentlinie
+ * Mini-Header für Folgeseiten – schlank, elegant, reduziert:
+ *   LINKS  – Restaurantname · Monat klein
+ *   RECHTS – Logo (mini) · Seitenzahl optional im Footer
  */
 function addMiniHeader(
   doc: jsPDF,
   branding: RestaurantBranding,
   logoDataUrl: string,
-  monthLabel: string,        // z.B. "APRIL 2026"
+  monthLabel: string,
   pageW: number,
 ): void {
-  const miniH  = 10;
-  const y      = 4;
-  const logoW  = 24;
-  const logoH  = 6;
+  const miniH = 9;
+  const y     = 3;
+  const x     = 10;
+  const w     = pageW - 20;
 
-  doc.setFillColor(...branding.headerBg);
-  doc.rect(10, y, pageW - 20, miniH, 'F');
+  // Gradient wie Haupt-Header, aber schmaler
+  const bg     = branding.headerBg;
+  const colorL: [number, number, number] = [
+    Math.min(255, Math.round(bg[0] * 1.40)),
+    Math.min(255, Math.round(bg[1] * 1.30)),
+    Math.min(255, Math.round(bg[2] * 1.25)),
+  ];
+  drawGradientBlock(doc, x, y, w, miniH, colorL, bg, 24);
 
+  // Akzentlinie
   doc.setDrawColor(...branding.accentColor);
-  doc.setLineWidth(0.45);
-  doc.line(10, y + miniH, pageW - 10, y + miniH);
+  doc.setLineWidth(0.28);
+  doc.line(x, y + miniH, x + w, y + miniH);
 
+  // Logo mini – vertikal zentriert
+  const logoW = 22;
+  const logoH = Math.round(logoW / (220 / 56)); // ≈ 5.6mm
+  const logoX = pageW - 14 - logoW;
+  const logoY = y + (miniH - logoH) / 2;
   if (logoDataUrl) {
-    doc.addImage(logoDataUrl, 'PNG', pageW - 12 - logoW, y + 1.8, logoW, logoH);
+    doc.addImage(logoDataUrl, 'PNG', logoX, logoY, logoW, logoH);
   }
 
+  // Restaurantname
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
   doc.setTextColor(...branding.textPrimary);
-  doc.text(branding.displayName.toUpperCase(), 14, y + 5);
+  doc.text(branding.displayName.toUpperCase(), 14, y + 4.5);
 
+  // Monat dezent
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6);
+  doc.setFontSize(5.5);
   doc.setTextColor(...branding.textSecondary);
-  doc.text(monthLabel, 14, y + 9);
+  doc.text(monthLabel, 14, y + 8);
 
   doc.setTextColor(0, 0, 0);
 }
@@ -707,15 +752,15 @@ function addMonthComparisonBlock(
 
   // ── Farben ───────────────────────────────────────────────────────────────
   const DARK_TEXT:       [number, number, number] = [20, 30, 65];
-  const PCT_TEXT:        [number, number, number] = [125, 135, 155];
+  const PCT_TEXT:        [number, number, number] = [120, 130, 150];
   const RESULT_BG:       [number, number, number] = [28, 55, 115];
   const RESULT_PCT:      [number, number, number] = [168, 190, 228];
   const TOTAL_BG:        [number, number, number] = [225, 232, 248];
   const TOTAL_RESULT_BG: [number, number, number] = [20, 44, 98];
-  const SOFT_GREEN:      [number, number, number] = [16, 108, 52];
-  const SOFT_RED:        [number, number, number] = [172, 28, 28];
-  const LIGHT_GREEN:     [number, number, number] = [100, 215, 145];
-  const LIGHT_RED:       [number, number, number] = [245, 125, 125];
+  const SOFT_GREEN:      [number, number, number] = [15, 105, 48];   // dunkles Grün auf weiss
+  const SOFT_RED:        [number, number, number] = [168, 38, 38];   // eleganteres Rot
+  const LIGHT_GREEN:     [number, number, number] = [140, 240, 175]; // heller auf dunklem BG
+  const LIGHT_RED:       [number, number, number] = [248, 138, 138]; // harmonischeres Rot
 
   // ── %-Format ohne Leerzeichen (kein Umbruch) ─────────────────────────────
   const pctStr = (v: number | null | undefined, base: number | null | undefined): string => {
@@ -999,6 +1044,7 @@ export async function exportPLToPDF(
         const body = buildBPLBody(monthResult.rows, revA, revB, revPY);
         autoTable(doc, {
           startY: yK,
+          margin: { top: 22, bottom: 15 },
           head: [['Position', 'Ist CHF', 'Ist %', 'Budget CHF', 'Bud %', 'Abw. Budget', 'Vorjahr CHF', 'VJ %', 'Abw. VJ']],
           body: body as string[][],
           theme: 'plain',
@@ -1027,6 +1073,7 @@ export async function exportPLToPDF(
         const body = buildKlassischBody(monthResult.rows, revA, revPY);
         autoTable(doc, {
           startY: yK,
+          margin: { top: 22, bottom: 15 },
           head: [['Position', 'Ist CHF', 'Ist %', 'Vorjahr CHF', 'VJ %', 'Abw. VJ']],
           body: body as string[][],
           theme: 'plain',
@@ -1081,42 +1128,46 @@ export async function exportPLToPDF(
   // ──── Jahresübersicht ────────────────────────────────────────────────────
   else if (mode === 'yearly') {
     const blockH = 36;
-    const logoW  = 44;
-    const logoH  = 13;
-
-    doc.setFillColor(...activeBranding.headerBg);
-    doc.rect(10, 8, PAGE_W - 20, blockH, 'F');
+    const bg     = activeBranding.headerBg;
+    const colorL: [number, number, number] = [
+      Math.min(255, Math.round(bg[0] * 1.45)),
+      Math.min(255, Math.round(bg[1] * 1.35)),
+      Math.min(255, Math.round(bg[2] * 1.30)),
+    ];
+    drawGradientBlock(doc, 10, 8, PAGE_W - 20, blockH, colorL, bg);
 
     doc.setDrawColor(...activeBranding.accentColor);
-    doc.setLineWidth(0.6);
+    doc.setLineWidth(0.35);
     doc.line(10, 8 + blockH, PAGE_W - 10, 8 + blockH);
 
+    const logoW = 46;
+    const logoH = Math.round(logoW / (220 / 56));
     if (logoDataUrl) {
-      doc.addImage(logoDataUrl, 'PNG', PAGE_W - 12 - logoW, 8 + 4, logoW, logoH);
+      doc.addImage(logoDataUrl, 'PNG', PAGE_W - 14 - logoW, 8 + (blockH - logoH) / 2, logoW, logoH);
     }
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6);
+    doc.setFontSize(5.5);
     doc.setTextColor(...activeBranding.textSecondary);
-    doc.text(`Exportiert am ${now}`, PAGE_W - 13, 8 + blockH - 4, { align: 'right' });
+    doc.text(`Exportiert am ${now}`, PAGE_W - 14, 8 + blockH - 3, { align: 'right' });
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(15);
+    doc.setFontSize(16);
     doc.setTextColor(...activeBranding.textPrimary);
     doc.text(activeBranding.displayName.toUpperCase(), 15, 21);
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
+    doc.setFontSize(10.5);
     doc.setTextColor(...activeBranding.textPrimary);
     doc.text(String(year), 15, 30);
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
+    doc.setFontSize(7);
     doc.setTextColor(...activeBranding.textSecondary);
     doc.text('Jahresübersicht', 15, 38);
 
     doc.setTextColor(0, 0, 0);
-    const yH = 8 + blockH + 5;
+    const yH = 8 + blockH + 6;
 
     const KEY_ROWS: { id: string; isPct?: boolean; pctLabel?: string }[] = [
       { id: 'revenue_total' },

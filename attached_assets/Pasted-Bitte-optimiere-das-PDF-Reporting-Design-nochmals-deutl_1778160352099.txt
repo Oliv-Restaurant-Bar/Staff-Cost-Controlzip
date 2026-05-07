@@ -1,0 +1,204 @@
+Bitte optimiere das PDF Reporting Design nochmals deutlich.
+
+Aktuell ist das neue CI/CD Design grundsätzlich gut,
+aber es gibt noch mehrere visuelle Probleme.
+
+---
+
+1. Header Farben näher ans Original Logo bringen
+
+Die aktuellen Headerfarben sind:
+- zu dunkel
+- falscher Farbton
+- wirken zu schwer/schwarz
+
+Bitte die Farben heller und näher am echten Branding der Logos machen.
+
+OLIV:
+- echtes Olivgrün verwenden
+- eleganter dunkler Grünton
+- weniger schwarz
+- mehr Richtung:
+  #233b2f
+  #2f4a3b
+  #415a4c
+
+BEAULIEU:
+- wärmerer Braun/Goldton
+- weniger schwarzbraun
+- mehr Richtung:
+  #5b4428
+  #7a5a32
+  #a6844f
+
+Bitte den Farbton direkt an den Logos orientieren.
+
+---
+
+2. Header Verlauf / Gradient verbessern
+
+Aktuell wirkt der Header zu flach und dunkel.
+
+Bitte:
+- sanfter Verlauf
+- subtiler Gradient
+- hochwertiger Look
+- keine harte schwarze Fläche
+
+Beispiel:
+links etwas heller,
+rechts etwas dunkler.
+
+Sehr dezent und elegant.
+
+---
+
+3. Positive CHF Zahlen besser lesbar machen
+
+Aktuell:
+positive grüne CHF Werte sind schlecht lesbar.
+
+Besonders im dunklen EBITDA/EBIT Block.
+
+Bitte verbessern:
+
+Optionen:
+- helleres Grün
+ODER
+- Hintergrund leicht anpassen
+ODER
+- Schrift etwas kräftiger/fetter
+
+Ziel:
+positive Werte sofort gut lesbar.
+
+Beispiele:
++53'307
+32'867
+
+dürfen nicht "verschwimmen".
+
+---
+
+4. Negativwerte optimieren
+
+Negative rote Zahlen ebenfalls etwas harmonischer machen.
+
+Aktuell teilweise zu aggressiv rot.
+
+Bitte:
+- etwas eleganteres Rot
+- besser lesbar
+- professioneller Reporting Stil
+
+---
+
+5. Seitenumbruch Problem beheben
+
+Aktuell auf Seite 2:
+
+Der Mini-Header und der nächste Block liegen übereinander.
+
+Das ist nicht sauber.
+
+Bitte korrigieren:
+
+- genügend Abstand nach Mini-Header
+- kein Überlappen
+- Blocktitel startet sauber unter dem Header
+
+Der Header darf niemals Tabellen oder Titel überdecken.
+
+---
+
+6. Mini-Header auf Folgeseiten verbessern
+
+Aktuell:
+Mini-Header wirkt technisch/unfertig.
+
+Bitte verbessern:
+
+Folgeseiten Header:
+- dünner
+- sauber
+- Logo rechts klein
+- Restaurantname links
+- Monat dezent
+- Seitenzahl rechts
+
+Elegant und reduziert.
+
+Nicht einfach nur Text oben.
+
+---
+
+7. Logo Positionierung verbessern
+
+Die Logos wirken teilweise:
+- zu klein
+- zu weit oben
+- zu nahe am Rand
+
+Bitte:
+- vertikal besser zentrieren
+- mehr Padding rechts
+- proportional leicht grösser
+- optisch harmonischer
+
+---
+
+8. Goldene Linie verbessern
+
+Die goldene Trennlinie unten im Header:
+- aktuell etwas zu dominant
+
+Bitte:
+- dünner
+- eleganter
+- dezenter Goldton
+
+---
+
+9. Gesamte Typografie optimieren
+
+Bitte allgemein:
+- professionelleres Schriftbild
+- bessere Abstände
+- mehr White Space
+- bessere Hierarchie
+
+Restaurantname:
+gross und dominant
+
+Monat:
+klar sichtbar
+
+Dokumenttitel:
+kleiner und dezenter
+
+Exportdatum:
+klein und elegant
+
+---
+
+10. Ziel
+
+Das Reporting soll wirken wie:
+- professionelles Management Reporting
+- hochwertige Gastro-Gruppe
+- modernes Controlling Dashboard
+- nicht wie ein einfacher PDF Export
+
+---
+
+11. Tests
+
+Bitte prüfen:
+- OLIV Farben wirken näher am Original Logo
+- Beaulieu Farben wirken näher am Original Logo
+- positive CHF Werte gut lesbar
+- EBITDA/EBIT Block lesbar
+- keine überlappenden Elemente auf Seite 2
+- Mini-Header sauber
+- Logos harmonisch positioniert
+- Hochformat bleibt elegant
