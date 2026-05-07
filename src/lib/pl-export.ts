@@ -36,24 +36,28 @@ export interface PLExportOptions {
 
 const C = {
   // Dunkelblau – nur für Tabellenzeilen-Sektionskopf (weisse Schrift)
-  navy:       [22,  40,  90]  as [number, number, number],
-  // Professionelles Blau – Ergebnis-Zeilen (EBITDA / EBIT)
-  navyMid:    [38,  78, 168]  as [number, number, number],
-  // Klares Blau – Tabellen-Spaltenköpfe
-  navyLight:  [55, 105, 190]  as [number, number, number],
+  navy:        [22,  40,  90]  as [number, number, number],
+  // Dunkelgrau – Ergebnis-Zeilen (EBITDA / EBIT)
+  navyMid:     [78,  85, 106]  as [number, number, number],
+  // Klares Blau – Tabellen-Spaltenköpfe (bleibt blau)
+  navyLight:   [55, 105, 190]  as [number, number, number],
   // Hellgrau – Abschnitts-Balken über jeder Tabelle
-  sectionBar: [218, 220, 230] as [number, number, number],
+  sectionBar:  [218, 220, 230] as [number, number, number],
   // Dezentes Hellgrau – alternating rows
-  slateLight: [245, 245, 248] as [number, number, number],
-  white:      [255, 255, 255] as [number, number, number],
-  // Petrolgrün – professionelles Controlling-Grün
-  green:      [13,  92,  64]  as [number, number, number],
-  // Knallrot – vivid Crimson für Minuszahlen
-  red:        [210, 30,  48]  as [number, number, number],
+  slateLight:  [245, 245, 248] as [number, number, number],
+  white:       [255, 255, 255] as [number, number, number],
+  // Petrolgrün – professionelles Controlling-Grün (auf weissem Hintergrund)
+  green:       [13,  92,  64]  as [number, number, number],
+  // Helles Aqua-Mint – positive Ergebnisse auf dunklem Grau-Hintergrund
+  resultGreen: [92, 220, 162]  as [number, number, number],
+  // Knallrot – vivid Crimson für Minuszahlen (auf weissem Hintergrund)
+  red:         [210, 30,  48]  as [number, number, number],
+  // Helles Rot – negative Ergebnisse auf dunklem Grau-Hintergrund
+  resultRed:   [255, 135, 145] as [number, number, number],
   // Dezentes Grau für Prozentwerte – klar sekundär
-  gray:       [162, 166, 178] as [number, number, number],
+  gray:        [162, 166, 178] as [number, number, number],
   // Dunkeltext für Abschnitts-Label auf hellgrauem Balken
-  navyHeader: [72,  80, 102]  as [number, number, number],
+  navyHeader:  [72,  80, 102]  as [number, number, number],
 };
 
 // ── Zahlenformate ─────────────────────────────────────────────────────────────
@@ -89,6 +93,9 @@ function resultActualColor(
   isSubtotal: boolean,
 ): [number, number, number] | undefined {
   if ((!isResult && !isSubtotal) || actual == null || Math.abs(actual) < 0.5) return undefined;
+  // Auf dunklem Grau-Hintergrund (navyMid): helle Varianten für Lesbarkeit
+  if (isResult)    return actual >= 0 ? C.resultGreen : C.resultRed;
+  // Auf hellem Hintergrund (subtotal): normale Varianten
   return actual >= 0 ? C.green : C.red;
 }
 
@@ -571,7 +578,8 @@ function addPrevMonthComparison(
 
     const fillColor    = isResult ? C.navyMid : undefined;
     const baseTxt      = isResult ? C.white   : undefined;
-    const istColor     = isResult ? (curV >= 0 ? C.green : C.red) : undefined;
+    // navyMid ist dunkelgrau → helle Varianten für gute Lesbarkeit
+    const istColor     = isResult ? (curV >= 0 ? C.resultGreen : C.resultRed) : undefined;
     const abwColor     = isResult ? C.white : varColor(abwCHF, isExpense);
 
     const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -777,18 +785,18 @@ function addMonthComparisonBlock(
   // ── Farben ───────────────────────────────────────────────────────────────
   const DARK_TEXT:       [number, number, number] = [22, 40, 90];    // = C.navy
   const PCT_TEXT:        [number, number, number] = [162, 166, 178]; // dezent grau, klar sekundär
-  // Professionelles Blau – passt zu navyMid / navyLight
-  const RESULT_BG:       [number, number, number] = [38, 78, 168];   // = C.navyMid
-  const RESULT_PCT:      [number, number, number] = [180, 198, 235]; // hell auf Blau
-  const TOTAL_BG:        [number, number, number] = [228, 232, 248]; // leicht bläulich-grau
-  const TOTAL_RESULT_BG: [number, number, number] = [26, 58, 138];   // dunkles Blau für Total
+  // Dunkelgrau – Ergebnis-Zeilen (identisch mit C.navyMid)
+  const RESULT_BG:       [number, number, number] = [78, 85, 106];
+  const RESULT_PCT:      [number, number, number] = [188, 192, 215]; // hell auf Grau
+  const TOTAL_BG:        [number, number, number] = [228, 228, 238]; // nahezu neutral
+  const TOTAL_RESULT_BG: [number, number, number] = [55, 62, 82];    // dunkleres Grau für Total
   // Petrolgrün – Controlling-Stil, kein Neon
   const PETROL_GREEN:    [number, number, number] = [13, 92, 64];
-  // Knallrot – vivid Crimson, identisch mit C.red
+  // Knallrot – vivid Crimson
   const BORDEAUX:        [number, number, number] = [210, 30, 48];
-  // Auf blauem RESULT_BG: helle, gut lesbare Varianten
-  const RESULT_GREEN:    [number, number, number] = [92, 220, 162];  // helles Aqua-Mint auf Blau
-  const RESULT_RED:      [number, number, number] = [255, 130, 140]; // helles Rot auf Blau
+  // Auf dunklem Grau: helle, gut lesbare Varianten (= C.resultGreen / C.resultRed)
+  const RESULT_GREEN:    [number, number, number] = [92, 220, 162];
+  const RESULT_RED:      [number, number, number] = [255, 135, 145];
 
   // ── %-Format ohne Leerzeichen (kein Umbruch) ─────────────────────────────
   const pctStr = (v: number | null | undefined, base: number | null | undefined): string => {
