@@ -1,0 +1,182 @@
+Bitte korrigiere die Rollen- und Berechtigungslogik für den Geschäftsführer Login im Beaulieu.
+
+Aktuelles Problem:
+Der Geschäftsführer im Beaulieu hat aktuell nicht dieselben Rechte wie der Admin, obwohl er fast alles können soll.
+
+Gewünschte Logik:
+
+Der Geschäftsführer Beaulieu soll für das Restaurant Beaulieu praktisch Admin-Rechte erhalten, aber nur innerhalb von Beaulieu.
+
+Wichtig:
+Er darf NICHT auf andere Restaurants zugreifen.
+Er darf Budget und Erfolgsrechnung NICHT sehen.
+
+---
+
+1. Rolle definieren
+
+Bitte Rolle erstellen oder korrigieren:
+
+role = "manager"
+oder
+role = "geschaeftsfuehrer"
+
+Für Beaulieu gilt:
+
+Geschäftsführer = Admin-Rechte innerhalb Beaulieu
+
+Ausnahme:
+- Budget ausblenden
+- Erfolgsrechnung ausblenden
+
+---
+
+2. Zugriff erlauben
+
+Der Geschäftsführer Beaulieu soll Zugriff haben auf:
+
+- Dashboard
+- Verkaufs-Dashboard
+- Tagesansicht
+- Tages-Controlling
+- Produktanalyse
+- Dienstplanung
+- Personal FIX
+- Warenrechnungen
+- WES-Analyse
+- Lieferanten
+- Mitarbeiter / Personalstamm
+- Produkte
+- Verkaufsdaten Upload
+- Import-Zentrale
+- Einstellungen, soweit sie Beaulieu betreffen
+- alle Bearbeiten/Speichern/Freigeben Funktionen innerhalb Beaulieu
+
+Er soll alles machen können, was ich als Admin im Beaulieu machen kann.
+
+---
+
+3. Zugriff sperren
+
+Der Geschäftsführer Beaulieu darf NICHT sehen:
+
+- Budget
+- Erfolgsrechnung / P&L
+- Reporting Finanzmodule
+- Finanz-/Jahresabschluss Auswertungen, falls diese zur Erfolgsrechnung gehören
+
+Diese Menüpunkte müssen komplett ausgeblendet sein.
+Nicht nur deaktiviert.
+
+---
+
+4. Restaurant Begrenzung
+
+Der Geschäftsführer darf nur Daten von Beaulieu sehen und bearbeiten.
+
+Er darf NICHT:
+- Oliv Daten sehen
+- Oliv Mitarbeitende sehen
+- Oliv Umsätze sehen
+- Oliv Reports sehen
+- zwischen Restaurants wechseln, falls diese Funktion existiert
+
+Alle Queries müssen tenant/business/restaurant_id korrekt filtern.
+
+---
+
+5. Berechtigungsprüfung zentralisieren
+
+Bitte nicht nur Sidebar Menüpunkte ausblenden.
+
+Auch Backend/API/RLS prüfen.
+
+Der Geschäftsführer darf per direkter URL nicht auf Budget oder Erfolgsrechnung zugreifen.
+
+Beispiele:
+- /budget
+- /erfolgsrechnung
+- /reporting
+
+müssen für ihn blockiert werden.
+
+Anzeige:
+"Keine Berechtigung"
+
+---
+
+6. Schreibrechte
+
+Der Geschäftsführer Beaulieu soll innerhalb Beaulieu schreiben/bearbeiten/speichern dürfen:
+
+- Dienstpläne erstellen und ändern
+- Ist-Stunden bearbeiten
+- Warenrechnungen erfassen
+- Lieferanten verwalten
+- Produkte bearbeiten
+- Verkaufsdaten hochladen
+- Tagesdaten bearbeiten
+- WES-Daten bearbeiten
+- Einstellungen für Beaulieu ändern
+
+Also nicht nur Leserechte.
+
+---
+
+7. Admin bleibt unverändert
+
+Meine Admin-Rolle darf nicht eingeschränkt werden.
+
+Admin sieht weiterhin:
+- alle Restaurants
+- Budget
+- Erfolgsrechnung
+- alle Module
+- alle Einstellungen
+
+---
+
+8. Tests
+
+Bitte mit dem Beaulieu Geschäftsführer Login konkret testen:
+
+Er muss sehen:
+- Dashboard
+- Verkauf
+- Tagesansicht
+- Tages-Controlling
+- Produktanalyse
+- Dienstplanung
+- Personal FIX
+- Warenrechnungen
+- WES-Analyse
+- Stammdaten
+- Import / Upload
+- Einstellungen Beaulieu
+
+Er darf NICHT sehen:
+- Budget
+- Erfolgsrechnung
+- Reporting Finanzmodule
+
+Bitte auch testen:
+- Direkter Aufruf /budget blockiert
+- Direkter Aufruf /erfolgsrechnung blockiert
+- Direkter Aufruf /reporting blockiert
+- Beaulieu Daten laden korrekt
+- Oliv Daten sind nicht sichtbar
+- Speichern/Bearbeiten funktioniert überall im Beaulieu
+
+---
+
+9. Wichtig
+
+Ziel ist:
+Geschäftsführer Beaulieu = fast Admin für Beaulieu
+
+Aber ohne:
+- Budget
+- Erfolgsrechnung
+- Zugriff auf andere Restaurants
+
+Bitte diese Logik sauber und zentral implementieren, damit sie nicht bei einzelnen Modulen wieder fehlt.

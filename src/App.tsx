@@ -102,7 +102,7 @@ const AppContent = () => {
       console.log('[AUTH] tenant locked: beaulieu');
       console.log('[AUTH] module budget: blocked');
       console.log('[AUTH] module erfolgsrechnung: blocked');
-      console.log('[AUTH] allowed modules: dashboard, tagesansicht, tages-controlling, verkauf-dashboard, produkt-analyse, dienstplanung, personal-fix, personalstamm, produkt-stamm, warenrechnungen, wes-analyse, import, sales-upload');
+      console.log('[AUTH] allowed modules: dashboard, tagesansicht, tages-controlling, verkauf-dashboard, produkt-analyse, dienstplanung, personal-fix, personalstamm, produkt-stamm, warenrechnungen, wes-analyse, lieferanten, lieferanten-vergleich, import, sales-upload, settings');
     }
   }, [isBeaulieuManager]);
 
@@ -173,7 +173,7 @@ const AppContent = () => {
             {/* Personalstamm: Admin + beaulieu_manager (tenant-gefiltert) */}
             <Route path="/personal-stamm" element={<Personalstamm />} />
 
-            {/* Einstellungen: nur Admin */}
+            {/* Einstellungen: Admin + beaulieu_manager (nur Beaulieu-relevante Settings) */}
             <Route
               path="/settings"
               element={canAccessSettings ? <Settings /> : <Navigate to="/personal" replace />}
@@ -196,10 +196,10 @@ const AppContent = () => {
               element={<ImportHub />}
             />
             <Route path="/lieferanten"
-              element={isBeaulieuManager ? <BlockedRoute path="/lieferanten" /> : <SupplierDocumentsPage />}
+              element={<SupplierDocumentsPage />}
             />
             <Route path="/lieferanten-vergleich"
-              element={isBeaulieuManager ? <BlockedRoute path="/lieferanten-vergleich" /> : <SupplierComparisonPage />}
+              element={<SupplierComparisonPage />}
             />
             <Route path="/budget"
               element={isBeaulieuManager ? <BlockedRoute path="/budget" /> : <BudgetPage />}

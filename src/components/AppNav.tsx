@@ -210,7 +210,7 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Settings',
         icon: Settings,
         adminOnly: true,
-        // beaulieuAllowed: false — Einstellungen bleiben gesperrt
+        beaulieuAllowed: true,
       },
     ],
   },

@@ -241,7 +241,8 @@ export const usePermissions = (): Permissions => {
 
     // Personal — Beaulieu GF darf Lohn/Stammdaten eigener Mitarbeiter pflegen
     canEditEmployees:  isAdmin || isBeaulieuManager,
-    canAccessSettings: isAdmin,
+    // Beaulieu GF darf Einstellungen für seinen Mandanten ändern
+    canAccessSettings: isAdmin || isBeaulieuManager,
 
     // Dienstplan
     canEditSchedule: true,
