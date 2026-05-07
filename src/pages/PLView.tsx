@@ -1064,21 +1064,21 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
     const isPos = v.actual >= 0;
     const p = pctVal(v.actual);
     return (
-      <tr className="bg-[#F7F0E3] dark:bg-slate-800/80 font-bold border-t-2 border-b border-[#4F6F52] dark:border-[#3d5640] text-gray-900 dark:text-gray-100">
-        <td className={cn('px-3 text-sm', pyResult)} colSpan={2}>{row.catLabel}</td>
+      <tr className="bg-[#F7F0E3] dark:bg-slate-800/80 font-bold border-t-2 border-b border-[#4F6F52] dark:border-[#3d5640]">
+        <td className={cn('px-3 text-sm text-gray-900 dark:text-gray-100', pyResult)} colSpan={2}>{row.catLabel}</td>
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums font-bold', pyResult,
           isPos ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600'
         )}>{fmt(v.actual)}</td>
         {pctMode !== 'off' && (
-          <td className={cn(pctClass, pyResult, 'font-bold')}>
+          <td className={cn('px-2 text-right font-mono tabular-nums text-xs text-gray-500 dark:text-gray-400 font-bold', pyResult)}>
             {p ?? <span className="opacity-30">—</span>}
           </td>
         )}
-        {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.budget)}</td>}
-        {showBudget && pctMode !== 'off' && <td className={cn(pctBudClass, pyResult, 'font-bold')}>{pctValBudget(v.budget) ?? <span className="opacity-30">—</span>}</td>}
+        {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-gray-700 dark:text-gray-300', pyResult)}>{fmt(v.budget)}</td>}
+        {showBudget && pctMode !== 'off' && <td className={cn('px-2 text-right font-mono tabular-nums text-xs text-gray-500 dark:text-gray-400 font-bold', pyResult)}>{pctValBudget(v.budget) ?? <span className="opacity-30">—</span>}</td>}
         {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
-        {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground', pyResult)}>{fmt(v.prevYear)}</td>}
-        {showPrevYear && pctMode !== 'off' && <td className={cn(pctPYClass, pyResult, 'font-bold')}>{pctValPY(v.prevYear) ?? <span className="opacity-30">—</span>}</td>}
+        {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-gray-700 dark:text-gray-300', pyResult)}>{fmt(v.prevYear)}</td>}
+        {showPrevYear && pctMode !== 'off' && <td className={cn('px-2 text-right font-mono tabular-nums text-xs text-gray-500 dark:text-gray-400 font-bold', pyResult)}>{pctValPY(v.prevYear) ?? <span className="opacity-30">—</span>}</td>}
         {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
       </tr>
     );
