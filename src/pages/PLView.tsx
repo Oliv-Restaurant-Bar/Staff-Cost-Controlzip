@@ -899,7 +899,7 @@ const InlineIstCell = ({
   useEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
 
   const save = () => {
-    const raw = input.replace(/['\s]/g, '').replace(',', '.');
+    const raw = input.trim().replace(/^CHF\s*/i, '').replace(/['\s]/g, '').replace(',', '.');
     const num = parseFloat(raw);
     if (isNaN(num)) { onCancel(); return; }
 
@@ -1168,7 +1168,13 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
             onCancel={() => setEditingIst(false)}
           />
         ) : (
-          v.actual > 0 ? fmt(v.actual) : <span className="text-muted-foreground/40">—</span>
+          v.actual !== 0 ? (
+            <span className={v.actual < 0 ? 'text-red-600 dark:text-red-400' : undefined}>
+              {fmt(v.actual)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground/40">—</span>
+          )
         )}
       </td>
       {pctMode !== 'off' && (
@@ -1176,10 +1182,10 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
           {pctVal(v.actual) ?? <span className="opacity-25">—</span>}
         </td>
       )}
-      {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.budget > 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>}
+      {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.budget !== 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>}
       {showBudget && pctMode !== 'off' && <td className={cn(pctBudClass, pyItem)}>{pctValBudget(v.budget) ?? <span className="opacity-25">—</span>}</td>}
       {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
-      {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.prevYear > 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>}
+      {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.prevYear !== 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>}
       {showPrevYear && pctMode !== 'off' && <td className={cn(pctPYClass, pyItem)}>{pctValPY(v.prevYear) ?? <span className="opacity-25">—</span>}</td>}
       {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
     </tr>
@@ -1301,7 +1307,7 @@ const BudgetPLDrilldownDialog = ({
   }, []);
 
   const parseInput = (raw: string): number | null => {
-    const cleaned = raw.replace(/['\s]/g, '').replace(',', '.');
+    const cleaned = raw.trim().replace(/^CHF\s*/i, '').replace(/['\s]/g, '').replace(',', '.');
     const num = parseFloat(cleaned);
     return isNaN(num) ? null : num;
   };
