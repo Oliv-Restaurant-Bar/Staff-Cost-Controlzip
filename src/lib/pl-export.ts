@@ -436,7 +436,7 @@ function buildBPLBody(
     const fillColor  = isResult   ? C.navyMid
                      : isSubtotal ? [228, 228, 238] as [number, number, number]
                      : undefined;
-    const baseTxtColor = isResult ? C.white : undefined;
+    const baseTxtColor = isResult ? C.navyHeader : undefined;
     const istValColor  = resultActualColor(v.actual, isResult, isSubtotal);
     const istColor     = istValColor ?? baseTxtColor;
     const abwBudC      = varColor(v.vsBudget,   isExp);
@@ -453,13 +453,13 @@ function buildBPLBody(
     body.push([
       { content: label,               styles: cs() },
       { content: fmtCHF(v.actual),    styles: cs({ halign: 'right', fontStyle: 'bold', ...(istColor ? { textColor: istColor } : {}) }) },
-      { content: fmtPctRatio(v.actual,   revA),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: fmtPctRatio(v.actual,   revA),  styles: cs({ halign: 'right', textColor: C.gray }) },
       { content: fmtCHF(v.budget),    styles: cs({ halign: 'right' }) },
-      { content: fmtPctRatio(v.budget,   revB),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
-      { content: fmtCHF(v.vsBudget),  styles: cs({ halign: 'right', textColor: isResult ? C.white : abwBudC }) },
+      { content: fmtPctRatio(v.budget,   revB),  styles: cs({ halign: 'right', textColor: C.gray }) },
+      { content: fmtCHF(v.vsBudget),  styles: cs({ halign: 'right', textColor: abwBudC }) },
       { content: fmtCHF(v.prevYear),  styles: cs({ halign: 'right' }) },
-      { content: fmtPctRatio(v.prevYear, revPY), styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
-      { content: fmtCHF(v.vsPrevYear), styles: cs({ halign: 'right', textColor: isResult ? C.white : abwVJC }) },
+      { content: fmtPctRatio(v.prevYear, revPY), styles: cs({ halign: 'right', textColor: C.gray }) },
+      { content: fmtCHF(v.vsPrevYear), styles: cs({ halign: 'right', textColor: abwVJC }) },
     ]);
   }
   return body;
@@ -496,7 +496,7 @@ function buildKlassischBody(
     const fillColor  = isResult   ? C.navyMid
                      : isSubtotal ? [228, 228, 238] as [number, number, number]
                      : undefined;
-    const baseTxtColor = isResult ? C.white : undefined;
+    const baseTxtColor = isResult ? C.navyHeader : undefined;
     const istValColor  = resultActualColor(v.actual, isResult, isSubtotal);
     const istColor     = istValColor ?? baseTxtColor;
     const abwVJC       = varColor(v.vsPrevYear, isExp);
@@ -512,10 +512,10 @@ function buildKlassischBody(
     body.push([
       { content: label,                styles: cs() },
       { content: fmtCHF(v.actual),     styles: cs({ halign: 'right', fontStyle: 'bold', ...(istColor ? { textColor: istColor } : {}) }) },
-      { content: fmtPctRatio(v.actual,   revA),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
+      { content: fmtPctRatio(v.actual,   revA),  styles: cs({ halign: 'right', textColor: C.gray }) },
       { content: fmtCHF(v.prevYear),   styles: cs({ halign: 'right' }) },
-      { content: fmtPctRatio(v.prevYear, revPY), styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray }) },
-      { content: fmtCHF(v.vsPrevYear), styles: cs({ halign: 'right', textColor: isResult ? C.white : abwVJC }) },
+      { content: fmtPctRatio(v.prevYear, revPY), styles: cs({ halign: 'right', textColor: C.gray }) },
+      { content: fmtCHF(v.vsPrevYear), styles: cs({ halign: 'right', textColor: abwVJC }) },
     ]);
   }
   return body;
@@ -577,10 +577,9 @@ function addPrevMonthComparison(
     const abwPctStr = prevV !== 0 ? `${abwPct > 0 ? '+' : ''}${abwPct.toFixed(1)} %` : '–';
 
     const fillColor    = isResult ? C.navyMid : undefined;
-    const baseTxt      = isResult ? C.white   : undefined;
-    // navyMid ist dunkelgrau → helle Varianten für gute Lesbarkeit
+    const baseTxt      = isResult ? C.navyHeader : undefined;
     const istColor     = isResult ? (curV >= 0 ? C.resultGreen : C.resultRed) : undefined;
-    const abwColor     = isResult ? C.white : varColor(abwCHF, isExpense);
+    const abwColor     = varColor(abwCHF, isExpense);
 
     const cs = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
       fontStyle: 'bold' as const,
@@ -592,9 +591,9 @@ function addPrevMonthComparison(
     return [
       { content: label,               styles: cs() },
       { content: fmtCHF(curV),        styles: cs({ halign: 'right', ...(istColor ? { textColor: istColor } : {}) }) },
-      { content: fmtPctRatio(curV,  curRev),  styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray, fontStyle: 'normal' }) },
+      { content: fmtPctRatio(curV,  curRev),  styles: cs({ halign: 'right', textColor: C.gray, fontStyle: 'normal' }) },
       { content: fmtCHF(prevV),       styles: cs({ halign: 'right', fontStyle: 'normal' }) },
-      { content: fmtPctRatio(prevV, prevRev), styles: cs({ halign: 'right', textColor: isResult ? C.white : C.gray, fontStyle: 'normal' }) },
+      { content: fmtPctRatio(prevV, prevRev), styles: cs({ halign: 'right', textColor: C.gray, fontStyle: 'normal' }) },
       { content: fmtCHF(abwCHF),      styles: cs({ halign: 'right', textColor: abwColor, fontStyle: 'normal' }) },
       { content: abwPctStr,            styles: cs({ halign: 'right', textColor: abwColor, fontStyle: 'normal' }) },
     ];

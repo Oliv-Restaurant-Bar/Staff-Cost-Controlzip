@@ -859,7 +859,7 @@ function computeBPLRows(
       rows.push({
         catId: cat.id, catLabel: cat.label, catType: 'result',
         isExpense: cat.isExpense, isCategory: true,
-        values: makeCell(catA[cat.id] ?? 0, catB[cat.id] ?? 0, catP[cat.id] ?? 0, false),
+        values: makeCell(catA[cat.id] ?? 0, catB[cat.id] ?? 0, catP[cat.id] ?? 0, cat.isExpense),
       });
     }
   }
