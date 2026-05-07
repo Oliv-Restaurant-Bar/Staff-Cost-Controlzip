@@ -166,19 +166,25 @@ const MonthRow = ({
         {fmt(values.actual)}
       </td>
       {/* % Umsatz */}
-      <td className="px-2 py-1.5 text-right text-xs text-muted-foreground">
+      <td className={cn('px-2 py-1.5 text-right text-xs',
+        def.type === 'result' ? 'text-gray-500' : 'text-muted-foreground',
+      )}>
         {def.showPercent || def.type === 'result'
           ? fmtPct(pctOfRevenue)
           : ''}
       </td>
       {/* Budget */}
-      <td className="px-2 py-1.5 text-right text-sm font-mono text-muted-foreground">
+      <td className={cn('px-2 py-1.5 text-right text-sm font-mono',
+        def.type === 'result' ? 'text-gray-700' : 'text-muted-foreground',
+      )}>
         {fmt(values.budget)}
       </td>
       {/* Abw. Budget */}
       <VarCell value={values.vsBudget} pct={values.vsBudgetPct} inverted={expenseInverted} />
       {/* Vorjahr */}
-      <td className="px-2 py-1.5 text-right text-sm font-mono text-muted-foreground">
+      <td className={cn('px-2 py-1.5 text-right text-sm font-mono',
+        def.type === 'result' ? 'text-gray-700' : 'text-muted-foreground',
+      )}>
         {fmt(values.prevYear)}
       </td>
       {/* Abw. VJ */}
