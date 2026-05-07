@@ -1,0 +1,130 @@
+Bitte passe den Block "Monatsvergleich" im PDF Export nochmals an.
+
+1. Spaltenausrichtung korrigieren
+
+Aktuell sind die Monatsüberschriften und Zahlen teilweise versetzt.
+Bitte die Tabelle sauber als echte Tabelle aufbauen:
+
+Kennzahl | Jan | Feb | Mär | Apr | Total
+
+Alle Monatswerte müssen exakt unter dem jeweiligen Monatsnamen stehen.
+Alle Zahlen rechtsbündig.
+Keine verschobenen Spalten.
+Keine abgeschnittene rechte Spalte.
+
+2. Trend-Spalte ersetzen
+
+Die letzte Spalte "Trend" bitte vollständig entfernen.
+
+Stattdessen neue letzte Spalte:
+
+"Total"
+oder
+"Kumuliert"
+
+Diese Spalte zeigt die Summe aller ausgewählten Monate.
+
+3. Berechnung Total / Kumuliert
+
+Für CHF-Zeilen:
+Summe der ausgewählten Monate.
+
+Beispiel:
+Betriebsertrag netto Total =
+Jan + Feb + Mär + Apr
+
+Für Prozent-Zeilen:
+Nicht Durchschnitt der Prozente.
+
+Sondern korrekt aus kumulierten CHF Werten berechnen:
+
+Warenaufwand % Total =
+Total Warenaufwand / Total Betriebsertrag netto * 100
+
+Personalaufwand % Total =
+Total Personalaufwand / Total Betriebsertrag netto * 100
+
+EBITDA % Total =
+Total EBITDA / Total Betriebsertrag netto * 100
+
+EBIT % Total =
+Total EBIT / Total Betriebsertrag netto * 100
+
+4. Tabelleninhalt
+
+Zeilen:
+
+Betriebsertrag netto
+
+Warenaufwand
+Warenaufwand %
+
+Personalaufwand
+Personalaufwand %
+
+EBITDA
+EBITDA %
+
+EBIT
+EBIT %
+
+Spalten:
+Kennzahl
+Jan
+Feb
+Mär
+Apr
+Total
+
+Je nach ausgewählten Monaten dynamisch:
+Wenn Jan bis Mai gewählt:
+Kennzahl | Jan | Feb | Mär | Apr | Mai | Total
+
+5. Design verbessern
+
+Die Total-Spalte soll leicht hervorgehoben werden:
+- dezenter Hintergrund
+- fett
+- klare Trennlinie vor Total
+
+CHF Beträge:
+- fett
+- gut lesbar
+- schwarz/dunkel
+- negative Werte rot
+
+Prozentwerte:
+- kleiner
+- dezenter grau/blau
+- aber nicht umbrechen
+
+6. Ergebnisblock
+
+Der dunkle Block für EBITDA / EBIT kann bleiben.
+Aber auch dort:
+- Monatswerte sauber ausrichten
+- Total-Spalte sauber darstellen
+- negative Werte rot
+- positive Werte grün
+- Prozentwerte kleiner
+
+7. Wichtig
+
+Der Monatsvergleich soll zeigen:
+- Monatsverlauf pro ausgewählten Monat
+- rechts die kumulierte Summe
+
+Nicht mehr:
+- Trend
+- Abweichung
+- Prozentänderung
+
+8. Tests
+
+Bitte prüfen:
+- Jan, Feb, Mär, Apr sind exakt ausgerichtet
+- letzte Spalte heisst Total oder Kumuliert
+- Total CHF summiert korrekt
+- Total Prozent berechnet sich aus kumulierten CHF Werten
+- keine Spalte ist abgeschnitten
+- Hochformat bleibt lesbar
