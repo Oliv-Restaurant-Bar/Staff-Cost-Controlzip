@@ -1,0 +1,268 @@
+Bitte überarbeite die 4 Analyse-Diagramme komplett.
+
+Aktuell sind diese Auswertungen:
+- nicht lesefreundlich
+- visuell überladen
+- schwer interpretierbar
+- nicht managementtauglich
+- die Aussagen sind nicht sofort klar
+
+Ich möchte eine deutlich professionellere und aussagekräftigere Darstellung.
+
+---
+
+BETROFFENE 4 ANALYSEN
+
+1. Personalkostenquote pro Monat
+2. Umsatz vs. Personalkosten
+3. Warenaufwandquote pro Monat
+4. Umsatz vs. Warenaufwand
+
+---
+
+GRUNDSATZ
+
+Weniger technische Darstellung.
+Mehr Management-Dashboard.
+Weniger Linienchaos.
+Weniger Farben.
+Mehr Fokus auf Aussage.
+
+Die wichtigste Frage muss sofort beantwortet werden:
+- Ist der Monat gut oder schlecht?
+- Sind die Kosten unter Kontrolle?
+- Wie entwickelt sich die Quote?
+- Welche Monate sind kritisch?
+
+---
+
+1. PERSONALKOSTENQUOTE PRO MONAT NEU AUFBAUEN
+
+Aktuell:
+- Linien + Balken + Ziel + Farben = zu chaotisch
+
+Neu:
+Nur EIN Balken pro Monat.
+
+Der Balken zeigt:
+PK Quote Ist %
+
+Farblogik:
+- Grün = unter Ziel
+- Orange = nahe Ziel
+- Rot = über Ziel
+
+Zusätzlich:
+- Zielwert als dünne horizontale Linie
+- Prozentwert direkt IM oder ÜBER dem Balken
+- Monat klar lesbar
+
+Beispiel:
+Jan → 40.4 %
+Feb → 40.7 %
+Mär → 34.4 %
+Apr → 32.0 %
+
+Keine zweite Linie mehr.
+Keine doppelte PK Plan Linie.
+Keine unnötige Legende.
+
+Optional:
+Beim Hover Tooltip:
+- PK Ist CHF
+- Umsatz CHF
+- PK Quote %
+- Zielwert %
+
+---
+
+2. UMSATZ VS. PERSONALKOSTEN NEU
+
+Aktuell:
+Zu kleine Balken.
+Zu viele Informationen gleichzeitig.
+Prozent kaum lesbar.
+
+Neu:
+Kombinierte Management-Darstellung.
+
+Pro Monat:
+- Umsatz Balken (gross)
+- Personalkosten Balken (kleiner davor oder daneben)
+
+Direkt auf dem Personalkosten-Balken:
+PK Quote %
+
+Beispiel:
+Apr:
+Umsatz CHF 267k
+PK CHF 96k
+36.1 %
+
+Wichtig:
+- Prozentwert gross genug
+- CHF Werte im Tooltip
+- Keine unnötigen Farben
+
+Farben:
+Umsatz = neutral blau
+PK = orange/rot
+
+---
+
+3. WARENAUFWANDQUOTE PRO MONAT NEU
+
+Genau gleich wie PK Quote.
+
+Nur:
+Warenquote %
+
+Ein Balken pro Monat.
+Farbe je nach Ziel:
+- Grün = gut
+- Orange = ok
+- Rot = kritisch
+
+Zielwertlinie:
+z.B. 30 %
+
+Prozentwert direkt auf Balken.
+
+---
+
+4. UMSATZ VS. WARENAUFWAND NEU
+
+Gleiches Prinzip wie Umsatz vs PK.
+
+Pro Monat:
+- Umsatz
+- Warenaufwand
+- Warenquote direkt sichtbar
+
+Keine komplizierten Linien.
+
+---
+
+5. LAYOUT VERBESSERN
+
+Aktuell:
+Die Diagramme wirken gequetscht.
+
+Neu:
+- Mehr Höhe
+- Mehr Abstand
+- Grössere Schrift
+- Weniger kleine Texte
+- Weniger technische Infos
+
+Desktop:
+2 Diagramme pro Zeile OK
+
+Aber:
+Mehr Luft.
+Mehr Padding.
+Mehr Fokus.
+
+---
+
+6. MANAGEMENT-KPI OBERHALB JE BLOCK
+
+Über jeder Analyse bitte kleine KPI-Karten.
+
+Beispiel Personalkosten:
+
+PK Quote Ø:
+35.2 %
+
+Schlechtester Monat:
+Feb 40.7 %
+
+Bester Monat:
+Apr 32.0 %
+
+Ziel:
+40 %
+
+---
+
+7. AUSSAGEKRÄFTIGE HINWEISE
+
+Zusätzlich automatische Bewertung:
+
+Beispiele:
+- "Personalkosten seit März stabil unter Ziel"
+- "Warenaufwand im April deutlich verbessert"
+- "Mai aktuell unvollständig"
+
+Kurzer Satz unter Diagramm.
+
+---
+
+8. PROBLEME BEHEBEN
+
+Aktuell:
+Mai zeigt Fantasiewerte / extreme Balken.
+
+Bitte absichern:
+
+Wenn Umsatz fehlt oder zu tief:
+- keine Quote berechnen
+- Balken ausgrauen
+- "keine vollständigen Daten"
+
+Keine:
+- 2071 %
+- Infinity
+- NaN
+- extreme Achsen
+
+---
+
+9. DESIGN
+
+Modernes SaaS Dashboard Design.
+
+Wichtig:
+- weiss / hellgrau Hintergrund
+- klare Farben
+- grosse lesbare Zahlen
+- Prozentwerte fett
+- Monate sauber lesbar
+- keine überladenen Gitternetzlinien
+
+---
+
+10. TOOLTIP PROFESSIONELL
+
+Hover soll zeigen:
+
+Monat
+Umsatz CHF
+PK CHF oder Waren CHF
+Quote %
+Budget %
+Vorjahr %
+
+Schön formatiert.
+
+---
+
+11. PDF / EXPORT
+
+Die neue Darstellung soll:
+- auch im PDF Export erscheinen
+- sauber skalieren
+- keine abgeschnittenen Labels
+- gleiche Farben wie Webapp
+
+---
+
+12. TESTS
+
+Bitte prüfen:
+
+- keine extremen Prozentwerte mehr
+- keine falschen Achsen
+- Prozentwerte direkt lesbar
+- Mai wird korrekt behandelt wenn unvollständig
+- Dashboard wirkt klarer und managementtauglich

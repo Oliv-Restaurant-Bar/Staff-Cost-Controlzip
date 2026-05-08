@@ -485,184 +485,450 @@ const RevenueComparisonChart = ({
   );
 };
 
-// ─── Chart 2: PK-Quote pro Monat ─────────────────────────────────────────────
+// ─── Globale Konstanten für Warenaufwand-Ziel ─────────────────────────────────
+
+const WAREN_THRESHOLD = 30;
+
+// ─── Insight-Texte (automatische Bewertung) ───────────────────────────────────
+
+function buildPKInsight(data: MonthlyKPI[], threshold: number): string {
+  const withData = data.filter(d => d.pkQuoteIst != null);
+  if (!withData.length) return '';
+  const over = withData.filter(d => d.pkQuoteIst! > threshold);
+  if (!over.length)
+    return `Alle ${withData.length} Monate mit Daten liegen unter dem Zielwert von ${threshold} %.`;
+  if (over.length === withData.length)
+    return `Alle ${withData.length} Monate überschreiten den Zielwert von ${threshold} %.`;
+  const names = over.map(d => d.label).join(', ');
+  return `${over.length} ${over.length === 1 ? 'Monat' : 'Monate'} über Ziel (${names}).`;
+}
+
+function buildWarenInsight(data: MonthlyKPI[]): string {
+  const withData = data.filter(d => d.warenQuoteIst != null);
+  if (!withData.length) return '';
+  const over = withData.filter(d => d.warenQuoteIst! > WAREN_THRESHOLD);
+  if (!over.length)
+    return `Alle ${withData.length} Monate liegen unter dem Ziel von ${WAREN_THRESHOLD} %.`;
+  const names = over.map(d => d.label).join(', ');
+  return `${over.length} ${over.length === 1 ? 'Monat' : 'Monate'} über Ziel (${names}).`;
+}
+
+// ─── KPI-Strip über Diagrammblock ─────────────────────────────────────────────
+
+const QuoteKpiStrip = ({
+  data, quoteFn, stripLabel, threshold,
+}: {
+  data:       MonthlyKPI[];
+  quoteFn:    (d: MonthlyKPI) => number | null;
+  stripLabel: string;
+  threshold:  number;
+}) => {
+  const withData = data.filter(d => quoteFn(d) != null);
+  if (!withData.length) return null;
+  const vals  = withData.map(d => ({ label: d.label, val: quoteFn(d)! }));
+  const avg   = vals.reduce((s, d) => s + d.val, 0) / vals.length;
+  const best  = vals.reduce((a, b) => a.val < b.val ? a : b);
+  const worst = vals.reduce((a, b) => a.val > b.val ? a : b);
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+      <div className="rounded-xl border border-border bg-card px-4 py-3">
+        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">{stripLabel} Ø</p>
+        <p className="text-2xl font-bold">{avg.toFixed(1)} %</p>
+        <p className="text-[10px] text-muted-foreground mt-0.5">Durchschnitt</p>
+      </div>
+      <div className="rounded-xl border border-green-200 bg-green-50 dark:bg-green-950/20 px-4 py-3">
+        <p className="text-[10px] font-semibold text-green-700 uppercase tracking-wide mb-1">Bester Monat</p>
+        <p className="text-2xl font-bold text-green-700">{best.val.toFixed(1)} %</p>
+        <p className="text-[10px] text-green-600 mt-0.5">{best.label}</p>
+      </div>
+      <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-950/20 px-4 py-3">
+        <p className="text-[10px] font-semibold text-red-700 uppercase tracking-wide mb-1">Schlechtester</p>
+        <p className="text-2xl font-bold text-red-700">{worst.val.toFixed(1)} %</p>
+        <p className="text-[10px] text-red-600 mt-0.5">{worst.label}</p>
+      </div>
+      <div className="rounded-xl border border-border bg-muted/40 px-4 py-3">
+        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Ziel</p>
+        <p className="text-2xl font-bold text-muted-foreground">≤ {threshold} %</p>
+        <p className="text-[10px] text-muted-foreground mt-0.5">Obergrenze</p>
+      </div>
+    </div>
+  );
+};
+
+const InsightBanner = ({ text }: { text: string }) => {
+  if (!text) return null;
+  return (
+    <p className="text-[11px] text-muted-foreground italic mt-3 px-1 flex items-start gap-1">
+      <span className="shrink-0 mt-px">→</span>
+      <span>{text}</span>
+    </p>
+  );
+};
+
+// ─── Chart 2: PK-Quote pro Monat (Management-Design) ─────────────────────────
+
+const PKQuoteTooltip = ({
+  active, payload, label, threshold, allData,
+}: {
+  active?: boolean;
+  payload?: { name: string; value: number }[];
+  label?: string;
+  threshold: number;
+  allData: MonthlyKPI[];
+}) => {
+  if (!active || !payload?.length) return null;
+  const entry = allData.find(d => d.label === label);
+  const quote = entry?.pkQuoteIst ?? null;
+  return (
+    <div className="bg-card border border-border shadow-lg rounded-xl px-3 py-2.5 text-xs min-w-[190px]">
+      <p className="font-bold text-foreground mb-2 border-b border-border pb-1.5">{label}</p>
+      <div className="space-y-1.5">
+        <div className="flex justify-between gap-6">
+          <span className="text-muted-foreground">Umsatz Ist</span>
+          <span className="font-semibold">{fmtCHF(entry?.umsatzIst)}</span>
+        </div>
+        <div className="flex justify-between gap-6">
+          <span className="text-muted-foreground">PK Ist</span>
+          <span className="font-semibold">{fmtCHF(entry?.pkIst)}</span>
+        </div>
+        <div className="flex justify-between gap-6 pt-1 border-t border-border">
+          <span className="font-medium">PK-Quote</span>
+          <span className="font-bold text-[13px]" style={{ color: pkBarColor(quote, threshold) }}>
+            {quote != null ? `${quote.toFixed(1)} %` : '–'}
+          </span>
+        </div>
+        <div className="flex justify-between gap-6 text-muted-foreground/60">
+          <span>Ziel</span>
+          <span>≤ {threshold} %</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const PKQuoteChart = ({ data, threshold }: { data: MonthlyKPI[]; threshold: number }) => {
-  const hasData = data.some(d => d.pkQuoteIst !== null || d.pkQuoteBudget !== null);
+  const hasData = data.some(d => d.pkQuoteIst !== null);
   if (!hasData) return <NoDataOverlay message="Keine PK-Quote berechenbar – bitte Umsatz und Personalkosten erfassen." />;
 
+  const renderBarLabel = (props: Record<string, unknown>) => {
+    const { x, y, width, height, index } = props as { x: number; y: number; width: number; height: number; index: number };
+    const entry = data[index];
+    if (entry.pkQuoteIst == null) return null;
+    const pct = entry.pkQuoteIst;
+    const cx  = (x as number) + (width as number) / 2;
+    const h   = height as number;
+    const col = pkBarColor(pct, threshold);
+    if (h > 26) {
+      return (
+        <text x={cx} y={(y as number) + h / 2 + 5} textAnchor="middle" fontSize={12} fontWeight="700" fill="white">
+          {pct.toFixed(1)}%
+        </text>
+      );
+    }
+    return (
+      <text x={cx} y={(y as number) - 5} textAnchor="middle" fontSize={11} fontWeight="700" fill={col}>
+        {pct.toFixed(1)}%
+      </text>
+    );
+  };
+
+  const yMax = Math.max(...data.map(d => d.pkQuoteIst ?? 0), threshold + 8);
+
   return (
-    <ResponsiveContainer width="100%" height={280}>
-      <ComposedChart data={data} barCategoryGap="30%">
+    <ResponsiveContainer width="100%" height={310}>
+      <BarChart data={data} barCategoryGap="42%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
-        <XAxis dataKey="label" tick={AXIS_STYLE} axisLine={false} tickLine={false} />
+        <XAxis dataKey="label" tick={{ ...AXIS_STYLE, fontSize: 12 }} axisLine={false} tickLine={false} />
         <YAxis
-          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={44}
+          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={42}
           tickFormatter={v => `${v}%`}
-          domain={[0, Math.max(threshold + 15, 50)]}
+          domain={[0, Math.ceil(yMax / 5) * 5]}
         />
         <ReTooltip
-          content={<PctTooltip extraLabel={`Ziel: ≤ ${threshold} %`} />}
-          cursor={{ fill: 'hsl(var(--muted)/0.4)' }}
+          content={(p: any) => <PKQuoteTooltip {...p} threshold={threshold} allData={data} />}
+          cursor={{ fill: 'hsl(var(--muted)/0.25)' }}
         />
-        <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-          formatter={v => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{v}</span>} />
-
         <ReferenceLine
           y={threshold}
           stroke={C_RED}
           strokeDasharray="6 3"
           strokeWidth={1.5}
-          label={{ value: `Ziel ${threshold}%`, position: 'insideTopRight', fontSize: 10, fill: C_RED, dy: -4 }}
+          label={{ value: `Ziel ${threshold}%`, position: 'insideTopRight', fontSize: 10, fill: C_RED, dy: -6 }}
         />
-
-        {/* PK Plan – heller Balken im Hintergrund */}
-        <Bar dataKey="pkQuoteBudget" name="PK Plan %" fill={C_PK_PLAN} radius={[3,3,0,0]} opacity={0.65} />
-
-        {/* PK Ist – farbige Balken + Label */}
-        <Bar dataKey="pkQuoteIst" name="PK Ist %" radius={[3,3,0,0]}
-          label={renderPctLabel as any}>
+        <Bar dataKey="pkQuoteIst" radius={[5,5,0,0]} label={renderBarLabel as any} isAnimationActive={false}>
           {data.map((entry, i) => (
-            <Cell key={i} fill={pkBarColor(entry.pkQuoteIst, threshold)} />
+            <Cell key={i} fill={entry.pkQuoteIst == null ? 'hsl(var(--muted))' : pkBarColor(entry.pkQuoteIst, threshold)} />
           ))}
         </Bar>
-
-        {/* Verbindungslinie */}
-        <Line
-          dataKey="pkQuoteIst"
-          stroke={C_ACTUAL}
-          strokeWidth={1.5}
-          dot={{ r: 3, fill: C_ACTUAL, stroke: 'white', strokeWidth: 1.5 }}
-          connectNulls
-          legendType="none"
-        />
-      </ComposedChart>
-    </ResponsiveContainer>
-  );
-};
-
-// ─── Chart 3: Umsatz vs. Personalkosten ──────────────────────────────────────
-
-const RevenuePKChart = ({ data }: { data: MonthlyKPI[] }) => {
-  const hasData = data.some(d => d.umsatzIst || d.pkIst);
-  if (!hasData) return <NoDataOverlay message="Noch keine Daten für dieses Diagramm vorhanden." />;
-
-  const renderPKLabel = (props: Record<string, unknown>) => {
-    const { x, y, width, value, index } = props as { x: number; y: number; width: number; value: number; index: number };
-    const quote = data[index]?.pkQuoteIst;
-    if (!value || !quote) return null;
-    return (
-      <text x={x + width / 2} y={y - 3} textAnchor="middle" fontSize={9} fontWeight="600" fill={C_RED}>
-        {`${quote.toFixed(1)}%`}
-      </text>
-    );
-  };
-
-  return (
-    <ResponsiveContainer width="100%" height={260}>
-      <BarChart data={data} barGap={3} barCategoryGap="28%">
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
-        <XAxis dataKey="label" tick={AXIS_STYLE} axisLine={false} tickLine={false} />
-        <YAxis
-          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={68}
-          tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
-        />
-        <ReTooltip content={<ChfTooltip />} cursor={{ fill: 'hsl(var(--muted)/0.4)' }} />
-        <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-          formatter={v => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{v}</span>} />
-        <Bar dataKey="umsatzIst" name="Umsatz Ist"      fill={C_ACTUAL}  radius={[3,3,0,0]} />
-        <Bar dataKey="pkIst"     name="PK Ist"          fill={C_PK}      radius={[3,3,0,0]}
-          label={renderPKLabel as any} />
-        <Bar dataKey="pkBudget"  name="PK Plan"         fill={C_PK_PLAN} radius={[3,3,0,0]} opacity={0.65} />
       </BarChart>
     </ResponsiveContainer>
   );
 };
 
-// ─── Chart 4: Warenaufwand-Quote ──────────────────────────────────────────────
+// ─── Chart 3: Umsatz vs. Personalkosten (Management-Design) ──────────────────
+
+const PKCombinedTooltip = ({
+  active, payload, label, threshold, allData,
+}: {
+  active?: boolean;
+  payload?: { name: string; value: number; color: string }[];
+  label?: string;
+  threshold: number;
+  allData: MonthlyKPI[];
+}) => {
+  if (!active || !payload?.length) return null;
+  const entry = allData.find(d => d.label === label);
+  const quote = entry?.pkQuoteIst ?? null;
+  return (
+    <div className="bg-card border border-border shadow-lg rounded-xl px-3 py-2.5 text-xs min-w-[210px]">
+      <p className="font-bold text-foreground mb-2 border-b border-border pb-1.5">{label}</p>
+      <div className="space-y-1.5">
+        <div className="flex justify-between gap-6">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: C_ACTUAL }} />
+            <span className="text-muted-foreground">Umsatz Ist</span>
+          </span>
+          <span className="font-semibold">{fmtCHF(entry?.umsatzIst)}</span>
+        </div>
+        <div className="flex justify-between gap-6">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: C_PK }} />
+            <span className="text-muted-foreground">PK Ist</span>
+          </span>
+          <span className="font-semibold">{fmtCHF(entry?.pkIst)}</span>
+        </div>
+        <div className="flex justify-between gap-6 pt-1 border-t border-border">
+          <span className="font-medium">PK-Quote</span>
+          <span className="font-bold text-[13px]" style={{ color: pkBarColor(quote, threshold) }}>
+            {quote != null ? `${quote.toFixed(1)} %` : '–'}
+          </span>
+        </div>
+        <div className="flex justify-between gap-6 text-muted-foreground/60">
+          <span>Ziel</span>
+          <span>≤ {threshold} %</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const RevenuePKChart = ({ data, threshold }: { data: MonthlyKPI[]; threshold: number }) => {
+  const hasData = data.some(d => d.umsatzIst || d.pkIst);
+  if (!hasData) return <NoDataOverlay message="Noch keine Daten für dieses Diagramm vorhanden." />;
+
+  const renderPKLabel = (props: Record<string, unknown>) => {
+    const { x, y, width, index } = props as { x: number; y: number; width: number; index: number };
+    const entry = data[index];
+    const quote = entry?.pkQuoteIst;
+    if (!entry?.pkIst || quote == null) return null;
+    return (
+      <text x={(x as number) + (width as number) / 2} y={(y as number) - 5}
+        textAnchor="middle" fontSize={11} fontWeight="700"
+        fill={pkBarColor(quote, threshold)}>
+        {quote.toFixed(1)}%
+      </text>
+    );
+  };
+
+  return (
+    <ResponsiveContainer width="100%" height={310}>
+      <BarChart data={data} barGap={4} barCategoryGap="34%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+        <XAxis dataKey="label" tick={{ ...AXIS_STYLE, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <YAxis
+          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={52}
+          tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
+        />
+        <ReTooltip
+          content={(p: any) => <PKCombinedTooltip {...p} threshold={threshold} allData={data} />}
+          cursor={{ fill: 'hsl(var(--muted)/0.25)' }}
+        />
+        <Bar dataKey="umsatzIst" name="Umsatz Ist" fill={C_ACTUAL} radius={[5,5,0,0]} isAnimationActive={false} />
+        <Bar dataKey="pkIst"     name="PK Ist"     fill={C_PK}     radius={[5,5,0,0]} isAnimationActive={false}
+          label={renderPKLabel as any} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+};
+
+// ─── Chart 4: Warenaufwandquote (Management-Design) ──────────────────────────
+
+const WarenQuoteTooltip = ({
+  active, payload, label, allData,
+}: {
+  active?: boolean;
+  payload?: { name: string; value: number }[];
+  label?: string;
+  allData: MonthlyKPI[];
+}) => {
+  if (!active || !payload?.length) return null;
+  const entry = allData.find(d => d.label === label);
+  const quote = entry?.warenQuoteIst ?? null;
+  return (
+    <div className="bg-card border border-border shadow-lg rounded-xl px-3 py-2.5 text-xs min-w-[190px]">
+      <p className="font-bold text-foreground mb-2 border-b border-border pb-1.5">{label}</p>
+      <div className="space-y-1.5">
+        <div className="flex justify-between gap-6">
+          <span className="text-muted-foreground">Umsatz Ist</span>
+          <span className="font-semibold">{fmtCHF(entry?.umsatzIst)}</span>
+        </div>
+        <div className="flex justify-between gap-6">
+          <span className="text-muted-foreground">Warenaufwand</span>
+          <span className="font-semibold">{fmtCHF(entry?.warenIst)}</span>
+        </div>
+        <div className="flex justify-between gap-6 pt-1 border-t border-border">
+          <span className="font-medium">Warenquote</span>
+          <span className="font-bold text-[13px]" style={{ color: warenBarColor(quote) }}>
+            {quote != null ? `${quote.toFixed(1)} %` : '–'}
+          </span>
+        </div>
+        <div className="flex justify-between gap-6 text-muted-foreground/60">
+          <span>Ziel</span>
+          <span>≤ {WAREN_THRESHOLD} %</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const WarenQuoteChart = ({ data }: { data: MonthlyKPI[] }) => {
   const hasData = data.some(d => d.warenQuoteIst !== null);
   if (!hasData) return <NoDataOverlay message="Kein Warenaufwand erfasst. Bitte Sage-CSV mit 4xxx-Konten importieren." />;
 
-  const WAREN_THRESHOLD = 30;
+  const renderBarLabel = (props: Record<string, unknown>) => {
+    const { x, y, width, height, index } = props as { x: number; y: number; width: number; height: number; index: number };
+    const entry = data[index];
+    if (entry.warenQuoteIst == null) return null;
+    const pct = entry.warenQuoteIst;
+    const cx  = (x as number) + (width as number) / 2;
+    const h   = height as number;
+    const col = warenBarColor(pct);
+    if (h > 26) {
+      return (
+        <text x={cx} y={(y as number) + h / 2 + 5} textAnchor="middle" fontSize={12} fontWeight="700" fill="white">
+          {pct.toFixed(1)}%
+        </text>
+      );
+    }
+    return (
+      <text x={cx} y={(y as number) - 5} textAnchor="middle" fontSize={11} fontWeight="700" fill={col}>
+        {pct.toFixed(1)}%
+      </text>
+    );
+  };
+
+  const yMax = Math.max(...data.map(d => d.warenQuoteIst ?? 0), WAREN_THRESHOLD + 8);
 
   return (
-    <ResponsiveContainer width="100%" height={280}>
-      <ComposedChart data={data} barCategoryGap="32%">
+    <ResponsiveContainer width="100%" height={310}>
+      <BarChart data={data} barCategoryGap="42%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
-        <XAxis dataKey="label" tick={AXIS_STYLE} axisLine={false} tickLine={false} />
+        <XAxis dataKey="label" tick={{ ...AXIS_STYLE, fontSize: 12 }} axisLine={false} tickLine={false} />
         <YAxis
-          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={44}
+          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={42}
           tickFormatter={v => `${v}%`}
-          domain={[0, Math.max(WAREN_THRESHOLD + 15, 45)]}
+          domain={[0, Math.ceil(yMax / 5) * 5]}
         />
         <ReTooltip
-          content={<PctTooltip extraLabel={`Ziel: ≤ ${WAREN_THRESHOLD} %`} />}
-          cursor={{ fill: 'hsl(var(--muted)/0.4)' }}
+          content={(p: any) => <WarenQuoteTooltip {...p} allData={data} />}
+          cursor={{ fill: 'hsl(var(--muted)/0.25)' }}
         />
-        <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-          formatter={v => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{v}</span>} />
-
         <ReferenceLine
           y={WAREN_THRESHOLD}
           stroke={C_WAREN}
           strokeDasharray="6 3"
           strokeWidth={1.5}
-          label={{ value: `Ziel ${WAREN_THRESHOLD}%`, position: 'insideTopRight', fontSize: 10, fill: C_WAREN, dy: -4 }}
+          label={{ value: `Ziel ${WAREN_THRESHOLD}%`, position: 'insideTopRight', fontSize: 10, fill: C_WAREN, dy: -6 }}
         />
-
-        <Bar dataKey="warenQuoteIst" name="Warenquote Ist %" radius={[3,3,0,0]}
-          label={renderPctLabel as any}>
+        <Bar dataKey="warenQuoteIst" radius={[5,5,0,0]} label={renderBarLabel as any} isAnimationActive={false}>
           {data.map((entry, i) => (
-            <Cell key={i} fill={warenBarColor(entry.warenQuoteIst)} />
+            <Cell key={i} fill={entry.warenQuoteIst == null ? 'hsl(var(--muted))' : warenBarColor(entry.warenQuoteIst)} />
           ))}
         </Bar>
-
-        <Line
-          dataKey="warenQuoteIst"
-          stroke={C_WAREN}
-          strokeWidth={1.5}
-          dot={{ r: 3, fill: C_WAREN, stroke: 'white', strokeWidth: 1.5 }}
-          connectNulls
-          legendType="none"
-        />
-      </ComposedChart>
+      </BarChart>
     </ResponsiveContainer>
   );
 };
 
-// ─── Chart 5: Umsatz vs. Warenaufwand ────────────────────────────────────────
+// ─── Chart 5: Umsatz vs. Warenaufwand (Management-Design) ────────────────────
+
+const WarenCombinedTooltip = ({
+  active, payload, label, allData,
+}: {
+  active?: boolean;
+  payload?: { name: string; value: number; color: string }[];
+  label?: string;
+  allData: MonthlyKPI[];
+}) => {
+  if (!active || !payload?.length) return null;
+  const entry = allData.find(d => d.label === label);
+  const quote = entry?.warenQuoteIst ?? null;
+  return (
+    <div className="bg-card border border-border shadow-lg rounded-xl px-3 py-2.5 text-xs min-w-[210px]">
+      <p className="font-bold text-foreground mb-2 border-b border-border pb-1.5">{label}</p>
+      <div className="space-y-1.5">
+        <div className="flex justify-between gap-6">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: C_ACTUAL }} />
+            <span className="text-muted-foreground">Umsatz Ist</span>
+          </span>
+          <span className="font-semibold">{fmtCHF(entry?.umsatzIst)}</span>
+        </div>
+        <div className="flex justify-between gap-6">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: C_WAREN }} />
+            <span className="text-muted-foreground">Warenaufwand</span>
+          </span>
+          <span className="font-semibold">{fmtCHF(entry?.warenIst)}</span>
+        </div>
+        <div className="flex justify-between gap-6 pt-1 border-t border-border">
+          <span className="font-medium">Warenquote</span>
+          <span className="font-bold text-[13px]" style={{ color: warenBarColor(quote) }}>
+            {quote != null ? `${quote.toFixed(1)} %` : '–'}
+          </span>
+        </div>
+        <div className="flex justify-between gap-6 text-muted-foreground/60">
+          <span>Ziel</span>
+          <span>≤ {WAREN_THRESHOLD} %</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const RevenueWarenChart = ({ data }: { data: MonthlyKPI[] }) => {
   const hasData = data.some(d => d.warenIst || d.umsatzIst);
   if (!hasData) return <NoDataOverlay message="Noch keine Daten vorhanden." />;
 
   const renderWarenLabel = (props: Record<string, unknown>) => {
-    const { x, y, width, value, index } = props as { x: number; y: number; width: number; value: number; index: number };
-    const quote = data[index]?.warenQuoteIst;
-    if (!value || !quote) return null;
+    const { x, y, width, index } = props as { x: number; y: number; width: number; index: number };
+    const entry = data[index];
+    const quote = entry?.warenQuoteIst;
+    if (!entry?.warenIst || quote == null) return null;
     return (
-      <text x={x + width / 2} y={y - 3} textAnchor="middle" fontSize={9} fontWeight="600" fill={C_WAREN}>
-        {`${quote.toFixed(1)}%`}
+      <text x={(x as number) + (width as number) / 2} y={(y as number) - 5}
+        textAnchor="middle" fontSize={11} fontWeight="700"
+        fill={warenBarColor(quote)}>
+        {quote.toFixed(1)}%
       </text>
     );
   };
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
-      <BarChart data={data} barGap={3} barCategoryGap="28%">
+    <ResponsiveContainer width="100%" height={310}>
+      <BarChart data={data} barGap={4} barCategoryGap="34%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
-        <XAxis dataKey="label" tick={AXIS_STYLE} axisLine={false} tickLine={false} />
+        <XAxis dataKey="label" tick={{ ...AXIS_STYLE, fontSize: 12 }} axisLine={false} tickLine={false} />
         <YAxis
-          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={68}
+          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={52}
           tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
         />
-        <ReTooltip content={<ChfTooltip />} cursor={{ fill: 'hsl(var(--muted)/0.4)' }} />
-        <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-          formatter={v => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{v}</span>} />
-        <Bar dataKey="umsatzIst" name="Umsatz Ist"    fill={C_ACTUAL} radius={[3,3,0,0]} />
-        <Bar dataKey="warenIst"  name="Warenaufwand"  fill={C_WAREN}  radius={[3,3,0,0]}
+        <ReTooltip
+          content={(p: any) => <WarenCombinedTooltip {...p} allData={data} />}
+          cursor={{ fill: 'hsl(var(--muted)/0.25)' }}
+        />
+        <Bar dataKey="umsatzIst" name="Umsatz Ist"   fill={C_ACTUAL} radius={[5,5,0,0]} isAnimationActive={false} />
+        <Bar dataKey="warenIst"  name="Warenaufwand" fill={C_WAREN}  radius={[5,5,0,0]} isAnimationActive={false}
           label={renderWarenLabel as any} />
       </BarChart>
     </ResponsiveContainer>
@@ -1525,84 +1791,129 @@ const Reporting = () => {
         </section>
 
         {/* ── Diagramme: Personalkosten ── */}
-        <section className="space-y-4">
-          <h2 className="text-sm font-bold">Personalkosten-Analyse {year}</h2>
+        <section className="space-y-5">
+          <div>
+            <h2 className="text-sm font-bold">Personalkosten-Analyse {year}</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              PK-Quote = Personalkosten Ist / Umsatz Ist Netto. Quoten werden nur berechnet wenn Umsatz ≥ CHF 1'000.
+            </p>
+          </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <QuoteKpiStrip
+            data={monthlyKPIs}
+            quoteFn={d => d.pkQuoteIst}
+            stripLabel="PK-Quote"
+            threshold={threshold}
+          />
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* PK-Quote */}
             <Card>
-              <CardHeader className="pb-2 pt-4">
-                <CardTitle className="text-sm flex items-center gap-2">
+              <CardHeader className="pb-2 pt-4 px-5">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                  Personalkostenquote pro Monat (%)
+                  Personalkostenquote pro Monat
                 </CardTitle>
-                <div className="flex items-center gap-3 text-[10px] mt-0.5">
-                  <span className="inline-flex items-center gap-1 text-green-600 font-medium">■ unter Ziel</span>
-                  <span className="inline-flex items-center gap-1 text-amber-600 font-medium">■ nahe Ziel</span>
-                  <span className="inline-flex items-center gap-1 text-red-600 font-medium">■ über Ziel</span>
-                  <span className="text-muted-foreground/60">· Ziel: ≤ {threshold} %</span>
+                <div className="flex items-center gap-3 text-[10px] mt-1">
+                  <span className="inline-flex items-center gap-1 text-green-600 font-semibold">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-green-500 inline-block" /> unter Ziel
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-amber-600 font-semibold">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-amber-500 inline-block" /> nahe Ziel
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-red-600 font-semibold">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" /> über Ziel
+                  </span>
+                  <span className="text-muted-foreground/60 ml-1">Ziel: ≤ {threshold} %</span>
                 </div>
               </CardHeader>
-              <CardContent className="pt-0 pr-2">
+              <CardContent className="pt-0 px-3">
                 <PKQuoteChart data={monthlyKPIs} threshold={threshold} />
+                <InsightBanner text={buildPKInsight(monthlyKPIs, threshold)} />
               </CardContent>
             </Card>
 
             {/* Umsatz vs. PK */}
             <Card>
-              <CardHeader className="pb-2 pt-4">
-                <CardTitle className="text-sm flex items-center gap-2">
+              <CardHeader className="pb-2 pt-4 px-5">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <BarChart2 className="h-4 w-4 text-muted-foreground" />
-                  Umsatz vs. Personalkosten (CHF)
+                  Umsatz vs. Personalkosten
                 </CardTitle>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  PK%-Wert wird direkt auf dem Personalkosten-Balken angezeigt.
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  <span className="inline-flex items-center gap-1 mr-3">
+                    <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: C_ACTUAL }} /> Umsatz Ist
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: C_PK }} /> PK Ist — Quote % auf Balken
+                  </span>
                 </p>
               </CardHeader>
-              <CardContent className="pt-0 pr-2">
-                <RevenuePKChart data={monthlyKPIs} />
+              <CardContent className="pt-0 px-3">
+                <RevenuePKChart data={monthlyKPIs} threshold={threshold} />
               </CardContent>
             </Card>
           </div>
         </section>
 
         {/* ── Diagramme: Warenaufwand ── */}
-        <section className="space-y-4">
-          <h2 className="text-sm font-bold">Warenaufwand-Analyse {year}</h2>
-          <p className="text-xs text-muted-foreground -mt-2">
-            Warenaufwand wird aus importierten Sage-Konten (4xxx) oder manuell hinterlegten Kategorien berechnet.
-          </p>
+        <section className="space-y-5">
+          <div>
+            <h2 className="text-sm font-bold">Warenaufwand-Analyse {year}</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Warenaufwand aus importierten Sage-Konten (4xxx) oder manuell erfassten Kategorien.
+            </p>
+          </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <QuoteKpiStrip
+            data={monthlyKPIs}
+            quoteFn={d => d.warenQuoteIst}
+            stripLabel="Warenquote"
+            threshold={WAREN_THRESHOLD}
+          />
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <Card>
-              <CardHeader className="pb-2 pt-4">
-                <CardTitle className="text-sm flex items-center gap-2">
+              <CardHeader className="pb-2 pt-4 px-5">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                  Warenaufwandquote pro Monat (%)
+                  Warenaufwandquote pro Monat
                 </CardTitle>
-                <div className="flex items-center gap-3 text-[10px] mt-0.5">
-                  <span className="inline-flex items-center gap-1 text-green-600 font-medium">■ ≤ 28%</span>
-                  <span className="inline-flex items-center gap-1 text-amber-600 font-medium">■ 28–33%</span>
-                  <span className="inline-flex items-center gap-1 text-red-600 font-medium">■ &gt; 33%</span>
-                  <span className="text-muted-foreground/60">· Ziel: ≤ 30%</span>
+                <div className="flex items-center gap-3 text-[10px] mt-1">
+                  <span className="inline-flex items-center gap-1 text-green-600 font-semibold">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-green-500 inline-block" /> ≤ 28 %
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-amber-600 font-semibold">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-amber-500 inline-block" /> 28–33 %
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-red-600 font-semibold">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" /> &gt; 33 %
+                  </span>
+                  <span className="text-muted-foreground/60 ml-1">Ziel: ≤ {WAREN_THRESHOLD} %</span>
                 </div>
               </CardHeader>
-              <CardContent className="pt-0 pr-2">
+              <CardContent className="pt-0 px-3">
                 <WarenQuoteChart data={monthlyKPIs} />
+                <InsightBanner text={buildWarenInsight(monthlyKPIs)} />
               </CardContent>
             </Card>
 
             <Card>
-              <CardHeader className="pb-2 pt-4">
-                <CardTitle className="text-sm flex items-center gap-2">
+              <CardHeader className="pb-2 pt-4 px-5">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <BarChart2 className="h-4 w-4 text-muted-foreground" />
-                  Umsatz vs. Warenaufwand (CHF)
+                  Umsatz vs. Warenaufwand
                 </CardTitle>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Warenquote (%) wird direkt auf dem Warenaufwand-Balken angezeigt.
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  <span className="inline-flex items-center gap-1 mr-3">
+                    <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: C_ACTUAL }} /> Umsatz Ist
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: C_WAREN }} /> Warenaufwand — Quote % auf Balken
+                  </span>
                 </p>
               </CardHeader>
-              <CardContent className="pt-0 pr-2">
+              <CardContent className="pt-0 px-3">
                 <RevenueWarenChart data={monthlyKPIs} />
               </CardContent>
             </Card>
