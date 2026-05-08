@@ -327,12 +327,142 @@ const NoDataOverlay = ({ message }: { message: string }) => (
 
 // ─── Chart 1: Umsatzvergleich ─────────────────────────────────────────────────
 
-const RevenueComparisonChart = ({ data }: { data: MonthlyKPI[] }) => {
+const RevenueComparisonTooltip = ({
+  active, payload, label, allData,
+}: {
+  active?: boolean;
+  payload?: { name: string; value: number; color: string }[];
+  label?: string;
+  allData: MonthlyKPI[];
+}) => {
+  if (!active || !payload?.length) return null;
+  const entry = allData.find(d => d.label === label);
+  const ist    = entry?.umsatzIst    ?? null;
+  const budget = entry?.umsatzBudget ?? null;
+  const vj     = entry?.umsatzVorjahr ?? null;
+  const abwB   = entry?.abwBudgetPct  ?? null;
+  const abwV   = entry?.abwVorjahrPct ?? null;
+  const abwBchf = ist != null && budget != null ? ist - budget : null;
+  const abwVchf = ist != null && vj     != null ? ist - vj     : null;
+
+  const pctStyle = (v: number | null) =>
+    v == null ? '' : v >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold';
+  const fmtDelta = (v: number | null) =>
+    v == null ? null : `${v >= 0 ? '+' : ''}${v.toFixed(1)} %`;
+  const fmtDeltaCHF = (v: number | null) =>
+    v == null ? null : `${v >= 0 ? '+' : ''}${fmtCHF(Math.abs(v))}`;
+
+  return (
+    <div className="bg-card border border-border shadow-lg rounded-lg px-3 py-2.5 text-xs space-y-1.5 min-w-[210px]">
+      <p className="font-bold text-foreground mb-1.5 border-b border-border pb-1">{label}</p>
+
+      {ist != null && (
+        <div className="flex items-center justify-between gap-4">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: C_ACTUAL }} />
+            <span className="text-muted-foreground">Umsatz Ist</span>
+          </span>
+          <span className="font-semibold">{fmtCHF(ist)}</span>
+        </div>
+      )}
+
+      {budget != null && (
+        <div className="flex items-center justify-between gap-4">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: C_BUDGET }} />
+            <span className="text-muted-foreground">Budget</span>
+          </span>
+          <span className="font-semibold">{fmtCHF(budget)}</span>
+        </div>
+      )}
+      {abwB != null && (
+        <div className="flex items-center justify-between gap-4 pl-4">
+          <span className="text-muted-foreground/70">Abw. Budget</span>
+          <span className="flex items-center gap-1.5">
+            {abwBchf != null && <span className="text-muted-foreground">{fmtDeltaCHF(abwBchf)}</span>}
+            <span className={pctStyle(abwB)}>{fmtDelta(abwB)}</span>
+          </span>
+        </div>
+      )}
+
+      {vj != null && (
+        <div className="flex items-center justify-between gap-4 mt-0.5">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: C_PREV }} />
+            <span className="text-muted-foreground">Vorjahr</span>
+          </span>
+          <span className="font-semibold">{fmtCHF(vj)}</span>
+        </div>
+      )}
+      {abwV != null && (
+        <div className="flex items-center justify-between gap-4 pl-4">
+          <span className="text-muted-foreground/70">Abw. Vorjahr</span>
+          <span className="flex items-center gap-1.5">
+            {abwVchf != null && <span className="text-muted-foreground">{fmtDeltaCHF(abwVchf)}</span>}
+            <span className={pctStyle(abwV)}>{fmtDelta(abwV)}</span>
+          </span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const RevenueComparisonChart = ({
+  data,
+  highlightVariance,
+}: {
+  data: MonthlyKPI[];
+  highlightVariance: boolean;
+}) => {
   const hasData = data.some(d => d.umsatzIst || d.umsatzBudget || d.umsatzVorjahr);
   if (!hasData) return <NoDataOverlay message="Noch keine Umsatzdaten vorhanden." />;
 
+  const renderAbwLabel = (props: Record<string, unknown>) => {
+    if (!highlightVariance) return null;
+    const { x, y, width, index } = props as { x: number; y: number; width: number; index: number };
+    const entry = data[index];
+    if (!entry?.umsatzIst) return null;
+    const abwB = entry.abwBudgetPct;
+    const abwV = entry.abwVorjahrPct;
+    if (abwB == null && abwV == null) return null;
+
+    const cx = (x as number) + (width as number) / 2;
+    const lineH = 10;
+    const lines: { text: string; color: string; yi: number }[] = [];
+    if (abwB != null) lines.push({
+      text: `${abwB >= 0 ? '+' : ''}${abwB.toFixed(1)}%B`,
+      color: abwB >= 0 ? '#16a34a' : '#dc2626',
+      yi: 0,
+    });
+    if (abwV != null) lines.push({
+      text: `${abwV >= 0 ? '+' : ''}${abwV.toFixed(1)}%V`,
+      color: abwV >= 0 ? '#16a34a' : '#dc2626',
+      yi: 1,
+    });
+    const totalH = lines.length * lineH;
+    const baseY = (y as number) - totalH - 2;
+
+    return (
+      <g>
+        {lines.map((l, i) => (
+          <text
+            key={i}
+            x={cx}
+            y={baseY + i * lineH}
+            textAnchor="middle"
+            fontSize={8}
+            fontWeight="700"
+            fill={l.color}
+          >
+            {l.text}
+          </text>
+        ))}
+      </g>
+    );
+  };
+
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={highlightVariance ? 300 : 260}>
       <BarChart data={data} barGap={2} barCategoryGap="28%">
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
         <XAxis dataKey="label" tick={AXIS_STYLE} axisLine={false} tickLine={false} />
@@ -340,12 +470,23 @@ const RevenueComparisonChart = ({ data }: { data: MonthlyKPI[] }) => {
           tick={AXIS_STYLE} axisLine={false} tickLine={false} width={68}
           tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
         />
-        <ReTooltip content={<ChfTooltip />} cursor={{ fill: 'hsl(var(--muted)/0.4)' }} />
-        <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-          formatter={v => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{v}</span>} />
-        <Bar dataKey="umsatzIst"     name="Umsatz Ist (Netto)"  fill={C_ACTUAL} radius={[3,3,0,0]} />
-        <Bar dataKey="umsatzBudget"  name="Budget"              fill={C_BUDGET} radius={[3,3,0,0]} />
-        <Bar dataKey="umsatzVorjahr" name="Vorjahr"             fill={C_PREV}   radius={[3,3,0,0]} />
+        <ReTooltip
+          content={<RevenueComparisonTooltip allData={data} />}
+          cursor={{ fill: 'hsl(var(--muted)/0.4)' }}
+        />
+        <Legend
+          iconType="square" iconSize={10} wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+          formatter={v => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{v}</span>}
+        />
+        <Bar
+          dataKey="umsatzIst"
+          name="Umsatz Ist (Netto)"
+          fill={C_ACTUAL}
+          radius={[3,3,0,0]}
+          label={highlightVariance ? (renderAbwLabel as any) : undefined}
+        />
+        <Bar dataKey="umsatzBudget"  name="Budget"  fill={C_BUDGET} radius={[3,3,0,0]} />
+        <Bar dataKey="umsatzVorjahr" name="Vorjahr" fill={C_PREV}   radius={[3,3,0,0]} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -805,30 +946,37 @@ const AbsenzMonatsBlock = ({ year }: { year: number }) => {
         </div>
       </CardHeader>
       <CardContent className="pt-0">
-        {!absenceSummary || Object.keys(absenceSummary).length === 0 ? (
+        {!absenceSummary || (absenceSummary.vacationDays === 0 && absenceSummary.sickDays === 0) ? (
           <p className="text-xs text-muted-foreground/60 italic py-2">
             Keine Absenzen im Dienstplan erfasst.
           </p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {Object.entries(absenceSummary).map(([type, count]) => {
-              const icon = type === 'vacation' ? <Palmtree className="h-3.5 w-3.5" />
-                : type === 'sick' ? <Stethoscope className="h-3.5 w-3.5" />
-                : <UserX className="h-3.5 w-3.5" />;
-              const label = type === 'vacation' ? 'Ferien'
-                : type === 'sick' ? 'Krankheit'
-                : type;
-              return (
-                <div key={type} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
-                  <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
-                    {icon}
-                    <span className="text-[10px] uppercase tracking-wide">{label}</span>
-                  </div>
-                  <p className="text-lg font-bold">{count}</p>
-                  <p className="text-[10px] text-muted-foreground">Einträge</p>
+            {[
+              { key: 'vacation', label: 'Ferien',      days: absenceSummary.vacationDays, cost: absenceSummary.vacationCost, icon: <Palmtree    className="h-3.5 w-3.5" /> },
+              { key: 'sick',     label: 'Krankheit',   days: absenceSummary.sickDays,     cost: absenceSummary.sickCost,    icon: <Stethoscope  className="h-3.5 w-3.5" /> },
+            ].filter(r => r.days > 0).map(r => (
+              <div key={r.key} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">
+                  {r.icon}
+                  <span className="text-[10px] uppercase tracking-wide">{r.label}</span>
                 </div>
-              );
-            })}
+                <p className="text-lg font-bold">{r.days}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  Tage · {fmtCHF(r.cost)}
+                </p>
+              </div>
+            ))}
+            {absenceSummary.totalCost > 0 && (
+              <div className="rounded-lg border border-orange-200 bg-orange-50 dark:bg-orange-950/20 px-3 py-2">
+                <div className="flex items-center gap-1.5 text-orange-700 mb-0.5">
+                  <UserX className="h-3.5 w-3.5" />
+                  <span className="text-[10px] uppercase tracking-wide">Kosten total</span>
+                </div>
+                <p className="text-lg font-bold">{fmtCHF(absenceSummary.totalCost)}</p>
+                <p className="text-[10px] text-muted-foreground">inkl. Sozialkosten</p>
+              </div>
+            )}
           </div>
         )}
       </CardContent>
@@ -1378,7 +1526,7 @@ const Reporting = () => {
               </p>
             </CardHeader>
             <CardContent className="pt-0 pr-2">
-              <RevenueComparisonChart data={monthlyKPIs} />
+              <RevenueComparisonChart data={monthlyKPIs} highlightVariance={highlightVariance} />
             </CardContent>
           </Card>
         </section>
