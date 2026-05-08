@@ -351,14 +351,27 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
       const accountNum = accM[1];
       const afterNum   = accM[2].trim();
 
+      // Jahreszahlen (20xx) sind nie Kontonummern – erscheinen im Buchungstext
+      // z.B. "Verrechnung Transgourmet RV 2024 63150508, 63156230, 792"
+      if (/^20\d{2}$/.test(accountNum)) continue;
+
       if (!hasCHFAmount(afterNum)) {
+        // Nur Tokens mit mindestens einem Buchstaben behalten:
+        // entfernt Seitenzahlen (1–3 Stellen), Rechnungsnummern (8 Stellen),
+        // Referenznummern und sonstige rein-numerischen Tokens jeder Länge
         const cleanName = afterNum
           .split(/\s+/)
-          .filter(t => !/^\d{1,3}$/.test(t))   // Seitenzahlen ("2", "12") entfernen
+          .filter(t => {
+            const stripped = t.replace(/[,.:;]/g, '');
+            return /[a-zA-ZäöüÄÖÜß]/.test(stripped);
+          })
           .join(' ')
           .trim();
 
-        if (cleanName.length >= 2 && !/^\d+$/.test(cleanName)) {
+        // cleanName muss mindestens ein echtes Wort mit 2+ Buchstaben enthalten
+        const hasRealWord = /[a-zA-ZäöüÄÖÜß]{2,}/.test(cleanName);
+
+        if (hasRealWord && cleanName.length >= 2) {
           if (accountNum !== currentAccount?.number) {
             currentAccount = { number: accountNum, name: cleanName };
           } else {
@@ -471,6 +484,10 @@ function parseLine(
   if (!accountMatch) return null;
 
   const accountNumber = accountMatch[1].padStart(4, '0');
+
+  // Jahreszahlen (20xx) sind keine Kontonummern im Buchungsformat
+  if (/^20\d{2}$/.test(accountMatch[1])) return null;
+
   const afterAccount  = text.slice(accountMatch[0].length).trim();
 
   // Letzten Betrag finden

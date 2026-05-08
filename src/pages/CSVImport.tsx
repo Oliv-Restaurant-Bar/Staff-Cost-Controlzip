@@ -13,7 +13,7 @@
  * Nur für Administratoren zugänglich.
  */
 
-import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -36,13 +36,14 @@ import {
 import {
   Upload, CheckCircle2, AlertTriangle, XCircle, FileText,
   ChevronRight, ChevronLeft, Save, Info, FileType, FileSpreadsheet,
-  Loader2, ShoppingCart, Plus, BookOpen,
+  Loader2, ShoppingCart, Plus, BookOpen, Scissors, ChevronDown, Eye,
 } from 'lucide-react';
 import { GastronoviImportSection } from '@/components/GastronoviImportSection';
 import { cn } from '@/lib/utils';
 import {
   processCSV, matchCSVRows, buildMonthRecord,
-  CSVParseResult, MatchedCSVRow, ImportConfig,
+  CSVParseResult, MatchedCSVRow, ParsedCSVRow, ImportConfig,
+  PL_CATEGORY_TO_ROW_ID,
 } from '@/lib/csv-import-engine';
 import { parsePDF, parseSageKontoblattExcel } from '@/lib/pdf-import-engine';
 import {
@@ -311,15 +312,193 @@ function PLCategorySelect({
   );
 }
 
+// ─── Split-Dialog ─────────────────────────────────────────────────────────────
+
+interface SplitEntry {
+  plCategory: PLCategory | '';
+  amount: string;
+}
+
+interface SplitDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  row: MatchedCSVRow | null;
+  onConfirm: (row: MatchedCSVRow, splits: Array<{ plCategory: PLCategory; amount: number }>) => void;
+}
+
+function SplitDialog({ open, onOpenChange, row, onConfirm }: SplitDialogProps) {
+  const [entries, setEntries] = useState<SplitEntry[]>([
+    { plCategory: '', amount: '' },
+    { plCategory: '', amount: '' },
+  ]);
+
+  const totalAmount = row?.parsed.amount ?? 0;
+
+  const splitTotal = entries.reduce((s, e) => {
+    const n = parseFloat(e.amount.replace(',', '.'));
+    return s + (isNaN(n) ? 0 : n);
+  }, 0);
+
+  const diff = Math.abs(splitTotal - totalAmount);
+  const isValid =
+    entries.length >= 2 &&
+    entries.every(e => e.plCategory !== '' && e.amount !== '' && !isNaN(parseFloat(e.amount.replace(',', '.')))) &&
+    diff < 0.01;
+
+  // Einträge zurücksetzen wenn Dialog geöffnet wird
+  const prevOpen = useRef(false);
+  if (open && !prevOpen.current) {
+    prevOpen.current = true;
+    setTimeout(() => setEntries([{ plCategory: '', amount: '' }, { plCategory: '', amount: '' }]), 0);
+  }
+  if (!open && prevOpen.current) {
+    prevOpen.current = false;
+  }
+
+  function handleConfirm() {
+    if (!row || !isValid) return;
+    const splits = entries.map(e => ({
+      plCategory: e.plCategory as PLCategory,
+      amount: parseFloat(e.amount.replace(',', '.')),
+    }));
+    onConfirm(row, splits);
+    onOpenChange(false);
+    setEntries([{ plCategory: '', amount: '' }, { plCategory: '', amount: '' }]);
+  }
+
+  function updateEntry(i: number, patch: Partial<SplitEntry>) {
+    setEntries(prev => prev.map((e, j) => j === i ? { ...e, ...patch } : e));
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <Scissors className="h-5 w-5 text-primary" />
+            Betrag aufteilen
+          </DialogTitle>
+        </DialogHeader>
+
+        {row && (
+          <div className="space-y-4 py-1">
+            {/* Konto-Info */}
+            <div className="bg-muted/50 rounded-lg px-4 py-3 space-y-1.5 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Konto</span>
+                <span className="font-mono font-bold">{row.parsed.accountNumber}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Bezeichnung</span>
+                <span className="truncate ml-4 text-right max-w-[260px]">{row.parsed.accountName}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-muted/60 pt-1.5 mt-1">
+                <span className="text-xs text-muted-foreground">Gesamtbetrag</span>
+                <span className="font-mono font-semibold">{formatAmount(totalAmount)}</span>
+              </div>
+            </div>
+
+            {/* Split-Zeilen */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Aufteilung
+              </label>
+              {entries.map((entry, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <span className="text-xs text-muted-foreground w-5 shrink-0 text-right">{i + 1}.</span>
+                  <PLCategorySelect
+                    value={entry.plCategory}
+                    onChange={v => updateEntry(i, { plCategory: v })}
+                    className="flex-1 h-8"
+                  />
+                  <Input
+                    className="w-28 h-8 text-sm font-mono text-right"
+                    placeholder="0.00"
+                    value={entry.amount}
+                    onChange={e => updateEntry(i, { amount: e.target.value })}
+                  />
+                  {entries.length > 2 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive shrink-0"
+                      onClick={() => setEntries(prev => prev.filter((_, j) => j !== i))}
+                    >
+                      <XCircle className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full h-8 text-xs gap-1.5"
+              onClick={() => setEntries(prev => [...prev, { plCategory: '', amount: '' }])}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Weitere Zeile hinzufügen
+            </Button>
+
+            {/* Summen-Anzeige */}
+            <div className={cn(
+              'flex items-center justify-between px-3 py-2 rounded-lg text-sm border',
+              diff < 0.01
+                ? 'bg-green-50 border-green-200 text-green-800'
+                : 'bg-amber-50 border-amber-200 text-amber-800',
+            )}>
+              <span className="text-xs font-medium">Summe der Teile</span>
+              <div className="text-right">
+                <span className="font-mono font-semibold">{formatAmount(splitTotal)}</span>
+                {diff >= 0.01 && (
+                  <span className="ml-2 text-xs font-normal opacity-80">
+                    Differenz: {formatAmount(diff)}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            Abbrechen
+          </Button>
+          <Button
+            size="sm"
+            disabled={!isValid}
+            onClick={handleConfirm}
+            className="gap-1.5"
+          >
+            <Scissors className="h-3.5 w-3.5" />
+            Aufteilen & zuordnen
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Nicht-zugeordnet-Tabelle mit Inline-Zuweisung ────────────────────────────
 
 interface UnresolvedTableProps {
   rows: MatchedCSVRow[];
   onAssign: (accountNumber: string, accountName: string, plCategory: PLCategory, department?: DepartmentHint) => void;
+  onSplit: (row: MatchedCSVRow) => void;
 }
 
-function UnresolvedTable({ rows, onAssign }: UnresolvedTableProps) {
+function UnresolvedTable({ rows, onAssign, onSplit }: UnresolvedTableProps) {
   const [selections, setSelections] = useState<Record<string, PLCategory | ''>>({});
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+
+  function toggleExpanded(key: string) {
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
 
   // Dialog-State für «Neues Konto erstellen»
   const [dialogOpen, setDialogOpen]       = useState(false);
@@ -378,84 +557,124 @@ function UnresolvedTable({ rows, onAssign }: UnresolvedTableProps) {
               <TableHead className="text-xs py-2">Bezeichnung</TableHead>
               <TableHead className="text-right w-32 text-xs py-2">Betrag CHF</TableHead>
               <TableHead className="min-w-[190px] text-xs py-2">P&L-Kategorie</TableHead>
-              <TableHead className="w-[170px] text-xs py-2">Aktion</TableHead>
+              <TableHead className="w-[210px] text-xs py-2">Aktion</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((row, i) => {
               const key      = row.parsed.accountNumber;
               const selected = selections[key] ?? '';
+              const expanded = expandedRows.has(key);
               return (
-                <TableRow
-                  key={i}
-                  className="border-l-[3px] border-l-amber-400 hover:bg-amber-50/40 transition-colors"
-                >
-                  {/* Konto */}
-                  <TableCell className="py-2">
-                    <div className="flex flex-col gap-1">
-                      <span className="font-mono text-[11px] font-bold text-amber-900 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded w-fit">
-                        {key}
+                <React.Fragment key={i}>
+                  <TableRow
+                    className="border-l-[3px] border-l-amber-400 hover:bg-amber-50/40 transition-colors"
+                  >
+                    {/* Konto */}
+                    <TableCell className="py-2">
+                      <div className="flex flex-col gap-1">
+                        <span className="font-mono text-[11px] font-bold text-amber-900 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded w-fit">
+                          {key}
+                        </span>
+                        <Badge className="bg-amber-100 text-amber-700 border-amber-300 text-[9px] w-fit px-1.5 py-0 leading-4">
+                          Ausstehend
+                        </Badge>
+                      </div>
+                    </TableCell>
+
+                    {/* Bezeichnung */}
+                    <TableCell className="text-sm font-medium py-2">
+                      <div>
+                        {row.parsed.accountName}
+                        <button
+                          className="ml-1.5 text-muted-foreground hover:text-foreground transition-colors align-middle"
+                          onClick={() => toggleExpanded(key)}
+                          title="Originalzeile anzeigen"
+                        >
+                          <ChevronDown className={cn('h-3.5 w-3.5 inline transition-transform', expanded && 'rotate-180')} />
+                        </button>
+                      </div>
+                    </TableCell>
+
+                    {/* Betrag */}
+                    <TableCell className="text-right font-mono text-sm font-semibold py-2">
+                      <span className={row.parsed.amount < 0 ? 'text-red-600' : ''}>
+                        {formatAmount(row.parsed.amount)}
                       </span>
-                      <Badge className="bg-amber-100 text-amber-700 border-amber-300 text-[9px] w-fit px-1.5 py-0 leading-4">
-                        Ausstehend
-                      </Badge>
-                    </div>
-                  </TableCell>
+                    </TableCell>
 
-                  {/* Bezeichnung */}
-                  <TableCell className="text-sm font-medium py-2">
-                    {row.parsed.accountName}
-                  </TableCell>
+                    {/* Kategorie-Dropdown */}
+                    <TableCell className="py-2">
+                      <PLCategorySelect
+                        value={selected}
+                        onChange={v => setSelections(prev => ({ ...prev, [key]: v }))}
+                        className="border-amber-200 focus:border-amber-400 w-full"
+                      />
+                    </TableCell>
 
-                  {/* Betrag */}
-                  <TableCell className="text-right font-mono text-sm font-semibold py-2">
-                    <span className={row.parsed.amount < 0 ? 'text-red-600' : ''}>
-                      {formatAmount(row.parsed.amount)}
-                    </span>
-                  </TableCell>
-
-                  {/* Kategorie-Dropdown */}
-                  <TableCell className="py-2">
-                    <PLCategorySelect
-                      value={selected}
-                      onChange={v => setSelections(prev => ({ ...prev, [key]: v }))}
-                      className="border-amber-200 focus:border-amber-400 w-full"
-                    />
-                  </TableCell>
-
-                  {/* Aktionen */}
-                  <TableCell className="py-2">
-                    <div className="flex gap-1.5">
-                      <Button
-                        size="sm"
-                        className="h-8 text-xs flex-1 gap-1"
-                        disabled={!selected}
-                        onClick={() => {
-                          if (!selected) return;
-                          onAssign(key, row.parsed.accountName, selected as PLCategory);
-                          setSelections(prev => {
-                            const next = { ...prev };
-                            delete next[key];
-                            return next;
-                          });
-                        }}
-                      >
-                        <Save className="h-3 w-3" />
-                        Speichern
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 text-xs px-2.5 border-amber-300 hover:bg-amber-50 hover:text-amber-800 shrink-0"
-                        onClick={() => openCreateDialog(row)}
-                        title="Neues Konto im Kontenplan erstellen"
-                      >
+                    {/* Aktionen */}
+                    <TableCell className="py-2">
+                      <div className="flex gap-1 flex-wrap">
+                        <Button
+                          size="sm"
+                          className="h-8 text-xs gap-1"
+                          disabled={!selected}
+                          onClick={() => {
+                            if (!selected) return;
+                            onAssign(key, row.parsed.accountName, selected as PLCategory);
+                            setSelections(prev => {
+                              const next = { ...prev };
+                              delete next[key];
+                              return next;
+                            });
+                          }}
+                        >
+                          <Save className="h-3 w-3" />
+                          Speichern
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs px-2 border-blue-200 text-blue-700 hover:bg-blue-50 hover:text-blue-800 shrink-0 gap-1"
+                          onClick={() => onSplit(row)}
+                          title="Betrag auf mehrere P&L-Kategorien aufteilen"
+                        >
+                          <Scissors className="h-3 w-3" />
+                          Split
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs px-2 border-amber-300 hover:bg-amber-50 hover:text-amber-800 shrink-0"
+                          onClick={() => openCreateDialog(row)}
+                          title="Neues Konto im Kontenplan erstellen"
+                        >
                         <Plus className="h-3.5 w-3.5" />
                       </Button>
                     </div>
                   </TableCell>
                 </TableRow>
-              );
+
+                {/* Expandierbare Detailzeile: Originalzeile aus PDF/CSV */}
+                {expanded && (
+                  <TableRow key={`${i}-detail`} className="bg-slate-50/70 border-l-[3px] border-l-amber-300">
+                    <TableCell colSpan={5} className="py-2 px-4">
+                      <div className="flex items-start gap-2">
+                        <Eye className="h-3.5 w-3.5 mt-0.5 shrink-0 text-slate-400" />
+                        <div className="space-y-0.5">
+                          <p className="font-medium text-[10px] uppercase tracking-wide text-slate-500">
+                            Originalzeile aus Datei
+                          </p>
+                          <p className="font-mono text-[11px] text-slate-700 break-all leading-relaxed">
+                            {row.parsed.rawLine || '—'}
+                          </p>
+                        </div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </React.Fragment>
+            );
             })}
           </TableBody>
         </Table>
@@ -577,6 +796,12 @@ export default function CSVImportPage() {
   const [loading, setLoading]               = useState(false);
   const [selectedMatchedIndices, setSelectedMatchedIndices] = useState<Set<number>>(new Set());
 
+  // ── Split-State ──────────────────────────────────────────────────────────────
+  const [splitMatchedRows, setSplitMatchedRows] = useState<MatchedCSVRow[]>([]);
+  const [splitExcluded, setSplitExcluded]       = useState<Set<string>>(new Set());
+  const [splitDialogOpen, setSplitDialogOpen]   = useState(false);
+  const [splitDialogRow, setSplitDialogRow]     = useState<MatchedCSVRow | null>(null);
+
   // Beim Seitenaufruf: Sage Journal aus Supabase laden (auto-migration)
   useEffect(() => {
     syncJournalYearFromDB(year);
@@ -661,6 +886,49 @@ export default function CSVImportPage() {
     setParseResult(null);
     setWarnings([]);
     setStep('upload');
+    setSplitMatchedRows([]);
+    setSplitExcluded(new Set());
+  }
+
+  // ─── Split-Zuordnung ──────────────────────────────────────────────────────
+
+  function openSplitDialog(row: MatchedCSVRow) {
+    setSplitDialogRow(row);
+    setSplitDialogOpen(true);
+  }
+
+  function handleSplit(
+    originalRow: MatchedCSVRow,
+    splits: Array<{ plCategory: PLCategory; amount: number }>,
+  ) {
+    const newRows: MatchedCSVRow[] = splits.map((split, i) => {
+      const catDef = PL_CATEGORIES.find(c => c.id === split.plCategory);
+      const synthetic: ParsedCSVRow = {
+        lineIndex:     originalRow.parsed.lineIndex,
+        rawLine:       `${originalRow.parsed.rawLine} [Split ${i + 1}/${splits.length}]`,
+        accountNumber: `${originalRow.parsed.accountNumber}-${i + 1}`,
+        accountName:   `${originalRow.parsed.accountName} – ${getCategoryLabel(split.plCategory)}`,
+        rawAmount:     split.amount.toFixed(2),
+        amount:        split.amount,
+      };
+      return {
+        parsed:          synthetic,
+        status:          'exact' as const,
+        plCategory:      split.plCategory,
+        plCategoryLabel: getCategoryLabel(split.plCategory),
+        plSection:       catDef?.section ?? 'operating_expenses',
+        plRowId:         PL_CATEGORY_TO_ROW_ID[split.plCategory] ?? null,
+        sign:            (catDef?.sign ?? 'expense') as 'income' | 'expense',
+        department:      'general',
+        matchNote:       `Manuell aufgeteilt aus Konto ${originalRow.parsed.accountNumber}`,
+      };
+    });
+
+    setSplitMatchedRows(prev => [...prev, ...newRows]);
+    setSplitExcluded(prev => new Set([...prev, originalRow.parsed.accountNumber]));
+    toast.success(
+      `Konto ${originalRow.parsed.accountNumber} in ${splits.length} Teile aufgeteilt`,
+    );
   }
 
   // ─── Vorschau ─────────────────────────────────────────────────────────────
@@ -741,9 +1009,17 @@ export default function CSVImportPage() {
     if (!parseResult) return;
     setLoading(true);
 
-    const selectedMatched = parseResult.matched.filter((_, i) => selectedMatchedIndices.has(i));
+    // Zeilen, die per Split aufgeteilt wurden, aus unresolved rausfiltern
+    const remainingUnresolved = parseResult.unresolved.filter(
+      r => !splitExcluded.has(r.parsed.accountNumber),
+    );
+
+    // Normale gematchte Zeilen + manuell aufgeteilte Split-Zeilen
+    const baseMatched = parseResult.matched.filter((_, i) => selectedMatchedIndices.has(i));
+    const allSelected = [...baseMatched, ...splitMatchedRows];
+
     const config: ImportConfig = { year, month, dataType, mode: importMode, fileName };
-    const record = buildMonthRecord(selectedMatched, parseResult.unresolved, config);
+    const record = buildMonthRecord(allSelected, remainingUnresolved, config);
 
     try {
       const source: import('@/types/reporting').ImportSource =
@@ -751,13 +1027,17 @@ export default function CSVImportPage() {
           ? (dataType === 'previous_year' ? 'pdf_previous_year' : 'pdf_current')
           : (dataType === 'previous_year' ? 'csv_previous_year' : 'csv_current');
 
+      const splitNote = splitMatchedRows.length > 0
+        ? `, ${splitExcluded.size} aufgeteilt (${splitMatchedRows.length} Teilzeilen)`
+        : '';
+
       saveMonth(
         { ...record, year, month },
         source,
         importMode,
         {
           fileName,
-          note: `${fileKind.toUpperCase()}-Import: ${parseResult.matchedCount} zugeordnet, ${parseResult.unresolvedCount} unbekannt`,
+          note: `${fileKind.toUpperCase()}-Import: ${parseResult.matchedCount} zugeordnet, ${remainingUnresolved.length} unbekannt${splitNote}`,
         },
         tenantKey(REPORTING_STORAGE_KEY),
       );
@@ -780,16 +1060,24 @@ export default function CSVImportPage() {
 
   // ─── Hilfswerte ───────────────────────────────────────────────────────────
 
+  // Unresolved-Zeilen ohne bereits aufgeteilte Konten
+  const visibleUnresolved = useMemo(
+    () => parseResult?.unresolved.filter(r => !splitExcluded.has(r.parsed.accountNumber)) ?? [],
+    [parseResult, splitExcluded],
+  );
+
   const selectedMatched = useMemo(
     () => parseResult ? parseResult.matched.filter((_, i) => selectedMatchedIndices.has(i)) : [],
     [parseResult, selectedMatchedIndices],
   );
 
-  const revenueTotal = selectedMatched.filter(r => r.sign === 'income').reduce((s, r) => s + r.parsed.amount, 0);
-  const expenseTotal = selectedMatched.filter(r => r.sign !== 'income').reduce((s, r) => s + r.parsed.amount, 0);
+  const revenueTotal = [...selectedMatched, ...splitMatchedRows]
+    .filter(r => r.sign === 'income').reduce((s, r) => s + r.parsed.amount, 0);
+  const expenseTotal = [...selectedMatched, ...splitMatchedRows]
+    .filter(r => r.sign !== 'income').reduce((s, r) => s + r.parsed.amount, 0);
 
-  const hasUnresolved   = (parseResult?.unresolvedCount ?? 0) > 0;
-  const unresolvedCount = parseResult?.unresolvedCount ?? 0;
+  const hasUnresolved   = visibleUnresolved.length > 0;
+  const unresolvedCount = visibleUnresolved.length;
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -1071,7 +1359,7 @@ export default function CSVImportPage() {
                         )}
                       >
                         {hasUnresolved && <AlertTriangle className="h-3.5 w-3.5 mr-1.5 text-amber-500" />}
-                        Ausstehend ({parseResult.unresolvedCount})
+                        Ausstehend ({unresolvedCount})
                       </TabsTrigger>
                     </TabsList>
 
@@ -1087,8 +1375,9 @@ export default function CSVImportPage() {
 
                     <TabsContent value="unresolved" className="mt-0">
                       <UnresolvedTable
-                        rows={parseResult.unresolved}
+                        rows={visibleUnresolved}
                         onAssign={handleAssignAccount}
+                        onSplit={openSplitDialog}
                       />
                     </TabsContent>
                   </Tabs>
@@ -1161,6 +1450,14 @@ export default function CSVImportPage() {
 
         </TabsContent>
       </Tabs>
+
+      {/* ── Split-Dialog (global, ausserhalb der Tabs) ── */}
+      <SplitDialog
+        open={splitDialogOpen}
+        onOpenChange={setSplitDialogOpen}
+        row={splitDialogRow}
+        onConfirm={handleSplit}
+      />
     </div>
   );
 }

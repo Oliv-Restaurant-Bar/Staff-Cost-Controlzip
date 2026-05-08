@@ -1,0 +1,144 @@
+Bitte behebe den PDF Import der Kontoblätter.
+
+Problem:
+Beim Import von "VJ Kosten 01.2025.pdf" erkennt die App fälschlicherweise "2024" als Konto und zeigt:
+Konto 2024
+Betrag CHF 29’966.17
+Bezeichnung: 63150508, 63156230,
+
+Das ist falsch.
+
+Im PDF ist 2024 kein Konto, sondern Teil des Buchungstextes:
+"Verrechnung Transgourmet RV 2024 63150508, 63156230, 792"
+
+Das echte Konto ist hier im Abschnitt:
+4000 Prodega Warenaufwand
+
+Und die Zeile enthält als Gegenkonto:
+4060
+
+Die App darf Jahreszahlen wie 2024 oder 2025 nicht als Konto interpretieren.
+
+---
+
+1. Parser korrigieren
+
+Ein Konto darf nur erkannt werden, wenn es als echte Kontonummer am Anfang eines neuen Kontoblocks steht.
+
+Beispiele gültig:
+4000 Prodega Warenaufwand
+4020 Wein Warenaufwand
+4060 Küche Warenaufwand
+5000 Löhne
+6000 Mietzins
+
+Nicht gültig:
+2024 innerhalb eines Buchungstextes
+63150508 Rechnungsnummer
+63156230 Rechnungsnummer
+792 Referenznummer
+
+---
+
+2. Kontoblock-Logik
+
+Der Import soll pro Kontoblock lesen:
+
+Konto:
+4000
+
+Bezeichnung:
+Prodega Warenaufwand
+
+Relevanter Monatswert:
+Saldo / Total gemäss Kontoblock
+
+Nicht jede Nummer innerhalb der Buchungszeilen als Konto behandeln.
+
+---
+
+3. Sammelbuchungen und Verrechnungen
+
+Wenn innerhalb eines Kontos Zeilen mit "Verrechnung", "RV", "LSV" oder Rechnungsnummern vorkommen:
+Diese dürfen nicht als neue Konten interpretiert werden.
+
+Sie gehören zum aktuell aktiven Konto.
+
+---
+
+4. Split-Funktion ergänzen
+
+Ich möchte einen Betrag beim Import auf mehrere P&L-Konten aufteilen können.
+
+Wenn eine Zeile / ein Konto nicht eindeutig zugeordnet werden kann, soll ich wählen können:
+
+"Aufteilen"
+
+Dann öffnet sich ein Split-Dialog:
+
+Gesamtbetrag:
+CHF XX’XXX
+
+Aufteilung:
+- Konto / P&L-Kategorie auswählen
+- Betrag CHF eingeben
+- weitere Zeile hinzufügen
+
+Beispiel:
+CHF 29’966.17 aufteilen:
+- Küche Warenaufwand CHF 24’000
+- Übriger Warenaufwand CHF 5’966.17
+
+Die Summe der Split-Zeilen muss exakt dem Gesamtbetrag entsprechen.
+Erst dann darf gespeichert/importiert werden.
+
+---
+
+5. Keine Blockade durch falsche Erkennung
+
+Wenn ein Konto unsicher erkannt wird:
+- nicht einfach "Konto ausstehend" blockieren
+- stattdessen anzeigen:
+  "Unklare Nummer im Buchungstext erkannt"
+  und Originaltext anzeigen
+
+Damit ich verstehe, woher der Fehler kommt.
+
+---
+
+6. Detailanzeige verbessern
+
+Bei ausstehenden Zuordnungen bitte mehr Details anzeigen:
+
+- erkannte Nummer
+- Originalzeile aus PDF
+- Seite im PDF
+- aktueller Kontoblock
+- Betrag
+- warum Zuordnung nötig ist
+
+Damit ich entscheiden kann, ob es wirklich ein Konto ist.
+
+---
+
+7. Validierung
+
+Folgende Nummern dürfen nicht als Konten erkannt werden:
+- Jahreszahlen 2024, 2025, 2026
+- Rechnungsnummern wie 63150508
+- Belegnummern
+- Referenznummern
+- Texte nach "RV", "LSV", "RE"
+
+---
+
+8. Tests mit dieser Datei
+
+Bitte den Import mit "VJ Kosten 01.2025.pdf" testen.
+
+Erwartung:
+- Konto 2024 erscheint NICHT mehr als ausstehendes Konto
+- Die Datei lässt sich importieren
+- Kontoblöcke werden korrekt erkannt
+- 4000, 4020, 4030, 4040, 4050, 4060 usw. werden korrekt übernommen
+- Split-Funktion funktioniert bei Bedarf
