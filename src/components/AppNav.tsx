@@ -28,7 +28,7 @@ import {
   Upload, Settings, Inbox,
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
-  Wallet, BarChart3, ShoppingCart,
+  Wallet, BarChart3, ShoppingCart, LineChart,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -104,6 +104,13 @@ const NAV_GROUPS: NavGroup[] = [
         icon: BarChart3,
         adminOnly: true,
         beaulieuAllowed: true,
+      },
+      {
+        path: '/reporting',
+        label: 'Analyse / Reporting',
+        shortLabel: 'Analyse',
+        icon: LineChart,
+        adminOnly: true,
       },
     ],
   },
