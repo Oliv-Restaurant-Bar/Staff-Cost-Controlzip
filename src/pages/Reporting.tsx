@@ -422,22 +422,15 @@ const RevenueComparisonChart = ({
     const { x, y, width, index } = props as { x: number; y: number; width: number; index: number };
     const entry = data[index];
     if (!entry?.umsatzIst) return null;
-    const abwB = entry.abwBudgetPct;
     const abwV = entry.abwVorjahrPct;
-    if (abwB == null && abwV == null) return null;
+    if (abwV == null) return null;
 
     const cx = (x as number) + (width as number) / 2;
     const lineH = 10;
-    const lines: { text: string; color: string; yi: number }[] = [];
-    if (abwB != null) lines.push({
-      text: `${abwB >= 0 ? '+' : ''}${abwB.toFixed(1)}%B`,
-      color: abwB >= 0 ? '#16a34a' : '#dc2626',
-      yi: 0,
-    });
-    if (abwV != null) lines.push({
-      text: `${abwV >= 0 ? '+' : ''}${abwV.toFixed(1)}%V`,
+    const lines: { text: string; color: string }[] = [];
+    lines.push({
+      text: `VJ: ${abwV >= 0 ? '+' : ''}${abwV.toFixed(1)}%`,
       color: abwV >= 0 ? '#16a34a' : '#dc2626',
-      yi: 1,
     });
     const totalH = lines.length * lineH;
     const baseY = (y as number) - totalH - 2;
@@ -1759,9 +1752,9 @@ const Reporting = () => {
                               <span className={varianceColor(m.revenueActual, m.revenueBudget)}>
                                 {fmtCHF(m.revenueActual)}
                               </span>
-                              {highlightVariance && abwB != null && (
-                                <div className={cn('text-[9px] font-semibold', abwColor(abwB))}>
-                                  Bdg: {fmtAbw(abwB)}
+                              {highlightVariance && abwV != null && (
+                                <div className={cn('text-[9px] font-semibold', abwColor(abwV))}>
+                                  VJ: {fmtAbw(abwV)}
                                 </div>
                               )}
                             </div>
@@ -1777,7 +1770,7 @@ const Reporting = () => {
                               <span>{fmtCHF(m.revenueBudget)}</span>
                               {highlightVariance && abwB != null && (
                                 <div className={cn('text-[9px] font-semibold', abwColor(abwB))}>
-                                  {fmtAbw(abwB)}
+                                  Bdg: {fmtAbw(abwB)}
                                 </div>
                               )}
                             </div>
@@ -1789,13 +1782,9 @@ const Reporting = () => {
                           {m.revenuePreviousYear !== undefined ? (
                             <div>
                               <span>{fmtCHF(m.revenuePreviousYear)}</span>
-                              {highlightVariance && abwV != null ? (
-                                <div className={cn('text-[9px] font-semibold', abwColor(abwV))}>
-                                  {fmtAbw(abwV)}
-                                </div>
-                              ) : !highlightVariance && m.revenueActual ? (
-                                <span className="ml-1 text-[9px]">{fmtAbw(abwV)}</span>
-                              ) : null}
+                              {highlightVariance && (
+                                <div className="text-[9px] text-muted-foreground/50">Basis VJ</div>
+                              )}
                             </div>
                           ) : '–'}
                         </td>
