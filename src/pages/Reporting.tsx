@@ -962,6 +962,30 @@ interface WarenKombinierteProps {
   onSelectData:   () => void;
 }
 
+const renderRevenueLabel = (props: Record<string, unknown>) => {
+  const { x, y, width, height, value } = props as {
+    x: number; y: number; width: number; height: number; value: number;
+  };
+  if (!value || value <= 0) return null;
+  const label = `CHF ${Math.round(value).toLocaleString('de-CH')}`;
+  const inside = (height as number) > 55;
+  return (
+    <text
+      x={(x as number) + (width as number) / 2}
+      y={inside
+        ? (y as number) + (height as number) / 2
+        : (y as number) - 8}
+      textAnchor="middle"
+      dominantBaseline="middle"
+      fontSize={11}
+      fontWeight="700"
+      fill={inside ? '#fff' : 'hsl(var(--foreground))'}
+    >
+      {label}
+    </text>
+  );
+};
+
 const WarenKombinierteChart = ({
   data, year, selectedMonths, onToggle, onSelectAll, onSelectNone, onSelectData,
 }: WarenKombinierteProps) => {
@@ -1073,7 +1097,8 @@ const WarenKombinierteChart = ({
                 content={(p: any) => <WarenCombinedTooltip {...p} allData={chartData} />}
                 cursor={{ fill: 'hsl(var(--muted)/0.25)' }}
               />
-              <Bar yAxisId="left" dataKey="umsatzIst" name="Umsatz Ist" fill={C_ACTUAL} radius={[5,5,0,0]} isAnimationActive={false} />
+              <Bar yAxisId="left" dataKey="umsatzIst" name="Umsatz Ist" fill={C_ACTUAL} radius={[5,5,0,0]} isAnimationActive={false}
+                label={renderRevenueLabel as any} />
               <Bar yAxisId="left" dataKey="warenIst" name="Warenaufwand" radius={[5,5,0,0]} isAnimationActive={false}
                 label={renderQuoteLabel as any}>
                 {chartData.map((entry, i) => (
@@ -1229,7 +1254,8 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
                 content={(p: any) => <PKCombinedTooltip {...p} threshold={threshold} allData={chartDataWithTarget} />}
                 cursor={{ fill: 'hsl(var(--muted)/0.25)' }}
               />
-              <Bar yAxisId="left" dataKey="umsatzIst" name="Umsatz Ist" fill={C_ACTUAL} radius={[5,5,0,0]} isAnimationActive={false} />
+              <Bar yAxisId="left" dataKey="umsatzIst" name="Umsatz Ist" fill={C_ACTUAL} radius={[5,5,0,0]} isAnimationActive={false}
+                label={renderRevenueLabel as any} />
               <Bar yAxisId="left" dataKey="pkIst" name="Personalkosten Ist" radius={[5,5,0,0]} isAnimationActive={false}
                 label={renderPKLabel as any}>
                 {chartDataWithTarget.map((entry, i) => (
