@@ -53,7 +53,13 @@ An internal reporting tool for revenue, personnel costs, schedules, and KPIs, su
 - **WES Analysis:** Compares WES from recipes, suppliers, and accounting for cost control.
 
 ## User preferences
-_Populate as you build_
+
+### Datenintegrität — verbindliche Entwicklervorgabe
+- **Umsatzdaten dürfen niemals per localStorage-Overwrite oder naivem Blob-Write gespeichert werden.**
+- Jeder Schreibpfad für `dailyBudgets` / `beaulieu:dailyBudgets` muss `safeUpsertDailyBudgets()` verwenden.
+- `safeUpsertDailyBudgets` liest immer zuerst den aktuellen Supabase-KV-Stand, mergt, schreibt zurück.
+- Bei KV-Schreibfehler erscheint eine sichtbare Fehlermeldung — kein stilles Fallback auf localStorage.
+- Die `daily_revenues`-Tabelle (Roadmap in diesem File) wird erst aktiviert, wenn die aktuelle Lösung fachlich fertig getestet ist. Bis dahin keine Migration ausführen.
 
 ## Technische Roadmap — daily_revenues Migration
 
