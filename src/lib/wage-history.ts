@@ -55,6 +55,7 @@ export interface NewWageEntry {
   monthlySalaryWith13th?: number;
   salary13?:             boolean;
   notes?:                string;
+  createdBy?:            string;     // E-Mail des eingeloggten Benutzers
 }
 
 // ── DB → App Mapping ──────────────────────────────────────────────────────────
@@ -229,33 +230,73 @@ export async function applyEffectiveWages(
 /**
  * Neuen Lohneintrag hinzufügen.
  * Bestehende Einträge werden NIEMALS geändert.
+ *
+ * Fehlerbehandlung:
+ *   - "permission denied"  → Migration 20260508_employee_wages_fix_rls.sql
+ *     muss im Supabase SQL-Editor ausgeführt werden.
+ *   - "relation does not exist" → Migration 20260430_employee_wages.sql fehlt.
  */
 export async function addWageEntry(
   entry: NewWageEntry,
-): Promise<{ error: string | null }> {
+): Promise<{ error: string | null; userMessage: string | null }> {
   try {
+    const row: Record<string, unknown> = {
+      employee_id:              entry.employeeId,
+      restaurant_id:            entry.restaurantId,
+      valid_from:               entry.validFrom,
+      hourly_wage:              entry.hourlyWage             ?? 0,
+      monthly_salary:           entry.monthlySalary          ?? 0,
+      monthly_salary_with_13th: entry.monthlySalaryWith13th  ?? 0,
+      salary_13:                entry.salary13               ?? false,
+      notes:                    entry.notes                  ?? '',
+      created_by:               entry.createdBy              ?? '',
+    };
+
     const { error } = await (supabase as any)
       .from('employee_wages')
-      .insert({
-        employee_id:             entry.employeeId,
-        restaurant_id:           entry.restaurantId,
-        valid_from:              entry.validFrom,
-        hourly_wage:             entry.hourlyWage             ?? 0,
-        monthly_salary:          entry.monthlySalary          ?? 0,
-        monthly_salary_with_13th: entry.monthlySalaryWith13th ?? 0,
-        salary_13:               entry.salary13               ?? false,
-        notes:                   entry.notes                  ?? '',
-      });
+      .insert(row);
 
     if (error) {
-      console.error('[WAGE-HISTORY] addWageEntry Fehler:', error.message);
-      return { error: error.message };
+      console.error('[WAGE-HISTORY] addWageEntry Fehler:', {
+        code:    error.code,
+        message: error.message,
+        details: error.details,
+        hint:    error.hint,
+        entry:   { employeeId: entry.employeeId, restaurantId: entry.restaurantId, validFrom: entry.validFrom },
+      });
+
+      // Benutzerfreundliche Meldung je nach Fehlertyp
+      const msg = error.message ?? '';
+      if (msg.includes('permission denied') || error.code === '42501') {
+        return {
+          error:       error.message,
+          userMessage: 'Lohneintrag konnte wegen fehlender Berechtigung nicht gespeichert werden. Bitte Administrator kontaktieren (Supabase-Migration erforderlich).',
+        };
+      }
+      if (msg.includes('relation') && msg.includes('does not exist')) {
+        return {
+          error:       error.message,
+          userMessage: 'Tabelle employee_wages fehlt in der Datenbank. Bitte Migration 20260430_employee_wages.sql ausführen.',
+        };
+      }
+      if (msg.includes('duplicate') || error.code === '23505') {
+        return {
+          error:       error.message,
+          userMessage: `Für das Datum ${entry.validFrom} existiert bereits ein Lohneintrag.`,
+        };
+      }
+      return {
+        error:       error.message,
+        userMessage: `Speichern fehlgeschlagen: ${error.message}`,
+      };
     }
 
-    console.log(`[WAGE-HISTORY] employee: ${entry.employeeId} | new entry: ${entry.validFrom} | wage: ${entry.hourlyWage || entry.monthlySalary}`);
-    return { error: null };
+    console.log(`[WAGE-HISTORY] addWageEntry OK | employee: ${entry.employeeId} | validFrom: ${entry.validFrom} | wage: ${entry.hourlyWage || entry.monthlySalary} | createdBy: ${entry.createdBy ?? '–'}`);
+    return { error: null, userMessage: null };
   } catch (e) {
-    return { error: String(e) };
+    const msg = String(e);
+    console.error('[WAGE-HISTORY] addWageEntry Exception:', msg);
+    return { error: msg, userMessage: `Unerwarteter Fehler: ${msg}` };
   }
 }
 

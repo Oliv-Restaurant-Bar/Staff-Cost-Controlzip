@@ -8,13 +8,12 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Plus, Clock, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Loader2, History } from 'lucide-react';
+import { Plus, Clock, ChevronUp, AlertCircle, CheckCircle2, Loader2, History, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import {
@@ -24,6 +23,7 @@ import {
   type WageEntry,
 } from '@/lib/wage-history';
 import type { Employee } from '@/types/personnel';
+import { useAuth } from '@/hooks/useAuth';
 
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────────
 
@@ -60,6 +60,8 @@ interface WageHistorySectionProps {
 // ── Hauptkomponente ────────────────────────────────────────────────────────────
 
 export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHistorySectionProps) {
+  const { user } = useAuth();
+
   const [history,     setHistory]     = useState<WageEntry[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [showForm,    setShowForm]    = useState(false);
@@ -74,6 +76,7 @@ export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHist
   const [salary13,    setSalary13]    = useState(false);
   const [notes,       setNotes]       = useState('');
   const [formError,   setFormError]   = useState<string | null>(null);
+  const [permError,   setPermError]   = useState(false);
 
   // Lohnhistorie laden
   useEffect(() => {
@@ -110,14 +113,15 @@ export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHist
 
   const handleSave = async () => {
     setFormError(null);
+    setPermError(false);
 
     if (!validFrom) {
       setFormError('Bitte Gültig-ab-Datum angeben.');
       return;
     }
 
-    const hw = parseFloat(hourlyWage.replace(',', '.'));
-    const ms = parseFloat(monthlySal.replace(',', '.'));
+    const hw  = parseFloat(hourlyWage.replace(',', '.'));
+    const ms  = parseFloat(monthlySal.replace(',', '.'));
     const m13 = parseFloat(monthly13.replace(',', '.'));
 
     if (wageType === 'hourly' && (isNaN(hw) || hw <= 0)) {
@@ -137,7 +141,7 @@ export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHist
     }
 
     setSaving(true);
-    const { error } = await addWageEntry({
+    const { error, userMessage } = await addWageEntry({
       employeeId:            String(employee.id),
       restaurantId,
       validFrom,
@@ -146,12 +150,16 @@ export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHist
       monthlySalaryWith13th: wageType === 'monthly' && !isNaN(m13) && m13 > 0 ? m13 : 0,
       salary13,
       notes,
+      createdBy:             user?.email ?? '',
     });
 
     setSaving(false);
 
     if (error) {
-      setFormError('Speichern fehlgeschlagen: ' + error);
+      const isPermDenied = error.includes('permission denied') || error.includes('42501');
+      if (isPermDenied) setPermError(true);
+      setFormError(userMessage ?? `Speichern fehlgeschlagen: ${error}`);
+      toast.error(userMessage ?? 'Lohneintrag konnte nicht gespeichert werden.');
       return;
     }
 
@@ -339,10 +347,24 @@ export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHist
               />
             </div>
 
-            {/* Fehler */}
-            {formError && (
-              <div className="flex items-center gap-2 rounded border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/20 px-2.5 py-1.5 text-xs text-red-700 dark:text-red-400">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            {/* Fehler: fehlende DB-Berechtigung */}
+            {formError && permError && (
+              <div className="rounded border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 px-3 py-2.5 text-xs text-amber-800 dark:text-amber-300 space-y-1.5">
+                <div className="flex items-center gap-2 font-semibold">
+                  <ShieldAlert className="h-4 w-4 shrink-0" />
+                  Datenbankberechtigung fehlt
+                </div>
+                <p>{formError}</p>
+                <p className="text-[10px] opacity-80 font-mono">
+                  Lösung: Migration <strong>20260508_employee_wages_fix_rls.sql</strong> im Supabase SQL-Editor ausführen.
+                </p>
+              </div>
+            )}
+
+            {/* Fehler: normaler Validierungsfehler */}
+            {formError && !permError && (
+              <div className="flex items-start gap-2 rounded border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/20 px-2.5 py-1.5 text-xs text-red-700 dark:text-red-400">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                 {formError}
               </div>
             )}
