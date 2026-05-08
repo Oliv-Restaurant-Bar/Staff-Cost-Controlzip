@@ -506,6 +506,86 @@ function validateRow(row: Record<string, unknown>, idx: number): string | null {
   return errors.length > 0 ? errors.join('; ') : null;
 }
 
+// ─── Reset-Monat (Admin-Funktion) ─────────────────────────────────────────────
+
+export interface ResetMonthResult {
+  deleted:     number;
+  auditLogged: boolean;
+  error:       string | null;
+}
+
+/**
+ * Löscht ALLE product_sales-Zeilen für einen bestimmten Monat + source-Liste.
+ * Nur für Admins — kein Re-Check hier, muss vom Aufrufer geprüft werden.
+ *
+ * Nach dem Löschen wird ein Eintrag in product_sales_reset_log geschrieben
+ * (Audit-Trail). Wenn die Tabelle noch nicht existiert (Migration noch nicht
+ * ausgeführt), wird der Fehler nur geloggt — keine Exception.
+ *
+ * @param year       Vierstelliges Jahr
+ * @param month      Monat 1–12
+ * @param sources    z.B. ['food_csv_export', 'beverage_csv_export']
+ * @param deletedBy  E-Mail-Adresse des eingeloggten Admins (für Audit-Log)
+ */
+export async function resetProductSalesMonth(params: {
+  year:      number;
+  month:     number;
+  sources:   string[];
+  deletedBy: string;
+}): Promise<ResetMonthResult> {
+  const { year, month, sources, deletedBy } = params;
+
+  const fromDate = `${year}-${String(month).padStart(2, '0')}-01`;
+  const lastDay  = new Date(year, month, 0).getDate();
+  const toDate   = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+  console.log(`[sales-db] resetProductSalesMonth: ${fromDate}–${toDate}, sources=${sources.join(',')}, by=${deletedBy}`);
+
+  let totalDeleted = 0;
+
+  for (const source of sources) {
+    const { error, count } = await (supabase as any)
+      .from('product_sales')
+      .delete({ count: 'exact' })
+      .eq('source', source)
+      .gte('sale_date', fromDate)
+      .lte('sale_date', toDate);
+
+    if (error) {
+      console.error(`[sales-db] resetProductSalesMonth DELETE Fehler (source=${source}):`, error);
+      return { deleted: totalDeleted, auditLogged: false, error: formatSupabaseError(error) };
+    }
+    const n = count ?? 0;
+    totalDeleted += n;
+    console.log(`[sales-db] resetProductSalesMonth: ${n} Zeilen gelöscht (source=${source})`);
+  }
+
+  // ── Audit-Log (stilles Fallback wenn Tabelle noch nicht existiert) ──────────
+  let auditLogged = false;
+  try {
+    const { error: auditErr } = await (supabase as any)
+      .from('product_sales_reset_log')
+      .insert({
+        deleted_by:   deletedBy,
+        year,
+        month,
+        sources:      sources.join(','),
+        rows_deleted: totalDeleted,
+        deleted_at:   new Date().toISOString(),
+      });
+    if (!auditErr) {
+      auditLogged = true;
+      console.log('[sales-db] Audit-Log gespeichert');
+    } else {
+      console.warn('[sales-db] Audit-Log NICHT gespeichert (Migration noch nicht ausgeführt?):', auditErr.message);
+    }
+  } catch (e) {
+    console.warn('[sales-db] Audit-Log Exception:', e);
+  }
+
+  return { deleted: totalDeleted, auditLogged, error: null };
+}
+
 // ─── Delete-before-Insert ─────────────────────────────────────────────────────
 
 /**

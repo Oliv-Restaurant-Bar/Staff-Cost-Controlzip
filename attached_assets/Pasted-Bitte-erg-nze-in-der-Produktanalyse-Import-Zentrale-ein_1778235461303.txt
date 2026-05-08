@@ -1,0 +1,151 @@
+Bitte ergänze in der Produktanalyse / Import-Zentrale eine sichere Reset-Funktion für Monatsdaten.
+
+Ziel:
+Ich möchte Produktdaten eines bestimmten Monats vollständig löschen können, damit ich den Monat danach sauber neu hochladen kann.
+
+---
+
+1. Neue Funktion: Monatsdaten resetten
+
+Bitte einen Button ergänzen:
+
+"Monat zurücksetzen"
+oder
+"Produktdaten Monat löschen"
+
+Position:
+- in der Produktanalyse
+oder
+- in der Import-Zentrale beim jeweiligen Monat
+
+---
+
+2. Auswahl
+
+Der Benutzer muss auswählen können:
+
+- Restaurant
+- Jahr
+- Monat
+- Datenart: Produktanalyse / Produktverkäufe
+
+Beispiel:
+Oliv
+Januar 2026
+Produktdaten löschen
+
+---
+
+3. Sicherheitsabfrage
+
+Vor dem Löschen zwingend Bestätigung anzeigen:
+
+"Willst du wirklich alle Produktdaten für Januar 2026 löschen?
+Diese Aktion kann nicht rückgängig gemacht werden."
+
+Zusätzlich soll der Benutzer bestätigen mit:
+
+RESET
+
+oder:
+
+JA, LÖSCHEN
+
+---
+
+4. Was gelöscht wird
+
+Es sollen nur die Produktdaten dieses Monats gelöscht werden.
+
+Beispiel:
+Restaurant = Oliv
+Jahr = 2026
+Monat = Januar
+
+Dann löschen:
+- alle Produktverkaufsdaten Januar 2026
+- alle aggregierten Produktanalysewerte Januar 2026
+- alle Cachewerte für diesen Monat
+
+Nicht löschen:
+- Tagesumsätze
+- Dienstplan
+- Warenrechnungen
+- Budget
+- Erfolgsrechnung
+- andere Monate
+- andere Restaurants
+
+---
+
+5. Nach dem Reset
+
+Nach erfolgreichem Löschen:
+
+- Produktanalyse neu laden
+- KPI Karten für diesen Monat auf 0 oder leer setzen
+- Rangliste leer anzeigen
+- Hinweis anzeigen:
+"Produktdaten für Januar 2026 wurden gelöscht. Du kannst den Monat jetzt neu importieren."
+
+---
+
+6. Re-Import danach
+
+Wenn ich danach den Monat neu hochlade:
+- neue Daten sauber importieren
+- keine alten Daten mehr vorhanden
+- keine Duplikate
+- keine mehrfachen Summen
+
+---
+
+7. Datenbankseitig absichern
+
+Bitte den Reset nicht nur im Frontend machen.
+
+Es muss wirklich in Supabase / Datenbank gelöscht werden.
+
+Falls mehrere Tabellen betroffen sind:
+- Rohdaten
+- aggregierte Daten
+- Produktanalyse Cache
+- Import Logs
+
+bitte alle betroffenen Produktdaten für diesen Monat löschen.
+
+---
+
+8. Audit Log
+
+Bitte speichern:
+- wer den Monat gelöscht hat
+- wann
+- welches Restaurant
+- welcher Monat
+- wie viele Datensätze gelöscht wurden
+
+Damit nachvollziehbar bleibt, was passiert ist.
+
+---
+
+9. Rechte
+
+Nur Admin darf Monatsdaten löschen.
+
+Geschäftsführer oder normale User dürfen diese Reset-Funktion nicht sehen und nicht ausführen.
+
+---
+
+10. Tests
+
+Bitte testen:
+
+- Januar 2026 Produktdaten löschen
+- Produktanalyse Januar zeigt danach keine Daten
+- Februar 2026 bleibt unverändert
+- anderes Restaurant bleibt unverändert
+- Re-Import Januar funktioniert sauber
+- keine Duplikate entstehen
+- Produkte mit 0 Umsatz bleiben ausgeblendet
+- Tagesumsätze bleiben unverändert

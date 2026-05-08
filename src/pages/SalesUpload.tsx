@@ -18,6 +18,8 @@ import {
   History, CircleAlert, ChevronRight, Utensils, Wine,
   Info, Trash2,
 } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { ResetProductMonthDialog } from '@/components/ResetProductMonthDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -316,6 +318,9 @@ function PreviewCard({
 // ─── Hauptseite ───────────────────────────────────────────────────────────────
 
 export default function SalesUpload() {
+  const { isAdmin, user } = useAuth();
+  const userEmail = user?.email ?? 'unbekannt';
+
   // Datei-Zustand
   const [foodFiles, setFoodFiles]       = useState<SectionFiles>({ anzahl: null, umsatz: null });
   const [beverageFiles, setBeverageFiles] = useState<SectionFiles>({ anzahl: null, umsatz: null });
@@ -763,6 +768,14 @@ export default function SalesUpload() {
           <RefreshCw className="h-5 w-5 animate-spin text-primary" />
           Importiere {fmtNum(allPreviewRows.length)} Datensätze in Supabase…
         </div>
+      )}
+
+      {/* ── Monat zurücksetzen (nur Admin) ───────────────────────────────────── */}
+      {isAdmin && (
+        <ResetProductMonthDialog
+          userEmail={userEmail}
+          onReset={() => loadBatches()}
+        />
       )}
 
       {/* ── Import-Historie ──────────────────────────────────────────────────── */}
