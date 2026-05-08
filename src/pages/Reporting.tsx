@@ -495,23 +495,37 @@ const WAREN_THRESHOLD = 30;
 function buildPKInsight(data: MonthlyKPI[], threshold: number): string {
   const withData = data.filter(d => d.pkQuoteIst != null);
   if (!withData.length) return '';
-  const over = withData.filter(d => d.pkQuoteIst! > threshold);
-  if (!over.length)
-    return `Alle ${withData.length} Monate mit Daten liegen unter dem Zielwert von ${threshold} %.`;
-  if (over.length === withData.length)
-    return `Alle ${withData.length} Monate überschreiten den Zielwert von ${threshold} %.`;
-  const names = over.map(d => d.label).join(', ');
-  return `${over.length} ${over.length === 1 ? 'Monat' : 'Monate'} über Ziel (${names}).`;
+  const over  = withData.filter(d => d.pkQuoteIst! > threshold);
+  const under = withData.filter(d => d.pkQuoteIst! <= threshold);
+  const parts: string[] = [];
+  if (over.length > 0) {
+    parts.push(`${over.length} ${over.length === 1 ? 'Monat' : 'Monate'} über Ziel (${threshold} %): ${over.map(d => d.label).join(', ')}.`);
+  } else {
+    parts.push(`Alle ${withData.length} Monate mit Daten liegen unter dem Zielwert.`);
+  }
+  if (under.length > 0) {
+    const best = under.reduce((a, b) => a.pkQuoteIst! < b.pkQuoteIst! ? a : b);
+    parts.push(`Bester Monat: ${best.label} mit ${best.pkQuoteIst!.toFixed(1)} %.`);
+  }
+  return parts.join(' ');
 }
 
 function buildWarenInsight(data: MonthlyKPI[]): string {
   const withData = data.filter(d => d.warenQuoteIst != null);
   if (!withData.length) return '';
-  const over = withData.filter(d => d.warenQuoteIst! > WAREN_THRESHOLD);
-  if (!over.length)
-    return `Alle ${withData.length} Monate liegen unter dem Ziel von ${WAREN_THRESHOLD} %.`;
-  const names = over.map(d => d.label).join(', ');
-  return `${over.length} ${over.length === 1 ? 'Monat' : 'Monate'} über Ziel (${names}).`;
+  const over  = withData.filter(d => d.warenQuoteIst! > WAREN_THRESHOLD);
+  const under = withData.filter(d => d.warenQuoteIst! <= WAREN_THRESHOLD);
+  const parts: string[] = [];
+  if (over.length > 0) {
+    parts.push(`${over.length} ${over.length === 1 ? 'Monat' : 'Monate'} über Ziel (${WAREN_THRESHOLD} %): ${over.map(d => d.label).join(', ')}.`);
+  } else {
+    parts.push(`Alle ${withData.length} Monate liegen unter dem Ziel.`);
+  }
+  if (under.length > 0) {
+    const best = under.reduce((a, b) => a.warenQuoteIst! < b.warenQuoteIst! ? a : b);
+    parts.push(`Bester Monat: ${best.label} mit ${best.warenQuoteIst!.toFixed(1)} %.`);
+  }
+  return parts.join(' ');
 }
 
 // ─── KPI-Strip über Diagrammblock ─────────────────────────────────────────────
@@ -608,13 +622,13 @@ const PKQuoteTooltip = ({
 };
 
 const PKQuoteChart = ({ data, threshold }: { data: MonthlyKPI[]; threshold: number }) => {
-  const hasData = data.some(d => d.pkQuoteIst !== null);
-  if (!hasData) return <NoDataOverlay message="Keine PK-Quote berechenbar – bitte Umsatz und Personalkosten erfassen." />;
+  const chartData = data.filter(d => d.pkQuoteIst != null);
+  if (!chartData.length) return <NoDataOverlay message="Keine PK-Quote berechenbar – bitte Umsatz und Personalkosten erfassen." />;
 
   const renderBarLabel = (props: Record<string, unknown>) => {
     const { x, y, width, height, index } = props as { x: number; y: number; width: number; height: number; index: number };
-    const entry = data[index];
-    if (entry.pkQuoteIst == null) return null;
+    const entry = chartData[index];
+    if (!entry || entry.pkQuoteIst == null) return null;
     const pct = entry.pkQuoteIst;
     const cx  = (x as number) + (width as number) / 2;
     const h   = height as number;
@@ -633,11 +647,11 @@ const PKQuoteChart = ({ data, threshold }: { data: MonthlyKPI[]; threshold: numb
     );
   };
 
-  const yMax = Math.max(...data.map(d => d.pkQuoteIst ?? 0), threshold + 8);
+  const yMax = Math.max(...chartData.map(d => d.pkQuoteIst ?? 0), threshold + 8);
 
   return (
     <ResponsiveContainer width="100%" height={310}>
-      <BarChart data={data} barCategoryGap="42%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
+      <BarChart data={chartData} barCategoryGap="42%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
         <XAxis dataKey="label" tick={{ ...AXIS_STYLE, fontSize: 12 }} axisLine={false} tickLine={false} />
         <YAxis
@@ -646,7 +660,7 @@ const PKQuoteChart = ({ data, threshold }: { data: MonthlyKPI[]; threshold: numb
           domain={[0, Math.ceil(yMax / 5) * 5]}
         />
         <ReTooltip
-          content={(p: any) => <PKQuoteTooltip {...p} threshold={threshold} allData={data} />}
+          content={(p: any) => <PKQuoteTooltip {...p} threshold={threshold} allData={chartData} />}
           cursor={{ fill: 'hsl(var(--muted)/0.25)' }}
         />
         <ReferenceLine
@@ -657,8 +671,8 @@ const PKQuoteChart = ({ data, threshold }: { data: MonthlyKPI[]; threshold: numb
           label={{ value: `Ziel ${threshold}%`, position: 'insideTopRight', fontSize: 10, fill: C_RED, dy: -6 }}
         />
         <Bar dataKey="pkQuoteIst" radius={[5,5,0,0]} label={renderBarLabel as any} isAnimationActive={false}>
-          {data.map((entry, i) => (
-            <Cell key={i} fill={entry.pkQuoteIst == null ? 'hsl(var(--muted))' : pkBarColor(entry.pkQuoteIst, threshold)} />
+          {chartData.map((entry, i) => (
+            <Cell key={i} fill={pkBarColor(entry.pkQuoteIst, threshold)} />
           ))}
         </Bar>
       </BarChart>
@@ -714,17 +728,17 @@ const PKCombinedTooltip = ({
 };
 
 const RevenuePKChart = ({ data, threshold }: { data: MonthlyKPI[]; threshold: number }) => {
-  const hasData = data.some(d => d.umsatzIst || d.pkIst);
-  if (!hasData) return <NoDataOverlay message="Noch keine Daten für dieses Diagramm vorhanden." />;
+  const chartData = data.filter(d => (d.umsatzIst ?? 0) > 0 || (d.pkIst ?? 0) > 0);
+  if (!chartData.length) return <NoDataOverlay message="Noch keine Daten für dieses Diagramm vorhanden." />;
 
   const renderPKLabel = (props: Record<string, unknown>) => {
     const { x, y, width, index } = props as { x: number; y: number; width: number; index: number };
-    const entry = data[index];
+    const entry = chartData[index];
     const quote = entry?.pkQuoteIst;
     if (!entry?.pkIst || quote == null) return null;
     return (
       <text x={(x as number) + (width as number) / 2} y={(y as number) - 5}
-        textAnchor="middle" fontSize={11} fontWeight="700"
+        textAnchor="middle" fontSize={12} fontWeight="700"
         fill={pkBarColor(quote, threshold)}>
         {quote.toFixed(1)}%
       </text>
@@ -733,7 +747,7 @@ const RevenuePKChart = ({ data, threshold }: { data: MonthlyKPI[]; threshold: nu
 
   return (
     <ResponsiveContainer width="100%" height={310}>
-      <BarChart data={data} barGap={4} barCategoryGap="34%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
+      <BarChart data={chartData} barGap={4} barCategoryGap="34%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
         <XAxis dataKey="label" tick={{ ...AXIS_STYLE, fontSize: 12 }} axisLine={false} tickLine={false} />
         <YAxis
@@ -741,7 +755,7 @@ const RevenuePKChart = ({ data, threshold }: { data: MonthlyKPI[]; threshold: nu
           tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
         />
         <ReTooltip
-          content={(p: any) => <PKCombinedTooltip {...p} threshold={threshold} allData={data} />}
+          content={(p: any) => <PKCombinedTooltip {...p} threshold={threshold} allData={chartData} />}
           cursor={{ fill: 'hsl(var(--muted)/0.25)' }}
         />
         <Bar dataKey="umsatzIst" name="Umsatz Ist" fill={C_ACTUAL} radius={[5,5,0,0]} isAnimationActive={false} />
@@ -793,13 +807,13 @@ const WarenQuoteTooltip = ({
 };
 
 const WarenQuoteChart = ({ data }: { data: MonthlyKPI[] }) => {
-  const hasData = data.some(d => d.warenQuoteIst !== null);
-  if (!hasData) return <NoDataOverlay message="Kein Warenaufwand erfasst. Bitte Sage-CSV mit 4xxx-Konten importieren." />;
+  const chartData = data.filter(d => d.warenQuoteIst != null);
+  if (!chartData.length) return <NoDataOverlay message="Kein Warenaufwand erfasst. Bitte Sage-CSV mit 4xxx-Konten importieren." />;
 
   const renderBarLabel = (props: Record<string, unknown>) => {
     const { x, y, width, height, index } = props as { x: number; y: number; width: number; height: number; index: number };
-    const entry = data[index];
-    if (entry.warenQuoteIst == null) return null;
+    const entry = chartData[index];
+    if (!entry || entry.warenQuoteIst == null) return null;
     const pct = entry.warenQuoteIst;
     const cx  = (x as number) + (width as number) / 2;
     const h   = height as number;
@@ -818,11 +832,11 @@ const WarenQuoteChart = ({ data }: { data: MonthlyKPI[] }) => {
     );
   };
 
-  const yMax = Math.max(...data.map(d => d.warenQuoteIst ?? 0), WAREN_THRESHOLD + 8);
+  const yMax = Math.max(...chartData.map(d => d.warenQuoteIst ?? 0), WAREN_THRESHOLD + 8);
 
   return (
     <ResponsiveContainer width="100%" height={310}>
-      <BarChart data={data} barCategoryGap="42%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
+      <BarChart data={chartData} barCategoryGap="42%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
         <XAxis dataKey="label" tick={{ ...AXIS_STYLE, fontSize: 12 }} axisLine={false} tickLine={false} />
         <YAxis
@@ -831,7 +845,7 @@ const WarenQuoteChart = ({ data }: { data: MonthlyKPI[] }) => {
           domain={[0, Math.ceil(yMax / 5) * 5]}
         />
         <ReTooltip
-          content={(p: any) => <WarenQuoteTooltip {...p} allData={data} />}
+          content={(p: any) => <WarenQuoteTooltip {...p} allData={chartData} />}
           cursor={{ fill: 'hsl(var(--muted)/0.25)' }}
         />
         <ReferenceLine
@@ -842,8 +856,8 @@ const WarenQuoteChart = ({ data }: { data: MonthlyKPI[] }) => {
           label={{ value: `Ziel ${WAREN_THRESHOLD}%`, position: 'insideTopRight', fontSize: 10, fill: C_WAREN, dy: -6 }}
         />
         <Bar dataKey="warenQuoteIst" radius={[5,5,0,0]} label={renderBarLabel as any} isAnimationActive={false}>
-          {data.map((entry, i) => (
-            <Cell key={i} fill={entry.warenQuoteIst == null ? 'hsl(var(--muted))' : warenBarColor(entry.warenQuoteIst)} />
+          {chartData.map((entry, i) => (
+            <Cell key={i} fill={warenBarColor(entry.warenQuoteIst)} />
           ))}
         </Bar>
       </BarChart>
@@ -898,17 +912,17 @@ const WarenCombinedTooltip = ({
 };
 
 const RevenueWarenChart = ({ data }: { data: MonthlyKPI[] }) => {
-  const hasData = data.some(d => d.warenIst || d.umsatzIst);
-  if (!hasData) return <NoDataOverlay message="Noch keine Daten vorhanden." />;
+  const chartData = data.filter(d => (d.umsatzIst ?? 0) > 0 || (d.warenIst ?? 0) > 0);
+  if (!chartData.length) return <NoDataOverlay message="Noch keine Daten vorhanden." />;
 
   const renderWarenLabel = (props: Record<string, unknown>) => {
     const { x, y, width, index } = props as { x: number; y: number; width: number; index: number };
-    const entry = data[index];
+    const entry = chartData[index];
     const quote = entry?.warenQuoteIst;
     if (!entry?.warenIst || quote == null) return null;
     return (
       <text x={(x as number) + (width as number) / 2} y={(y as number) - 5}
-        textAnchor="middle" fontSize={11} fontWeight="700"
+        textAnchor="middle" fontSize={12} fontWeight="700"
         fill={warenBarColor(quote)}>
         {quote.toFixed(1)}%
       </text>
@@ -917,7 +931,7 @@ const RevenueWarenChart = ({ data }: { data: MonthlyKPI[] }) => {
 
   return (
     <ResponsiveContainer width="100%" height={310}>
-      <BarChart data={data} barGap={4} barCategoryGap="34%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
+      <BarChart data={chartData} barGap={4} barCategoryGap="34%" margin={{ top: 28, right: 16, bottom: 0, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
         <XAxis dataKey="label" tick={{ ...AXIS_STYLE, fontSize: 12 }} axisLine={false} tickLine={false} />
         <YAxis
@@ -925,7 +939,7 @@ const RevenueWarenChart = ({ data }: { data: MonthlyKPI[] }) => {
           tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
         />
         <ReTooltip
-          content={(p: any) => <WarenCombinedTooltip {...p} allData={data} />}
+          content={(p: any) => <WarenCombinedTooltip {...p} allData={chartData} />}
           cursor={{ fill: 'hsl(var(--muted)/0.25)' }}
         />
         <Bar dataKey="umsatzIst" name="Umsatz Ist"   fill={C_ACTUAL} radius={[5,5,0,0]} isAnimationActive={false} />
@@ -1401,22 +1415,28 @@ const AnnualRevenueImportCard = ({ onImported }: { onImported: () => void }) => 
 // ─── Monatsauswahl-Panel ──────────────────────────────────────────────────────
 
 interface MonthSelectorProps {
-  kpis:           MonthlyKPI[];
-  selected:       Set<number>;
-  onToggle:       (month: number) => void;
-  onSelectAll:    () => void;
-  onSelectNone:   () => void;
+  kpis:            MonthlyKPI[];
+  selected:        Set<number>;
+  onToggle:        (month: number) => void;
+  onSelectAll:     () => void;
+  onSelectNone:    () => void;
+  onSelectData:    () => void;
 }
 
-const MonthSelectorPanel = ({ kpis, selected, onToggle, onSelectAll, onSelectNone }: MonthSelectorProps) => {
+const MonthSelectorPanel = ({ kpis, selected, onToggle, onSelectAll, onSelectNone, onSelectData }: MonthSelectorProps) => {
+  const dataMonthCount = kpis.filter(k => (k.umsatzIst ?? 0) > 0).length;
   return (
     <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h3 className="text-xs font-bold text-foreground flex items-center gap-1.5">
           <BarChart2 className="h-3.5 w-3.5 text-muted-foreground" />
           Monatsauswahl für Kumuliert-Berechnung
         </h3>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
+          <button onClick={onSelectData} className="text-[10px] text-green-700 dark:text-green-400 font-semibold hover:underline">
+            Mit Daten ({dataMonthCount})
+          </button>
+          <span className="text-muted-foreground/40">·</span>
           <button onClick={onSelectAll}  className="text-[10px] text-blue-600 hover:underline">Alle</button>
           <span className="text-muted-foreground/40">·</span>
           <button onClick={onSelectNone} className="text-[10px] text-muted-foreground hover:underline">Keine</button>
@@ -1425,16 +1445,17 @@ const MonthSelectorPanel = ({ kpis, selected, onToggle, onSelectAll, onSelectNon
       <div className="grid grid-cols-6 sm:grid-cols-12 gap-1.5">
         {kpis.map(k => {
           const isChecked = selected.has(k.month);
-          const hasData   = (k.umsatzIst ?? 0) > 0 || (k.pkIst ?? 0) > 0;
+          const hasData   = (k.umsatzIst ?? 0) > 0;
           return (
             <label
               key={k.month}
+              title={hasData ? `${k.label}: CHF ${(k.umsatzIst ?? 0).toLocaleString('de-CH', { maximumFractionDigits: 0 })}` : `${k.label}: kein Umsatz`}
               className={cn(
                 'flex flex-col items-center gap-0.5 rounded border px-1.5 py-1 cursor-pointer transition-colors text-[10px]',
                 isChecked
                   ? 'bg-primary/10 border-primary/40 text-primary font-semibold'
                   : 'bg-card border-border text-muted-foreground hover:bg-muted/50',
-                !hasData && 'opacity-50',
+                !hasData && 'opacity-40',
               )}
             >
               <input
@@ -1444,15 +1465,17 @@ const MonthSelectorPanel = ({ kpis, selected, onToggle, onSelectAll, onSelectNon
                 className="sr-only"
               />
               <span>{k.label}</span>
-              {hasData && (
-                <span className={cn('w-1.5 h-1.5 rounded-full', isChecked ? 'bg-primary' : 'bg-muted-foreground/40')} />
-              )}
+              <span className={cn(
+                'w-1.5 h-1.5 rounded-full',
+                !hasData       ? 'bg-muted-foreground/20' :
+                isChecked      ? 'bg-primary' : 'bg-muted-foreground/40',
+              )} />
             </label>
           );
         })}
       </div>
       <p className="text-[10px] text-muted-foreground/60">
-        ☑ {selected.size} Monat{selected.size !== 1 ? 'e' : ''} ausgewählt – Prozentwerte werden aus Summen berechnet (nicht Durchschnitt der Monatsquoten).
+        ☑ {selected.size} Monat{selected.size !== 1 ? 'e' : ''} ausgewählt — Prozentwerte aus Summen (kein Durchschnitt der Monatsquoten).
       </p>
     </div>
   );
@@ -1618,15 +1641,28 @@ const Reporting = () => {
   );
 
   // ── Monatsauswahl ────────────────────────────────────────────────────────
-  const [selectedMonths, setSelectedMonths] = useState<Set<number>>(() => new Set(Array.from({ length: 12 }, (_, i) => i + 1)));
+  const [selectedMonths, setSelectedMonths] = useState<Set<number>>(() => new Set<number>());
+  const autoSelectKeyRef = useRef('');
 
-  const toggleMonth    = (m: number) => setSelectedMonths(prev => {
+  // Auto-select only months with actual revenue when data first loads or year/tenant changes
+  useEffect(() => {
+    const key = `${year}-${tenantId}`;
+    if (autoSelectKeyRef.current === key) return;
+    const withRevenue = monthlyKPIs.filter(k => (k.umsatzIst ?? 0) > 0);
+    // Wait until KPIs are computed (at least one month has data or we've passed initial render)
+    if (withRevenue.length === 0 && !monthlyKPIs.some(k => k.umsatzIst != null)) return;
+    autoSelectKeyRef.current = key;
+    setSelectedMonths(new Set(withRevenue.map(k => k.month)));
+  }, [year, tenantId, monthlyKPIs]);
+
+  const toggleMonth      = (m: number) => setSelectedMonths(prev => {
     const next = new Set(prev);
     next.has(m) ? next.delete(m) : next.add(m);
     return next;
   });
   const selectAllMonths  = () => setSelectedMonths(new Set(Array.from({ length: 12 }, (_, i) => i + 1)));
   const selectNoMonths   = () => setSelectedMonths(new Set());
+  const selectDataMonths = () => setSelectedMonths(new Set(monthlyKPIs.filter(k => (k.umsatzIst ?? 0) > 0).map(k => k.month)));
 
   const cumulated = useMemo(() => calcCumulated(monthlyKPIs, selectedMonths), [monthlyKPIs, selectedMonths]);
 
@@ -1953,18 +1989,19 @@ const Reporting = () => {
         {/* ── Absenzen ── */}
         <AbsenzMonatsBlock year={year} />
 
-        {/* ── Monatsauswahl ── */}
-        <MonthSelectorPanel
-          kpis={monthlyKPIs}
-          selected={selectedMonths}
-          onToggle={toggleMonth}
-          onSelectAll={selectAllMonths}
-          onSelectNone={selectNoMonths}
-        />
+        {/* ── Monatsauswahl + Kumuliert-Zusammenfassung ── */}
+        <section className="space-y-3">
+          <MonthSelectorPanel
+            kpis={monthlyKPIs}
+            selected={selectedMonths}
+            onToggle={toggleMonth}
+            onSelectAll={selectAllMonths}
+            onSelectNone={selectNoMonths}
+            onSelectData={selectDataMonths}
+          />
 
-        {/* ── Kumuliert-Zusammenfassung ── */}
         {selectedMonths.size > 0 && cumulated.umsatzIst > 0 && (
-          <section>
+          <div>
             <h2 className="text-sm font-bold mb-3">
               Kumuliert – {selectedMonths.size} ausgewählte Monate
             </h2>
@@ -1990,8 +2027,9 @@ const Reporting = () => {
                 color={cumulated.warenQuote != null && cumulated.warenQuote > 30 ? 'red' : 'green'}
               />
             </div>
-          </section>
+          </div>
         )}
+        </section>
 
         {/* ── Haupttabelle ── */}
         <section>

@@ -1,0 +1,172 @@
+Bitte die beiden Warenaufwand-Auswertungen zu EINER einzigen grossen, übersichtlichen Management-Auswertung zusammenführen.
+
+Aktuell:
+- „Warenaufwandquote pro Monat“
+- „Umsatz vs. Warenaufwand“
+
+Diese zwei Diagramme sollen ersetzt werden durch EIN grosses kombiniertes Diagramm.
+
+Ziel:
+Viel lesefreundlicher, moderner und aussagekräftiger.
+
+---
+
+NEUE AUSWERTUNG:
+Titel:
+„Warenaufwand Analyse 2026“
+
+Layout:
+- volle Breite
+- deutlich grösser
+- mehr Höhe
+- kein Split mehr in zwei kleine Charts
+
+---
+
+DARSTELLUNG
+
+Pro Monat anzeigen:
+
+1. Umsatz Ist CHF
+→ grosser Hauptbalken
+
+2. Warenaufwand CHF
+→ zweiter Balken daneben
+
+3. Warenquote %
+→ direkt sichtbar auf dem Warenaufwand-Balken
+
+4. Zielquote
+→ horizontale Linie (z.B. 30%)
+
+5. Farbstatus automatisch:
+- Grün = unter Ziel
+- Orange = nahe Ziel
+- Rot = über Ziel
+
+---
+
+BEISPIEL JAN
+
+Umsatz:
+CHF 256’003
+
+Warenaufwand:
+CHF 75’810
+
+Quote:
+29.6 %
+
+Ziel:
+30 %
+
+→ Balken orange
+
+---
+
+DESIGN
+
+Bitte modern und management-tauglich:
+
+- klare grosse Balken
+- Prozentwerte direkt auf Balken
+- Umsatz dominant darstellen
+- Warenaufwand etwas schmaler
+- Prozent gut lesbar
+- keine kleine Mini-Schrift
+- mehr vertikaler Abstand
+- bessere Farben
+- keine unnötige Legende
+- keine zwei getrennten Charts mehr
+
+---
+
+ZUSÄTZLICH OBEN RECHTS
+
+Kleine kompakte KPI-Zusammenfassung:
+
+- Warenaufwand kumuliert CHF
+- Warenquote kumuliert %
+- Zielquote
+- Anzahl Monate über Ziel
+
+Beispiel:
+
+Warenaufwand kumuliert:
+CHF 290’546
+
+Warenquote:
+26.6 %
+
+Ziel:
+30 %
+
+0 Monate über Ziel
+
+---
+
+TOOLTIPS
+
+Hover pro Monat:
+
+- Umsatz Ist
+- Warenaufwand CHF
+- Warenquote %
+- Zielquote %
+- Budget Warenaufwand
+- Vorjahr Warenquote falls vorhanden
+
+---
+
+DATENLOGIK
+
+Keine Quote berechnen wenn:
+- Umsatz leer
+- Umsatz 0
+- keine Ist-Daten
+
+Dann:
+- Balken ausgrauen
+- keine Fantasiewerte
+- keine 0%
+- kein Achsenfehler
+
+---
+
+MONATSAUSWAHL INTEGRIEREN
+
+Die Monatsauswahl soll direkt im Chart integriert werden.
+
+Nicht mehr als separater Block unten.
+
+Direkt unter dem Chart:
+
+[Jan] [Feb] [Mär] [Apr] ...
+
+Nur Monate mit Umsatz > 0 automatisch aktivieren.
+
+---
+
+ANALYSE-TEXT AUTOMATISCH
+
+Unter dem Chart automatisch generieren:
+
+Beispiele:
+
+„Alle 4 Monate liegen unter dem Zielwert von 30 %.“
+
+oder
+
+„2 Monate liegen über Ziel: Jan, Feb.“
+
+oder
+
+„März hat die beste Warenquote mit 27.2 %.“
+
+---
+
+WICHTIG
+
+Bitte die alte Warenaufwandquote-Auswertung UND Umsatz-vs-Warenaufwand-Auswertung komplett entfernen.
+
+Nur noch EIN grosses kombiniertes Diagramm verwenden.
