@@ -27,7 +27,7 @@ import {
   parseWideFile, matchAnzahlUmsatz, generateImportBatch,
   type NormalizedSaleRow, type MatchResult, type ParseResult,
 } from '@/lib/gastronovi-csv-parser';
-import { insertProductSales, fetchImportBatches, sourceLabel, type ImportBatch } from '@/lib/sales-db';
+import { insertProductSales, deleteProductSalesForPeriod, fetchImportBatches, sourceLabel, type ImportBatch } from '@/lib/sales-db';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -331,6 +331,7 @@ export default function SalesUpload() {
   const [foodResult, setFoodResult]         = useState<SectionResult | null>(null);
   const [beverageResult, setBeverageResult] = useState<SectionResult | null>(null);
   const [importCount, setImportCount]       = useState(0);
+  const [deletedCount, setDeletedCount]     = useState(0);
   const [importBatchId, setImportBatchId]   = useState('');
 
   // Historie
@@ -425,6 +426,31 @@ export default function SalesUpload() {
     if (allRows.length === 0) return;
     setStep('importing');
 
+    // ── Schritt A: Bestehende Daten für dieselben source+Monate löschen ──────
+    // Verhindert Duplikate bei Re-Import (naives Insert würde anhängen).
+    // Gruppenbildung: { source → Set<'YYYY-MM'> }
+    const sourceMonthMap = new Map<string, Set<string>>();
+    for (const row of allRows) {
+      const src = row.source ?? 'food_csv_export';
+      if (!sourceMonthMap.has(src)) sourceMonthMap.set(src, new Set());
+      sourceMonthMap.get(src)!.add(row.sale_date.slice(0, 7));
+    }
+    const deletions = Array.from(sourceMonthMap.entries()).map(([src, months]) => ({
+      source: src,
+      months: Array.from(months),
+    }));
+
+    console.log('[SalesUpload] Delete-before-insert:', deletions);
+    const { deleted, error: delErr } = await deleteProductSalesForPeriod(deletions);
+    if (delErr) {
+      setParseError(`Fehler beim Löschen alter Daten: ${delErr}`);
+      setStep('error');
+      return;
+    }
+    setDeletedCount(deleted);
+    console.log(`[SalesUpload] ${deleted} alte Zeilen gelöscht vor Re-Import`);
+
+    // ── Schritt B: Neue Daten einfügen ────────────────────────────────────────
     const { count, error } = await insertProductSales(allRows);
     if (error) {
       setParseError(error);
@@ -447,6 +473,7 @@ export default function SalesUpload() {
     setBeverageResult(null);
     setParseError('');
     setImportCount(0);
+    setDeletedCount(0);
   }
 
   // ── Gesamtzahlen ────────────────────────────────────────────────────────────
@@ -488,6 +515,11 @@ export default function SalesUpload() {
               Batch: {importBatchId} · Jahr: {year}
               {beverageResult ? ' · Food + Beverage' : ' · Food'}
             </p>
+            {deletedCount > 0 && (
+              <p className="text-xs text-emerald-600/80 dark:text-emerald-600 mt-1">
+                ↻ {fmtNum(deletedCount)} veraltete Zeilen ersetzt (Re-Import, keine Duplikate)
+              </p>
+            )}
           </div>
           <Button variant="outline" size="sm" onClick={reset}>Neuer Import</Button>
         </div>
@@ -664,6 +696,15 @@ export default function SalesUpload() {
               <span>Umsatz: <strong>{fmtChf(totalRev)}</strong></span>
               <span>Jahr: <strong>{year}</strong></span>
             </div>
+          </div>
+
+          {/* Re-Import-Hinweis */}
+          <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/10 px-4 py-2.5 flex items-start gap-2">
+            <Info className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+            <p className="text-[11px] text-blue-700 dark:text-blue-400">
+              <strong>Re-Import sicher:</strong> Bestehende Zeilen für dieselben Monate und Quellen werden
+              vor dem Import automatisch gelöscht — keine doppelten Produkte.
+            </p>
           </div>
 
           {/* Food Vorschau */}

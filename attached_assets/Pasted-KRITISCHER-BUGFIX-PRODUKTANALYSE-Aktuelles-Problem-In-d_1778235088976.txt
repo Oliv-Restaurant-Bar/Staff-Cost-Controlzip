@@ -1,0 +1,153 @@
+KRITISCHER BUGFIX PRODUKTANALYSE
+
+Aktuelles Problem:
+In der Produktanalyse erscheinen doppelte oder dreifache Werte / Produkte.
+Das darf nicht passieren.
+
+Ziel:
+Beim Import oder Aktualisieren der Produktdaten muss pro Restaurant, Monat, Jahr und Produkt immer nur ein gültiger Datensatz bestehen.
+
+---
+
+1. Alte Produktdaten beim Re-Import löschen oder ersetzen
+
+Wenn Produktdaten für denselben Zeitraum erneut hochgeladen/importiert werden:
+
+Beispiel:
+Restaurant = Oliv
+Jahr = 2026
+Monat = Januar
+
+Dann sollen die bestehenden Produktanalyse-Daten für diesen Zeitraum zuerst sauber ersetzt werden.
+
+Gewünschte Logik:
+- bestehende Produktdaten für Restaurant + Jahr + Monat löschen
+- neue Produktdaten importieren
+- danach darf es keine Duplikate geben
+
+Oder alternativ:
+- sauberer UPSERT pro Produkt
+- eindeutiger Schlüssel: restaurant_id + year + month + product_name oder product_id
+- bestehender Wert wird aktualisiert, nicht dupliziert
+
+Wichtig:
+Nicht einfach neue Zeilen anhängen.
+
+---
+
+2. Keine doppelten Produkte in der Rangliste
+
+Die Rangliste darf Produkte nicht mehrfach anzeigen.
+
+Wenn derselbe Produktname mehrfach vorkommt, muss das System entweder:
+- die Werte korrekt zusammenfassen
+oder
+- den bestehenden Datensatz ersetzen
+
+Nicht erlaubt:
+- gleicher Produktname mehrfach in Top 10 / Top 20 / Alle
+- mehrfach gezählte Umsätze
+- mehrfach gezählte Anzahl
+
+---
+
+3. Produkte mit 0 Umsatz ausblenden
+
+Produkte mit Umsatz = 0 CHF dürfen in der Rangliste nicht angezeigt werden.
+
+Das gilt für:
+- Top 10
+- Top 20
+- Alle
+- Flop 20
+- Food
+- Beverage
+- Suche
+- Export falls vorhanden
+
+Nur Produkte mit Umsatz > 0 anzeigen.
+
+---
+
+4. Flop 20 Logik prüfen
+
+Flop 20 soll die 20 Produkte mit dem tiefsten Umsatz anzeigen,
+aber nur wenn Umsatz > 0.
+
+Produkte mit 0 Umsatz dürfen nicht erscheinen.
+
+---
+
+5. Importlogik prüfen
+
+Bitte prüfe:
+- Import-Zentrale
+- Verkaufsdaten Upload
+- Produktanalyse Aggregation
+- Produkt-Rangliste
+- Cache/localStorage
+- Supabase Speicherung
+
+Es darf keine parallele alte Produktdatenquelle geben, die doppelt mitgerechnet wird.
+
+---
+
+6. Datenbank Constraint
+
+Bitte wenn möglich eindeutige Constraint oder Upsert Logik ergänzen:
+
+restaurant_id
+year
+month
+product_key / product_id / normalized_product_name
+
+Damit Duplikate technisch verhindert werden.
+
+---
+
+7. Bestehende Duplikate bereinigen
+
+Bitte vorhandene doppelte Produktdaten bereinigen.
+
+Für jeden Zeitraum:
+- Duplikate identifizieren
+- je Produkt zusammenführen oder alte doppelte Einträge löschen
+- danach Rangliste neu berechnen
+
+Wichtig:
+Nicht Umsätze mehrfach zählen.
+
+---
+
+8. Anzeige
+
+Die KPI Karten oben müssen ebenfalls bereinigt sein:
+- Produkte
+- Gesamtumsatz
+- Gesamtanzahl
+
+Diese dürfen nicht durch doppelte Importe verfälscht werden.
+
+---
+
+9. Tests
+
+Bitte konkret testen:
+
+Januar 2026:
+- Produktanalyse öffnen
+- keine doppelten Produkte
+- keine dreifachen Werte
+- keine Produkte mit 0 Umsatz
+- Top 10 korrekt
+- Top 20 korrekt
+- Alle korrekt
+- Flop 20 korrekt
+- Food/Beverage Filter korrekt
+
+Re-Import Test:
+- Januar 2026 erneut importieren
+- alte Werte werden ersetzt oder sauber upserted
+- keine Duplikate entstehen
+- Gesamtumsatz bleibt korrekt
+- Gesamtanzahl bleibt korrekt

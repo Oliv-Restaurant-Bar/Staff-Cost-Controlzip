@@ -506,6 +506,56 @@ function validateRow(row: Record<string, unknown>, idx: number): string | null {
   return errors.length > 0 ? errors.join('; ') : null;
 }
 
+// ─── Delete-before-Insert ─────────────────────────────────────────────────────
+
+/**
+ * Löscht bestehende Zeilen aus product_sales für eine Kombination aus
+ * source + Monate (YYYY-MM), bevor neue Daten importiert werden.
+ *
+ * Verhindert Duplikate bei Re-Imports: ohne diesen Schritt werden neue
+ * Zeilen schlicht angehängt — dieselben Produkte erscheinen mehrfach.
+ *
+ * @param deletions  Array von { source, months } — z.B.
+ *                   [{ source: 'food_csv_export', months: ['2026-01', '2026-02'] }]
+ * @returns          Gesamtzahl der gelöschten Zeilen, oder Fehlermeldung
+ */
+export async function deleteProductSalesForPeriod(
+  deletions: Array<{ source: string; months: string[] }>,
+): Promise<{ deleted: number; error: string | null }> {
+  let totalDeleted = 0;
+
+  for (const { source, months } of deletions) {
+    for (const month of months) {
+      // Monats-Range: 'YYYY-MM-01' bis 'YYYY-MM-NN' (letzter Tag)
+      const [y, m] = month.split('-').map(Number);
+      const fromDate = `${month}-01`;
+      const lastDay  = new Date(y, m, 0).getDate();
+      const toDate   = `${month}-${String(lastDay).padStart(2, '0')}`;
+
+      console.log(`[sales-db] DELETE product_sales WHERE source='${source}' AND sale_date BETWEEN '${fromDate}' AND '${toDate}'`);
+
+      const { error, count } = await (supabase as any)
+        .from('product_sales')
+        .delete({ count: 'exact' })
+        .eq('source', source)
+        .gte('sale_date', fromDate)
+        .lte('sale_date', toDate);
+
+      if (error) {
+        console.error('[sales-db] deleteProductSalesForPeriod Fehler:', error);
+        return { deleted: totalDeleted, error: formatSupabaseError(error) };
+      }
+
+      const n = count ?? 0;
+      totalDeleted += n;
+      console.log(`[sales-db] Gelöscht: ${n} Zeilen für ${source} ${month}`);
+    }
+  }
+
+  console.log(`[sales-db] deleteProductSalesForPeriod: ${totalDeleted} Zeilen total gelöscht`);
+  return { deleted: totalDeleted, error: null };
+}
+
 // ─── Insert ───────────────────────────────────────────────────────────────────
 
 /** Verkaufsdaten in product_sales einfügen */
