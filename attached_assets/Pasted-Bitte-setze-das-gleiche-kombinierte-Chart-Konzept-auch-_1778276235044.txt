@@ -1,0 +1,109 @@
+Bitte setze das gleiche kombinierte Chart-Konzept auch für die Personalkosten um.
+
+Aktuell ist die neue Warenaufwand-Analyse gut gelöst.
+Bitte diese Logik 1:1 auch für Personalkosten übernehmen.
+
+---
+
+1. Personalkosten-Charts zusammenführen
+
+Bitte die zwei bisherigen Charts:
+
+- Personalkostenquote pro Monat
+- Umsatz vs. Personalkosten
+
+zu EINEM grossen kombinierten Chart zusammenführen.
+
+Titel:
+Personalkosten-Analyse 2026
+
+Darstellung pro Monat:
+- Umsatz Ist als grosser Balken
+- Personalkosten Ist als zweiter Balken daneben
+- Personalquote % direkt auf dem Personalkosten-Balken
+
+KPI-Box oben rechts:
+- Personalkosten kumuliert CHF
+- Personalquote kumuliert %
+- Zielwert
+- Monate über Ziel
+
+Tooltip:
+- Umsatz Ist
+- Personalkosten Ist
+- Personalquote %
+- Zielquote %
+
+---
+
+2. Zielwert-Linie ergänzen
+
+Bitte bei beiden kombinierten Charts eine klare Zielwert-Linie einbauen:
+
+- Warenaufwand-Analyse: Ziel z.B. 30 %
+- Personalkosten-Analyse: Ziel z.B. 40 %
+
+Wichtig:
+Da die Balken CHF anzeigen, soll die Zielwert-Linie visuell verständlich sein.
+
+Am besten:
+- zweite rechte Y-Achse für Prozentwerte
+oder
+- horizontale Linie auf Prozentbasis mit klarer Beschriftung
+
+Beschriftung:
+Ziel Warenquote 30 %
+Ziel Personalquote 40 %
+
+Die Linie soll:
+- gestrichelt
+- dezent rot/orange
+- gut sichtbar
+- nicht zu dominant sein
+
+---
+
+3. Farben
+
+Personalkosten:
+- Umsatz Ist = gleich wie bei Warenaufwand
+- Personalkosten = orange/rot je nach Quote
+- Grün = unter Ziel
+- Orange = nahe Ziel
+- Rot = über Ziel
+
+Warenaufwand:
+Bitte die Zielwertlinie ebenfalls ergänzen, falls noch nicht sichtbar.
+
+---
+
+4. Datenlogik
+
+Keine Fantasiewerte:
+Wenn Umsatz leer oder 0:
+- keine Quote berechnen
+- keinen Kostenbalken erzwingen
+- Monat grau oder leer anzeigen
+- keine 0.0 %, keine Infinity, keine NaN
+
+---
+
+5. Alte Personalkosten-Charts entfernen
+
+Nach Umsetzung sollen nicht mehr zwei kleine Personalkosten-Charts angezeigt werden.
+
+Nur noch:
+- ein grosses kombiniertes Personalkosten-Chart
+- ein grosses kombiniertes Warenaufwand-Chart
+
+---
+
+6. Tests
+
+Bitte prüfen:
+- Personalkosten erscheinen als ein grosses Chart
+- Quote steht direkt auf dem Personalkostenbalken
+- kumulierte KPI Box stimmt
+- Zielwertlinie 40 % sichtbar
+- Warenaufwand Zielwertlinie 30 % sichtbar
+- Monate ohne Umsatz werden sauber behandelt
