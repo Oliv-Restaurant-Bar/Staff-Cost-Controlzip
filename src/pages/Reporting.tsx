@@ -950,6 +950,147 @@ const RevenueWarenChart = ({ data }: { data: MonthlyKPI[] }) => {
   );
 };
 
+// ─── Chart 4+5: Warenaufwand Kombinierte Auswertung (gross, full-width) ───────
+
+interface WarenKombinierteProps {
+  data:           MonthlyKPI[];
+  year:           number;
+  selectedMonths: Set<number>;
+  onToggle:       (m: number) => void;
+  onSelectAll:    () => void;
+  onSelectNone:   () => void;
+  onSelectData:   () => void;
+}
+
+const WarenKombinierteChart = ({
+  data, year, selectedMonths, onToggle, onSelectAll, onSelectNone, onSelectData,
+}: WarenKombinierteProps) => {
+  const chartData = data.filter(d => (d.umsatzIst ?? 0) > 0);
+
+  const withQuote      = data.filter(d => d.warenQuoteIst != null);
+  const sumWaren       = withQuote.reduce((s, d) => s + (d.warenIst ?? 0), 0);
+  const sumUmsatz      = withQuote.reduce((s, d) => s + (d.umsatzIst ?? 0), 0);
+  const kumuliertQuote = sumUmsatz > 0 ? (sumWaren / sumUmsatz) * 100 : null;
+  const uberZiel       = withQuote.filter(d => d.warenQuoteIst! > WAREN_THRESHOLD).length;
+  const insight        = buildWarenInsight(data);
+
+  const renderQuoteLabel = (props: Record<string, unknown>) => {
+    const { x, y, width, index } = props as { x: number; y: number; width: number; index: number };
+    const entry = chartData[index];
+    const quote = entry?.warenQuoteIst;
+    if (!entry?.warenIst || quote == null) return null;
+    return (
+      <text
+        x={(x as number) + (width as number) / 2}
+        y={(y as number) - 7}
+        textAnchor="middle"
+        fontSize={13}
+        fontWeight="700"
+        fill={warenBarColor(quote)}
+      >
+        {quote.toFixed(1)}%
+      </text>
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2 pt-4 px-5">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex-1 min-w-0">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <BarChart2 className="h-4 w-4 text-muted-foreground" />
+              Warenaufwand-Analyse {year}
+            </CardTitle>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] mt-2">
+              <span className="flex items-center gap-1.5 text-muted-foreground">
+                <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: C_ACTUAL }} />
+                Umsatz Ist
+              </span>
+              <span className="flex items-center gap-1.5 text-muted-foreground">
+                <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: C_WAREN }} />
+                Warenaufwand — Quote % auf Balken
+              </span>
+              <span className="text-muted-foreground/50">Ziel ≤ {WAREN_THRESHOLD} %</span>
+              <span className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 text-green-600 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" /> ≤ 28 %
+                </span>
+                <span className="inline-flex items-center gap-1 text-amber-600 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" /> 28–33 %
+                </span>
+                <span className="inline-flex items-center gap-1 text-red-600 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" /> &gt; 33 %
+                </span>
+              </span>
+            </div>
+          </div>
+
+          {/* KPI-Zusammenfassung oben rechts */}
+          {sumWaren > 0 && (
+            <div className="shrink-0 rounded-lg bg-muted/40 border border-border px-3 py-2 text-right min-w-[140px]">
+              <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Warenaufwand kumuliert</p>
+              <p className="text-sm font-bold text-foreground mt-0.5">{fmtCHF(sumWaren)}</p>
+              <div className="mt-1.5 pt-1.5 border-t border-border/60">
+                <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Warenquote</p>
+                <p className="text-base font-bold mt-0.5" style={{ color: warenBarColor(kumuliertQuote) }}>
+                  {kumuliertQuote != null ? `${kumuliertQuote.toFixed(1)} %` : '–'}
+                </p>
+                <p className="text-[9px] text-muted-foreground/60">Ziel ≤ {WAREN_THRESHOLD} %</p>
+              </div>
+              <p className={cn('text-[10px] font-semibold mt-1.5', uberZiel > 0 ? 'text-red-600' : 'text-green-600')}>
+                {uberZiel > 0 ? `${uberZiel} Monate über Ziel` : '✓ 0 Monate über Ziel'}
+              </p>
+            </div>
+          )}
+        </div>
+      </CardHeader>
+
+      <CardContent className="pt-2 px-3">
+        {chartData.length === 0 ? (
+          <NoDataOverlay message="Kein Warenaufwand erfasst. Bitte Sage-CSV mit 4xxx-Konten importieren." />
+        ) : (
+          <ResponsiveContainer width="100%" height={400}>
+            <BarChart data={chartData} barGap={5} barCategoryGap="28%" margin={{ top: 36, right: 20, bottom: 0, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+              <XAxis dataKey="label" tick={{ ...AXIS_STYLE, fontSize: 12 }} axisLine={false} tickLine={false} />
+              <YAxis
+                tick={AXIS_STYLE} axisLine={false} tickLine={false} width={56}
+                tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
+              />
+              <ReTooltip
+                content={(p: any) => <WarenCombinedTooltip {...p} allData={chartData} />}
+                cursor={{ fill: 'hsl(var(--muted)/0.25)' }}
+              />
+              <Bar dataKey="umsatzIst" name="Umsatz Ist" fill={C_ACTUAL} radius={[5,5,0,0]} isAnimationActive={false} />
+              <Bar dataKey="warenIst"  name="Warenaufwand" radius={[5,5,0,0]} isAnimationActive={false}
+                label={renderQuoteLabel as any}>
+                {chartData.map((entry, i) => (
+                  <Cell key={i} fill={entry.warenQuoteIst == null ? 'hsl(var(--muted))' : warenBarColor(entry.warenQuoteIst)} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+
+        {/* Inline Monatsauswahl */}
+        <div className="mt-4 pt-3 border-t border-border/50">
+          <MonthSelectorPanel
+            kpis={data}
+            selected={selectedMonths}
+            onToggle={onToggle}
+            onSelectAll={onSelectAll}
+            onSelectNone={onSelectNone}
+            onSelectData={onSelectData}
+          />
+        </div>
+
+        {insight && <InsightBanner text={insight} />}
+      </CardContent>
+    </Card>
+  );
+};
+
 // ─── Vollständigkeits-Badge ───────────────────────────────────────────────────
 
 const CompletenessBadge = ({ pct }: { pct: number }) => {
@@ -1922,88 +2063,26 @@ const Reporting = () => {
           </div>
         </section>
 
-        {/* ── Diagramme: Warenaufwand ── */}
-        <section className="space-y-5">
-          <div>
-            <h2 className="text-sm font-bold">Warenaufwand-Analyse {year}</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Warenaufwand aus importierten Sage-Konten (4xxx) oder manuell erfassten Kategorien.
-            </p>
-          </div>
-
-          <QuoteKpiStrip
-            data={monthlyKPIs}
-            quoteFn={d => d.warenQuoteIst}
-            stripLabel="Warenquote"
-            threshold={WAREN_THRESHOLD}
-          />
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <Card>
-              <CardHeader className="pb-2 pt-4 px-5">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                  Warenaufwandquote pro Monat
-                </CardTitle>
-                <div className="flex items-center gap-3 text-[10px] mt-1">
-                  <span className="inline-flex items-center gap-1 text-green-600 font-semibold">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-green-500 inline-block" /> ≤ 28 %
-                  </span>
-                  <span className="inline-flex items-center gap-1 text-amber-600 font-semibold">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-amber-500 inline-block" /> 28–33 %
-                  </span>
-                  <span className="inline-flex items-center gap-1 text-red-600 font-semibold">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" /> &gt; 33 %
-                  </span>
-                  <span className="text-muted-foreground/60 ml-1">Ziel: ≤ {WAREN_THRESHOLD} %</span>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-0 px-3">
-                <WarenQuoteChart data={monthlyKPIs} />
-                <InsightBanner text={buildWarenInsight(monthlyKPIs)} />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2 pt-4 px-5">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <BarChart2 className="h-4 w-4 text-muted-foreground" />
-                  Umsatz vs. Warenaufwand
-                </CardTitle>
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  <span className="inline-flex items-center gap-1 mr-3">
-                    <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: C_ACTUAL }} /> Umsatz Ist
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: C_WAREN }} /> Warenaufwand — Quote % auf Balken
-                  </span>
-                </p>
-              </CardHeader>
-              <CardContent className="pt-0 px-3">
-                <RevenueWarenChart data={monthlyKPIs} />
-              </CardContent>
-            </Card>
-          </div>
-        </section>
+        {/* ── Diagramme: Warenaufwand (kombiniert) ── */}
+        <WarenKombinierteChart
+          data={monthlyKPIs}
+          year={year}
+          selectedMonths={selectedMonths}
+          onToggle={toggleMonth}
+          onSelectAll={selectAllMonths}
+          onSelectNone={selectNoMonths}
+          onSelectData={selectDataMonths}
+        />
 
         {/* ── Absenzen ── */}
         <AbsenzMonatsBlock year={year} />
 
-        {/* ── Monatsauswahl + Kumuliert-Zusammenfassung ── */}
+        {/* ── Kumuliert-Zusammenfassung ── */}
         <section className="space-y-3">
-          <MonthSelectorPanel
-            kpis={monthlyKPIs}
-            selected={selectedMonths}
-            onToggle={toggleMonth}
-            onSelectAll={selectAllMonths}
-            onSelectNone={selectNoMonths}
-            onSelectData={selectDataMonths}
-          />
-
         {selectedMonths.size > 0 && cumulated.umsatzIst > 0 && (
           <div>
             <h2 className="text-sm font-bold mb-3">
-              Kumuliert – {selectedMonths.size} ausgewählte Monate
+              Kumuliert – {selectedMonths.size} Monate ({selectedMonths.size === monthlyKPIs.filter(k => (k.umsatzIst ?? 0) > 0).length ? 'alle mit Daten' : 'ausgewählt'})
             </h2>
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
               <SummaryCard label="Umsatz kumuliert"     value={fmtCHF(cumulated.umsatzIst)}    sub={cumulated.umsatzBudget > 0 ? `Budget: ${fmtCHF(cumulated.umsatzBudget)}` : undefined} color="blue" />
