@@ -39,6 +39,7 @@ import {
   ActualHourEntry,
 } from '@/lib/supabase-db';
 import { Employee, grossToNet } from '@/types/personnel';
+import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
@@ -414,11 +415,12 @@ const Dashboard = () => {
   const laborCostThreshold = resolveZielwert(currentYear, currentMonth).targetPercent;
   const budgetData   = useBudgetMonth(currentYear, currentMonth);
 
-  // ── Mitarbeiter nach Abteilung filtern ──────────────────────────────────────
+  // ── Mitarbeiter nach Abteilung UND aktivem Monat filtern ────────────────────
   const visibleEmployees = useMemo(() => {
-    if (isAdmin) return employees;
-    return employees.filter(e => e.department === allowedDepartment);
-  }, [employees, isAdmin, allowedDepartment]);
+    const monthActive = (e: Employee) => isEmployeeActiveInMonth(e, currentYear, currentMonth);
+    if (isAdmin) return employees.filter(monthActive);
+    return employees.filter(e => monthActive(e) && e.department === allowedDepartment);
+  }, [employees, isAdmin, allowedDepartment, currentYear, currentMonth]);
 
   const visibleIds = useMemo(() => new Set(visibleEmployees.map(e => e.id)), [visibleEmployees]);
 

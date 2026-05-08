@@ -1331,6 +1331,19 @@ CREATE POLICY "Anon self-register new employee"
                               Inaktiv
                             </span>
                           )}
+                          {emp.employmentEndDate && (() => {
+                            const today = new Date();
+                            const exit  = new Date(emp.employmentEndDate + 'T00:00:00');
+                            return exit < today ? (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border border-slate-300 bg-slate-100 text-slate-500">
+                                Ausgetreten
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border border-amber-200 bg-amber-50 text-amber-600">
+                                Kündigung {emp.employmentEndDate}
+                              </span>
+                            );
+                          })()}
                           {selectedLocal.contractFileName && selectedId === emp.id && (
                             <FileText className="h-3 w-3 text-muted-foreground" />
                           )}

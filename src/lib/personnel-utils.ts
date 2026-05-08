@@ -17,6 +17,41 @@ export function getEmployeeDisplayName(
   return name || 'Unbekannter Mitarbeiter';
 }
 
+/**
+ * Prüft ob ein Mitarbeiter im angegebenen Monat aktiv war.
+ *
+ * Regeln:
+ *  - Kein Austrittsdatum → aktiv
+ *  - Austrittsdatum vor Monatsbeginn → NICHT aktiv (z.B. Austritt 30.04 → Mai = nicht aktiv)
+ *  - Austrittsdatum im oder nach dem Monat → aktiv (z.B. Austritt 15.05 → Mai = aktiv)
+ *  - Kein Eintrittsdatum (contractStart) → aktiv
+ *  - Eintrittsdatum nach Monatsende → NICHT aktiv (z.B. Eintritt 01.06 → Mai = nicht aktiv)
+ *  - Eintrittsdatum im oder vor dem Monat → aktiv (z.B. Eintritt 15.05 → Mai = aktiv)
+ */
+export function isEmployeeActiveInMonth(
+  emp: { employmentEndDate?: string | null; contractStart?: string | null },
+  year: number,
+  month: number,
+): boolean {
+  if (emp.employmentEndDate) {
+    const exit = new Date(emp.employmentEndDate + 'T00:00:00');
+    const exitYear  = exit.getFullYear();
+    const exitMonth = exit.getMonth() + 1;
+    if (exitYear < year || (exitYear === year && exitMonth < month)) {
+      return false;
+    }
+  }
+  if (emp.contractStart) {
+    const entry = new Date(emp.contractStart + 'T00:00:00');
+    const entryYear  = entry.getFullYear();
+    const entryMonth = entry.getMonth() + 1;
+    if (entryYear > year || (entryYear === year && entryMonth > month)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export const formatCurrency = (value: number): string => {
   return new Intl.NumberFormat('de-CH', {
     style: 'currency',

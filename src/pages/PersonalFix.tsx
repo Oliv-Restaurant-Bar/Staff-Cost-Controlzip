@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth } from '@/lib/supabase-db';
 import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { Employee } from '@/types/personnel';
+import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -1551,19 +1552,26 @@ export default function PersonalFixPage() {
   // ── Sortierte Listen ───────────────────────────────────────────────────────
 
   const fixedEmployees = useMemo(() =>
-    employees.filter(hasFixedSalary).sort((a, b) => a.name.localeCompare(b.name, 'de')),
-    [employees],
+    employees
+      .filter(e => hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth))
+      .sort((a, b) => a.name.localeCompare(b.name, 'de')),
+    [employees, selectedYear, selectedMonth],
   );
 
   const variableEmployees = useMemo(() =>
-    employees.filter(e => !hasFixedSalary(e)).sort((a, b) => a.name.localeCompare(b.name, 'de')),
-    [employees],
+    employees
+      .filter(e => !hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth))
+      .sort((a, b) => a.name.localeCompare(b.name, 'de')),
+    [employees, selectedYear, selectedMonth],
   );
 
   // Beaulieu: Mitarbeiter ohne hinterlegten Lohn (weder Stunden- noch Monatslohn)
   const missingWageEmployees = useMemo(() =>
-    employees.filter(e => (e.hourlyWage ?? 0) === 0 && (e.monthlySalary ?? 0) === 0),
-    [employees],
+    employees.filter(e =>
+      isEmployeeActiveInMonth(e, selectedYear, selectedMonth) &&
+      (e.hourlyWage ?? 0) === 0 && (e.monthlySalary ?? 0) === 0,
+    ),
+    [employees, selectedYear, selectedMonth],
   );
 
   // ── Hilfsfunktion: Stunden je nach Ansicht ─────────────────────────────────

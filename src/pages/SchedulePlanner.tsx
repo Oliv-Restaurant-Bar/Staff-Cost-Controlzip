@@ -77,7 +77,7 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { formatCurrency, getEmployeeDisplayName } from '@/lib/personnel-utils';
+import { formatCurrency, getEmployeeDisplayName, isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -2049,15 +2049,12 @@ const SchedulePlanner = () => {
     setSelectedEmployeeForEdit(null);
   };
 
-  // Filter out employees who have already left before the start of the displayed month.
-  // Append T00:00:00 so the date is parsed as LOCAL midnight (not UTC) — avoids timezone shift.
-  const monthStartDate = startOfMonth(currentMonth);
-  const activeEmployees = employees.filter(e => {
-    if (!e.employmentEndDate) return true;
-    const exitDate = new Date(e.employmentEndDate + 'T00:00:00');
-    // Keep if exit date is >= first day of current month (they were still active this month)
-    return exitDate >= monthStartDate;
-  });
+  // Filter out employees who were not active in the displayed month.
+  // Uses isEmployeeActiveInMonth which checks both exit date (employmentEndDate)
+  // and entry date (contractStart) against the selected year/month.
+  const activeEmployees = employees.filter(e =>
+    isEmployeeActiveInMonth(e, currentMonth.getFullYear(), currentMonth.getMonth() + 1),
+  );
 
   // ── Sortierungsfunktion ────────────────────────────────────────────────────
   /** Sortiert eine Mitarbeiterliste anhand der gespeicherten Reihenfolge. */

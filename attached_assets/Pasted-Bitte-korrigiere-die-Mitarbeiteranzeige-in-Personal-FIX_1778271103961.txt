@@ -1,0 +1,83 @@
+Bitte korrigiere die Mitarbeiteranzeige in "Personal FIX + VARIABEL".
+
+Problem:
+Ehemalige Mitarbeiter werden weiterhin angezeigt, obwohl sie nicht mehr aktiv sind.
+Beispiel:
+Ausgewählter Monat = Mai 2026.
+Mitarbeiter mit Austrittsdatum vor Mai 2026 dürfen nicht mehr erscheinen.
+
+Gewünschte Logik:
+
+1. Mitarbeiter nach Austrittsdatum filtern
+
+Ein Mitarbeiter soll im ausgewählten Monat nur angezeigt werden, wenn:
+
+- kein Austrittsdatum vorhanden ist
+oder
+- Austrittsdatum liegt innerhalb oder nach dem ausgewählten Monat
+
+Beispiele:
+Austritt 31.03.2026 → im Mai 2026 NICHT anzeigen
+Austritt 30.04.2026 → im Mai 2026 NICHT anzeigen
+Austritt 15.05.2026 → im Mai 2026 anzeigen
+kein Austrittsdatum → anzeigen
+
+2. Eintrittsdatum ebenfalls berücksichtigen
+
+Falls Eintrittsdatum vorhanden ist:
+
+Eintritt 01.06.2026 → im Mai 2026 NICHT anzeigen
+Eintritt 15.05.2026 → im Mai 2026 anzeigen
+
+3. Betrifft alle Personalbereiche
+
+Bitte diese Logik überall anwenden:
+
+- Personal FIX + VARIABEL
+- Flex Kosten pro Mitarbeiter
+- Dienstplanung
+- Personalstamm Auswahl
+- Mitarbeiterfilter
+- PDF Export Personal
+- alle Kostenberechnungen
+
+4. Kostenberechnung
+
+Ehemalige Mitarbeiter dürfen für Monate nach Austritt nicht mehr in:
+- Anzahl Mitarbeiter
+- Planstunden
+- Iststunden
+- Fixkosten
+- Flexkosten
+- Total Personal
+einberechnet werden.
+
+5. Historische Monate
+
+Wichtig:
+In historischen Monaten sollen ehemalige Mitarbeiter weiterhin sichtbar sein.
+
+Beispiel:
+Mitarbeiter Austritt 31.03.2026:
+- März 2026 anzeigen
+- April 2026 nicht anzeigen
+- Mai 2026 nicht anzeigen
+
+6. UI Hinweis optional
+
+Optional:
+Im Personalstamm darf der Mitarbeiter weiterhin sichtbar sein,
+aber mit Status:
+"Ausgetreten"
+
+In operativen Monatsansichten aber nur anzeigen, wenn er im ausgewählten Monat relevant war.
+
+7. Tests
+
+Bitte konkret testen:
+- Mai 2026 zeigt keine Mitarbeiter mit Austritt vor Mai
+- März 2026 zeigt Mitarbeiter mit Austritt im März noch
+- Eintritt in Zukunft wird nicht vor Eintritt angezeigt
+- PDF Export stimmt
+- Total Mitarbeiteranzahl stimmt
+- Total Fix/Flexkosten stimmen
