@@ -69,6 +69,21 @@ export async function kvSet(key: string, value: unknown): Promise<void> {
 }
 
 /**
+ * Wie kvSet, wirft aber einen Fehler wenn Supabase nicht erreichbar ist
+ * oder der Schreibvorgang fehlschlägt. Nur für kritische Umsatzdaten.
+ */
+async function kvSetStrict(key: string, value: unknown): Promise<void> {
+  if (!(await isAvailable())) {
+    throw new Error('Supabase nicht verfügbar');
+  }
+  const { error } = await (supabase as any)
+    .from('app_settings')
+    .upsert({ key, value }, { onConflict: 'key' });
+  if (error) throw error;
+  notifyKV(key);
+}
+
+/**
  * Sicherer Tages-Upsert für dailyBudgets.
  * =========================================
  * PROBLEM: Alle naiven Schreibpfade lesen aus localStorage, ergänzen Tage,
@@ -133,15 +148,27 @@ export async function safeUpsertDailyBudgets(
     }
   }
 
-  // 5. Zurückschreiben
+  // 5. Zurückschreiben: localStorage sofort (schnell), dann KV (persistent)
   const merged = base;
   try { localStorage.setItem(storageKey, JSON.stringify(merged)); } catch { /* ignore */ }
-  await kvSet(storageKey, merged);
 
-  console.log(
-    `[SAFE-UPSERT] ${storageKey}: ${Object.keys(updates).length} Tage aktualisiert` +
-    ` (total im Blob: ${Object.keys(merged).length}, onlyIfZero=${onlyIfZero})`,
-  );
+  try {
+    await kvSetStrict(storageKey, merged);
+    console.log(
+      `[SAFE-UPSERT] ${storageKey}: ${Object.keys(updates).length} Tage aktualisiert` +
+      ` (total: ${Object.keys(merged).length}, onlyIfZero=${onlyIfZero}) ✓ KV gespeichert`,
+    );
+  } catch (kvError) {
+    console.error(`[SAFE-UPSERT] KV-Schreibfehler für ${storageKey}:`, kvError);
+    // Toast über dynamischen Import — verhindert Kreisabhängigkeit (UI → lib → UI)
+    try {
+      const { toast } = await import('sonner');
+      toast.error(
+        'Umsatz konnte nicht dauerhaft gespeichert werden. Bitte Verbindung prüfen.',
+        { duration: 10000, id: 'kv-write-failed' },
+      );
+    } catch { /* Sonner nicht verfügbar */ }
+  }
 
   return merged;
 }
