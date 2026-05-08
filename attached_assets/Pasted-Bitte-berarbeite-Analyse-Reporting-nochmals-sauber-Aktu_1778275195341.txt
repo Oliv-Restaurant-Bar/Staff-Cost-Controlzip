@@ -1,0 +1,258 @@
+Bitte überarbeite Analyse / Reporting nochmals sauber.
+
+Aktuelle Probleme:
+
+1. Die Prozent-Abweichungen werden nicht eingeblendet, obwohl sie erscheinen sollen, wenn ich den Button anklicke.
+2. Die Auswertungen:
+   - Personalkostenquote pro Monat
+   - Umsatz vs. Personalkosten
+   - Warenaufwandquote pro Monat
+   - Umsatz vs. Warenaufwand
+   sind visuell nicht gut und nicht aussagekräftig genug.
+3. Die Monatsauswahl für die kumulierte Berechnung ist nicht gut integriert.
+4. Monate ohne Ist-Umsatz, z.B. Juni, Juli, August usw., dürfen nicht automatisch vorausgewählt sein.
+
+---
+
+1. Prozent-Abweichungen korrekt einblenden
+
+Wenn der Button „Abw. >10%“ aktiv ist, müssen in der Monatsdaten-Tabelle die Prozentabweichungen sichtbar werden.
+
+Bei Umsatz Ist:
+Anzeige = Abweichung Ist vs. Vorjahr
+
+Formel:
+(Umsatz Ist - Vorjahr) / Vorjahr * 100
+
+Label:
+VJ: +xx.x %
+
+Bei Budget:
+Anzeige = Abweichung Ist vs. Budget
+
+Formel:
+(Umsatz Ist - Budget) / Budget * 100
+
+Label:
+Bdg: +xx.x %
+
+Wichtig:
+- Nur anzeigen, wenn Button aktiv ist
+- Wenn Button inaktiv ist, ausblenden
+- Keine NaN
+- Keine Infinity
+- Keine 0.0 %, wenn Vergleichswert fehlt
+- Grün bei besser
+- Rot bei schlechter
+
+---
+
+2. Monatsauswahl besser integrieren
+
+Die Monatsauswahl für kumulierte Berechnung soll nicht als separater grosser Block irgendwo unten stehen.
+
+Sie soll direkt in die Auswertungen integriert werden.
+
+Idee:
+Direkt unter der Monatsdaten-Tabelle oder oberhalb der Diagramme:
+
+„Monate für Auswertung“
+[Jan] [Feb] [Mär] [Apr] [Mai] [Jun] ...
+
+Die Monatsbuttons sollen:
+- kompakt sein
+- klar zeigen, ob ausgewählt oder nicht
+- nur Monate mit Ist-Umsatz automatisch vorauswählen
+- Monate ohne Umsatz nicht automatisch auswählen
+
+Beispiel:
+Jan, Feb, Mär, Apr haben Umsatz → vorausgewählt
+Mai hat Umsatz teilweise → auswählbar, aber je nach Vollständigkeit markiert
+Jun bis Dez ohne Ist-Umsatz → nicht vorausgewählt
+
+---
+
+3. Monate ohne Ist-Umsatz nicht vorauswählen
+
+Aktuell sind Juni, Juli, August usw. ausgewählt, obwohl Umsatz Ist leer ist.
+
+Das ist falsch.
+
+Standardauswahl:
+Nur Monate mit Umsatz Ist > 0 automatisch auswählen.
+
+Wenn Monat Umsatz Ist leer oder 0:
+- nicht automatisch auswählen
+- grau darstellen
+- optional Hinweis „keine Ist-Daten“
+
+Der Benutzer darf solche Monate manuell auswählen, aber sie sollen nicht standardmässig aktiv sein.
+
+---
+
+4. Personalkostenquote pro Monat verbessern
+
+Die Darstellung soll aussagekräftiger werden.
+
+Bitte als klares Balkendiagramm:
+
+Pro Monat:
+- PK Ist % als Hauptbalken
+- PK Plan % optional als dünner Vergleichsmarker oder zweiter schmaler Balken
+- Zielwert als horizontale Linie
+
+Wichtig:
+Direkt auf jedem Balken:
+- Prozentwert anzeigen, z.B. 36.3 %
+
+Farben:
+- Grün = unter Ziel
+- Orange = nahe Ziel
+- Rot = über Ziel
+
+Keine überladene Legende.
+Keine unklaren Linien.
+
+Zusätzlich unter dem Diagramm:
+Kurze Aussage automatisch:
+„2 Monate über Ziel: Jan, Feb“
+„April liegt mit 36.3 % unter Ziel 40 %“
+
+---
+
+5. Umsatz vs. Personalkosten verbessern
+
+Dieses Diagramm soll sofort zeigen:
+
+- Umsatz pro Monat
+- Personalkosten Ist pro Monat
+- Quote direkt sichtbar
+
+Darstellung:
+Pro Monat zwei Balken:
+- Umsatz Ist CHF
+- Personalkosten Ist CHF
+
+Direkt über oder auf dem Personalkosten-Balken:
+PK-Quote %
+
+Beispiel:
+Jan:
+Umsatz CHF 256’003
+PK CHF 103’499
+40.4 %
+
+Tooltip:
+- Umsatz Ist
+- PK Ist
+- PK Plan
+- PK Quote Ist
+- PK Quote Plan
+
+Bitte keine unleserlichen kleinen Labels.
+
+---
+
+6. Warenaufwandquote pro Monat analog verbessern
+
+Gleich wie Personalkostenquote:
+
+Pro Monat:
+- Warenaufwand % als Hauptbalken
+- Budget/Ziel als Vergleichslinie
+- Prozent direkt sichtbar
+
+Farben:
+- Grün = gut
+- Orange = nahe Ziel
+- Rot = über Ziel
+
+Keine Fantasiewerte anzeigen, wenn Umsatz fehlt.
+
+---
+
+7. Umsatz vs. Warenaufwand verbessern
+
+Gleich wie Umsatz vs. Personalkosten:
+
+Pro Monat:
+- Umsatz Ist CHF
+- Warenaufwand CHF
+- Warenquote %
+
+Direkt auf Warenaufwand-Balken:
+Warenquote %
+
+Tooltip:
+- Umsatz
+- Warenaufwand
+- Warenquote
+- Zielquote
+- Budget Warenaufwand
+
+---
+
+8. Kumulierte Werte rechts anzeigen
+
+Für die ausgewählten Monate soll automatisch eine kompakte Zusammenfassung angezeigt werden:
+
+„Kumuliert ausgewählte Monate“
+
+- Umsatz kumuliert
+- Warenaufwand kumuliert
+- Warenquote kumuliert
+- Personalaufwand kumuliert
+- Personalquote kumuliert
+- EBITDA kumuliert, falls vorhanden
+
+Wichtig:
+Prozentwerte kumuliert aus Summen berechnen, nicht Durchschnitt der Monatsprozente.
+
+Formel:
+Personalquote kumuliert =
+Summe Personalaufwand / Summe Umsatz
+
+Warenquote kumuliert =
+Summe Warenaufwand / Summe Umsatz
+
+---
+
+9. Datenqualität beachten
+
+Wenn Umsatz fehlt:
+- keine Quote berechnen
+- Monat ausgrauen
+- Hinweis „keine Ist-Daten“
+- keine 0 %
+- keine extremen Werte
+- keine falsche Achse
+
+---
+
+10. Design Ziel
+
+Die Auswertungen sollen wirken wie ein Management Dashboard:
+
+- weniger technische Darstellung
+- klare Balken
+- gut lesbare Prozentwerte
+- aussagekräftige Farben
+- automatische kurze Interpretation
+- keine überladenen Charts
+
+---
+
+11. Tests
+
+Bitte prüfen:
+
+- Button „Abw. >10%“ zeigt Prozentabweichungen
+- Umsatz Ist zeigt VJ-Abweichung
+- Budget zeigt Budget-Abweichung
+- Monate ohne Umsatz sind nicht vorausgewählt
+- Jan bis Apr sind vorausgewählt, wenn Umsatz vorhanden
+- Personalkostenquote zeigt sinnvolle Werte
+- Umsatz vs. Personalkosten zeigt Prozentlabels
+- Warenaufwandquote zeigt sinnvolle Werte
+- Umsatz vs. Warenaufwand zeigt Prozentlabels
+- kumulierte Werte stimmen aus Summen

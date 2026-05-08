@@ -21,7 +21,7 @@ import {
   LayoutDashboard, TrendingUp, ChevronRight, Plus,
   Edit3, Upload, CheckCircle2, AlertCircle, Clock,
   Info, Save, X, FileText, BarChart2, RefreshCw, Settings2, AlertTriangle,
-  FileDown, FileSpreadsheet, UserX, Palmtree, Stethoscope,
+  FileDown, FileSpreadsheet, UserX, Palmtree, Stethoscope, Sheet,
 } from 'lucide-react';
 import { eachDayOfInterval, startOfMonth, endOfMonth } from 'date-fns';
 import {
@@ -59,6 +59,7 @@ import {
 import { loadBudgetWithPL, resolveBudgetYear } from '@/lib/budget-store';
 import {
   exportReportingToPDF, exportReportingToExcel, calcEffectiveTotals,
+  exportMonatsdatenToPDF, MonatsdatenRow,
 } from '@/lib/reporting-export';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
@@ -1654,6 +1655,32 @@ const Reporting = () => {
     } catch { toast.error('PDF-Export fehlgeschlagen'); }
   };
 
+  const handleExportMonatsdaten = () => {
+    try {
+      const rows: MonatsdatenRow[] = effectiveMonths.map((m, idx) => {
+        const kpi = monthlyKPIs[idx];
+        const completeness = calcCompleteness(m);
+        return {
+          monat:           MONTH_NAMES_SHORT_DE[m.month],
+          umsatzIst:       m.revenueActual        ?? null,
+          umsatzBudget:    m.revenueBudget        ?? null,
+          umsatzVorjahr:   m.revenuePreviousYear  ?? null,
+          abwBudgetPct:    kpi.abwBudgetPct,
+          abwVorjahrPct:   kpi.abwVorjahrPct,
+          warenaufwand:    kpi.warenaufwandPL,
+          warenPct:        kpi.warenaufwandPLPct,
+          personalaufwand: kpi.personalaufwandPL,
+          personalPct:     kpi.personalaufwandPLPct,
+          pkIst:           m.personnelCostActual  ?? null,
+          pkPlan:          m.personnelCostPlanned ?? null,
+          vollstaendigkeit: completeness.completenessPercent,
+        };
+      });
+      exportMonatsdatenToPDF(rows, year, tenant.name, threshold, tenantId);
+      toast.success('Monatsdaten PDF exportiert');
+    } catch { toast.error('Monatsdaten PDF fehlgeschlagen'); }
+  };
+
   const handleExportExcel = () => {
     try {
       exportReportingToExcel(effectiveMonths, totals, year);
@@ -1698,6 +1725,9 @@ const Reporting = () => {
             </Link>
             <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-rose-300 text-rose-700 hover:bg-rose-50" onClick={handleExportPDF}>
               <FileDown className="h-3.5 w-3.5" /><span className="hidden sm:inline">PDF</span>
+            </Button>
+            <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-indigo-300 text-indigo-700 hover:bg-indigo-50" onClick={handleExportMonatsdaten}>
+              <Sheet className="h-3.5 w-3.5" /><span className="hidden sm:inline">Monatsdaten PDF</span>
             </Button>
             <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-green-300 text-green-700 hover:bg-green-50" onClick={handleExportExcel}>
               <FileSpreadsheet className="h-3.5 w-3.5" /><span className="hidden sm:inline">Excel</span>

@@ -4,6 +4,266 @@ import * as XLSX from 'xlsx';
 import { MonthlyFinancialRecord } from '@/types/reporting';
 import { MONTH_NAMES_SHORT_DE, MONTH_NAMES_DE } from '@/types/reporting';
 
+// ─── Monatsdaten-Kompakt-Export ───────────────────────────────────────────────
+
+export interface MonatsdatenRow {
+  monat: string;
+  umsatzIst: number | null;
+  umsatzBudget: number | null;
+  umsatzVorjahr: number | null;
+  abwBudgetPct: number | null;
+  abwVorjahrPct: number | null;
+  warenaufwand: number | null;
+  warenPct: number | null;
+  personalaufwand: number | null;
+  personalPct: number | null;
+  pkIst: number | null;
+  pkPlan: number | null;
+  vollstaendigkeit: number;
+}
+
+const FCHF = (v: number | null | undefined): string =>
+  v != null
+    ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(v)
+    : '–';
+
+const FPCT = (v: number | null | undefined): string =>
+  v != null ? `${v.toFixed(1)} %` : '–';
+
+const FABW = (v: number | null | undefined): string =>
+  v != null ? `${v >= 0 ? '+' : ''}${v.toFixed(1)} %` : '';
+
+function addPortraitHeader(doc: jsPDF, restaurantName: string, title: string, sub: string, pageW: number) {
+  doc.setFillColor(30, 64, 175);
+  doc.rect(0, 0, pageW, 22, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.text(restaurantName, 10, 9);
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+  doc.text(title, 10, 17);
+  doc.text(sub, pageW - 10, 17, { align: 'right' });
+  doc.setTextColor(0, 0, 0);
+}
+
+export function exportMonatsdatenToPDF(
+  rows: MonatsdatenRow[],
+  year: number,
+  restaurantName: string,
+  threshold = 40,
+  tenantId = 'oliv',
+): void {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const now = new Date().toLocaleDateString('de-CH');
+
+  addPortraitHeader(doc, restaurantName, `Monatsdaten ${year}`, `Exportiert am ${now}`, pageW);
+
+  // ── Tabellendaten ────────────────────────────────────────────────────────
+
+  const dataRows = rows.filter(r => r.monat !== 'Total');
+
+  const body: string[][] = dataRows.map(r => {
+    const abwVjStr  = r.abwVorjahrPct != null ? `\n${FABW(r.abwVorjahrPct)} vs VJ`  : '';
+    const abwBdgStr = r.abwBudgetPct  != null ? `\n${FABW(r.abwBudgetPct)} vs Plan` : '';
+    return [
+      r.monat,
+      r.umsatzIst   != null ? `${FCHF(r.umsatzIst)}${abwVjStr}`    : '–',
+      r.umsatzBudget != null ? `${FCHF(r.umsatzBudget)}${abwBdgStr}` : '–',
+      FCHF(r.umsatzVorjahr),
+      FCHF(r.warenaufwand),
+      FPCT(r.warenPct),
+      FCHF(r.personalaufwand),
+      FPCT(r.personalPct),
+      FCHF(r.pkIst),
+      FCHF(r.pkPlan),
+      r.vollstaendigkeit > 0 ? `${Math.round(r.vollstaendigkeit)} %` : '–',
+    ];
+  });
+
+  // ── Summenzeile ──────────────────────────────────────────────────────────
+
+  const sumField = (key: keyof MonatsdatenRow): number | null => {
+    const total = dataRows.reduce((s, r) => s + ((r[key] as number | null) ?? 0), 0);
+    return total > 0 ? total : null;
+  };
+
+  const totalUmsatz    = sumField('umsatzIst');
+  const totalBudget    = sumField('umsatzBudget');
+  const totalVorjahr   = sumField('umsatzVorjahr');
+  const totalWaren     = sumField('warenaufwand');
+  const totalPersonal  = sumField('personalaufwand');
+  const totalPkIst     = sumField('pkIst');
+  const totalPkPlan    = sumField('pkPlan');
+
+  const safeQ = (num: number | null, denom: number | null): number | null =>
+    num && denom && denom > 1000 ? parseFloat(((num / denom) * 100).toFixed(1)) : null;
+  const safeAbw = (a: number | null, b: number | null): number | null =>
+    a != null && b != null && b !== 0 ? parseFloat((((a - b) / Math.abs(b)) * 100).toFixed(1)) : null;
+
+  const totAbwVj  = safeAbw(totalUmsatz, totalVorjahr);
+  const totAbwBdg = safeAbw(totalUmsatz, totalBudget);
+
+  body.push([
+    'Total',
+    totalUmsatz != null ? `${FCHF(totalUmsatz)}${totAbwVj != null ? `\n${FABW(totAbwVj)} vs VJ` : ''}` : '–',
+    totalBudget != null ? `${FCHF(totalBudget)}${totAbwBdg != null ? `\n${FABW(totAbwBdg)} vs Plan` : ''}` : '–',
+    FCHF(totalVorjahr),
+    FCHF(totalWaren),
+    FPCT(safeQ(totalWaren, totalUmsatz)),
+    FCHF(totalPersonal),
+    FPCT(safeQ(totalPersonal, totalUmsatz)),
+    FCHF(totalPkIst),
+    FCHF(totalPkPlan),
+    '',
+  ]);
+
+  // ── AutoTable ────────────────────────────────────────────────────────────
+
+  const allRows = [...dataRows];
+
+  autoTable(doc, {
+    startY: 27,
+    margin: { left: 10, right: 10 },
+    tableWidth: 190,
+    head: [[
+      'Monat', 'Umsatz Ist', 'Budget', 'Vorjahr',
+      'Warenaufw.', 'Waren %',
+      'Personalaufw.', 'Personal %',
+      'PK Ist', 'PK Plan', 'Vollst.',
+    ]],
+    body,
+    theme: 'striped',
+    headStyles: {
+      fillColor: [30, 64, 175],
+      textColor: 255,
+      fontStyle: 'bold',
+      fontSize: 7,
+      halign: 'center',
+      cellPadding: { top: 2.5, bottom: 2.5, left: 1.5, right: 1.5 },
+    },
+    bodyStyles: {
+      fontSize: 7.5,
+      cellPadding: { top: 2, bottom: 2, left: 1.5, right: 1.5 },
+    },
+    columnStyles: {
+      0:  { cellWidth: 13, halign: 'left',   fontStyle: 'bold' },
+      1:  { cellWidth: 23, halign: 'right' },
+      2:  { cellWidth: 20, halign: 'right',  textColor: [100, 100, 100] },
+      3:  { cellWidth: 20, halign: 'right',  textColor: [100, 100, 100] },
+      4:  { cellWidth: 21, halign: 'right' },
+      5:  { cellWidth: 11, halign: 'right' },
+      6:  { cellWidth: 21, halign: 'right' },
+      7:  { cellWidth: 11, halign: 'right' },
+      8:  { cellWidth: 19, halign: 'right',  textColor: [100, 100, 100] },
+      9:  { cellWidth: 19, halign: 'right',  textColor: [100, 100, 100] },
+      10: { cellWidth: 12, halign: 'center' },
+    },
+    didParseCell: (data) => {
+      const rowIdx  = data.row.index;
+      const colIdx  = data.column.index;
+      const rawVal  = String(data.cell.raw ?? '');
+      const isTotal = rowIdx === body.length - 1;
+
+      if (isTotal && data.section === 'body') {
+        data.cell.styles.fontStyle  = 'bold';
+        data.cell.styles.fillColor  = [226, 232, 250] as [number, number, number];
+        data.cell.styles.textColor  = [20, 20, 60] as [number, number, number];
+        return;
+      }
+
+      if (data.section !== 'body') return;
+
+      const row = allRows[rowIdx];
+
+      // Umsatz Ist — Zellfarbe nach VJ-Abweichung
+      if (colIdx === 1 && row) {
+        const abwVj = row.abwVorjahrPct;
+        if (abwVj != null) {
+          data.cell.styles.textColor = abwVj >= 0
+            ? ([21, 128, 61] as [number, number, number])
+            : ([153, 27, 27] as [number, number, number]);
+        }
+      }
+
+      // Budget — Zellfarbe nach Plan-Abweichung
+      if (colIdx === 2 && row) {
+        const abwBdg = row.abwBudgetPct;
+        if (abwBdg != null && abwBdg !== 0) {
+          data.cell.styles.textColor = abwBdg >= 0
+            ? ([21, 128, 61] as [number, number, number])
+            : ([153, 27, 27] as [number, number, number]);
+        }
+      }
+
+      // Waren %
+      if (colIdx === 5 && rawVal !== '–') {
+        const num = parseFloat(rawVal);
+        if (!isNaN(num)) {
+          data.cell.styles.fontStyle  = 'bold';
+          data.cell.styles.textColor  = num > 33
+            ? ([153, 27, 27] as [number, number, number])
+            : num > 28
+              ? ([146, 64, 14] as [number, number, number])
+              : ([21, 128, 61] as [number, number, number]);
+        }
+      }
+
+      // Personal %
+      if (colIdx === 7 && rawVal !== '–') {
+        const num = parseFloat(rawVal);
+        if (!isNaN(num)) {
+          data.cell.styles.fontStyle  = 'bold';
+          data.cell.styles.textColor  = num > threshold + 5
+            ? ([153, 27, 27] as [number, number, number])
+            : num > threshold
+              ? ([146, 64, 14] as [number, number, number])
+              : ([21, 128, 61] as [number, number, number]);
+        }
+      }
+
+      // Vollständigkeit
+      if (colIdx === 10 && rawVal !== '–' && rawVal !== '') {
+        const num = parseFloat(rawVal);
+        if (!isNaN(num)) {
+          data.cell.styles.textColor  = num >= 80
+            ? ([21, 128, 61] as [number, number, number])
+            : num >= 50
+              ? ([146, 64, 14] as [number, number, number])
+              : ([153, 27, 27] as [number, number, number]);
+          data.cell.styles.fontStyle  = 'bold';
+        }
+      }
+    },
+    showHead: 'everyPage',
+  });
+
+  // ── Fusszeile ────────────────────────────────────────────────────────────
+
+  const finalY = (doc as any).lastAutoTable.finalY + 7;
+  doc.setFontSize(7);
+  doc.setTextColor(150, 150, 150);
+  doc.text(
+    `PK-Ziel: ≤ ${threshold} %  ·  Waren-Ziel: ≤ 30 %  ·  Werte in CHF, exkl. MWST`,
+    10, Math.min(finalY, 285),
+  );
+  doc.text(restaurantName, pageW - 10, Math.min(finalY, 285), { align: 'right' });
+
+  // ── Seitennummern ────────────────────────────────────────────────────────
+
+  const totalPagesCount = (doc as any).internal.getNumberOfPages();
+  for (let i = 1; i <= totalPagesCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setTextColor(170, 170, 170);
+    doc.text(`Seite ${i} / ${totalPagesCount}`, pageW / 2, 291, { align: 'center' });
+  }
+
+  const slug = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
+  doc.save(`${slug}_Monatsdaten_${year}.pdf`);
+}
+
 const CHF = (v: number | undefined | null) =>
   v != null && v !== 0
     ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(v)
