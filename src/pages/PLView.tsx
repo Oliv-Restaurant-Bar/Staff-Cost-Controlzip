@@ -2559,6 +2559,18 @@ const PLViewPage = () => {
               </button>
             )}
 
+            {/* Analyse-Link */}
+            <Link to="/reporting">
+              <Button
+                variant="outline" size="sm"
+                className="h-8 text-xs gap-1 border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-300"
+                title="Zur Analyse-Seite (Umsatz, PK-Quote, Warenaufwand, Charts)"
+              >
+                <TrendingUp className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Analyse</span>
+              </Button>
+            </Link>
+
             {/* PDF Export – alle 3 Ansichten */}
             <Button
               variant="outline" size="sm"

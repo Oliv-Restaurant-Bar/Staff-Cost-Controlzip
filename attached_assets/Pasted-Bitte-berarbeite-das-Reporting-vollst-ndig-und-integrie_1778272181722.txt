@@ -1,0 +1,298 @@
+Bitte überarbeite das Reporting vollständig und integriere es sauber unter der Erfolgsrechnung.
+
+Aktuelles Problem:
+Das Reporting ist aktuell als eigene Seite / eigener Bereich aufgebaut.
+Es zeigt teilweise falsche Werte, insbesondere:
+- Umsatzvergleich April stimmt nicht
+- Personalkostenquote pro Monat ist offensichtlich falsch, z.B. 3297.7 %
+- Umsatz vs. Personalkosten zeigt keine Prozentwerte direkt im Diagramm
+- Warenaufwand fehlt als gleichwertige Analyse
+- Reporting muss logisch zur Erfolgsrechnung gehören
+
+---
+
+1. Reporting unter Erfolgsrechnung integrieren
+
+Bitte das Reporting nicht mehr als separaten Hauptbereich führen.
+
+Es soll unter "Erfolgsrechnung" erscheinen, z.B. als Tabs:
+
+- Erfolgsrechnung
+- Monatsvergleich
+- Jahresübersicht
+- Reporting / Analyse
+
+Oder innerhalb der Erfolgsrechnung unten als Analysebereich.
+
+Wichtig:
+Alle Reporting-Zahlen müssen dieselbe Datenbasis verwenden wie die Erfolgsrechnung.
+
+---
+
+2. Umsatzvergleich April korrigieren
+
+Der Umsatzvergleich muss exakt dieselben Ist-Umsätze verwenden wie:
+
+- Tagesansicht
+- Tages-Controlling
+- Erfolgsrechnung Betriebsertrag netto
+- Dashboard
+
+April darf nicht aus einer anderen Quelle kommen.
+
+Bitte prüfen:
+- April 2026 Umsatz Ist
+- Budget April 2026
+- Vorjahr April 2025
+
+Der Balken "Umsatz Ist" April muss exakt der Erfolgsrechnung entsprechen.
+
+Keine separaten Reporting-Daten verwenden.
+Keine alten lokalen Werte.
+Keine Dummy-Werte.
+
+---
+
+3. Personalkostenquote pro Monat korrigieren
+
+Die aktuelle Darstellung mit 3297.7 % ist falsch.
+
+Die Personalkostenquote pro Monat muss berechnet werden als:
+
+Personalkostenquote IST =
+Personalkosten Ist / Umsatz Ist * 100
+
+Personalkostenquote Plan =
+Personalkosten Plan / Umsatz Ist * 100
+
+Oder falls Umsatz fehlt:
+- kein Balken anzeigen
+- "kein Umsatz" anzeigen
+- nicht durch 0 teilen
+- niemals extreme Fantasiewerte anzeigen
+
+Wichtig:
+Wenn Umsatz = 0 oder leer:
+Quote = null
+Nicht 3297 %
+Nicht Infinity
+Nicht NaN
+
+---
+
+4. Diagramm Personalkostenquote verbessern
+
+Das Diagramm soll zeigen:
+
+pro Monat:
+- PK Ist %
+- PK Plan %
+- Zielwert %
+
+Also Vergleich:
+Ist-Personalkosten vs. geplante Personalkosten im Verhältnis zum Umsatz.
+
+Darstellung:
+- Balken oder Linien für PK Ist % und PK Plan %
+- Zielwert als Linie
+- Prozentwerte direkt auf den Balken anzeigen
+
+Beispiel:
+April:
+PK Ist 36.1 %
+PK Plan 40.0 %
+Ziel 40.0 %
+
+---
+
+5. Umsatz vs. Personalkosten verbessern
+
+Beim Diagramm "Umsatz vs. Personalkosten" sollen pro Monat angezeigt werden:
+
+- Umsatz CHF
+- Personalkosten Ist CHF
+- Personalkosten Plan CHF optional
+
+Zusätzlich direkt im Diagramm:
+- Personalkostenquote Ist %
+- Personalkostenquote Plan %
+
+Die Prozentwerte sollen auf oder über den Personalkosten-Balken stehen.
+
+Beispiel:
+April:
+Umsatz CHF 267’920
+PK Ist CHF 96’788
+Quote 36.1 %
+
+---
+
+6. Warenaufwand gleichwertig ergänzen
+
+Ich möchte dieselben Auswertungen auch für Warenaufwand.
+
+Bitte ergänzen:
+
+A) Warenaufwandquote pro Monat
+
+Formel:
+Warenaufwandquote Ist =
+Warenaufwand Ist / Umsatz Ist * 100
+
+Warenaufwandquote Budget =
+Warenaufwand Budget / Umsatz Budget oder Umsatz Ist, bitte einheitlich definieren
+
+Zielwert als Linie, z.B. 30 %
+
+Darstellung:
+- Warenaufwand Ist %
+- Warenaufwand Budget %
+- Zielwert %
+
+Prozentwerte direkt auf Balken anzeigen.
+
+B) Umsatz vs. Warenaufwand
+
+Zeigt pro Monat:
+- Umsatz CHF
+- Warenaufwand CHF
+- Warenaufwand %
+
+Prozentwert direkt auf dem Warenaufwand-Balken anzeigen.
+
+---
+
+7. Monatsauswahl unten für Durchschnitt / Kumuliert
+
+Bitte unten im Reporting eine Monatsauswahl mit Checkboxen einbauen:
+
+☑ Jan
+☑ Feb
+☑ Mär
+☑ Apr
+☐ Mai
+...
+
+Der Benutzer kann Monate auswählen.
+
+Rechts oder ganz unten soll automatisch berechnet werden:
+
+- Kumuliert ausgewählte Monate
+- Durchschnitt ausgewählte Monate
+
+Für CHF-Werte:
+Kumuliert = Summe der ausgewählten Monate
+Durchschnitt = Summe / Anzahl Monate
+
+Für Prozentwerte:
+Nicht Durchschnitt der Prozentwerte als Hauptlogik.
+
+Wichtig:
+Kumulierte Prozentwerte müssen aus Summen berechnet werden:
+
+PK Quote kumuliert =
+Summe PK Ist / Summe Umsatz Ist * 100
+
+Warenquote kumuliert =
+Summe Warenaufwand / Summe Umsatz Ist * 100
+
+EBITDA % kumuliert =
+Summe EBITDA / Summe Umsatz Ist * 100
+
+Optional zusätzlich:
+Durchschnitt Monatsquote anzeigen, aber klar als "Ø Monatsquote" bezeichnen.
+
+---
+
+8. Vergleich ganz rechts
+
+Wenn Monate unten ausgewählt sind, soll in Tabellen / Diagrammen ganz rechts eine Spalte erscheinen:
+
+"Kumuliert"
+oder
+"Auswahl Total"
+
+Diese zeigt:
+- Umsatz Summe
+- Warenaufwand Summe
+- Warenaufwand %
+- Personalkosten Summe
+- Personalkosten %
+- EBITDA Summe
+- EBITDA %
+- EBIT Summe
+- EBIT %
+
+---
+
+9. Datenquellen zentralisieren
+
+Bitte alle Reporting Diagramme aus denselben zentralen Funktionen speisen wie die Erfolgsrechnung.
+
+Keine eigene Berechnung pro Chart.
+
+Zentrale monatliche Werte:
+- Umsatz Ist
+- Umsatz Budget
+- Umsatz Vorjahr
+- Personal Ist
+- Personal Plan / Budget
+- Warenaufwand Ist
+- Warenaufwand Budget
+- EBITDA
+- EBIT
+
+Jeder Chart nutzt dieselben Monatsdaten.
+
+---
+
+10. Fehlerbehandlung
+
+Wenn ein Monat keinen Umsatz hat:
+- keine Prozentquote berechnen
+- "kein Umsatz" anzeigen
+- Balken nicht verfälschen
+- keine 0.0 % anzeigen, wenn eigentlich keine Basis vorhanden ist
+- keine Extremwerte wie 3297 %
+
+---
+
+11. Design
+
+Die Diagramme sollen managementtauglich sein:
+- Werte direkt auf Balken
+- Prozentwerte lesbar
+- keine übertriebenen Achsen
+- keine Fantasiewerte
+- Farben logisch:
+  Umsatz neutral/blau oder grün
+  Personalkosten orange/rot
+  Warenaufwand gold/braun
+  Zielwert gestrichelt
+
+---
+
+12. Tests
+
+Bitte konkret testen:
+
+April 2026:
+- Umsatz im Reporting = Umsatz in Erfolgsrechnung
+- Umsatz im Reporting = Umsatz in Tagesansicht
+
+Personalkostenquote:
+- PK Ist / Umsatz = korrekter Prozentwert
+- PK Plan / Umsatz = korrekter Prozentwert
+- keine 3297 % mehr
+
+Warenaufwandquote:
+- Warenaufwand / Umsatz = korrekter Prozentwert
+
+Monatsauswahl:
+- Jan bis Apr auswählen
+- Kumuliert berechnet korrekt aus Summen
+- Prozentwerte werden aus Summen berechnet
+- ganz rechte Kumuliert-Spalte stimmt
+
+PDF / Excel:
+- Reporting Export übernimmt dieselbe Logik

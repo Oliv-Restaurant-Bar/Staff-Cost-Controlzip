@@ -1,0 +1,158 @@
+Bitte erweitere die Tabelle "Monatsdaten 2026" im Reporting.
+
+Ziel:
+Die Monatsdaten sollen nicht nur Umsatz, Budget, Vorjahr und Personalkosten zeigen, sondern auch Warenaufwand und Personalaufwand aus der Erfolgsrechnung.
+
+---
+
+1. Neue Spalten nach "Vorjahr"
+
+Direkt nach der Spalte "Vorjahr" bitte folgende Spalten ergänzen:
+
+1. Warenaufwand
+2. Warenaufwand %
+3. Personalaufwand
+4. Personalaufwand %
+
+Reihenfolge neu:
+
+Monat
+Umsatz Ist
+Budget
+Vorjahr
+Warenaufwand
+Warenaufwand %
+Personalaufwand
+Personalaufwand %
+PK Ist
+PK Geplant
+Ausgaben
+Vollst.
+Aktion
+
+---
+
+2. Datenquelle Warenaufwand
+
+Warenaufwand muss aus der Erfolgsrechnung kommen.
+
+Formel:
+Warenaufwand = Total Warenaufwand aus P&L / Erfolgsrechnung des jeweiligen Monats
+
+Warenaufwand % =
+Warenaufwand / Umsatz Ist * 100
+
+Wenn Umsatz Ist fehlt oder 0 ist:
+kein Prozentwert anzeigen, nicht 0.0 %, nicht NaN, nicht Infinity.
+
+---
+
+3. Datenquelle Personalaufwand
+
+Personalaufwand muss ebenfalls aus der Erfolgsrechnung kommen.
+
+Formel:
+Personalaufwand = Total Personal aus P&L / Erfolgsrechnung des jeweiligen Monats
+
+Personalaufwand % =
+Personalaufwand / Umsatz Ist * 100
+
+Wichtig:
+Das ist der Personalaufwand aus der Erfolgsrechnung, nicht nur PK Ist aus Dienstplanung.
+
+---
+
+4. Bestehende PK Ist / PK Geplant behalten
+
+Die bestehenden Spalten:
+PK Ist
+PK Geplant
+
+bleiben bestehen.
+
+Aber zusätzlich soll der echte Personalaufwand aus der Erfolgsrechnung davor angezeigt werden.
+
+---
+
+5. Prozentabweichungen per Button
+
+Oben gibt es den Button:
+"Abw. >10%"
+
+Wenn dieser Button aktiv ist, sollen bei Umsatz Ist, Budget und Vorjahr die prozentualen Abweichungen klar angezeigt werden.
+
+Gewünschte Logik:
+
+Umsatz Ist vs Budget:
+Abw. Budget % =
+(Umsatz Ist - Budget) / Budget * 100
+
+Umsatz Ist vs Vorjahr:
+Abw. Vorjahr % =
+(Umsatz Ist - Vorjahr) / Vorjahr * 100
+
+Anzeige:
+- direkt neben oder unter dem jeweiligen Wert
+- grün wenn besser
+- rot wenn schlechter
+
+Beispiel:
+Umsatz Ist CHF 267’000
+Budget CHF 220’000
+→ +21.4 %
+
+Vorjahr CHF 215’943
+→ +23.6 %
+
+---
+
+6. Button Verhalten
+
+Wenn "Abw. >10%" aktiv ist:
+- Prozentabweichungen anzeigen
+- starke Abweichungen visuell hervorheben
+
+Wenn Button nicht aktiv ist:
+- Tabelle kompakter anzeigen
+- Prozentabweichungen ausblenden oder dezenter zeigen
+
+---
+
+7. Farb-Logik
+
+Bei Umsatz:
+Ist höher als Budget/Vorjahr = grün
+Ist tiefer als Budget/Vorjahr = rot
+
+Bei Warenaufwand und Personalaufwand:
+höhere Quote = kritisch / rot
+tiefere Quote = gut / grün, wenn Vergleich vorhanden
+
+---
+
+8. Zahlenformat
+
+CHF:
+CHF 267’000
+
+Prozent:
+25.5 %
+
+Abweichung:
++21.4 %
+-12.8 %
+
+Keine langen Dezimalzahlen.
+
+---
+
+9. Tests
+
+Bitte prüfen:
+- Warenaufwand wird pro Monat korrekt aus Erfolgsrechnung übernommen
+- Warenaufwand % stimmt
+- Personalaufwand wird pro Monat korrekt aus Erfolgsrechnung übernommen
+- Personalaufwand % stimmt
+- Button "Abw. >10%" zeigt Abweichungen korrekt
+- Monate ohne Umsatz zeigen keine falschen Prozentwerte
+- Tabelle bleibt lesbar
