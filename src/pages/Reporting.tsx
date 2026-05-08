@@ -963,23 +963,20 @@ interface WarenKombinierteProps {
 }
 
 const renderRevenueLabel = (props: Record<string, unknown>) => {
-  const { x, y, width, height, value } = props as {
+  const { x, y, width, value } = props as {
     x: number; y: number; width: number; height: number; value: number;
   };
   if (!value || value <= 0) return null;
   const label = `CHF ${Math.round(value).toLocaleString('de-CH')}`;
-  const inside = (height as number) > 55;
   return (
     <text
       x={(x as number) + (width as number) / 2}
-      y={inside
-        ? (y as number) + (height as number) / 2
-        : (y as number) - 8}
+      y={(y as number) - 6}
       textAnchor="middle"
-      dominantBaseline="middle"
+      dominantBaseline="auto"
       fontSize={11}
       fontWeight="700"
-      fill={inside ? '#fff' : 'hsl(var(--foreground))'}
+      fill="hsl(var(--foreground))"
     >
       {label}
     </text>
