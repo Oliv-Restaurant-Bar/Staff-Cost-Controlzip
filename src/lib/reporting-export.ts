@@ -637,6 +637,98 @@ export function exportReportingToPDF(
   doc.save(`Reporting_${year}.pdf`);
 }
 
+export function exportMonatsdatenToExcel(
+  rows: MonatsdatenRow[],
+  year: number,
+  restaurantName: string,
+  threshold = 40,
+  tenantId = 'oliv',
+): void {
+  const fmtN = (v: number | null | undefined): string =>
+    v != null
+      ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(v)
+      : '–';
+  const fmtP = (v: number | null | undefined): string =>
+    v != null ? `${v.toFixed(1)} %` : '–';
+
+  const dataRows = rows.filter(r => r.monat !== 'Total');
+
+  const header = [
+    'Monat', 'Umsatz Ist', 'Budget', 'Vorjahr',
+    'Warenaufwand', 'Waren %',
+    'Personalaufwand', 'Personal %',
+    'PK Ist', 'PK Plan', 'Vollst. %',
+  ];
+
+  const body: (string | number | null)[][] = dataRows.map(r => [
+    r.monat,
+    r.umsatzIst    ?? null,
+    r.umsatzBudget ?? null,
+    r.umsatzVorjahr ?? null,
+    r.warenaufwand ?? null,
+    r.warenPct     != null ? parseFloat(r.warenPct.toFixed(1)) : null,
+    r.personalaufwand ?? null,
+    r.personalPct  != null ? parseFloat(r.personalPct.toFixed(1)) : null,
+    r.pkIst        ?? null,
+    r.pkPlan       ?? null,
+    r.vollstaendigkeit > 0 ? Math.round(r.vollstaendigkeit) : null,
+  ]);
+
+  // Summenzeile
+  const sumNum = (key: keyof MonatsdatenRow) =>
+    dataRows.reduce((s, r) => s + ((r[key] as number | null) ?? 0), 0) || null;
+  const totU = sumNum('umsatzIst');
+  const totW = sumNum('warenaufwand');
+  const totP = sumNum('personalaufwand');
+  const safeQ = (n: number | null, d: number | null) =>
+    n && d && d > 1000 ? parseFloat(((n / d) * 100).toFixed(1)) : null;
+
+  body.push([
+    'Total',
+    totU, sumNum('umsatzBudget'), sumNum('umsatzVorjahr'),
+    totW, safeQ(totW, totU),
+    totP, safeQ(totP, totU),
+    sumNum('pkIst'), sumNum('pkPlan'), null,
+  ]);
+
+  // Formatted sheet for display (string values, easier to read)
+  const displayRows: string[][] = [
+    [`${restaurantName} — Monatsdaten ${year}`, '', '', '', '', '', '', '', '', '', ''],
+    [`Exportiert am ${new Date().toLocaleDateString('de-CH')} · PK-Ziel ≤ ${threshold} % · Waren-Ziel ≤ 30 %`,
+      '', '', '', '', '', '', '', '', '', ''],
+    [],
+    header,
+    ...dataRows.map(r => [
+      r.monat,
+      fmtN(r.umsatzIst), fmtN(r.umsatzBudget), fmtN(r.umsatzVorjahr),
+      fmtN(r.warenaufwand), fmtP(r.warenPct),
+      fmtN(r.personalaufwand), fmtP(r.personalPct),
+      fmtN(r.pkIst), fmtN(r.pkPlan),
+      r.vollstaendigkeit > 0 ? `${Math.round(r.vollstaendigkeit)} %` : '–',
+    ]),
+    [
+      'Total',
+      fmtN(sumNum('umsatzIst')), fmtN(sumNum('umsatzBudget')), fmtN(sumNum('umsatzVorjahr')),
+      fmtN(totW), fmtP(safeQ(totW, totU)),
+      fmtN(totP), fmtP(safeQ(totP, totU)),
+      fmtN(sumNum('pkIst')), fmtN(sumNum('pkPlan')), '',
+    ],
+  ] as string[][];
+
+  const ws = XLSX.utils.aoa_to_sheet(displayRows);
+  ws['!cols'] = [
+    { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 18 },
+    { wch: 18 }, { wch: 10 },
+    { wch: 18 }, { wch: 10 },
+    { wch: 18 }, { wch: 18 }, { wch: 10 },
+  ];
+
+  const wb = XLSX.utils.book_new();
+  const slug = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
+  XLSX.utils.book_append_sheet(wb, ws, `Monatsdaten ${year}`);
+  XLSX.writeFile(wb, `${slug}_Monatsdaten_${year}.xlsx`);
+}
+
 export function exportReportingToExcel(
   months: MonthlyFinancialRecord[],
   totals: ReportingTotals,
