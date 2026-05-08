@@ -37,6 +37,7 @@ import NotFound from "./pages/NotFound";
 import OnboardingForm from "./pages/OnboardingForm";
 import ImportHub from "./pages/ImportHub";
 import PersonalFixPage from "./pages/PersonalFix";
+import DataIntegrityTest from "./pages/DataIntegrityTest";
 import ProdukteSeite from "./pages/Produkte";
 import AbsenzKostenPage from "./pages/AbsenzKosten";
 import ArtikelPage from "./pages/Artikel";
@@ -207,6 +208,7 @@ const AppContent = () => {
             <Route path="/personal-fix"
               element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
             />
+            <Route path="/integrity-test" element={<DataIntegrityTest />} />
             <Route path="/produkte"
               element={<ProdukteSeite />}
             />
