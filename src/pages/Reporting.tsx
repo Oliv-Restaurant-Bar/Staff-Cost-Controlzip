@@ -72,6 +72,8 @@ import {
   computeMonthlyIstNet,
   computeMonthlyVjNet,
 } from '@/lib/revenue-sync';
+import { computePLForMonth } from '@/lib/pl-engine';
+import type { PLMonthResult } from '@/types/pl';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
 
@@ -89,10 +91,13 @@ interface MonthlyKPI {
   umsatzIst:        number | null;
   umsatzBudget:     number | null;
   umsatzVorjahr:    number | null;
-  // Personalkosten
+  // Abweichungen Umsatz (für "Abw. >10%"-Button)
+  abwBudgetPct:     number | null;   // (umsatzIst - umsatzBudget) / umsatzBudget * 100
+  abwVorjahrPct:    number | null;   // (umsatzIst - umsatzVorjahr) / umsatzVorjahr * 100
+  // Personalkosten (aus Dienstplanung / manuelle Erfassung)
   pkIst:            number | null;
   pkBudget:         number | null;
-  // Warenaufwand
+  // Warenaufwand (aus expenseCategories, für Charts)
   warenIst:         number | null;
   warenBudget:      number | null;
   // Quoten (null wenn Umsatz fehlt oder < 1'000 CHF)
@@ -100,6 +105,11 @@ interface MonthlyKPI {
   pkQuoteBudget:    number | null;
   warenQuoteIst:    number | null;
   warenQuoteBudget: number | null;
+  // Aus Erfolgsrechnung / P&L (authoritative für Tabelle)
+  warenaufwandPL:    number | null;   // total_cogs aus PLMonthResult
+  warenaufwandPLPct: number | null;   // warenaufwandPL / umsatzIst * 100
+  personalaufwandPL:    number | null; // total_personnel aus PLMonthResult
+  personalaufwandPLPct: number | null; // personalaufwandPL / umsatzIst * 100
 }
 
 // ─── Warenaufwand-Extraktion ──────────────────────────────────────────────────
@@ -138,6 +148,7 @@ function safeQuote(num: number | null | undefined, denom: number | null | undefi
 
 function buildMonthlyKPIs(
   effectiveMonths: MonthlyFinancialRecord[],
+  plResults?: PLMonthResult[],
 ): MonthlyKPI[] {
   return effectiveMonths.map((m, idx) => {
     const umsatzIst     = m.revenueActual        ?? null;
@@ -148,20 +159,43 @@ function buildMonthlyKPIs(
     const warenRaw      = sumWarenaufwand(m);
     const warenIst      = warenRaw > 0 ? warenRaw : null;
 
+    // Abweichungen
+    const abwBudgetPct = umsatzIst != null && umsatzBudget != null && umsatzBudget !== 0
+      ? parseFloat((((umsatzIst - umsatzBudget) / Math.abs(umsatzBudget)) * 100).toFixed(1))
+      : null;
+    const abwVorjahrPct = umsatzIst != null && umsatzVorjahr != null && umsatzVorjahr !== 0
+      ? parseFloat((((umsatzIst - umsatzVorjahr) / Math.abs(umsatzVorjahr)) * 100).toFixed(1))
+      : null;
+
+    // P&L-basierte Werte (authoritative, identisch mit PLView)
+    const plResult = plResults?.[idx];
+    const plCogs      = plResult?.rows.find(r => r.def.id === 'total_cogs');
+    const plPersonnel = plResult?.rows.find(r => r.def.id === 'total_personnel');
+    const rawWaren = plCogs?.values.actual ?? null;
+    const rawPers  = plPersonnel?.values.actual ?? null;
+    const warenaufwandPL    = rawWaren != null && rawWaren > 0 ? rawWaren : null;
+    const personalaufwandPL = rawPers  != null && rawPers  > 0 ? rawPers  : null;
+
     return {
       month:            idx + 1,
       label:            MONTH_NAMES_SHORT_DE[idx + 1],
       umsatzIst,
       umsatzBudget,
       umsatzVorjahr,
+      abwBudgetPct,
+      abwVorjahrPct,
       pkIst,
       pkBudget,
       warenIst,
-      warenBudget:      null,  // Budget-Warenaufwand noch nicht in budget_v1 abgebildet
-      pkQuoteIst:       safeQuote(pkIst,    umsatzIst),
-      pkQuoteBudget:    safeQuote(pkBudget, umsatzIst),
-      warenQuoteIst:    safeQuote(warenIst, umsatzIst),
-      warenQuoteBudget: null,
+      warenBudget:          null,
+      pkQuoteIst:           safeQuote(pkIst,    umsatzIst),
+      pkQuoteBudget:        safeQuote(pkBudget, umsatzIst),
+      warenQuoteIst:        safeQuote(warenIst, umsatzIst),
+      warenQuoteBudget:     null,
+      warenaufwandPL,
+      warenaufwandPLPct:    safeQuote(warenaufwandPL,    umsatzIst),
+      personalaufwandPL,
+      personalaufwandPLPct: safeQuote(personalaufwandPL, umsatzIst),
     };
   });
 }
@@ -1019,34 +1053,44 @@ const MonthSelectorPanel = ({ kpis, selected, onToggle, onSelectAll, onSelectNon
 // ─── Kumuliert-Zusammenfassung ────────────────────────────────────────────────
 
 interface CumulatedTotals {
-  umsatzIst:    number;
-  umsatzBudget: number;
-  pkIst:        number;
-  pkBudget:     number;
-  warenIst:     number;
-  pkQuote:      number | null;
-  pkQuoteBudget: number | null;
-  warenQuote:   number | null;
-  months:       number;
+  umsatzIst:        number;
+  umsatzBudget:     number;
+  pkIst:            number;
+  pkBudget:         number;
+  warenIst:         number;
+  warenaufwandPL:   number;
+  personalaufwandPL: number;
+  pkQuote:          number | null;
+  pkQuoteBudget:    number | null;
+  warenQuote:       number | null;
+  warenaufwandPLPct:    number | null;
+  personalaufwandPLPct: number | null;
+  months:           number;
 }
 
 function calcCumulated(kpis: MonthlyKPI[], selected: Set<number>): CumulatedTotals {
-  const sel = kpis.filter(k => selected.has(k.month));
-  const sumU  = sel.reduce((s, k) => s + (k.umsatzIst ?? 0), 0);
+  const sel  = kpis.filter(k => selected.has(k.month));
+  const sumU  = sel.reduce((s, k) => s + (k.umsatzIst    ?? 0), 0);
   const sumUB = sel.reduce((s, k) => s + (k.umsatzBudget ?? 0), 0);
-  const sumPK = sel.reduce((s, k) => s + (k.pkIst ?? 0), 0);
-  const sumPKB= sel.reduce((s, k) => s + (k.pkBudget ?? 0), 0);
-  const sumW  = sel.reduce((s, k) => s + (k.warenIst ?? 0), 0);
+  const sumPK = sel.reduce((s, k) => s + (k.pkIst        ?? 0), 0);
+  const sumPKB= sel.reduce((s, k) => s + (k.pkBudget     ?? 0), 0);
+  const sumW  = sel.reduce((s, k) => s + (k.warenIst     ?? 0), 0);
+  const sumWPL= sel.reduce((s, k) => s + (k.warenaufwandPL    ?? 0), 0);
+  const sumPPL= sel.reduce((s, k) => s + (k.personalaufwandPL ?? 0), 0);
   return {
-    umsatzIst:     sumU,
-    umsatzBudget:  sumUB,
-    pkIst:         sumPK,
-    pkBudget:      sumPKB,
-    warenIst:      sumW,
-    pkQuote:       sumU >= 1000 && sumPK > 0 ? parseFloat(((sumPK / sumU) * 100).toFixed(1)) : null,
-    pkQuoteBudget: sumU >= 1000 && sumPKB > 0 ? parseFloat(((sumPKB / sumU) * 100).toFixed(1)) : null,
-    warenQuote:    sumU >= 1000 && sumW > 0 ? parseFloat(((sumW / sumU) * 100).toFixed(1)) : null,
-    months:        sel.length,
+    umsatzIst:            sumU,
+    umsatzBudget:         sumUB,
+    pkIst:                sumPK,
+    pkBudget:             sumPKB,
+    warenIst:             sumW,
+    warenaufwandPL:       sumWPL,
+    personalaufwandPL:    sumPPL,
+    pkQuote:              sumU >= 1000 && sumPK  > 0 ? parseFloat(((sumPK  / sumU) * 100).toFixed(1)) : null,
+    pkQuoteBudget:        sumU >= 1000 && sumPKB > 0 ? parseFloat(((sumPKB / sumU) * 100).toFixed(1)) : null,
+    warenQuote:           sumU >= 1000 && sumW   > 0 ? parseFloat(((sumW   / sumU) * 100).toFixed(1)) : null,
+    warenaufwandPLPct:    sumU >= 1000 && sumWPL > 0 ? parseFloat(((sumWPL / sumU) * 100).toFixed(1)) : null,
+    personalaufwandPLPct: sumU >= 1000 && sumPPL > 0 ? parseFloat(((sumPPL / sumU) * 100).toFixed(1)) : null,
+    months:               sel.length,
   };
 }
 
@@ -1153,8 +1197,17 @@ const Reporting = () => {
     });
   }, [months, year, dailyBudgetsData, vjDailyData, resolvedBudget, prevYearMonths]);
 
+  // ── P&L-Berechnungen pro Monat (identisch mit PLView) ───────────────────
+  const plResults = useMemo<PLMonthResult[]>(
+    () => effectiveMonths.map(rec => computePLForMonth(rec)),
+    [effectiveMonths],
+  );
+
   // ── Zentrales KPI-Array (alle Charts nutzen dasselbe Objekt) ────────────
-  const monthlyKPIs = useMemo(() => buildMonthlyKPIs(effectiveMonths), [effectiveMonths]);
+  const monthlyKPIs = useMemo(
+    () => buildMonthlyKPIs(effectiveMonths, plResults),
+    [effectiveMonths, plResults],
+  );
 
   // ── Monatsauswahl ────────────────────────────────────────────────────────
   const [selectedMonths, setSelectedMonths] = useState<Set<number>>(() => new Set(Array.from({ length: 12 }, (_, i) => i + 1)));
@@ -1481,37 +1534,48 @@ const Reporting = () => {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-muted/50 border-b border-border">
-                    <th className="text-left px-3 py-2.5 font-semibold text-muted-foreground w-20">Monat</th>
+                    <th className="text-left px-3 py-2.5 font-semibold text-muted-foreground w-20 sticky left-0 bg-muted/50">Monat</th>
                     <th className="text-right px-3 py-2.5 font-semibold text-muted-foreground">Umsatz Ist</th>
                     <th className="text-right px-3 py-2.5 font-semibold text-muted-foreground">Budget</th>
                     <th className="text-right px-3 py-2.5 font-semibold text-muted-foreground">Vorjahr</th>
+                    <th className="text-right px-3 py-2.5 font-semibold text-amber-700 dark:text-amber-400">Warenaufwand</th>
+                    <th className="text-right px-3 py-2.5 font-semibold text-amber-700 dark:text-amber-400">Waren %</th>
+                    <th className="text-right px-3 py-2.5 font-semibold text-orange-700 dark:text-orange-400">Personalaufwand</th>
+                    <th className="text-right px-3 py-2.5 font-semibold text-orange-700 dark:text-orange-400">Personal %</th>
                     <th className="text-right px-3 py-2.5 font-semibold text-muted-foreground">PK Ist</th>
-                    <th className="text-right px-3 py-2.5 font-semibold text-muted-foreground">PK %</th>
-                    <th className="text-right px-3 py-2.5 font-semibold text-muted-foreground">Waren</th>
-                    <th className="text-right px-3 py-2.5 font-semibold text-muted-foreground">Waren %</th>
+                    <th className="text-right px-3 py-2.5 font-semibold text-muted-foreground">PK Plan</th>
                     <th className="text-center px-3 py-2.5 font-semibold text-muted-foreground w-16">Vollst.</th>
                     <th className="text-center px-3 py-2.5 font-semibold text-muted-foreground w-20">Aktion</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {effectiveMonths.map((m, idx) => {
-                    const kpi         = monthlyKPIs[idx];
+                    const kpi          = monthlyKPIs[idx];
                     const completeness = calcCompleteness(m);
-                    const isEmpty     = !m.revenueActual && !m.revenueBudget && !m.personnelCostActual && !m.personnelCostPlanned && m.expenseCategories.length === 0;
-                    const isCurrent   = m.year === currentYear && m.month === currentMonth;
-                    const isFuture    = m.year > currentYear || (m.year === currentYear && m.month > currentMonth);
+                    const isEmpty      = !m.revenueActual && !m.revenueBudget && !m.personnelCostActual && !m.personnelCostPlanned && m.expenseCategories.length === 0;
+                    const isCurrent    = m.year === currentYear && m.month === currentMonth;
                     const isOutOfScope = stichtagActive && !isInScope(m.year, m.month);
-                    const isSelected  = selectedMonths.has(m.month);
+                    const isSelected   = selectedMonths.has(m.month);
 
-                    const revPct = m.revenueActual != null && m.revenueBudget != null && m.revenueBudget !== 0
-                      ? ((m.revenueActual - m.revenueBudget) / Math.abs(m.revenueBudget)) * 100
-                      : undefined;
-                    const isVarHighlighted = highlightVariance && revPct !== undefined && Math.abs(revPct) > 10;
+                    const abwB = kpi.abwBudgetPct;
+                    const abwV = kpi.abwVorjahrPct;
+
+                    const isVarHighlighted = highlightVariance && abwB !== null && Math.abs(abwB) > 10;
                     const varRowClass = isVarHighlighted
-                      ? revPct! < 0
+                      ? abwB! < 0
                         ? 'bg-red-50 dark:bg-red-950/20 border-l-4 border-l-red-400'
                         : 'bg-green-50 dark:bg-green-950/20 border-l-4 border-l-green-400'
                       : '';
+
+                    const abwColor = (pct: number | null, positive = true) => {
+                      if (pct == null) return 'text-muted-foreground/50';
+                      const good = positive ? pct >= 0 : pct <= 0;
+                      if (good)  return pct === 0 ? 'text-muted-foreground' : 'text-green-600 dark:text-green-400';
+                      return Math.abs(pct) > 10 ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400';
+                    };
+
+                    const fmtAbw = (pct: number | null) =>
+                      pct == null ? null : `${pct >= 0 ? '+' : ''}${pct.toFixed(1)} %`;
 
                     return (
                       <tr
@@ -1525,7 +1589,8 @@ const Reporting = () => {
                           varRowClass,
                         )}
                       >
-                        <td className="px-3 py-2 font-semibold">
+                        {/* Monat */}
+                        <td className="px-3 py-2 font-semibold sticky left-0 bg-inherit">
                           <div className="flex items-center gap-1">
                             <input
                               type="checkbox"
@@ -1538,42 +1603,111 @@ const Reporting = () => {
                             </span>
                           </div>
                         </td>
+
+                        {/* Umsatz Ist */}
                         <td className="px-3 py-2 text-right font-mono">
-                          {m.revenueActual !== undefined
-                            ? <span className={varianceColor(m.revenueActual, m.revenueBudget)}>{fmtCHF(m.revenueActual)}</span>
-                            : <span className="text-muted-foreground/40">–</span>}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">
-                          {m.revenueBudget !== undefined ? fmtCHF(m.revenueBudget) : '–'}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">
-                          {m.revenuePreviousYear !== undefined
-                            ? <>{fmtCHF(m.revenuePreviousYear)}{m.revenueActual && <span className="ml-1 text-[9px]">{formatVariance(m.revenueActual, m.revenuePreviousYear)}</span>}</>
-                            : '–'}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono">
-                          {m.personnelCostActual !== undefined ? fmtCHF(m.personnelCostActual) : <span className="text-muted-foreground/40">–</span>}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono">
-                          {kpi.pkQuoteIst !== null
-                            ? <span className={cn('font-semibold', kpi.pkQuoteIst > threshold ? 'text-red-600' : kpi.pkQuoteIst > threshold - 3 ? 'text-amber-600' : 'text-green-600')}>
-                                {fmtPct(kpi.pkQuoteIst)}
+                          {m.revenueActual !== undefined ? (
+                            <div>
+                              <span className={varianceColor(m.revenueActual, m.revenueBudget)}>
+                                {fmtCHF(m.revenueActual)}
                               </span>
-                            : <span className="text-muted-foreground/40">–</span>}
+                              {highlightVariance && abwB != null && (
+                                <div className={cn('text-[9px] font-semibold', abwColor(abwB))}>
+                                  Bdg: {fmtAbw(abwB)}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground/40">–</span>
+                          )}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono text-amber-700 dark:text-amber-400">
-                          {kpi.warenIst !== null ? fmtCHF(kpi.warenIst) : <span className="text-muted-foreground/40">–</span>}
+
+                        {/* Budget */}
+                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">
+                          {m.revenueBudget !== undefined ? (
+                            <div>
+                              <span>{fmtCHF(m.revenueBudget)}</span>
+                              {highlightVariance && abwB != null && (
+                                <div className={cn('text-[9px] font-semibold', abwColor(abwB))}>
+                                  {fmtAbw(abwB)}
+                                </div>
+                              )}
+                            </div>
+                          ) : '–'}
                         </td>
+
+                        {/* Vorjahr */}
+                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">
+                          {m.revenuePreviousYear !== undefined ? (
+                            <div>
+                              <span>{fmtCHF(m.revenuePreviousYear)}</span>
+                              {highlightVariance && abwV != null ? (
+                                <div className={cn('text-[9px] font-semibold', abwColor(abwV))}>
+                                  {fmtAbw(abwV)}
+                                </div>
+                              ) : !highlightVariance && m.revenueActual ? (
+                                <span className="ml-1 text-[9px]">{fmtAbw(abwV)}</span>
+                              ) : null}
+                            </div>
+                          ) : '–'}
+                        </td>
+
+                        {/* Warenaufwand (P&L) */}
                         <td className="px-3 py-2 text-right font-mono">
-                          {kpi.warenQuoteIst !== null
-                            ? <span className={cn('font-semibold', kpi.warenQuoteIst > 33 ? 'text-red-600' : kpi.warenQuoteIst > 28 ? 'text-amber-600' : 'text-green-600')}>
-                                {fmtPct(kpi.warenQuoteIst)}
-                              </span>
+                          {kpi.warenaufwandPL != null ? (
+                            <span className="text-amber-700 dark:text-amber-400">{fmtCHF(kpi.warenaufwandPL)}</span>
+                          ) : <span className="text-muted-foreground/40">–</span>}
+                        </td>
+
+                        {/* Waren % */}
+                        <td className="px-3 py-2 text-right font-mono">
+                          {kpi.warenaufwandPLPct != null ? (
+                            <span className={cn('font-semibold',
+                              kpi.warenaufwandPLPct > 33 ? 'text-red-600' :
+                              kpi.warenaufwandPLPct > 28 ? 'text-amber-600' : 'text-green-600')}>
+                              {fmtPct(kpi.warenaufwandPLPct)}
+                            </span>
+                          ) : <span className="text-muted-foreground/40">–</span>}
+                        </td>
+
+                        {/* Personalaufwand (P&L) */}
+                        <td className="px-3 py-2 text-right font-mono">
+                          {kpi.personalaufwandPL != null ? (
+                            <span className="text-orange-700 dark:text-orange-400">{fmtCHF(kpi.personalaufwandPL)}</span>
+                          ) : <span className="text-muted-foreground/40">–</span>}
+                        </td>
+
+                        {/* Personal % */}
+                        <td className="px-3 py-2 text-right font-mono">
+                          {kpi.personalaufwandPLPct != null ? (
+                            <span className={cn('font-semibold',
+                              kpi.personalaufwandPLPct > threshold + 5 ? 'text-red-600' :
+                              kpi.personalaufwandPLPct > threshold     ? 'text-amber-600' : 'text-green-600')}>
+                              {fmtPct(kpi.personalaufwandPLPct)}
+                            </span>
+                          ) : <span className="text-muted-foreground/40">–</span>}
+                        </td>
+
+                        {/* PK Ist (Dienstplanung) */}
+                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">
+                          {m.personnelCostActual !== undefined
+                            ? fmtCHF(m.personnelCostActual)
                             : <span className="text-muted-foreground/40">–</span>}
                         </td>
+
+                        {/* PK Plan */}
+                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">
+                          {m.personnelCostPlanned !== undefined
+                            ? fmtCHF(m.personnelCostPlanned)
+                            : <span className="text-muted-foreground/40">–</span>}
+                        </td>
+
+                        {/* Vollständigkeit */}
                         <td className="px-3 py-2 text-center">
                           <CompletenessBadge pct={completeness.completenessPercent} />
                         </td>
+
+                        {/* Aktion */}
                         <td className="px-3 py-2 text-center">
                           <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" onClick={() => setEditRecord(m)}>
                             {isEmpty ? <><Plus className="h-3 w-3 mr-0.5" />Erfassen</> : <><Edit3 className="h-3 w-3 mr-0.5" />Bearbeiten</>}
@@ -1586,27 +1720,40 @@ const Reporting = () => {
                   {/* ── Kumuliert-Zeile ── */}
                   {selectedMonths.size > 0 && selectedMonths.size < 12 && cumulated.umsatzIst > 0 && (
                     <tr className="bg-blue-100/60 dark:bg-blue-900/20 border-t-2 border-blue-300 font-bold">
-                      <td className="px-3 py-2.5 text-xs font-bold text-blue-800 dark:text-blue-300">
+                      <td className="px-3 py-2.5 text-xs font-bold text-blue-800 dark:text-blue-300 sticky left-0 bg-blue-100/60 dark:bg-blue-900/20">
                         Σ Auswahl ({selectedMonths.size} Mo.)
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono text-sm">{fmtCHF(cumulated.umsatzIst)}</td>
                       <td className="px-3 py-2.5 text-right font-mono text-sm text-muted-foreground">{cumulated.umsatzBudget > 0 ? fmtCHF(cumulated.umsatzBudget) : '–'}</td>
                       <td className="px-3 py-2.5 text-center text-muted-foreground">–</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-sm">{fmtCHF(cumulated.pkIst)}</td>
+                      {/* Warenaufwand PL */}
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-amber-700">
+                        {cumulated.warenaufwandPL > 0 ? fmtCHF(cumulated.warenaufwandPL) : '–'}
+                      </td>
                       <td className="px-3 py-2.5 text-right font-mono text-sm">
-                        {cumulated.pkQuote != null ? (
-                          <span className={cumulated.pkQuote > threshold ? 'text-red-600' : 'text-green-600'}>
-                            {fmtPct(cumulated.pkQuote)}
+                        {cumulated.warenaufwandPLPct != null ? (
+                          <span className={cumulated.warenaufwandPLPct > 30 ? 'text-red-600' : 'text-green-600'}>
+                            {fmtPct(cumulated.warenaufwandPLPct)}
                           </span>
                         ) : '–'}
                       </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-sm text-amber-700">{cumulated.warenIst > 0 ? fmtCHF(cumulated.warenIst) : '–'}</td>
+                      {/* Personalaufwand PL */}
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-orange-700">
+                        {cumulated.personalaufwandPL > 0 ? fmtCHF(cumulated.personalaufwandPL) : '–'}
+                      </td>
                       <td className="px-3 py-2.5 text-right font-mono text-sm">
-                        {cumulated.warenQuote != null ? (
-                          <span className={cumulated.warenQuote > 30 ? 'text-red-600' : 'text-green-600'}>
-                            {fmtPct(cumulated.warenQuote)}
+                        {cumulated.personalaufwandPLPct != null ? (
+                          <span className={cumulated.personalaufwandPLPct > threshold ? 'text-red-600' : 'text-green-600'}>
+                            {fmtPct(cumulated.personalaufwandPLPct)}
                           </span>
                         ) : '–'}
+                      </td>
+                      {/* PK Ist / Plan */}
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-muted-foreground">
+                        {fmtCHF(cumulated.pkIst)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-muted-foreground">
+                        {cumulated.pkBudget > 0 ? fmtCHF(cumulated.pkBudget) : '–'}
                       </td>
                       <td />
                       <td />
@@ -1616,28 +1763,59 @@ const Reporting = () => {
                   {/* ── Total-Zeile ── */}
                   {hasAnyData && (
                     <tr className="bg-slate-100 dark:bg-slate-800 border-t-2 border-border font-bold">
-                      <td className="px-3 py-2.5 text-sm font-bold">Σ Total {year}</td>
+                      <td className="px-3 py-2.5 text-sm font-bold sticky left-0 bg-slate-100 dark:bg-slate-800">Σ Total {year}</td>
                       <td className="px-3 py-2.5 text-right font-mono text-sm">{totals.revenueActual > 0 ? fmtCHF(totals.revenueActual) : '–'}</td>
                       <td className="px-3 py-2.5 text-right font-mono text-sm text-muted-foreground">{totals.revenueBudget > 0 ? fmtCHF(totals.revenueBudget) : '–'}</td>
                       <td className="px-3 py-2.5 text-right font-mono text-sm text-muted-foreground">
                         {totals.revenuePreviousYear > 0 ? <>
                           {fmtCHF(totals.revenuePreviousYear)}
-                          {totals.revenueActual > 0 && <span className="ml-1 text-[9px] font-normal">{formatVariance(totals.revenueActual, totals.revenuePreviousYear)}</span>}
+                          {totals.revenueActual > 0 && (
+                            <span className="ml-1 text-[9px] font-normal">
+                              {formatVariance(totals.revenueActual, totals.revenuePreviousYear)}
+                            </span>
+                          )}
                         </> : '–'}
                       </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-sm">
-                        {totals.personnelCostActual > 0 ? <>
-                          {fmtCHF(totals.personnelCostActual)}
-                          {totals.revenueActual > 0 && <span className="ml-1 text-[9px] font-normal text-muted-foreground">{fmtPct(safeQuote(totals.personnelCostActual, totals.revenueActual))}</span>}
-                        </> : '–'}
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-sm">
-                        {safeQuote(totals.personnelCostActual, totals.revenueActual) != null
-                          ? fmtPct(safeQuote(totals.personnelCostActual, totals.revenueActual))
+                      {/* Warenaufwand PL Totals */}
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-amber-700">
+                        {monthlyKPIs.reduce((s, k) => s + (k.warenaufwandPL ?? 0), 0) > 0
+                          ? fmtCHF(monthlyKPIs.reduce((s, k) => s + (k.warenaufwandPL ?? 0), 0))
                           : '–'}
                       </td>
-                      <td className="px-3 py-2.5 text-center text-muted-foreground">–</td>
-                      <td className="px-3 py-2.5 text-center text-muted-foreground">–</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm">
+                        {(() => {
+                          const tw = monthlyKPIs.reduce((s, k) => s + (k.warenaufwandPL ?? 0), 0);
+                          const tu = totals.revenueActual;
+                          const q  = safeQuote(tw, tu);
+                          return q != null ? (
+                            <span className={q > 30 ? 'text-red-600' : 'text-green-600'}>{fmtPct(q)}</span>
+                          ) : '–';
+                        })()}
+                      </td>
+                      {/* Personalaufwand PL Totals */}
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-orange-700">
+                        {monthlyKPIs.reduce((s, k) => s + (k.personalaufwandPL ?? 0), 0) > 0
+                          ? fmtCHF(monthlyKPIs.reduce((s, k) => s + (k.personalaufwandPL ?? 0), 0))
+                          : '–'}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm">
+                        {(() => {
+                          const tp = monthlyKPIs.reduce((s, k) => s + (k.personalaufwandPL ?? 0), 0);
+                          const tu = totals.revenueActual;
+                          const q  = safeQuote(tp, tu);
+                          return q != null ? (
+                            <span className={q > threshold ? 'text-red-600' : 'text-green-600'}>{fmtPct(q)}</span>
+                          ) : '–';
+                        })()}
+                      </td>
+                      {/* PK Ist */}
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-muted-foreground">
+                        {totals.personnelCostActual > 0 ? fmtCHF(totals.personnelCostActual) : '–'}
+                      </td>
+                      {/* PK Plan */}
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-muted-foreground">
+                        {totals.revenueBudget > 0 ? '–' : '–'}
+                      </td>
                       <td />
                       <td />
                     </tr>
