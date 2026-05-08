@@ -55,6 +55,99 @@ An internal reporting tool for revenue, personnel costs, schedules, and KPIs, su
 ## User preferences
 _Populate as you build_
 
+## Technische Roadmap — daily_revenues Migration
+
+### Kontext
+Tagesumsätze werden aktuell als grosser KV-Blob in `app_settings` gespeichert
+(Schlüssel `dailyBudgets` / `beaulieu:dailyBudgets`). Als Sofortschutz gegen
+Datenverlust wurde `safeUpsertDailyBudgets` eingeführt (liest KV → mergt →
+schreibt zurück). Diese Lösung ist stabil, hat aber strukturelle Grenzen:
+kein Audit-Log, kein atomarer UPSERT pro Tag, Merge-Konflikte bei Parallelzugriff.
+
+### Zielarchitektur
+Normalisierte Tabelle `daily_revenues` in Supabase Postgres:
+```sql
+-- Vorbereitet in supabase/migrations/20260507_daily_revenues.sql
+CREATE TABLE daily_revenues (
+  restaurant_id TEXT    NOT NULL,  -- 'oliv' | 'beaulieu'
+  date          DATE    NOT NULL,
+  actual_revenue        NUMERIC,
+  planned_revenue       NUMERIC,
+  actual_food           NUMERIC,
+  actual_beverage       NUMERIC,
+  actual_labor_cost     NUMERIC,
+  previous_year_revenue NUMERIC,
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  updated_at    TIMESTAMPTZ DEFAULT now(),
+  updated_by    TEXT,              -- user email für Audit-Trail
+  PRIMARY KEY (restaurant_id, date)
+);
+```
+Jeder Tag hat einen eindeutigen Datensatz — kein Blob, kein Merge nötig.
+
+### Migrationsschritte (in dieser Reihenfolge)
+
+**Schritt 1 — SQL-Migration ausführen**
+- Script `supabase/migrations/20260507_daily_revenues.sql` im Supabase SQL-Editor
+  ausführen (noch nicht aktiv).
+- Zählt bestehende KV-Daten vor und nach der Migration (Abweichung = 0 prüfen).
+
+**Schritt 2 — Datenmigration KV → Tabelle**
+- Einmalige Server-Side-Migration: alle Einträge aus `app_settings` wo
+  `key IN ('dailyBudgets', 'beaulieu:dailyBudgets')` als normalisierte Zeilen
+  in `daily_revenues` einfügen.
+- Validierung: `SELECT count(*) FROM daily_revenues` muss ≥ bisherige Blob-Tage.
+
+**Schritt 3 — Neue Datenbankschicht**
+- Neue Datei `src/lib/daily-revenues-db.ts` mit:
+  - `upsertDailyRevenue(restaurantId, date, fields)` → atomarer UPSERT inkl.
+    `updated_by` und `updated_at`
+  - `getDailyRevenues(restaurantId, fromDate, toDate)` → Rückgabe als Map
+  - `getDailyRevenueMonth(restaurantId, year, month)` → 31-Tage-Array
+- Kein localStorage mehr für Tagesumsätze — direkt aus Supabase Postgres.
+
+**Schritt 4 — Lese- und Schreibpfade umstellen**
+Betroffene Komponenten (alle nutzen aktuell `safeUpsertDailyBudgets`):
+1. `GastronoviImportSection` (handleSave, commitImport, handleImportClick)
+2. `TagesansichtPage` (saveManualIst)
+3. `TagesControllingPage` (commitUmsatzEdit)
+4. `Dashboard` (saveRevenue)
+5. `useVj2025Import` (Vorjahres-Seed)
+6. `usePersonnelData` (Lohnkosten-Schreibpfad)
+7. `SchedulePlanner` (Lohnkosten-Tagesblock)
+
+**Schritt 5 — Audit-Log**
+- Tabelle `daily_revenues` enthält `updated_by` (Email des einloggten Benutzers)
+  und `updated_at` (Timestamp).
+- Optional: separate `daily_revenues_audit`-Tabelle mit Trigger für vollständigen
+  Change-History.
+
+**Schritt 6 — Fallback entfernen**
+- `safeUpsertDailyBudgets` auf Read-Only-Fallback reduzieren (nur noch lesen,
+  nicht mehr schreiben).
+- `useSyncStore` `SYNC_KEYS`-Liste: `dailyBudgets` entfernen.
+- localStorage-Einträge `dailyBudgets` / `beaulieu:dailyBudgets` nach Migration
+  löschen (Cleanup-Script).
+
+**Schritt 7 — Integrationstests**
+Alle vier Views müssen für jeden Testtag identische Werte zeigen:
+- Tagesansicht (`TagesansichtPage`)
+- Dashboard (`Index.tsx`)
+- Tages-Controlling (`TagesControllingPage`)
+- Erfolgsrechnung / P&L (`PLView.tsx`)
+
+Testscript: `src/lib/__tests__/daily-revenues-integration.test.ts` (noch zu erstellen).
+
+### Status
+- [x] SQL-Migration-Script vorbereitet (`supabase/migrations/20260507_daily_revenues.sql`)
+- [ ] SQL-Script im Supabase SQL-Editor ausführen
+- [ ] Datenmigration KV → Tabelle
+- [ ] `daily-revenues-db.ts` implementieren
+- [ ] Schreibpfade umstellen
+- [ ] Audit-Log aktivieren
+- [ ] Fallback entfernen
+- [ ] Integrationstests
+
 ## Gotchas
 - **Supabase Migrations:** All SQL migration scripts in `supabase/migrations/` **must** be executed sequentially in the Supabase SQL Editor.
 - **Tenant Filtering:** Data for Beaulieu is filtered by `id LIKE 'b-%'` and for Oliv by `id NOT LIKE 'b-%'`; there is no explicit `restaurant_id` column.
