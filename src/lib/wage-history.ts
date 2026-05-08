@@ -232,67 +232,104 @@ export async function applyEffectiveWages(
  * Bestehende Einträge werden NIEMALS geändert.
  *
  * Fehlerbehandlung:
- *   - "permission denied"  → Migration 20260508_employee_wages_fix_rls.sql
- *     muss im Supabase SQL-Editor ausgeführt werden.
- *   - "relation does not exist" → Migration 20260430_employee_wages.sql fehlt.
+ *   - "created_by column not found" → Spalte fehlt; Retry ohne created_by.
+ *     Migration 20260509_employee_wages_created_by.sql für Audit-Trail ausführen.
+ *   - "permission denied"           → Migration 20260508_employee_wages_fix_rls.sql ausführen.
+ *   - "relation does not exist"     → Migration 20260430_employee_wages.sql ausführen.
  */
 export async function addWageEntry(
   entry: NewWageEntry,
 ): Promise<{ error: string | null; userMessage: string | null }> {
-  try {
-    const row: Record<string, unknown> = {
-      employee_id:              entry.employeeId,
-      restaurant_id:            entry.restaurantId,
-      valid_from:               entry.validFrom,
-      hourly_wage:              entry.hourlyWage             ?? 0,
-      monthly_salary:           entry.monthlySalary          ?? 0,
-      monthly_salary_with_13th: entry.monthlySalaryWith13th  ?? 0,
-      salary_13:                entry.salary13               ?? false,
-      notes:                    entry.notes                  ?? '',
-      created_by:               entry.createdBy              ?? '',
-    };
+  // Basis-Payload (immer vorhanden)
+  const baseRow: Record<string, unknown> = {
+    employee_id:              entry.employeeId,
+    restaurant_id:            entry.restaurantId,
+    valid_from:               entry.validFrom,
+    hourly_wage:              entry.hourlyWage             ?? 0,
+    monthly_salary:           entry.monthlySalary          ?? 0,
+    monthly_salary_with_13th: entry.monthlySalaryWith13th  ?? 0,
+    salary_13:                entry.salary13               ?? false,
+    notes:                    entry.notes                  ?? '',
+  };
 
-    const { error } = await (supabase as any)
-      .from('employee_wages')
-      .insert(row);
+  const doInsert = async (includeCreatedBy: boolean) => {
+    const row = includeCreatedBy && entry.createdBy
+      ? { ...baseRow, created_by: entry.createdBy }
+      : { ...baseRow };
+    return (supabase as any).from('employee_wages').insert(row);
+  };
 
-    if (error) {
-      console.error('[WAGE-HISTORY] addWageEntry Fehler:', {
-        code:    error.code,
-        message: error.message,
-        details: error.details,
-        hint:    error.hint,
-        entry:   { employeeId: entry.employeeId, restaurantId: entry.restaurantId, validFrom: entry.validFrom },
-      });
+  const handleError = (error: { code?: string; message?: string; details?: string; hint?: string }) => {
+    console.error('[WAGE-HISTORY] addWageEntry Fehler:', {
+      code:    error.code,
+      message: error.message,
+      details: error.details,
+      hint:    error.hint,
+      entry:   { employeeId: entry.employeeId, restaurantId: entry.restaurantId, validFrom: entry.validFrom },
+    });
 
-      // Benutzerfreundliche Meldung je nach Fehlertyp
-      const msg = error.message ?? '';
-      if (msg.includes('permission denied') || error.code === '42501') {
-        return {
-          error:       error.message,
-          userMessage: 'Lohneintrag konnte wegen fehlender Berechtigung nicht gespeichert werden. Bitte Administrator kontaktieren (Supabase-Migration erforderlich).',
-        };
-      }
-      if (msg.includes('relation') && msg.includes('does not exist')) {
-        return {
-          error:       error.message,
-          userMessage: 'Tabelle employee_wages fehlt in der Datenbank. Bitte Migration 20260430_employee_wages.sql ausführen.',
-        };
-      }
-      if (msg.includes('duplicate') || error.code === '23505') {
-        return {
-          error:       error.message,
-          userMessage: `Für das Datum ${entry.validFrom} existiert bereits ein Lohneintrag.`,
-        };
-      }
+    const msg = error.message ?? '';
+
+    if (msg.includes('permission denied') || error.code === '42501') {
       return {
-        error:       error.message,
-        userMessage: `Speichern fehlgeschlagen: ${error.message}`,
+        error:       msg,
+        userMessage: 'Lohneintrag konnte wegen fehlender Berechtigung nicht gespeichert werden. Bitte Administrator kontaktieren (Supabase-Migration 20260508_employee_wages_fix_rls.sql ausführen).',
       };
     }
+    if (msg.includes('relation') && msg.includes('does not exist')) {
+      return {
+        error:       msg,
+        userMessage: 'Tabelle employee_wages fehlt in der Datenbank. Bitte Migration 20260430_employee_wages.sql im Supabase SQL-Editor ausführen.',
+      };
+    }
+    if (msg.includes('duplicate') || error.code === '23505') {
+      return {
+        error:       msg,
+        userMessage: `Für das Datum ${entry.validFrom} existiert bereits ein Lohneintrag. Bitte ein anderes Datum wählen.`,
+      };
+    }
+    return {
+      error:       msg,
+      userMessage: `Speichern fehlgeschlagen: ${msg}`,
+    };
+  };
 
-    console.log(`[WAGE-HISTORY] addWageEntry OK | employee: ${entry.employeeId} | validFrom: ${entry.validFrom} | wage: ${entry.hourlyWage || entry.monthlySalary} | createdBy: ${entry.createdBy ?? '–'}`);
+  try {
+    // Versuch 1: mit created_by (voller Audit-Trail)
+    let { error } = await doInsert(true);
+
+    // Falls created_by-Spalte fehlt → Retry ohne created_by (Graceful Degradation)
+    // Die Spalte wird durch Migration 20260509_employee_wages_created_by.sql hinzugefügt.
+    if (error) {
+      const msg = error.message ?? '';
+      const isCreatedByMissing =
+        msg.includes('created_by') ||
+        msg.includes('schema cache') ||
+        (msg.includes('column') && msg.includes('does not exist') && msg.includes('created_by'));
+
+      if (isCreatedByMissing) {
+        console.warn(
+          '[WAGE-HISTORY] Spalte created_by fehlt → Retry ohne Audit-Feld.\n' +
+          '  Für vollständigen Audit-Trail bitte ausführen:\n' +
+          '  supabase/migrations/20260509_employee_wages_created_by.sql',
+        );
+        const retry = await doInsert(false);
+        error = retry.error;
+      }
+    }
+
+    if (error) {
+      return handleError(error);
+    }
+
+    console.log(
+      `[WAGE-HISTORY] addWageEntry OK | employee: ${entry.employeeId}` +
+      ` | validFrom: ${entry.validFrom}` +
+      ` | wage: ${entry.hourlyWage || entry.monthlySalary}` +
+      ` | createdBy: ${entry.createdBy ?? '–'}`,
+    );
     return { error: null, userMessage: null };
+
   } catch (e) {
     const msg = String(e);
     console.error('[WAGE-HISTORY] addWageEntry Exception:', msg);
