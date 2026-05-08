@@ -601,15 +601,23 @@ export const usePersonnelData = () => {
       // Kein vollständiger Blob-Overwrite: nur Sync via merge (kein Datenverlust durch stale State)
       // Dieses useEffect synct hauptsächlich Personalkosten-Felder (plannedLaborCost, actualLaborCost).
       // Umsätze werden separat via safeUpsertDailyBudgets aus GastronoviImportSection / TagesansichtPage geschrieben.
+      // Nur Lohnkosten-Felder in KV schreiben — nie Revenue-Felder aus diesem Hook.
+      // Verhindert, dass usePersonnelData Revenue-Daten mit stale State überschreibt.
       import('@/lib/supabase-kv').then(({ kvGet, kvSet }) => {
         kvGet(DAILY_BUDGETS_KEY).then(remote => {
           const base = (remote && typeof remote === 'object' && !Array.isArray(remote))
             ? remote as Record<string, Record<string, unknown>>
             : {};
-          // Merge: base (KV) als Fundament, lokale Werte > 0 gewinnen
-          const merged = { ...base };
+          const merged: Record<string, Record<string, unknown>> = { ...base };
           for (const [day, data] of Object.entries(dailyBudgets)) {
-            merged[day] = { ...(base[day] ?? {}), ...data };
+            const existing = base[day] ?? {};
+            // Nur Lohnkosten-Felder aktualisieren — Revenue-Felder (actualRevenue, etc.)
+            // bleiben aus KV erhalten und werden NICHT von lokalem State überschrieben.
+            merged[day] = {
+              ...existing,
+              plannedLaborCost: (data as Record<string, unknown>).plannedLaborCost ?? existing.plannedLaborCost ?? 0,
+              actualLaborCost:  (data as Record<string, unknown>).actualLaborCost  ?? existing.actualLaborCost  ?? 0,
+            };
           }
           kvSet(DAILY_BUDGETS_KEY, merged).catch(() => {});
         }).catch(() => {});

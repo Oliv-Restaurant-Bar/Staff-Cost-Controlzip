@@ -1478,8 +1478,25 @@ const SchedulePlanner = () => {
       // localStorage backup
       localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(scheduleData));
       localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(employees));
-      localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(dailyBudgets));
-      import('@/lib/supabase-kv').then(({ kvSet }) => kvSet('dailyBudgets', dailyBudgets).catch(() => {}));
+      // Sicherer Partial-Upsert: nur Lohnkosten-Felder für den aktuellen Monat schreiben.
+      // Kein Blob-Overwrite — Revenue-Felder anderer Monate bleiben in KV unberührt.
+      {
+        const laborUpdates: Record<string, Record<string, unknown>> = {};
+        for (const [day, entry] of Object.entries(dailyBudgets)) {
+          if (day.startsWith(monthKey)) {
+            laborUpdates[day] = {
+              plannedLaborCost: (entry as Record<string, unknown>).plannedLaborCost ?? 0,
+              actualLaborCost:  (entry as Record<string, unknown>).actualLaborCost  ?? 0,
+            };
+          }
+        }
+        if (Object.keys(laborUpdates).length > 0) {
+          import('@/lib/supabase-kv').then(({ safeUpsertDailyBudgets }) =>
+            safeUpsertDailyBudgets(tenantKey('dailyBudgets'), laborUpdates, false).catch(() => {})
+          );
+        }
+        localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(dailyBudgets));
+      }
       localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(actualHoursData));
 
       setLastSaveTime(new Date());
