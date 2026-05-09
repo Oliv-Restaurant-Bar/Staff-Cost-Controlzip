@@ -487,7 +487,9 @@ const RevenueComparisonChart = ({
   const hasData = data.some(d => d.umsatzIst || d.umsatzBudget || d.umsatzVorjahr);
   if (!hasData) return <NoDataOverlay message="Noch keine Umsatzdaten vorhanden." />;
 
-  // ── Summary bar from selected months ─────────────────────────────────────
+  const [showSelector, setShowSelector] = useState(false);
+
+  // ── Kumuliert-Werte für KPI-Box ───────────────────────────────────────────
   const selSet  = selectedMonths.size > 0
     ? selectedMonths
     : new Set(data.filter(d => (d.umsatzIst ?? 0) > 0).map(d => d.month));
@@ -500,23 +502,8 @@ const RevenueComparisonChart = ({
   const sumAbwV   = sumIst > 0 && sumVJ > 0
     ? parseFloat(((sumIst - sumVJ) / sumVJ * 100).toFixed(1)) : null;
 
-  const summaryEntry: MonthlyKPI = {
-    month: 0,
-    label: `∑ ${selData.length} Mo.`,
-    umsatzIst:     sumIst    > 0 ? sumIst    : null,
-    umsatzBudget:  sumBudget > 0 ? sumBudget : null,
-    umsatzVorjahr: sumVJ     > 0 ? sumVJ     : null,
-    abwBudgetPct:  sumAbwB,
-    abwVorjahrPct: sumAbwV,
-    pkIst: null, pkBudget: null,
-    warenIst: null, warenBudget: null,
-    pkQuoteIst: null, pkQuoteBudget: null,
-    warenQuoteIst: null, warenQuoteBudget: null,
-    warenaufwandPL: null, warenaufwandPLPct: null,
-    personalaufwandPL: null, personalaufwandPLPct: null,
-  };
-
-  const chartData = [summaryEntry, ...data];
+  // Nur Monatsdaten – kein Kumuliert-Balken → Y-Achse skaliert auf Monatswerte
+  const chartData = data;
 
   // ── Label renderer ────────────────────────────────────────────────────────
   const renderAbwLabel = (props: Record<string, unknown>) => {
@@ -542,23 +529,12 @@ const RevenueComparisonChart = ({
     });
 
     const totalH = lines.length * lineH;
-    // Pin labels to the top of the chart area regardless of bar height
-    // Math.min caps tall-bar labels (barTop small → barTop−h−4 could be negative, fine in margin)
-    // and raises short-bar labels (barTop large → barTop−h−4 large) to ≤ 8px from chart top
     const baseY = Math.min((y as number) - totalH - 4, 8);
 
     return (
       <g>
         {lines.map((l, i) => (
-          <text
-            key={i}
-            x={cx}
-            y={baseY + i * lineH}
-            textAnchor="middle"
-            fontSize={9}
-            fontWeight="700"
-            fill={l.color}
-          >
+          <text key={i} x={cx} y={baseY + i * lineH} textAnchor="middle" fontSize={9} fontWeight="700" fill={l.color}>
             {l.text}
           </text>
         ))}
@@ -568,6 +544,39 @@ const RevenueComparisonChart = ({
 
   return (
     <div>
+      {/* KPI-Box oben rechts – klicken öffnet/schliesst Monatsauswahl */}
+      {sumIst > 0 && (
+        <div className="flex justify-end mb-2">
+          <div
+            className={cn(
+              'rounded-lg border px-3 py-2 text-right min-w-[160px] cursor-pointer select-none transition-colors',
+              showSelector
+                ? 'bg-primary/10 border-primary/40'
+                : 'bg-muted/40 border-border hover:border-primary/30 hover:bg-muted/60',
+            )}
+            onClick={() => setShowSelector(s => !s)}
+          >
+            <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Umsatz kumuliert</p>
+            <p className="text-sm font-bold text-foreground mt-0.5">{fmtCHF(sumIst)}</p>
+            <div className="mt-1.5 pt-1.5 border-t border-border/60 space-y-0.5">
+              {sumAbwB != null && (
+                <p className={cn('text-[11px] font-semibold', sumAbwB >= 0 ? 'text-green-600' : 'text-red-600')}>
+                  B: {sumAbwB >= 0 ? '+' : ''}{sumAbwB.toFixed(1)} %
+                </p>
+              )}
+              {sumAbwV != null && (
+                <p className={cn('text-[11px] font-semibold', sumAbwV >= 0 ? 'text-green-600' : 'text-red-600')}>
+                  VJ: {sumAbwV >= 0 ? '+' : ''}{sumAbwV.toFixed(1)} %
+                </p>
+              )}
+            </div>
+            <p className="text-[9px] text-muted-foreground/50 mt-1.5">
+              {selData.length} Mo. · Monate wählen ▾
+            </p>
+          </div>
+        </div>
+      )}
+
       <ResponsiveContainer width="100%" height={320}>
         <BarChart data={chartData} barGap={2} barCategoryGap="26%" margin={{ top: 36, right: 8, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
@@ -575,21 +584,30 @@ const RevenueComparisonChart = ({
             dataKey="label"
             tick={(tickProps: any) => {
               const { x, y, payload } = tickProps;
-              const isSummary = payload.index === 0;
+              const entry  = data.find(d => d.label === payload.value);
+              const isSel  = entry ? selectedMonths.has(entry.month) : false;
+              const hasPt  = entry ? (entry.umsatzIst ?? 0) > 0 : false;
               return (
-                <text
-                  x={x} y={y + 4}
-                  textAnchor="middle"
-                  dominantBaseline="hanging"
-                  fontSize={isSummary ? 10 : AXIS_STYLE.fontSize}
-                  fontWeight={isSummary ? '700' : '400'}
-                  fill={isSummary ? 'hsl(var(--foreground))' : (AXIS_STYLE as any).fill ?? 'hsl(var(--muted-foreground))'}
+                <g
+                  transform={`translate(${x},${y})`}
+                  style={{ cursor: entry ? 'pointer' : 'default' }}
+                  onClick={() => entry && onToggle(entry.month)}
                 >
-                  {payload.value}
-                </text>
+                  <text
+                    y={4} textAnchor="middle" dominantBaseline="hanging"
+                    fontSize={AXIS_STYLE.fontSize}
+                    fontWeight={isSel ? '700' : '400'}
+                    fill={isSel ? '#4f46e5' : AXIS_STYLE.fill}
+                  >
+                    {payload.value}
+                  </text>
+                  <circle cx={0} cy={19} r={3}
+                    fill={!hasPt ? 'rgba(0,0,0,0.1)' : isSel ? '#4f46e5' : 'rgba(0,0,0,0.2)'}
+                  />
+                </g>
               );
             }}
-            axisLine={false} tickLine={false}
+            axisLine={false} tickLine={false} height={28}
           />
           <YAxis
             tick={AXIS_STYLE} axisLine={false} tickLine={false} width={68}
@@ -603,34 +621,25 @@ const RevenueComparisonChart = ({
             iconType="square" iconSize={10} wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
             formatter={v => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{v}</span>}
           />
-          <Bar dataKey="umsatzIst" name="Umsatz Ist (Netto)" radius={[3,3,0,0]} label={renderAbwLabel as any}>
-            {chartData.map((_, i) => (
-              <Cell key={i} fill={i === 0 ? '#6366f1' : C_ACTUAL} fillOpacity={i === 0 ? 0.9 : 1} />
-            ))}
-          </Bar>
-          <Bar dataKey="umsatzBudget" name="Budget" radius={[3,3,0,0]}>
-            {chartData.map((_, i) => (
-              <Cell key={i} fill={C_BUDGET} fillOpacity={i === 0 ? 0.75 : 1} />
-            ))}
-          </Bar>
-          <Bar dataKey="umsatzVorjahr" name="Vorjahr" radius={[3,3,0,0]}>
-            {chartData.map((_, i) => (
-              <Cell key={i} fill={C_PREV} fillOpacity={i === 0 ? 0.75 : 1} />
-            ))}
-          </Bar>
+          <Bar dataKey="umsatzIst"     name="Umsatz Ist (Netto)" fill={C_ACTUAL} radius={[3,3,0,0]} label={renderAbwLabel as any} />
+          <Bar dataKey="umsatzBudget"  name="Budget"              fill={C_BUDGET} radius={[3,3,0,0]} />
+          <Bar dataKey="umsatzVorjahr" name="Vorjahr"             fill={C_PREV}   radius={[3,3,0,0]} />
         </BarChart>
       </ResponsiveContainer>
 
-      <div className="mt-4 pt-3 border-t border-border/50">
-        <MonthSelectorPanel
-          kpis={data}
-          selected={selectedMonths}
-          onToggle={onToggle}
-          onSelectAll={onSelectAll}
-          onSelectNone={onSelectNone}
-          onSelectData={onSelectData}
-        />
-      </div>
+      {/* Monatsauswahl – eingeblendet nach Klick auf KPI-Box */}
+      {showSelector && (
+        <div className="mt-3">
+          <MonthSelectorPanel
+            kpis={data}
+            selected={selectedMonths}
+            onToggle={onToggle}
+            onSelectAll={onSelectAll}
+            onSelectNone={onSelectNone}
+            onSelectData={onSelectData}
+          />
+        </div>
+      )}
     </div>
   );
 };
@@ -1236,7 +1245,32 @@ const WarenKombinierteChart = ({
               margin={{ top: 36, right: 48, bottom: 0, left: 0 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
-              <XAxis dataKey="label" tick={{ ...AXIS_STYLE, fontSize: 12 }} axisLine={false} tickLine={false} />
+              <XAxis
+                dataKey="label"
+                tick={(tickProps: any) => {
+                  const { x, y, payload } = tickProps;
+                  const entry = chartData.find(d => d.label === payload.value);
+                  const isSel = entry ? selectedMonths.has(entry.month) : false;
+                  return (
+                    <g
+                      transform={`translate(${x},${y})`}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => entry && onToggle(entry.month)}
+                    >
+                      <text y={4} textAnchor="middle" dominantBaseline="hanging"
+                        fontSize={12} fontWeight={isSel ? '700' : '400'}
+                        fill={isSel ? '#4f46e5' : AXIS_STYLE.fill}
+                      >
+                        {payload.value}
+                      </text>
+                      <circle cx={0} cy={20} r={3}
+                        fill={isSel ? '#4f46e5' : 'rgba(0,0,0,0.18)'}
+                      />
+                    </g>
+                  );
+                }}
+                axisLine={false} tickLine={false} height={28}
+              />
               <YAxis
                 yAxisId="left" orientation="left"
                 tick={AXIS_STYLE} axisLine={false} tickLine={false} width={56}
@@ -1269,18 +1303,6 @@ const WarenKombinierteChart = ({
             </ComposedChart>
           </ResponsiveContainer>
         )}
-
-        {/* Inline Monatsauswahl */}
-        <div className="mt-4 pt-3 border-t border-border/50">
-          <MonthSelectorPanel
-            kpis={data}
-            selected={selectedMonths}
-            onToggle={onToggle}
-            onSelectAll={onSelectAll}
-            onSelectNone={onSelectNone}
-            onSelectData={onSelectData}
-          />
-        </div>
 
         {insight && <InsightBanner text={insight} />}
       </CardContent>
@@ -1322,36 +1344,74 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
 
     const cx = (x as number) + (width as number) / 2;
     const barH = height as number;
+    const cy = (y as number) + barH / 2;
 
-    // Balken gross genug → Label ins Innere (weiss, klar lesbar, kein Overlap mit Ziellinie)
-    if (barH >= 24) {
+    // Hoher Balken → quer (rotiert 90°) im Inneren
+    if (barH >= 42) {
       return (
-        <text
-          x={cx}
-          y={(y as number) + 17}
-          textAnchor="middle"
-          fontSize={12}
-          fontWeight="700"
-          fill="#ffffff"
+        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
+          fontSize={12} fontWeight="700" fill="#ffffff"
+          transform={`rotate(-90, ${cx}, ${cy})`}
         >
           {quote.toFixed(1)}%
         </text>
       );
     }
 
-    // Balken zu flach → Label oberhalb mit genug Abstand zur Ziellinie
+    // Mittlerer Balken → horizontal im Inneren
+    if (barH >= 20) {
+      return (
+        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
+          fontSize={11} fontWeight="700" fill="#ffffff"
+        >
+          {quote.toFixed(1)}%
+        </text>
+      );
+    }
+
+    // Flacher Balken → oberhalb
     return (
-      <text
-        x={cx}
-        y={(y as number) - 5}
-        textAnchor="middle"
-        fontSize={11}
-        fontWeight="700"
-        fill={pkBarColor(quote, threshold)}
+      <text x={cx} y={(y as number) - 5} textAnchor="middle"
+        fontSize={10} fontWeight="700" fill={pkBarColor(quote, threshold)}
       >
         {quote.toFixed(1)}%
       </text>
     );
+  };
+
+  // Dienstplan-Balken: Quote = pkIst / umsatzIst × 100, quer im Balken
+  const renderDienstplanLabel = (props: Record<string, unknown>) => {
+    const { x, y, width, height, index } = props as {
+      x: number; y: number; width: number; height: number; index: number;
+    };
+    const entry = chartDataWithTarget[index];
+    if (!entry?.pkIst || !entry?.umsatzIst) return null;
+    const quote = (entry.pkIst / entry.umsatzIst) * 100;
+
+    const cx = (x as number) + (width as number) / 2;
+    const barH = height as number;
+    const cy = (y as number) + barH / 2;
+
+    if (barH >= 42) {
+      return (
+        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
+          fontSize={11} fontWeight="700" fill="#ffffff"
+          transform={`rotate(-90, ${cx}, ${cy})`}
+        >
+          {quote.toFixed(1)}%
+        </text>
+      );
+    }
+    if (barH >= 16) {
+      return (
+        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
+          fontSize={9} fontWeight="700" fill="#ffffff"
+        >
+          {quote.toFixed(1)}%
+        </text>
+      );
+    }
+    return null;
   };
 
   return (
@@ -1387,18 +1447,20 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
                   <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" /> über Ziel
                 </span>
               </span>
-              {/* Toggle: Dienstplan Ist */}
+              {/* Dienstplan Ist – Link-Schalter */}
               <button
                 onClick={() => setShowDienstplan(v => !v)}
                 className={cn(
-                  'ml-1 h-6 px-2.5 flex items-center gap-1.5 rounded-full border text-[10px] font-semibold transition-colors',
+                  'ml-1 text-[10px] font-semibold underline underline-offset-2 transition-colors',
                   showDienstplan
-                    ? 'bg-slate-600 text-white border-slate-600'
-                    : 'bg-card border-border text-muted-foreground hover:bg-muted',
+                    ? 'text-slate-600 dark:text-slate-400'
+                    : 'text-muted-foreground hover:text-foreground',
                 )}
               >
-                <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: showDienstplan ? '#fff' : C_DIENSTPLAN }} />
-                Dienstplan Ist
+                <span className="inline-flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: C_DIENSTPLAN }} />
+                  {showDienstplan ? 'Dienstplan ausblenden' : '+ Dienstplan Ist einblenden'}
+                </span>
               </button>
             </div>
           </div>
@@ -1459,7 +1521,8 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
                 ))}
               </Bar>
               {showDienstplan && (
-                <Bar yAxisId="left" dataKey="pkIst" name="PK Ist (Dienstplan)" fill={C_DIENSTPLAN} radius={[5,5,0,0]} isAnimationActive={false} />
+                <Bar yAxisId="left" dataKey="pkIst" name="PK Ist (Dienstplan)" fill={C_DIENSTPLAN} radius={[5,5,0,0]} isAnimationActive={false}
+                  label={renderDienstplanLabel as any} />
               )}
               <Line
                 yAxisId="right" dataKey="pkTargetPct" name={`Ziel ${threshold} %`}
