@@ -1,0 +1,175 @@
+Bitte korrigiere die Farb- und Vorzeichenlogik der Abweichungen in der Erfolgsrechnung.
+
+Wichtig:
+Ab Konto 4000 gilt grundsätzlich Aufwandlogik.
+
+Bei Aufwandkonten ist es schlecht, wenn IST höher ist als Budget oder Vorjahr.
+Diese Abweichung muss deshalb ROT angezeigt werden, auch wenn sie rechnerisch positiv ist.
+
+Beispiel:
+IST Aufwand: CHF 113’788
+Budget: CHF 99’360
+
+Abweichung:
+IST - Budget = +14’428
+
+Anzeige:
++14’428
++14.5 %
+ROT
+
+Nicht:
+-14’428
+grün
+
+---
+
+1. Aufwandkonten ab 4000
+
+Für alle Konten / Gruppen / Totalzeilen ab Konto 4000:
+
+Wenn IST > Budget:
+- Anzeige positiv mit Pluszeichen
+- Farbe ROT
+- Bedeutung: höhere Kosten als Budget
+
+Wenn IST < Budget:
+- Anzeige negativ mit Minuszeichen
+- Farbe GRÜN
+- Bedeutung: tiefere Kosten als Budget
+
+Gleiche Logik für Vorjahr:
+
+Wenn IST > Vorjahr:
+- +Abweichung
+- ROT
+
+Wenn IST < Vorjahr:
+- -Abweichung
+- GRÜN
+
+---
+
+2. Ertragskonten unter 4000
+
+Für Umsatz / Betriebsertrag:
+
+Wenn IST > Budget oder Vorjahr:
+- positiv
+- GRÜN
+
+Wenn IST < Budget oder Vorjahr:
+- negativ
+- ROT
+
+---
+
+3. Ergebniszeilen als Ausnahme
+
+Bei Ergebniszeilen gilt nicht Aufwandlogik, auch wenn sie nach Aufwandblöcken stehen.
+
+Für folgende Zeilen gilt Ergebnislogik:
+- Bruttogewinn
+- Bruttogewinn 1
+- Bruttogewinn 2
+- Deckungsbeitrag
+- EBITDA
+- EBIT
+- Betriebsergebnis
+- Gewinn / Verlust
+
+Wenn IST besser/höher als Budget oder Vorjahr:
+- GRÜN
+
+Wenn IST schlechter/tiefer als Budget oder Vorjahr:
+- ROT
+
+---
+
+4. Wichtig für Totalzeilen
+
+Totalzeilen müssen die richtige Logik erben.
+
+Beispiele:
+
+Total Personalaufwand:
+IST höher als Budget = ROT
+IST tiefer als Budget = GRÜN
+
+Raumaufwand:
+IST tiefer als Budget = GRÜN
+IST höher als Budget = ROT
+
+Total Betriebskosten:
+IST höher als Budget = ROT
+IST tiefer als Budget = GRÜN
+
+Bruttoergebnis 2:
+IST höher als Budget = GRÜN
+IST tiefer als Budget = ROT
+
+---
+
+5. Keine Berechnungswerte verfälschen
+
+Bitte Zahlen nicht künstlich drehen.
+
+Die Abweichung soll logisch dargestellt werden:
+
+Für Aufwand:
+IST - Vergleichswert
+
+Beispiel:
+113’788 - 99’360 = +14’428
+
+Das bleibt +14’428, aber rot.
+
+Nicht als -14’428 anzeigen, wenn IST höher ist.
+
+---
+
+6. Gilt überall
+
+Bitte diese Logik überall anwenden:
+- Erfolgsrechnung Tabelle
+- Detaildialoge
+- KPI Karten
+- Vergleichsansicht
+- PDF Export
+- Excel Export
+- Analyse / Reporting falls P&L-Abweichungen angezeigt werden
+
+---
+
+7. Tests
+
+Bitte konkret testen:
+
+Total Personalaufwand:
+IST 113’788
+Budget 99’360
+Erwartung:
++14’428 ROT
+
+Raumaufwand:
+IST 42’330
+Budget 43’580
+Erwartung:
+-1’250 GRÜN
+
+Reinigung:
+IST 4’014
+Budget 2’680
+Erwartung:
++1’334 ROT
+
+Bruttoergebnis 2:
+IST 88’341
+Budget 65’640
+Erwartung:
++22’701 GRÜN
+
+EBIT:
+IST höher als Budget
+Erwartung:
+GRÜN

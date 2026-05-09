@@ -474,22 +474,29 @@ const RevenueComparisonChart = ({
   if (!hasData) return <NoDataOverlay message="Noch keine Umsatzdaten vorhanden." />;
 
   const renderAbwLabel = (props: Record<string, unknown>) => {
-    if (!highlightVariance) return null;
     const { x, y, width, index } = props as { x: number; y: number; width: number; index: number };
     const entry = data[index];
     if (!entry?.umsatzIst) return null;
+
+    const abwB = entry.abwBudgetPct;
     const abwV = entry.abwVorjahrPct;
-    if (abwV == null) return null;
+    if (abwB == null && abwV == null) return null;
 
     const cx = (x as number) + (width as number) / 2;
-    const lineH = 10;
+    const lineH = 12;
     const lines: { text: string; color: string }[] = [];
-    lines.push({
+
+    if (abwB != null) lines.push({
+      text: `B: ${abwB >= 0 ? '+' : ''}${abwB.toFixed(1)}%`,
+      color: abwB >= 0 ? '#16a34a' : '#dc2626',
+    });
+    if (abwV != null) lines.push({
       text: `VJ: ${abwV >= 0 ? '+' : ''}${abwV.toFixed(1)}%`,
       color: abwV >= 0 ? '#16a34a' : '#dc2626',
     });
+
     const totalH = lines.length * lineH;
-    const baseY = (y as number) - totalH - 2;
+    const baseY = (y as number) - totalH - 4;
 
     return (
       <g>
@@ -499,7 +506,7 @@ const RevenueComparisonChart = ({
             x={cx}
             y={baseY + i * lineH}
             textAnchor="middle"
-            fontSize={8}
+            fontSize={9}
             fontWeight="700"
             fill={l.color}
           >
@@ -511,8 +518,8 @@ const RevenueComparisonChart = ({
   };
 
   return (
-    <ResponsiveContainer width="100%" height={highlightVariance ? 300 : 260}>
-      <BarChart data={data} barGap={2} barCategoryGap="28%">
+    <ResponsiveContainer width="100%" height={320}>
+      <BarChart data={data} barGap={2} barCategoryGap="28%" margin={{ top: 36, right: 8, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
         <XAxis dataKey="label" tick={AXIS_STYLE} axisLine={false} tickLine={false} />
         <YAxis
@@ -532,7 +539,7 @@ const RevenueComparisonChart = ({
           name="Umsatz Ist (Netto)"
           fill={C_ACTUAL}
           radius={[3,3,0,0]}
-          label={highlightVariance ? (renderAbwLabel as any) : undefined}
+          label={renderAbwLabel as any}
         />
         <Bar dataKey="umsatzBudget"  name="Budget"  fill={C_BUDGET} radius={[3,3,0,0]} />
         <Bar dataKey="umsatzVorjahr" name="Vorjahr" fill={C_PREV}   radius={[3,3,0,0]} />
