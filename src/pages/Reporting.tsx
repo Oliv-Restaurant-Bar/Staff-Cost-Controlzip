@@ -198,7 +198,11 @@ function buildMonthlyKPIs(
   plResults?: PLMonthResult[],
 ): MonthlyKPI[] {
   return effectiveMonths.map((m, idx) => {
-    const umsatzIst     = m.revenueActual        ?? null;
+    // PLView-kompatible Umsatz-Berechnung: 3xxx-Journalkonten haben Priorität (identisch mit getCatActual)
+    const revFrom3xxx = m.expenseCategories
+      .filter(c => { const n = parseInt(c.categoryId); return !isNaN(n) && n >= 3000 && n <= 3999; })
+      .reduce((s, c) => s + (c.amount ?? 0), 0);
+    const umsatzIst     = revFrom3xxx > 0 ? revFrom3xxx : (m.revenueActual ?? null);
     const umsatzBudget  = m.revenueBudget        ?? null;
     const umsatzVorjahr = m.revenuePreviousYear  ?? null;
     const pkIst         = m.personnelCostActual  ?? null;

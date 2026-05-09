@@ -334,28 +334,32 @@ const DrilldownDialog = ({
             <p className="text-muted-foreground mb-0.5">Vorjahr (CHF)</p>
             <p className="font-semibold">{fmtCHF(drilldown.values.prevYear)}</p>
           </div>
-          {drilldown.values.vsBudget !== undefined && (
-            <div>
-              <p className="text-muted-foreground mb-0.5">Abw. Budget</p>
-              <p className={cn('font-semibold',
-                drilldown.values.vsBudget > 0 ? 'text-emerald-600' : 'text-red-600'
-              )}>
-                {drilldown.values.vsBudget > 0 ? '+' : ''}{fmtCHF(drilldown.values.vsBudget)}
-                {drilldown.values.vsBudgetPct !== undefined &&
-                  ` (${drilldown.values.vsBudgetPct > 0 ? '+' : ''}${fmtPct(drilldown.values.vsBudgetPct)})`}
-              </p>
-            </div>
-          )}
-          {drilldown.values.vsPrevYear !== undefined && (
-            <div>
-              <p className="text-muted-foreground mb-0.5">Abw. Vorjahr</p>
-              <p className={cn('font-semibold',
-                drilldown.values.vsPrevYear > 0 ? 'text-emerald-600' : 'text-red-600'
-              )}>
-                {drilldown.values.vsPrevYear > 0 ? '+' : ''}{fmtCHF(drilldown.values.vsPrevYear)}
-              </p>
-            </div>
-          )}
+          {drilldown.values.vsBudget !== undefined && (() => {
+            const isExpRow = PL_STRUCTURE.find(r => r.id === drilldown.rowId)?.valueRole === 'negative';
+            const goodBudget = isExpRow ? drilldown.values.vsBudget < 0 : drilldown.values.vsBudget > 0;
+            return (
+              <div>
+                <p className="text-muted-foreground mb-0.5">Abw. Budget</p>
+                <p className={cn('font-semibold', goodBudget ? 'text-emerald-600' : 'text-red-600')}>
+                  {drilldown.values.vsBudget > 0 ? '+' : ''}{fmtCHF(drilldown.values.vsBudget)}
+                  {drilldown.values.vsBudgetPct !== undefined &&
+                    ` (${drilldown.values.vsBudgetPct > 0 ? '+' : ''}${fmtPct(drilldown.values.vsBudgetPct)})`}
+                </p>
+              </div>
+            );
+          })()}
+          {drilldown.values.vsPrevYear !== undefined && (() => {
+            const isExpRow = PL_STRUCTURE.find(r => r.id === drilldown.rowId)?.valueRole === 'negative';
+            const goodPY = isExpRow ? drilldown.values.vsPrevYear < 0 : drilldown.values.vsPrevYear > 0;
+            return (
+              <div>
+                <p className="text-muted-foreground mb-0.5">Abw. Vorjahr</p>
+                <p className={cn('font-semibold', goodPY ? 'text-emerald-600' : 'text-red-600')}>
+                  {drilldown.values.vsPrevYear > 0 ? '+' : ''}{fmtCHF(drilldown.values.vsPrevYear)}
+                </p>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Quelldaten */}
@@ -554,6 +558,7 @@ const YearView = ({
 // ─── Budget P&L Vergleich ─────────────────────────────────────────────────────
 
 interface BPLCell {
+  isExpense: boolean;
   budget: number;
   actual: number;
   prevYear: number;
@@ -663,10 +668,10 @@ function getCatPY(
 }
 
 function makeCell(actual: number, budget: number, prevYear: number, isExpense: boolean): BPLCell {
-  const vsBudget   = isExpense ? budget - actual   : actual - budget;
-  const vsPrevYear = isExpense ? prevYear - actual  : actual - prevYear;
+  const vsBudget   = actual - budget;
+  const vsPrevYear = actual - prevYear;
   return {
-    actual, budget, prevYear,
+    isExpense, actual, budget, prevYear,
     vsBudget,
     vsBudgetPct:   budget    !== 0 ? (vsBudget   / Math.abs(budget))    * 100 : undefined,
     vsPrevYear,
@@ -866,18 +871,18 @@ function computeBPLRows(
   return rows;
 }
 
-const BPLVarCell = ({ value, pct }: { value: number; pct?: number }) => {
-  const pos     = value > 0;
+const BPLVarCell = ({ value, pct, isExpense = false }: { value: number; pct?: number; isExpense?: boolean }) => {
+  const isGood  = isExpense ? value < 0 : value > 0;
   const neutral = Math.abs(value) < 0.5;
   return (
     <td className={cn(
       'px-2 py-1 text-right text-xs whitespace-nowrap tabular-nums',
-      neutral ? 'text-muted-foreground' :
-      pos     ? 'text-emerald-600 dark:text-emerald-400 font-semibold' :
-                'text-red-600 dark:text-red-400 font-semibold',
+      neutral  ? 'text-muted-foreground' :
+      isGood   ? 'text-emerald-600 dark:text-emerald-400 font-semibold' :
+                 'text-red-600 dark:text-red-400 font-semibold',
     )}>
       <span className="flex items-center justify-end gap-0.5">
-        {!neutral && (pos
+        {!neutral && (isGood
           ? <ArrowUpRight className="h-3 w-3" />
           : <ArrowDownRight className="h-3 w-3" />
         )}
@@ -1082,10 +1087,10 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
         )}
         {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-gray-700 dark:text-gray-300', pyResult)}>{fmt(v.budget)}</td>}
         {showBudget && pctMode !== 'off' && <td className={cn('px-2 text-right font-mono tabular-nums text-xs text-gray-500 dark:text-gray-400 font-bold', pyResult)}>{pctValBudget(v.budget) ?? <span className="opacity-30">—</span>}</td>}
-        {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
+        {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} isExpense={row.isExpense} />}
         {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-gray-700 dark:text-gray-300', pyResult)}>{fmt(v.prevYear)}</td>}
         {showPrevYear && pctMode !== 'off' && <td className={cn('px-2 text-right font-mono tabular-nums text-xs text-gray-500 dark:text-gray-400 font-bold', pyResult)}>{pctValPY(v.prevYear) ?? <span className="opacity-30">—</span>}</td>}
-        {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
+        {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} isExpense={row.isExpense} />}
       </tr>
     );
   }
@@ -1125,10 +1130,10 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
         )}
         {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-75', py)}>{fmt(v.budget)}</td>}
         {showBudget && pctMode !== 'off' && <td className={cn(py, pctMode === 'subtle' ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-white/30' : 'px-2 text-right font-mono tabular-nums text-xs text-[#c8d9b8] font-bold')}>{pctValBudget(v.budget) ?? <span className="opacity-30">—</span>}</td>}
-        {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
+        {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} isExpense={row.isExpense} />}
         {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-65', py)}>{fmt(v.prevYear)}</td>}
         {showPrevYear && pctMode !== 'off' && <td className={cn(py, pctMode === 'subtle' ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-white/30' : 'px-2 text-right font-mono tabular-nums text-xs text-[#c8d9b8] font-bold')}>{pctValPY(v.prevYear) ?? <span className="opacity-30">—</span>}</td>}
-        {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
+        {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} isExpense={row.isExpense} />}
       </tr>
     );
   }
@@ -1530,7 +1535,7 @@ const BudgetPLDrilldownDialog = ({
             <div>
               <p className="text-muted-foreground mb-0.5">Abw. Budget (CHF / %)</p>
               <p className={cn('font-semibold',
-                v.vsBudget >= 0 ? 'text-emerald-600' : 'text-red-600'
+                (row.isExpense ? v.vsBudget < 0 : v.vsBudget >= 0) ? 'text-emerald-600' : 'text-red-600'
               )}>
                 {v.vsBudget >= 0 ? '+' : ''}{fmtCHF(v.vsBudget)}
                 {v.vsBudgetPct !== undefined && (
@@ -1547,7 +1552,7 @@ const BudgetPLDrilldownDialog = ({
             <div className="col-span-2">
               <p className="text-muted-foreground mb-0.5">Abw. Vorjahr (CHF / %)</p>
               <p className={cn('font-semibold',
-                v.vsPrevYear >= 0 ? 'text-emerald-600' : 'text-red-600'
+                (row.isExpense ? v.vsPrevYear < 0 : v.vsPrevYear >= 0) ? 'text-emerald-600' : 'text-red-600'
               )}>
                 {v.vsPrevYear >= 0 ? '+' : ''}{fmtCHF(v.vsPrevYear)}
                 {v.vsPrevYearPct !== undefined && (
@@ -1563,9 +1568,9 @@ const BudgetPLDrilldownDialog = ({
           <div className="text-xs text-muted-foreground space-y-1 border-t border-border pt-3">
             <p className="font-semibold text-foreground mb-1">Wie werden die Abweichungen berechnet?</p>
             {row.isExpense ? (
-              <p>Bei Aufwand-Positionen: <strong>Abw. = Budget − Ist</strong>.
-                Ein positiver Wert (grün) bedeutet: weniger ausgegeben als budgetiert = gut.
-                Negativ (rot) = Budgetüberschreitung.</p>
+              <p>Bei Aufwand-Positionen: <strong>Abw. = Ist − Budget</strong>.
+                Ein negativer Wert (grün) bedeutet: weniger ausgegeben als budgetiert = gut.
+                Positiv (rot) = Budgetüberschreitung.</p>
             ) : (
               <p>Bei Ertrags-Positionen: <strong>Abw. = Ist − Budget</strong>.
                 Ein positiver Wert (grün) bedeutet: mehr eingenommen als geplant = gut.
