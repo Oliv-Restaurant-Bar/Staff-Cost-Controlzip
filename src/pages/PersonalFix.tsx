@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import ManagementInsights from '@/components/personal-fix/ManagementInsights';
 import HourBalanceSection from '@/components/hour-balance/HourBalanceSection';
 import { buildHourBalances, generatePlanningHints } from '@/lib/hour-balance-utils';
 import { Navigate } from 'react-router-dom';
@@ -3472,6 +3473,25 @@ export default function PersonalFixPage() {
             </div>
           </div>
         )}
+
+        {/* ── Management Insights (Beta) ──────────────────────────────────── */}
+        <ManagementInsights
+          selectedYear={selectedYear}
+          selectedMonth={selectedMonth}
+          pfix={pfix}
+          pfixPerEmp={pfixPerEmp}
+          personnelBudget={personnelBudget}
+          forecastDelta={forecastDelta}
+          forecastStatus={forecastStatus}
+          forecastFlexTotal={forecastFlexTotal}
+          forecastAvailableVar={forecastAvailableVar}
+          avgHourlyWage={avgHourlyWage}
+          effectiveForecastCutoff={effectiveForecastCutoff}
+          daysInSelectedMonth={daysInSelectedMonth}
+          deptSummary={deptSummary}
+          abwDays={pfixAbw.days}
+          totalFixCost={totalFixCost}
+        />
 
       </main>
 
