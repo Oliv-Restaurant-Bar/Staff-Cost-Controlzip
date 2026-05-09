@@ -493,10 +493,10 @@ const WAREN_THRESHOLD = 30;
 // ─── Insight-Texte (automatische Bewertung) ───────────────────────────────────
 
 function buildPKInsight(data: MonthlyKPI[], threshold: number): string {
-  const withData = data.filter(d => d.pkQuoteIst != null);
+  const withData = data.filter(d => d.personalaufwandPLPct != null);
   if (!withData.length) return '';
-  const over  = withData.filter(d => d.pkQuoteIst! > threshold);
-  const under = withData.filter(d => d.pkQuoteIst! <= threshold);
+  const over  = withData.filter(d => d.personalaufwandPLPct! > threshold);
+  const under = withData.filter(d => d.personalaufwandPLPct! <= threshold);
   const parts: string[] = [];
   if (over.length > 0) {
     parts.push(`${over.length} ${over.length === 1 ? 'Monat' : 'Monate'} über Ziel (${threshold} %): ${over.map(d => d.label).join(', ')}.`);
@@ -504,8 +504,8 @@ function buildPKInsight(data: MonthlyKPI[], threshold: number): string {
     parts.push(`Alle ${withData.length} Monate mit Daten liegen unter dem Zielwert.`);
   }
   if (under.length > 0) {
-    const best = under.reduce((a, b) => a.pkQuoteIst! < b.pkQuoteIst! ? a : b);
-    parts.push(`Bester Monat: ${best.label} mit ${best.pkQuoteIst!.toFixed(1)} %.`);
+    const best = under.reduce((a, b) => a.personalaufwandPLPct! < b.personalaufwandPLPct! ? a : b);
+    parts.push(`Bester Monat: ${best.label} mit ${best.personalaufwandPLPct!.toFixed(1)} %.`);
   }
   return parts.join(' ');
 }
@@ -693,9 +693,9 @@ const PKCombinedTooltip = ({
 }) => {
   if (!active || !payload?.length) return null;
   const entry = allData.find(d => d.label === label);
-  const quote = entry?.pkQuoteIst ?? null;
+  const quote = entry?.personalaufwandPLPct ?? null;
   return (
-    <div className="bg-card border border-border shadow-lg rounded-xl px-3 py-2.5 text-xs min-w-[210px]">
+    <div className="bg-card border border-border shadow-lg rounded-xl px-3 py-2.5 text-xs min-w-[230px]">
       <p className="font-bold text-foreground mb-2 border-b border-border pb-1.5">{label}</p>
       <div className="space-y-1.5">
         <div className="flex justify-between gap-6">
@@ -708,12 +708,21 @@ const PKCombinedTooltip = ({
         <div className="flex justify-between gap-6">
           <span className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-sm" style={{ background: C_PK }} />
-            <span className="text-muted-foreground">PK Ist</span>
+            <span className="text-muted-foreground">Personalaufwand (ER)</span>
           </span>
-          <span className="font-semibold">{fmtCHF(entry?.pkIst)}</span>
+          <span className="font-semibold">{fmtCHF(entry?.personalaufwandPL)}</span>
         </div>
+        {entry?.pkIst != null && (
+          <div className="flex justify-between gap-6">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-sm bg-slate-500 inline-block" />
+              <span className="text-muted-foreground">PK Ist (Dienstplan)</span>
+            </span>
+            <span className="font-semibold">{fmtCHF(entry.pkIst)}</span>
+          </div>
+        )}
         <div className="flex justify-between gap-6 pt-1 border-t border-border">
-          <span className="font-medium">PK-Quote</span>
+          <span className="font-medium">PK-Quote (ER)</span>
           <span className="font-bold text-[13px]" style={{ color: pkBarColor(quote, threshold) }}>
             {quote != null ? `${quote.toFixed(1)} %` : '–'}
           </span>
@@ -1138,22 +1147,27 @@ interface PKKombinierteProps {
   threshold: number;
 }
 
+const C_DIENSTPLAN = '#64748b'; // slate-500 → Dienstplan Ist (3. Balken)
+
 const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
-  const chartData          = data.filter(d => (d.umsatzIst ?? 0) > 0);
+  const [showDienstplan, setShowDienstplan] = useState(false);
+
+  const chartData           = data.filter(d => (d.umsatzIst ?? 0) > 0);
   const chartDataWithTarget = chartData.map(d => ({ ...d, pkTargetPct: threshold }));
 
-  const withQuote      = data.filter(d => d.pkQuoteIst != null);
-  const sumPK          = withQuote.reduce((s, d) => s + (d.pkIst ?? 0), 0);
+  // KPI-Berechnung auf Basis Erfolgsrechnung (authoritative)
+  const withQuote      = data.filter(d => d.personalaufwandPLPct != null);
+  const sumPK          = withQuote.reduce((s, d) => s + (d.personalaufwandPL ?? 0), 0);
   const sumUmsatz      = withQuote.reduce((s, d) => s + (d.umsatzIst ?? 0), 0);
   const kumuliertQuote = sumUmsatz > 0 ? (sumPK / sumUmsatz) * 100 : null;
-  const uberZiel       = withQuote.filter(d => d.pkQuoteIst! > threshold).length;
+  const uberZiel       = withQuote.filter(d => d.personalaufwandPLPct! > threshold).length;
   const insight        = buildPKInsight(data, threshold);
 
   const renderPKLabel = (props: Record<string, unknown>) => {
     const { x, y, width, index } = props as { x: number; y: number; width: number; index: number };
     const entry = chartDataWithTarget[index];
-    const quote = entry?.pkQuoteIst;
-    if (!entry?.pkIst || quote == null) return null;
+    const quote = entry?.personalaufwandPLPct;
+    if (!entry?.personalaufwandPL || quote == null) return null;
     return (
       <text
         x={(x as number) + (width as number) / 2}
@@ -1178,16 +1192,16 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
               Personalkosten-Analyse {year}
             </CardTitle>
             <p className="text-[10px] text-muted-foreground/70 mt-0.5">
-              PK-Quote = Personalkosten Ist / Umsatz Ist Netto. Nur bei Umsatz ≥ CHF 1'000.
+              Personalaufwand aus Erfolgsrechnung (5xxx-Konten). PK-Quote = Personalaufwand / Umsatz Ist Netto.
             </p>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] mt-2">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[10px] mt-2">
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: C_ACTUAL }} />
                 Umsatz Ist
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: C_PK }} />
-                Personalkosten Ist — Quote % auf Balken
+                Personalaufwand (Erfolgsrechnung) — Quote % auf Balken
               </span>
               <span className="text-muted-foreground/50">Ziel ≤ {threshold} %</span>
               <span className="flex items-center gap-2">
@@ -1201,13 +1215,26 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
                   <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" /> über Ziel
                 </span>
               </span>
+              {/* Toggle: Dienstplan Ist */}
+              <button
+                onClick={() => setShowDienstplan(v => !v)}
+                className={cn(
+                  'ml-1 h-6 px-2.5 flex items-center gap-1.5 rounded-full border text-[10px] font-semibold transition-colors',
+                  showDienstplan
+                    ? 'bg-slate-600 text-white border-slate-600'
+                    : 'bg-card border-border text-muted-foreground hover:bg-muted',
+                )}
+              >
+                <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: showDienstplan ? '#fff' : C_DIENSTPLAN }} />
+                Dienstplan Ist
+              </button>
             </div>
           </div>
 
           {/* KPI-Box oben rechts */}
           {sumPK > 0 && (
-            <div className="shrink-0 rounded-lg bg-muted/40 border border-border px-3 py-2 text-right min-w-[140px]">
-              <p className="text-[9px] uppercase tracking-wide text-muted-foreground">PK kumuliert</p>
+            <div className="shrink-0 rounded-lg bg-muted/40 border border-border px-3 py-2 text-right min-w-[150px]">
+              <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Personalaufwand kum.</p>
               <p className="text-sm font-bold text-foreground mt-0.5">{fmtCHF(sumPK)}</p>
               <div className="mt-1.5 pt-1.5 border-t border-border/60">
                 <p className="text-[9px] uppercase tracking-wide text-muted-foreground">PK-Quote</p>
@@ -1231,7 +1258,7 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
           <ResponsiveContainer width="100%" height={400}>
             <ComposedChart
               data={chartDataWithTarget}
-              barGap={5} barCategoryGap="28%"
+              barGap={5} barCategoryGap={showDienstplan ? '22%' : '28%'}
               margin={{ top: 36, right: 48, bottom: 0, left: 0 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
@@ -1253,12 +1280,15 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
               />
               <Bar yAxisId="left" dataKey="umsatzIst" name="Umsatz Ist" fill={C_ACTUAL} radius={[5,5,0,0]} isAnimationActive={false}
                 label={renderRevenueLabel as any} />
-              <Bar yAxisId="left" dataKey="pkIst" name="Personalkosten Ist" radius={[5,5,0,0]} isAnimationActive={false}
+              <Bar yAxisId="left" dataKey="personalaufwandPL" name="Personalaufwand (ER)" radius={[5,5,0,0]} isAnimationActive={false}
                 label={renderPKLabel as any}>
                 {chartDataWithTarget.map((entry, i) => (
-                  <Cell key={i} fill={entry.pkQuoteIst == null ? 'hsl(var(--muted))' : pkBarColor(entry.pkQuoteIst, threshold)} />
+                  <Cell key={i} fill={entry.personalaufwandPLPct == null ? 'hsl(var(--muted))' : pkBarColor(entry.personalaufwandPLPct, threshold)} />
                 ))}
               </Bar>
+              {showDienstplan && (
+                <Bar yAxisId="left" dataKey="pkIst" name="PK Ist (Dienstplan)" fill={C_DIENSTPLAN} radius={[5,5,0,0]} isAnimationActive={false} />
+              )}
               <Line
                 yAxisId="right" dataKey="pkTargetPct" name={`Ziel ${threshold} %`}
                 stroke={C_RED} strokeDasharray="6 3" strokeWidth={1.5}

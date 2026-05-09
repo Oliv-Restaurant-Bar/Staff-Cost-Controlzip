@@ -1,0 +1,304 @@
+Bitte baue unter "Personal FIX" eine neue zusätzliche Untersektion ein, ohne die bestehenden Auswertungen zu verändern.
+
+Wichtig:
+Die bestehenden Bereiche in Personal FIX dürfen nicht gelöscht, ersetzt oder verändert werden.
+
+Neu soll zusätzlich darunter eine neue Sektion entstehen:
+
+"Management Insights (Beta)"
+oder
+"Personal Steuerung (Beta)"
+
+Ziel:
+Diese neue Sektion soll mir konkrete Handlungsempfehlungen geben.
+Nicht nur Zahlen anzeigen, sondern sagen:
+- wo ist das Problem?
+- warum entsteht es?
+- was soll ich konkret tun?
+- was passiert bis Monatsende, wenn nichts geändert wird?
+
+---
+
+1. Neue Untersektion unter Personal FIX
+
+Bitte unter den bestehenden Personal FIX Auswertungen einen neuen Bereich ergänzen:
+
+Titel:
+Management Insights (Beta)
+
+Untertitel:
+Automatische Handlungsempfehlungen aus Fixkosten, Flexkosten, Ist-Stunden, Plan-Stunden und Budget.
+
+Dieser Bereich ist zusätzlich.
+Die bestehende Seite bleibt unverändert.
+
+---
+
+2. Forecast Monatsende
+
+Baue eine Forecast-Karte:
+
+"Forecast Monatsende"
+
+Sie soll anzeigen:
+
+- aktueller Personalaufwand bis heute
+- geplante restliche Personalkosten bis Monatsende
+- voraussichtlicher Personalaufwand Ende Monat
+- Monatsbudget
+- erwartete Abweichung CHF
+- erwartete Abweichung %
+
+Beispiel:
+
+Forecast Ende Mai:
+CHF 118’400
+
+Budget:
+CHF 106’400
+
+Risiko:
+CHF 12’000 über Budget
+
+Status:
+Rot / Orange / Grün
+
+Logik:
+Wenn aktueller Ist-Verlauf + geplante Restkosten > Budget:
+Warnung anzeigen.
+
+Wenn im Budget:
+Grün anzeigen.
+
+---
+
+3. Risiko-Ampel
+
+Eine klare Ampel:
+
+Grün:
+Im Plan
+
+Orange:
+Risiko bis Monatsende
+
+Rot:
+Budgetüberschreitung wahrscheinlich
+
+Zusätzlich kurzer Text:
+
+"Bei unverändertem Plan wird das Monatsbudget voraussichtlich um CHF X überschritten."
+
+oder:
+
+"Der Monat liegt aktuell CHF X unter Budget."
+
+---
+
+4. Kritische Tage erkennen
+
+Baue eine Liste:
+
+"Kritische Tage"
+
+Zeige die Tage, an denen:
+- Ist-Kosten über Plan liegen
+- Personalquote über Ziel liegt
+- starke Abweichung besteht
+- sehr viele Stunden geplant oder gearbeitet wurden
+
+Beispiel:
+
+03.05.2026
++CHF 175 über Plan
++15.5 %
+Grund: Ist-Stunden höher als Plan
+
+01.05.2026
++CHF 87 über Plan
++5.8 %
+Grund: Service über Plan
+
+Sortierung:
+kritischste Tage zuerst.
+
+---
+
+5. Top Kostentreiber
+
+Baue eine Karte:
+
+"Top Kostentreiber"
+
+Zeige Mitarbeiter mit:
+- höchster Ist-Kostenabweichung
+- meisten Ist-Stunden über Plan
+- höchstem Flex-Ist
+- grösster Differenz Plan vs Ist
+
+Beispiel:
+
+Aushilfe 2 Küche A
++CHF 450 über Plan
++12.5 h
+
+Carlos
++CHF 280 über Plan
++8.3 h
+
+Wichtig:
+Nur Mitarbeiter anzeigen, die im gewählten Monat aktiv sind.
+
+---
+
+6. Konkrete Handlungsempfehlungen
+
+Baue eine Karte:
+
+"Empfohlene Massnahmen"
+
+Die App soll automatisch Textvorschläge generieren.
+
+Beispiele:
+
+- "Reduziere in der verbleibenden Monatsplanung ca. 42 Flex-Stunden, um im Budget zu bleiben."
+- "Prüfe die Tage 01.05, 02.05 und 03.05: dort liegen die Ist-Kosten über Plan."
+- "Küche verursacht aktuell die grösste Abweichung. Prüfe Schichtlängen und Aushilfen."
+- "Service liegt im Plan. Fokus zuerst auf Küche."
+- "Wenn keine Anpassung erfolgt, wird das Budget voraussichtlich um CHF X überschritten."
+
+Wichtig:
+Keine KI/API nötig.
+Regelbasierte Empfehlungen reichen.
+
+---
+
+7. Abteilungsvergleich
+
+Baue einen kleinen Vergleich:
+
+Service vs Küche
+
+Pro Abteilung:
+- Plan-Kosten
+- Ist-Kosten
+- Abweichung CHF
+- Abweichung %
+- Status
+
+Ziel:
+Ich möchte sofort sehen, ob Service oder Küche das Problem verursacht.
+
+---
+
+8. Stunden-Optimierung
+
+Baue eine kleine Kennzahl:
+
+"Notwendige Stundenreduktion"
+
+Formel:
+Budgetüberschreitung / durchschnittlicher Flex-Stundenlohn
+
+Beispiel:
+Überschreitung CHF 1’200
+Ø Flexlohn CHF 24/h
+
+Empfehlung:
+ca. 50 Stunden reduzieren
+
+Anzeige:
+"Um das Budget zu erreichen, müssten ca. 50 Flex-Stunden reduziert werden."
+
+Wenn unter Budget:
+"Es besteht aktuell noch Spielraum von ca. X Flex-Stunden."
+
+---
+
+9. Heatmap / Tagesstatus
+
+Optional, wenn schnell umsetzbar:
+
+Zeige eine kleine Monats-Heatmap:
+
+Grün = im Plan
+Orange = leicht über Plan
+Rot = stark über Plan
+
+Jeder Tag als kleine Kachel.
+Beim Klick:
+Details anzeigen.
+
+---
+
+10. Datenquellen
+
+Bitte nur bestehende Daten verwenden:
+
+- Personal FIX
+- Dienstplan Plan-Stunden
+- Dienstplan Ist-Stunden
+- Mitarbeiter-Lohnhistorie
+- Fixlöhne
+- Flexlöhne
+- Monatsbudget Personal
+- aktive Mitarbeiter nach Eintritt/Austritt
+
+Keine neue externe Datenquelle.
+
+---
+
+11. Sicherheit
+
+Die bestehende Seite darf nicht gefährdet werden.
+
+Bitte:
+- neue Komponente separat bauen
+- keine bestehende Berechnung überschreiben
+- keine bestehende Tabelle löschen
+- keine Datenbank-Migration nötig, wenn nicht zwingend
+- nur lesend aus bestehenden Daten berechnen
+
+Falls etwas unsicher ist:
+lieber als "Beta" anzeigen.
+
+---
+
+12. UI / Design
+
+Design:
+- sauber
+- übersichtlich
+- managementtauglich
+- klare Ampelfarben
+- Kartenlayout
+- kurze Texte
+- keine überladenen Tabellen
+
+Bereiche:
+1. Forecast Monatsende
+2. Risiko-Ampel
+3. Kritische Tage
+4. Top Kostentreiber
+5. Service vs Küche
+6. Empfohlene Massnahmen
+7. Stundenreduktion / Spielraum
+
+---
+
+13. Tests
+
+Bitte testen:
+
+- Mai 2026
+- Monat mit Ist-Daten
+- Monat ohne Ist-Daten
+- Mitarbeiter mit Austritt werden nicht berücksichtigt
+- Service/Küche korrekt getrennt
+- Wenn Budget überschritten wird, erscheint rote Warnung
+- Wenn Budget unterschritten wird, erscheint grüne Bewertung
+- keine bestehenden Personal FIX Werte verändern
+- keine bestehenden PDF Exporte beschädigen
+
+Ziel:
+Ich will daraus konkrete operative Entscheidungen ableiten können, ohne die bestehende Personal FIX Seite zu riskieren.
