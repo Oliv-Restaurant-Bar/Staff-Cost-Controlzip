@@ -133,6 +133,52 @@ function sumWarenaufwand(rec: MonthlyFinancialRecord): number {
   return total;
 }
 
+// ─── Personalaufwand-Extraktion (PLView-kompatibel) ───────────────────────────
+/**
+ * Summiert den Personalaufwand direkt aus expenseCategories — identisch mit
+ * PLView Budget P&L (BPL_CAT_RANGES).
+ *
+ * Bereiche:
+ *   pl_wages           [5000, 5019]  Löhne inkl. Zulagen / Aushilfe
+ *   pl_social          [5700, 5799]  AHV / BVG / UVG / KTG
+ *   pl_personnel_other [5800, 5899]  Übriger Personalaufwand
+ *
+ * Gibt 0 zurück wenn keine Lohnkonten (5000-5019) vorhanden sind, damit
+ * der PLEngine-Fallback (personnelCostActual) greift.
+ *
+ * Warum: Der PLEngine überspringt Konten wie 5005 «Personal Aushilfe», wenn
+ * personnelCostActual bereits gesetzt ist (Anti-Doppelzählung für 5000-Löhne).
+ * Diese Funktion umgeht den Skip und liest das Journal direkt — so stimmt
+ * personalaufwandPL mit der Erfolgsrechnung überein.
+ */
+function sumPersonalFromJournal(rec: MonthlyFinancialRecord): number {
+  let wages = 0;
+  let socialAndOther = 0;
+  let hasWageAccount = false;
+
+  for (const cat of rec.expenseCategories) {
+    const raw = cat.categoryId?.trim() ?? '';
+    if (!raw) continue;
+    // 5-stellige Konten auf 4 Stellen kürzen (z.B. «61409» → 6140)
+    const s = raw.length > 4 ? raw.slice(0, 4) : raw;
+    const n = parseInt(s);
+    if (isNaN(n)) continue;
+
+    if (n >= 5000 && n <= 5019) {
+      wages += cat.amount ?? 0;
+      hasWageAccount = true;
+    } else if (n >= 5700 && n <= 5799) {
+      socialAndOther += cat.amount ?? 0;
+    } else if (n >= 5800 && n <= 5899) {
+      socialAndOther += cat.amount ?? 0;
+    }
+  }
+
+  // Nur zurückgeben, wenn echte Lohnkonten vorhanden — verhindert, dass
+  // ein reiner Sozialkosten-Import den PLEngine-Fallback verdrängt.
+  return hasWageAccount ? wages + socialAndOther : 0;
+}
+
 /**
  * Quote berechnen mit Null-Schutz.
  * Gibt null zurück wenn:
@@ -174,8 +220,17 @@ function buildMonthlyKPIs(
     const plPersonnel = plResult?.rows.find(r => r.def.id === 'total_personnel');
     const rawWaren = plCogs?.values.actual ?? null;
     const rawPers  = plPersonnel?.values.actual ?? null;
-    const warenaufwandPL    = rawWaren != null && rawWaren > 0 ? rawWaren : null;
-    const personalaufwandPL = rawPers  != null && rawPers  > 0 ? rawPers  : null;
+    const warenaufwandPL = rawWaren != null && rawWaren > 0 ? rawWaren : null;
+
+    // personalaufwandPL: PLView-kompatible Berechnung aus Sage-Journal (Priorität 1)
+    // Warum: PLEngine überspringt z.B. Konto 5005 «Personal Aushilfe», wenn
+    // personnelCostActual gesetzt ist → Abweichung zur Erfolgsrechnung.
+    // sumPersonalFromJournal liest die BPL_CAT_RANGES direkt wie PLView Budget P&L.
+    // Fallback auf PLEngine-Ergebnis wenn keine Lohnkonten im Journal vorhanden.
+    const journalPersonal = sumPersonalFromJournal(m);
+    const personalaufwandPL = journalPersonal > 0
+      ? journalPersonal
+      : (rawPers != null && rawPers > 0 ? rawPers : null);
 
     return {
       month:            idx + 1,
@@ -1164,16 +1219,39 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
   const insight        = buildPKInsight(data, threshold);
 
   const renderPKLabel = (props: Record<string, unknown>) => {
-    const { x, y, width, index } = props as { x: number; y: number; width: number; index: number };
+    const { x, y, width, height, index } = props as {
+      x: number; y: number; width: number; height: number; index: number;
+    };
     const entry = chartDataWithTarget[index];
     const quote = entry?.personalaufwandPLPct;
     if (!entry?.personalaufwandPL || quote == null) return null;
+
+    const cx = (x as number) + (width as number) / 2;
+    const barH = height as number;
+
+    // Balken gross genug → Label ins Innere (weiss, klar lesbar, kein Overlap mit Ziellinie)
+    if (barH >= 24) {
+      return (
+        <text
+          x={cx}
+          y={(y as number) + 17}
+          textAnchor="middle"
+          fontSize={12}
+          fontWeight="700"
+          fill="#ffffff"
+        >
+          {quote.toFixed(1)}%
+        </text>
+      );
+    }
+
+    // Balken zu flach → Label oberhalb mit genug Abstand zur Ziellinie
     return (
       <text
-        x={(x as number) + (width as number) / 2}
-        y={(y as number) - 7}
+        x={cx}
+        y={(y as number) - 5}
         textAnchor="middle"
-        fontSize={13}
+        fontSize={11}
         fontWeight="700"
         fill={pkBarColor(quote, threshold)}
       >
