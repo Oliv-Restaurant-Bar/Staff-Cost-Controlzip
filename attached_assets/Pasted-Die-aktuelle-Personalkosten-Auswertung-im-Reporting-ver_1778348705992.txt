@@ -1,0 +1,170 @@
+Die aktuelle Personalkosten-Auswertung im Reporting verwendet eine falsche Datenbasis oder falsche Berechnungslogik.
+
+Die Prozentwerte im roten Balken stimmen logisch nicht mit der Erfolgsrechnung überein.
+
+Beispiel aus April:
+Umsatz laut Erfolgsrechnung ≈ CHF 267’000
+Total Personalaufwand laut Erfolgsrechnung ≈ CHF 113’788
+
+Das ergibt:
+113’788 / 267’000 = ca. 42.6 %
+
+NICHT 51.8 %.
+
+Die Auswertung MUSS exakt dieselben Werte wie die Erfolgsrechnung verwenden.
+
+---
+
+BITTE KORRIGIEREN:
+
+1. Datenbasis vereinheitlichen
+
+Die Personalkostenquote im Reporting MUSS direkt aus der Erfolgsrechnung kommen.
+
+Nicht:
+- Dienstplan
+- Personal FIX
+- Forecastwerte
+- eigene Summen
+- andere Aggregationen
+
+Sondern exakt:
+
+Personalkostenquote =
+Total Personalaufwand aus Erfolgsrechnung
+geteilt durch
+Umsatz Ist aus Erfolgsrechnung
+
+Formel:
+(totalPersonalaufwand / umsatzIst) * 100
+
+---
+
+2. Datenquelle verpflichtend
+
+Bitte dieselben Werte verwenden wie:
+
+Erfolgsrechnung → Zeile:
+"Total Personalaufwand"
+
+und
+
+Erfolgsrechnung → Umsatz netto / Betriebsertrag
+
+Wichtig:
+Keine doppelte Zählung.
+Keine zusätzlichen Fix-/Flexsummen.
+Keine Hochrechnung.
+Keine Forecastwerte.
+
+Nur:
+die finalen P&L-Werte des jeweiligen Monats.
+
+---
+
+3. Zielwertlinie korrekt darstellen
+
+Die rote Zielwertlinie (40 %) bleibt korrekt.
+
+Aber:
+Der rote Balken muss exakt die echte Quote zeigen.
+
+Beispiel:
+
+Jan:
+Umsatz CHF 256’003
+Personal CHF 122’722
+= 47.9 %
+
+Dann Balken = 47.9 %
+
+Apr:
+Umsatz CHF 267’000
+Personal CHF 113’788
+= 42.6 %
+
+Dann Balken = 42.6 %
+
+Mai:
+wenn kein finaler Personalaufwand vorhanden:
+kein roter Balken anzeigen.
+
+---
+
+4. Tooltip korrigieren
+
+Beim Hover anzeigen:
+
+Monat
+Umsatz Ist
+Total Personalaufwand
+PK-Quote %
+
+Beispiel:
+
+April 2026
+Umsatz: CHF 267’000
+Personalaufwand: CHF 113’788
+PK-Quote: 42.6 %
+
+---
+
+5. Nur finale Monatswerte
+
+Keine Forecast- oder Zwischenwerte mischen.
+
+Wenn Erfolgsrechnung für Monat noch nicht vollständig:
+- Balken ausblenden
+oder
+- "keine finalen Daten" anzeigen.
+
+---
+
+6. Konsistenzprüfung einbauen
+
+Bitte zusätzlich automatisch prüfen:
+
+berechneteQuote =
+personalaufwand / umsatz
+
+Wenn Abweichung > 0.5 % gegenüber angezeigtem Wert:
+console.warn ausgeben:
+
+"[REPORTING] PK-Quote stimmt nicht mit Erfolgsrechnung überein"
+
+Damit solche Fehler zukünftig sofort sichtbar werden.
+
+---
+
+7. Gleiches Prinzip später für Warenaufwand
+
+Die Warenquote muss später genauso funktionieren:
+
+Total Warenaufwand aus Erfolgsrechnung
+geteilt durch
+Umsatz aus Erfolgsrechnung
+
+Keine separaten Berechnungen.
+
+---
+
+8. Tests
+
+Bitte prüfen:
+
+Jan:
+122’722 / 256’003 = 47.9 %
+
+Feb:
+109’017 / 227’396 = 47.9 %
+
+Mär:
+113’758 / 290’014 = 39.2 %
+
+Apr:
+113’788 / 267’000 = 42.6 %
+
+Mai:
+keine finalen Personalkosten → kein Balken
+
+Die Werte im Chart müssen exakt mit der Erfolgsrechnung identisch sein.

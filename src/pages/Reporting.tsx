@@ -466,16 +466,58 @@ const RevenueComparisonTooltip = ({
 const RevenueComparisonChart = ({
   data,
   highlightVariance,
+  selectedMonths,
+  onToggle,
+  onSelectAll,
+  onSelectNone,
+  onSelectData,
 }: {
   data: MonthlyKPI[];
   highlightVariance: boolean;
+  selectedMonths: Set<number>;
+  onToggle: (m: number) => void;
+  onSelectAll: () => void;
+  onSelectNone: () => void;
+  onSelectData: () => void;
 }) => {
   const hasData = data.some(d => d.umsatzIst || d.umsatzBudget || d.umsatzVorjahr);
   if (!hasData) return <NoDataOverlay message="Noch keine Umsatzdaten vorhanden." />;
 
+  // ── Summary bar from selected months ─────────────────────────────────────
+  const selSet  = selectedMonths.size > 0
+    ? selectedMonths
+    : new Set(data.filter(d => (d.umsatzIst ?? 0) > 0).map(d => d.month));
+  const selData = data.filter(d => selSet.has(d.month));
+  const sumIst    = selData.reduce((s, d) => s + (d.umsatzIst    ?? 0), 0);
+  const sumBudget = selData.reduce((s, d) => s + (d.umsatzBudget ?? 0), 0);
+  const sumVJ     = selData.reduce((s, d) => s + (d.umsatzVorjahr ?? 0), 0);
+  const sumAbwB   = sumIst > 0 && sumBudget > 0
+    ? parseFloat(((sumIst - sumBudget) / sumBudget * 100).toFixed(1)) : null;
+  const sumAbwV   = sumIst > 0 && sumVJ > 0
+    ? parseFloat(((sumIst - sumVJ) / sumVJ * 100).toFixed(1)) : null;
+
+  const summaryEntry: MonthlyKPI = {
+    month: 0,
+    label: `∑ ${selData.length} Mo.`,
+    umsatzIst:     sumIst    > 0 ? sumIst    : null,
+    umsatzBudget:  sumBudget > 0 ? sumBudget : null,
+    umsatzVorjahr: sumVJ     > 0 ? sumVJ     : null,
+    abwBudgetPct:  sumAbwB,
+    abwVorjahrPct: sumAbwV,
+    pkIst: null, pkBudget: null,
+    warenIst: null, warenBudget: null,
+    pkQuoteIst: null, pkQuoteBudget: null,
+    warenQuoteIst: null, warenQuoteBudget: null,
+    warenaufwandPL: null, warenaufwandPLPct: null,
+    personalaufwandPL: null, personalaufwandPLPct: null,
+  };
+
+  const chartData = [summaryEntry, ...data];
+
+  // ── Label renderer ────────────────────────────────────────────────────────
   const renderAbwLabel = (props: Record<string, unknown>) => {
     const { x, y, width, index } = props as { x: number; y: number; width: number; index: number };
-    const entry = data[index];
+    const entry = chartData[index];
     if (!entry?.umsatzIst) return null;
 
     const abwB = entry.abwBudgetPct;
@@ -496,7 +538,10 @@ const RevenueComparisonChart = ({
     });
 
     const totalH = lines.length * lineH;
-    const baseY = (y as number) - totalH - 4;
+    // Pin labels to the top of the chart area regardless of bar height
+    // Math.min caps tall-bar labels (barTop small → barTop−h−4 could be negative, fine in margin)
+    // and raises short-bar labels (barTop large → barTop−h−4 large) to ≤ 8px from chart top
+    const baseY = Math.min((y as number) - totalH - 4, 8);
 
     return (
       <g>
@@ -518,33 +563,71 @@ const RevenueComparisonChart = ({
   };
 
   return (
-    <ResponsiveContainer width="100%" height={320}>
-      <BarChart data={data} barGap={2} barCategoryGap="28%" margin={{ top: 36, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
-        <XAxis dataKey="label" tick={AXIS_STYLE} axisLine={false} tickLine={false} />
-        <YAxis
-          tick={AXIS_STYLE} axisLine={false} tickLine={false} width={68}
-          tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
+    <div>
+      <ResponsiveContainer width="100%" height={320}>
+        <BarChart data={chartData} barGap={2} barCategoryGap="26%" margin={{ top: 36, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+          <XAxis
+            dataKey="label"
+            tick={(tickProps: any) => {
+              const { x, y, payload } = tickProps;
+              const isSummary = payload.index === 0;
+              return (
+                <text
+                  x={x} y={y + 4}
+                  textAnchor="middle"
+                  dominantBaseline="hanging"
+                  fontSize={isSummary ? 10 : AXIS_STYLE.fontSize}
+                  fontWeight={isSummary ? '700' : '400'}
+                  fill={isSummary ? 'hsl(var(--foreground))' : (AXIS_STYLE as any).fill ?? 'hsl(var(--muted-foreground))'}
+                >
+                  {payload.value}
+                </text>
+              );
+            }}
+            axisLine={false} tickLine={false}
+          />
+          <YAxis
+            tick={AXIS_STYLE} axisLine={false} tickLine={false} width={68}
+            tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
+          />
+          <ReTooltip
+            content={<RevenueComparisonTooltip allData={chartData} />}
+            cursor={{ fill: 'hsl(var(--muted)/0.4)' }}
+          />
+          <Legend
+            iconType="square" iconSize={10} wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+            formatter={v => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{v}</span>}
+          />
+          <Bar dataKey="umsatzIst" name="Umsatz Ist (Netto)" radius={[3,3,0,0]} label={renderAbwLabel as any}>
+            {chartData.map((_, i) => (
+              <Cell key={i} fill={i === 0 ? '#6366f1' : C_ACTUAL} fillOpacity={i === 0 ? 0.9 : 1} />
+            ))}
+          </Bar>
+          <Bar dataKey="umsatzBudget" name="Budget" radius={[3,3,0,0]}>
+            {chartData.map((_, i) => (
+              <Cell key={i} fill={C_BUDGET} fillOpacity={i === 0 ? 0.75 : 1} />
+            ))}
+          </Bar>
+          <Bar dataKey="umsatzVorjahr" name="Vorjahr" radius={[3,3,0,0]}>
+            {chartData.map((_, i) => (
+              <Cell key={i} fill={C_PREV} fillOpacity={i === 0 ? 0.75 : 1} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+
+      <div className="mt-4 pt-3 border-t border-border/50">
+        <MonthSelectorPanel
+          kpis={data}
+          selected={selectedMonths}
+          onToggle={onToggle}
+          onSelectAll={onSelectAll}
+          onSelectNone={onSelectNone}
+          onSelectData={onSelectData}
         />
-        <ReTooltip
-          content={<RevenueComparisonTooltip allData={data} />}
-          cursor={{ fill: 'hsl(var(--muted)/0.4)' }}
-        />
-        <Legend
-          iconType="square" iconSize={10} wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-          formatter={v => <span style={{ color: 'hsl(var(--muted-foreground))' }}>{v}</span>}
-        />
-        <Bar
-          dataKey="umsatzIst"
-          name="Umsatz Ist (Netto)"
-          fill={C_ACTUAL}
-          radius={[3,3,0,0]}
-          label={renderAbwLabel as any}
-        />
-        <Bar dataKey="umsatzBudget"  name="Budget"  fill={C_BUDGET} radius={[3,3,0,0]} />
-        <Bar dataKey="umsatzVorjahr" name="Vorjahr" fill={C_PREV}   radius={[3,3,0,0]} />
-      </BarChart>
-    </ResponsiveContainer>
+      </div>
+    </div>
   );
 };
 
@@ -2325,7 +2408,15 @@ const Reporting = () => {
               </p>
             </CardHeader>
             <CardContent className="pt-0 pr-2">
-              <RevenueComparisonChart data={monthlyKPIs} highlightVariance={highlightVariance} />
+              <RevenueComparisonChart
+                data={monthlyKPIs}
+                highlightVariance={highlightVariance}
+                selectedMonths={selectedMonths}
+                onToggle={toggleMonth}
+                onSelectAll={selectAllMonths}
+                onSelectNone={selectNoMonths}
+                onSelectData={selectDataMonths}
+              />
             </CardContent>
           </Card>
         </section>
