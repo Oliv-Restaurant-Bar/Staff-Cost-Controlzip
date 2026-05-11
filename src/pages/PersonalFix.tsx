@@ -3548,16 +3548,6 @@ export default function PersonalFixPage() {
           </section>
         )}
 
-        {/* ── Stundensaldo & Planungshinweise ──────────────────────────────── */}
-        {allEmployees.length > 0 && (
-          <HourBalanceSection
-            balances={hourBalances}
-            hints={planningHints}
-            mode={varView}
-            modeLabel={varModeLabelShort}
-          />
-        )}
-
         {/* ── Gesamt-Total FIX + VARIABEL ──────────────────────────────────── */}
         {pfix.active.istTotalVar > 0 && (
           <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
