@@ -207,6 +207,7 @@ const SchedulePlanner = () => {
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [empFilterOpen, setEmpFilterOpen] = useState(false);
   const [empSearchQuery, setEmpSearchQuery] = useState('');
+  const [sidebarEmpSearch, setSidebarEmpSearch] = useState('');
   const [calendarView, setCalendarView] = useState<CalendarView>('week');
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
   const [visibleWeekInMonth, setVisibleWeekInMonth] = useState(0);
@@ -3098,13 +3099,22 @@ const SchedulePlanner = () => {
           />
 
           {/* ── Filter ─────────────────────────────────────────── */}
-          {canSwitchDepartment && (
-            <div className="rounded-lg border bg-card overflow-hidden">
-              <div className="px-2.5 py-1.5 border-b border-border/50">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Filter</p>
-              </div>
-              <div className="px-2 py-2 space-y-2">
-                {/* Department */}
+          <div className="rounded-lg border bg-card overflow-hidden">
+            <div className="px-2.5 py-1.5 border-b border-border/50 flex items-center justify-between">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Filter</p>
+              {(selectedEmployeeIds.length > 0 || empTypeFilter !== null) && (
+                <button
+                  onClick={() => { setSelectedEmployeeIds([]); setEmpTypeFilter(null); setSidebarEmpSearch(''); }}
+                  className="text-[10px] text-primary hover:underline"
+                  title="Alle Filter zurücksetzen"
+                >
+                  zurücksetzen
+                </button>
+              )}
+            </div>
+            <div className="px-2 py-2 space-y-2">
+              {/* Department — only for admins who can switch */}
+              {canSwitchDepartment && (
                 <div className="flex items-center gap-1 flex-wrap">
                   {([
                     { key: 'all' as const,     label: 'Alle',    dot: null },
@@ -3126,31 +3136,102 @@ const SchedulePlanner = () => {
                     </button>
                   ))}
                 </div>
-                {/* Employment type */}
-                <div className="flex items-center gap-1 flex-wrap">
-                  {([
-                    { key: null,          label: 'Alle' },
-                    { key: 'vollzeit',    label: 'VZ' },
-                    { key: 'teilzeit',    label: 'TZ' },
-                    { key: 'stundenlohn', label: 'SL' },
-                  ] as const).map(({ key, label }) => (
+              )}
+
+              {/* Employment type */}
+              <div className="flex items-center gap-1 flex-wrap">
+                {([
+                  { key: null,          label: 'Alle' },
+                  { key: 'vollzeit',    label: 'VZ' },
+                  { key: 'teilzeit',    label: 'TZ' },
+                  { key: 'stundenlohn', label: 'SL' },
+                ] as const).map(({ key, label }) => (
+                  <button
+                    key={String(key)}
+                    onClick={() => setEmpTypeFilter(empTypeFilter === key ? null : key)}
+                    className={cn(
+                      "h-6 px-2 text-[11px] font-medium rounded-md transition-colors border",
+                      empTypeFilter === key
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Employee multi-select — inline search + checklist */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-medium text-muted-foreground">Mitarbeiter</p>
+                  {selectedEmployeeIds.length > 0 ? (
                     <button
-                      key={String(key)}
-                      onClick={() => setEmpTypeFilter(empTypeFilter === key ? null : key)}
-                      className={cn(
-                        "h-6 px-2 text-[11px] font-medium rounded-md transition-colors border",
-                        empTypeFilter === key
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"
-                      )}
+                      className="text-[10px] text-primary hover:underline"
+                      onClick={() => { setSelectedEmployeeIds([]); setSidebarEmpSearch(''); }}
                     >
-                      {label}
+                      Alle anzeigen
                     </button>
-                  ))}
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground/60">alle</span>
+                  )}
                 </div>
+                {/* Search */}
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+                  <Input
+                    placeholder="Suchen…"
+                    value={sidebarEmpSearch}
+                    onChange={e => setSidebarEmpSearch(e.target.value)}
+                    className="h-6 text-[11px] pl-6 pr-2 rounded"
+                  />
+                </div>
+                {/* Employee list */}
+                <div className="max-h-44 overflow-y-auto space-y-0.5 rounded border border-border/50 bg-background p-1">
+                  {(() => {
+                    const searchLower = sidebarEmpSearch.toLowerCase();
+                    const opts = dropdownEmployeeOptions.filter(e =>
+                      !searchLower || getEmployeeDisplayName(e).toLowerCase().includes(searchLower)
+                    );
+                    if (opts.length === 0) {
+                      return <p className="text-[11px] text-muted-foreground text-center py-2">Keine Treffer</p>;
+                    }
+                    return opts.map(e => {
+                      const checked = selectedEmployeeIds.includes(e.id);
+                      return (
+                        <label
+                          key={e.id}
+                          className="flex items-center gap-1.5 px-1 py-1 rounded hover:bg-muted cursor-pointer select-none"
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={v => {
+                              setSelectedEmployeeIds(prev =>
+                                v ? [...prev, e.id] : prev.filter(id => id !== e.id)
+                              );
+                            }}
+                            className="h-3.5 w-3.5 shrink-0"
+                          />
+                          {activeDepartment === 'all' && (
+                            <span className={cn(
+                              "w-1.5 h-1.5 rounded-full shrink-0",
+                              e.department === 'service' ? "bg-blue-500" : "bg-orange-500"
+                            )} />
+                          )}
+                          <span className="text-[11px] truncate leading-tight">{getEmployeeDisplayName(e)}</span>
+                        </label>
+                      );
+                    });
+                  })()}
+                </div>
+                {selectedEmployeeIds.length > 0 && (
+                  <p className="text-[10px] text-primary font-medium text-center">
+                    {selectedEmployeeIds.length} ausgewählt
+                  </p>
+                )}
               </div>
             </div>
-          )}
+          </div>
 
           {/* ── Controlling — KPIs ─────────────────────────────── */}
           <div className="rounded-lg border bg-card px-3 py-2.5 space-y-1.5">
@@ -3297,7 +3378,27 @@ const SchedulePlanner = () => {
           {/* ══════════════ MAIN CONTENT ══════════════ */}
           <div className="flex flex-col gap-2">
 
-            {/* ── Compact KPI Strip ───────────────────────────────────── */}
+            {/* ── Active employee-filter banner ───────────────────────── */}
+          {selectedEmployeeIds.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-primary/30 bg-primary/5 text-xs">
+              <Users className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span className="flex-1 font-medium text-primary">
+                {selectedEmployeeIds.length === 1
+                  ? `1 Mitarbeiter ausgewählt`
+                  : `${selectedEmployeeIds.length} Mitarbeiter ausgewählt`}
+              </span>
+              <button
+                onClick={() => { setSelectedEmployeeIds([]); setSidebarEmpSearch(''); }}
+                className="text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 shrink-0"
+                title="Filter zurücksetzen"
+              >
+                <X className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline text-[11px]">zurücksetzen</span>
+              </button>
+            </div>
+          )}
+
+          {/* ── Compact KPI Strip ───────────────────────────────────── */}
             <div className={cn(
               "shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 rounded-xl border-2",
               gesamtCostRatioStatus === 'good'    && "border-green-400/60 bg-green-50/60 dark:bg-green-950/20",

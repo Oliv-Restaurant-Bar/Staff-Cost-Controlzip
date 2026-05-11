@@ -1,0 +1,125 @@
+Bitte korrigiere die Mitarbeiter-Spalte im Dienstplan.
+
+Aktuelles Problem:
+Die Mitarbeiternamen sind links abgeschnitten und kaum lesbar.
+Die Zusatzinfos, Icons und Warnungen nehmen zu viel Platz weg.
+
+Ziel:
+Der Name muss immer vollständig oder zumindest klar lesbar sein.
+
+---
+
+1. Mitarbeiternamen priorisieren
+
+In der linken Mitarbeiter-Spalte soll standardmässig nur angezeigt werden:
+
+- vollständiger Name
+- optional kleine Stundenbalance darunter
+
+Alle anderen Informationen bitte aus der Hauptansicht entfernen.
+
+Nicht mehr dauerhaft anzeigen:
+- Warn-Icons
+- Spät-Badges
+- Vertragsinfos
+- TZ / VZ / AH
+- mehrere Status-Badges
+- Zusatzsymbole neben dem Namen
+
+---
+
+2. Warnungen über Schriftfarbe anzeigen
+
+Wenn ein Mitarbeiter Warnungen hat:
+- Name in Rot anzeigen
+- optional kleines dezentes Warnsymbol neben dem Namen
+
+Keine grossen Badges mehr.
+
+Beispiel:
+Carlos
+normal schwarz
+
+Arber
+rot, wenn Warnung vorhanden
+
+---
+
+3. Mitarbeiter-Detail per Klick
+
+Wenn man auf den Mitarbeiternamen klickt:
+
+Popup / Sidepanel öffnen mit allen Details:
+
+- Name
+- Abteilung
+- Vertrag
+- Sollstunden
+- Iststunden
+- Stundenbalance
+- Warnungen
+- Spätdienste
+- Überstundenrisiko
+- Ferien/Krank
+- Kosten Plan
+- Kosten Ist
+- Lohnbasis
+
+Damit bleiben alle Informationen verfügbar, aber die Tabelle wird nicht überladen.
+
+---
+
+4. Spaltenbreite fixieren
+
+Die Mitarbeiter-Spalte muss genügend breit sein, damit Namen lesbar bleiben.
+
+Bitte:
+- sticky left column beibehalten
+- feste Mindestbreite setzen, z.B. 180–220 px
+- Name darf nicht auf 2 Buchstaben gekürzt werden
+- bei sehr langen Namen mit sauberem Ellipsis arbeiten
+
+Beispiel:
+"Dzhymsheleishvili Y..." statt "D..."
+
+---
+
+5. Aushilfe-Buttons reduzieren
+
+Aktuell sind oben zwei Buttons "Aushilfe hinzufügen" sichtbar.
+
+Bitte nur EINEN Button anzeigen:
+
+"+ Aushilfe hinzufügen"
+
+Dieser Button soll:
+- für aktuelle Abteilung funktionieren
+- oder im Dialog Abteilung auswählen lassen
+
+Keine doppelten Buttons.
+
+---
+
+6. Layout prüfen
+
+Bitte prüfen:
+- Wochenansicht
+- Monatsansicht
+- horizontales Scrollen
+- sticky Mitarbeiter-Spalte
+- schmale Bildschirme
+- Service/Küche Filter
+- Mitarbeiterfilter
+
+Ziel:
+Mitarbeiternamen müssen immer lesbar bleiben.
+
+---
+
+7. Wichtig
+
+Keine Planungslogik ändern.
+Keine Kostenlogik ändern.
+Keine Daten verändern.
+
+Nur UI/UX der Mitarbeiter-Spalte und Header-Buttons korrigieren.
