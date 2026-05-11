@@ -3082,7 +3082,7 @@ const SchedulePlanner = () => {
 
       {/* LEFT SIDEBAR: inline panel, no overlay */}
       {legendSidebarOpen && (
-      <aside className="w-[240px] min-w-[240px] shrink-0 flex flex-col bg-card border-r border-border overflow-y-auto">
+      <aside className="w-[240px] min-w-[240px] shrink-0 flex flex-col bg-card border-r border-border">
         {/* Sidebar header */}
         <div className="flex items-center justify-between px-3 py-2.5 border-b border-border shrink-0">
           <span className="font-semibold text-sm">Schichtplanung</span>
@@ -3397,77 +3397,6 @@ const SchedulePlanner = () => {
             </div>
           )}
 
-        </div>
-
-        {/* ── Netto/Brutto + Stichtag — pinned to bottom of sidebar ── */}
-        <div className="shrink-0 border-t border-border bg-card">
-          {/* Umsatzbasis */}
-          <div className="px-3 py-2 space-y-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Umsatzbasis</p>
-            <div className="flex rounded-md overflow-hidden border border-border text-xs h-7">
-              <button
-                type="button"
-                onClick={() => setShowNetRevenue(true)}
-                className={cn(
-                  "flex-1 transition-colors font-medium",
-                  showNetRevenue ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted",
-                )}
-              >
-                Netto
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowNetRevenue(false)}
-                className={cn(
-                  "flex-1 transition-colors font-medium",
-                  !showNetRevenue ? "bg-amber-500 text-white" : "text-muted-foreground hover:bg-muted",
-                )}
-              >
-                Brutto
-              </button>
-            </div>
-          </div>
-          {/* Stichtag */}
-          <div className={cn(
-            "mx-3 mb-2 rounded-md border p-2 space-y-1 transition-colors",
-            stichtagActive
-              ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30"
-              : "border-border bg-muted/30",
-          )}>
-            <div className="flex items-center gap-1.5">
-              <CalendarClock className={cn("h-3.5 w-3.5 shrink-0", stichtagActive ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")} />
-              <span className={cn("text-[10px] font-semibold uppercase tracking-wider", stichtagActive ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
-                Stichtag
-              </span>
-              {stichtagActive && (
-                <button
-                  onClick={clearStichtag}
-                  className="ml-auto h-4 w-4 flex items-center justify-center rounded-full bg-amber-200 dark:bg-amber-800 hover:bg-amber-300 dark:hover:bg-amber-700 text-amber-700 dark:text-amber-300 transition-colors"
-                  title="Stichtag aufheben"
-                >
-                  <X className="h-2.5 w-2.5" />
-                </button>
-              )}
-            </div>
-            {stichtagActive
-              ? <p className="text-xs font-bold text-amber-800 dark:text-amber-300">per {stichtagFormatted}</p>
-              : <p className="text-[10px] text-muted-foreground leading-tight">Auswertungen begrenzen</p>
-            }
-            <input
-              type="date"
-              value={stichtag ? stichtag.toISOString().split('T')[0] : ''}
-              onChange={e => {
-                const val = e.target.value;
-                if (!val) clearStichtag();
-                else setStichtag(new Date(val + 'T12:00:00'));
-              }}
-              max={new Date().toISOString().split('T')[0]}
-              className={cn(
-                "w-full text-[11px] rounded px-1.5 py-1 border bg-background transition-colors",
-                stichtagActive ? "border-amber-300 dark:border-amber-700" : "border-border",
-              )}
-            />
-          </div>
         </div>
 
       </aside>
