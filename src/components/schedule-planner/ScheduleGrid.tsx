@@ -90,6 +90,8 @@ interface ScheduleGridProps {
    * Called with employeeId, date (yyyy-MM-dd), slotType, and the selected TimeSlot.
    */
   onCopyToIst?: (employeeId: string, date: string, slotType: 'früh' | 'spät', slot: TimeSlot) => void;
+  /** Callback when user clicks on an employee name to view a detail panel */
+  onEmployeeClick?: (employee: Employee) => void;
 }
 
 function patternShortLabel(type: PatternType): string {
@@ -277,6 +279,7 @@ export const ScheduleGrid = ({
   onCellColorChange,
   showDepartmentBadge = false,
   onCopyToIst,
+  onEmployeeClick,
 }: ScheduleGridProps) => {
   const { shiftMap, absenceShifts } = useShiftConfig();
   
@@ -714,7 +717,7 @@ export const ScheduleGrid = ({
               <th 
                 className={cn(
                   "sticky left-0 z-20 bg-card px-2 py-1 text-left text-xs font-semibold border-b border-r-2 border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
-                  isWeekView ? "w-[90px] min-w-[90px] max-w-[90px]" : "w-[110px] min-w-[110px] max-w-[110px]"
+                  isWeekView ? "w-[160px] min-w-[160px] max-w-[160px]" : "w-[160px] min-w-[160px] max-w-[160px]"
                 )}
                 rowSpan={2}
               >
@@ -900,8 +903,8 @@ export const ScheduleGrid = ({
                     "px-1.5 py-1 border-b border-r-2 border-border overflow-hidden",
                     "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
                     isWeekView
-                      ? "w-[90px] min-w-[90px] max-w-[90px]"
-                      : "w-[110px] min-w-[110px] max-w-[110px]"
+                      ? "w-[160px] min-w-[160px] max-w-[160px]"
+                      : "w-[160px] min-w-[160px] max-w-[160px]"
                   )}>
                     <TooltipProvider>
                       <Tooltip>
@@ -915,13 +918,21 @@ export const ScheduleGrid = ({
                                     employee.department === 'service' ? "bg-blue-500" : "bg-orange-500"
                                   )} />
                                 )}
-                                <span className="truncate min-w-0">{getEmployeeDisplayName(employee)}</span>
-                                {empPatternWarnings.some(w => w.severity === 'critical') && (
-                                  <AlertTriangle className="h-2.5 w-2.5 text-red-500 shrink-0" />
-                                )}
-                                {!empPatternWarnings.some(w => w.severity === 'critical') && empPatternWarnings.some(w => w.severity === 'warning') && (
-                                  <AlertTriangle className="h-2.5 w-2.5 text-amber-400/70 shrink-0" />
-                                )}
+                                <span
+                                  className={cn(
+                                    "truncate min-w-0",
+                                    onEmployeeClick && "cursor-pointer hover:underline underline-offset-2",
+                                    empPatternWarnings.some(w => w.severity === 'critical')
+                                      ? "text-red-600 dark:text-red-400"
+                                      : empPatternWarnings.some(w => w.severity === 'warning')
+                                        ? "text-amber-600 dark:text-amber-400"
+                                        : undefined
+                                  )}
+                                  onClick={onEmployeeClick ? (e) => { e.stopPropagation(); onEmployeeClick(employee); } : undefined}
+                                  title={onEmployeeClick ? "Details anzeigen" : undefined}
+                                >
+                                  {getEmployeeDisplayName(employee)}
+                                </span>
                               </div>
                               <div className={cn(
                                 "text-[10px] font-semibold tabular-nums leading-tight",
@@ -1283,7 +1294,7 @@ export const ScheduleGrid = ({
                 <td className={cn(
                   "sticky left-0 z-10 bg-muted px-1.5 py-1.5 border-b border-r-2 border-border font-semibold text-xs",
                   "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
-                  isWeekView ? "w-[90px] min-w-[90px] max-w-[90px]" : "w-[110px] min-w-[110px] max-w-[110px]"
+                  isWeekView ? "w-[160px] min-w-[160px] max-w-[160px]" : "w-[160px] min-w-[160px] max-w-[160px]"
                 )}>
                   Tages-Σ
                   <span className="ml-1 text-[9px] font-normal text-muted-foreground">{employees.length} MA</span>

@@ -25,7 +25,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -75,6 +75,9 @@ import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -227,6 +230,10 @@ const SchedulePlanner = () => {
   const [shiftConfigDialogOpen, setShiftConfigDialogOpen] = useState(false);
   const [daysOffDialogOpen, setDaysOffDialogOpen] = useState(false);
   const [selectedEmployeeForDaysOff, setSelectedEmployeeForDaysOff] = useState<Employee | null>(null);
+  const [employeeDetailEmp, setEmployeeDetailEmp] = useState<Employee | null>(null);
+  const [aushilfeDept, setAushilfeDept] = useState<'service' | 'küche' | null>(null);
+  const [aushilfeName, setAushilfeName] = useState('');
+  const [aushilfeWage, setAushilfeWage] = useState('20');
   const [apply8HoursDialogOpen, setApply8HoursDialogOpen] = useState(false);
   const [selectedEmployeeFor8Hours, setSelectedEmployeeFor8Hours] = useState<Employee | null>(null);
   const [employeeFormOpen, setEmployeeFormOpen] = useState(false);
@@ -3510,12 +3517,26 @@ const SchedulePlanner = () => {
                   )}
                 </CardTitle>
                 {activeDepartment === 'all' ? (
-                  <div className="flex gap-1">
-                    <AddAushilfeDialog department="service" onAdd={handleAddAushilfe} />
-                    <AddAushilfeDialog department="küche" onAdd={handleAddAushilfe} />
-                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" className="gap-1">
+                        <UserPlus className="h-3.5 w-3.5" />
+                        Aushilfe
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => { setAushilfeDept('service'); setAushilfeName(''); setAushilfeWage('20'); }}>
+                        <span className="w-2 h-2 rounded-full bg-blue-500 mr-2 shrink-0 inline-block" />
+                        Service Aushilfe
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => { setAushilfeDept('küche'); setAushilfeName(''); setAushilfeWage('20'); }}>
+                        <span className="w-2 h-2 rounded-full bg-orange-500 mr-2 shrink-0 inline-block" />
+                        Küche Aushilfe
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 ) : (
-                  <AddAushilfeDialog department={activeDepartment} onAdd={handleAddAushilfe} />
+                  <AddAushilfeDialog department={activeDepartment as 'service' | 'küche'} onAdd={handleAddAushilfe} />
                 )}
               </div>
               
@@ -3689,6 +3710,7 @@ const SchedulePlanner = () => {
                       onCellColorChange={handleCellColorChange}
                       showDepartmentBadge={activeDepartment === 'all'}
                       onCopyToIst={handleCopyPlanToIst}
+                      onEmployeeClick={setEmployeeDetailEmp}
                     />
                 </>
               ) : (
@@ -4687,6 +4709,195 @@ const SchedulePlanner = () => {
         dailyBudgets={dailyBudgets}
         restaurantName={tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv'}
       />
+
+      {/* ── Mitarbeiter Detail Dialog ─────────────────────────────────── */}
+      {employeeDetailEmp && (() => {
+        const emp = employeeDetailEmp;
+        const plannedHrs = calculateEmployeeHours(emp.id);
+        const targetHrs = getMonthlyTargetHours(emp);
+        const actualHrs = calculateEmployeeActualHours(emp.id);
+        const balance = plannedHrs - targetHrs;
+        const empWarnings = patternWarnings.filter(w => w.empId === emp.id);
+        const lateShifts = daysInMonth.filter(day => {
+          const k = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
+          return !!(scheduleData[k]?.spät?.start);
+        }).length;
+        const absenceDays = { FE: 0, K: 0, F: 0 };
+        daysInMonth.forEach(day => {
+          const entry = actualHoursData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
+          if (entry?.absenceType) absenceDays[entry.absenceType] = (absenceDays[entry.absenceType] || 0) + 1;
+        });
+        const hourlyRate = emp.hourlyWage ?? 0;
+        const monthlyRate = emp.monthlySalary ?? 0;
+        const planCost = monthlyRate > 0
+          ? monthlyRate
+          : plannedHrs * hourlyRate;
+        const actualCost = monthlyRate > 0
+          ? monthlyRate
+          : actualHrs * hourlyRate;
+        return (
+          <Dialog open={!!employeeDetailEmp} onOpenChange={open => { if (!open) setEmployeeDetailEmp(null); }}>
+            <DialogContent className="sm:max-w-[420px]">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <span className={cn(
+                    "w-2.5 h-2.5 rounded-full shrink-0",
+                    emp.department === 'service' ? "bg-blue-500" : "bg-orange-500"
+                  )} />
+                  {getEmployeeDisplayName(emp)}
+                </DialogTitle>
+                <DialogDescription>
+                  {emp.department === 'service' ? 'Service' : 'Küche'} · {emp.employmentType === 'vollzeit' ? 'Vollzeit' : emp.employmentType === 'teilzeit' ? 'Teilzeit' : emp.employmentType === 'aushilfe' ? 'Aushilfe' : emp.employmentType}
+                  {emp.weeklyHours ? ` · ${emp.weeklyHours}h/Woche` : ''}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 py-1">
+                {/* Hours */}
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="rounded-lg bg-muted/60 px-3 py-2">
+                    <div className="text-[11px] text-muted-foreground mb-0.5">Soll</div>
+                    <div className="text-base font-bold tabular-nums">{targetHrs.toFixed(1)}h</div>
+                  </div>
+                  <div className="rounded-lg bg-muted/60 px-3 py-2">
+                    <div className="text-[11px] text-muted-foreground mb-0.5">Plan</div>
+                    <div className="text-base font-bold tabular-nums">{plannedHrs.toFixed(1)}h</div>
+                  </div>
+                  <div className={cn(
+                    "rounded-lg px-3 py-2",
+                    balance >= 0 ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-red-50 dark:bg-red-950/30"
+                  )}>
+                    <div className="text-[11px] text-muted-foreground mb-0.5">Balance</div>
+                    <div className={cn(
+                      "text-base font-bold tabular-nums",
+                      balance >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
+                    )}>
+                      {balance >= 0 ? '+' : ''}{balance.toFixed(1)}h
+                    </div>
+                  </div>
+                </div>
+
+                <Separator />
+
+                {/* Schedule details */}
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+                  <div className="text-muted-foreground">Ist-Stunden</div>
+                  <div className="font-medium tabular-nums text-right">{actualHrs.toFixed(1)}h</div>
+                  <div className="text-muted-foreground">Spätdienste</div>
+                  <div className="font-medium tabular-nums text-right">{lateShifts}×</div>
+                  {absenceDays.FE > 0 && (
+                    <>
+                      <div className="text-muted-foreground">Ferientage</div>
+                      <div className="font-medium tabular-nums text-right">{absenceDays.FE} Tage</div>
+                    </>
+                  )}
+                  {absenceDays.K > 0 && (
+                    <>
+                      <div className="text-muted-foreground">Krankheitstage</div>
+                      <div className="font-medium tabular-nums text-right">{absenceDays.K} Tage</div>
+                    </>
+                  )}
+                  {absenceDays.F > 0 && (
+                    <>
+                      <div className="text-muted-foreground">Frei-Tage</div>
+                      <div className="font-medium tabular-nums text-right">{absenceDays.F} Tage</div>
+                    </>
+                  )}
+                  {effectiveShowCosts && planCost > 0 && (
+                    <>
+                      <div className="text-muted-foreground">Kosten Plan</div>
+                      <div className="font-medium tabular-nums text-right">{formatCurrency(planCost)}</div>
+                      <div className="text-muted-foreground">Kosten Ist</div>
+                      <div className="font-medium tabular-nums text-right">{formatCurrency(actualCost)}</div>
+                    </>
+                  )}
+                </div>
+
+                {/* Warnings */}
+                {empWarnings.length > 0 && (
+                  <>
+                    <Separator />
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                        <AlertTriangle className="h-3 w-3" />
+                        Muster-Warnungen
+                      </div>
+                      {empWarnings.map((w, i) => (
+                        <div key={i} className={cn(
+                          "text-xs rounded px-2 py-1.5 leading-snug",
+                          w.severity === 'critical'
+                            ? "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400"
+                            : "bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400"
+                        )}>
+                          {w.message}
+                          {w.detail && <span className="block text-[11px] opacity-70 mt-0.5">{w.detail}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
+
+      {/* ── Aushilfe Dialog (Alle-Abteilungen-Modus) ─────────────────── */}
+      <Dialog open={aushilfeDept !== null} onOpenChange={open => { if (!open) setAushilfeDept(null); }}>
+        <DialogContent className="sm:max-w-[340px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {aushilfeDept && (
+                <span className={cn(
+                  "w-2.5 h-2.5 rounded-full shrink-0",
+                  aushilfeDept === 'service' ? "bg-blue-500" : "bg-orange-500"
+                )} />
+              )}
+              Aushilfe hinzufügen ({aushilfeDept === 'service' ? 'Service' : 'Küche'})
+            </DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="aushilfe-name-all">Name</Label>
+              <Input
+                id="aushilfe-name-all"
+                value={aushilfeName}
+                onChange={e => setAushilfeName(e.target.value)}
+                placeholder="Name eingeben"
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && aushilfeName.trim() && aushilfeDept) {
+                    handleAddAushilfe({ name: aushilfeName.trim(), department: aushilfeDept, employmentType: 'aushilfe', hourlyWage: parseFloat(aushilfeWage) || 20 });
+                    setAushilfeDept(null);
+                  }
+                }}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="aushilfe-wage-all">Stundenlohn (CHF)</Label>
+              <Input
+                id="aushilfe-wage-all"
+                type="number"
+                value={aushilfeWage}
+                onChange={e => setAushilfeWage(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAushilfeDept(null)}>Abbrechen</Button>
+            <Button
+              disabled={!aushilfeName.trim()}
+              onClick={() => {
+                if (aushilfeName.trim() && aushilfeDept) {
+                  handleAddAushilfe({ name: aushilfeName.trim(), department: aushilfeDept, employmentType: 'aushilfe', hourlyWage: parseFloat(aushilfeWage) || 20 });
+                  setAushilfeDept(null);
+                }
+              }}
+            >
+              Hinzufügen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
