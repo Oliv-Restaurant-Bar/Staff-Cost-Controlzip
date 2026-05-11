@@ -1,69 +1,135 @@
 /**
- * Mirus Excel Parser — Monatsblatt (.xls / .xlsx)
- * =================================================
- * Liest Mirus-Monatsblätter aus Excel und extrahiert:
- *   A) Dokumentdaten  B) Mitarbeiterdaten
- *   C) Tageszeilen    D) Totale
+ * Mirus Excel Parser — Koordinatenbasiert
+ * ========================================
+ * Position-basierter Parser für Mirus-Monatsblätter (Excel-Drucklayout).
  *
- * Verwendet SheetJS (xlsx@0.18.x).
- * Rein diagnostisch — kein Schreiben, kein Supabase.
+ * Strategie:
+ *   - Mitarbeiterblock = Zeile mit "Name / Vorname" in Spalte C
+ *   - Name kommt aus Zelle M(blockStart)
+ *   - Wochenstunden aus BO(blockStart)
+ *   - Tageszeilen ab blockStart+6, per Datumszellen-Suche
+ *   - Spalten-Map wird per Header-Zeilen-Scan automatisch ermittelt
+ *
+ * Kein Supabase, kein Speichern — rein diagnostisch.
  */
 
 import * as XLSX from 'xlsx';
 
-// ─── Typen ────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── LAYOUT-KONFIGURATION ─────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
 
-export type CellVal = string | number | boolean | Date | null | undefined;
+/** Alle Spaltenbuchstaben → 0-basierte Indices */
+const C = (letter: string) => XLSX.utils.decode_col(letter);
 
-export interface RawCell {
-  sheetName: string;
-  rowIdx: number;   // 0-basiert
-  colIdx: number;   // 0-basiert
-  cellRef: string;  // "A1", "B3" …
-  rawValue: CellVal;
-  formatted: string;
+/**
+ * Standard-Layout für Mirus-Monatsblatt (Drucklayout).
+ * Spalten werden per Header-Zeilen-Scan automatisch überschrieben,
+ * wenn Schlüsselwörter ("Datum", "Arbeitszeit", "Pause", "Total") gefunden werden.
+ */
+const LAYOUT = {
+  markerCol:       C('C'),   // "Name / Vorname" steht hier
+  nameCol:         C('M'),   // Employee-Name
+  weeklyHoursCol:  C('BO'),  // Wochenstunden
+  metaRowOffset:   1,        // Kostenstelle etc. in der Zeile nach dem Block-Start
+  daySearchOffset: 5,        // Tageszeilen-Suche startet ab blockStart + diesen Offset
+
+  // Tagesspalten — Standard, wird per Header überschrieben
+  day: {
+    dateCol:    C('B'),
+    weekdayCol: C('D'),
+    fromCol:    C('H'),
+    toCol:      C('I'),
+    pauseCol:   C('AD'),
+    totalCol:   C('AH'),
+    remarkCol:  C('BJ'),
+  },
+};
+
+const ABSENCE_CODES = ['FR', 'FE', 'KR', 'Frei', 'Ferien', 'Krank', 'Unfall', 'Kompensation', 'KO'];
+
+const TOTAL_LABELS: { key: keyof EmployeeTotals; patterns: string[] }[] = [
+  { key: 'totalHours',   patterns: ['total stunden', 'total h', 'gesamtarbeitszeit', 'bruttoarbeitszeit'] },
+  { key: 'pauseTotal',   patterns: ['pause', 'pausen total'] },
+  { key: 'nettoTotal',   patterns: ['netto', 'nettoarbeitszeit'] },
+  { key: 'zeitzuschlag', patterns: ['zeitzuschlag', 'zuschlag'] },
+  { key: 'ueberzeit',    patterns: ['überzeit', 'ueberzeit', 'überstunden'] },
+  { key: 'saldo',        patterns: ['saldo'] },
+  { key: 'ferien',       patterns: ['ferien'] },
+  { key: 'frei',         patterns: ['frei', 'freizeit', 'kompensation'] },
+  { key: 'krankheit',    patterns: ['krank', 'unfall'] },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── TYPEN ────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface TimeBlock {
+  from: string;
+  to: string;
+  department?: string;
 }
 
-export interface ExcelDayRow {
+export interface DayRecord {
   date: string | null;
   weekday: string | null;
-  timeBlocks: { from: string; to: string }[];
-  department: string | null;
-  pause: string | null;
-  totalHours: string | null;
-  absenceCodes: string[];
-  remark: string | null;
-  rawCells: RawCell[];
-  rowIdx: number;
+  shifts: TimeBlock[];
+  breakMinutes: number | null;
+  totalHours: number | null;
+  absenceCode: string | null;
+  notes: string | null;
+  rawCells: {
+    dateCell?: string;
+    workTimeCell?: string;
+    pauseCell?: string;
+    totalCell?: string;
+    remarkCell?: string;
+  };
   confidence: 'high' | 'medium' | 'low';
 }
 
-export interface ExcelTotals {
-  totalHours: string | null;
-  pauseTotal: string | null;
-  nettoTotal: string | null;
-  zeitzuschlag: string | null;
-  ueberzeit: string | null;
-  saldo: string | null;
-  ferien: string | null;
-  rawLines: string[];
+export interface EmployeeTotals {
+  totalHours?: string;
+  pauseTotal?: string;
+  nettoTotal?: string;
+  zeitzuschlag?: string;
+  ueberzeit?: string;
+  saldo?: string;
+  ferien?: string;
+  frei?: string;
+  krankheit?: string;
+}
+
+export interface RawBlock {
+  markerCell: string;
+  nameCell: string;
+  weeklyHoursCell: string;
+  metaRowText: string;
+  detectedColMap: Record<string, string>;
 }
 
 export interface ExcelEmployee {
   name: string | null;
-  personalnummer: string | null;
-  kostenstelle: string | null;
   department: string | null;
-  employment: string | null;
-  weeklyHours: string | null;
-  eintritt: string | null;
-  austritt: string | null;
+  costCenter: string | null;
+  weeklyHours: number | null;
+  employmentPeriod: string | null;
   sheetName: string;
-  dayRows: ExcelDayRow[];
-  totals: ExcelTotals;
-  uncertainRows: number;
-  headerRowIdx: number;
-  rawHeaderCells: RawCell[];
+  blockStartRow: number;   // 1-basiert (für Anzeige)
+  blockEndRow: number | null;
+  days: DayRecord[];
+  totals: EmployeeTotals;
+  rawBlock: RawBlock;
+}
+
+export interface ExcelDocQuality {
+  totalEmployees: number;
+  employeesWithName: number;
+  employeesWithDays: number;
+  employeesWithTotals: number;
+  totalDayRecords: number;
+  daysWithShifts: number;
+  qualityPercent: number;
 }
 
 export interface ExcelParsedDocument {
@@ -74,655 +140,522 @@ export interface ExcelParsedDocument {
   restaurant: string | null;
   creationDate: string | null;
   employees: ExcelEmployee[];
+  quality: ExcelDocQuality;
   warnings: string[];
-  quality: {
-    totalEmployees: number;
-    totalDayRows: number;
-    uncertainRows: number;
-    employeesWithTotals: number;
-    qualityPercent: number;
-  };
+  sheetsProcessed: string[];
 }
 
-// ─── Konstanten ───────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── ZELL-HELFER ──────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
 
-const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+function getCell(ws: XLSX.WorkSheet, col: number, row: number): XLSX.CellObject | undefined {
+  return ws[XLSX.utils.encode_cell({ r: row, c: col })] as XLSX.CellObject | undefined;
+}
 
-const ABSENCE_CODES = [
-  'FE', 'FR', 'KR', 'UN', 'UE', 'GF', 'AB', 'MU', 'MA',
-  'BU', 'JU', 'KO', 'AZ', 'ML', 'UU', 'BL', 'ZA', 'NU', 'WK', 'KI', 'SU', 'FL',
+function cellText(ws: XLSX.WorkSheet, col: number, row: number): string {
+  const cell = getCell(ws, col, row);
+  if (!cell) return '';
+  return (cell.w ?? String(cell.v ?? '')).trim();
+}
+
+function cellNum(ws: XLSX.WorkSheet, col: number, row: number): number | null {
+  const cell = getCell(ws, col, row);
+  if (!cell) return null;
+  if (cell.t === 'n' && typeof cell.v === 'number') return cell.v;
+  const n = parseFloat(String(cell.v ?? '').replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+
+function formatDate(d: Date): string {
+  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+}
+
+function timeSerial(v: number): string {
+  // 0.0 = 00:00, 0.5 = 12:00
+  const frac = v % 1;
+  const totalMin = Math.round(frac * 1440);
+  return `${String(Math.floor(totalMin / 60)).padStart(2, '0')}:${String(totalMin % 60).padStart(2, '0')}`;
+}
+
+function parseTimeCell(cell: XLSX.CellObject | undefined): string | null {
+  if (!cell) return null;
+  if (cell.t === 'n' && typeof cell.v === 'number') {
+    // Fractional = time (0.0–1.0), or could be > 1 (date+time combined)
+    const frac = cell.v % 1;
+    if (frac > 0) return timeSerial(frac);
+  }
+  const w = (cell.w ?? String(cell.v ?? '')).trim();
+  const m = w.match(/^(\d{1,2})[:\.](\d{2})(?:\s*[-–]\s*(\d{1,2})[:\.](\d{2}))?/);
+  if (m) {
+    const from = `${m[1].padStart(2, '0')}:${m[2]}`;
+    if (m[3] && m[4]) return from; // return just "from" here; "to" parsed separately
+    return from;
+  }
+  return null;
+}
+
+function parseDateCell(cell: XLSX.CellObject | undefined): string | null {
+  if (!cell) return null;
+  if (cell.v instanceof Date) return formatDate(cell.v);
+  if (cell.t === 'n' && typeof cell.v === 'number' && cell.v > 25569) {
+    // Excel serial date (Jan 1 1970 = 25569)
+    try {
+      const info = XLSX.SSF.parse_date_code(cell.v);
+      if (info && info.y > 2000)
+        return `${String(info.d).padStart(2, '0')}.${String(info.m).padStart(2, '0')}.${info.y}`;
+    } catch { /* ignore */ }
+  }
+  const w = (cell.w ?? String(cell.v ?? '')).trim();
+  // Accepts "01.01.2026", "01.01.", "01.01"
+  if (/^\d{1,2}\.\d{1,2}/.test(w)) return w;
+  return null;
+}
+
+function detectAbsence(text: string): string | null {
+  for (const code of ABSENCE_CODES) {
+    if (text.toLowerCase().includes(code.toLowerCase())) return code;
+  }
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── BLOCK-ERKENNUNG ──────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function findBlockStarts(ws: XLSX.WorkSheet): number[] {
+  const ref = ws['!ref'];
+  if (!ref) return [];
+  const range = XLSX.utils.decode_range(ref);
+  const starts: number[] = [];
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const cell = getCell(ws, LAYOUT.markerCol, r);
+    if (!cell) continue;
+    const text = String(cell.v ?? cell.w ?? '').trim();
+    if (/Name\s*\/\s*Vorname/i.test(text)) starts.push(r);
+  }
+  return starts;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── SPALTEN-AUTO-ERKENNUNG ───────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface ColMap {
+  dateCol: number;
+  weekdayCol: number;
+  fromCol: number;
+  toCol: number | null;
+  pauseCol: number | null;
+  totalCol: number | null;
+  remarkCol: number | null;
+}
+
+const HEADER_MAP: { key: keyof ColMap; patterns: string[] }[] = [
+  { key: 'dateCol',    patterns: ['datum', 'date'] },
+  { key: 'weekdayCol', patterns: ['tag', 'wochentag'] },
+  { key: 'fromCol',    patterns: ['von', 'from', 'arbeitszeit', 'beginn'] },
+  { key: 'toCol',      patterns: ['bis', 'to', 'ende'] },
+  { key: 'pauseCol',   patterns: ['pause'] },
+  { key: 'totalCol',   patterns: ['total', 'gesamt'] },
+  { key: 'remarkCol',  patterns: ['bemerkung', 'remark', 'notiz'] },
 ];
 
-const MONTH_MAP: Record<string, number> = {
-  januar: 1, january: 1, jan: 1,
-  februar: 2, february: 2, feb: 2,
-  märz: 3, maerz: 3, march: 3, mar: 3,
-  april: 4, apr: 4,
-  mai: 5, may: 5,
-  juni: 6, june: 6, jun: 6,
-  juli: 7, july: 7, jul: 7,
-  august: 8, aug: 8,
-  september: 9, sep: 9, sept: 9,
-  oktober: 10, october: 10, oct: 10, okt: 10,
-  november: 11, nov: 11,
-  dezember: 12, december: 12, dec: 12, dez: 12,
-};
-
-const MONTH_NAMES_DE = [
-  '', 'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
-  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
-];
-
-// ─── Hilfsfunktionen ──────────────────────────────────────────────────────────
-
-function str(v: CellVal): string {
-  if (v == null) return '';
-  if (v instanceof Date) return v.toLocaleDateString('de-CH');
-  return String(v).trim();
-}
-
-/** Alle nicht-leeren Werte einer Zeile als Strings */
-function rowTexts(row: CellVal[]): string[] {
-  return row.map(str).filter(Boolean);
-}
-
-/** Gesamter Zeilentext (Leerzeichen-getrennt) */
-function rowJoined(row: CellVal[]): string {
-  return rowTexts(row).join(' ');
-}
-
-/**
- * Zeit aus einem Zellwert extrahieren.
- * Mirus speichert Zeiten meist als Text "10:00" oder als Excel-Dezimalbruch (0.xxx).
- */
-function parseTime(v: CellVal): string | null {
-  if (v == null) return null;
-  // Direkter String HH:MM
-  if (typeof v === 'string') {
-    const m = v.match(/^(\d{1,2}):(\d{2})$/);
-    if (m) return `${m[1].padStart(2, '0')}:${m[2]}`;
-  }
-  // Excel-Dezimalbruch (0.0 = 00:00, 0.5 = 12:00, 1.0 = 24:00)
-  if (typeof v === 'number' && v >= 0 && v < 2) {
-    const totalMinutes = Math.round(v * 24 * 60);
-    const h = Math.floor(totalMinutes / 60);
-    const m = totalMinutes % 60;
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  }
-  return null;
-}
-
-/** Stunden aus Zellwert (Dezimalzahl oder "HH:MM"-String) */
-function parseHours(v: CellVal): string | null {
-  if (v == null) return null;
-  if (typeof v === 'number' && !isNaN(v) && v >= 0) {
-    // Excel-Zeit-Dezimalbruch → Stunden umrechnen
-    if (v > 0 && v < 2) return (v * 24).toFixed(2);
-    // Direkte Stundenzahl (z.B. 8.5, 42.0)
-    if (v <= 300) return v.toFixed(2);
-  }
-  if (typeof v === 'string') {
-    // "8.42" oder "8,42"
-    const dec = v.replace(',', '.');
-    const n = parseFloat(dec);
-    if (!isNaN(n) && n >= 0 && n <= 300) return n.toFixed(2);
-    // "8:25" → Stunden
-    const hm = v.match(/^(\d{1,3}):(\d{2})$/);
-    if (hm) return (parseInt(hm[1]) + parseInt(hm[2]) / 60).toFixed(2);
-  }
-  return null;
-}
-
-/** Datum aus Zellwert */
-function parseDate(v: CellVal, year?: number | null): string | null {
-  if (v instanceof Date) {
-    return `${String(v.getDate()).padStart(2, '0')}.${String(v.getMonth() + 1).padStart(2, '0')}`;
-  }
-  if (typeof v === 'string') {
-    const m = v.match(/^(\d{1,2})\.(\d{1,2})\.?$/);
-    if (m) return `${m[1].padStart(2, '0')}.${m[2].padStart(2, '0')}`;
-    const mFull = v.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-    if (mFull) return `${mFull[1].padStart(2, '0')}.${mFull[2].padStart(2, '0')}`;
-    // "01.01.2026"
-  }
-  if (typeof v === 'number' && year) {
-    // Serial-Datum von Excel
-    const d = XLSX.SSF.parse_date_code(v);
-    if (d && d.m > 0 && d.m <= 12 && d.d > 0 && d.d <= 31) {
-      return `${String(d.d).padStart(2, '0')}.${String(d.m).padStart(2, '0')}`;
-    }
-  }
-  return null;
-}
-
-function detectWeekday(texts: string[]): string | null {
-  for (const t of texts) {
-    for (const wd of WEEKDAYS) {
-      if (t === wd || new RegExp(`^${wd}$`).test(t.trim())) return wd;
-    }
-  }
-  return null;
-}
-
-function extractTimeBlocksFromRow(row: CellVal[]): { from: string; to: string }[] {
-  const blocks: { from: string; to: string }[] = [];
-  // Durchlaufe Zellen, suche Zeitpaare
-  const times: string[] = [];
-  for (const cell of row) {
-    const t = parseTime(cell);
-    if (t) { times.push(t); continue; }
-    // String "HH:MM-HH:MM"
-    if (typeof cell === 'string') {
-      const rangeM = cell.match(/(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})/g);
-      if (rangeM) {
-        for (const r of rangeM) {
-          const rm = r.match(/(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})/);
-          if (rm) blocks.push({ from: rm[1].padStart(5, '0'), to: rm[2].padStart(5, '0') });
-        }
-        continue;
-      }
-      const singleM = cell.match(/^(\d{1,2}:\d{2})$/);
-      if (singleM) times.push(singleM[1].padStart(5, '0'));
-    }
-  }
-  // Zeitpaare bilden
-  for (let i = 0; i + 1 < times.length; i += 2) {
-    blocks.push({ from: times[i], to: times[i + 1] });
-  }
-  return blocks;
-}
-
-function extractAbsenceCodes(texts: string[]): string[] {
-  const found: string[] = [];
-  for (const t of texts) {
-    for (const code of ABSENCE_CODES) {
-      if (t === code && !found.includes(code)) found.push(code);
-    }
-  }
-  return found;
-}
-
-function detectDepartment(text: string): string | null {
-  const l = text.toLowerCase();
-  if (l.includes('küche') || l.includes('kueche') || l.includes('kitchen')) return 'küche';
-  if (l.includes('service') || l.includes('saal') || l.includes('restaurant') || l.includes('bar')) return 'service';
-  return null;
-}
-
-function makeCellRef(sheetName: string, rowIdx: number, colIdx: number, rawValue: CellVal, formatted: string): RawCell {
-  return {
-    sheetName,
-    rowIdx,
-    colIdx,
-    cellRef: XLSX.utils.encode_cell({ r: rowIdx, c: colIdx }),
-    rawValue,
-    formatted,
+function detectColMap(ws: XLSX.WorkSheet, blockStart: number, limit: number): { map: ColMap; detected: Record<string, string> } {
+  const map: ColMap = {
+    dateCol:    LAYOUT.day.dateCol,
+    weekdayCol: LAYOUT.day.weekdayCol,
+    fromCol:    LAYOUT.day.fromCol,
+    toCol:      LAYOUT.day.toCol,
+    pauseCol:   LAYOUT.day.pauseCol,
+    totalCol:   LAYOUT.day.totalCol,
+    remarkCol:  LAYOUT.day.remarkCol,
   };
-}
+  const detected: Record<string, string> = {};
 
-// ─── Dokument-Metadaten ───────────────────────────────────────────────────────
+  const ref = ws['!ref'];
+  if (!ref) return { map, detected };
+  const range = XLSX.utils.decode_range(ref);
 
-function detectDocumentMeta(rows: CellVal[][], fileName: string): {
-  month: number | null; monthName: string | null; year: number | null;
-  restaurant: string | null; creationDate: string | null;
-} {
-  let month: number | null = null, monthName: string | null = null;
-  let year: number | null = null, restaurant: string | null = null;
-  let creationDate: string | null = null;
-
-  // Dateiname auswerten
-  const fnLower = fileName.toLowerCase();
-  for (const [name, num] of Object.entries(MONTH_MAP)) {
-    if (fnLower.includes(name)) { month = num; monthName = MONTH_NAMES_DE[num]; break; }
-  }
-  const yrM = fileName.match(/\b(202[0-9])\b/);
-  if (yrM) year = parseInt(yrM[1]);
-
-  // Obere Zeilen scannen (max. 30)
-  for (const row of rows.slice(0, 30)) {
-    const text = rowJoined(row);
-    if (!text) continue;
-
-    // Jahr
-    if (!year) { const ym = text.match(/\b(202[0-9])\b/); if (ym) year = parseInt(ym[1]); }
-
-    // Monat
-    if (!month) {
-      for (const [name, num] of Object.entries(MONTH_MAP)) {
-        if (new RegExp(`\\b${name}\\b`, 'i').test(text)) { month = num; monthName = MONTH_NAMES_DE[num]; break; }
-      }
-    }
-
-    // Restaurant
-    if (!restaurant) {
-      if (/\bOLIV\b/i.test(text)) restaurant = 'OLIV';
-      else if (/\bBeaulieu\b/i.test(text)) restaurant = 'Beaulieu';
-    }
-
-    // Erstellungsdatum
-    if (!creationDate) {
-      const dm = text.match(/\b(\d{1,2}\.\d{1,2}\.\d{4})\b/);
-      if (dm) creationDate = dm[1];
-    }
-  }
-
-  return { month, monthName, year, restaurant, creationDate };
-}
-
-// ─── Mitarbeiter-Grenzen ──────────────────────────────────────────────────────
-
-function findEmployeeBoundariesInSheet(rows: CellVal[][]): number[] {
-  const bounds: number[] = [];
-  for (let i = 0; i < rows.length; i++) {
-    const text = rowJoined(rows[i]);
-    if (/Name\s*\/\s*Vorname/i.test(text)) { bounds.push(i); continue; }
-    if (/Personal.?Nr\.?/i.test(text) && rows[i].some(c => typeof c === 'number' && c > 100)) {
-      bounds.push(i); continue;
-    }
-  }
-  return [...new Set(bounds)].sort((a, b) => a - b);
-}
-
-// ─── Mitarbeiter-Kopfzeile ────────────────────────────────────────────────────
-
-function parseEmployeeHeaderRows(
-  rows: CellVal[][], startIdx: number, sheetName: string,
-): Pick<ExcelEmployee, 'name' | 'personalnummer' | 'kostenstelle' | 'department' | 'employment' | 'weeklyHours' | 'eintritt' | 'austritt' | 'rawHeaderCells'> {
-  const result = {
-    name: null as string | null,
-    personalnummer: null as string | null,
-    kostenstelle: null as string | null,
-    department: null as string | null,
-    employment: null as string | null,
-    weeklyHours: null as string | null,
-    eintritt: null as string | null,
-    austritt: null as string | null,
-    rawHeaderCells: [] as RawCell[],
-  };
-
-  const headerRows = rows.slice(startIdx, startIdx + 12);
-
-  for (let ri = 0; ri < headerRows.length; ri++) {
-    const row = headerRows[ri];
-    const absRowIdx = startIdx + ri;
-    const texts = rowTexts(row);
-    const joined = texts.join(' ');
-
-    // Collect raw cells
-    for (let ci = 0; ci < row.length; ci++) {
-      if (row[ci] != null && str(row[ci])) {
-        result.rawHeaderCells.push(makeCellRef(sheetName, absRowIdx, ci, row[ci], str(row[ci])));
-      }
-    }
-
-    // ── Name / Vorname ────────────────────────────────────────────────────
-    if (/Name\s*\/\s*Vorname/i.test(joined)) {
-      // Finde den Index der "Name / Vorname"-Zelle, Name steht daneben
-      let labelCol = -1;
-      for (let ci = 0; ci < row.length; ci++) {
-        if (/Name\s*\/\s*Vorname/i.test(str(row[ci]))) { labelCol = ci; break; }
-      }
-      if (labelCol >= 0) {
-        // Sammle Zellen rechts davon bis "Wöchentliche" oder leere Grenze
-        const nameParts: string[] = [];
-        for (let ci = labelCol + 1; ci < row.length && ci < labelCol + 8; ci++) {
-          const v = str(row[ci]);
-          if (!v || /Wöchentliche|Personalnummer|Kostenstelle/i.test(v)) break;
-          // Nur Buchstaben-Werte (kein Datum, keine Zahl)
-          if (/^[\p{L}\s'\-]+$/u.test(v)) nameParts.push(v);
-        }
-        if (nameParts.length > 0) result.name = nameParts.join(' ').trim();
-      }
-
-      // "Wöchentliche Arbeitszeit" in derselben Zeile suchen
-      for (let ci = 0; ci < row.length; ci++) {
-        if (/Wöchentliche/i.test(str(row[ci]))) {
-          // Wert steht in der nächsten nicht-leeren Zelle
-          const wh = parseHours(row[ci + 1]) ?? parseHours(row[ci + 2]);
-          if (wh && !result.weeklyHours) result.weeklyHours = wh;
-          break;
+  for (let r = blockStart; r <= Math.min(blockStart + 12, limit); r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell || cell.t !== 's') continue;
+      const text = String(cell.v ?? '').toLowerCase().trim();
+      for (const { key, patterns } of HEADER_MAP) {
+        if (patterns.some(p => text.includes(p))) {
+          (map as Record<string, number | null>)[key] = c;
+          detected[key] = `${XLSX.utils.encode_col(c)} (${cell.v})`;
         }
       }
-      // Wochenstunden auch im selben String: "Wöchentliche Arbeitszeit ... 42.0"
-      if (!result.weeklyHours) {
-        const whM = joined.match(/Wöchentliche\s+Arbeitszeit\D+(\d+[.,]\d+)/i);
-        if (whM) result.weeklyHours = whM[1].replace(',', '.');
-      }
-      continue;
+    }
+  }
+  return { map, detected };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── TAGESZEILEN ──────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function readDayRows(
+  ws: XLSX.WorkSheet,
+  startRow: number,
+  endRow: number,
+  map: ColMap,
+): DayRecord[] {
+  const records: DayRecord[] = [];
+  const ref = ws['!ref'];
+  if (!ref) return records;
+  const range = XLSX.utils.decode_range(ref);
+
+  for (let r = startRow; r <= endRow; r++) {
+    const dateCell = getCell(ws, map.dateCol, r);
+    const date     = parseDateCell(dateCell);
+
+    // Absenzen: erste 25 Spalten scannen
+    let absenceCode: string | null = null;
+    for (let c = range.s.c; c <= Math.min(range.e.c, 25); c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell) continue;
+      const code = detectAbsence(String(cell.v ?? ''));
+      if (code) { absenceCode = code; break; }
     }
 
-    // ── Personalnummer ────────────────────────────────────────────────────
-    if (/Personal.?Nr\.?/i.test(joined) && !result.personalnummer) {
-      for (let ci = 0; ci < row.length; ci++) {
-        if (/Personal.?Nr\.?/i.test(str(row[ci]))) {
-          const v = str(row[ci + 1] ?? row[ci + 2]);
-          if (v && /^\d{1,8}$/.test(v)) { result.personalnummer = v; break; }
+    if (!date && !absenceCode) continue;
+
+    // Schichten
+    const shifts: TimeBlock[] = [];
+    const fromCell = getCell(ws, map.fromCol, r);
+    const fromTime = parseTimeCell(fromCell);
+
+    if (fromTime) {
+      const toTime = map.toCol !== null ? parseTimeCell(getCell(ws, map.toCol, r)) : null;
+
+      // Sometimes from/to are encoded "HH:MM–HH:MM" in one cell
+      const rawW = (fromCell?.w ?? String(fromCell?.v ?? '')).trim();
+      const rangeMatch = rawW.match(/(\d{1,2}[:\. ]\d{2})\s*[-–]\s*(\d{1,2}[:\. ]\d{2})/);
+      if (rangeMatch) {
+        shifts.push({
+          from: rangeMatch[1].replace(/[. ]/, ':'),
+          to:   rangeMatch[2].replace(/[. ]/, ':'),
+        });
+      } else if (toTime) {
+        shifts.push({ from: fromTime, to: toTime });
+      } else {
+        shifts.push({ from: fromTime, to: '?' });
+      }
+
+      // Check for a second shift further right in the same row
+      if (map.toCol !== null) {
+        const nextFromCol = map.toCol + 1;
+        const nextToCol   = map.toCol + 2;
+        const from2 = parseTimeCell(getCell(ws, nextFromCol, r));
+        const to2   = parseTimeCell(getCell(ws, nextToCol, r));
+        if (from2 && to2) shifts.push({ from: from2, to: to2 });
+      }
+    }
+
+    // Pause
+    let breakMinutes: number | null = null;
+    if (map.pauseCol !== null) {
+      const pauseCell = getCell(ws, map.pauseCol, r);
+      if (pauseCell) {
+        if (pauseCell.t === 'n' && typeof pauseCell.v === 'number') {
+          // Could be fraction of hour, minutes, or serial time
+          const v = pauseCell.v % 1 > 0 ? pauseCell.v : pauseCell.v;
+          if (v < 5) breakMinutes = Math.round(v * 60); // hours → minutes
+          else       breakMinutes = Math.round(v);       // already minutes
+        } else {
+          const w = (pauseCell.w ?? String(pauseCell.v ?? '')).trim();
+          const m = w.match(/^(\d+)[:\.](\d+)/);
+          if (m) breakMinutes = parseInt(m[1]) * 60 + parseInt(m[2]);
+          else {
+            const n = parseFloat(w.replace(',', '.'));
+            if (!isNaN(n)) breakMinutes = n < 5 ? Math.round(n * 60) : Math.round(n);
+          }
         }
       }
-      continue;
     }
 
-    // ── Kostenstelle ──────────────────────────────────────────────────────
-    if (/Kostenstelle/i.test(joined) && !result.kostenstelle) {
-      for (let ci = 0; ci < row.length; ci++) {
-        if (/^Kostenstelle$/i.test(str(row[ci]).trim())) {
-          // Nächste nicht-leere Zelle ist der Wert
-          for (let nc = ci + 1; nc < row.length && nc < ci + 4; nc++) {
-            const v = str(row[nc]);
-            if (v && !/Arbeitsverhältnis/i.test(v)) {
-              result.kostenstelle = v.slice(0, 30);
-              if (!result.department) result.department = detectDepartment(v);
+    // Total
+    let totalHours: number | null = null;
+    if (map.totalCol !== null) {
+      const totalCell = getCell(ws, map.totalCol, r);
+      if (totalCell?.t === 'n' && typeof totalCell.v === 'number') {
+        const v = totalCell.v;
+        // Serial time fraction → hours
+        totalHours = v < 2 ? Math.round(v * 24 * 100) / 100 : v;
+      } else {
+        const n = cellNum(ws, map.totalCol, r);
+        if (n !== null) totalHours = n;
+      }
+    }
+
+    const weekday = cellText(ws, map.weekdayCol, r) || null;
+    const notes   = map.remarkCol !== null ? cellText(ws, map.remarkCol, r) || null : null;
+
+    const confidence: 'high' | 'medium' | 'low' =
+      date && (shifts.length > 0 || absenceCode) ? 'high' :
+      date ? 'medium' : 'low';
+
+    records.push({
+      date, weekday, shifts,
+      breakMinutes, totalHours, absenceCode, notes,
+      rawCells: {
+        dateCell:     dateCell   ? XLSX.utils.encode_cell({ r, c: map.dateCol })   : undefined,
+        workTimeCell: fromCell   ? XLSX.utils.encode_cell({ r, c: map.fromCol })   : undefined,
+        pauseCell:    map.pauseCol !== null ? XLSX.utils.encode_cell({ r, c: map.pauseCol }) : undefined,
+        totalCell:    map.totalCol !== null ? XLSX.utils.encode_cell({ r, c: map.totalCol }) : undefined,
+        remarkCell:   map.remarkCol !== null ? XLSX.utils.encode_cell({ r, c: map.remarkCol }) : undefined,
+      },
+      confidence,
+    });
+  }
+  return records;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── TOTALE ───────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function readTotals(ws: XLSX.WorkSheet, blockStart: number, blockEnd: number): EmployeeTotals {
+  const totals: EmployeeTotals = {};
+  const ref = ws['!ref'];
+  if (!ref) return totals;
+  const range = XLSX.utils.decode_range(ref);
+
+  for (let r = blockStart; r <= blockEnd; r++) {
+    // Scan all cells in this row for label text
+    for (let c = range.s.c; c <= Math.min(range.e.c, 40); c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell) continue;
+      const text = String(cell.v ?? cell.w ?? '').toLowerCase().trim();
+      if (!text) continue;
+
+      for (const { key, patterns } of TOTAL_LABELS) {
+        if (totals[key]) continue; // already found
+        if (patterns.some(p => text.includes(p))) {
+          // Look for numeric/text value in next 6 cells
+          for (let dc = 1; dc <= 6; dc++) {
+            const valCell = getCell(ws, c + dc, r);
+            if (!valCell) continue;
+            const val = (valCell.w ?? String(valCell.v ?? '')).trim();
+            if (val && val !== '0' && val !== '-') {
+              totals[key] = val;
               break;
             }
           }
-          break;
         }
-      }
-      // Fallback: Gesamtzeile nach "Kostenstelle" bis "Arbeitsverhältnis"
-      if (!result.kostenstelle) {
-        const ksM = joined.match(/Kostenstelle\s+(.+?)(?:\s+Arbeitsverhältnis|$)/i);
-        if (ksM) {
-          result.kostenstelle = ksM[1].trim().slice(0, 30);
-          if (!result.department) result.department = detectDepartment(result.kostenstelle);
-        }
-      }
-      // ── Arbeitsverhältnis in derselben Zeile ──────────────────────────
-      if (!result.employment) {
-        const avM = joined.match(/Arbeitsverhältnis\s+(.+?)(?:\s+\d{2}\.\d{2}\.\d{4}|$)/i);
-        if (avM) result.employment = avM[1].trim().slice(0, 30);
-      }
-      // Einritt / Austritt: "01.01.2026 - 31.12.2026"
-      if (!result.eintritt) {
-        const dates = [...joined.matchAll(/(\d{2}\.\d{2}\.\d{4})/g)].map(m => m[1]);
-        if (dates[0]) result.eintritt = dates[0];
-        if (dates[1]) result.austritt = dates[1];
-      }
-      continue;
-    }
-
-    // ── Arbeitsverhältnis auf eigener Zeile ───────────────────────────────
-    if (/Arbeitsverhältnis/i.test(joined) && !result.employment) {
-      const avM = joined.match(/Arbeitsverhältnis\s+(.+?)(?:\s+\d{2}\.\d{2}\.\d{4}|$)/i);
-      if (avM) result.employment = avM[1].trim().slice(0, 30);
-      if (!result.eintritt) {
-        const dates = [...joined.matchAll(/(\d{2}\.\d{2}\.\d{4})/g)].map(m => m[1]);
-        if (dates[0]) result.eintritt = dates[0];
-        if (dates[1]) result.austritt = dates[1];
-      }
-      continue;
-    }
-
-    // ── Wöchentliche Arbeitszeit auf eigener Zeile ───────────────────────
-    if (/Wöchentliche/i.test(joined) && !result.weeklyHours) {
-      for (let ci = 0; ci < row.length; ci++) {
-        if (/Wöchentliche/i.test(str(row[ci]))) {
-          const wh = parseHours(row[ci + 1]) ?? parseHours(row[ci + 2]);
-          if (wh) { result.weeklyHours = wh; break; }
-        }
-      }
-      if (!result.weeklyHours) {
-        const whM = joined.match(/(\d+[.,]\d+)\s*h?$/i);
-        if (whM) result.weeklyHours = whM[1].replace(',', '.');
       }
     }
   }
-
-  return result;
+  return totals;
 }
 
-// ─── Tageszeile ───────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── MITARBEITER-META ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
 
-function isDayRow(row: CellVal[], year: number | null): boolean {
-  const first = row[0];
-  if (first instanceof Date) return true;
-  if (typeof first === 'number' && year) {
-    // Excel-Serial-Date?
-    const d = XLSX.SSF.parse_date_code(first);
-    if (d && d.m > 0 && d.m <= 12 && d.d > 0 && d.d <= 31) return true;
+function readMetaRow(ws: XLSX.WorkSheet, row: number): { costCenter: string | null; employmentPeriod: string | null; text: string } {
+  const ref = ws['!ref'];
+  if (!ref) return { costCenter: null, employmentPeriod: null, text: '' };
+  const range = XLSX.utils.decode_range(ref);
+
+  const parts: string[] = [];
+  let costCenter: string | null = null;
+  let employmentPeriod: string | null = null;
+
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const cell = getCell(ws, c, row);
+    if (!cell) continue;
+    const text = (cell.w ?? String(cell.v ?? '')).trim();
+    if (!text) continue;
+    parts.push(text);
+
+    if (!costCenter && /Küche|Service|Housekeeping|Büro|Kitchen|Bar|Restaurant/i.test(text))
+      costCenter = text;
+    if (!employmentPeriod && /\d{2}\.\d{2}\.\d{4}/.test(text))
+      employmentPeriod = text;
   }
-  const s = str(first);
-  return /^\d{1,2}\.\d{1,2}\.?$/.test(s);
+  return { costCenter, employmentPeriod, text: parts.join(' | ') };
 }
 
-function isTotalsRow(row: CellVal[]): boolean {
-  const joined = rowJoined(row);
-  return /^\s*TOTAL\b/i.test(joined) ||
-    /total.*(stunden|std|sum)/i.test(joined) ||
-    /^stunden$/i.test(joined.trim()) ||
-    /zeitzuschlag|überzeit|ueberzeit/i.test(joined) ||
-    /^\s*saldo\b/i.test(joined) ||
-    /unterschrift|visum/i.test(joined);
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── BLOCK PARSEN ─────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
 
-function parseDayRow(row: CellVal[], rowIdx: number, sheetName: string, year: number | null): ExcelDayRow {
-  const texts = row.map(str);
+function parseBlock(
+  ws: XLSX.WorkSheet,
+  blockStart: number,  // 0-basiert
+  blockEnd: number,    // 0-basiert
+  sheetName: string,
+): ExcelEmployee {
+  // Name aus M(blockStart)
+  const nameCell = getCell(ws, LAYOUT.nameCol, blockStart);
+  const name = nameCell ? (nameCell.w ?? String(nameCell.v ?? '')).trim() || null : null;
 
-  // Datum
-  const date = parseDate(row[0], year);
+  // Wochenstunden aus BO(blockStart)
+  const whCell = getCell(ws, LAYOUT.weeklyHoursCol, blockStart);
+  let weeklyHours: number | null = null;
+  if (whCell?.t === 'n' && typeof whCell.v === 'number') {
+    weeklyHours = whCell.v;
+  } else if (whCell) {
+    const n = parseFloat(String(whCell.v ?? '').replace(',', '.'));
+    if (!isNaN(n)) weeklyHours = n;
+  }
 
-  // Wochentag (meist Zelle 1 oder 2)
-  const weekday = detectWeekday(texts.slice(0, 4));
+  // Meta-Zeile (Kostenstelle, Arbeitsverhältnis)
+  const metaRow  = blockStart + LAYOUT.metaRowOffset;
+  const meta     = readMetaRow(ws, metaRow);
+  const { costCenter, employmentPeriod } = meta;
 
-  // Zeitblöcke
-  const timeBlocks = extractTimeBlocksFromRow(row);
-
-  // Abteilung: suche in Texten
+  // Abteilung ableiten
   let department: string | null = null;
-  for (const t of texts) { const d = detectDepartment(t); if (d) { department = d; break; } }
-
-  // Absenzcodes
-  const absenceCodes = extractAbsenceCodes(texts);
-
-  // Stunden: suche numerische Werte in hinteren Spalten
-  // Typische Mirus-Spaltenreihenfolge: ... | Brutto | Pause | Netto
-  const numericCols: { idx: number; val: string }[] = [];
-  for (let ci = 2; ci < row.length; ci++) {
-    const h = parseHours(row[ci]);
-    if (h !== null) numericCols.push({ idx: ci, val: h });
+  if (costCenter) {
+    if (/küche|kitchen|koch/i.test(costCenter))   department = 'küche';
+    else if (/service|sala|saal/i.test(costCenter)) department = 'service';
+    else department = costCenter;
   }
 
-  let pause: string | null = null;
-  let totalHours: string | null = null;
+  // Spalten-Map erkennen
+  const { map: colMap, detected } = detectColMap(ws, blockStart, blockEnd);
 
-  if (numericCols.length >= 3) {
-    // Drittletzter = Brutto, Vorletzter = Pause, Letzter = Netto
-    pause      = numericCols[numericCols.length - 2].val;
-    totalHours = numericCols[numericCols.length - 1].val;
-  } else if (numericCols.length === 2) {
-    pause      = numericCols[0].val;
-    totalHours = numericCols[1].val;
-  } else if (numericCols.length === 1) {
-    totalHours = numericCols[0].val;
-  }
+  // Tageszeilen ab blockStart + daySearchOffset
+  const dayStart = blockStart + LAYOUT.daySearchOffset;
+  const days     = readDayRows(ws, dayStart, blockEnd, colMap);
 
-  // Bemerkung: letzter Text-String der kein Wochentag / keine Zahl ist
-  const remark = texts.filter(t =>
-    t && !WEEKDAYS.includes(t) && !/^\d/.test(t) &&
-    !ABSENCE_CODES.includes(t) && !/Küche|Service/i.test(t) &&
-    t.length > 3
-  ).pop() ?? null;
+  // Totale
+  const totals = readTotals(ws, blockStart, blockEnd);
 
-  // Raw-Zellen
-  const rawCells: RawCell[] = row.map((v, ci) => makeCellRef(sheetName, rowIdx, ci, v, str(v)));
-
-  // Konfidenz
-  let confidence: 'high' | 'medium' | 'low' = 'high';
-  if (!date) confidence = 'low';
-  else if (!weekday && timeBlocks.length === 0 && absenceCodes.length === 0 && !totalHours) confidence = 'low';
-  else if (!weekday || (!totalHours && timeBlocks.length === 0)) confidence = 'medium';
+  // Detected-ColMap als lesbare Strings
+  const detectedForDisplay: Record<string, string> = {
+    date:    `${XLSX.utils.encode_col(colMap.dateCol)}`,
+    weekday: `${XLSX.utils.encode_col(colMap.weekdayCol)}`,
+    from:    `${XLSX.utils.encode_col(colMap.fromCol)}`,
+    to:      colMap.toCol    !== null ? XLSX.utils.encode_col(colMap.toCol)    : '—',
+    pause:   colMap.pauseCol !== null ? XLSX.utils.encode_col(colMap.pauseCol) : '—',
+    total:   colMap.totalCol !== null ? XLSX.utils.encode_col(colMap.totalCol) : '—',
+    remark:  colMap.remarkCol !== null ? XLSX.utils.encode_col(colMap.remarkCol) : '—',
+    ...detected,
+  };
 
   return {
-    date, weekday, timeBlocks, department,
-    pause, totalHours, absenceCodes, remark,
-    rawCells, rowIdx,
-    confidence,
+    name, department, costCenter, weeklyHours, employmentPeriod,
+    sheetName,
+    blockStartRow: blockStart + 1,
+    blockEndRow:   blockEnd + 1,
+    days, totals,
+    rawBlock: {
+      markerCell:       XLSX.utils.encode_cell({ r: blockStart, c: LAYOUT.markerCol }),
+      nameCell:         XLSX.utils.encode_cell({ r: blockStart, c: LAYOUT.nameCol }),
+      weeklyHoursCell:  XLSX.utils.encode_cell({ r: blockStart, c: LAYOUT.weeklyHoursCol }),
+      metaRowText:      meta.text,
+      detectedColMap:   detectedForDisplay,
+    },
   };
 }
 
-// ─── Totale ───────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── QUALITÄT ─────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
 
-function parseTotalsRows(rows: CellVal[][], rowIdxOffset: number, sheetName: string): ExcelTotals {
-  const t: ExcelTotals = {
-    totalHours: null, pauseTotal: null, nettoTotal: null,
-    zeitzuschlag: null, ueberzeit: null, saldo: null,
-    ferien: null, rawLines: [],
+function employeeQuality(emp: ExcelEmployee): number {
+  let s = 0;
+  if (emp.name)        s += 25;
+  if (emp.weeklyHours) s += 10;
+  if (emp.costCenter)  s += 10;
+  const active = emp.days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length;
+  if      (active >= 20) s += 40;
+  else if (active >= 10) s += 30;
+  else if (active >= 5)  s += 20;
+  else if (active >= 1)  s += 10;
+  if (emp.totals.totalHours) s += 15;
+  return Math.min(100, s);
+}
+
+function docQuality(employees: ExcelEmployee[]): ExcelDocQuality {
+  if (!employees.length) return {
+    totalEmployees: 0, employeesWithName: 0, employeesWithDays: 0,
+    employeesWithTotals: 0, totalDayRecords: 0, daysWithShifts: 0, qualityPercent: 0,
   };
+  const employeesWithName   = employees.filter(e => !!e.name).length;
+  const employeesWithDays   = employees.filter(e => e.days.length > 0).length;
+  const employeesWithTotals = employees.filter(e => !!e.totals.totalHours).length;
+  const totalDayRecords     = employees.reduce((s, e) => s + e.days.length, 0);
+  const daysWithShifts      = employees.reduce((s, e) => s + e.days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length, 0);
+  const avg = employees.reduce((s, e) => s + employeeQuality(e), 0) / employees.length;
+  return { totalEmployees: employees.length, employeesWithName, employeesWithDays, employeesWithTotals, totalDayRecords, daysWithShifts, qualityPercent: Math.round(avg) };
+}
 
-  for (const row of rows) {
-    const joined = rowJoined(row);
-    if (!joined) continue;
-    t.rawLines.push(joined);
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── DATEINAME / META ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
 
-    // Ersten numerischen Wert aus Zeile holen
-    const numVals = row.map(parseHours).filter(Boolean) as string[];
-    const best = numVals[numVals.length - 1] ?? null;
+const MONTH_MAP: Record<string, [number, string]> = {
+  januar: [1, 'Januar'], february: [2, 'Februar'], februar: [2, 'Februar'],
+  märz: [3, 'März'], april: [4, 'April'], mai: [5, 'Mai'],
+  juni: [6, 'Juni'], juli: [7, 'Juli'], august: [8, 'August'],
+  september: [9, 'September'], oktober: [10, 'Oktober'], november: [11, 'November'],
+  dezember: [12, 'Dezember'],
+};
 
-    if (/^\s*TOTAL\b/i.test(joined) && !t.totalHours) { t.totalHours = best; continue; }
-    if (/stunden.?total|total.?stunden|gesamt.?std/i.test(joined) && !t.totalHours) { t.totalHours = best; continue; }
-    if (/^stunden$/i.test(joined.trim()) && !t.totalHours) { t.totalHours = best; continue; }
-    if (/pause.*total|total.*pause/i.test(joined) && !t.pauseTotal) { t.pauseTotal = best; continue; }
-    if (/\bnetto\b/i.test(joined) && !t.nettoTotal) { t.nettoTotal = best; continue; }
-    if (/zeitzuschlag/i.test(joined) && !t.zeitzuschlag) { t.zeitzuschlag = best; continue; }
-    if (/überzeit|uberzeit/i.test(joined) && !t.ueberzeit) { t.ueberzeit = best; continue; }
-    if (/\bsaldo\b/i.test(joined) && !t.saldo) {
-      // Saldo kann negativ sein
-      const sm = joined.match(/([+-]?\d+[.,]\d+)/); t.saldo = sm ? sm[1] : best; continue;
-    }
-    if (/\bferien\b|\bferientage\b/i.test(joined) && !t.ferien) { t.ferien = best; continue; }
+function metaFromFileName(fileName: string): { month: number | null; monthName: string | null; year: number | null } {
+  const lower = fileName.toLowerCase();
+  let month: number | null = null;
+  let monthName: string | null = null;
+  for (const [token, [m, n]] of Object.entries(MONTH_MAP)) {
+    if (lower.includes(token)) { month = m; monthName = n; break; }
   }
-
-  return t;
+  const ym = fileName.match(/20\d{2}/);
+  return { month, monthName, year: ym ? parseInt(ym[0]) : null };
 }
 
-// ─── Qualitäts-Score ──────────────────────────────────────────────────────────
-
-function calcQuality(employees: ExcelEmployee[]): number {
-  if (employees.length === 0) return 0;
-  const totalRows = employees.reduce((s, e) => s + e.dayRows.length, 0);
-  if (totalRows === 0 && employees.every(e => !e.name)) return 0;
-
-  const namedPct = employees.filter(e => !!e.name).length / employees.length;
-  const highRows  = employees.reduce((s, e) => s + e.dayRows.filter(r => r.confidence === 'high').length, 0);
-  const rowPct    = totalRows > 0 ? highRows / totalRows : 0;
-  const totPct    = employees.filter(e => !!e.totals.totalHours).length / employees.length;
-  const whPct     = employees.filter(e => !!e.weeklyHours).length / employees.length;
-
-  return Math.round(namedPct * 35 + rowPct * 45 + totPct * 15 + whPct * 5);
-}
-
-// ─── Haupt-Parser ─────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── HAUPT-EXPORT ─────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> {
-  const warnings: string[] = [];
+  const buf = await file.arrayBuffer();
+  const wb  = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: true, cellText: true });
+
+  const meta      = metaFromFileName(file.name);
   const employees: ExcelEmployee[] = [];
-
-  const buffer = await file.arrayBuffer();
-  let wb: XLSX.WorkBook;
-  try {
-    wb = XLSX.read(buffer, {
-      type: 'array',
-      cellDates: true,
-      cellNF: true,
-      cellText: true,
-      raw: false,
-    });
-  } catch (err) {
-    throw new Error(`Excel-Datei konnte nicht gelesen werden: ${String(err)}`);
-  }
-
-  // Lese jedes Sheet doppelt: einmal raw (für Zahlen), einmal formatted (für Text-Matching)
-  const sheetsData: { name: string; rawRows: CellVal[][]; fmtRows: CellVal[][] }[] = [];
+  const warnings:  string[]        = [];
+  const sheetsProcessed: string[]  = [];
 
   for (const sheetName of wb.SheetNames) {
-    const ws = wb.Sheets[sheetName];
-    const rawRows = XLSX.utils.sheet_to_json<CellVal[]>(ws, {
-      header: 1, defval: null, raw: true,
-    });
-    const fmtRows = XLSX.utils.sheet_to_json<CellVal[]>(ws, {
-      header: 1, defval: null, raw: false,
-    });
-    sheetsData.push({ name: sheetName, rawRows, fmtRows });
-  }
+    const ws     = wb.Sheets[sheetName];
+    const starts = findBlockStarts(ws);
 
-  // Alle Zeilen für Metadaten-Erkennung
-  const allRows: CellVal[][] = sheetsData.flatMap(s => s.fmtRows);
-  const meta = detectDocumentMeta(allRows, file.name);
-
-  if (!meta.month) warnings.push('Monat konnte nicht erkannt werden (Dateiname + Zellinhalte geprüft).');
-  if (!meta.year)  warnings.push('Jahr konnte nicht erkannt werden.');
-
-  // ── Mitarbeiter je Sheet ──────────────────────────────────────────────────
-  for (const { name: sheetName, rawRows, fmtRows } of sheetsData) {
-    // Verwende fmtRows für Text-Matching, rawRows für Zahlenwerte
-    const boundaries = findEmployeeBoundariesInSheet(fmtRows);
-
-    if (boundaries.length === 0) {
-      // Sheet hat kein "Name / Vorname" — vielleicht Deckblatt oder Zusammenfassung
-      if (fmtRows.length > 3) {
-        warnings.push(`Sheet "${sheetName}": keine Mitarbeitergrenzen gefunden.`);
-      }
+    if (starts.length === 0) {
+      warnings.push(`Sheet „${sheetName}": kein „Name / Vorname" in Spalte C gefunden`);
       continue;
     }
 
-    for (let b = 0; b < boundaries.length; b++) {
-      const startIdx = boundaries[b];
-      const endIdx   = b + 1 < boundaries.length ? boundaries[b + 1] : fmtRows.length;
+    sheetsProcessed.push(sheetName);
+    const ref   = ws['!ref'];
+    if (!ref) continue;
+    const range = XLSX.utils.decode_range(ref);
 
-      // Header aus fmt-Zeilen lesen (Text-Matching), aber Zahlen aus raw-Zeilen
-      const headerInfo = parseEmployeeHeaderRows(fmtRows, startIdx, sheetName);
-
-      // Tageszeilen
-      const dayRows: ExcelDayRow[] = [];
-      const totalsRows: CellVal[][] = [];
-      let inTotals = false;
-
-      for (let ri = startIdx + 1; ri < endIdx; ri++) {
-        const fmtRow = fmtRows[ri];
-        const rawRow = rawRows[ri] ?? fmtRow;
-
-        // Übergang Totale-Abschnitt
-        if (!inTotals && isTotalsRow(fmtRow)) inTotals = true;
-
-        if (inTotals) { totalsRows.push(rawRow); continue; }
-
-        if (!fmtRow || fmtRow.every(c => c == null || str(c) === '')) continue;
-
-        if (isDayRow(rawRow, meta.year)) {
-          // Mische: Datum/Wochentag aus rawRow, Texte aus fmtRow
-          const merged: CellVal[] = rawRow.map((rv, ci) =>
-            (rv == null || str(rv) === '') ? (fmtRow[ci] ?? null) : rv
-          );
-          dayRows.push(parseDayRow(merged, ri, sheetName, meta.year));
-        }
+    for (let i = 0; i < starts.length; i++) {
+      const blockStart = starts[i];
+      const blockEnd   = i < starts.length - 1 ? starts[i + 1] - 1 : range.e.r;
+      try {
+        employees.push(parseBlock(ws, blockStart, blockEnd, sheetName));
+      } catch (err) {
+        warnings.push(`Block ab Zeile ${blockStart + 1}: ${String(err)}`);
       }
-
-      const totals = parseTotalsRows(totalsRows, 0, sheetName);
-      const uncertainRows = dayRows.filter(r => r.confidence !== 'high').length;
-
-      employees.push({
-        ...headerInfo,
-        name:           headerInfo.name           ?? null,
-        sheetName,
-        dayRows, totals, uncertainRows,
-        headerRowIdx:   startIdx,
-      });
     }
   }
-
-  const totalDayRows     = employees.reduce((s, e) => s + e.dayRows.length, 0);
-  const uncertainRows    = employees.reduce((s, e) => s + e.uncertainRows, 0);
-  const empWithTotals    = employees.filter(e => !!e.totals.totalHours).length;
-  const qualityPercent   = calcQuality(employees);
 
   return {
     fileName: file.name,
     ...meta,
-    employees, warnings,
-    quality: {
-      totalEmployees: employees.length,
-      totalDayRows, uncertainRows,
-      employeesWithTotals: empWithTotals,
-      qualityPercent,
-    },
+    restaurant:   null,
+    creationDate: null,
+    employees,
+    quality:  docQuality(employees),
+    warnings,
+    sheetsProcessed,
   };
 }

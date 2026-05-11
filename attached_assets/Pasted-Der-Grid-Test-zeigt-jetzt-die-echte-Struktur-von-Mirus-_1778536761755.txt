@@ -1,0 +1,274 @@
+Der Grid-Test zeigt jetzt die echte Struktur von Mirus.
+
+Bitte den Mirus Excel Parser jetzt komplett auf einen koordinatenbasierten / positionsbasierten Parser umbauen.
+
+Wichtig:
+Nicht mehr textbasiert oder regex-orientiert arbeiten.
+Nicht mehr ganze Zeilen zusammenlesen.
+Nicht mehr "Mitarbeiter 1" generieren.
+
+Die Datei ist ein Excel-Drucklayout mit fixen Zellpositionen.
+
+====================================================
+1. MITARBEITERBLOCK ERKENNEN
+====================================================
+
+Ein neuer Mitarbeiterblock beginnt immer dort, wo:
+
+Spalte C = "Name / Vorname"
+
+Beispiel:
+C6 = Name / Vorname
+
+Dann gilt:
+
+Name:
+M6
+
+Wochenstunden:
+BO6
+
+Kostenstelle / Arbeitsverhältnis:
+C7 und folgende Zellen derselben Zeile
+
+Der Parser soll also jeden Block so erkennen:
+
+- finde alle Zellen in Spalte C mit Wert "Name / Vorname"
+- jede gefundene Zeile = Start eines Mitarbeiterblocks
+- Ende = Zeile vor dem nächsten Block oder Ende des Sheets
+
+====================================================
+2. MITARBEITERDATEN AUS FESTEN ZELLEN LESEN
+====================================================
+
+Für Blockstart-Zeile r:
+
+employee.name = Zelle M(r)
+
+employee.weeklyHours = Zelle BO(r)
+
+employee.costCenter = aus Zeile r+1 lesen
+employee.department =
+- Küche wenn Kostenstelle "Küche" enthält
+- Service wenn Kostenstelle "Service" enthält
+
+employee.employmentPeriod =
+aus Zeile r+1 extrahieren, z.B. 01.11.2025 - 31.03.2026
+
+Wichtig:
+Name darf nur aus M(r) kommen.
+Keine Zusatztexte anhängen.
+
+====================================================
+3. TAGESDATEN KOORDINATENBASIERT LESEN
+====================================================
+
+Nicht mehr Tageszeilen per Regex suchen.
+
+Innerhalb jedes Blocks:
+
+- suche ab r+8 bis Blockende nach echten Datumszellen
+- Datumszellen können Excel-Date-Typ oder Textdatum sein
+- jede Datumszelle startet eine Tageszeile
+
+Ausgehend von dieser Datumszeile:
+
+Bitte die Spalten aus dem Grid lesen.
+
+Aus dem Debug sichtbar:
+- Datum steht bei B oder ähnlichem Anfangsbereich
+- Wochentag steht daneben
+- Arbeitszeit steht in H / I / Umgebung
+- Pause steht um AD
+- Total steht um AH / AI
+- Bemerkung steht weiter rechts
+
+Bitte die exakten Spalten aus dem Grid ableiten und im Parser als Layout-Konfiguration festlegen.
+
+Beispiel Struktur:
+
+const MIRUS_LAYOUT = {
+  markerCol: "C",
+  nameCol: "M",
+  weeklyHoursCol: "BO",
+  employeeMetaRowOffset: 1,
+  dayStartOffset: 8,
+  columns: {
+    date: "B",
+    weekday: "H",
+    workTime: "H",
+    pause: "AD",
+    total: "AH",
+    remark: "BJ"
+  }
+}
+
+Falls Spalten leicht variieren:
+über Headerzeile "Datum", "Arbeitszeit", "Pause", "Total", "Bemerkung" automatisch mapen.
+
+====================================================
+4. MEHRERE ZEITBLÖCKE PRO TAG
+====================================================
+
+Wenn pro Tag mehrere Zeitblöcke vorkommen:
+
+Beispiel:
+10:00–14:00 Küche
+17:00–22:00 Küche
+
+Dann als shifts Array speichern:
+
+shifts: [
+  { from: "10:00", to: "14:00", department: "Küche" },
+  { from: "17:00", to: "22:00", department: "Küche" }
+]
+
+====================================================
+5. ABSENZEN ERKENNEN
+====================================================
+
+Absenzcodes erkennen:
+- FR
+- FE
+- KR
+- Frei
+- Ferien
+- Krank
+- Unfall
+- Kompensation
+
+Diese dürfen auch ohne Zeitblock eine gültige Tageszeile ergeben.
+
+====================================================
+6. TOTALE KOORDINATENBASIERT LESEN
+====================================================
+
+Die Totalzeilen stehen oberhalb oder innerhalb des Mitarbeiterblocks.
+
+Bitte Totale nicht aus Freitext raten, sondern aus den bekannten Bereichen lesen:
+
+- Total Stunden
+- Pause
+- Netto
+- Zeitzuschlag
+- Überzeit
+- Saldo
+- Ferien
+- Frei
+- Krankheit falls vorhanden
+
+Falls nicht eindeutig:
+in Debug markieren, aber Tagesdaten trotzdem importfähig lassen.
+
+====================================================
+7. NORMALISIERTE DATENSTRUKTUR
+====================================================
+
+Jeder Tag soll am Ende so aussehen:
+
+{
+  employeeName,
+  date,
+  weekday,
+  shifts,
+  breakMinutes,
+  totalHours,
+  absenceCode,
+  notes,
+  rawCells: {
+    dateCell,
+    workTimeCell,
+    pauseCell,
+    totalCell,
+    remarkCell
+  }
+}
+
+Jeder Mitarbeiter:
+
+{
+  name,
+  department,
+  costCenter,
+  weeklyHours,
+  employmentPeriod,
+  days,
+  totals,
+  rawBlock
+}
+
+====================================================
+8. DEBUG UI ANPASSEN
+====================================================
+
+Auf /mirus-excel-test bitte zusätzlich anzeigen:
+
+"Block-Raster"
+
+Pro Mitarbeiter:
+- Startzeile
+- Endzeile
+- Name-Zelle
+- Wochenstunden-Zelle
+- Kostenstellen-Zelle
+- Tagesbereich
+- Anzahl erkannte Datumszeilen
+- Anzahl erkannte Zeitblöcke
+- Anzahl erkannte Totale
+
+====================================================
+9. QUALITÄTSLOGIK ANPASSEN
+====================================================
+
+Nicht mehr automatisch 0 %, wenn alte Regex-Tageszeilen fehlen.
+
+Neue Bewertung:
+
+- Mitarbeitername erkannt
+- Wochenstunden erkannt
+- Kostenstelle erkannt
+- Datumszeilen erkannt
+- Zeitblöcke oder Absenzcodes erkannt
+- Totalstunden erkannt
+- Saldo/Überzeit optional
+
+Importfähig wenn:
+- Name vorhanden
+- mindestens 1 Tageszeile oder Totalstunden vorhanden
+- keine kritischen Strukturfehler
+
+====================================================
+10. UI
+====================================================
+
+Bitte:
+- Mitarbeiterkarten standardmässig eingeklappt lassen
+- Fehlerliste übersichtlicher machen
+- nicht jeden fehlenden Tag als Hauptfehler anzeigen
+- nur echte Strukturfehler anzeigen
+- Tageszeilen erst beim Aufklappen anzeigen
+
+====================================================
+11. ZIEL
+====================================================
+
+Nach Umbau soll der Import mindestens erreichen:
+
+- Mitarbeiter erkannt: > 95 %
+- Namen korrekt: > 98 %
+- Tageszeilen erkannt: > 90 %
+- Totale erkannt: > 90 %
+
+Wenn einzelne Mitarbeiter keine Tagesdaten haben, aber Totale haben:
+nicht automatisch blockieren, sondern als "prüfen" markieren.
+
+====================================================
+12. WICHTIG
+====================================================
+
+Noch nichts in Supabase speichern.
+Kein produktiver Import.
+Kein Mitarbeiterportal.
+Kein Freigabeprozess.
+
+Nur den Mirus Excel Parser stabil und positionsbasiert machen.
