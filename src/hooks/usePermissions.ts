@@ -173,7 +173,7 @@ export const usePermissions = (): Permissions => {
   const canAccessModule = (module: AppModule): boolean => {
     switch (module) {
       case 'dashboard':
-        return isAdmin || isBeaulieuManager;
+        return isAdmin || isBeaulieuManager || isServiceManager || isKuecheManager;
       case 'dienstplanung':
         return true; // alle (aber gefiltert nach Abteilung)
       case 'soll_ist_analyse':
