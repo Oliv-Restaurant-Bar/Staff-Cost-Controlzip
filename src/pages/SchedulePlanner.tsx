@@ -25,7 +25,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -262,7 +262,7 @@ const SchedulePlanner = () => {
   const [pkDetailOpen, setPkDetailOpen]                       = useState(false);
   const [zielwertEditOpen, setZielwertEditOpen]               = useState(false);
   const [zielwertDraft, setZielwertDraft]                     = useState<{ service: string; küche: string; global: string; autoGlobal: boolean }>({ service: '20.0', küche: '20.0', global: '40.0', autoGlobal: true });
-  const [legendSidebarOpen, setLegendSidebarOpen]             = useState(true);
+  const [legendSidebarOpen, setLegendSidebarOpen]             = useState(false);
   const [empTypeFilter, setEmpTypeFilter]                     = useState<'vollzeit' | 'teilzeit' | 'stundenlohn' | null>(null);
   const [hintsCollapsed, setHintsCollapsed]                   = useState(false);
 
@@ -2650,11 +2650,15 @@ const SchedulePlanner = () => {
                   <Home className="h-4 w-4" />
                 </Button>
               </Link>
+              <button
+                onClick={() => setLegendSidebarOpen(v => !v)}
+                className="flex items-center justify-center h-7 w-7 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0"
+                title="Panel öffnen / schliessen"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
               <div className="min-w-0">
                 <h1 className="text-base font-bold text-foreground leading-tight">Dienstplanung</h1>
-                <p className="text-[11px] text-muted-foreground leading-tight hidden sm:block">
-                  Oliv Gastro AG
-                </p>
               </div>
             </div>
 
@@ -3054,177 +3058,244 @@ const SchedulePlanner = () => {
         </div>
       </header>
 
+      {/* ── Sidebar backdrop ────────────────────────────────────────────── */}
+      {legendSidebarOpen && (
+        <div
+          className="fixed inset-0 z-[35] bg-background/60 backdrop-blur-sm"
+          onClick={() => setLegendSidebarOpen(false)}
+        />
+      )}
+
+      {/* ══════════════ LEFT SIDEBAR: Fixed overlay ══════════════ */}
+      <aside className={cn(
+        "fixed left-0 top-0 h-full z-40 w-64",
+        "flex flex-col bg-card border-r border-border",
+        "transition-transform duration-200 ease-in-out",
+        legendSidebarOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
+      )}>
+        {/* Sidebar header */}
+        <div className="flex items-center justify-between px-3 py-2.5 border-b border-border shrink-0">
+          <span className="font-semibold text-sm">Schichtplanung</span>
+          <button
+            onClick={() => setLegendSidebarOpen(false)}
+            className="h-7 w-7 flex items-center justify-center rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+            title="Schliessen"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Scrollable sections */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-2">
+
+          {/* ── Schichten + Abwesenheiten ──────────────────────── */}
+          <ShiftLegend
+            onEditClick={() => setShiftConfigDialogOpen(true)}
+            department={activeDepartment === 'all' ? 'all' : activeDepartment as 'service' | 'küche'}
+            activeTool={paintTool}
+            onToolSelect={setPaintTool}
+            mode="sidebar"
+          />
+
+          {/* ── Filter ─────────────────────────────────────────── */}
+          {canSwitchDepartment && (
+            <div className="rounded-lg border bg-card overflow-hidden">
+              <div className="px-2.5 py-1.5 border-b border-border/50">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Filter</p>
+              </div>
+              <div className="px-2 py-2 space-y-2">
+                {/* Department */}
+                <div className="flex items-center gap-1 flex-wrap">
+                  {([
+                    { key: 'all' as const,     label: 'Alle',    dot: null },
+                    { key: 'service' as const, label: 'Service', dot: 'bg-blue-500' },
+                    { key: 'küche' as const,   label: 'Küche',   dot: 'bg-orange-500' },
+                  ]).map(({ key, label, dot }) => (
+                    <button
+                      key={key}
+                      onClick={() => setActiveDepartment(key as Department)}
+                      className={cn(
+                        "h-6 px-2 text-[11px] font-medium rounded-md flex items-center gap-1 transition-colors border",
+                        activeDepartment === key
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+                      )}
+                    >
+                      {dot && <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", dot)} />}
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {/* Employment type */}
+                <div className="flex items-center gap-1 flex-wrap">
+                  {([
+                    { key: null,          label: 'Alle' },
+                    { key: 'vollzeit',    label: 'VZ' },
+                    { key: 'teilzeit',    label: 'TZ' },
+                    { key: 'stundenlohn', label: 'SL' },
+                  ] as const).map(({ key, label }) => (
+                    <button
+                      key={String(key)}
+                      onClick={() => setEmpTypeFilter(empTypeFilter === key ? null : key)}
+                      className={cn(
+                        "h-6 px-2 text-[11px] font-medium rounded-md transition-colors border",
+                        empTypeFilter === key
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Controlling — KPIs ─────────────────────────────── */}
+          <div className="rounded-lg border bg-card px-3 py-2.5 space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {pkqPeriodLabel}
+            </p>
+            <div className="space-y-1.5 text-xs">
+              <div className="flex justify-between items-baseline">
+                <span className="text-muted-foreground">Mitarbeiter</span>
+                <span className="font-bold">{departmentEmployeeCount}</span>
+              </div>
+              <div className="flex justify-between items-baseline">
+                <span className="text-muted-foreground">Geplant</span>
+                <span className="font-bold tabular-nums">{departmentPlannedHours.toFixed(1)} h</span>
+              </div>
+              {gesamtCostRatio !== null && (
+                <div className="flex justify-between items-baseline">
+                  <span className="text-muted-foreground">PKQ</span>
+                  <button
+                    onClick={() => setPkDetailOpen(true)}
+                    className={cn(
+                      "font-black tabular-nums hover:underline cursor-pointer text-sm",
+                      gesamtCostRatioStatus === 'good'  && "text-green-600 dark:text-green-400",
+                      gesamtCostRatioStatus === 'ok'    && "text-yellow-600 dark:text-yellow-400",
+                      gesamtCostRatioStatus === 'high'  && "text-red-600 dark:text-red-400",
+                    )}
+                  >
+                    {gesamtCostRatio.toFixed(1)} %
+                  </button>
+                </div>
+              )}
+              <div className="flex justify-between items-baseline">
+                <span className="text-muted-foreground">Ziel</span>
+                <span className="font-semibold tabular-nums">{laborCostThreshold} %</span>
+              </div>
+              {departmentWarningCount > 0 && (
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3 text-amber-500" />
+                    Warnungen
+                  </span>
+                  <span className="font-bold text-amber-600 dark:text-amber-400">{departmentWarningCount}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Zielwerte ──────────────────────────────────────── */}
+          <div className="rounded-lg border bg-card px-3 py-2.5 space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Zielwerte</p>
+            <div className="space-y-1.5 text-xs">
+              {activeDepartment !== 'küche' && (
+                <div className="flex justify-between items-baseline">
+                  <span className="text-blue-600 dark:text-blue-400 font-medium">Service</span>
+                  <span className="tabular-nums font-semibold">{_serviceResolved.targetPercent.toFixed(1)} %</span>
+                </div>
+              )}
+              {activeDepartment !== 'service' && (
+                <div className="flex justify-between items-baseline">
+                  <span className="text-orange-600 dark:text-orange-400 font-medium">Küche</span>
+                  <span className="tabular-nums font-semibold">{_kücheResolved.targetPercent.toFixed(1)} %</span>
+                </div>
+              )}
+              {activeDepartment === 'all' && (
+                <div className="flex justify-between items-baseline">
+                  <span className="text-muted-foreground">Global</span>
+                  <span className="tabular-nums font-semibold">{_globalResolved.targetPercent.toFixed(1)} %</span>
+                </div>
+              )}
+              <button
+                onClick={handleOpenZielwertEdit}
+                className="text-[10px] text-muted-foreground/60 hover:text-foreground flex items-center gap-1 pt-0.5"
+              >
+                <Pencil className="h-2.5 w-2.5" />
+                bearbeiten
+              </button>
+            </div>
+          </div>
+
+          {/* ── Smart Hinweise ─────────────────────────────────── */}
+          {(patternWarnings.length > 0 || overhoursEmployees.length > 0 || gesamtCostRatioStatus === 'high') && (
+            <div className="rounded-lg border bg-card overflow-hidden">
+              <button
+                onClick={() => setHintsCollapsed(v => !v)}
+                className="flex items-center gap-1.5 w-full px-2.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted/50 transition-colors"
+              >
+                <Lightbulb className="h-3 w-3 text-amber-500 shrink-0" />
+                <span className="flex-1 text-left">Hinweise</span>
+                {(() => {
+                  const total = patternWarnings.filter(w => w.severity === 'critical').length + overhoursEmployees.length + (gesamtCostRatioStatus === 'high' ? 1 : 0);
+                  return total > 0 ? <span className="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400 rounded-full px-1.5 py-0 font-bold">{total}</span> : null;
+                })()}
+                <ChevronDown className={cn("h-3 w-3 transition-transform", hintsCollapsed && "rotate-180")} />
+              </button>
+              {!hintsCollapsed && (
+                <div className="px-2.5 pb-2.5 space-y-1">
+                  {gesamtCostRatioStatus === 'high' && gesamtCostRatio !== null && (
+                    <div className="flex items-start gap-1.5 text-[10px] text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 rounded px-1.5 py-1">
+                      <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
+                      <span>PKQ {gesamtCostRatio.toFixed(1)} % über Ziel ({laborCostThreshold} %)</span>
+                    </div>
+                  )}
+                  {overhoursEmployees.slice(0, 3).map(({ employee, difference }) => (
+                    <div key={employee.id} className="flex items-start gap-1.5 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded px-1.5 py-1">
+                      <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
+                      <span className="truncate">{getEmployeeDisplayName(employee)} +{difference.toFixed(1)} h</span>
+                    </div>
+                  ))}
+                  {patternWarnings.slice(0, 4).map((w, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        "flex items-start gap-1.5 text-[10px] rounded px-1.5 py-1 cursor-pointer hover:opacity-80",
+                        w.severity === 'critical'
+                          ? "text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30"
+                          : "text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30"
+                      )}
+                      onClick={() => {
+                        const d = new Date(w.firstDate);
+                        handleJumpToDay(d, w.empId);
+                      }}
+                      title={w.detail}
+                    >
+                      <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
+                      <span className="leading-tight">{w.empName}: {w.message}</span>
+                    </div>
+                  ))}
+                  {patternWarnings.length > 4 && (
+                    <p className="text-[10px] text-muted-foreground text-center py-0.5">
+                      +{patternWarnings.length - 4} weitere Warnungen
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+        </div>
+      </aside>
+
       <main className="max-w-[1800px] mx-auto w-full px-4 pt-2 pb-8">
-        <div className="flex gap-3 items-start">
-
-          {/* ══════════════ LEFT SIDEBAR: Legend + Quick stats ══════════════ */}
-          <aside className={cn(
-            "shrink-0 flex flex-col gap-2 transition-[width] duration-200",
-            legendSidebarOpen ? "w-52" : "w-8"
-          )}>
-            <button
-              onClick={() => setLegendSidebarOpen(v => !v)}
-              className="flex items-center gap-1.5 px-1.5 py-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors text-[11px] w-full"
-              title={legendSidebarOpen ? 'Legende einklappen' : 'Legende ausklappen'}
-            >
-              <PanelLeftClose className={cn("h-4 w-4 shrink-0 transition-transform duration-200", !legendSidebarOpen && "rotate-180")} />
-              {legendSidebarOpen && <span className="font-medium truncate">Schichten</span>}
-            </button>
-
-            {legendSidebarOpen && (
-              <>
-                <ShiftLegend
-                  onEditClick={() => setShiftConfigDialogOpen(true)}
-                  department={activeDepartment === 'all' ? 'all' : activeDepartment as 'service' | 'küche'}
-                  activeTool={paintTool}
-                  onToolSelect={setPaintTool}
-                  mode="sidebar"
-                />
-
-                {/* Mini sidebar KPIs */}
-                <div className="rounded-lg border bg-card px-3 py-2.5 space-y-1.5">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {pkqPeriodLabel}
-                  </p>
-                  <div className="space-y-1.5 text-xs">
-                    <div className="flex justify-between items-baseline">
-                      <span className="text-muted-foreground">Mitarbeiter</span>
-                      <span className="font-bold">{departmentEmployeeCount}</span>
-                    </div>
-                    <div className="flex justify-between items-baseline">
-                      <span className="text-muted-foreground">Geplant</span>
-                      <span className="font-bold tabular-nums">{departmentPlannedHours.toFixed(1)} h</span>
-                    </div>
-                    {gesamtCostRatio !== null && (
-                      <div className="flex justify-between items-baseline">
-                        <span className="text-muted-foreground">PKQ</span>
-                        <button
-                          onClick={() => setPkDetailOpen(true)}
-                          className={cn(
-                            "font-black tabular-nums hover:underline cursor-pointer text-sm",
-                            gesamtCostRatioStatus === 'good'  && "text-green-600 dark:text-green-400",
-                            gesamtCostRatioStatus === 'ok'    && "text-yellow-600 dark:text-yellow-400",
-                            gesamtCostRatioStatus === 'high'  && "text-red-600 dark:text-red-400",
-                          )}
-                        >
-                          {gesamtCostRatio.toFixed(1)} %
-                        </button>
-                      </div>
-                    )}
-                    <div className="flex justify-between items-baseline">
-                      <span className="text-muted-foreground">Ziel</span>
-                      <span className="font-semibold tabular-nums">{laborCostThreshold} %</span>
-                    </div>
-                    {departmentWarningCount > 0 && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3 text-amber-500" />
-                          Warnungen
-                        </span>
-                        <span className="font-bold text-amber-600 dark:text-amber-400">{departmentWarningCount}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Zielwerte */}
-                <div className="rounded-lg border bg-card px-3 py-2.5 space-y-1.5">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Zielwerte</p>
-                  <div className="space-y-1.5 text-xs">
-                    {activeDepartment !== 'küche' && (
-                      <div className="flex justify-between items-baseline">
-                        <span className="text-blue-600 dark:text-blue-400 font-medium">Service</span>
-                        <span className="tabular-nums font-semibold">{_serviceResolved.targetPercent.toFixed(1)} %</span>
-                      </div>
-                    )}
-                    {activeDepartment !== 'service' && (
-                      <div className="flex justify-between items-baseline">
-                        <span className="text-orange-600 dark:text-orange-400 font-medium">Küche</span>
-                        <span className="tabular-nums font-semibold">{_kücheResolved.targetPercent.toFixed(1)} %</span>
-                      </div>
-                    )}
-                    {activeDepartment === 'all' && (
-                      <div className="flex justify-between items-baseline">
-                        <span className="text-muted-foreground">Global</span>
-                        <span className="tabular-nums font-semibold">{_globalResolved.targetPercent.toFixed(1)} %</span>
-                      </div>
-                    )}
-                    <button
-                      onClick={handleOpenZielwertEdit}
-                      className="text-[10px] text-muted-foreground/60 hover:text-foreground flex items-center gap-1 pt-0.5"
-                    >
-                      <Pencil className="h-2.5 w-2.5" />
-                      bearbeiten
-                    </button>
-                  </div>
-                </div>
-
-                {/* Smart Hinweise */}
-                {(patternWarnings.length > 0 || overhoursEmployees.length > 0 || gesamtCostRatioStatus === 'high') && (
-                  <div className="rounded-lg border bg-card overflow-hidden">
-                    <button
-                      onClick={() => setHintsCollapsed(v => !v)}
-                      className="flex items-center gap-1.5 w-full px-2.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted/50 transition-colors"
-                    >
-                      <Lightbulb className="h-3 w-3 text-amber-500 shrink-0" />
-                      <span className="flex-1 text-left">Hinweise</span>
-                      {(() => {
-                        const total = patternWarnings.filter(w => w.severity === 'critical').length + overhoursEmployees.length + (gesamtCostRatioStatus === 'high' ? 1 : 0);
-                        return total > 0 ? <span className="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400 rounded-full px-1.5 py-0 font-bold">{total}</span> : null;
-                      })()}
-                      <ChevronDown className={cn("h-3 w-3 transition-transform", hintsCollapsed && "rotate-180")} />
-                    </button>
-                    {!hintsCollapsed && (
-                      <div className="px-2.5 pb-2.5 space-y-1">
-                        {/* PKQ over target */}
-                        {gesamtCostRatioStatus === 'high' && gesamtCostRatio !== null && (
-                          <div className="flex items-start gap-1.5 text-[10px] text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 rounded px-1.5 py-1">
-                            <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
-                            <span>PKQ {gesamtCostRatio.toFixed(1)} % über Ziel ({laborCostThreshold} %)</span>
-                          </div>
-                        )}
-                        {/* Overtime employees */}
-                        {overhoursEmployees.slice(0, 3).map(({ employee, difference }) => (
-                          <div key={employee.id} className="flex items-start gap-1.5 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded px-1.5 py-1">
-                            <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
-                            <span className="truncate">{getEmployeeDisplayName(employee)} +{difference.toFixed(1)} h</span>
-                          </div>
-                        ))}
-                        {/* Pattern warnings — show up to 4 */}
-                        {patternWarnings.slice(0, 4).map((w, i) => (
-                          <div
-                            key={i}
-                            className={cn(
-                              "flex items-start gap-1.5 text-[10px] rounded px-1.5 py-1 cursor-pointer hover:opacity-80",
-                              w.severity === 'critical'
-                                ? "text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30"
-                                : "text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30"
-                            )}
-                            onClick={() => {
-                              const d = new Date(w.firstDate);
-                              handleJumpToDay(d, w.empId);
-                            }}
-                            title={w.detail}
-                          >
-                            <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
-                            <span className="leading-tight">{w.empName}: {w.message}</span>
-                          </div>
-                        ))}
-                        {patternWarnings.length > 4 && (
-                          <p className="text-[10px] text-muted-foreground text-center py-0.5">
-                            +{patternWarnings.length - 4} weitere Warnungen
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-          </aside>
+        <div className="flex flex-col gap-2">
 
           {/* ══════════════ MAIN CONTENT ══════════════ */}
-          <div className="flex-1 min-w-0 flex flex-col gap-2">
+          <div className="flex flex-col gap-2">
 
             {/* ── Compact KPI Strip ───────────────────────────────────── */}
             <div className={cn(

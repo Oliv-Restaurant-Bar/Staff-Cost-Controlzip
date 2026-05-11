@@ -1,0 +1,115 @@
+Bitte ergänze im Dienstplan einen echten Mitarbeiter-Filter.
+
+Ziel:
+Ich möchte gezielt einen oder mehrere Mitarbeiter auswählen können.
+Im Dienstplan sollen danach wirklich nur noch diese ausgewählten Mitarbeiter sichtbar sein.
+
+---
+
+1. Neuer Mitarbeiter-Filter
+
+Oben in der Dienstplan-Toolbar oder in der neuen Sidebar ergänzen:
+
+"Mitarbeiter filtern"
+
+Funktion:
+- Multi-Select
+- Suche nach Name
+- mehrere Mitarbeiter auswählbar
+- Auswahl entfernen möglich
+- Button "Alle anzeigen"
+
+---
+
+2. Filterwirkung
+
+Wenn Mitarbeiter ausgewählt sind:
+
+Im Dienstplan dürfen nur noch diese Mitarbeiter angezeigt werden.
+
+Beispiel:
+Auswahl:
+- Arber
+- Carlos
+- Sadete
+
+Dann zeigt der Dienstplan nur:
+- Arber
+- Carlos
+- Sadete
+
+Alle anderen Mitarbeiter werden komplett ausgeblendet.
+
+---
+
+3. Kombination mit Abteilungsfilter
+
+Der Mitarbeiterfilter muss mit Service/Küche funktionieren.
+
+Beispiel:
+Filter Service + Carlos:
+→ Carlos nur anzeigen, wenn Carlos Service ist
+
+Beispiel:
+Alle Abteilungen + Carlos + Sadete:
+→ Carlos und Sadete anzeigen
+
+---
+
+4. Filterstatus sichtbar machen
+
+Wenn ein Filter aktiv ist, oben klar anzeigen:
+
+"3 Mitarbeiter ausgewählt"
+
+Zusätzlich Button:
+"Filter zurücksetzen"
+
+---
+
+5. Auswahl speichern
+
+Optional:
+Die letzte Auswahl kann pro Benutzer gespeichert werden.
+
+Aber:
+"Alle anzeigen" muss jederzeit möglich sein.
+
+---
+
+6. Planung weiterhin möglich
+
+Wichtig:
+Gefilterte Mitarbeiter müssen weiterhin normal bearbeitet werden können:
+
+- Schicht eintragen
+- Schicht ändern
+- Drag & Drop
+- Ist-Stunden
+- Kostenberechnung
+- Wochenreport
+- Tagesdetail
+
+Der Filter darf nur die Anzeige ändern, nicht die Daten.
+
+---
+
+7. Keine Daten löschen
+
+Beim Filtern dürfen keine Dienstplandaten verschwinden oder gelöscht werden.
+
+Nur visuelle Ausblendung.
+
+---
+
+8. Tests
+
+Bitte testen:
+
+- einen Mitarbeiter auswählen
+- mehrere Mitarbeiter auswählen
+- Filter zurücksetzen
+- Kombination mit Service/Küche
+- Schicht bei gefiltertem Mitarbeiter bearbeiten
+- Reload prüfen
+- keine Daten anderer Mitarbeiter löschen
