@@ -3630,6 +3630,9 @@ export default function PersonalFixPage() {
           deptSummary={deptSummary}
           abwDays={pfixAbw.days}
           totalFixCost={totalFixCost}
+          forecastIstDay={forecastIstDay}
+          onForecastIstDayChange={setForecastIstDay}
+          todayDate={today.getDate()}
         />
 
       </main>

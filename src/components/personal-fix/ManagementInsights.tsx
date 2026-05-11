@@ -54,6 +54,9 @@ export interface ManagementInsightsProps {
   deptSummary: MgmtDeptRow[];
   abwDays: MgmtAbwDay[];
   totalFixCost: number;
+  forecastIstDay: number | null;
+  onForecastIstDayChange: (day: number | null) => void;
+  todayDate: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -92,6 +95,9 @@ export default function ManagementInsights({
   daysInSelectedMonth,
   deptSummary,
   totalFixCost,
+  forecastIstDay,
+  onForecastIstDayChange,
+  todayDate,
 }: ManagementInsightsProps) {
   const monthLabel = new Date(selectedYear, selectedMonth - 1, 1)
     .toLocaleString('de-CH', { month: 'long', year: 'numeric' });
@@ -176,11 +182,35 @@ export default function ManagementInsights({
                   <TrendingUp className="h-4 w-4 text-muted-foreground" />
                   Forecast Monatsende
                 </CardTitle>
-                <p className="text-[10px] text-muted-foreground/70">
-                  {effectiveForecastCutoff > 0
-                    ? `Ist bis ${effectiveForecastCutoff}. + geplante Restkosten ab ${Math.min(effectiveForecastCutoff + 1, daysInSelectedMonth)}.`
-                    : 'Vollständiger Monatsplan (noch keine Ist-Daten)'}
-                </p>
+                {/* Inline Ist-bis-Tag picker */}
+                <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                  <span className="text-[10px] text-muted-foreground/70">Ist bis Tag</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={daysInSelectedMonth}
+                    value={forecastIstDay ?? ''}
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10);
+                      if (!isNaN(v) && v >= 1 && v <= daysInSelectedMonth) onForecastIstDayChange(v);
+                      else if (e.target.value === '') onForecastIstDayChange(null);
+                    }}
+                    placeholder={String(todayDate)}
+                    className="w-11 text-center rounded border border-violet-300 dark:border-violet-600 bg-background text-[11px] font-semibold px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
+                  />
+                  {forecastIstDay !== null && (
+                    <button
+                      onClick={() => onForecastIstDayChange(null)}
+                      className="text-[10px] text-muted-foreground/60 hover:text-muted-foreground leading-none"
+                      title="Zurücksetzen auf heute"
+                    >×</button>
+                  )}
+                  <span className="text-[10px] text-muted-foreground/70">
+                    {effectiveForecastCutoff > 0
+                      ? `→ Restkosten ab ${Math.min(effectiveForecastCutoff + 1, daysInSelectedMonth)}.`
+                      : '(kein Ist)'}
+                  </span>
+                </div>
               </CardHeader>
               <CardContent className="px-4 pb-4 space-y-2.5">
                 {personnelBudget === 0 ? (
