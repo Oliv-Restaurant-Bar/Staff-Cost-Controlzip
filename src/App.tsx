@@ -267,35 +267,43 @@ const AppContent = () => {
 
 // ─── Root App — BrowserRouter hier oben, damit öffentliche Routen möglich ───
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <TenantProvider>
-      <StichtagProvider>
-      <RevenueDisplayProvider>
-        <PlanDisplayProvider>
-          <GuestSessionProvider>
-            <Sonner />
-            <AuthProvider>
-              <BrowserRouter>
-                <Routes>
-                  {/* ── Öffentliche Routen — kein Login erforderlich ── */}
-                  <Route path="/onboarding/:token" element={<OnboardingForm />} />
-                  <Route path="/gast" element={<GuestAccess />} />
-                  <Route path="/mirus-parser-test" element={<MirusParserTest />} />
+const App = () => {
+  // ── Komplett isolierte öffentliche Seiten ────────────────────────────────
+  // Kein AuthProvider, kein Tenant-Redirect, kein Router-Redirect.
+  // Muss VOR jedem Provider stehen, damit nichts dazwischenfunken kann.
+  if (window.location.pathname === '/mirus-parser-test') {
+    return <MirusParserTest />;
+  }
 
-                  {/* ── Alle anderen Routen → Auth-Check ── */}
-                  <Route path="/*" element={<AppContent />} />
-                </Routes>
-              </BrowserRouter>
-            </AuthProvider>
-          </GuestSessionProvider>
-        </PlanDisplayProvider>
-      </RevenueDisplayProvider>
-      </StichtagProvider>
-      </TenantProvider>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <TenantProvider>
+        <StichtagProvider>
+        <RevenueDisplayProvider>
+          <PlanDisplayProvider>
+            <GuestSessionProvider>
+              <Sonner />
+              <AuthProvider>
+                <BrowserRouter>
+                  <Routes>
+                    {/* ── Öffentliche Routen — kein Login erforderlich ── */}
+                    <Route path="/onboarding/:token" element={<OnboardingForm />} />
+                    <Route path="/gast" element={<GuestAccess />} />
+
+                    {/* ── Alle anderen Routen → Auth-Check ── */}
+                    <Route path="/*" element={<AppContent />} />
+                  </Routes>
+                </BrowserRouter>
+              </AuthProvider>
+            </GuestSessionProvider>
+          </PlanDisplayProvider>
+        </RevenueDisplayProvider>
+        </StichtagProvider>
+        </TenantProvider>
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+};
 
 export default App;
