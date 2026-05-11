@@ -345,7 +345,7 @@ function emptyEmployee(id: string): Employee {
 // ─── Haupt-Komponente ─────────────────────────────────────────────────────────
 
 const Personalstamm = () => {
-  const { tenantId } = useTenant();
+  const { tenantId, tenantKey } = useTenant();
   const {
     isAdmin, isManager, allowedDepartment, canEditEmployees, isBeaulieuManager,
   } = usePermissions();
