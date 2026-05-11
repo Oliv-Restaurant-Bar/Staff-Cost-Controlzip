@@ -25,7 +25,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2 } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -50,6 +50,7 @@ import { ExportOptionsDialog, ExportOptions } from '@/components/schedule-planne
 import { ImportMatchPreviewDialog, NameMatchOverride } from '@/components/schedule-planner/ImportMatchPreviewDialog';
 import { LaborCostComparison } from '@/components/schedule-planner/LaborCostComparison';
 import { KüchenplanImportDialog } from '@/components/schedule-planner/KüchenplanImportDialog';
+import { WeeklyReportDialog } from '@/components/schedule-planner/WeeklyReportDialog';
 import { EmployeeForm } from '@/components/EmployeeForm';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { MirusDailyImportEntry, MirusImportMode } from '@/types/personnel';
@@ -217,6 +218,7 @@ const SchedulePlanner = () => {
     toast.success(`Schicht ${slot.start}–${slot.end} kopiert — öffne eine Zelle zum Einfügen`);
   };
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [weeklyReportOpen, setWeeklyReportOpen] = useState(false);
   const [dayDetailDialogOpen, setDayDetailDialogOpen] = useState(false);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [istDayDetailDialogOpen, setIstDayDetailDialogOpen] = useState(false);
@@ -2741,6 +2743,10 @@ const SchedulePlanner = () => {
                     <FileText className="h-4 w-4 mr-2" />
                     Export PDF
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setWeeklyReportOpen(true)}>
+                    <FileBarChart2 className="h-4 w-4 mr-2 text-blue-600" />
+                    Wochenreport PDF
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setPrintDialogOpen(true)}>
                     <Printer className="h-4 w-4 mr-2" />
                     Drucken
@@ -4384,6 +4390,17 @@ const SchedulePlanner = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Wochenreport PDF Dialog ─────────────────────────────────────── */}
+      <WeeklyReportDialog
+        open={weeklyReportOpen}
+        onOpenChange={setWeeklyReportOpen}
+        employees={activeEmployees}
+        scheduleData={scheduleData}
+        actualHoursData={actualHoursData}
+        dailyBudgets={dailyBudgets}
+        restaurantName={tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv'}
+      />
     </div>
   );
 };
