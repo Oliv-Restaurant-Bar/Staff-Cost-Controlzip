@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import {
   TrendingUp, AlertTriangle, CheckCircle,
-  Lightbulb, Users, BarChart2, Zap, Target,
+  Lightbulb, BarChart2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -61,14 +61,6 @@ export interface ManagementInsightsProps {
 const fmtCHF = (n: number) =>
   n.toLocaleString('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 });
 
-const fmtCHFDec = (n: number) =>
-  n.toLocaleString('de-CH', { style: 'currency', currency: 'CHF', minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-function fmtDate(iso: string): string {
-  const [, m, d] = iso.split('-');
-  return `${d}.${m}.`;
-}
-
 // ─── Ampel Dots ───────────────────────────────────────────────────────────────
 
 function AmpelDots({ status }: { status: 'on_track' | 'warning' | 'off_track' }) {
@@ -99,7 +91,6 @@ export default function ManagementInsights({
   effectiveForecastCutoff,
   daysInSelectedMonth,
   deptSummary,
-  abwDays,
   totalFixCost,
 }: ManagementInsightsProps) {
   const monthLabel = new Date(selectedYear, selectedMonth - 1, 1)
@@ -138,24 +129,6 @@ export default function ManagementInsights({
     },
   }[forecastStatus];
 
-  // ── Kritische Tage ──────────────────────────────────────────────────────────
-  const criticalDays = useMemo(() =>
-    [...abwDays]
-      .filter(d => d.diff > 0.01)
-      .sort((a, b) => b.diff - a.diff)
-      .slice(0, 7),
-    [abwDays],
-  );
-
-  // ── Top Kostentreiber ───────────────────────────────────────────────────────
-  const topDrivers = useMemo(() =>
-    [...pfixPerEmp]
-      .filter(e => e.diffWork > 0.01)
-      .sort((a, b) => b.diffWork - a.diffWork)
-      .slice(0, 5),
-    [pfixPerEmp],
-  );
-
   // ── Abteilungsvergleich ─────────────────────────────────────────────────────
   const deptRows = useMemo(() => {
     const depts = ['service', 'küche'];
@@ -170,89 +143,7 @@ export default function ManagementInsights({
     }).filter(d => d.planWork > 0 || d.istWork > 0 || d.fix > 0);
   }, [deptSummary, pfixPerEmp]);
 
-  // ── Handlungsempfehlungen (regelbasiert) ────────────────────────────────────
-  const recommendations = useMemo(() => {
-    const items: { icon: string; text: string; severity: 'red' | 'amber' | 'green' | 'neutral' }[] = [];
-
-    if (personnelBudget > 0) {
-      if (forecastStatus === 'off_track') {
-        items.push({
-          icon: '🔴',
-          text: `Wenn keine Anpassung erfolgt, wird das Budget voraussichtlich um ${fmtCHF(Math.abs(forecastDelta))} überschritten.`,
-          severity: 'red',
-        });
-        if (avgHourlyWage > 0 && hoursSaved > 0) {
-          items.push({
-            icon: '⚙️',
-            text: `Reduziere in der verbleibenden Monatsplanung ca. ${hoursSaved} Flex-Stunden, um im Budget zu bleiben.`,
-            severity: 'red',
-          });
-        }
-      } else if (forecastStatus === 'warning') {
-        items.push({
-          icon: '🟡',
-          text: `Leichte Budgetüberschreitung möglich (${fmtCHF(Math.abs(forecastDelta))}). Flex-Stunden beobachten.`,
-          severity: 'amber',
-        });
-      } else {
-        items.push({
-          icon: '🟢',
-          text: `Der Monat liegt aktuell ${fmtCHF(Math.abs(forecastDelta))} unter Budget. Spielraum vorhanden.`,
-          severity: 'green',
-        });
-      }
-    }
-
-    if (criticalDays.length > 0) {
-      const top3 = criticalDays.slice(0, 3).map(d => fmtDate(d.date)).join(', ');
-      items.push({
-        icon: '📅',
-        text: `Prüfe die Tage ${top3}: dort liegen die Ist-Kosten über Plan.`,
-        severity: criticalDays.length >= 3 ? 'amber' : 'neutral',
-      });
-    }
-
-    const sortedDepts = [...deptRows].sort((a, b) => b.diffWork - a.diffWork);
-    const worstDept = sortedDepts[0];
-    const bestDept  = sortedDepts[sortedDepts.length - 1];
-    if (worstDept && worstDept.diffWork > 50) {
-      const lbl = worstDept.dept === 'service' ? 'Service' : 'Küche';
-      items.push({
-        icon: '🍳',
-        text: `${lbl} verursacht aktuell die grösste Abweichung (${fmtCHF(worstDept.diffWork)} über Plan). Prüfe Schichtlängen und Aushilfen.`,
-        severity: 'amber',
-      });
-    }
-    if (bestDept && bestDept !== worstDept && bestDept.diffWork < -10) {
-      const lbl = bestDept.dept === 'service' ? 'Service' : 'Küche';
-      items.push({
-        icon: '✅',
-        text: `${lbl} liegt im Plan. Fokus zuerst auf die andere Abteilung.`,
-        severity: 'green',
-      });
-    }
-
-    if (topDrivers.length > 0) {
-      const names = topDrivers.slice(0, 2).map(e => e.name).join(' und ');
-      items.push({
-        icon: '👤',
-        text: `${names} haben die höchsten Abweichungen zwischen Plan und Ist.`,
-        severity: 'neutral',
-      });
-    }
-
-    if (items.length === 0) {
-      items.push({
-        icon: 'ℹ️',
-        text: 'Noch keine Ist-Daten erfasst. Empfehlungen erscheinen sobald Ist-Stunden importiert sind.',
-        severity: 'neutral',
-      });
-    }
-
-    return items;
-  }, [forecastStatus, forecastDelta, personnelBudget, criticalDays, deptRows, topDrivers, avgHourlyWage, hoursSaved]);
-
-  const hasAnyData = personnelBudget > 0 || abwDays.length > 0 || pfixPerEmp.length > 0;
+  const hasAnyData = personnelBudget > 0 || pfixPerEmp.length > 0;
 
   return (
     <section className="space-y-4">
@@ -266,7 +157,7 @@ export default function ManagementInsights({
         <div className="h-px flex-1 bg-border" />
       </div>
       <p className="text-[11px] text-muted-foreground text-center -mt-2">
-        Automatische Handlungsempfehlungen aus Fixkosten, Flexkosten, Ist-Stunden, Plan-Stunden und Budget · {monthLabel}
+        Forecast Monatsende · Risiko-Ampel · Abteilungsvergleich · {monthLabel}
       </p>
 
       {!hasAnyData ? (
@@ -425,126 +316,8 @@ export default function ManagementInsights({
             </Card>
           </div>
 
-          {/* ── Row 2: Kritische Tage + Top Kostentreiber ───────────────── */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-            {/* Kritische Tage */}
-            <Card>
-              <CardHeader className="pb-2 pt-4 px-4">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-500" />
-                  Kritische Tage
-                </CardTitle>
-                <p className="text-[10px] text-muted-foreground/70">
-                  Tage mit Ist-Kosten über Plan — sortiert nach Abweichung.
-                </p>
-              </CardHeader>
-              <CardContent className="px-4 pb-4">
-                {criticalDays.length === 0 ? (
-                  <div className="py-6 text-center">
-                    <CheckCircle className="h-7 w-7 text-emerald-500 mx-auto mb-2" />
-                    <p className="text-xs text-muted-foreground">Keine kritischen Tage — Ist liegt überall im Plan.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    {criticalDays.map(d => {
-                      const pct = d.diffPct ?? 0;
-                      const sev = pct > 20 ? 'red' : pct > 8 ? 'amber' : 'yellow';
-                      return (
-                        <div key={d.date} className={cn(
-                          'flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-xs border',
-                          sev === 'red'
-                            ? 'bg-red-50/60 dark:bg-red-950/20 border-red-200 dark:border-red-800'
-                            : sev === 'amber'
-                              ? 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800'
-                              : 'bg-yellow-50/40 dark:bg-yellow-950/10 border-yellow-200 dark:border-yellow-900',
-                        )}>
-                          <div className="flex items-center gap-2">
-                            <span className={cn('w-2 h-2 rounded-full shrink-0',
-                              sev === 'red' ? 'bg-red-500' : sev === 'amber' ? 'bg-amber-500' : 'bg-yellow-400')} />
-                            <span className="font-mono font-semibold">{fmtDate(d.date)}</span>
-                          </div>
-                          <div className="flex items-center gap-3 text-right">
-                            <div className="text-muted-foreground text-[10px]">
-                              <span>Plan {fmtCHF(d.planWork)}</span>
-                              <span className="mx-1">·</span>
-                              <span>Ist {fmtCHF(d.istWork)}</span>
-                            </div>
-                            <span className={cn('font-mono font-bold whitespace-nowrap',
-                              sev === 'red'   ? 'text-red-600 dark:text-red-400'
-                              : sev === 'amber' ? 'text-amber-600 dark:text-amber-400'
-                                              : 'text-yellow-700 dark:text-yellow-400')}>
-                              +{fmtCHF(d.diff)}
-                            </span>
-                            {d.diffPct != null && (
-                              <span className="text-muted-foreground text-[10px] w-14 text-right">
-                                +{d.diffPct.toFixed(1)} %
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Top Kostentreiber */}
-            <Card>
-              <CardHeader className="pb-2 pt-4 px-4">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <Users className="h-4 w-4 text-muted-foreground" />
-                  Top Kostentreiber
-                </CardTitle>
-                <p className="text-[10px] text-muted-foreground/70">
-                  Flex-Mitarbeiter mit höchster Ist-Abweichung vs. Plan (Arbeit).
-                </p>
-              </CardHeader>
-              <CardContent className="px-4 pb-4">
-                {topDrivers.length === 0 ? (
-                  <div className="py-6 text-center">
-                    <CheckCircle className="h-7 w-7 text-emerald-500 mx-auto mb-2" />
-                    <p className="text-xs text-muted-foreground">Alle Mitarbeiter liegen im Plan.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    {topDrivers.map((e, i) => {
-                      const diffH    = e.istH - e.planH;
-                      const deptLabel = e.dept === 'service' ? 'Service' : e.dept === 'küche' ? 'Küche' : e.dept;
-                      return (
-                        <div key={e.id} className="flex items-center gap-3 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
-                          <div className={cn(
-                            'h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0',
-                            i === 0 ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
-                            : i === 1 ? 'bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300'
-                                      : 'bg-muted text-muted-foreground',
-                          )}>
-                            {i + 1}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold truncate">{e.name}</p>
-                            <p className="text-muted-foreground text-[10px]">{deptLabel} · {fmtCHFDec(e.hourlyWage)}/h</p>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <p className="font-mono font-bold text-red-600 dark:text-red-400">+{fmtCHF(e.diffWork)}</p>
-                            {diffH > 0.05 && (
-                              <p className="text-[10px] text-muted-foreground">+{diffH.toFixed(1)} h</p>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* ── Row 3: Service vs. Küche + Stundenoptimierung ───────────── */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-            {/* Abteilungsvergleich */}
+          {/* ── Service vs. Küche — Abteilungsvergleich (full-width) ─────── */}
+          {deptRows.length > 0 && (
             <Card>
               <CardHeader className="pb-2 pt-4 px-4">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -556,203 +329,50 @@ export default function ManagementInsights({
                 </p>
               </CardHeader>
               <CardContent className="px-4 pb-4">
-                {deptRows.length === 0 ? (
-                  <p className="text-xs text-muted-foreground italic py-4 text-center">
-                    Keine Abteilungsdaten verfügbar.
-                  </p>
-                ) : (
-                  <div className="space-y-4">
-                    {deptRows.map(d => {
-                      const label  = d.dept === 'service' ? '🍽 Service' : '🍳 Küche';
-                      const isOver = d.diffWork > 10;
-                      const barIst = d.planWork > 0
-                        ? Math.min(120, (d.istWork / d.planWork) * 100)
-                        : d.istWork > 0 ? 100 : 0;
-                      return (
-                        <div key={d.dept} className="space-y-1.5">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-semibold">{label}</span>
-                            <div className={cn(
-                              'flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold border',
-                              isOver
-                                ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-950/30 dark:border-red-800 dark:text-red-400'
-                                : 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-400',
-                            )}>
-                              <span className={cn('h-1.5 w-1.5 rounded-full inline-block',
-                                isOver ? 'bg-red-500' : 'bg-emerald-500')} />
-                              {isOver ? 'Über Plan' : 'Im Plan'}
-                            </div>
-                          </div>
-                          {/* Progress bar */}
-                          <div className="relative h-6 rounded-full bg-muted overflow-hidden">
-                            <div
-                              className={cn('h-full rounded-full transition-all', isOver ? 'bg-red-400/70' : 'bg-emerald-400/70')}
-                              style={{ width: `${Math.min(100, barIst)}%` }}
-                            />
-                            <div className="absolute inset-0 flex items-center justify-between px-2.5 text-[10px] font-mono font-bold text-foreground">
-                              <span>Plan {fmtCHF(d.planWork)}</span>
-                              <span>Ist {fmtCHF(d.istWork)}</span>
-                            </div>
-                          </div>
-                          <div className="flex justify-between text-[10px] px-1">
-                            <span className="text-muted-foreground">Fix: {fmtCHF(d.fix)}</span>
-                            <span className={cn('font-semibold',
-                              isOver ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')}>
-                              {d.diffWork > 0.01 ? '+' : d.diffWork < -0.01 ? '−' : '±'}
-                              {fmtCHF(Math.abs(d.diffWork))}
-                              {d.diffPct != null && ` (${d.diffPct > 0 ? '+' : ''}${d.diffPct.toFixed(1)} %)`}
-                            </span>
+                <div className="space-y-4">
+                  {deptRows.map(d => {
+                    const label  = d.dept === 'service' ? '🍽 Service' : '🍳 Küche';
+                    const isOver = d.diffWork > 10;
+                    const barIst = d.planWork > 0
+                      ? Math.min(120, (d.istWork / d.planWork) * 100)
+                      : d.istWork > 0 ? 100 : 0;
+                    return (
+                      <div key={d.dept} className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold">{label}</span>
+                          <div className={cn(
+                            'flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold border',
+                            isOver
+                              ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-950/30 dark:border-red-800 dark:text-red-400'
+                              : 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-400',
+                          )}>
+                            <span className={cn('h-1.5 w-1.5 rounded-full inline-block',
+                              isOver ? 'bg-red-500' : 'bg-emerald-500')} />
+                            {isOver ? 'Über Plan' : 'Im Plan'}
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Stundenoptimierung */}
-            <Card>
-              <CardHeader className="pb-2 pt-4 px-4">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <Zap className="h-4 w-4 text-muted-foreground" />
-                  Stundenoptimierung
-                </CardTitle>
-                <p className="text-[10px] text-muted-foreground/70">
-                  Notwendige Reduktion oder vorhandener Spielraum.
-                </p>
-              </CardHeader>
-              <CardContent className="px-4 pb-4 space-y-3">
-                {personnelBudget === 0 ? (
-                  <p className="text-xs text-muted-foreground italic py-4 text-center">Kein Budget hinterlegt.</p>
-                ) : avgHourlyWage === 0 ? (
-                  <p className="text-xs text-muted-foreground italic py-4 text-center">Kein Ø-Stundenlohn berechnet.</p>
-                ) : (
-                  <>
-                    <div className="rounded-lg bg-muted/40 border border-border px-3 py-2.5 space-y-1.5 text-xs">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Ø Flex-Stundenlohn</span>
-                        <span className="font-mono font-semibold">{fmtCHFDec(avgHourlyWage)}/h</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Budgetabweichung (Forecast)</span>
-                        <span className={cn('font-mono font-semibold',
-                          forecastDelta >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                          {forecastDelta >= 0 ? '−' : '+'}{fmtCHF(Math.abs(forecastDelta))}
-                        </span>
-                      </div>
-                    </div>
-                    <div className={cn(
-                      'rounded-lg border px-4 py-4 text-center',
-                      forecastDelta >= 0
-                        ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800'
-                        : 'bg-red-50/60 dark:bg-red-950/20 border-red-200 dark:border-red-800',
-                    )}>
-                      <p className={cn('text-3xl font-bold font-mono',
-                        forecastDelta >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300')}>
-                        {forecastDelta >= 0 ? `+${hoursHeadroom}` : `−${hoursSaved}`} h
-                      </p>
-                      <p className={cn('text-xs mt-1.5',
-                        forecastDelta >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
-                        {forecastDelta >= 0
-                          ? `Spielraum — noch ca. ${hoursHeadroom} Flex-Stunden planbar`
-                          : `Reduktion nötig — ca. ${hoursSaved} Flex-Stunden zu viel`}
-                      </p>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground text-center">
-                      Formel: Budgetabweichung ÷ Ø Stundenlohn ({fmtCHFDec(avgHourlyWage)}/h)
-                    </p>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* ── Row 4: Handlungsempfehlungen (full width) ───────────────── */}
-          <Card>
-            <CardHeader className="pb-2 pt-4 px-4">
-              <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <Lightbulb className="h-4 w-4 text-amber-500" />
-                Empfohlene Massnahmen
-              </CardTitle>
-              <p className="text-[10px] text-muted-foreground/70">
-                Regelbasierte Handlungsempfehlungen aus aktuellen Personaldaten.
-              </p>
-            </CardHeader>
-            <CardContent className="px-4 pb-4">
-              <ul className="space-y-2">
-                {recommendations.map((r, i) => (
-                  <li key={i} className={cn(
-                    'flex items-start gap-2.5 rounded-lg px-3 py-2.5 text-sm border',
-                    r.severity === 'red'    ? 'bg-red-50/60 dark:bg-red-950/20 border-red-200 dark:border-red-800'
-                    : r.severity === 'amber'  ? 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800'
-                    : r.severity === 'green'  ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800'
-                                              : 'bg-muted/30 border-border',
-                  )}>
-                    <span className="text-base shrink-0 mt-0.5 leading-none">{r.icon}</span>
-                    <span className={cn(
-                      r.severity === 'red'   ? 'text-red-800 dark:text-red-200'
-                      : r.severity === 'amber' ? 'text-amber-800 dark:text-amber-200'
-                      : r.severity === 'green' ? 'text-emerald-800 dark:text-emerald-200'
-                                              : 'text-foreground',
-                    )}>
-                      {r.text}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-
-          {/* ── Optional: Monats-Heatmap ─────────────────────────────────── */}
-          {abwDays.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2 pt-4 px-4">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <Target className="h-4 w-4 text-muted-foreground" />
-                  Monatstatus — Tagesübersicht
-                </CardTitle>
-                <p className="text-[10px] text-muted-foreground/70">
-                  Grün = im Plan · Gelb = leicht über Plan · Orange = über Plan · Rot = stark über Plan · Grau = keine Daten
-                </p>
-              </CardHeader>
-              <CardContent className="px-4 pb-4">
-                <div className="flex flex-wrap gap-1.5">
-                  {Array.from({ length: daysInSelectedMonth }, (_, i) => {
-                    const day     = i + 1;
-                    const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                    const entry   = abwDays.find(d => d.date === dateStr);
-                    const diff    = entry?.diff ?? 0;
-                    const pct     = entry?.diffPct ?? 0;
-                    const hasData = !!entry;
-                    const tile    = !hasData
-                      ? 'bg-muted/40 text-muted-foreground'
-                      : pct > 20 ? 'bg-red-500 text-white'
-                      : pct > 8  ? 'bg-amber-500 text-white'
-                      : diff > 0.01 ? 'bg-yellow-400 text-yellow-900 dark:text-white dark:bg-yellow-600'
-                                   : 'bg-emerald-500 text-white';
-                    return (
-                      <div
-                        key={day}
-                        className={cn(
-                          'h-9 w-9 rounded-md flex items-center justify-center text-[11px] font-bold cursor-default transition-transform hover:scale-110 hover:z-10 relative',
-                          tile,
-                        )}
-                        title={hasData
-                          ? `${fmtDate(dateStr)}: Plan ${fmtCHF(entry!.planWork)} · Ist ${fmtCHF(entry!.istWork)} · Diff ${diff > 0.01 ? '+' : ''}${fmtCHF(diff)}`
-                          : `${day}. — keine Daten`}
-                      >
-                        {day}
+                        <div className="relative h-6 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className={cn('h-full rounded-full transition-all', isOver ? 'bg-red-400/70' : 'bg-emerald-400/70')}
+                            style={{ width: `${Math.min(100, barIst)}%` }}
+                          />
+                          <div className="absolute inset-0 flex items-center justify-between px-2.5 text-[10px] font-mono font-bold text-foreground">
+                            <span>Plan {fmtCHF(d.planWork)}</span>
+                            <span>Ist {fmtCHF(d.istWork)}</span>
+                          </div>
+                        </div>
+                        <div className="flex justify-between text-[10px] px-1">
+                          <span className="text-muted-foreground">Fix: {fmtCHF(d.fix)}</span>
+                          <span className={cn('font-semibold',
+                            isOver ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')}>
+                            {d.diffWork > 0.01 ? '+' : d.diffWork < -0.01 ? '−' : '±'}
+                            {fmtCHF(Math.abs(d.diffWork))}
+                            {d.diffPct != null && ` (${d.diffPct > 0 ? '+' : ''}${d.diffPct.toFixed(1)} %)`}
+                          </span>
+                        </div>
                       </div>
                     );
                   })}
-                </div>
-                <div className="flex flex-wrap items-center gap-4 mt-3 text-[10px] text-muted-foreground">
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-500 inline-block" />Im Plan</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-yellow-400 inline-block" />Leicht über</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-500 inline-block" />Über Plan</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-red-500 inline-block" />Stark über</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-muted/40 inline-block border border-border" />Keine Daten</span>
                 </div>
               </CardContent>
             </Card>

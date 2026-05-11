@@ -1318,6 +1318,7 @@ export default function PersonalFixPage() {
   const [breakdown, setBreakdown] = useState<BreakdownTarget | null>(null);
   const [abwMode,   setAbwMode]   = useState<AbwMode>('day');
   const [forecastViewMode, setForecastViewMode] = useState<'actual' | 'forecast'>('actual');
+  const [dayDetailModal, setDayDetailModal] = useState<AbwDay | null>(null);
   const [forecastIstDay,   setForecastIstDay]   = useState<number | null>(null);
   const [flexPeriodPopup,  setFlexPeriodPopup]  = useState<FlexPeriodTarget | null>(null);
   const [expandedFixDepts, setExpandedFixDepts] = useState<Set<string>>(new Set());
@@ -3362,6 +3363,58 @@ export default function PersonalFixPage() {
             </div>
             </>)}
 
+            {/* ── Tagesübersicht Heatmap ───────────────────────────────── */}
+            {pfixAbw.days.length > 0 && (
+              <div className="px-4 pb-2">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Tagesübersicht — Flex Plan vs. Ist
+                  </p>
+                  <span className="text-[10px] text-muted-foreground/60 italic">Tag anklicken für Details</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {Array.from({ length: daysInSelectedMonth }, (_, i) => {
+                    const day     = i + 1;
+                    const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const entry   = pfixAbw.days.find(d => d.date === dateStr);
+                    const diff    = entry?.diff ?? 0;
+                    const pct     = entry?.diffPct ?? 0;
+                    const hasData = !!entry;
+                    const tileCls = !hasData
+                      ? 'bg-muted/40 text-muted-foreground cursor-default'
+                      : pct > 20
+                        ? 'bg-red-500 text-white cursor-pointer hover:ring-2 hover:ring-red-300 hover:scale-110'
+                        : pct > 8
+                          ? 'bg-amber-500 text-white cursor-pointer hover:ring-2 hover:ring-amber-300 hover:scale-110'
+                          : diff > 0.01
+                            ? 'bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-white cursor-pointer hover:ring-2 hover:ring-yellow-300 hover:scale-110'
+                            : 'bg-emerald-500 text-white cursor-pointer hover:ring-2 hover:ring-emerald-300 hover:scale-110';
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        disabled={!hasData}
+                        onClick={() => { if (hasData && entry) setDayDetailModal(entry); }}
+                        className={cn(
+                          'h-9 w-9 rounded-md flex items-center justify-center text-[11px] font-bold transition-all relative z-0',
+                          tileCls,
+                        )}
+                      >
+                        {day}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex flex-wrap items-center gap-4 mt-2 text-[10px] text-muted-foreground">
+                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-500 inline-block" />Im Plan</span>
+                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-yellow-400 inline-block" />Leicht über</span>
+                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-500 inline-block" />Über Plan</span>
+                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-red-500 inline-block" />Stark über</span>
+                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-muted/40 border border-border inline-block" />Keine Daten</span>
+                </div>
+              </div>
+            )}
+
             {/* ── Operativer Status-Banner (vereinfacht) ───────────────── */}
             {(() => {
               const isForecast    = forecastViewMode === 'forecast';
@@ -3493,6 +3546,101 @@ export default function PersonalFixPage() {
         onClose={() => setFlexPeriodPopup(null)}
       />
       <FlexBreakdownModal target={breakdown} onClose={() => setBreakdown(null)} />
+
+      {/* ── Tag-Detail-Modal ──────────────────────────────────────────────── */}
+      <Dialog open={dayDetailModal !== null} onOpenChange={open => { if (!open) setDayDetailModal(null); }}>
+        <DialogContent className="max-w-sm">
+          {dayDetailModal && (() => {
+            const d            = dayDetailModal;
+            const [, mm, dd]   = d.date.split('-');
+            const dateLabel    = `${dd}.${mm}.${selectedYear}`;
+            const pct          = d.diffPct ?? 0;
+            const isRed        = pct > 20;
+            const isOrange     = pct > 8 && pct <= 20;
+            const isYellow     = d.diff > 0.01 && pct <= 8;
+            const fixPerDay    = daysInSelectedMonth > 0 ? totalFixCost / daysInSelectedMonth : 0;
+            const totalPlan    = d.planWork + fixPerDay;
+            const planHours    = avgHourlyWage > 0 ? d.planWork / avgHourlyWage : null;
+            const istHours     = avgHourlyWage > 0 ? d.istWork / avgHourlyWage : null;
+            const verdictColor = isRed ? 'text-red-700 dark:text-red-400'
+              : isOrange ? 'text-amber-700 dark:text-amber-400'
+              : isYellow ? 'text-yellow-700 dark:text-yellow-600'
+              : 'text-emerald-700 dark:text-emerald-400';
+            const verdictTitle = isRed
+              ? '⛔ Kritisch'
+              : isOrange
+                ? '⚠ Erhöht'
+                : isYellow
+                  ? '⚠ Leicht erhöht'
+                  : '✓ Im Zielbereich';
+            const verdictText = isRed
+              ? 'Die Ist-Kosten überschreiten den Plan deutlich. Schichtlängen und Einsätze prüfen.'
+              : isOrange
+                ? 'Die Ist-Kosten liegen über dem Planwert. Leichtes Einsparpotenzial vorhanden.'
+                : isYellow
+                  ? 'Die Ist-Kosten liegen knapp über Plan — noch im vertretbaren Bereich.'
+                  : 'Dieser Tag liegt im Zielbereich. Die geplanten Personalkosten sind gesund.';
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="text-base">Tagesdetail — {dateLabel}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3 pt-1">
+                  {/* KPI rows */}
+                  <div className="rounded-lg border border-border bg-muted/20 divide-y divide-border text-sm">
+                    <div className="flex justify-between px-3 py-2">
+                      <span className="text-muted-foreground">Flex Plan</span>
+                      <span className="font-mono font-semibold">{fmtCHF(d.planWork)}</span>
+                    </div>
+                    <div className="flex justify-between px-3 py-2">
+                      <span className="text-muted-foreground">Flex Ist</span>
+                      <span className="font-mono font-semibold text-orange-700 dark:text-orange-400">{fmtCHF(d.istWork)}</span>
+                    </div>
+                    <div className="flex justify-between px-3 py-2">
+                      <span className="text-muted-foreground">Abweichung</span>
+                      <span className={cn('font-mono font-bold', verdictColor)}>
+                        {d.diff > 0.01 ? '+' : d.diff < -0.01 ? '−' : '±'}
+                        {fmtCHF(Math.abs(d.diff))}
+                        {d.diffPct !== null && ` (${d.diffPct > 0 ? '+' : ''}${d.diffPct.toFixed(1)} %)`}
+                      </span>
+                    </div>
+                    <div className="flex justify-between px-3 py-2">
+                      <span className="text-muted-foreground">FIX-Anteil (Tagesquote)</span>
+                      <span className="font-mono text-blue-700 dark:text-blue-400">{fmtCHF(fixPerDay)}</span>
+                    </div>
+                    <div className="flex justify-between px-3 py-2">
+                      <span className="text-muted-foreground">Gesamtkosten Plan</span>
+                      <span className="font-mono">{fmtCHF(totalPlan)}</span>
+                    </div>
+                    {planHours !== null && (
+                      <div className="flex justify-between px-3 py-2">
+                        <span className="text-muted-foreground">Flex-Stunden Plan / Ist</span>
+                        <span className="font-mono">
+                          {planHours.toFixed(1)} h {istHours !== null ? `/ ${istHours.toFixed(1)} h` : ''}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  {/* Verdict */}
+                  <div className={cn(
+                    'rounded-lg border px-3 py-2.5',
+                    isRed
+                      ? 'bg-red-50/60 dark:bg-red-950/20 border-red-200 dark:border-red-800'
+                      : isOrange
+                        ? 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800'
+                        : isYellow
+                          ? 'bg-yellow-50/60 dark:bg-yellow-950/20 border-yellow-200 dark:border-yellow-800'
+                          : 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800',
+                  )}>
+                    <p className={cn('text-sm font-bold', verdictColor)}>{verdictTitle}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{verdictText}</p>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
