@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Plus, Clock, ChevronUp, AlertCircle, CheckCircle2, Loader2, History, ShieldAlert, Copy, ExternalLink, Check } from 'lucide-react';
+import { Plus, Clock, ChevronUp, AlertCircle, CheckCircle2, Loader2, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -49,143 +49,11 @@ function fmtTs(iso: string): string {
   } catch { return iso; }
 }
 
-// ── Migration SQL (vollständiger Fix, zum Kopieren) ────────────────────────────
-
-const SUPABASE_PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID ?? '';
-const SUPABASE_SQL_EDITOR_URL = SUPABASE_PROJECT_ID
-  ? `https://supabase.com/dashboard/project/${SUPABASE_PROJECT_ID}/sql/new`
-  : 'https://supabase.com/dashboard';
-
-const MIGRATION_SQL = `-- employee_wages RLS & GRANT Fix (2026-05-11)
--- Bitte vollständig im Supabase SQL-Editor ausführen.
-
-CREATE TABLE IF NOT EXISTS public.employee_wages (
-  id                       UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
-  employee_id              TEXT          NOT NULL,
-  restaurant_id            TEXT          NOT NULL,
-  valid_from               DATE          NOT NULL,
-  hourly_wage              NUMERIC(10,2) NOT NULL DEFAULT 0,
-  monthly_salary           NUMERIC(10,2) NOT NULL DEFAULT 0,
-  monthly_salary_with_13th NUMERIC(10,2) NOT NULL DEFAULT 0,
-  salary_13                BOOLEAN       NOT NULL DEFAULT false,
-  notes                    TEXT          NOT NULL DEFAULT '',
-  created_by               TEXT          NOT NULL DEFAULT '',
-  created_at               TIMESTAMPTZ   NOT NULL DEFAULT now()
-);
-
-ALTER TABLE public.employee_wages
-  ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT '';
-
-ALTER TABLE public.employee_wages
-  ADD COLUMN IF NOT EXISTS contract_type TEXT DEFAULT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_employee_wages_lookup
-  ON public.employee_wages(restaurant_id, employee_id, valid_from DESC);
-
-ALTER TABLE public.employee_wages ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "employee_wages_auth_all"    ON public.employee_wages;
-DROP POLICY IF EXISTS "employee_wages_anon_all"    ON public.employee_wages;
-DROP POLICY IF EXISTS "employee_wages_auth_select" ON public.employee_wages;
-DROP POLICY IF EXISTS "employee_wages_auth_insert" ON public.employee_wages;
-DROP POLICY IF EXISTS "employee_wages_auth_update" ON public.employee_wages;
-DROP POLICY IF EXISTS "employee_wages_auth_delete" ON public.employee_wages;
-DROP POLICY IF EXISTS "employee_wages_anon_select" ON public.employee_wages;
-DROP POLICY IF EXISTS "ew_select" ON public.employee_wages;
-DROP POLICY IF EXISTS "ew_insert" ON public.employee_wages;
-DROP POLICY IF EXISTS "ew_update" ON public.employee_wages;
-DROP POLICY IF EXISTS "ew_delete" ON public.employee_wages;
-
-CREATE POLICY "ew_select" ON public.employee_wages FOR SELECT TO authenticated, anon USING (true);
-CREATE POLICY "ew_insert" ON public.employee_wages FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "ew_update" ON public.employee_wages FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "ew_delete" ON public.employee_wages FOR DELETE TO authenticated USING (true);
-
-GRANT USAGE ON SCHEMA public TO authenticated, anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.employee_wages TO authenticated;
-GRANT SELECT ON public.employee_wages TO anon;
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated, anon;
-
-NOTIFY pgrst, 'reload schema';
-
-SELECT 'employee_wages RLS-Fix OK' AS status, COUNT(*) AS policies
-FROM pg_policies WHERE tablename = 'employee_wages';`;
-
-// ── PermissionErrorPanel ───────────────────────────────────────────────────────
-
-function PermissionErrorPanel({
-  sqlCopied,
-  onCopy,
-}: {
-  sqlCopied: boolean;
-  onCopy: () => void;
-}) {
-  return (
-    <div className="rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-3 space-y-3">
-      {/* Header */}
-      <div className="flex items-start gap-2">
-        <ShieldAlert className="h-4 w-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
-        <div>
-          <p className="text-xs font-bold text-red-800 dark:text-red-300">
-            Datenbankberechtigung fehlt — INSERT blockiert
-          </p>
-          <p className="text-[11px] text-red-700 dark:text-red-400 mt-0.5">
-            Die Tabelle <code className="font-mono bg-red-100 dark:bg-red-900/40 px-1 rounded">employee_wages</code> hat
-            keine GRANT-Berechtigung für die <code className="font-mono bg-red-100 dark:bg-red-900/40 px-1 rounded">authenticated</code>-Rolle.
-            Einmaliges Ausführen der Migration im Supabase SQL-Editor behebt das Problem dauerhaft.
-          </p>
-        </div>
-      </div>
-
-      {/* Anleitung */}
-      <ol className="text-[11px] text-red-800 dark:text-red-300 space-y-1 list-decimal list-inside pl-0.5">
-        <li>SQL unten kopieren</li>
-        <li>
-          Supabase SQL-Editor öffnen:&nbsp;
-          <a
-            href={SUPABASE_SQL_EDITOR_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-0.5 underline underline-offset-2 font-semibold"
-          >
-            SQL Editor <ExternalLink className="h-2.5 w-2.5" />
-          </a>
-        </li>
-        <li>SQL einfügen und auf <strong>Run</strong> klicken</li>
-        <li>Seite neu laden und erneut versuchen</li>
-      </ol>
-
-      {/* Copy-Button */}
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-7 text-xs gap-1.5 border-red-300 dark:border-red-700 text-red-800 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/30"
-        onClick={onCopy}
-      >
-        {sqlCopied
-          ? <><Check className="h-3.5 w-3.5 text-green-600" /> SQL kopiert!</>
-          : <><Copy className="h-3.5 w-3.5" /> Migration-SQL kopieren</>}
-      </Button>
-
-      {/* SQL Preview (collapsible) */}
-      <details className="group">
-        <summary className="text-[10px] text-red-600 dark:text-red-500 cursor-pointer select-none list-none flex items-center gap-1">
-          <span className="group-open:hidden">▶ SQL anzeigen</span>
-          <span className="hidden group-open:inline">▼ SQL ausblenden</span>
-        </summary>
-        <pre className="mt-1.5 text-[9px] font-mono bg-red-100 dark:bg-red-900/30 rounded p-2 overflow-x-auto whitespace-pre-wrap text-red-900 dark:text-red-200 max-h-48 overflow-y-auto">
-          {MIGRATION_SQL}
-        </pre>
-      </details>
-    </div>
-  );
-}
-
 // ── Props ──────────────────────────────────────────────────────────────────────
 
 interface WageHistorySectionProps {
   employee:     Employee;
-  restaurantId: string; // tenantId: 'oliv' | 'beaulieu'
+  restaurantId: string;
   isAdmin:      boolean;
 }
 
@@ -194,22 +62,20 @@ interface WageHistorySectionProps {
 export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHistorySectionProps) {
   const { user } = useAuth();
 
-  const [history,     setHistory]     = useState<WageEntry[]>([]);
-  const [loading,     setLoading]     = useState(true);
-  const [showForm,    setShowForm]    = useState(false);
-  const [saving,      setSaving]      = useState(false);
+  const [history,    setHistory]    = useState<WageEntry[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [showForm,   setShowForm]   = useState(false);
+  const [saving,     setSaving]     = useState(false);
 
   // Formularfelder
-  const [wageType,    setWageType]    = useState<'hourly' | 'monthly'>('hourly');
-  const [validFrom,   setValidFrom]   = useState('');
-  const [hourlyWage,  setHourlyWage]  = useState('');
-  const [monthlySal,  setMonthlySal]  = useState('');
-  const [monthly13,   setMonthly13]   = useState('');
-  const [salary13,    setSalary13]    = useState(false);
-  const [notes,       setNotes]       = useState('');
-  const [formError,   setFormError]   = useState<string | null>(null);
-  const [permError,   setPermError]   = useState(false);
-  const [sqlCopied,   setSqlCopied]   = useState(false);
+  const [wageType,   setWageType]   = useState<'hourly' | 'monthly'>('hourly');
+  const [validFrom,  setValidFrom]  = useState('');
+  const [hourlyWage, setHourlyWage] = useState('');
+  const [monthlySal, setMonthlySal] = useState('');
+  const [monthly13,  setMonthly13]  = useState('');
+  const [salary13,   setSalary13]   = useState(false);
+  const [notes,      setNotes]      = useState('');
+  const [formError,  setFormError]  = useState<string | null>(null);
 
   // Lohnhistorie laden
   useEffect(() => {
@@ -246,7 +112,6 @@ export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHist
 
   const handleSave = async () => {
     setFormError(null);
-    setPermError(false);
 
     if (!validFrom) {
       setFormError('Bitte Gültig-ab-Datum angeben.');
@@ -289,8 +154,6 @@ export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHist
     setSaving(false);
 
     if (error) {
-      const isPermDenied = error.includes('permission denied') || error.includes('42501');
-      if (isPermDenied) setPermError(true);
       setFormError(userMessage ?? `Speichern fehlgeschlagen: ${error}`);
       toast.error(userMessage ?? 'Lohneintrag konnte nicht gespeichert werden.');
       return;
@@ -480,21 +343,8 @@ export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHist
               />
             </div>
 
-            {/* Fehler: fehlende DB-Berechtigung */}
-            {formError && permError && (
-              <PermissionErrorPanel
-                sqlCopied={sqlCopied}
-                onCopy={() => {
-                  navigator.clipboard.writeText(MIGRATION_SQL).then(() => {
-                    setSqlCopied(true);
-                    setTimeout(() => setSqlCopied(false), 3000);
-                  });
-                }}
-              />
-            )}
-
-            {/* Fehler: normaler Validierungsfehler */}
-            {formError && !permError && (
+            {/* Fehler */}
+            {formError && (
               <div className="flex items-start gap-2 rounded border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/20 px-2.5 py-1.5 text-xs text-red-700 dark:text-red-400">
                 <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                 {formError}
