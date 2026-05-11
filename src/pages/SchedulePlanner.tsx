@@ -2645,7 +2645,7 @@ const SchedulePlanner = () => {
   }
 
   return (
-    <div className="bg-background">
+    <div className="bg-background h-full flex flex-col">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
         <div className="max-w-[1800px] mx-auto px-4">
@@ -3066,21 +3066,12 @@ const SchedulePlanner = () => {
         </div>
       </header>
 
-      {/* ── Sidebar backdrop ────────────────────────────────────────────── */}
-      {legendSidebarOpen && (
-        <div
-          className="fixed inset-0 z-[35] bg-background/60 backdrop-blur-sm"
-          onClick={() => setLegendSidebarOpen(false)}
-        />
-      )}
+      {/* ══════════════ BODY: inline sidebar + scrollable main ══════════════ */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
 
-      {/* ══════════════ LEFT SIDEBAR: Fixed overlay ══════════════ */}
-      <aside className={cn(
-        "fixed left-0 top-0 h-full z-40 w-64",
-        "flex flex-col bg-card border-r border-border",
-        "transition-transform duration-200 ease-in-out",
-        legendSidebarOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
-      )}>
+      {/* LEFT SIDEBAR: inline panel, no overlay */}
+      {legendSidebarOpen && (
+      <aside className="w-[240px] min-w-[240px] shrink-0 flex flex-col bg-card border-r border-border overflow-y-auto">
         {/* Sidebar header */}
         <div className="flex items-center justify-between px-3 py-2.5 border-b border-border shrink-0">
           <span className="font-semibold text-sm">Schichtplanung</span>
@@ -3378,7 +3369,10 @@ const SchedulePlanner = () => {
 
         </div>
       </aside>
+      )} {/* end legendSidebarOpen */}
 
+      {/* MAIN CONTENT: scrollable, fills remaining width */}
+      <div className="flex-1 min-w-0 overflow-auto">
       <main className="max-w-[1800px] mx-auto w-full px-4 pt-2 pb-8">
         <div className="flex flex-col gap-2">
 
@@ -4334,6 +4328,8 @@ const SchedulePlanner = () => {
           </div>{/* end flex-1 content */}
         </div>{/* end flex gap-3 */}
       </main>
+      </div> {/* end overflow-auto */}
+      </div> {/* end flex body row */}
 
       {/* Copy Week Dialog */}
       <CopyWeekDialog
