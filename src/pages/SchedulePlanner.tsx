@@ -25,7 +25,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -172,7 +172,7 @@ const SchedulePlanner = () => {
   // Auth: user + loading + sessionVersion needed to gate data fetches correctly.
   // sessionVersion increments on every auth event (boot, TOKEN_REFRESHED, SIGNED_IN)
   // so pages re-fetch automatically after a background token renewal.
-  const { user, loading: authLoading, sessionVersion } = useAuth();
+  const { user, loading: authLoading, sessionVersion, signOut } = useAuth();
 
   // ── Fetch generation counter ──────────────────────────────────────────────
   // Prevents race conditions when loadMonthData() is called concurrently
@@ -2714,6 +2714,15 @@ const SchedulePlanner = () => {
                   <Settings className="h-4 w-4" />
                 </Button>
               </Link>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                title="Abmelden"
+                onClick={() => signOut()}
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
               {/* Mehr-Dropdown: alle selteneren Werkzeuge */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
