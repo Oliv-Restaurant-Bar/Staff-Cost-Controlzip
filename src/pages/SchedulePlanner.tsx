@@ -850,22 +850,28 @@ const SchedulePlanner = () => {
   }, [loadMonthData]);
 
   // ── Reload employees when Personalstamm signals a change ─────────────────
-  // When a new employee is added in Personalstamm (same tab or different tab),
-  // it sets 'employees-updated-at' in localStorage.  The storage event fires
-  // in all OTHER tabs; for same-tab SPA navigation the component remounts and
-  // loadMonthData() fires via the session/month effect above.
+  // Two channels:
+  //   1. storage event  — fires in OTHER tabs when 'employees-updated-at' changes
+  //   2. employees-updated CustomEvent — fires in the SAME tab (SPA navigation)
+  //      dispatched by Personalstamm after every save (new + update).
   useEffect(() => {
-    const sessionVersionRef = { current: sessionVersion };
-    sessionVersionRef.current = sessionVersion;
-
     const onStorage = (e: StorageEvent) => {
-      if (e.key === 'employees-updated-at' && sessionVersionRef.current > 0) {
-        console.log('[ROUTE] employees-updated-at changed – reloading employees');
+      if (e.key === 'employees-updated-at') {
+        console.log('[PERSONAL_SYNC] employees-updated-at changed (other tab) – reloading employees');
         loadMonthData();
       }
     };
+    const onEmployeesUpdated = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { tenantId?: string; isNew?: boolean } | undefined;
+      console.log('[PERSONAL_SYNC] employees-updated event (same tab) – reloading employees', detail);
+      loadMonthData();
+    };
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    window.addEventListener('employees-updated', onEmployeesUpdated);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('employees-updated', onEmployeesUpdated);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadMonthData]);
 
@@ -2052,9 +2058,30 @@ const SchedulePlanner = () => {
   // Filter out employees who were not active in the displayed month.
   // Uses isEmployeeActiveInMonth which checks both exit date (employmentEndDate)
   // and entry date (contractStart) against the selected year/month.
-  const activeEmployees = employees.filter(e =>
-    isEmployeeActiveInMonth(e, currentMonth.getFullYear(), currentMonth.getMonth() + 1),
-  );
+  const activeEmployees = (() => {
+    const yr  = currentMonth.getFullYear();
+    const mon = currentMonth.getMonth() + 1;
+    return employees.filter(e => {
+      const active = isEmployeeActiveInMonth(e, yr, mon);
+      if (!active) {
+        let reason = 'unbekannt';
+        if (e.employmentEndDate) {
+          const exit = new Date(e.employmentEndDate + 'T00:00:00');
+          if (exit.getFullYear() < yr || (exit.getFullYear() === yr && exit.getMonth() + 1 < mon)) {
+            reason = `Austritt ${e.employmentEndDate} liegt vor Monat ${yr}-${String(mon).padStart(2,'0')}`;
+          }
+        }
+        if (e.contractStart) {
+          const entry = new Date(e.contractStart + 'T00:00:00');
+          if (entry.getFullYear() > yr || (entry.getFullYear() === yr && entry.getMonth() + 1 > mon)) {
+            reason = `Eintritt ${e.contractStart} liegt nach Monat ${yr}-${String(mon).padStart(2,'0')}`;
+          }
+        }
+        console.warn(`[PERSONAL_SYNC] Mitarbeiter im Personalstamm vorhanden, aber im Dienstplan ausgefiltert: "${e.name}" (id=${e.id}) – Grund: ${reason}`);
+      }
+      return active;
+    });
+  })();
 
   // ── Sortierungsfunktion ────────────────────────────────────────────────────
   /** Sortiert eine Mitarbeiterliste anhand der gespeicherten Reihenfolge. */

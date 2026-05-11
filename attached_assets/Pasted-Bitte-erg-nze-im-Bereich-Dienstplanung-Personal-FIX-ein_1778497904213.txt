@@ -1,0 +1,225 @@
+Bitte ergänze im Bereich Dienstplanung / Personal FIX einen neuen Wochenexport für Management-Besprechungen.
+
+Ziel:
+Ich möchte jede Woche einen sauberen PDF-Report exportieren können, den ich mit Geschäftsführer, Serviceleitung und Küchenleitung besprechen kann.
+
+Der Report soll zeigen:
+- was letzte Woche geplant war
+- was effektiv passiert ist
+- wo Kosten zu hoch waren
+- welche Tage problematisch waren
+- welche Abteilung verantwortlich war
+- welche Massnahmen für die nächste Woche nötig sind
+
+---
+
+1. Neuer Button
+
+Im Dienstplan oder Personal FIX ergänzen:
+
+"Wochenreport PDF"
+
+Position:
+- bei Dienstplanung oben neben Kosten / PDF
+oder
+- bei Personal FIX neben PDF Export
+
+---
+
+2. Zeitraum
+
+Der Benutzer soll auswählen können:
+
+- aktuelle Woche
+- letzte Woche
+- Kalenderwoche auswählen
+- Datum von / bis optional
+
+Standard:
+letzte abgeschlossene Woche
+
+Beispiel:
+KW 19 · 04.05.2026 bis 10.05.2026
+
+---
+
+3. Inhalt des Wochenreports
+
+Der PDF Report soll folgende Blöcke enthalten:
+
+A) Zusammenfassung Woche
+
+- Umsatz Ist Woche
+- Personal Plan CHF
+- Personal Ist CHF
+- Abweichung CHF
+- Abweichung %
+- Personalquote Ist
+- Zielquote
+- Status: Grün / Orange / Rot
+
+B) Service vs Küche
+
+Pro Abteilung:
+- Planstunden
+- Iststunden
+- Plan-Kosten
+- Ist-Kosten
+- Abweichung CHF
+- Abweichung Stunden
+- Personalquote falls Umsatz vorhanden
+- Status
+
+C) Tagesübersicht
+
+Für jeden Tag der Woche:
+
+- Datum
+- Umsatz Ist
+- Planstunden
+- Iststunden
+- Plan-Kosten
+- Ist-Kosten
+- Abweichung CHF
+- Personalquote
+- Status
+
+Farben:
+- grün = im Plan
+- orange = leicht über Plan
+- rot = deutlich über Plan
+
+D) Kritische Tage
+
+Automatisch hervorheben:
+
+- Tage mit höchster Kostenabweichung
+- Tage mit Personalquote über Ziel
+- Tage mit Iststunden deutlich über Plan
+- Tage mit tiefem Umsatz und hohen Kosten
+
+E) Erkenntnisse
+
+Automatisch generierte Texte:
+
+Beispiele:
+- "Samstag war trotz hohem Umsatz personalintensiv."
+- "Dienstag lag die Personalquote deutlich über Ziel."
+- "Küche hatte 18.5 Iststunden mehr als geplant."
+- "Service war insgesamt im Plan."
+
+F) Empfehlungen für nächste Woche
+
+Regelbasierte Handlungsempfehlungen:
+
+Beispiele:
+- "Am Dienstag 1 Person weniger im Service einplanen."
+- "Küche Frühschicht am Mittwoch prüfen."
+- "Bei Umsatz unter CHF 5’000 Zielbesetzung reduzieren."
+- "Aushilfen nur an umsatzstarken Tagen einsetzen."
+- "Planstunden für Service um ca. 12 Stunden reduzieren."
+
+---
+
+4. Planung nächste Woche ergänzen
+
+Optional im gleichen Report unten:
+
+"Planung nächste Woche"
+
+Falls bereits Dienstplan für nächste Woche besteht:
+
+- geplante Stunden
+- geplante Personalkosten
+- Umsatzbudget oder Forecast
+- erwartete Personalquote
+- Risikoanalyse
+
+Beispiel:
+"Bei geplantem Umsatz CHF 65’000 und geplanten Personalkosten CHF 22’000 liegt die Quote bei 33.8 %."
+
+---
+
+5. PDF Design
+
+Der Report soll professionell und besprechungstauglich sein:
+
+- Hochformat oder Querformat, je nachdem lesbarer
+- Restaurantname und Logo im Header
+- Kalenderwoche gross sichtbar
+- klare Tabellen
+- Ampelfarben
+- kurze Management-Kommentare
+- nicht zu überladen
+- maximal 2 bis 3 Seiten
+
+Titel:
+Wochenreport Personal & Kosten
+KW 19 · 04.05.2026 bis 10.05.2026
+
+---
+
+6. Datenquellen
+
+Bitte nur bestehende Daten verwenden:
+
+- Dienstplan Planstunden
+- Dienstplan Iststunden
+- Lohnhistorie / Stundenlöhne
+- Personal FIX
+- Tagesumsatz Ist
+- Zielquote Personal
+- Abteilung Service / Küche
+- Mitarbeiterstatus aktiv nach Eintritt/Austritt
+
+Wichtig:
+Für Ist-Vergleich immer echten Tagesumsatz aus Tagesansicht verwenden.
+
+---
+
+7. Keine bestehenden Exporte verändern
+
+Bitte diesen Wochenreport als neuen zusätzlichen Export bauen.
+
+Bestehende PDF Exporte nicht verändern.
+
+---
+
+8. Filter / Empfänger
+
+Optional Auswahl:
+
+☑ Gesamt
+☑ Service
+☑ Küche
+
+Damit ich auch einen Report nur für Serviceleitung oder Küchenleitung exportieren kann.
+
+Wenn Service gewählt:
+- nur Service-Kosten
+- Service-Stunden
+- Service-Empfehlungen
+
+Wenn Küche gewählt:
+- nur Küche-Kosten
+- Küche-Stunden
+- Küche-Empfehlungen
+
+---
+
+9. Tests
+
+Bitte testen:
+
+- letzte Woche exportieren
+- aktuelle Woche exportieren
+- Service-only Export
+- Küche-only Export
+- Tage mit Umsatz fehlen sauber markieren
+- keine falschen Personalquoten
+- Plan/Ist-Kosten stimmen mit Personal FIX überein
+- ausgetretene Mitarbeiter werden nicht berücksichtigt
+- PDF ist druckbar und verständlich
+
+Ziel:
+Der Wochenreport soll als Grundlage für die wöchentliche Besprechung mit Geschäftsführer, Serviceleitung und Küchenleitung dienen.

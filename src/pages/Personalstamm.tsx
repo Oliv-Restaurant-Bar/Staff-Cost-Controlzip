@@ -772,8 +772,6 @@ const Personalstamm = () => {
       saveLocalData(newLocal);
 
       if (isNew) {
-        // Signal für Dienstplan: Mitarbeiterliste hat sich geändert (auch in anderen Tabs)
-        localStorage.setItem('employees-updated-at', String(Date.now()));
         // Neuer Mitarbeiter: Komplette Liste aus Supabase neu laden → Persistenz-Check
         console.log(`[EMPLOYEE SAVE] reloading employees from Supabase after insert...`);
         const reloaded = await loadEmployees(tenantId);
@@ -783,22 +781,34 @@ const Personalstamm = () => {
           console.log(`[CHECK] employees saved in DB: ${saved ? 'OK' : 'MISSING – not found after reload'}`);
           console.log(`[CHECK] employees reload after refresh: OK`);
           console.log(`[CHECK] beaulieu count: ${reloaded.length}`);
+          // Dienstplan-Cache aktualisieren: nächster Remount hat aktuelle Liste
+          try {
+            const cacheKey = tenantId === 'beaulieu' ? 'beaulieu:schedule-employees' : 'schedule-employees';
+            localStorage.setItem(cacheKey, JSON.stringify(reloaded));
+          } catch { /* ignore quota errors */ }
         } else {
           console.warn(`[EMPLOYEE SAVE] reload returned null after insert`);
           // Fallback: lokal hinzufügen
           setEmployees(prev => [...prev, finalData]);
         }
+        // Signal für Dienstplan (anderer Tab via storage event)
+        localStorage.setItem('employees-updated-at', String(Date.now()));
+        // Signal für Dienstplan (gleicher Tab via CustomEvent — storage event feuert nur in anderen Tabs)
+        window.dispatchEvent(new CustomEvent('employees-updated', { detail: { tenantId, isNew: true } }));
       } else {
         // Bestehender Mitarbeiter: lokal aktualisieren
         setEmployees(prev => {
-          const idx = prev.findIndex(e => e.id === finalData.id);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = finalData;
-            return next;
-          }
-          return [...prev, finalData];
+          const next = prev.map(e => e.id === finalData.id ? finalData : e);
+          // Dienstplan-Cache aktualisieren
+          try {
+            const cacheKey = tenantId === 'beaulieu' ? 'beaulieu:schedule-employees' : 'schedule-employees';
+            localStorage.setItem(cacheKey, JSON.stringify(next));
+          } catch { /* ignore quota errors */ }
+          return next.some(e => e.id === finalData.id) ? next : [...next, finalData];
         });
+        // Signal für Dienstplan in anderen Tabs + gleichem Tab
+        localStorage.setItem('employees-updated-at', String(Date.now()));
+        window.dispatchEvent(new CustomEvent('employees-updated', { detail: { tenantId, isNew: false } }));
       }
 
       setSelectedId(finalData.id);
