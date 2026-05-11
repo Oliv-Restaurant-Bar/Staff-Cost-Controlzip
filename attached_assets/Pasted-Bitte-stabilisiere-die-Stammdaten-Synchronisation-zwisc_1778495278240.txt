@@ -1,0 +1,157 @@
+Bitte stabilisiere die Stammdaten-Synchronisation zwischen Personalstamm und Dienstplan.
+
+Aktuelles Problem:
+Neu angelegte Mitarbeiter im Personalstamm erscheinen nicht zuverlässig im Dienstplan.
+
+Beispiel:
+Mitarbeiter wurde im Personalstamm neu angelegt, ist sichtbar in der Liste, wird aber im Dienstplan nicht übernommen oder nicht angezeigt.
+
+Das darf nicht passieren.
+
+---
+
+1. Personalstamm als zentrale Quelle
+
+Der Personalstamm muss die zentrale Quelle für Mitarbeiter sein.
+
+Wenn ein Mitarbeiter dort angelegt wird, muss er automatisch in allen relevanten Modulen verfügbar sein:
+
+- Dienstplanung
+- Personal FIX
+- Mitarbeiterfilter
+- Reporting
+- PDF Export
+- Kostenberechnung
+
+---
+
+2. Dienstplan muss neue Mitarbeiter sofort laden
+
+Nach dem Anlegen eines neuen Mitarbeiters:
+
+- Dienstplan öffnen
+- Mitarbeiter muss erscheinen
+- ohne manuellen Workaround
+- spätestens nach Reload
+
+Falls möglich:
+direkt nach Speichern automatisch refetch / invalidate cache.
+
+---
+
+3. Prüfen der Filterlogik
+
+Bitte prüfen, ob neue Mitarbeiter wegen Filtern ausgeblendet werden:
+
+- Eintrittsdatum
+- Austrittsdatum
+- Abteilung Service/Küche
+- Anstellungsart Vollzeit/Teilzeit/Aushilfe
+- aktiver Monat
+- selectedDepartment
+- selectedEmployees
+- Rolle / Berechtigung
+- restaurant_id / business_id
+
+Wichtig:
+Wenn Eintrittsdatum leer ist oder vor/im aktuellen Monat liegt, muss der Mitarbeiter im Dienstplan erscheinen.
+
+---
+
+4. Restaurant-Zuordnung prüfen
+
+Bitte sicherstellen:
+
+Neuer Mitarbeiter bekommt korrekt:
+- restaurant_id
+- business_id / tenant_id
+- department
+- employment_type
+- active status
+
+Wenn diese Felder fehlen, darf er nicht still verschwinden.
+
+Stattdessen im Personalstamm Warnung anzeigen:
+"Mitarbeiter ist unvollständig und kann nicht im Dienstplan angezeigt werden."
+
+---
+
+5. Cache / localStorage / Supabase prüfen
+
+Bitte prüfen:
+- wird Mitarbeiter in Supabase gespeichert?
+- wird Dienstplan aus Supabase oder altem Cache geladen?
+- wird localStorage nach Mitarbeiteranlage aktualisiert?
+- wird cache invalidation ausgelöst?
+- gibt es mehrere Mitarbeiterquellen?
+
+Ziel:
+Keine alten Cache-Daten im Dienstplan.
+
+---
+
+6. Fallback vermeiden
+
+Dienstplan darf nicht aus einer alten statischen Mitarbeiterliste lesen.
+
+Er muss immer aktuelle Mitarbeiter aus dem Personalstamm verwenden.
+
+---
+
+7. Fehler sichtbar machen
+
+Wenn ein Mitarbeiter nicht im Dienstplan erscheint, obwohl er im Personalstamm existiert:
+
+Bitte Debug-Warnung in Console:
+"[PERSONAL_SYNC] Mitarbeiter im Personalstamm vorhanden, aber im Dienstplan ausgefiltert"
+
+Mit Grund:
+- Austritt vor Monat
+- Eintritt nach Monat
+- keine Abteilung
+- falsches Restaurant
+- inactive
+- Filter aktiv
+
+---
+
+8. Tests
+
+Bitte konkret testen:
+
+1. Neuer Mitarbeiter im Personalstamm anlegen:
+Name: Test Mitarbeiter
+Abteilung: Service
+Anstellung: Teilzeit
+Eintritt: 01.05.2026
+
+Erwartung:
+- erscheint sofort im Dienstplan Mai 2026
+- erscheint im Filter "Alle Mitarbeiter"
+- erscheint bei Service
+- kann geplant werden
+- bleibt nach Reload sichtbar
+
+2. Mitarbeiter Küche anlegen:
+- erscheint bei Küche
+- erscheint bei Alle
+
+3. Mitarbeiter mit Eintritt 01.06.2026:
+- erscheint nicht im Mai
+- erscheint im Juni
+
+4. Mitarbeiter mit Austritt 30.04.2026:
+- erscheint nicht im Mai
+
+5. Bestehende Mitarbeiter dürfen nicht verschwinden.
+
+---
+
+9. Wichtig
+
+Bitte keine bestehenden Mitarbeiter löschen oder überschreiben.
+
+Nur die Synchronisation / Lade- und Filterlogik stabilisieren.
+
+Ziel:
+Personalstamm und Dienstplan müssen immer denselben aktuellen Mitarbeiterbestand verwenden.

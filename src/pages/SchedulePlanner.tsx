@@ -3356,6 +3356,7 @@ const SchedulePlanner = () => {
                       showCosts={effectiveShowCosts}
                       dailyBudgets={dailyBudgets}
                       laborCostThreshold={gridLaborCostThreshold}
+                      scheduleMode={scheduleMode}
                       externalActiveTool={paintTool}
                       onExternalToolChange={setPaintTool}
                       highlightedEmployeeId={highlightedEmpId}

@@ -1,0 +1,147 @@
+Die Tages-Personalquote im Dienstplan verwendet aktuell NICHT den echten Tagesumsatz aus der Tagesansicht / dem POS-Import.
+
+Dadurch entstehen komplett falsche rote Warnungen wie am 02.05.2026.
+
+Beispiel 02.05.2026:
+Im Popup wird angezeigt:
+PK Gesamt = CHF 4’498
+Umsatz = CHF 3’883
+→ ergibt 115.8 % (falsch)
+
+Der echte Ist-Umsatz dieses Tages beträgt aber:
+CHF 23’793.30
+
+Die korrekte Rechnung wäre:
+
+4’498 / 23’793.30 = 18.9 %
+
+Das liegt klar UNTER dem Zielwert von 40 % und müsste grün sein.
+
+---
+
+BITTE KORRIGIEREN:
+
+1. Für den Ist-Vergleich IMMER echten Tagesumsatz verwenden
+
+Die gesamte Tages-Personalquote im Dienstplan muss zwingend den echten Tagesumsatz aus der Tagesansicht / POS-Datenbasis verwenden.
+
+Nicht:
+- geplante Umsätze
+- Forecast
+- Budgetwerte
+- Durchschnittswerte
+- alte Caches
+- Monatsdurchschnitt
+- leere Fallbackwerte
+
+Sondern exakt:
+Netto-Ist-Umsatz dieses Tages.
+
+---
+
+2. Einheitliche Formel
+
+Formel:
+
+tagesQuote =
+(tagesPersonalKosten / tagesUmsatzIst) * 100
+
+Beispiel 02.05.2026:
+
+CHF 4’498 / CHF 23’793.30
+= 18.9 %
+
+→ grün
+→ unter Zielwert 40 %
+
+---
+
+3. Datenquelle vereinheitlichen
+
+Die gleiche Umsatzquelle verwenden wie:
+- Tagesansicht
+- Tages-Controlling
+- Erfolgsrechnung
+- Reporting
+
+Es darf KEINE separate Umsatzlogik im Dienstplan geben.
+
+---
+
+4. Fallback verhindern
+
+Wenn kein Umsatz gefunden wird:
+NICHT einfach:
+0
+1000
+oder andere Dummywerte einsetzen.
+
+Sondern:
+- Quote ausblenden
+oder
+- "Kein Umsatz vorhanden"
+
+anzeigen.
+
+---
+
+5. Ziel-Logik korrigieren
+
+Ampel:
+
+≤ 40 %
+→ grün
+
+40–45 %
+→ orange
+
+> 45 %
+→ rot
+
+Aktuell ist die Logik falsch, weil die Umsatzbasis falsch ist.
+
+---
+
+6. Tooltip / Popup erweitern
+
+Im Popup zusätzlich anzeigen:
+
+Ist-Umsatz (Netto)
+Quelle: Tagesumsatz
+Berechnungsformel
+
+Beispiel:
+
+Umsatz Netto:
+CHF 23’793.30
+
+Personal:
+CHF 4’498
+
+Quote:
+18.9 %
+
+Berechnung:
+4’498 ÷ 23’793.30
+
+---
+
+7. Konsistenzprüfung einbauen
+
+Bitte automatisch prüfen:
+
+if (quote > 80 && umsatzIst > 15000)
+console.warn("[DIENSTPLAN] Wahrscheinlich falscher Umsatzwert")
+
+Damit solche Fehler sofort sichtbar werden.
+
+---
+
+8. Wichtig
+
+Die Tagesquote MUSS exakt dieselbe Umsatzbasis verwenden wie:
+- Tagesansicht
+- Reporting
+- Erfolgsrechnung
+
+Sonst sind sämtliche Tages-KPIs wertlos.

@@ -59,6 +59,8 @@ interface ScheduleGridProps {
   showCosts?: boolean;
   dailyBudgets?: Record<string, { plannedRevenue?: number; actualRevenue?: number }>;
   laborCostThreshold?: number;
+  /** 'ist' → use actualRevenue from POS; 'plan' → use plannedRevenue from budget */
+  scheduleMode?: 'plan' | 'ist';
   /** External paint-tool controlled by parent (activates paint mode from ShiftLegend) */
   externalActiveTool?: string | null;
   /** Notifies parent when internal tool bar changes the active tool */
@@ -263,6 +265,7 @@ export const ScheduleGrid = ({
   showCosts = false,
   dailyBudgets = {},
   laborCostThreshold: laborCostThresholdProp,
+  scheduleMode = 'plan',
   externalActiveTool,
   onExternalToolChange,
   highlightedEmployeeId,
@@ -371,16 +374,34 @@ export const ScheduleGrid = ({
       }
     });
 
-    // Get planned revenue for this day
+    // Get revenue for this day
     const budget = dailyBudgets[dateStr];
     const plannedRevenue = budget?.plannedRevenue || 0;
+    const rawActualRevenue = budget?.actualRevenue;
 
-    // Calculate labor cost percentage
-    const laborCostPercentage = plannedRevenue > 0 ? (totalCosts / plannedRevenue) * 100 : 0;
-    const isOverBudget = plannedRevenue > 0 && laborCostPercentage > laborCostThreshold;
+    // IST mode: use real POS revenue when available — NEVER fall back to budget/dummy values
+    const effectiveRevenue: number =
+      scheduleMode === 'ist' && rawActualRevenue != null && rawActualRevenue > 0
+        ? rawActualRevenue
+        : plannedRevenue;
+    const revenueSource: 'actual' | 'planned' | 'none' =
+      scheduleMode === 'ist' && rawActualRevenue != null && rawActualRevenue > 0
+        ? 'actual'
+        : plannedRevenue > 0
+          ? 'planned'
+          : 'none';
+
+    // Calculate labor cost percentage using the correct revenue base
+    const laborCostPercentage = effectiveRevenue > 0 ? (totalCosts / effectiveRevenue) * 100 : 0;
+    const isOverBudget = effectiveRevenue > 0 && laborCostPercentage > laborCostThreshold;
+
+    // Consistency guard: warn if quote looks impossible (likely stale budget value used as revenue)
+    if (laborCostPercentage > 80 && rawActualRevenue != null && rawActualRevenue > 15000) {
+      console.warn(`[DIENSTPLAN] Wahrscheinlich falscher Umsatzwert: date=${dateStr} quote=${laborCostPercentage.toFixed(1)}% umsatzIst=${rawActualRevenue}`);
+    }
 
     // Calculate how many hours are over budget
-    const maxCostsAllowed = plannedRevenue * (laborCostThreshold / 100);
+    const maxCostsAllowed = effectiveRevenue * (laborCostThreshold / 100);
     const excessCosts = totalCosts - maxCostsAllowed;
 
     // Estimate excess hours based on average hourly wage
@@ -400,6 +421,9 @@ export const ScheduleGrid = ({
       totalCosts,
       employeeCount,
       plannedRevenue,
+      actualRevenue: rawActualRevenue ?? undefined,
+      effectiveRevenue,
+      revenueSource,
       laborCostPercentage,
       isOverBudget,
       excessHours: Math.max(0, excessHours),
@@ -429,7 +453,7 @@ export const ScheduleGrid = ({
     weekDays.forEach(day => {
       const stats = getDailyStats(day);
       totalCosts += stats.totalCosts;
-      totalRevenue += stats.plannedRevenue;
+      totalRevenue += stats.effectiveRevenue;
     });
 
     const laborCostPercentage = totalRevenue > 0 ? (totalCosts / totalRevenue) * 100 : null;
@@ -690,8 +714,8 @@ export const ScheduleGrid = ({
                     {(() => {
                       const dateStr = format(day, 'yyyy-MM-dd');
                       const stats = getDailyStats(day);
-                      const laborCostQuote = stats.plannedRevenue > 0
-                        ? (stats.totalCosts / stats.plannedRevenue * 100)
+                      const laborCostQuote = stats.effectiveRevenue > 0
+                        ? (stats.totalCosts / stats.effectiveRevenue * 100)
                         : null;
                       return (
                         <th
@@ -1287,7 +1311,7 @@ export const ScheduleGrid = ({
                   const isWeekendDay = isWeekend(day);
                   const isSundayDay = isSunday(day);
                   const stats = getDailyStats(day);
-                  const { totalHours, totalCosts, employeeCount, isOverBudget, laborCostPercentage, excessHours, plannedRevenue } = stats;
+                  const { totalHours, totalCosts, employeeCount, isOverBudget, laborCostPercentage, excessHours, effectiveRevenue: footerRevenue } = stats;
                   const showWeekSum = sundayIndices.includes(dayIdx) && getWeeklyHours;
                   
                   return (
@@ -1316,7 +1340,7 @@ export const ScheduleGrid = ({
                             )}>
                               CHF {totalCosts.toFixed(0)}
                             </div>
-                            {plannedRevenue > 0 && (
+                            {footerRevenue > 0 && (
                               <div className={cn(
                                 "text-[7px]",
                                 isOverBudget ? "text-red-600 dark:text-red-400 font-semibold" : "text-muted-foreground"
@@ -1336,7 +1360,7 @@ export const ScheduleGrid = ({
                                     <p className="text-xs">
                                       {excessHours.toFixed(1)} Stunden über dem {laborCostThreshold}%-Ziel
                                       <br />
-                                      (Budget: CHF {plannedRevenue.toFixed(0)})
+                                      ({stats.revenueSource === 'actual' ? 'Ist-Umsatz' : 'Budget'}: CHF {footerRevenue.toFixed(0)})
                                     </p>
                                   </TooltipContent>
                                 </Tooltip>
@@ -1389,7 +1413,7 @@ export const ScheduleGrid = ({
     {/* ── Over-budget Plan Dialog ─────────────────────────────────────── */}
     {openDialogDay && showCosts && (() => {
       const stats = getDailyStats(new Date(openDialogDay));
-      const maxAllowed = stats.plannedRevenue * (laborCostThreshold / 100);
+      const maxAllowed = stats.effectiveRevenue * (laborCostThreshold / 100);
       const excessCosts = Math.max(0, stats.totalCosts - maxAllowed);
       const breakdown = getDayEmployeeBreakdown(openDialogDay);
       const whatIfRev = parseFloat(whatIfRevenue);
@@ -1440,12 +1464,18 @@ export const ScheduleGrid = ({
                 {/* Row 1: overall KPIs */}
                 <div className="grid grid-cols-6 gap-x-4 gap-y-1">
                   {[
-                    { label: 'Umsatz budg.', value: `CHF ${stats.plannedRevenue.toFixed(0)}`, red: false },
+                    {
+                      label: stats.revenueSource === 'actual' ? 'Umsatz Netto (Ist)' : 'Umsatz (Budget)',
+                      value: stats.effectiveRevenue > 0 ? `CHF ${stats.effectiveRevenue.toFixed(0)}` : 'Kein Umsatz',
+                      red: false,
+                    },
                     { label: 'Kosten plan', value: `CHF ${stats.totalCosts.toFixed(0)}`, red: false },
                     { label: 'Stunden plan', value: `${stats.totalHours.toFixed(1)} h`, red: false },
                     {
                       label: 'PKQ aktuell',
-                      value: `${stats.plannedRevenue > 0 ? (stats.totalCosts / stats.plannedRevenue * 100).toFixed(1) : '–'}% / ${laborCostThreshold}%`,
+                      value: stats.effectiveRevenue > 0
+                        ? `${(stats.totalCosts / stats.effectiveRevenue * 100).toFixed(1)}% / ${laborCostThreshold}%`
+                        : `– / ${laborCostThreshold}%`,
                       red: true,
                     },
                     { label: 'Zu viel CHF', value: `+CHF ${excessCosts.toFixed(0)}`, red: true },
@@ -1456,6 +1486,24 @@ export const ScheduleGrid = ({
                       <div className={cn("text-sm font-bold", red ? "text-red-600 dark:text-red-400" : "text-foreground")}>{value}</div>
                     </div>
                   ))}
+                </div>
+                {/* Formula + source row */}
+                <div className="border-t border-border/40 pt-1.5 flex items-center gap-4 flex-wrap">
+                  <span className="text-[10px] text-muted-foreground">
+                    <span className="font-semibold">Berechnung:</span>{' '}
+                    CHF {stats.totalCosts.toFixed(0)} ÷ {stats.effectiveRevenue > 0 ? `CHF ${stats.effectiveRevenue.toFixed(0)}` : '–'}{' '}
+                    = {stats.effectiveRevenue > 0 ? `${(stats.totalCosts / stats.effectiveRevenue * 100).toFixed(1)} %` : '–'}
+                  </span>
+                  <span className={cn(
+                    "text-[10px] font-medium px-1.5 py-0.5 rounded",
+                    stats.revenueSource === 'actual'
+                      ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400"
+                      : stats.revenueSource === 'planned'
+                        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
+                        : "bg-slate-100 text-slate-500"
+                  )}>
+                    Quelle: {stats.revenueSource === 'actual' ? 'Tages-Ist-Umsatz' : stats.revenueSource === 'planned' ? 'Budgetwert' : 'kein Umsatz'}
+                  </span>
                 </div>
                 {/* Row 2: Früh / Spät slot breakdown */}
                 {(stats.totalFrühCosts > 0 || stats.totalSpätCosts > 0) && (() => {
