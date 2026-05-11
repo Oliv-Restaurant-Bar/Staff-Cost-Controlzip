@@ -1,0 +1,195 @@
+Bitte im Bereich Analyse / Reporting zusätzlich eine neue Sektion ergänzen:
+
+"Planung nächste Woche"
+
+Ziel:
+Nicht nur vergangene Daten analysieren, sondern aktiv die kommende Woche optimieren können.
+
+Der Bereich soll helfen:
+- Überbesetzung früh erkennen
+- Budgetabweichungen vermeiden
+- schwache Tage optimieren
+- Umsatz vs. geplante Kosten im Voraus sehen
+- Service- und Küchenleitung konkrete Hinweise geben
+
+Wichtig:
+Neue Sektion ergänzen, bestehendes Reporting NICHT verändern.
+
+---
+
+1. Neue Sektion
+
+Unterhalb der bisherigen Reporting-Auswertungen ergänzen:
+
+"Forecast & Planung nächste Woche"
+
+Standard:
+immer nächste Kalenderwoche anzeigen.
+
+Beispiel:
+KW 20 · 11.05.2026 – 17.05.2026
+
+---
+
+2. Tagesplanung nächste Woche
+
+Pro Tag anzeigen:
+
+- geplanter Umsatz / Budgetumsatz
+- geplante Stunden
+- geplante Personalkosten
+- geplante Personalquote
+- Zielquote
+- Status Grün / Orange / Rot
+
+Beispiel:
+
+Montag
+Budgetumsatz: CHF 6’500
+Geplante Kosten: CHF 2’900
+Geplante Quote: 44.6 %
+→ Über Ziel
+
+Dienstag
+Budgetumsatz: CHF 9’000
+Geplante Kosten: CHF 2’700
+Quote: 30.0 %
+→ Im Plan
+
+---
+
+3. Wichtig:
+Budgetierter Umsatz pro Tag verwenden
+
+Bitte NICHT Monatsbudget einfach durch 30 teilen.
+
+Sondern:
+- bestehende Tagesbudgets
+- Tages-Controlling
+- historische Tagesumsätze
+- Wochentagslogik
+
+verwenden.
+
+Beispiel:
+Samstag automatisch höher als Montag.
+
+Falls keine Tagesbudgets vorhanden:
+historische Durchschnittswerte derselben Wochentage verwenden.
+
+---
+
+4. Neue Diagramme
+
+A) Forecast Personalquote nächste Woche
+
+Grosses Diagramm:
+
+- pro Tag geplante Quote %
+- Zielquote 40 % als Linie
+- grün/orange/rot
+
+Werte direkt auf Balken.
+
+B) Umsatz vs. geplante Kosten
+
+Pro Tag:
+- Budgetumsatz
+- geplante Kosten
+
+mit CHF direkt auf Balken.
+
+---
+
+5. Automatische Optimierungshinweise
+
+Das ist der wichtigste Teil.
+
+Das System soll aktiv Vorschläge machen:
+
+Beispiele:
+
+"Montag aktuell über Zielquote (+8.2 %) → 1 Service-Mitarbeiter prüfen"
+
+"Dienstag 18 geplante Stunden über historischem Durchschnitt"
+
+"Freitag trotz hohem Umsatz im Zielbereich"
+
+"Küche Mittwoch vermutlich überbesetzt"
+
+"Sonntag Budgetquote kritisch wegen tiefem Umsatz"
+
+"Mit aktueller Planung würde die Wochenquote 43.8 % betragen"
+
+---
+
+6. Wochenforecast
+
+Zusammenfassung oben:
+
+- geplanter Umsatz Woche
+- geplante Personalkosten
+- Forecast Personalquote
+- Abweichung zum Ziel
+- erwarteter Spielraum oder Risiko
+
+Beispiel:
+
+Forecast Woche:
+Umsatz CHF 82’000
+Personalkosten CHF 31’500
+Forecast PKQ 38.4 %
+→ Im Ziel
+
+oder:
+
+Forecast PKQ 44.7 %
+→ Risiko +CHF 3’900
+
+---
+
+7. Service vs Küche Forecast
+
+Zusätzlich:
+- geplante Kosten Service
+- geplante Kosten Küche
+- geplante Stunden
+- Quote / Anteil
+
+Damit man sieht:
+wo die Überplanung entsteht.
+
+---
+
+8. Fokus:
+konkrete Entscheidungen ermöglichen
+
+Die Seite soll helfen zu entscheiden:
+
+- Wo brauche ich weniger Leute?
+- Wo kann ich Stunden sparen?
+- Welche Tage sind kritisch?
+- Wo passt der Umsatz nicht zur Besetzung?
+- Welche Schichten wirken überplant?
+- Welche Abteilung verursacht das Risiko?
+
+---
+
+9. Visuelle Darstellung
+
+Modernes Dashboard:
+- grosse KPI-Karten
+- Forecast-Ampel
+- Heatmap nächste Woche
+- Tageskarten
+- Prognosefarben
+- klare Zielwerte
+- nicht tabellenlastig
+
+---
+
+10. Keine bestehende Logik verändern
+
+Nur neue Forecast-/Optimierungs-Sektion ergänzen.
+
+Bestehende Reporting-Auswertungen nicht beschädigen.

@@ -28,7 +28,7 @@ import {
   Upload, Settings, Inbox,
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
-  Wallet, BarChart3, ShoppingCart, LineChart,
+  Wallet, BarChart3, ShoppingCart, LineChart, TrendingUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -111,6 +111,14 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Analyse',
         icon: LineChart,
         adminOnly: true,
+      },
+      {
+        path: '/forecast',
+        label: 'Forecast Planung',
+        shortLabel: 'Forecast',
+        icon: TrendingUp,
+        adminOnly: true,
+        beaulieuAllowed: true,
       },
     ],
   },
