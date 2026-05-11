@@ -55,6 +55,7 @@ import TagesansichtPage from "./pages/TagesansichtPage";
 import TagesControllingPage from "./pages/TagesControllingPage";
 import WarenrechnungenPage from "./pages/Warenrechnungen";
 import ForecastPlanung from "./pages/ForecastPlanung";
+import MirusParserTest from "./pages/MirusParserTest";
 
 const queryClient = new QueryClient();
 
@@ -210,6 +211,7 @@ const AppContent = () => {
               element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
             />
             <Route path="/integrity-test" element={<DataIntegrityTest />} />
+            <Route path="/mirus-parser-test" element={<MirusParserTest />} />
             <Route path="/produkte"
               element={<ProdukteSeite />}
             />
