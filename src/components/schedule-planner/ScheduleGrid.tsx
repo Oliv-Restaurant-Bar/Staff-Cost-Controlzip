@@ -714,20 +714,11 @@ export const ScheduleGrid = ({
               <th 
                 className={cn(
                   "sticky left-0 z-20 bg-card px-2 py-1 text-left text-xs font-semibold border-b border-r-2 border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
-                  isWeekView ? "w-[110px] min-w-[110px] max-w-[110px]" : "w-[140px] min-w-[140px] max-w-[140px]"
+                  isWeekView ? "w-[90px] min-w-[90px] max-w-[90px]" : "w-[110px] min-w-[110px] max-w-[110px]"
                 )}
                 rowSpan={2}
               >
                 Mitarbeiter
-              </th>
-              <th 
-                className={cn(
-                  "sticky z-20 bg-card px-1 py-1 text-center text-xs font-semibold border-b border-r-2 border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
-                  isWeekView ? "left-[110px] w-[50px] min-w-[50px] max-w-[50px]" : "left-[140px] w-[60px] min-w-[60px] max-w-[60px]"
-                )}
-                rowSpan={2}
-              >
-                Std.
               </th>
               {days.map((day, idx) => {
                 const isWeekendDay = isWeekend(day);
@@ -903,62 +894,56 @@ export const ScheduleGrid = ({
                   "group hover:bg-muted/30 transition-colors",
                   highlightedEmployeeId === employee.id && "ring-2 ring-inset ring-indigo-400 dark:ring-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/20",
                 )}>
-                  {/* Employee name cell – explicit width prevents misalignment of sticky second column */}
+                  {/* Employee name cell */}
                   <td className={cn(
                     "sticky left-0 z-10 bg-card group-hover:bg-muted",
                     "px-1.5 py-1 border-b border-r-2 border-border overflow-hidden",
                     "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
                     isWeekView
-                      ? "w-[110px] min-w-[110px] max-w-[110px]"
-                      : "w-[140px] min-w-[140px] max-w-[140px]"
+                      ? "w-[90px] min-w-[90px] max-w-[90px]"
+                      : "w-[110px] min-w-[110px] max-w-[110px]"
                   )}>
-                    <div className="flex items-center justify-between gap-0.5">
-                      <div className="flex-1 min-w-0 overflow-hidden">
-                        <div className="flex items-center gap-1 font-medium text-xs truncate" title={getEmployeeDisplayName(employee)}>
-                          {showDepartmentBadge && (
-                            <span className={cn(
-                              "w-1.5 h-1.5 rounded-full shrink-0",
-                              employee.department === 'service' ? "bg-blue-500" : "bg-orange-500"
-                            )} />
-                          )}
-                          <span className="truncate">{getEmployeeDisplayName(employee)}</span>
-                        </div>
-                        <div className="text-[10px] text-muted-foreground truncate">
-                          {employee.employmentType === 'vollzeit' && 'VZ'}
-                          {employee.employmentType === 'teilzeit' && 'TZ'}
-                          {employee.employmentType === 'minijob' && 'MJ'}
-                          {employee.employmentType === 'aushilfe' && 'AH'}
-                          {employee.weeklyHours && ` ${employee.weeklyHours}h`}
-                          {employee.daysOff && employee.daysOff.length > 0 && (
-                            <span className="text-primary/70 ml-0.5">
-                              {employee.daysOff.length}T
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center shrink-0">
-                        {onOpen8HoursDialog && (
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="flex items-center justify-between gap-0.5 w-full">
+                            <div className="flex-1 min-w-0 overflow-hidden">
+                              <div className="flex items-center gap-0.5 font-medium text-xs min-w-0">
+                                {showDepartmentBadge && (
+                                  <span className={cn(
+                                    "w-1.5 h-1.5 rounded-full shrink-0",
+                                    employee.department === 'service' ? "bg-blue-500" : "bg-orange-500"
+                                  )} />
+                                )}
+                                <span className="truncate min-w-0">{getEmployeeDisplayName(employee)}</span>
+                                {empPatternWarnings.some(w => w.severity === 'critical') && (
+                                  <AlertTriangle className="h-2.5 w-2.5 text-red-500 shrink-0" />
+                                )}
+                                {!empPatternWarnings.some(w => w.severity === 'critical') && empPatternWarnings.some(w => w.severity === 'warning') && (
+                                  <AlertTriangle className="h-2.5 w-2.5 text-amber-400/70 shrink-0" />
+                                )}
+                              </div>
+                              <div className={cn(
+                                "text-[10px] font-semibold tabular-nums leading-tight",
+                                isInRange ? "text-emerald-600 dark:text-emerald-400"
+                                : isUnder ? "text-amber-600 dark:text-amber-400"
+                                : "text-red-600 dark:text-red-400"
+                              )}>
+                                {(() => { const d = plannedHours - targetHours; return d >= 0 ? `+${d.toFixed(1)}h` : `${d.toFixed(1)}h`; })()}
+                              </div>
+                            </div>
+                            <div className="flex items-center shrink-0">
+                              {onOpen8HoursDialog && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   className="h-5 w-5 text-primary hover:text-primary/80"
-                                  onClick={() => onOpen8HoursDialog(employee)}
+                                  title="8.4h Schicht eintragen"
+                                  onClick={(e) => { e.stopPropagation(); onOpen8HoursDialog(employee); }}
                                 >
                                   <Clock className="h-3 w-3" />
                                 </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>8.4h Schicht eintragen</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        )}
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -966,140 +951,101 @@ export const ScheduleGrid = ({
                                   "h-5 w-5 opacity-0 group-hover:opacity-100",
                                   employee.daysOff && employee.daysOff.length > 0 && "opacity-50 text-primary"
                                 )}
-                                onClick={() => onConfigureDaysOff(employee)}
+                                title="Freie Tage"
+                                onClick={(e) => { e.stopPropagation(); onConfigureDaysOff(employee); }}
                               >
                                 <CalendarOff className="h-3 w-3" />
                               </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>Freie Tage</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                        {canRemove && (
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Mitarbeiter entfernen?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Möchten Sie {employee.name} wirklich aus dem Dienstplan entfernen?
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => onRemoveEmployee(employee.id)}
-                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                >
-                                  Entfernen
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        )}
-                        {/* Sort order arrows — only shown when sort mode is active */}
-                        {onMoveEmployee && (
-                          <div className="flex flex-col shrink-0">
-                            <button
-                              title="Nach oben"
-                              disabled={empIdx === 0}
-                              onClick={() => onMoveEmployee(employee.id, 'up')}
-                              className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed"
-                            >
-                              <ChevronUp className="h-3 w-3" />
-                            </button>
-                            <button
-                              title="Nach unten"
-                              disabled={empIdx === employees.length - 1}
-                              onClick={() => onMoveEmployee(employee.id, 'down')}
-                              className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed"
-                            >
-                              <ChevronDown className="h-3 w-3" />
-                            </button>
+                              {canRemove && (
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Mitarbeiter entfernen?</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        Möchten Sie {employee.name} wirklich aus dem Dienstplan entfernen?
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => onRemoveEmployee(employee.id)}
+                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                      >
+                                        Entfernen
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              )}
+                              {onMoveEmployee && (
+                                <div className="flex flex-col shrink-0">
+                                  <button
+                                    title="Nach oben"
+                                    disabled={empIdx === 0}
+                                    onClick={() => onMoveEmployee(employee.id, 'up')}
+                                    className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed"
+                                  >
+                                    <ChevronUp className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    title="Nach unten"
+                                    disabled={empIdx === employees.length - 1}
+                                    onClick={() => onMoveEmployee(employee.id, 'down')}
+                                    className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed"
+                                  >
+                                    <ChevronDown className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    </div>
-                    {/* Pattern warning chips */}
-                    {empPatternWarnings.length > 0 && (
-                      <div className="flex flex-wrap gap-0.5 mt-0.5">
-                        {empPatternWarnings.slice(0, 2).map((w, wi) => (
-                          <TooltipProvider key={wi}>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className={cn(
-                                  "inline-flex items-center gap-0.5 px-1 py-0 rounded text-[8px] font-semibold border cursor-default",
-                                  w.severity === 'critical'
-                                    ? "bg-red-100 border-red-300 text-red-700 dark:bg-red-950/40 dark:border-red-700 dark:text-red-300"
-                                    : "bg-amber-100 border-amber-300 text-amber-700 dark:bg-amber-950/40 dark:border-amber-700 dark:text-amber-300"
+                        </TooltipTrigger>
+                        <TooltipContent side="right" className="max-w-[240px] p-2.5">
+                          <p className="font-semibold text-xs mb-1.5">{getEmployeeDisplayName(employee)}</p>
+                          <div className="text-[11px] space-y-0.5 text-muted-foreground">
+                            <div>
+                              {employee.employmentType === 'vollzeit' ? 'Vollzeit'
+                                : employee.employmentType === 'teilzeit' ? 'Teilzeit'
+                                : employee.employmentType === 'minijob' ? 'Minijob'
+                                : 'Aushilfe'}
+                              {employee.weeklyHours ? ` · ${employee.weeklyHours} h/Woche` : ''}
+                            </div>
+                            {employee.hourlyWage ? <div>CHF {employee.hourlyWage.toFixed(2)}/h</div> : null}
+                            {employee.monthlySalary ? <div>CHF {employee.monthlySalary.toLocaleString('de-CH', { maximumFractionDigits: 0 })}/Mon.</div> : null}
+                            <div className={cn(
+                              isInRange ? "text-emerald-500" : isUnder ? "text-amber-500" : "text-red-500"
+                            )}>
+                              Plan: {plannedHours.toFixed(1)} / {targetHours.toFixed(1)} h
+                            </div>
+                            {employee.daysOff && employee.daysOff.length > 0 && (
+                              <div>{employee.daysOff.length} Ruhetag{employee.daysOff.length !== 1 ? 'e' : ''}/Wo.</div>
+                            )}
+                          </div>
+                          {empPatternWarnings.length > 0 && (
+                            <div className="border-t mt-1.5 pt-1.5 space-y-1">
+                              {empPatternWarnings.map((w, wi) => (
+                                <div key={wi} className={cn(
+                                  "text-[10px] leading-snug",
+                                  w.severity === 'critical' ? "text-red-400" : "text-amber-400"
                                 )}>
-                                  <AlertTriangle className="h-2 w-2 shrink-0" />
-                                  {patternShortLabel(w.type)}
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent side="right" className="max-w-[220px]">
-                                <p className="font-semibold text-xs">{w.message}</p>
-                                <p className="text-muted-foreground text-[10px] mt-0.5 leading-snug">{w.detail}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        ))}
-                        {empPatternWarnings.length > 2 && (
-                          <span className="inline-flex items-center px-1 py-0 rounded text-[8px] font-semibold border bg-muted border-border text-muted-foreground">
-                            +{empPatternWarnings.length - 2}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                  {/* Hours summary cell - compact */}
-                  <td className={cn(
-                    "sticky z-10 bg-card group-hover:bg-muted",
-                    "px-1 py-1 border-b border-r-2 border-border overflow-hidden",
-                    "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
-                    isWeekView
-                      ? "left-[110px] w-[50px] min-w-[50px] max-w-[50px]"
-                      : "left-[140px] w-[60px] min-w-[60px] max-w-[60px]"
-                  )}>
-                    <div className="space-y-0.5">
-                      <div className={cn(
-                        "text-[10px] font-semibold text-center",
-                        isInRange && "text-success",
-                        isUnder && "text-warning",
-                        !isInRange && !isUnder && "text-destructive"
-                      )}>
-                        {plannedHours.toFixed(1)}/{targetHours.toFixed(1)}
-                      </div>
-                      <div className={cn(
-                        "text-[9px] text-center font-medium",
-                        isInRange && "text-success",
-                        isUnder && "text-warning",
-                        !isInRange && !isUnder && "text-destructive"
-                      )}>
-                        {(() => {
-                          const diff = plannedHours - targetHours;
-                          return diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
-                        })()}h
-                      </div>
-                      <Progress 
-                        value={percentage} 
-                        className={cn(
-                          "h-1",
-                          isInRange && "[&>div]:bg-success",
-                          isUnder && "[&>div]:bg-warning",
-                          !isInRange && !isUnder && "[&>div]:bg-destructive"
-                        )}
-                      />
-                    </div>
+                                  {w.message}
+                                  {w.detail && <span className="block text-muted-foreground/70 text-[9px]">{w.detail}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </td>
                   {/* Shift cells for each day - Früh and Spät */}
                   {days.map((day, dayIdx) => {
@@ -1337,18 +1283,10 @@ export const ScheduleGrid = ({
                 <td className={cn(
                   "sticky left-0 z-10 bg-muted px-1.5 py-1.5 border-b border-r-2 border-border font-semibold text-xs",
                   "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
-                  isWeekView ? "w-[110px] min-w-[110px] max-w-[110px]" : "w-[140px] min-w-[140px] max-w-[140px]"
+                  isWeekView ? "w-[90px] min-w-[90px] max-w-[90px]" : "w-[110px] min-w-[110px] max-w-[110px]"
                 )}>
                   Tages-Σ
-                </td>
-                <td className={cn(
-                  "sticky z-10 bg-muted px-1 py-1.5 border-b border-r-2 border-border text-center",
-                  "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
-                  isWeekView
-                    ? "left-[110px] w-[50px] min-w-[50px] max-w-[50px]"
-                    : "left-[140px] w-[60px] min-w-[60px] max-w-[60px]"
-                )}>
-                  <span className="text-[9px] text-muted-foreground">{employees.length} MA</span>
+                  <span className="ml-1 text-[9px] font-normal text-muted-foreground">{employees.length} MA</span>
                 </td>
                 {days.map((day, dayIdx) => {
                   const isWeekendDay = isWeekend(day);

@@ -1,0 +1,189 @@
+Bitte die komplette linke Sidebar der Dienstplanung UX/UI-technisch neu strukturieren und modernisieren.
+
+Ziel:
+- maximaler Platz für die eigentliche Dienstplanung
+- weniger horizontales Scrollen
+- schnellere Planung
+- modernes SaaS-Feeling wie Personio / Planday / Linear
+- Fokus auf operative Planung statt Admin-Infos
+
+WICHTIG:
+Nur das UI/UX ändern.
+Keine bestehende:
+- Kostenlogik
+- Ist-Synchronisierung
+- Stundenberechnung
+- KPI-Berechnung
+- Dienstplanlogik
+- Datenbankstruktur
+verändern.
+
+====================================================
+1. LINKES SIDEBAR-KONZEPT ÄNDERN
+====================================================
+
+Die komplette linke Sidebar soll standardmässig eingeklappt sein.
+
+Aktuell wird zu viel Platz verschwendet durch:
+- Navigation
+- Stichtag
+- Netto/Brutto
+- Restaurant-Auswahl
+- User-Karte
+- Logout
+- Schichten separat im Layout
+
+Die eigentliche Planung braucht mehr Breite.
+
+Neue Logik:
+
+STANDARD:
+- Sidebar collapsed
+- Dienstplan nutzt fast volle Bildschirmbreite
+
+OBEN LINKS:
+- Hamburger/Menu-Button
+- Klick öffnet Sidebar als Slide-In
+
+====================================================
+2. RESTAURANT-INFO ENTFERNEN
+====================================================
+
+Die Restaurant-Auswahl und Anzeige:
+- Oliv
+- Beaulieu
+
+soll in der Dienstplanung NICHT mehr angezeigt werden.
+
+Grund:
+Service- und Küchenleiter haben ohnehin nur Zugriff
+auf ihr eigenes Restaurant.
+
+Deshalb:
+- Restaurant-Selector entfernen
+- Restaurant-Karte entfernen
+- „aktiv“-Anzeige entfernen
+
+Das spart Platz und reduziert visuelles Rauschen.
+
+====================================================
+3. USER-KARTE ENTFERNEN
+====================================================
+
+Diese Box entfernen:
+- Service-Manager
+- E-Mail
+- Logout
+
+Das soll stattdessen in:
+- kleines Profil-Icon oben rechts
+oder
+- Dropdown-Menü
+
+verschoben werden.
+
+Die grosse Karte links verschwendet Platz.
+
+====================================================
+4. SCHICHTEN + ABWESENHEITEN IN SIDEBAR
+====================================================
+
+Die aktuelle Schichten-/Abwesenheiten-Spalte
+soll vollständig in die Sidebar integriert werden.
+
+Wenn Sidebar geöffnet:
+- Schichten sichtbar
+- Abwesenheiten sichtbar
+- Drag & Drop aktiv
+
+Wenn Sidebar geschlossen:
+- maximal breite Dienstplanansicht
+
+====================================================
+5. NEUE SIDEBAR-STRUKTUR
+====================================================
+
+Die Sidebar soll kompakt und modern aufgebaut sein.
+
+SEKTION 1 — SCHICHTEN
+- alle Schichten
+- farbige Chips
+- Drag & Drop möglich
+
+SEKTION 2 — ABWESENHEITEN
+- Ferien
+- Krank
+- Frei
+- Eigene Zeit
+- usw.
+
+SEKTION 3 — FILTER
+- Mitarbeiter suchen
+- Küche / Service
+- Vollzeit / Teilzeit
+- Nur geplante Mitarbeiter
+- Nur offene Schichten
+- Nach Stunden sortieren
+
+SEKTION 4 — CONTROLLING
+- Stichtag
+- Netto / Brutto Toggle
+- Zielquote
+
+====================================================
+6. DIENSTPLAN-BREITE OPTIMIEREN
+====================================================
+
+Wenn Sidebar geschlossen:
+
+- deutlich mehr Platz für Tage
+- grössere Zellen
+- weniger horizontales Scrollen
+- mehr sichtbare Mitarbeiter
+- angenehmere Wochenübersicht
+
+Die Wochenansicht bleibt Standardansicht.
+
+====================================================
+7. DRAG & DROP VERBESSERN
+====================================================
+
+Schichten sollen:
+- von links direkt auf Mitarbeiter gezogen werden können
+- visuell klar hervorgehoben sein beim Hover
+- sauberes Drop-Feedback anzeigen
+
+Beim Hover:
+- leichte Hervorhebung der Zielzelle
+- weiche Animation
+
+====================================================
+8. DESIGN-SPRACHE
+====================================================
+
+Modernes SaaS-Design:
+- clean
+- ruhig
+- wenig visuelles Rauschen
+- klare Hierarchie
+- kompakter
+- professioneller
+
+UI:
+- soft shadows
+- rounded corners
+- sticky controls
+- smooth animations
+- reduzierte Linien
+- bessere Abstände
+
+====================================================
+9. PERFORMANCE
+====================================================
+
+Wichtig:
+- horizontales Scrollen performant halten
+- virtuelle Darstellung NICHT zerstören
+- bestehende Datenlogik vollständig behalten
+
+Nur UI modernisieren und Platz optimieren.
