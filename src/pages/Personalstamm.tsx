@@ -62,6 +62,8 @@ import { generateContract, detectContractTemplate } from '@/lib/generateContract
 import { ContractDraft, defaultContractDraft } from '@/types/contract';
 import { calcSL, calcML, LGAV } from '@/lib/salaryCalc';
 import { toast } from 'sonner';
+import { VertragswechselDialog } from '@/components/VertragswechselDialog';
+import { loadContractHistory, ContractPhase } from '@/lib/contract-history-store';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -397,6 +399,8 @@ const Personalstamm = () => {
   // ── UI-Abschnitte aufklappbar ──────────────────────────────────────────────
   const [openPersonal,   setOpenPersonal]   = useState(false);
   const [openContractF,  setOpenContractF]  = useState(false);
+  const [showVertragswechsel, setShowVertragswechsel] = useState(false);
+  const [contractHistory,     setContractHistory]     = useState<ContractPhase[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -404,6 +408,12 @@ const Personalstamm = () => {
   // when the value changes (it is stable after auth resolves and the component mounts).
   const isAdminRef = useRef(isAdmin);
   isAdminRef.current = isAdmin;
+
+  // ── Vertragshistorie laden wenn Mitarbeiter gewechselt ────────────────────
+  useEffect(() => {
+    if (!selectedId) { setContractHistory([]); return; }
+    setContractHistory(loadContractHistory(tenantKey, selectedId));
+  }, [selectedId, tenantKey]);
 
   // ── Laden ──────────────────────────────────────────────────────────────────
   // Empty deps: run only once on mount.
@@ -2417,6 +2427,77 @@ CREATE POLICY "Anon self-register new employee"
                         );
                       })()
                     )}
+                  {!editMode && canEditWages && selectedEmp && (
+                    <div className="pt-3 border-t mt-1 flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs gap-1.5"
+                        onClick={() => setShowVertragswechsel(true)}
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        Vertrag wechseln
+                      </Button>
+                      {contractHistory.length > 0 && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {contractHistory.length} Phase{contractHistory.length !== 1 ? 'n' : ''} in Historie
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+              )}
+
+              {/* ── Vertragshistorie ──────────────────────────────────────────── */}
+              {canEditWages && !editMode && selectedEmp && contractHistory.length > 0 && (
+                <Card className="border-slate-200/60 dark:border-slate-700/40">
+                  <CardHeader className="pb-2 pt-4">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <History className="h-4 w-4 text-slate-500" />
+                      Vertragshistorie
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0 space-y-2">
+                    {contractHistory.map((phase, i) => (
+                      <div key={phase.id} className="flex items-start gap-3 p-2.5 rounded-md bg-muted/40 border border-border">
+                        <div className={cn(
+                          'mt-1 h-2 w-2 rounded-full flex-shrink-0',
+                          i === 0 ? 'bg-green-500' : 'bg-muted-foreground/30',
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-semibold">
+                              {phase.contractType === 'monthly' ? 'Monatslohn (FIX)' : 'Stundenlohn (Flex)'}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              ab {phase.effectiveFrom.split('-').reverse().join('.')}
+                              {phase.effectiveTo && ` bis ${phase.effectiveTo.split('-').reverse().join('.')}`}
+                            </span>
+                            {i === 0 && (
+                              <span className="text-[10px] bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-700 px-1.5 py-0.5 rounded-full font-semibold">
+                                Aktiv
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {phase.contractType === 'monthly' && phase.monthlySalary
+                              ? `CHF ${phase.monthlySalary.toLocaleString('de-CH')} / Monat${phase.has13thSalary ? ' (inkl. 13. ML)' : ''}`
+                              : phase.hourlyWage
+                                ? `CHF ${phase.hourlyWage.toFixed(2)} / h`
+                                : '—'}
+                            {phase.employmentType && (
+                              <span className="ml-2">
+                                {{ vollzeit: 'Vollzeit', teilzeit: 'Teilzeit', minijob: 'Minijob', aushilfe: 'Aushilfe' }[phase.employmentType] ?? phase.employmentType}
+                              </span>
+                            )}
+                          </p>
+                          {phase.note && (
+                            <p className="text-[11px] text-muted-foreground italic mt-0.5">{phase.note}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </CardContent>
                 </Card>
               )}
@@ -3006,6 +3087,26 @@ CREATE POLICY "Anon self-register new employee"
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Vertragswechsel-Dialog ──────────────────────────────────────────── */}
+      {showVertragswechsel && selectedEmp && canEditWages && (
+        <VertragswechselDialog
+          employee={selectedEmp}
+          tenantKeyFn={tenantKey}
+          open={showVertragswechsel}
+          onOpenChange={setShowVertragswechsel}
+          onSaved={async (updated) => {
+            const ok = await upsertEmployee(updated, tenantId);
+            if (ok) {
+              setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
+              setContractHistory(loadContractHistory(tenantKey, updated.id));
+              toast.success(`Vertrag für ${updated.name} erfolgreich gewechselt`);
+            } else {
+              toast.error('Fehler beim Speichern — bitte nochmals versuchen');
+            }
+          }}
+        />
+      )}
     </div>
   );
 };

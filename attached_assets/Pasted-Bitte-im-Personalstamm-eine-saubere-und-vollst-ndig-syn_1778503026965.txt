@@ -1,0 +1,226 @@
+Bitte im Personalstamm eine saubere und vollständig synchronisierte Umstellung von Stundenlohn auf Monatslohn ermöglichen.
+
+Ziel:
+Ein Mitarbeiter soll problemlos von:
+- Stundenlohn / Teilzeit
+zu:
+- Monatslohn / Vollzeit
+
+wechseln können, ohne Inkonsistenzen in:
+- Personal FIX
+- Dienstplanung
+- Reporting
+- Kostenberechnung
+- Erfolgsrechnung
+- Forecasts
+- PDF Exports
+
+---
+
+1. Vertragswechsel sauber unterstützen
+
+Im Personalstamm soll ein Mitarbeiter seinen Vertragstyp wechseln können:
+
+Von:
+☑ Stundenlohn
+☑ Teilzeit
+☑ Flex
+
+Zu:
+☑ Monatslohn
+☑ Vollzeit
+☑ FIX
+
+Beispiel:
+Mitarbeiter war bisher:
+- Stundenlohn CHF 24/h
+- Teilzeit
+
+Neu:
+- Monatslohn CHF 4’800
+- Vollzeit
+- gültig ab 01.06.2026
+
+---
+
+2. Historie behalten
+
+Wichtig:
+Alte Lohnhistorie darf NICHT überschrieben werden.
+
+Sondern:
+Neue Vertragsphase anlegen.
+
+Beispiel:
+
+01.01.2026 – 31.05.2026
+→ Stundenlohn CHF 24
+
+ab 01.06.2026
+→ Monatslohn CHF 4’800
+
+Dadurch bleiben:
+- alte Reports korrekt
+- alte Personal FIX Berechnungen korrekt
+- alte Dienstpläne korrekt
+
+---
+
+3. Automatische Synchronisation
+
+Nach Vertragswechsel automatisch synchronisieren:
+
+A) Personal FIX
+Mitarbeiter erscheint:
+- nicht mehr bei Flex
+- neu bei FIX
+
+B) Dienstplanung
+- Stundenplanung bleibt möglich
+- aber Kostenberechnung nutzt FIX-Logik
+
+C) Reporting
+- Monatslohn fliesst korrekt in PK ein
+- Forecast korrekt
+- Wochenreport korrekt
+
+D) Erfolgsrechnung
+- FIX-Kosten korrekt
+- keine Doppelzählung
+
+---
+
+4. Übergangsmonat korrekt behandeln
+
+Wenn Wechsel mitten im Monat erfolgt:
+
+Beispiel:
+gültig ab 15.06.2026
+
+Dann:
+- bis 14.06 Stundenlohn
+- ab 15.06 Monatslohn pro rata
+
+Keine Doppelzählung.
+Keine Lücke.
+
+---
+
+5. Personal FIX Logik
+
+Nach Wechsel:
+
+Mitarbeiter muss automatisch:
+- aus "Flex Kosten pro Mitarbeiter" verschwinden
+- in FIX-Abteilung erscheinen
+
+Aber:
+Iststunden dürfen weiterhin sichtbar bleiben.
+
+---
+
+6. Warnungen verhindern
+
+Aktuell drohen Fehler wie:
+- Mitarbeiter doppelt
+- FIX + Flex gleichzeitig
+- falsche Forecasts
+- doppelte Kosten
+- Monatslohn + Stundenlohn parallel
+
+Das muss verhindert werden.
+
+---
+
+7. UI im Personalstamm
+
+Im Bereich:
+"Lohn & Kosten"
+
+Neuer Abschnitt:
+
+"Vertragswechsel"
+
+Beispiel:
+
+Aktiver Vertrag:
+Stundenlohn CHF 24/h
+
+[ Vertrag wechseln ]
+
+Dann Dialog:
+
+Neuer Vertrag:
+○ Stundenlohn
+○ Monatslohn
+
+Monatslohn:
+CHF ______
+
+Gültig ab:
+Datum
+
+☑ 13. Monatslohn
+☑ AG-Faktor übernehmen
+
+---
+
+8. Automatische Migration
+
+Beim Speichern:
+
+Wenn neuer Vertrag Monatslohn:
+- employment_type → Vollzeit/Teilzeit FIX
+- compensation_type → monthly
+- flex employee false
+- fixed employee true
+
+Wenn neuer Vertrag Stundenlohn:
+- inverse Logik
+
+Alles automatisch.
+
+---
+
+9. Tests
+
+Bitte konkret testen:
+
+TEST 1
+Stundenlohn → Monatslohn
+
+Erwartung:
+- erscheint bei FIX
+- verschwindet bei Flex
+- alte Reports bleiben korrekt
+
+TEST 2
+Monatslohn → Stundenlohn
+
+Erwartung:
+- erscheint bei Flex
+- FIX entfernt
+- keine doppelten Kosten
+
+TEST 3
+Wechsel mitten im Monat
+
+Erwartung:
+- pro rata korrekt
+- keine Doppelzählung
+
+TEST 4
+Forecast / Reporting
+
+Erwartung:
+- Forecast berücksichtigt neuen Vertrag
+- Wochenreport korrekt
+- PKQ korrekt
+
+---
+
+10. Wichtig
+
+Keine bestehenden Mitarbeiterdaten verlieren.
+
+Die Lösung muss historisch korrekt, synchronisiert und stabil sein.

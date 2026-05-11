@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth } from '@/lib/supabase-db';
+import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract-history-store';
 import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { Employee } from '@/types/personnel';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
@@ -1323,6 +1324,13 @@ export default function PersonalFixPage() {
   const [flexPeriodPopup,  setFlexPeriodPopup]  = useState<FlexPeriodTarget | null>(null);
   const [expandedFixDepts, setExpandedFixDepts] = useState<Set<string>>(new Set());
 
+  // Contract history for mid-month switch detection
+  const contractHistoryMap = useMemo(
+    () => loadAllContractHistory(tenantKey),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tenantId],
+  );
+
   useEffect(() => {
     setLoading(true);
     console.log(`[EMPLOYEE LOAD] tenant: ${tenantId}`);
@@ -1610,12 +1618,35 @@ export default function PersonalFixPage() {
   // ── Fix-Kosten mit Pro-rata je ausgewähltem Monat ─────────────────────────
 
   const fixedWithCost = useMemo(() =>
-    fixedEmployees.map(emp => ({
-      emp,
-      ...getProRataFixCost(emp, selectedYear, selectedMonth),
-      yearlyCost: getYearlyFixCost(emp, selectedYear),
-    })),
-    [fixedEmployees, selectedYear, selectedMonth],
+    fixedEmployees.map(emp => {
+      const phases     = contractHistoryMap[emp.id] ?? [];
+      const midSwitch  = getMidMonthSwitchInMonth(phases, selectedYear, selectedMonth);
+
+      // Employee switched TO monthly mid-month → pro-rata from switch day
+      if (midSwitch && midSwitch.contractType === 'monthly') {
+        const switchDay   = parseInt(midSwitch.effectiveFrom.slice(8, 10), 10);
+        const daysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
+        const daysAsFixed = daysInMonth - switchDay + 1;
+        const full        = getFixCost(emp);
+        const cost        = Math.round(full * (daysAsFixed / daysInMonth) * 100) / 100;
+        return {
+          emp,
+          cost,
+          label: `Pro rata ab ${String(switchDay).padStart(2, '0')}.${String(selectedMonth).padStart(2, '0')}. (Vertragswechsel)`,
+          excluded: false,
+          yearlyCost: getYearlyFixCost(emp, selectedYear),
+          hasMidMonthSwitch: true,
+        };
+      }
+
+      return {
+        ...getProRataFixCost(emp, selectedYear, selectedMonth),
+        emp,
+        yearlyCost: getYearlyFixCost(emp, selectedYear),
+        hasMidMonthSwitch: false,
+      };
+    }),
+    [fixedEmployees, selectedYear, selectedMonth, contractHistoryMap],
   );
 
   const activeFixedEmployees = useMemo(() =>
