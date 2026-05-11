@@ -487,8 +487,6 @@ const RevenueComparisonChart = ({
   const hasData = data.some(d => d.umsatzIst || d.umsatzBudget || d.umsatzVorjahr);
   if (!hasData) return <NoDataOverlay message="Noch keine Umsatzdaten vorhanden." />;
 
-  const [showSelector, setShowSelector] = useState(false);
-
   // ── Kumuliert-Werte für KPI-Box ───────────────────────────────────────────
   const selSet  = selectedMonths.size > 0
     ? selectedMonths
@@ -547,15 +545,7 @@ const RevenueComparisonChart = ({
       {/* KPI-Box oben rechts – klicken öffnet/schliesst Monatsauswahl */}
       {sumIst > 0 && (
         <div className="flex justify-end mb-2">
-          <div
-            className={cn(
-              'rounded-lg border px-3 py-2 text-right min-w-[160px] cursor-pointer select-none transition-colors',
-              showSelector
-                ? 'bg-primary/10 border-primary/40'
-                : 'bg-muted/40 border-border hover:border-primary/30 hover:bg-muted/60',
-            )}
-            onClick={() => setShowSelector(s => !s)}
-          >
+          <div className="rounded-lg border bg-muted/40 border-border px-3 py-2 text-right min-w-[160px]">
             <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Umsatz kumuliert</p>
             <p className="text-sm font-bold text-foreground mt-0.5">{fmtCHF(sumIst)}</p>
             <div className="mt-1.5 pt-1.5 border-t border-border/60 space-y-0.5">
@@ -571,7 +561,7 @@ const RevenueComparisonChart = ({
               )}
             </div>
             <p className="text-[9px] text-muted-foreground/50 mt-1.5">
-              {selData.length} Mo. · Monate wählen ▾
+              {selData.length} Monat{selData.length !== 1 ? 'e' : ''} ausgewählt
             </p>
           </div>
         </div>
@@ -627,19 +617,17 @@ const RevenueComparisonChart = ({
         </BarChart>
       </ResponsiveContainer>
 
-      {/* Monatsauswahl – eingeblendet nach Klick auf KPI-Box */}
-      {showSelector && (
-        <div className="mt-3">
-          <MonthSelectorPanel
-            kpis={data}
-            selected={selectedMonths}
-            onToggle={onToggle}
-            onSelectAll={onSelectAll}
-            onSelectNone={onSelectNone}
-            onSelectData={onSelectData}
-          />
-        </div>
-      )}
+      {/* Monatsauswahl – permanent eingeblendet */}
+      <div className="mt-3">
+        <MonthSelectorPanel
+          kpis={data}
+          selected={selectedMonths}
+          onToggle={onToggle}
+          onSelectAll={onSelectAll}
+          onSelectNone={onSelectNone}
+          onSelectData={onSelectData}
+        />
+      </div>
     </div>
   );
 };
