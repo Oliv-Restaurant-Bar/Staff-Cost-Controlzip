@@ -1,0 +1,146 @@
+Bitte den aktuellen Mirus Excel Parser nicht weiter mit der bisherigen Regex-Logik verbessern.
+
+Die Testresultate zeigen:
+- Namen werden falsch erkannt
+- Tageszeilen werden nicht erkannt
+- Qualität 0 %
+- Totale werden teilweise erkannt
+- Mirus Excel ist offenbar kein sauberer Datenexport, sondern ein Excel-Drucklayout
+
+Deshalb brauchen wir zuerst eine echte Excel-Struktur-Analyse.
+
+Ziel:
+Wir müssen verstehen, wie die Mirus Excel-Datei intern aufgebaut ist, bevor wir den produktiven Parser bauen.
+
+====================================================
+1. NEUE DEBUG-SEKTION AUF /mirus-excel-test
+====================================================
+
+Bitte auf der bestehenden Testseite /mirus-excel-test eine neue Sektion ergänzen:
+
+"Excel Grid Analyse"
+
+Diese soll pro hochgeladener Datei anzeigen:
+
+- Sheetname
+- verwendeter Zellbereich (!ref)
+- Anzahl Zeilen
+- Anzahl Spalten
+- Anzahl nicht-leere Zellen
+- Merge-Bereiche
+- ausgeblendete Zeilen/Spalten falls vorhanden
+
+====================================================
+2. RAW GRID PREVIEW
+====================================================
+
+Bitte zusätzlich eine visuelle Tabelle anzeigen:
+
+- Zeilennummer
+- Spaltenbuchstaben A, B, C, D ...
+- Zellwert
+- Zelltyp
+- Zelladresse z.B. A1, B12, C44
+
+Wichtig:
+Nicht nur erkannte Daten anzeigen,
+sondern wirklich die rohen Excel-Zellen.
+
+Ziel:
+Ich muss sehen können, wo Name, Datum, Zeiten, Pausen und Totale in der Datei wirklich stehen.
+
+====================================================
+3. FILTER IN GRID PREVIEW
+====================================================
+
+Bitte Filter ergänzen:
+
+- nur nicht-leere Zellen anzeigen
+- Zeilenbereich auswählen, z.B. 1–100
+- Suchfeld nach Text, z.B. "Name", "TOTAL", "Arbeitszeit", "Kostenstelle"
+- Button "Springe zu nächstem Treffer"
+
+====================================================
+4. MERGE-BEREICHE ANZEIGEN
+====================================================
+
+Wenn Zellen gemerged sind, bitte sichtbar machen:
+
+Beispiel:
+A1:C1 merged
+
+In der Zellansicht anzeigen:
+- merged ja/nein
+- merge range
+
+====================================================
+5. MITARBEITERBLOCK-ANALYSE
+====================================================
+
+Bitte zusätzlich eine automatische Blockanalyse ergänzen:
+
+Suche nach möglichen Mitarbeiterblöcken anhand von:
+- "Name / Vorname"
+- "Kostenstelle"
+- "Wöchentliche Arbeitszeit"
+- "TOTAL"
+- "Unterschrift"
+
+Für jeden gefundenen Block anzeigen:
+
+- Startzeile
+- Endzeile
+- mögliche Namenszelle
+- mögliche Kostenstellenzelle
+- mögliche Tagesdaten-Spalten
+- mögliche Totalzeile
+- Qualität der Blockerkennung
+
+Noch keine endgültige Extraktion, nur Analyse.
+
+====================================================
+6. EXPORT DEBUG
+====================================================
+
+Bitte Debug Export erweitern:
+
+Button:
+"Excel Struktur JSON exportieren"
+
+Export soll enthalten:
+- Sheets
+- Zellmatrix
+- Zelladressen
+- Zelltypen
+- Mergebereiche
+- Blockkandidaten
+- aktuelle Parserergebnisse
+- Fehlerliste
+
+====================================================
+7. KEINE PRODUKTIVE LOGIK
+====================================================
+
+Noch NICHT bauen:
+- produktiver Import
+- Supabase Speicherung
+- Mitarbeiterportal
+- Freigabeprozess
+- Archivierung
+
+Nur:
+Excel-Struktur sichtbar machen und verstehen.
+
+====================================================
+8. ZIEL
+====================================================
+
+Nach diesem Schritt wollen wir entscheiden:
+
+- Ist Mirus Excel ein fixer Blockaufbau?
+- Welche Spalten enthalten Tagesdaten?
+- Wo stehen Name und Kostenstelle?
+- Wie werden Mitarbeiter getrennt?
+- Können wir einen positionsbasierten Parser bauen?
+
+Bitte danach TypeScript prüfen und sicherstellen, dass /mirus-excel-test weiterhin sauber läuft.
