@@ -211,7 +211,6 @@ const AppContent = () => {
               element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
             />
             <Route path="/integrity-test" element={<DataIntegrityTest />} />
-            <Route path="/mirus-parser-test" element={<MirusParserTest />} />
             <Route path="/produkte"
               element={<ProdukteSeite />}
             />
@@ -283,6 +282,7 @@ const App = () => (
                   {/* ── Öffentliche Routen — kein Login erforderlich ── */}
                   <Route path="/onboarding/:token" element={<OnboardingForm />} />
                   <Route path="/gast" element={<GuestAccess />} />
+                  <Route path="/mirus-parser-test" element={<MirusParserTest />} />
 
                   {/* ── Alle anderen Routen → Auth-Check ── */}
                   <Route path="/*" element={<AppContent />} />
