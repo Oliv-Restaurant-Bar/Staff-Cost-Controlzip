@@ -214,31 +214,59 @@ function TotalsRow({ emp }: { emp: MirusEmployee }) {
   );
 }
 
-function EmployeeCard({ emp, index }: { emp: MirusEmployee; index: number }) {
-  const [expanded, setExpanded]       = useState(true);
-  const [showRaw, setShowRaw]         = useState(false);
-
-  const highRows = emp.dayRows.filter(r => r.confidence === 'high').length;
+function empQualityPct(emp: MirusEmployee, index: number): number {
   const totalRows = emp.dayRows.length;
-  const hasIssues = emp.uncertainRows > 0 || !emp.totals.totalHours;
+  const hasName = !!emp.name && emp.name !== `Mitarbeiter ${index + 1}`;
+  if (!hasName && totalRows === 0) return 0;
+  const highRows = emp.dayRows.filter(r => r.confidence === 'high').length;
+  const nameScore = hasName ? 35 : 0;
+  const rowScore  = totalRows > 0 ? (highRows / totalRows) * 50 : 0;
+  const totScore  = emp.totals.totalHours ? 15 : 0;
+  return Math.round(nameScore + rowScore + totScore);
+}
+
+function EmpQualityBadge({ pct }: { pct: number }) {
+  if (pct >= 80) return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border bg-green-50 border-green-300 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400">
+      ✓ {pct}%
+    </span>
+  );
+  if (pct >= 50) return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border bg-yellow-50 border-yellow-300 text-yellow-700 dark:bg-yellow-900/20 dark:border-yellow-700 dark:text-yellow-400">
+      ⚠ {pct}%
+    </span>
+  );
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border bg-red-50 border-red-300 text-red-700 dark:bg-red-900/20 dark:border-red-700 dark:text-red-400">
+      ✗ {pct}%
+    </span>
+  );
+}
+
+function EmployeeCard({ emp, index }: { emp: MirusEmployee; index: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const [showRaw, setShowRaw]   = useState(false);
+
+  const highRows  = emp.dayRows.filter(r => r.confidence === 'high').length;
+  const totalRows = emp.dayRows.length;
+  const pct       = empQualityPct(emp, index);
+
+  const cardBorder =
+    pct >= 80 ? 'border-green-200 dark:border-green-800' :
+    pct >= 50 ? 'border-yellow-200 dark:border-yellow-800' :
+                'border-red-200 dark:border-red-800';
 
   return (
-    <Card className={cn(
-      'border',
-      hasIssues ? 'border-yellow-300 dark:border-yellow-700' : 'border-border',
-    )}>
-      {/* Header */}
-      <button
-        className="w-full text-left"
-        onClick={() => setExpanded(e => !e)}
-      >
+    <Card className={cn('border', cardBorder)}>
+      {/* Header — immer sichtbar */}
+      <button className="w-full text-left" onClick={() => setExpanded(e => !e)}>
         <div className="flex items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">
               {index + 1}
             </div>
-            <div>
-              <p className="text-sm font-bold">{emp.name ?? `Mitarbeiter ${index + 1}`}</p>
+            <div className="min-w-0">
+              <p className="text-sm font-bold truncate">{emp.name ?? `Mitarbeiter ${index + 1}`}</p>
               <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                 {emp.kostenstelle && (
                   <span className="text-[10px] text-muted-foreground">{emp.kostenstelle}</span>
@@ -257,14 +285,11 @@ function EmployeeCard({ emp, index }: { emp: MirusEmployee; index: number }) {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            {/* Stats */}
+          <div className="flex items-center gap-2 shrink-0 ml-2">
             <div className="hidden sm:flex items-center gap-2 text-[11px]">
-              <span className="text-muted-foreground">{totalRows} Zeilen</span>
-              {emp.uncertainRows > 0 && (
-                <span className="text-yellow-600 dark:text-yellow-400 font-semibold">
-                  ⚠ {emp.uncertainRows} unsicher
-                </span>
+              <span className="text-muted-foreground">{totalRows} Tage</span>
+              {emp.totals.totalHours && (
+                <span className="text-muted-foreground font-mono">{emp.totals.totalHours} h</span>
               )}
               {totalRows > 0 && (
                 <span className={cn('font-semibold', highRows === totalRows ? 'text-green-600' : 'text-yellow-600')}>
@@ -272,7 +297,10 @@ function EmployeeCard({ emp, index }: { emp: MirusEmployee; index: number }) {
                 </span>
               )}
             </div>
-            {expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+            <EmpQualityBadge pct={pct} />
+            {expanded
+              ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+              : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
           </div>
         </div>
       </button>
@@ -523,6 +551,50 @@ function ResultSection({ result }: { result: ParseResult }) {
         )}>
           {doc.quality.qualityPercent}% Qualität
         </Badge>
+      </div>
+
+      {/* ── Zusammenfassung oben ─────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          {
+            label: 'Mitarbeiter',
+            value: doc.quality.totalEmployees,
+            sub: `${doc.employees.filter((e, i) => e.name && e.name !== `Mitarbeiter ${i + 1}`).length} mit Namen`,
+            ok: doc.quality.totalEmployees > 0,
+          },
+          {
+            label: 'Tageszeilen',
+            value: doc.quality.totalDayRows,
+            sub: `${doc.quality.uncertainRows} unsicher`,
+            ok: doc.quality.totalDayRows > 0,
+          },
+          {
+            label: 'Totale erkannt',
+            value: doc.employees.filter(e => !!e.totals.totalHours).length,
+            sub: `von ${doc.quality.totalEmployees}`,
+            ok: doc.employees.filter(e => !!e.totals.totalHours).length === doc.quality.totalEmployees,
+          },
+          {
+            label: 'Ø Qualität',
+            value: `${doc.quality.qualityPercent}%`,
+            sub: doc.quality.qualityPercent >= 80 ? 'gut' : doc.quality.qualityPercent >= 50 ? 'teilweise' : 'kritisch',
+            ok: doc.quality.qualityPercent >= 80,
+            warn: doc.quality.qualityPercent >= 50 && doc.quality.qualityPercent < 80,
+          },
+        ].map(item => (
+          <div key={item.label} className={cn(
+            'rounded-lg border p-3',
+            (item as { ok?: boolean; warn?: boolean }).warn
+              ? 'border-yellow-200 bg-yellow-50/40 dark:border-yellow-800 dark:bg-yellow-900/10'
+              : item.ok
+                ? 'border-green-200 bg-green-50/40 dark:border-green-800 dark:bg-green-900/10'
+                : 'border-red-200 bg-red-50/40 dark:border-red-800 dark:bg-red-900/10',
+          )}>
+            <p className="text-[10px] text-muted-foreground mb-0.5">{item.label}</p>
+            <p className="text-xl font-bold tabular-nums">{item.value}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{item.sub}</p>
+          </div>
+        ))}
       </div>
 
       {/* Metadaten */}
