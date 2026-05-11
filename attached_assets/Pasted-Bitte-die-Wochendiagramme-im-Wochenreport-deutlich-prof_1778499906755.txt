@@ -1,0 +1,178 @@
+Bitte die Wochendiagramme im Wochenreport deutlich professioneller und lesefreundlicher gestalten.
+
+Aktuell:
+- Diagramme sind zu klein
+- zu technisch
+- Werte schlecht lesbar
+- Erkenntnisse stehen unterhalb statt direkt neben den Diagrammen
+- Charts wirken wie Mini-Widgets statt Management-Auswertung
+
+Ziel:
+Die zweite Seite soll wie ein modernes Management-Reporting aussehen.
+
+---
+
+1. Diagramme deutlich grösser machen
+
+Die beiden Wochendiagramme sollen:
+
+- NICHT nebeneinander klein
+- sondern untereinander gross dargestellt werden
+
+Neues Layout:
+
+[ Grosses Diagramm ]
+[ Erkenntnisse rechts daneben ]
+
+[ Grosses Diagramm ]
+[ Erkenntnisse rechts daneben ]
+
+Oder alternativ:
+
+Diagramm volle Breite
+darunter kompakte Insights-Box
+
+Wichtig:
+Diagramme müssen dominieren und sofort verständlich sein.
+
+---
+
+2. Diagramm 1 professionell machen
+"Tageskosten Plan vs. Ist"
+
+Grosses Balkendiagramm:
+
+Pro Tag:
+- Plan CHF
+- Ist CHF
+
+Darstellung:
+- Plan = hellgrau/blau
+- Ist = grün wenn unter Plan
+- Ist = orange leicht über Plan
+- Ist = rot deutlich über Plan
+
+Zusätzlich:
+- CHF-Wert DIREKT auf Balken anzeigen
+- Differenz CHF als kleine Label
+- Tage mit grösster Abweichung markieren
+
+Beispiel:
+Sa
+CHF 4’008
++421
+
+---
+
+3. Diagramm 2 verbessern
+"Personalquote pro Tag"
+
+Nicht mehr diese kleinen Balken.
+
+Sondern:
+
+- grosse vertikale Balken
+- Zielwert 40 % als deutliche gestrichelte Linie
+- Prozentwert GROSS direkt auf Balken
+- Rot / Orange / Grün klar sichtbar
+- Ausreisser visuell separat markieren
+
+Beispiel:
+76%
+32%
+26%
+
+direkt gross auf dem Balken.
+
+---
+
+4. Rechte Insight-Spalte
+
+Rechts neben jedem Diagramm:
+
+kleine moderne Insight-Box:
+
+Beispiel:
+
+Höchste Kostenabweichung
+Samstag
++CHF 421
+
+Beste Personalquote
+Samstag
+17.6 %
+
+Schlechtester Tag
+Freitag
+872 %
+
+Meiste Mehrstunden
+Samstag
++13.4 h
+
+Wichtig:
+nicht nur Textlisten,
+sondern KPI-Karten.
+
+---
+
+5. Mehr visuelle Hierarchie
+
+Bitte:
+- grössere Überschriften
+- mehr Abstand
+- Charts mit Card-Design
+- Schatten leicht
+- moderne Farben
+- weniger Tabellenoptik
+- mehr Dashboard-Optik
+
+Der PDF soll wie ein professionelles Gastro-Controlling aussehen.
+
+---
+
+6. Werte direkt publizieren
+
+ALLE Balken sollen direkt Werte anzeigen:
+
+- CHF
+- %
+- + / -
+
+Nicht nur Tooltip oder Achse.
+
+Manager sollen beim Ausdrucken sofort alles sehen.
+
+---
+
+7. Kritische Tage kompakter
+
+Die Boxen oben auf Seite 2 sind aktuell zu gross.
+
+Bitte kompakter:
+- links Ampel
+- Mitte Problem
+- rechts KPI
+
+Beispiel:
+
+🔴 Freitag
+PKQ 872 %
++CHF 244
++8.3 h
+
+Dadurch bleibt mehr Platz für grosse Diagramme.
+
+---
+
+8. Ziel:
+Seite 2 soll wirken wie:
+
+- modernes Gastro-KPI-Dashboard
+- Controlling-Auswertung
+- Management-Meeting-Unterlage
+- nicht wie Rohdaten-Export
+
+Wichtig:
+Keine bestehende Berechnungslogik verändern.
+Nur Visualisierung, Diagrammaufbau und Lesbarkeit verbessern.

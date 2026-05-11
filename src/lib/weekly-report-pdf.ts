@@ -21,7 +21,9 @@ export interface WeeklyReportParams {
   targetPercentKüche?: number;
 }
 
-// ── Data helpers (logic unchanged) ───────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// DATA HELPERS  (logic unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
 
 function slotHours(slot: TimeSlot | null | undefined): number {
   if (!slot?.start || !slot?.end) return 0;
@@ -31,13 +33,9 @@ function slotHours(slot: TimeSlot | null | undefined): number {
   if (h < 0) h += 24;
   return h;
 }
-
 function breakDeduction(gross: number): number {
-  if (gross >= 7) return 1;
-  if (gross >= 5) return 0.5;
-  return 0;
+  return gross >= 7 ? 1 : gross >= 5 ? 0.5 : 0;
 }
-
 function dayPlanHours(ds: DaySchedule): number {
   const gross = slotHours(ds.früh) + slotHours(ds.spät);
   return Math.max(0, gross - breakDeduction(gross));
@@ -46,32 +44,29 @@ function dayPlanHours(ds: DaySchedule): number {
 function chf(v: number): string {
   return new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(v);
 }
-
-function pct(v: number): string {
-  return v.toFixed(1) + '%';
+function chfShort(v: number): string {
+  if (Math.abs(v) >= 10000) return (v / 1000).toFixed(0) + 'k';
+  if (Math.abs(v) >= 1000)  return (v / 1000).toFixed(1) + 'k';
+  return Math.round(v).toString();
 }
-
-function hrs(v: number): string {
-  return v.toFixed(1) + ' h';
-}
-
-function sign(v: number): string {
-  return v >= 0 ? '+' : '';
-}
+function pct(v: number): string { return v.toFixed(1) + '%'; }
+function hrs(v: number): string  { return v.toFixed(1) + ' h'; }
+function sign(v: number): string { return v >= 0 ? '+' : ''; }
 
 type RGB = [number, number, number];
 type TrafficStatus = 'green' | 'orange' | 'red' | 'none';
 
 const C = {
-  navy:       [30, 41, 59]   as RGB,
+  navy:       [30,  41,  59]  as RGB,
   border:     [226, 232, 240] as RGB,
   muted:      [100, 116, 139] as RGB,
   mutedLight: [148, 163, 184] as RGB,
   bgLight:    [248, 250, 252] as RGB,
-  indigo:     [99, 102, 241]  as RGB,
-  green:  { bg: [240,253,244] as RGB, text: [21,128,61]   as RGB, bar: [74,222,128]  as RGB, border: [134,239,172] as RGB },
-  orange: { bg: [255,251,235] as RGB, text: [161,98,7]    as RGB, bar: [251,191,36]  as RGB, border: [253,211,77]  as RGB },
-  red:    { bg: [254,242,242] as RGB, text: [153,27,27]   as RGB, bar: [252,165,165] as RGB, border: [252,165,165] as RGB },
+  white:      [255, 255, 255] as RGB,
+  indigo:     [99,  102, 241] as RGB,
+  green:  { bg: [240,253,244] as RGB, text: [21,128,61]   as RGB, bar: [34,197,94]   as RGB, border: [134,239,172] as RGB },
+  orange: { bg: [255,251,235] as RGB, text: [161,98,7]    as RGB, bar: [251,146,60]  as RGB, border: [253,186,116] as RGB },
+  red:    { bg: [254,242,242] as RGB, text: [153,27,27]   as RGB, bar: [248,113,113] as RGB, border: [252,165,165] as RGB },
   slate:  { bg: [248,250,252] as RGB, text: [100,116,139] as RGB, bar: [148,163,184] as RGB, border: [226,232,240] as RGB },
 };
 
@@ -81,29 +76,26 @@ function trafficStatus(quota: number | null, target: number): TrafficStatus {
   if (quota <= target + 5) return 'orange';
   return 'red';
 }
-
 function trafficPalette(s: TrafficStatus) {
-  if (s === 'green')  return C.green;
-  if (s === 'orange') return C.orange;
-  if (s === 'red')    return C.red;
-  return C.slate;
+  return s === 'green' ? C.green : s === 'orange' ? C.orange : s === 'red' ? C.red : C.slate;
 }
 
-// ── DayStats (logic unchanged) ────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// DAY STATS  (logic unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface DayStats {
   date: Date; dateStr: string;
   planHours: number; istHours: number; planCost: number; istCost: number;
   actualRevenue: number | null;
   planHoursService: number; planHoursKüche: number;
-  istHoursService: number;  istHoursKüche: number;
-  planCostService: number;  planCostKüche: number;
-  istCostService: number;   istCostKüche: number;
+  istHoursService:  number; istHoursKüche:  number;
+  planCostService:  number; planCostKüche:  number;
+  istCostService:   number; istCostKüche:   number;
 }
 
 function computeDayStats(
-  date: Date,
-  employees: Employee[],
+  date: Date, employees: Employee[],
   scheduleData: Record<string, DaySchedule>,
   actualHoursData: Record<string, { hours: number }>,
   dailyBudgets: Record<string, { plannedRevenue?: number; actualRevenue?: number }>,
@@ -111,48 +103,43 @@ function computeDayStats(
 ): DayStats {
   const dateStr = format(date, 'yyyy-MM-dd');
   const relevant = employees.filter(e => dept === 'all' || e.department === dept);
-  let planH=0, istH=0, planC=0, istC=0;
-  let planHS=0, planHK=0, istHS=0, istHK=0, planCS=0, planCK=0, istCS=0, istCK=0;
-
+  let planH=0,istH=0,planC=0,istC=0;
+  let planHS=0,planHK=0,istHS=0,istHK=0,planCS=0,planCK=0,istCS=0,istCK=0;
   relevant.forEach(emp => {
     const key = `${emp.id}-${dateStr}`;
     const ds = scheduleData[key];
-    const wage = emp.hourlyWage ?? 0;
-    const isSvc = emp.department === 'service';
+    const w = emp.hourlyWage ?? 0, isSvc = emp.department === 'service';
     const ph = ds ? dayPlanHours(ds) : 0;
     const ah = actualHoursData[key]?.hours ?? 0;
-    planH += ph; planC += ph * wage;
-    istH  += ah; istC  += ah * wage;
-    if (isSvc) { planHS+=ph; planCS+=ph*wage; istHS+=ah; istCS+=ah*wage; }
-    else        { planHK+=ph; planCK+=ph*wage; istHK+=ah; istCK+=ah*wage; }
+    planH+=ph; planC+=ph*w; istH+=ah; istC+=ah*w;
+    if (isSvc) { planHS+=ph; planCS+=ph*w; istHS+=ah; istCS+=ah*w; }
+    else        { planHK+=ph; planCK+=ph*w; istHK+=ah; istCK+=ah*w; }
   });
-
   const budget = dailyBudgets[dateStr];
   const actualRevenue = budget?.actualRevenue != null && budget.actualRevenue > 0 ? budget.actualRevenue : null;
   return {
-    date, dateStr,
-    planHours: planH, istHours: istH, planCost: planC, istCost: istC,
-    actualRevenue,
-    planHoursService: planHS, planHoursKüche: planHK,
-    istHoursService: istHS,   istHoursKüche: istHK,
-    planCostService: planCS,  planCostKüche: planCK,
-    istCostService: istCS,    istCostKüche: istCK,
+    date, dateStr, planHours:planH, istHours:istH, planCost:planC, istCost:istC, actualRevenue,
+    planHoursService:planHS, planHoursKüche:planHK,
+    istHoursService:istHS,   istHoursKüche:istHK,
+    planCostService:planCS,  planCostKüche:planCK,
+    istCostService:istCS,    istCostKüche:istCK,
   };
 }
 
-// ── Drawing helpers ───────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// DRAWING PRIMITIVES
+// ─────────────────────────────────────────────────────────────────────────────
 
-function sectionLabel(doc: jsPDF, text: string, x: number, y: number, rightW: number): void {
-  const [r,g,b] = C.navy;
-  doc.setFillColor(r, g, b);
+function sectionLabel(doc: jsPDF, text: string, x: number, y: number, w: number): void {
+  doc.setFillColor(...C.navy);
   doc.rect(x, y - 3.5, 2.5, 5.5, 'F');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
-  doc.setTextColor(r, g, b);
+  doc.setTextColor(...C.navy);
   doc.text(text, x + 4.5, y);
   doc.setDrawColor(...C.border);
   doc.setLineWidth(0.25);
-  doc.line(x, y + 2.5, x + rightW, y + 2.5);
+  doc.line(x, y + 2.5, x + w, y + 2.5);
 }
 
 function statusPill(doc: jsPDF, status: TrafficStatus, x: number, y: number): void {
@@ -169,159 +156,335 @@ function statusPill(doc: jsPDF, status: TrafficStatus, x: number, y: number): vo
   doc.text(label, x + pw / 2, y - 0.2, { align: 'center' });
 }
 
-// ── Bar chart (manual jsPDF drawing) ─────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// PAGE 2: COMPACT CRITICAL DAY ROW
+// ─────────────────────────────────────────────────────────────────────────────
 
-interface BarChartOpts {
-  x: number; y: number; w: number; h: number;
-  planValues?: number[];      // grey reference bars
-  istValues: number[];        // main bars
-  labels: string[];
-  targetValue?: number;       // draw target line
-  maxCap?: number;            // clamp scale; outliers get annotated
-  unit?: string;
-  isPercentage?: boolean;
+function drawCriticalDayRow(
+  doc: jsPDF, x: number, y: number, w: number,
+  d: DayStats, quota: number | null, issues: string[], status: TrafficStatus,
+): void {
+  const ROW_H = 9;
+  const pal = trafficPalette(status);
+
+  // Row background
+  doc.setFillColor(...pal.bg);
+  doc.setDrawColor(...pal.border);
+  doc.setLineWidth(0.25);
+  doc.roundedRect(x, y, w, ROW_H, 1, 1, 'FD');
+
+  // Colour dot
+  doc.setFillColor(...pal.text);
+  doc.circle(x + 4.5, y + ROW_H / 2, 2, 'F');
+
+  // Day name
+  const dayName = format(d.date, 'EEE d.M.', { locale: de });
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(...pal.text);
+  doc.text(dayName, x + 10, y + 6);
+
+  // Issues (truncated to 1 line)
+  const issueText = issues.slice(0, 2).join('  ·  ');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(60, 60, 60);
+  doc.text(issueText, x + 38, y + 6);
+
+  // Right KPI
+  const diffC = d.istCost - d.planCost;
+  const kpiParts: string[] = [];
+  if (quota !== null) kpiParts.push('PKQ ' + pct(quota));
+  if (Math.abs(diffC) > 50) kpiParts.push(sign(diffC) + chf(diffC));
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(...pal.text);
+  doc.text(kpiParts.join('  '), x + w - 2, y + 6, { align: 'right' });
 }
 
-function drawBarChart(doc: jsPDF, o: BarChartOpts): void {
-  const { x, y, w, h, planValues, istValues, labels, targetValue, maxCap, unit='', isPercentage=false } = o;
-  const LEFT_PAD = 9, BOTTOM_PAD = 7;
-  const px = x + LEFT_PAD, py = y;
-  const pw = w - LEFT_PAD, ph = h - BOTTOM_PAD;
+// ─────────────────────────────────────────────────────────────────────────────
+// PAGE 2: COST CHART  (Plan vs Ist per day, values on bars)
+// ─────────────────────────────────────────────────────────────────────────────
 
-  // Scale
-  const allVals = [...istValues, ...(planValues ?? []), targetValue ?? 0].filter(v => v > 0);
-  const rawMax = Math.max(...allVals, 1);
-  const scaleMax = maxCap != null ? Math.max(maxCap, targetValue ?? 0) : rawMax * 1.1;
+function drawCostChart(
+  doc: jsPDF, x: number, y: number, w: number, h: number,
+  dayStats: DayStats[], targetPercent: number,
+): void {
+  const L_PAD = 11, B_PAD = 12, T_PAD = 6;
+  const px = x + L_PAD, py = y + T_PAD;
+  const pw = w - L_PAD, ph = h - B_PAD - T_PAD;
+
+  const allC = dayStats.flatMap(d => [d.planCost, d.istCost]);
+  const scaleMax = Math.max(...allC, 1) * 1.18;
   const scale = ph / scaleMax;
 
-  // Background + border
-  doc.setFillColor(...C.bgLight);
+  // Chart area
+  doc.setFillColor(252, 252, 254);
   doc.rect(px, py, pw, ph, 'F');
   doc.setDrawColor(...C.border);
   doc.setLineWidth(0.2);
   doc.rect(px, py, pw, ph, 'S');
 
-  // Grid lines + y-axis labels
-  const gridCount = 3;
-  for (let g = 1; g <= gridCount; g++) {
-    const gy = py + ph - (ph / gridCount) * g;
-    const gVal = (scaleMax / gridCount) * g;
+  // Grid + y-axis labels
+  for (let g = 1; g <= 4; g++) {
+    const gy = py + ph - (ph / 4) * g;
+    const gv = (scaleMax / 4) * g;
     doc.setDrawColor(237, 242, 247);
     doc.setLineWidth(0.15);
     doc.line(px, gy, px + pw, gy);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(5);
+    doc.setFontSize(5.5);
     doc.setTextColor(...C.mutedLight);
-    const label = gVal >= 1000
-      ? (gVal / 1000).toFixed(0) + 'k'
-      : gVal.toFixed(isPercentage && gVal < 10 ? 1 : 0) + unit;
-    doc.text(label, px - 1, gy + 1, { align: 'right' });
+    doc.text(gv >= 1000 ? (gv/1000).toFixed(gv>=10000?0:1)+'k' : Math.round(gv).toString(), px - 1, gy + 1, { align: 'right' });
   }
 
-  // Target line (indigo dashed)
-  if (targetValue != null && targetValue > 0 && targetValue <= scaleMax) {
-    const ty = py + ph - targetValue * scale;
-    doc.setDrawColor(...C.indigo);
-    doc.setLineWidth(0.45);
-    const dash = 2, gap = 1.5;
-    let lx = px;
-    while (lx < px + pw) {
-      doc.line(lx, ty, Math.min(lx + dash, px + pw), ty);
-      lx += dash + gap;
+  // Bars per day
+  const groupW = pw / 7;
+  const barW = groupW * 0.34;
+  const gap   = groupW * 0.05;
+
+  dayStats.forEach((d, i) => {
+    const gx   = px + i * groupW;
+    const planH = d.planCost * scale;
+    const istH  = d.istCost  * scale;
+    const startX = gx + (groupW - 2 * barW - gap) / 2;
+
+    // Plan bar (slate)
+    doc.setFillColor(...C.slate.bar);
+    doc.rect(startX, py + ph - planH, barW, Math.max(planH, 0.5), 'F');
+
+    // Ist bar (3-colour)
+    const over = d.istCost / Math.max(d.planCost, 1) - 1;
+    const istCol = over <= 0 ? C.green.bar : over <= 0.15 ? C.orange.bar : C.red.bar;
+    const istX = startX + barW + gap;
+    doc.setFillColor(...istCol);
+    doc.rect(istX, py + ph - istH, barW, Math.max(istH, 0.5), 'F');
+
+    // Value on Plan bar
+    if (planH > 6) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(5.5);
+      doc.setTextColor(80, 80, 80);
+      doc.text(chfShort(d.planCost), startX + barW / 2, py + ph - planH - 1.5, { align: 'center' });
     }
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(5);
-    doc.setTextColor(...C.indigo);
-    doc.text('Ziel', px + pw + 1, ty + 1.2);
-  }
+    // Value on Ist bar
+    if (istH > 6) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.5);
+      const [rv, gv, bv] = over > 0 ? C.red.text : C.green.text;
+      doc.setTextColor(rv, gv, bv);
+      doc.text(chfShort(d.istCost), istX + barW / 2, py + ph - istH - 1.5, { align: 'center' });
+    }
 
-  // Bars
-  const n = labels.length;
-  const groupW = pw / n;
-
-  istValues.forEach((val, i) => {
-    const isOutlier = maxCap != null && val > maxCap;
-    const displayVal = isOutlier ? scaleMax * 0.98 : Math.min(val, scaleMax);
-    const bh = Math.max(displayVal * scale, 0.5);
-
-    if (planValues) {
-      // Grouped bars: Plan (slate) + Ist (colored)
-      const planVal = planValues[i] ?? 0;
-      const planH = Math.min(planVal, scaleMax) * scale;
-      const planBW = groupW * 0.36;
-      const istBW  = groupW * 0.36;
-      const gapBetween = groupW * 0.04;
-      const totalBW = planBW + gapBetween + istBW;
-      const startX = px + i * groupW + (groupW - totalBW) / 2;
-
-      // Plan bar
-      doc.setFillColor(...C.slate.bar);
-      doc.rect(startX, py + ph - planH, planBW, Math.max(planH, 0.5), 'F');
-
-      // Ist bar
-      const isOver = val > planVal;
-      const barCol = isOver ? C.red.bar : C.green.bar;
-      doc.setFillColor(...barCol);
-      doc.rect(startX + planBW + gapBetween, py + ph - bh, istBW, bh, 'F');
-
-      if (isOutlier) {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(5.5);
-        doc.setTextColor(...C.red.text);
-        doc.text('!', startX + planBW + gapBetween + istBW / 2, py + 2.5, { align: 'center' });
-      }
-    } else {
-      // Single bar (PKQ chart)
-      const barBW = groupW * 0.62;
-      const bx = px + i * groupW + (groupW - barBW) / 2;
-      let barCol: RGB;
-      if (targetValue != null) {
-        const s = trafficStatus(val, targetValue);
-        barCol = trafficPalette(s).bar;
-      } else {
-        barCol = C.indigo;
-      }
-      doc.setFillColor(...(isOutlier ? C.red.bar : barCol));
-      doc.rect(bx, py + ph - bh, barBW, bh, 'F');
-
-      // Value label above bar (only if not too small)
-      if (bh > 5 && !isOutlier) {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(5.5);
-        doc.setTextColor(60, 60, 60);
-        doc.text(val.toFixed(0) + unit, bx + barBW / 2, py + ph - bh - 1, { align: 'center' });
-      }
-      if (isOutlier) {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(6);
-        doc.setTextColor(...C.red.text);
-        doc.text('!', bx + barBW / 2, py + 2.5, { align: 'center' });
-        doc.setFontSize(4.5);
-        doc.text(val.toFixed(0) + unit, bx + barBW / 2, py + 5.5, { align: 'center' });
-      }
+    // Diff label beneath group
+    const diffC = d.istCost - d.planCost;
+    if (Math.abs(diffC) > 30) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.5);
+      doc.setTextColor(...(diffC > 0 ? C.red.text : C.green.text));
+      doc.text(sign(diffC) + chfShort(diffC), startX + barW + gap / 2, py + ph + 4, { align: 'center' });
     }
 
     // Day label
+    const dayLbl = format(d.date, 'EEE', { locale: de }).slice(0, 2);
+    const dateLbl = format(d.date, 'd.M.', { locale: de });
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6);
+    doc.setTextColor(...C.navy);
+    doc.text(dayLbl, gx + groupW / 2, py + ph + 7.5, { align: 'center' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5);
+    doc.setTextColor(...C.muted);
+    doc.text(dateLbl, gx + groupW / 2, py + ph + 11, { align: 'center' });
+  });
+
+  // Legend
+  doc.setFillColor(...C.slate.bar);
+  doc.rect(px, py - 4.5, 4, 3, 'F');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6);
+  doc.setTextColor(...C.muted);
+  doc.text('Plan', px + 5, py - 2);
+  doc.setFillColor(...C.green.bar);
+  doc.rect(px + 18, py - 4.5, 4, 3, 'F');
+  doc.text('Ist (im Plan)', px + 23, py - 2);
+  doc.setFillColor(...C.red.bar);
+  doc.rect(px + 50, py - 4.5, 4, 3, 'F');
+  doc.text('Ist (über Plan)', px + 55, py - 2);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PAGE 2: PKQ CHART  (large % values on bars, capped scale)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function drawPKQChart(
+  doc: jsPDF, x: number, y: number, w: number, h: number,
+  dayStats: DayStats[], dayQuotas: (number | null)[], targetPercent: number,
+): void {
+  const L_PAD = 11, B_PAD = 12, T_PAD = 6;
+  const px = x + L_PAD, py = y + T_PAD;
+  const pw = w - L_PAD, ph = h - B_PAD - T_PAD;
+
+  const pkqCap = targetPercent * 2.8;
+  const validQ = dayQuotas.filter(q => q !== null && q <= pkqCap) as number[];
+  const rawMax = Math.max(...validQ, targetPercent * 1.1, 1);
+  const scaleMax = rawMax * 1.12;
+  const scale = ph / scaleMax;
+
+  // Chart area
+  doc.setFillColor(252, 252, 254);
+  doc.rect(px, py, pw, ph, 'F');
+  doc.setDrawColor(...C.border);
+  doc.setLineWidth(0.2);
+  doc.rect(px, py, pw, ph, 'S');
+
+  // Grid + y-axis labels
+  for (let g = 1; g <= 4; g++) {
+    const gy = py + ph - (ph / 4) * g;
+    const gv = (scaleMax / 4) * g;
+    doc.setDrawColor(237, 242, 247);
+    doc.setLineWidth(0.15);
+    doc.line(px, gy, px + pw, gy);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(5.5);
+    doc.setTextColor(...C.mutedLight);
+    doc.text(gv.toFixed(0) + '%', px - 1, gy + 1, { align: 'right' });
+  }
+
+  // Target line — prominent dashed indigo
+  const tly = py + ph - targetPercent * scale;
+  doc.setDrawColor(...C.indigo);
+  doc.setLineWidth(0.6);
+  let lx = px;
+  while (lx < px + pw) {
+    doc.line(lx, tly, Math.min(lx + 3, px + pw), tly);
+    lx += 4.5;
+  }
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6);
+  doc.setTextColor(...C.indigo);
+  doc.text('Ziel ' + targetPercent + '%', px + pw + 1, tly + 1.5);
+
+  // Bars
+  const groupW = pw / 7;
+  const barW = groupW * 0.65;
+
+  dayQuotas.forEach((quota, i) => {
+    const gx  = px + i * groupW;
+    const bx  = gx + (groupW - barW) / 2;
+    const isOutlier = quota !== null && quota > pkqCap;
+    const displayQ  = quota === null ? 0 : isOutlier ? scaleMax * 0.97 : Math.min(quota, scaleMax);
+    const bh = Math.max(displayQ * scale, 1);
+    const stat = trafficStatus(quota, targetPercent);
+    const pal  = trafficPalette(stat);
+
+    if (quota === null) {
+      // No data — ghost bar
+      doc.setFillColor(241, 245, 249);
+      doc.rect(bx, py + ph - 3, barW, 3, 'F');
+    } else {
+      doc.setFillColor(...(isOutlier ? C.red.bar : pal.bar));
+      doc.rect(bx, py + ph - bh, barW, bh, 'F');
+
+      // Large % label inside / on top of bar
+      const labelY = bh > 12 ? py + ph - bh / 2 + 2 : py + ph - bh - 2;
+      const labelColor: RGB = bh > 12 ? C.white : pal.text;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(bh > 10 ? 8.5 : 6.5);
+      doc.setTextColor(...labelColor);
+      const label = isOutlier ? '!' : pct(quota);
+      doc.text(label, bx + barW / 2, labelY, { align: 'center' });
+
+      // Outlier: show real value small above
+      if (isOutlier) {
+        doc.setFontSize(5.5);
+        doc.setTextColor(...C.red.text);
+        doc.text(pct(quota), bx + barW / 2, py + 3, { align: 'center' });
+        doc.setFontSize(5);
+        doc.text('Ausreiss.', bx + barW / 2, py + 6.5, { align: 'center' });
+      }
+    }
+
+    // Day labels
+    const dayLbl = format(dayStats[i].date, 'EEE', { locale: de }).slice(0, 2);
+    const dateLbl = format(dayStats[i].date, 'd.M.', { locale: de });
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6);
+    doc.setTextColor(...C.navy);
+    doc.text(dayLbl, gx + groupW / 2, py + ph + 7.5, { align: 'center' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5);
     doc.setTextColor(...C.muted);
-    doc.text(labels[i], px + i * groupW + groupW / 2, py + ph + 5, { align: 'center' });
+    doc.text(dateLbl, gx + groupW / 2, py + ph + 11, { align: 'center' });
   });
 }
 
-// ── Main export function ──────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// PAGE 2: INSIGHT KPI CARDS  (right column next to chart)
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface InsightCard {
+  label: string;
+  title: string;
+  value: string;
+  status?: TrafficStatus;
+}
+
+function drawInsightCards(doc: jsPDF, x: number, y: number, w: number, h: number, cards: InsightCard[]): void {
+  const n = Math.min(cards.length, 4);
+  const cardH = Math.min(Math.floor(h / n) - 2, 15);
+  const cardGap = 2;
+
+  cards.slice(0, n).forEach((card, i) => {
+    const cy = y + i * (cardH + cardGap);
+    const pal = trafficPalette(card.status ?? 'none');
+
+    // Card bg
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(...C.border);
+    doc.setLineWidth(0.25);
+    doc.roundedRect(x, cy, w, cardH, 1, 1, 'FD');
+
+    // Left colour strip
+    if (card.status && card.status !== 'none') {
+      doc.setFillColor(...pal.border);
+      doc.roundedRect(x, cy, 2.5, cardH, 1, 1, 'F');
+      doc.rect(x + 1, cy, 1.5, cardH, 'F');
+    }
+
+    // Label (small grey)
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(...C.muted);
+    doc.text(card.label, x + 5, cy + 4.5);
+
+    // Title (medium)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(...C.navy);
+    doc.text(card.title, x + 5, cy + 9);
+
+    // Value (large, coloured)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(card.value.length > 10 ? 7 : 8.5);
+    doc.setTextColor(...(card.status && card.status !== 'none' ? pal.text : C.navy));
+    doc.text(card.value, x + w - 3, cy + cardH - 2.5, { align: 'right' });
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN EXPORT
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function exportWeeklyReportPDF(params: WeeklyReportParams): void {
   const {
     weekStart, weekEnd, employees, scheduleData, actualHoursData,
     dailyBudgets, department, restaurantName, targetPercent,
-    targetPercentService = targetPercent,
-    targetPercentKüche   = targetPercent,
   } = params;
 
-  const kw = getISOWeek(weekStart);
-  const kwRange = `${format(weekStart, 'd.M.yyyy', { locale: de })} – ${format(weekEnd, 'd.M.yyyy', { locale: de })}`;
-  const kwFull  = `KW ${kw}  ·  ${kwRange}`;
+  const kw       = getISOWeek(weekStart);
+  const kwRange  = `${format(weekStart, 'd.M.yyyy', { locale: de })} – ${format(weekEnd, 'd.M.yyyy', { locale: de })}`;
+  const kwFull   = `KW ${kw}  ·  ${kwRange}`;
   const deptLabel = department === 'service' ? 'Service' : department === 'küche' ? 'Küche' : 'Gesamt';
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -330,7 +493,7 @@ export function exportWeeklyReportPDF(params: WeeklyReportParams): void {
   const ML = 14, MR = W - 14, CW = MR - ML;
 
   // Build day data
-  const days: Date[] = Array.from({ length: 7 }, (_, i) => {
+  const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(weekStart); d.setDate(d.getDate() + i); return d;
   });
   const dayStats = days.map(d =>
@@ -339,205 +502,136 @@ export function exportWeeklyReportPDF(params: WeeklyReportParams): void {
 
   // Weekly totals
   const totPlanH   = dayStats.reduce((s,d) => s + d.planHours, 0);
-  const totIstH    = dayStats.reduce((s,d) => s + d.istHours, 0);
-  const totPlanC   = dayStats.reduce((s,d) => s + d.planCost, 0);
-  const totIstC    = dayStats.reduce((s,d) => s + d.istCost, 0);
+  const totIstH    = dayStats.reduce((s,d) => s + d.istHours,  0);
+  const totPlanC   = dayStats.reduce((s,d) => s + d.planCost,  0);
+  const totIstC    = dayStats.reduce((s,d) => s + d.istCost,   0);
   const totRevenue = dayStats.reduce((s,d) => s + (d.actualRevenue ?? 0), 0);
   const hasRevenue = dayStats.some(d => d.actualRevenue !== null);
   const totQuota   = totRevenue > 0 ? (totIstC / totRevenue) * 100 : null;
   const weekStat   = trafficStatus(totQuota, targetPercent);
 
-  // Dept totals
   const svcPlanH=dayStats.reduce((s,d)=>s+d.planHoursService,0);
-  const svcIstH =dayStats.reduce((s,d)=>s+d.istHoursService,0);
-  const svcPlanC=dayStats.reduce((s,d)=>s+d.planCostService,0);
-  const svcIstC =dayStats.reduce((s,d)=>s+d.istCostService,0);
-  const kuePlanH=dayStats.reduce((s,d)=>s+d.planHoursKüche,0);
-  const kueIstH =dayStats.reduce((s,d)=>s+d.istHoursKüche,0);
-  const kuePlanC=dayStats.reduce((s,d)=>s+d.planCostKüche,0);
-  const kueIstC =dayStats.reduce((s,d)=>s+d.istCostKüche,0);
+  const svcIstH =dayStats.reduce((s,d)=>s+d.istHoursService, 0);
+  const svcPlanC=dayStats.reduce((s,d)=>s+d.planCostService, 0);
+  const svcIstC =dayStats.reduce((s,d)=>s+d.istCostService,  0);
+  const kuePlanH=dayStats.reduce((s,d)=>s+d.planHoursKüche,  0);
+  const kueIstH =dayStats.reduce((s,d)=>s+d.istHoursKüche,   0);
+  const kuePlanC=dayStats.reduce((s,d)=>s+d.planCostKüche,   0);
+  const kueIstC =dayStats.reduce((s,d)=>s+d.istCostKüche,    0);
 
-  // Per-day PKQ (for charts + table)
   const dayQuotas = dayStats.map(d =>
     d.actualRevenue != null && d.actualRevenue > 0 ? (d.istCost / d.actualRevenue) * 100 : null
   );
-  const dayLabels = dayStats.map(d => format(d.date, 'EEE', { locale: de }).slice(0, 2));
+  const pkqCap = targetPercent * 2.8;
 
-  // PKQ chart cap: 2× target, so outliers don't destroy the scale
-  const pkqChartCap = targetPercent * 2.5;
-
-  // ════════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
   // PAGE 1
-  // ════════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  // ── Header ────────────────────────────────────────────────────────────────
-  const HEADER_H = 26;
+  // Header
   doc.setFillColor(...C.navy);
-  doc.rect(0, 0, W, HEADER_H, 'F');
-
-  // Restaurant + subtitle
+  doc.rect(0, 0, W, 26, 'F');
   doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
   doc.text(restaurantName, ML, 11);
-  doc.setFontSize(8.5);
-  doc.setFont('helvetica', 'normal');
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
   doc.setTextColor(148, 163, 184);
   doc.text('Wochenreport Personal & Kosten', ML, 18);
-
-  // KW right-aligned
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
   doc.setTextColor(255, 255, 255);
   doc.text(`KW ${kw}`, MR, 12, { align: 'right' });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
   doc.setTextColor(148, 163, 184);
   doc.text(kwRange, MR, 19, { align: 'right' });
-
   doc.setTextColor(0, 0, 0);
 
-  // Meta line
-  let y = HEADER_H + 5;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(...C.muted);
+  let y = 31;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...C.muted);
   doc.text(`Bereich: ${deptLabel}  ·  Export: ${format(new Date(), 'dd.MM.yyyy, HH:mm')}`, ML, y);
   y += 6;
 
-  // ── Section A: KPI Cards ──────────────────────────────────────────────────
+  // KPI cards
   sectionLabel(doc, 'Zusammenfassung Woche', ML, y, CW);
-
-  // Status pill aligned to right of section heading
   statusPill(doc, weekStat, MR - 30, y);
   y += 5;
 
-  const CARD_W = CW / 3 - 1.5;
-  const CARD_H = 20;
-  const CARD_GAP = 2;
-
+  const CARD_W = CW / 3 - 1.5, CARD_H = 20, CARD_GAP = 2;
   const summaryCards = [
-    {
-      label: 'Umsatz Ist',
-      value: hasRevenue ? chf(totRevenue) : '–',
-      sub: 'Netto-Umsatz Woche',
-      status: 'none' as TrafficStatus,
-    },
-    {
-      label: 'Personal Plan',
-      value: chf(totPlanC),
-      sub: hrs(totPlanH) + ' geplant',
-      status: 'none' as TrafficStatus,
-    },
-    {
-      label: 'Personal Ist',
-      value: chf(totIstC),
-      sub: hrs(totIstH) + ' Ist-Stunden',
-      status: 'none' as TrafficStatus,
-    },
-    {
-      label: 'Abweichung',
-      value: sign(totIstC - totPlanC) + chf(totIstC - totPlanC),
-      sub: totPlanC > 0 ? sign(totIstC - totPlanC) + ((totIstC - totPlanC) / totPlanC * 100).toFixed(1) + '%' : '–',
-      status: totIstC > totPlanC ? 'red' : totIstC > totPlanC * 0.97 ? 'orange' : 'green' as TrafficStatus,
-    },
-    {
-      label: 'Personalquote Ist',
-      value: totQuota !== null ? pct(totQuota) : '–',
-      sub: 'Ziel: ' + pct(targetPercent),
-      status: weekStat,
-    },
-    {
-      label: 'Zielquote',
-      value: pct(targetPercent),
-      sub: 'Grenzwert: ' + pct(targetPercent + 5),
-      status: 'none' as TrafficStatus,
-    },
+    { label: 'Umsatz Ist',       value: hasRevenue ? chf(totRevenue) : '–', sub: 'Netto-Umsatz Woche', status: 'none' as TrafficStatus },
+    { label: 'Personal Plan',    value: chf(totPlanC), sub: hrs(totPlanH) + ' geplant',    status: 'none' as TrafficStatus },
+    { label: 'Personal Ist',     value: chf(totIstC),  sub: hrs(totIstH) + ' Ist-Stunden', status: 'none' as TrafficStatus },
+    { label: 'Abweichung',
+      value: sign(totIstC-totPlanC) + chf(totIstC-totPlanC),
+      sub: totPlanC > 0 ? sign(totIstC-totPlanC)+((totIstC-totPlanC)/totPlanC*100).toFixed(1)+'%' : '–',
+      status: (totIstC > totPlanC ? 'red' : 'green') as TrafficStatus },
+    { label: 'Personalquote Ist', value: totQuota !== null ? pct(totQuota) : '–', sub: 'Ziel: ' + pct(targetPercent), status: weekStat },
+    { label: 'Zielquote',         value: pct(targetPercent), sub: 'Grenzwert: ' + pct(targetPercent+5), status: 'none' as TrafficStatus },
   ];
 
   summaryCards.forEach((card, i) => {
-    const col = i % 3;
-    const row = Math.floor(i / 3);
-    const cx = ML + col * (CARD_W + CARD_GAP);
-    const cy = y + row * (CARD_H + CARD_GAP);
+    const col = i % 3, row = Math.floor(i / 3);
+    const cx = ML + col * (CARD_W + CARD_GAP), cy = y + row * (CARD_H + CARD_GAP);
     const pal = trafficPalette(card.status);
-
-    // Card bg
     doc.setFillColor(255, 255, 255);
     doc.setDrawColor(...C.border);
     doc.setLineWidth(0.3);
     doc.roundedRect(cx, cy, CARD_W, CARD_H, 1.5, 1.5, 'FD');
-
-    // Colored left accent strip
     if (card.status !== 'none') {
       doc.setFillColor(...pal.border);
       doc.roundedRect(cx, cy, 2.5, CARD_H, 1, 1, 'F');
-      doc.setFillColor(...pal.border);
-      doc.rect(cx + 1, cy, 1.5, CARD_H, 'F'); // square off right side of strip
+      doc.rect(cx + 1, cy, 1.5, CARD_H, 'F');
     }
-
-    // Label
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(...C.muted);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...C.muted);
     doc.text(card.label, cx + 5, cy + 5.5);
-
-    // Value
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(card.value.length > 10 ? 10 : 12);
     doc.setTextColor(...(card.status !== 'none' ? pal.text : C.navy));
     doc.text(card.value, cx + 5, cy + 13);
-
-    // Sub-label
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(...C.mutedLight);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(...C.mutedLight);
     doc.text(card.sub, cx + 5, cy + 18);
   });
-
   doc.setTextColor(0, 0, 0);
   y += 2 * CARD_H + CARD_GAP + 7;
 
-  // ── Section B: Service vs. Küche ──────────────────────────────────────────
+  // Service vs Küche
   sectionLabel(doc, 'Service vs. Küche', ML, y, CW);
   y += 5;
 
-  const svcQuota = totRevenue > 0 ? (svcIstC / totRevenue) * 100 : null;
-  const kueQuota = totRevenue > 0 ? (kueIstC / totRevenue) * 100 : null;
+  const svcQ = totRevenue > 0 ? (svcIstC / totRevenue) * 100 : null;
+  const kueQ = totRevenue > 0 ? (kueIstC / totRevenue) * 100 : null;
 
-  type ATableCell = string | { content: string; styles?: object };
-  const deptRows: ATableCell[][] = [];
-
+  type ACell = string | { content: string; styles?: object };
+  const deptRows: ACell[][] = [];
   if (department === 'all' || department === 'service') {
-    const dH = svcIstH - svcPlanH, dC = svcIstC - svcPlanC;
+    const dH=svcIstH-svcPlanH, dC=svcIstC-svcPlanC;
     deptRows.push([
       { content: 'Service', styles: { fontStyle: 'bold' } },
       hrs(svcPlanH), hrs(svcIstH),
-      { content: sign(dH) + hrs(dH), styles: { textColor: dH > 0 ? C.red.text : C.green.text } },
+      { content: sign(dH)+hrs(dH), styles: { textColor: dH>0?C.red.text:C.green.text } },
       chf(svcPlanC), chf(svcIstC),
-      { content: sign(dC) + chf(dC), styles: { textColor: dC > 0 ? C.red.text : C.green.text } },
-      svcQuota !== null ? pct(svcQuota) : '–',
+      { content: sign(dC)+chf(dC), styles: { textColor: dC>0?C.red.text:C.green.text } },
+      svcQ !== null ? pct(svcQ) : '–',
     ]);
   }
   if (department === 'all' || department === 'küche') {
-    const dH = kueIstH - kuePlanH, dC = kueIstC - kuePlanC;
+    const dH=kueIstH-kuePlanH, dC=kueIstC-kuePlanC;
     deptRows.push([
       { content: 'Küche', styles: { fontStyle: 'bold' } },
       hrs(kuePlanH), hrs(kueIstH),
-      { content: sign(dH) + hrs(dH), styles: { textColor: dH > 0 ? C.red.text : C.green.text } },
+      { content: sign(dH)+hrs(dH), styles: { textColor: dH>0?C.red.text:C.green.text } },
       chf(kuePlanC), chf(kueIstC),
-      { content: sign(dC) + chf(dC), styles: { textColor: dC > 0 ? C.red.text : C.green.text } },
-      kueQuota !== null ? pct(kueQuota) : '–',
+      { content: sign(dC)+chf(dC), styles: { textColor: dC>0?C.red.text:C.green.text } },
+      kueQ !== null ? pct(kueQ) : '–',
     ]);
   }
   if (department === 'all') {
-    const dH = totIstH - totPlanH, dC = totIstC - totPlanC;
+    const dH=totIstH-totPlanH, dC=totIstC-totPlanC;
     deptRows.push([
-      { content: 'Total', styles: { fontStyle: 'bold', fillColor: [248, 250, 252] } },
+      { content: 'Total', styles: { fontStyle: 'bold', fillColor: [248,250,252] } },
       hrs(totPlanH), hrs(totIstH),
-      { content: sign(dH) + hrs(dH), styles: { textColor: dH > 0 ? C.red.text : C.green.text, fontStyle: 'bold' } },
+      { content: sign(dH)+hrs(dH), styles: { textColor: dH>0?C.red.text:C.green.text, fontStyle: 'bold' } },
       chf(totPlanC), chf(totIstC),
-      { content: sign(dC) + chf(dC), styles: { textColor: dC > 0 ? C.red.text : C.green.text, fontStyle: 'bold' } },
+      { content: sign(dC)+chf(dC), styles: { textColor: dC>0?C.red.text:C.green.text, fontStyle: 'bold' } },
       totQuota !== null
         ? { content: pct(totQuota), styles: { textColor: trafficPalette(weekStat).text, fontStyle: 'bold' } }
         : '–',
@@ -545,367 +639,281 @@ export function exportWeeklyReportPDF(params: WeeklyReportParams): void {
   }
 
   autoTable(doc, {
-    startY: y,
-    head: [['Abteilung', 'Plan Std.', 'Ist Std.', 'Diff. Std.', 'Plan CHF', 'Ist CHF', 'Diff. CHF', 'PKQ %']],
-    body: deptRows,
-    theme: 'plain',
+    startY: y, head: [['Abteilung','Plan Std.','Ist Std.','Diff. Std.','Plan CHF','Ist CHF','Diff. CHF','PKQ %']],
+    body: deptRows, theme: 'plain',
     headStyles: { fillColor: C.navy, textColor: [255,255,255], fontSize: 7.5, fontStyle: 'bold', cellPadding: 3 },
-    styles: { fontSize: 8, cellPadding: { top: 3, bottom: 3, left: 2, right: 2 } },
-    alternateRowStyles: { fillColor: [252, 252, 253] },
+    styles: { fontSize: 8, cellPadding: { top:3, bottom:3, left:2, right:2 } },
+    alternateRowStyles: { fillColor: [252,252,253] },
     columnStyles: {
-      0: { cellWidth: 22 },
-      1: { halign: 'right', cellWidth: 21 },
-      2: { halign: 'right', cellWidth: 21 },
-      3: { halign: 'right', cellWidth: 22 },
-      4: { halign: 'right', cellWidth: 25 },
-      5: { halign: 'right', cellWidth: 26 },
-      6: { halign: 'right', cellWidth: 26 },
-      7: { halign: 'right', cellWidth: 19 },
+      0:{cellWidth:22}, 1:{halign:'right',cellWidth:21}, 2:{halign:'right',cellWidth:21},
+      3:{halign:'right',cellWidth:22}, 4:{halign:'right',cellWidth:25},
+      5:{halign:'right',cellWidth:26}, 6:{halign:'right',cellWidth:26}, 7:{halign:'right',cellWidth:19},
     },
     margin: { left: ML, right: 14 },
   });
   y = (doc as any).lastAutoTable.finalY + 7;
 
-  // ── Section C: Daily Overview ─────────────────────────────────────────────
+  // Daily overview
   sectionLabel(doc, 'Tagesübersicht', ML, y, CW);
   y += 5;
 
   const dayRows = dayStats.map((d, i) => {
     const quota = dayQuotas[i];
-    const isOutlier = quota !== null && quota > pkqChartCap;
-    const qStatus = trafficStatus(quota, targetPercent);
-    const qPal    = trafficPalette(qStatus);
-    const diffC   = d.istCost - d.planCost;
-    const dayName = format(d.date, 'EEE, d.M.', { locale: de });
-
-    let pkqCell: ATableCell;
-    if (quota === null) {
-      pkqCell = { content: '–', styles: { textColor: C.muted } };
-    } else if (isOutlier) {
-      pkqCell = {
-        content: pct(quota) + ' !',
-        styles: { textColor: C.red.text, fontStyle: 'bold', fontSize: 6.5 },
-      };
-    } else {
-      pkqCell = {
-        content: pct(quota),
-        styles: { textColor: qPal.text, fontStyle: 'bold' },
-      };
-    }
-
+    const isOutlier = quota !== null && quota > pkqCap;
+    const qStat = trafficStatus(quota, targetPercent);
+    const qPal  = trafficPalette(qStat);
+    const diffC = d.istCost - d.planCost;
+    let pkqCell: ACell;
+    if (quota === null)    pkqCell = { content: '–', styles: { textColor: C.muted } };
+    else if (isOutlier)    pkqCell = { content: pct(quota)+'!', styles: { textColor: C.red.text, fontStyle:'bold', fontSize:6.5 } };
+    else                   pkqCell = { content: pct(quota), styles: { textColor: qPal.text, fontStyle:'bold' } };
     return [
-      dayName,
+      format(d.date, 'EEE, d.M.', { locale: de }),
       d.actualRevenue != null
-        ? { content: chf(d.actualRevenue), styles: { fontStyle: 'bold' } }
+        ? { content: chf(d.actualRevenue), styles: { fontStyle:'bold' } }
         : { content: '–', styles: { textColor: C.muted } },
-      hrs(d.planHours),
-      hrs(d.istHours),
-      chf(d.planCost),
+      hrs(d.planHours), hrs(d.istHours), chf(d.planCost),
       { content: chf(d.istCost), styles: { fontStyle: d.istCost > d.planCost ? 'bold' : 'normal' } },
-      {
-        content: sign(diffC) + chf(diffC),
-        styles: { textColor: diffC > 100 ? C.red.text : diffC < -100 ? C.green.text : C.muted },
-      },
+      { content: sign(diffC)+chf(diffC), styles: { textColor: diffC>100?C.red.text:diffC<-100?C.green.text:C.muted } },
       pkqCell,
     ];
   });
 
   autoTable(doc, {
-    startY: y,
-    head: [['Tag', 'Umsatz Ist', 'Plan Std.', 'Ist Std.', 'Plan CHF', 'Ist CHF', 'Diff. CHF', 'PKQ %']],
-    body: dayRows,
-    theme: 'plain',
-    headStyles: { fillColor: C.navy, textColor: [255,255,255], fontSize: 7.5, fontStyle: 'bold', cellPadding: 3 },
-    styles: { fontSize: 8, cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 } },
-    alternateRowStyles: { fillColor: [252, 252, 253] },
+    startY: y, head: [['Tag','Umsatz Ist','Plan Std.','Ist Std.','Plan CHF','Ist CHF','Diff. CHF','PKQ %']],
+    body: dayRows, theme: 'plain',
+    headStyles: { fillColor: C.navy, textColor: [255,255,255], fontSize: 7.5, fontStyle:'bold', cellPadding:3 },
+    styles: { fontSize:8, cellPadding:{ top:2.5, bottom:2.5, left:2, right:2 } },
+    alternateRowStyles: { fillColor: [252,252,253] },
     columnStyles: {
-      0: { cellWidth: 22 },
-      1: { halign: 'right', cellWidth: 28 },
-      2: { halign: 'right', cellWidth: 20 },
-      3: { halign: 'right', cellWidth: 20 },
-      4: { halign: 'right', cellWidth: 25 },
-      5: { halign: 'right', cellWidth: 25 },
-      6: { halign: 'right', cellWidth: 25 },
-      7: { halign: 'right', cellWidth: 17 },
+      0:{cellWidth:22}, 1:{halign:'right',cellWidth:28}, 2:{halign:'right',cellWidth:20},
+      3:{halign:'right',cellWidth:20}, 4:{halign:'right',cellWidth:25},
+      5:{halign:'right',cellWidth:25}, 6:{halign:'right',cellWidth:25}, 7:{halign:'right',cellWidth:17},
     },
     margin: { left: ML, right: 14 },
   });
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // PAGE 2
-  // ════════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PAGE 2  —  DASHBOARD
+  // ═══════════════════════════════════════════════════════════════════════════
   doc.addPage();
 
-  // Mini header strip
+  // Mini header
   doc.setFillColor(...C.navy);
   doc.rect(0, 0, W, 11, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(255,255,255);
   doc.text(`${restaurantName}  ·  Wochenreport Personal & Kosten  ·  ${kwFull}  ·  ${deptLabel}`, ML, 7.5);
   doc.setTextColor(0, 0, 0);
   y = 17;
 
-  // ── Section D: Critical Days ──────────────────────────────────────────────
-  sectionLabel(doc, 'Kritische Tage', ML, y, CW);
-  y += 5;
-
+  // ── Critical days: compact rows ──────────────────────────────────────────
   const criticalDays = dayStats
     .map((d, i) => {
       const quota = dayQuotas[i];
       const diffC = d.istCost - d.planCost;
       const diffH = d.istHours - d.planHours;
       const issues: string[] = [];
-      if (quota !== null && quota > targetPercent)
-        issues.push(`PKQ ${pct(quota)} (Ziel ${pct(targetPercent)})`);
-      if (diffC > 200)
-        issues.push(`${sign(diffC)}${chf(diffC)} über Plan`);
-      if (diffH > 3)
-        issues.push(`${sign(diffH)}${hrs(diffH)} Mehrstunden`);
-      if (d.actualRevenue !== null && d.actualRevenue < 5000 && d.istCost > 1500)
-        issues.push('Tiefer Umsatz bei hohen Kosten');
+      if (quota !== null && quota > targetPercent) issues.push(`PKQ ${pct(quota)} (Ziel ${pct(targetPercent)})`);
+      if (diffC > 200)  issues.push(`${sign(diffC)}${chf(diffC)} über Plan`);
+      if (diffH > 3)    issues.push(`${sign(diffH)}${hrs(diffH)} Mehrstunden`);
+      if (d.actualRevenue !== null && d.actualRevenue < 5000 && d.istCost > 1500) issues.push('Tiefer Umsatz');
       return { d, quota, issues, status: trafficStatus(quota, targetPercent) };
     })
     .filter(x => x.issues.length > 0)
-    .slice(0, 4); // cap at 4 to ensure page fit
+    .slice(0, 4);
+
+  sectionLabel(doc, 'Kritische Tage', ML, y, CW);
+  y += 5;
 
   if (criticalDays.length === 0) {
-    const pal = C.green;
-    doc.setFillColor(...pal.bg);
-    doc.setDrawColor(...pal.border);
+    doc.setFillColor(...C.green.bg);
+    doc.setDrawColor(...C.green.border);
     doc.setLineWidth(0.3);
-    doc.roundedRect(ML, y, CW, 9, 2, 2, 'FD');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.5);
-    doc.setTextColor(...pal.text);
-    doc.text('Keine kritischen Tage — Woche verlief im Plan', ML + 5, y + 6);
-    doc.setTextColor(0, 0, 0);
-    y += 14;
+    doc.roundedRect(ML, y, CW, 8, 1, 1, 'FD');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...C.green.text);
+    doc.text('Keine kritischen Tage — Woche verlief im Plan', ML + 5, y + 5.5);
+    doc.setTextColor(0,0,0);
+    y += 12;
   } else {
-    criticalDays.forEach(({ d, issues, status }) => {
-      const pal = trafficPalette(status);
-      const boxH = 8 + issues.length * 4.8;
-      doc.setFillColor(...pal.bg);
-      doc.setDrawColor(...pal.border);
-      doc.setLineWidth(0.3);
-      doc.roundedRect(ML, y, CW, boxH, 1.5, 1.5, 'FD');
-      // Left accent
-      doc.setFillColor(...pal.border);
-      doc.roundedRect(ML, y, 2.5, boxH, 1, 1, 'F');
-      doc.rect(ML + 1, y, 1.5, boxH, 'F');
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(...pal.text);
-      doc.text(format(d.date, 'EEEE, d. MMMM', { locale: de }), ML + 5, y + 5.5);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor(60, 60, 60);
-      issues.forEach((issue, ii) => {
-        doc.text('·  ' + issue, ML + 7, y + 9.5 + ii * 4.8);
-      });
-      y += boxH + 3;
+    criticalDays.forEach(({ d, quota, issues, status }) => {
+      drawCriticalDayRow(doc, ML, y, CW, d, quota, issues, status);
+      y += 11;
     });
     y += 3;
   }
 
-  // ── Section E: Charts ─────────────────────────────────────────────────────
-  sectionLabel(doc, 'Wochendiagramme', ML, y, CW);
+  // ── Chart section layout constants ───────────────────────────────────────
+  const CHART_COL_W  = CW * 0.63;      // ~115mm for charts
+  const INSIGHT_W    = CW * 0.33;      // ~60mm for insight cards
+  const COL_GAP      = CW * 0.04;      // ~7mm gap
+  const CHART_H      = 56;             // chart box height including labels
+  const CHART_SECTION_H = CHART_H + 14; // label + chart + gap
+
+  // ── Chart A: Plan vs Ist Costs ───────────────────────────────────────────
+  sectionLabel(doc, 'Tageskosten  Plan vs. Ist (CHF)', ML, y, CW);
   y += 6;
 
-  const CHART_H = 43;
-  const halfCW = CW / 2 - 3;
+  drawCostChart(doc, ML, y, CHART_COL_W, CHART_H, dayStats, targetPercent);
 
-  // Legend for Chart A
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(...C.navy);
-  doc.text('Plan vs. Ist Kosten (CHF)', ML, y);
-  doc.setFillColor(...C.slate.bar);
-  doc.rect(ML + CW / 2 - 22, y - 3.5, 5, 3, 'F');
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(...C.muted);
-  doc.text('Plan', ML + CW / 2 - 16, y - 1);
-  doc.setFillColor(...C.green.bar);
-  doc.rect(ML + CW / 2 - 8, y - 3.5, 5, 3, 'F');
-  doc.text('Ist (OK)', ML + CW / 2 - 2, y - 1);
+  // Cost insight cards
+  const sortedByCostDiff = [...dayStats].sort((a,b) => (b.istCost-b.planCost) - (a.istCost-a.planCost));
+  const worstCostDay   = sortedByCostDiff[0];
+  const bestCostDay    = sortedByCostDiff[sortedByCostDiff.length - 1];
+  const worstHoursDay  = [...dayStats].sort((a,b) => (b.istHours-b.planHours) - (a.istHours-a.planHours))[0];
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(...C.navy);
-  doc.text('Personalquote pro Tag (%)', ML + halfCW + 6, y);
-  y += 2;
+  const costCards: InsightCard[] = [
+    {
+      label: 'Hoechste Abweichung',
+      title: format(worstCostDay.date, 'EEEE', { locale: de }),
+      value: sign(worstCostDay.istCost-worstCostDay.planCost) + chf(worstCostDay.istCost-worstCostDay.planCost),
+      status: worstCostDay.istCost > worstCostDay.planCost ? 'red' : 'green',
+    },
+    {
+      label: 'Bester Tag (Kosten)',
+      title: format(bestCostDay.date, 'EEEE', { locale: de }),
+      value: sign(bestCostDay.istCost-bestCostDay.planCost) + chf(bestCostDay.istCost-bestCostDay.planCost),
+      status: bestCostDay.istCost <= bestCostDay.planCost ? 'green' : 'orange',
+    },
+    {
+      label: 'Meiste Mehrstunden',
+      title: format(worstHoursDay.date, 'EEEE', { locale: de }),
+      value: sign(worstHoursDay.istHours-worstHoursDay.planHours) + hrs(worstHoursDay.istHours-worstHoursDay.planHours),
+      status: worstHoursDay.istHours > worstHoursDay.planHours ? 'orange' : 'green',
+    },
+    {
+      label: 'Woche gesamt Diff.',
+      title: 'Personalkosten',
+      value: sign(totIstC-totPlanC) + chf(totIstC-totPlanC),
+      status: weekStat,
+    },
+  ];
+  drawInsightCards(doc, ML + CHART_COL_W + COL_GAP, y, INSIGHT_W, CHART_H, costCards);
 
-  // Chart A: Plan vs Ist costs
-  drawBarChart(doc, {
-    x: ML, y, w: halfCW, h: CHART_H,
-    planValues: dayStats.map(d => d.planCost),
-    istValues:  dayStats.map(d => d.istCost),
-    labels: dayLabels,
-    unit: '',
-  });
+  y += CHART_SECTION_H;
 
-  // Chart B: PKQ per day
-  const validQuotas = dayQuotas.map(q => q ?? 0);
-  drawBarChart(doc, {
-    x: ML + halfCW + 6, y, w: halfCW, h: CHART_H,
-    istValues: validQuotas,
-    labels: dayLabels,
-    targetValue: targetPercent,
-    maxCap: pkqChartCap,
-    unit: '%',
-    isPercentage: true,
-  });
+  // ── Chart B: PKQ per day ─────────────────────────────────────────────────
+  sectionLabel(doc, 'Personalquote pro Tag  (PKQ %)', ML, y, CW);
+  y += 6;
 
-  y += CHART_H + 10;
+  drawPKQChart(doc, ML, y, CHART_COL_W, CHART_H, dayStats, dayQuotas, targetPercent);
 
-  // Outlier legend (if any)
-  if (dayQuotas.some(q => q !== null && q > pkqChartCap)) {
-    doc.setFont('helvetica', 'italic');
-    doc.setFontSize(6.5);
-    doc.setTextColor(...C.red.text);
-    doc.text(
-      '!  Tage mit Ausreisser-PKQ (Umsatz zu tief): Wert wird im Chart begrenzt dargestellt, echter Wert steht in Tagesübersicht.',
-      ML, y
-    );
-    y += 6;
+  // PKQ insight cards
+  const validQuotaDays = dayStats.filter((_,i) => dayQuotas[i] !== null && dayQuotas[i]! <= pkqCap);
+  const bestPKQDay  = validQuotaDays.sort((a,b) => {
+    const qa = dayQuotas[dayStats.indexOf(a)]!, qb = dayQuotas[dayStats.indexOf(b)]!;
+    return qa - qb;
+  })[0];
+  const worstPKQDay = validQuotaDays[validQuotaDays.length - 1];
+  const outlierCount = dayQuotas.filter(q => q !== null && q > pkqCap).length;
+
+  const pkqCards: InsightCard[] = [];
+  if (bestPKQDay) {
+    const bq = dayQuotas[dayStats.indexOf(bestPKQDay)]!;
+    pkqCards.push({ label: 'Beste PKQ', title: format(bestPKQDay.date, 'EEEE', { locale: de }), value: pct(bq), status: trafficStatus(bq, targetPercent) });
+  }
+  if (worstPKQDay && worstPKQDay !== bestPKQDay) {
+    const wq = dayQuotas[dayStats.indexOf(worstPKQDay)]!;
+    pkqCards.push({ label: 'Schlechteste PKQ', title: format(worstPKQDay.date, 'EEEE', { locale: de }), value: pct(wq), status: trafficStatus(wq, targetPercent) });
+  }
+  pkqCards.push({ label: 'Zielquote', title: 'Vorgabe', value: pct(targetPercent), status: 'none' });
+  if (outlierCount > 0) {
+    pkqCards.push({ label: 'Ausreisser (Tiefer Umsatz)', title: outlierCount + ' Tag' + (outlierCount>1?'e':'') + ' im Chart begrenzt', value: 'Echt-Wert in Tabelle', status: 'orange' });
+  } else {
+    pkqCards.push({ label: 'PKQ-Status Woche', title: weekStat === 'green' ? 'Im Ziel' : weekStat === 'orange' ? 'Knapp' : 'Ueberschritten', value: totQuota !== null ? pct(totQuota) : '–', status: weekStat });
   }
 
-  // ── Section F: Insights ───────────────────────────────────────────────────
-  sectionLabel(doc, 'Erkenntnisse', ML, y, CW);
+  drawInsightCards(doc, ML + CHART_COL_W + COL_GAP, y, INSIGHT_W, CHART_H, pkqCards);
+  y += CHART_SECTION_H;
+
+  // ── Erkenntnisse + Empfehlungen (compact, grouped) ───────────────────────
+  sectionLabel(doc, 'Erkenntnisse & Empfehlungen', ML, y, CW);
   y += 5;
 
-  const insights: string[] = [];
-  if (totQuota !== null) {
-    if (totQuota <= targetPercent)
-      insights.push(`Personalquote Woche: ${pct(totQuota)} — im Ziel (Ziel: ${pct(targetPercent)}).`);
-    else
-      insights.push(`Personalquote Woche: ${pct(totQuota)} — Ziel von ${pct(targetPercent)} überschritten.`);
-  }
+  // Build insight bullets
+  const bullets: { text: string; status: TrafficStatus }[] = [];
+  if (totQuota !== null)
+    bullets.push({ text: totQuota <= targetPercent
+      ? `PKQ Woche ${pct(totQuota)} — im Ziel (${pct(targetPercent)}).`
+      : `PKQ Woche ${pct(totQuota)} — Ziel ${pct(targetPercent)} ueberschritten.`,
+      status: weekStat });
   const totDiffH = totIstH - totPlanH;
   if (Math.abs(totDiffH) > 2)
-    insights.push(totDiffH > 0
-      ? `Total ${hrs(totDiffH)} mehr Ist-Stunden als geplant.`
-      : `Total ${hrs(Math.abs(totDiffH))} weniger Ist-Stunden als geplant.`
-    );
+    bullets.push({ text: totDiffH > 0 ? `${hrs(totDiffH)} Mehrstunden gesamt.` : `${hrs(Math.abs(totDiffH))} unter Plan.`, status: totDiffH > 0 ? 'orange' : 'green' });
   if (department === 'all') {
-    const sdH = svcIstH - svcPlanH;
-    const kdH = kueIstH - kuePlanH;
-    if (Math.abs(sdH) > 1.5)
-      insights.push(sdH > 0 ? `Service: ${hrs(sdH)} Mehrstunden.` : `Service: ${hrs(Math.abs(sdH))} unter Plan.`);
-    if (Math.abs(kdH) > 1.5)
-      insights.push(kdH > 0 ? `Küche: ${hrs(kdH)} Mehrstunden.` : `Küche: ${hrs(Math.abs(kdH))} unter Plan.`);
+    const sdH = svcIstH-svcPlanH, kdH = kueIstH-kuePlanH;
+    if (Math.abs(sdH) > 1.5) bullets.push({ text: sdH > 0 ? `Service: ${hrs(sdH)} Mehrstunden.` : `Service: ${hrs(Math.abs(sdH))} unter Plan.`, status: sdH > 0 ? 'orange' : 'green' });
+    if (Math.abs(kdH) > 1.5) bullets.push({ text: kdH > 0 ? `Kueche: ${hrs(kdH)} Mehrstunden.` : `Kueche: ${hrs(Math.abs(kdH))} unter Plan.`, status: kdH > 0 ? 'orange' : 'green' });
   }
-  const bestDay = [...dayStats].filter(d => d.actualRevenue != null)
-    .sort((a, b) => (b.actualRevenue ?? 0) - (a.actualRevenue ?? 0))[0];
-  if (bestDay?.actualRevenue) {
-    const bq = bestDay.istCost / bestDay.actualRevenue * 100;
-    insights.push(
-      `Stärkster Tag: ${format(bestDay.date, 'EEEE', { locale: de })} — Umsatz ${chf(bestDay.actualRevenue)}, PKQ ${pct(bq)}.`
-    );
-  }
-  if (insights.length === 0) insights.push('Keine besonderen Erkenntnisse für diese Woche.');
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(40, 40, 40);
-  insights.slice(0, 5).forEach(text => {
-    const lines = doc.splitTextToSize('·  ' + text, CW - 4);
-    doc.text(lines, ML + 2, y);
-    y += lines.length * 4.8 + 0.8;
-  });
-  y += 5;
-
-  // ── Section G: Recommendations (grouped) ─────────────────────────────────
-  sectionLabel(doc, 'Empfehlungen für nächste Woche', ML, y, CW);
-  y += 5;
-
+  // Build recommendation groups
   interface RecGroup { label: string; color: RGB; items: string[] }
   const groups: RecGroup[] = [
     { label: 'Gesamt',          color: C.navy,       items: [] },
     { label: 'Service',         color: C.indigo,     items: [] },
-    { label: 'Küche',           color: [234,88,12],  items: [] },
+    { label: 'Kueche',          color: [217,119,6],  items: [] },
     { label: 'Kritische Tage',  color: C.red.text,   items: [] },
   ];
-
   const totDiffC = totIstC - totPlanC;
-  if (totDiffC > 300)
-    groups[0].items.push(`Personalkosten waren ${chf(totDiffC)} über Plan — Besetzung reduzieren.`);
-  if (totQuota !== null && totQuota > targetPercent)
-    groups[0].items.push(`Zielquote ${pct(targetPercent)} anstreben — aktuell ${pct(totQuota)}.`);
-
+  if (totDiffC > 300) groups[0].items.push(`Kosten ${chf(totDiffC)} ueber Plan — Besetzung reduzieren.`);
+  if (totQuota !== null && totQuota > targetPercent) groups[0].items.push(`Zielquote ${pct(targetPercent)} anstreben (aktuell ${pct(totQuota)}).`);
   if (department === 'all' || department === 'service') {
-    const svcDiff = svcIstC - svcPlanC;
-    if (svcDiff > 200)
-      groups[1].items.push(`Mehrkosten ${chf(svcDiff)} — Aushilfen nur an starken Tagen einsetzen.`);
-    const svcDiffH2 = svcIstH - svcPlanH;
-    if (svcDiffH2 > 5)
-      groups[1].items.push(`Planstunden um ca. ${hrs(svcDiffH2)} reduzieren.`);
+    const sd = svcIstC-svcPlanC, sdH2 = svcIstH-svcPlanH;
+    if (sd > 200) groups[1].items.push(`Mehrkosten ${chf(sd)} — Aushilfen nur an starken Tagen.`);
+    if (sdH2 > 5) groups[1].items.push(`Planstunden um ca. ${hrs(sdH2)} reduzieren.`);
   }
   if (department === 'all' || department === 'küche') {
-    const kueDiff = kueIstC - kuePlanC;
-    if (kueDiff > 200)
-      groups[2].items.push(`Mehrkosten ${chf(kueDiff)} — Frühschichten prüfen.`);
+    const kd = kueIstC-kuePlanC;
+    if (kd > 200) groups[2].items.push(`Mehrkosten ${chf(kd)} — Fruehschichten pruefen.`);
   }
-
   dayStats.forEach((d, i) => {
     const quota = dayQuotas[i];
     const dayName = format(d.date, 'EEEE', { locale: de });
     const istDiffH = d.istHours - d.planHours;
-    if (quota !== null && quota > targetPercent + 5 && d.actualRevenue !== null && d.actualRevenue > 500)
-      groups[3].items.push(`${dayName}: PKQ ${pct(quota)} — Besetzung anpassen.`);
-    if (istDiffH > 4)
-      groups[3].items.push(`${dayName}: ${hrs(istDiffH)} Mehrstunden — Dienstplan prüfen.`);
-    if (d.actualRevenue !== null && d.actualRevenue < 5000 && d.istCost > 1200)
-      groups[3].items.push(`${dayName}: Tiefer Umsatz — Minimalbesetzung prüfen.`);
+    if (quota !== null && quota > targetPercent+5 && (d.actualRevenue ?? 0) > 500) groups[3].items.push(`${dayName}: PKQ ${pct(quota)} — Besetzung anpassen.`);
+    if (istDiffH > 4) groups[3].items.push(`${dayName}: ${hrs(istDiffH)} Mehrstunden — Dienstplan pruefen.`);
   });
 
+  // Render bullets (2-column: insights left, recs right)
+  const colW2 = (CW - 4) / 2;
+
+  // Left: insights
+  let yl = y, yr = y;
+  bullets.slice(0, 5).forEach(b => {
+    const pal = trafficPalette(b.status);
+    doc.setFillColor(...pal.bar);
+    doc.circle(ML + 2, yl + 1.5, 1.2, 'F');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(40,40,40);
+    const lines = doc.splitTextToSize(b.text, colW2 - 6);
+    doc.text(lines, ML + 5, yl);
+    yl += lines.length * 4.5 + 2;
+  });
+
+  // Right: grouped recs
   const activeGroups = groups.filter(g => g.items.length > 0);
   if (activeGroups.length === 0) {
-    doc.setFont('helvetica', 'italic');
-    doc.setFontSize(8);
-    doc.setTextColor(...C.muted);
-    doc.text('Keine spezifischen Empfehlungen — Woche verlief im Plan.', ML + 2, y);
-    y += 7;
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(...C.muted);
+    doc.text('Keine Empfehlungen — Woche im Plan.', ML + colW2 + 4, yr);
   } else {
-    const recBoxH = activeGroups.reduce((s, g) =>
-      s + 6.5 + g.items.slice(0, 3).reduce((ss, item) =>
-        ss + doc.splitTextToSize('·  ' + item, CW - 40).length * 4.5, 0
-      ) + 3, 0
-    ) + 6;
-
-    doc.setFillColor(255, 251, 235);
-    doc.setDrawColor(...C.orange.border);
-    doc.setLineWidth(0.3);
-    const recBoxY = y - 2;
-    doc.roundedRect(ML, recBoxY, CW, recBoxH, 2, 2, 'FD');
-    y += 3;
-
     activeGroups.forEach(grp => {
-      // Group label
-      doc.setFillColor(...grp.color);
-      doc.rect(ML + 3, y - 1, CW - 6, 0.5, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
-      doc.setTextColor(...grp.color);
-      doc.text(grp.label, ML + 5, y + 3.5);
-      y += 6.5;
-
-      grp.items.slice(0, 3).forEach(item => {
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7.5);
-        doc.setTextColor(60, 40, 0);
-        const lines = doc.splitTextToSize('·  ' + item, CW - 12);
-        doc.text(lines, ML + 7, y);
-        y += lines.length * 4.5 + 1;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...grp.color);
+      doc.text(grp.label, ML + colW2 + 4, yr + 1);
+      yr += 5;
+      grp.items.slice(0, 2).forEach(item => {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(40,40,40);
+        const lines = doc.splitTextToSize('·  ' + item, colW2 - 4);
+        doc.text(lines, ML + colW2 + 5, yr);
+        yr += lines.length * 4.2 + 1;
       });
-      y += 2;
+      yr += 2;
     });
   }
 
-  // ── Footer on both pages ──────────────────────────────────────────────────
+  // Divider between columns
+  doc.setDrawColor(...C.border);
+  doc.setLineWidth(0.25);
+  doc.line(ML + colW2 + 2, y - 1, ML + colW2 + 2, Math.max(yl, yr) + 2);
+
+  // ── Footer ────────────────────────────────────────────────────────────────
   const totalPages = doc.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
@@ -914,14 +922,11 @@ export function exportWeeklyReportPDF(params: WeeklyReportParams): void {
     doc.setDrawColor(...C.border);
     doc.setLineWidth(0.3);
     doc.line(0, H - 10, W, H - 10);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(...C.muted);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(...C.muted);
     doc.text(`${restaurantName}  ·  ${kwFull}  ·  ${deptLabel}`, ML, H - 3.5);
     doc.text(`Seite ${p} / ${totalPages}`, MR, H - 3.5, { align: 'right' });
   }
 
-  // ── Save ─────────────────────────────────────────────────────────────────
-  const fileName = `Wochenreport_KW${kw}_${format(weekStart, 'yyyy')}_${deptLabel.replace('ü', 'ue')}.pdf`;
+  const fileName = `Wochenreport_KW${kw}_${format(weekStart,'yyyy')}_${deptLabel.replace('ü','ue')}.pdf`;
   doc.save(fileName);
 }
