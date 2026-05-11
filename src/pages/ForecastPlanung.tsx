@@ -12,7 +12,7 @@
  * Sektion ist eigenständig — bestehende Reporting-Seiten unverändert.
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   format, addWeeks, subWeeks,
   startOfWeek, endOfWeek, eachDayOfInterval,
@@ -22,7 +22,7 @@ import { de } from 'date-fns/locale';
 import {
   ChevronLeft, ChevronRight, TrendingUp, Target, Clock,
   DollarSign, AlertTriangle, CheckCircle2, Zap,
-  Users, ChefHat, Utensils, Calendar,
+  Users, ChefHat, Utensils, Calendar, Pencil, Check, X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -38,6 +38,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { loadEmployees, loadScheduleForMonth, DaySchedule } from '@/lib/supabase-db';
 import { Employee } from '@/types/personnel';
 import { resolveZielwert } from '@/lib/zielwerte-store';
+import { safeUpsertDailyBudgets } from '@/lib/supabase-kv';
 
 // ─── Typen ───────────────────────────────────────────────────────────────────
 
@@ -189,13 +190,50 @@ const KPICard = ({ label, value, sub, icon, status = 'none', large }: KPICardPro
 interface DayCardProps {
   day: DayForecast;
   target: number;
+  onEditBudget?: (dateStr: string, value: number) => Promise<void>;
 }
 
-const DayCard = ({ day, target }: DayCardProps) => {
+const DayCard = ({ day, target, onEditBudget }: DayCardProps) => {
   const dayName   = format(day.date, 'EEEE', { locale: de });
   const dateLabel = format(day.date, 'd. MMMM', { locale: de });
   const isToday   = format(day.date, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
   const diffPct   = day.planPKQ !== null ? day.planPKQ - target : null;
+
+  const [editing, setEditing]   = useState(false);
+  const [inputVal, setInputVal] = useState('');
+  const [saving,  setSaving]    = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const startEdit = () => {
+    const current = day.revenueSource === 'budget' && day.planRevenue !== null
+      ? Math.round(day.planRevenue).toString()
+      : '';
+    setInputVal(current);
+    setEditing(true);
+    setTimeout(() => inputRef.current?.select(), 0);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setInputVal('');
+  };
+
+  const commitEdit = async () => {
+    const parsed = parseInt(inputVal.replace(/['\s]/g, ''), 10);
+    if (!onEditBudget || isNaN(parsed) || parsed < 0) { cancelEdit(); return; }
+    setSaving(true);
+    await onEditBudget(day.dateStr, parsed);
+    setSaving(false);
+    setEditing(false);
+    setInputVal('');
+  };
+
+  const handleKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter')  { e.preventDefault(); commitEdit(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+  };
+
+  const canEdit = !!onEditBudget;
 
   return (
     <Card className={cn(
@@ -216,17 +254,68 @@ const DayCard = ({ day, target }: DayCardProps) => {
 
         {/* KPI rows */}
         <div className="space-y-1.5">
-          {day.planRevenue !== null && (
-            <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">Budget Umsatz</span>
-              <span className="font-semibold tabular-nums">
-                {fmtCHF(day.planRevenue)}
-                {day.revenueSource === 'historical' && (
-                  <span className="text-muted-foreground font-normal ml-1">~</span>
-                )}
-              </span>
-            </div>
-          )}
+          {/* Budget Umsatz row — inline editable */}
+          <div className="text-xs">
+            {editing ? (
+              <div className="flex items-center gap-1">
+                <input
+                  ref={inputRef}
+                  type="number"
+                  min={0}
+                  step={50}
+                  value={inputVal}
+                  onChange={e => setInputVal(e.target.value)}
+                  onKeyDown={handleKey}
+                  disabled={saving}
+                  className="w-full rounded border border-primary bg-background px-1.5 py-0.5 text-xs font-semibold tabular-nums focus:outline-none focus:ring-1 focus:ring-primary"
+                  placeholder="CHF"
+                  autoFocus
+                />
+                <button
+                  onClick={commitEdit}
+                  disabled={saving}
+                  className="flex-shrink-0 rounded p-0.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-950/30 disabled:opacity-40"
+                  title="Speichern"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={cancelEdit}
+                  disabled={saving}
+                  className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted/50 disabled:opacity-40"
+                  title="Abbrechen"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="group flex items-center justify-between">
+                <span className="text-muted-foreground">Budget Umsatz</span>
+                <div className="flex items-center gap-1">
+                  {day.planRevenue !== null ? (
+                    <span className="font-semibold tabular-nums">
+                      {fmtCHF(day.planRevenue)}
+                      {day.revenueSource === 'historical' && (
+                        <span className="text-muted-foreground font-normal ml-1">~</span>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground italic">—</span>
+                  )}
+                  {canEdit && (
+                    <button
+                      onClick={startEdit}
+                      className="ml-0.5 rounded p-0.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-muted/50 hover:text-foreground transition-opacity"
+                      title="Budget bearbeiten"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="flex justify-between text-xs">
             <span className="text-muted-foreground">Geplante Kosten</span>
             <span className="font-bold tabular-nums">{fmtCHF(day.planCost)}</span>
@@ -298,6 +387,9 @@ const ForecastPlanung = () => {
   const { tenantId, tenantKey } = useTenant();
   const { isAdmin, allowedDepartment, canSeePersonnelCostTotals } = usePermissions();
 
+  // ── Budget-Refresh-Trigger (nach inline Edit) ──────────────────────────────
+  const [refreshBudget, setRefreshBudget] = useState(0);
+
   // ── Woche navigieren (default: nächste Woche) ──────────────────────────────
   const [weekOffset, setWeekOffset] = useState(1); // 1 = next week
   const weekBase  = addWeeks(today, weekOffset);
@@ -313,10 +405,18 @@ const ForecastPlanung = () => {
   const [loading,      setLoading]      = useState(true);
 
   // dailyBudgets aus localStorage (immer tenant-korrekt)
+  // refreshBudget-Zähler erzwingt Neueinlesen nach inline Edit
   const dailyBudgets = useMemo<Record<string, DayBudget>>(() => {
     try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
     catch { return {}; }
-  }, [tenantKey, weekOffset]);
+  }, [tenantKey, weekOffset, refreshBudget]);
+
+  // ── Inline Budget-Edit speichern ────────────────────────────────────────────
+  const handleEditBudget = useCallback(async (dateStr: string, value: number) => {
+    const storageKey = tenantKey('dailyBudgets');
+    await safeUpsertDailyBudgets(storageKey, { [dateStr]: { plannedRevenue: value } });
+    setRefreshBudget(n => n + 1);
+  }, [tenantKey]);
 
   // Target-PKQ (resolveZielwert)
   const target = useMemo(() => {
@@ -717,7 +817,12 @@ const ForecastPlanung = () => {
             </h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
               {forecasts.map(d => (
-                <DayCard key={d.dateStr} day={d} target={target} />
+                <DayCard
+                  key={d.dateStr}
+                  day={d}
+                  target={target}
+                  onEditBudget={isAdmin ? handleEditBudget : undefined}
+                />
               ))}
             </div>
           </div>
