@@ -1,12 +1,24 @@
 /**
- * Mirus PDF Parser — Monatsbericht Arbeitzeiten
+ * Mirus PDF Parser — Monatsbericht Arbeitszeiten
  * ================================================
- * Liest Mirus-Monatsblätter (z. B. "Arbeitzeiten Januar 2026 OLIV.pdf")
+ * Liest Mirus-Monatsblätter (z.B. "Arbeitszeiten Januar 2026 OLIV.pdf")
  * und extrahiert:
  *   - Dokumentkopf (Monat, Jahr, Restaurant, Erstellungsdatum)
  *   - Pro Mitarbeiter: Stammdaten + Tageszeilen + Totale
  *
  * Kein Schreibvorgang — rein diagnostisch.
+ *
+ * Mirus-Seitenstruktur pro Mitarbeiter:
+ *   "Name / Vorname  Müller  Peter"
+ *   "Wöchentliche Arbeitszeit in Stunden  42.0"
+ *   "Kostenstelle  Service"
+ *   "Arbeitsverhältnis  Vollzeit"
+ *   "01.02.  So  08:00  17:00  0:30  8:30"   (Tageszeile)
+ *   …
+ *   "TOTAL  168:30"
+ *   "Zeitzuschlag  2:00"
+ *   "Überzeit  …"
+ *   "Unterschrift ______"
  */
 
 import * as pdfjsLib from 'pdfjs-dist';
@@ -34,13 +46,13 @@ export interface MirusLine {
 export interface MirusDayRow {
   lineText: string;
   lineIndex: number;
-  date: string | null;         // "01.01.2026" oder "01.01"
-  weekday: string | null;      // "Mo" | "Di" | ... | "So"
+  date: string | null;
+  weekday: string | null;
   timeBlocks: { from: string; to: string }[];
-  pause: string | null;        // "0:30"
-  totalHours: string | null;   // "7:30"
-  absenceCodes: string[];      // ["FE"], ["KR"], ["FR"], …
-  nightSupplement: boolean;    // "N" Markierung
+  pause: string | null;
+  totalHours: string | null;
+  absenceCodes: string[];
+  nightSupplement: boolean;
   remark: string | null;
   confidence: 'high' | 'medium' | 'low';
   uncertain: boolean;
@@ -61,9 +73,9 @@ export interface MirusEmployee {
   name: string | null;
   personalnummer: string | null;
   kostenstelle: string | null;
-  department: string | null;     // "service" | "küche" | "andere" | null
-  employment: string | null;     // "Vollzeit" | "Teilzeit" | …
-  weeklyHours: string | null;    // "42.0"
+  department: string | null;
+  employment: string | null;
+  weeklyHours: string | null;
   dayRows: MirusDayRow[];
   totals: MirusTotals;
   rawLines: string[];
@@ -92,13 +104,13 @@ export interface MirusParsedDocument {
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
-const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So',
-                  'MO', 'DI', 'MI', 'DO', 'FR', 'SA', 'SO',
-                  'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
+const WEEKDAYS_SHORT = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+const WEEKDAYS_SHORT_UPPER = WEEKDAYS_SHORT.map(w => w.toUpperCase());
 
 const ABSENCE_CODES = [
-  'FE', 'FR', 'KR', 'UN', 'UE', 'GF', 'AB', 'MU', 'MA', 'MI',
-  'BU', 'JU', 'KO', 'AZ', 'ML', 'UU', 'SO', 'BL', 'ZA', 'NU', 'WK',
+  'FE', 'FR', 'KR', 'UN', 'UE', 'GF', 'AB', 'MU', 'MA',
+  'BU', 'JU', 'KO', 'AZ', 'ML', 'UU', 'BL', 'ZA', 'NU', 'WK',
+  'KI', 'SU', 'FL',
 ];
 
 const MONTH_MAP: Record<string, number> = {
@@ -124,7 +136,7 @@ const MONTH_NAMES_DE = [
 // ─── Hilfsfunktionen ──────────────────────────────────────────────────────────
 
 function parseTimeHHMM(s: string): string | null {
-  const m = s.match(/\b(\d{1,2}):(\d{2})\b/);
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
   if (!m) return null;
   const h = parseInt(m[1]);
   const min = parseInt(m[2]);
@@ -132,57 +144,109 @@ function parseTimeHHMM(s: string): string | null {
   return `${String(h).padStart(2, '0')}:${m[2]}`;
 }
 
+/**
+ * Alle HH:MM-Werte aus einem Text extrahieren, in Reihenfolge.
+ */
+function allTimesInText(text: string): string[] {
+  return [...text.matchAll(/\b(\d{1,2}:\d{2})\b/g)].map(m => m[1]);
+}
+
+/**
+ * Zeitblöcke extrahieren.
+ * Strategie 1: explizite Range "HH:MM - HH:MM"
+ * Strategie 2: Mirus-Spalten-Format — erste zwei Zeiten >= 05:xx als From/To,
+ *              Rest (kleine Werte) als Pause/Total.
+ */
 function extractTimeBlocks(text: string): { from: string; to: string }[] {
   const blocks: { from: string; to: string }[] = [];
-  const re = /(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})/g;
+
+  // Strategie 1: explizite Range mit Bindestrich
+  const rangeRe = /(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})/g;
   let m;
-  while ((m = re.exec(text)) !== null) {
+  while ((m = rangeRe.exec(text)) !== null) {
     const from = parseTimeHHMM(m[1]);
     const to   = parseTimeHHMM(m[2]);
     if (from && to) blocks.push({ from, to });
   }
+  if (blocks.length > 0) return blocks;
+
+  // Strategie 2: Mirus-Spalten (Zellen nebeneinander ohne Dash)
+  // Arbeitsbeginn und -ende sind typischerweise >= 05:00
+  const times = allTimesInText(text);
+  const workTimes = times.filter(t => {
+    const h = parseInt(t.split(':')[0]);
+    return h >= 5;  // echte Arbeitszeiten, nicht Pause (0:30) oder kurze Totale
+  });
+
+  if (workTimes.length >= 2) {
+    const from = parseTimeHHMM(workTimes[0]);
+    const to   = parseTimeHHMM(workTimes[1]);
+    if (from && to) blocks.push({ from, to });
+  }
+
   return blocks;
 }
 
+/**
+ * Absenzcodes erkennen — nur als eigenständige Tokens (nicht Teilwort).
+ */
 function extractAbsenceCodes(text: string): string[] {
   const found: string[] = [];
   for (const code of ABSENCE_CODES) {
-    const re = new RegExp(`\\b${code}\\b`);
-    if (re.test(text)) found.push(code);
+    // Wort-Grenze, case-sensitive für 2-Buchstaben-Codes
+    if (new RegExp(`(?<![A-Za-z])${code}(?![A-Za-z])`).test(text)) {
+      found.push(code);
+    }
   }
   return found;
 }
 
+/**
+ * Pause extrahieren — kleine Zeitwerte (0:xx oder 1:xx).
+ */
 function extractPause(text: string): string | null {
-  // Look for pause after time blocks — usually a standalone HH:MM or H:MM
-  // Context: last value before total hours, or labeled "Pause"
-  const m = text.match(/Pause\s*:?\s*(\d{1,3}:\d{2})/i);
-  if (m) return m[1];
-  // Look for standalone short time values — often pause is expressed as 0:30
-  const pausePatterns = text.match(/\b(0:\d{2}|1:\d{2})\b/g);
-  if (pausePatterns && pausePatterns.length > 0) return pausePatterns[0];
+  // Explicit label
+  const labeled = text.match(/Pause\s*:?\s*(\d{1,3}:\d{2})/i);
+  if (labeled) return labeled[1];
+
+  // Erster Zeitwert mit Stunden 0 oder 1 — typisch für Pause
+  const times = allTimesInText(text);
+  for (const t of times) {
+    const h = parseInt(t.split(':')[0]);
+    if (h === 0 || h === 1) return t;
+  }
   return null;
 }
 
-function extractHoursValue(text: string): string | null {
-  // Total hours: typically the last HH:MM or H:MM that's > 1:00 on a day row
-  const all = [...text.matchAll(/\b(\d{1,3}:\d{2})\b/g)];
-  if (all.length === 0) return null;
-  // Prefer values > 2:00 (actual work hours, not pause)
-  for (let i = all.length - 1; i >= 0; i--) {
-    const val = all[i][1];
-    const [h] = val.split(':').map(Number);
-    if (h >= 2) return val;
+/**
+ * Totalstunden extrahieren — letzter Zeitwert >= 2:00 (echter Arbeitstag),
+ * oder der einzige Wert wenn nichts anderes passt.
+ */
+function extractTotalHours(text: string, timeBlocks: { from: string; to: string }[]): string | null {
+  const usedTimes = new Set(timeBlocks.flatMap(b => [b.from, b.to]));
+  const times = allTimesInText(text).filter(t => !usedTimes.has(t) && !usedTimes.has(parseTimeHHMM(t) ?? ''));
+
+  // Bevorzuge Werte >= 2:00 (echter Arbeitstag) und < 24:00
+  for (let i = times.length - 1; i >= 0; i--) {
+    const h = parseInt(times[i].split(':')[0]);
+    if (h >= 2 && h < 24) return times[i];
   }
-  return all[all.length - 1][1];
+  if (times.length > 0) return times[times.length - 1];
+  return null;
 }
 
+/**
+ * Wochentag aus Text, Rückgabe immer als 2-Buchstaben-Kürzel.
+ */
 function detectWeekday(text: string): string | null {
-  for (const d of WEEKDAYS) {
-    const re = new RegExp(`\\b${d}\\b`, 'i');
-    if (re.test(text)) {
-      // Normalise to short form
-      return d.slice(0, 2).charAt(0).toUpperCase() + d.slice(1, 2).toLowerCase();
+  // Suche nur nach eigenständigen 2-Buchstaben-Abkürzungen
+  for (const wd of WEEKDAYS_SHORT) {
+    if (new RegExp(`(?<![A-Za-z])${wd}(?![A-Za-z])`).test(text)) return wd;
+  }
+  // Uppercase-Varianten
+  for (const wd of WEEKDAYS_SHORT_UPPER) {
+    if (new RegExp(`(?<![A-Za-z])${wd}(?![A-Za-z])`).test(text)) {
+      return wd.charAt(0) + wd.charAt(1).toLowerCase();
     }
   }
   return null;
@@ -190,14 +254,13 @@ function detectWeekday(text: string): string | null {
 
 function detectDepartment(text: string): string | null {
   const lower = text.toLowerCase();
-  if (lower.includes('service') || lower.includes('saal')) return 'service';
-  if (lower.includes('küche') || lower.includes('kueche') || lower.includes('kitchen')) return 'küche';
-  if (lower.includes('bar') || lower.includes('bistro')) return 'service';
-  if (lower.includes('lieferung') || lower.includes('delivery')) return 'küche';
+  if (lower.includes('service') || lower.includes('saal') || lower.includes('restaurant')) return 'service';
+  if (lower.includes('küche') || lower.includes('kueche') || lower.includes('kitchen') || lower.includes('cuisine')) return 'küche';
+  if (lower.includes('bar') || lower.includes('bistro') || lower.includes('café') || lower.includes('cafe')) return 'service';
   return null;
 }
 
-// ─── PDF Text-Extraktion (gleicher Ansatz wie pdf-import-engine) ──────────────
+// ─── PDF Text-Extraktion ──────────────────────────────────────────────────────
 
 async function extractAllLines(file: File): Promise<MirusLine[]> {
   const buffer = await file.arrayBuffer();
@@ -217,19 +280,22 @@ async function extractAllLines(file: File): Promise<MirusLine[]> {
       const x    = item.transform[4];
       const yRaw = item.transform[5];
 
+      // Y-Toleranz: Items innerhalb von 4 Punkten gelten als gleiche Zeile
       let matchedY: number | null = null;
       for (const existY of lineMap.keys()) {
-        if (Math.abs(existY - yRaw) <= 3) { matchedY = existY; break; }
+        if (Math.abs(existY - yRaw) <= 4) { matchedY = existY; break; }
       }
       const key = matchedY ?? Math.round(yRaw);
       if (!lineMap.has(key)) lineMap.set(key, []);
       lineMap.get(key)!.push({ x, y: yRaw, text: item.str });
     }
 
+    // Oben nach unten sortieren (PDF: höhere Y = weiter oben)
     const sortedYs = Array.from(lineMap.keys()).sort((a, b) => b - a);
     for (const y of sortedYs) {
       const items = lineMap.get(y)!.sort((a, b) => a.x - b.x);
-      const text  = items.map(i => i.text).join('  ').replace(/\s{3,}/g, '  ').trim();
+      // Einzelne Zellen mit 2 Leerzeichen verbinden, mehrfache Spaces komprimieren
+      const text = items.map(i => i.text).join('  ').replace(/\s{3,}/g, '  ').trim();
       if (text) allLines.push({ y, items, text, pageNum: p });
     }
   }
@@ -237,14 +303,11 @@ async function extractAllLines(file: File): Promise<MirusLine[]> {
   return allLines;
 }
 
-// ─── Dokument-Metadaten erkennen ──────────────────────────────────────────────
+// ─── Dokument-Metadaten ───────────────────────────────────────────────────────
 
 function detectDocumentMeta(lines: MirusLine[]): {
-  month: number | null;
-  monthName: string | null;
-  year: number | null;
-  restaurant: string | null;
-  creationDate: string | null;
+  month: number | null; monthName: string | null;
+  year: number | null; restaurant: string | null; creationDate: string | null;
 } {
   let month: number | null = null;
   let monthName: string | null = null;
@@ -252,18 +315,25 @@ function detectDocumentMeta(lines: MirusLine[]): {
   let restaurant: string | null = null;
   let creationDate: string | null = null;
 
-  const head = lines.slice(0, 30);
+  // Ersten 40 Zeilen prüfen
+  const head = lines.slice(0, 40);
 
   for (const line of head) {
     const t = line.text;
 
-    // Erstellungsdatum: "Erstellt: 15.02.2026" or "Druckdatum: ..."
-    const cdMatch = t.match(/(?:Erstellt|Druckdatum|Gedruckt|Datum)\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{4})/i);
-    if (cdMatch && !creationDate) creationDate = cdMatch[1];
+    // Erstellungsdatum
+    const cdM = t.match(/(?:Erstellt|Druckdatum|Gedruckt|Datum)\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{4})/i);
+    if (cdM && !creationDate) creationDate = cdM[1];
 
-    // Jahr aus 4-stelliger Zahl
-    const yearMatch = t.match(/\b(202[0-9]|20[0-9]{2})\b/);
-    if (yearMatch && !year) year = parseInt(yearMatch[1]);
+    // Standalone Datum DD.MM.YYYY
+    if (!creationDate) {
+      const d = t.match(/\b(\d{1,2}\.\d{1,2}\.\d{4})\b/);
+      if (d) creationDate = d[1];
+    }
+
+    // Jahr
+    const yM = t.match(/\b(202[0-9])\b/);
+    if (yM && !year) year = parseInt(yM[1]);
 
     // Monat aus Monatsnamen
     if (!month) {
@@ -276,53 +346,25 @@ function detectDocumentMeta(lines: MirusLine[]): {
       }
     }
 
-    // Restaurant-Name: "OLIV" / "Beaulieu" / "Restaurant ..."
-    const restMatch = t.match(/(?:Restaurant|Betrieb|Kostenstelle Firma)[\s:]+([A-ZÄÖÜa-z0-9\s-]+)/i);
-    if (restMatch && !restaurant) restaurant = restMatch[1].trim();
-
-    // Fallback: wenn "OLIV" oder "Beaulieu" im Titel vorkommt
+    // Restaurant-Name
     if (!restaurant) {
-      if (/\bOLIV\b/i.test(t)) restaurant = 'OLIV';
+      if (/\bOLIV\b/.test(t)) restaurant = 'OLIV';
       else if (/\bBeaulieu\b/i.test(t)) restaurant = 'Beaulieu';
     }
-  }
-
-  // Second pass: scan filename-style lines like "Arbeitszeiten Januar 2026 OLIV"
-  for (const line of head) {
-    const t = line.text;
-    if (/arbeit.?zeit/i.test(t)) {
-      if (!month) {
-        for (const [name, num] of Object.entries(MONTH_MAP)) {
-          if (new RegExp(`\\b${name}\\b`, 'i').test(t)) {
-            month = num;
-            monthName = MONTH_NAMES_DE[num] ?? null;
-            break;
-          }
-        }
-      }
-      if (!year) {
-        const ym = t.match(/\b(202\d)\b/);
-        if (ym) year = parseInt(ym[1]);
-      }
-      if (!restaurant) {
-        if (/\bOLIV\b/i.test(t)) restaurant = 'OLIV';
-        else if (/\bBeaulieu\b/i.test(t)) restaurant = 'Beaulieu';
-      }
+    if (!restaurant) {
+      const rM = t.match(/(?:Restaurant|Betrieb)\s*:?\s*([A-ZÄÖÜa-z0-9\s-]{2,30})/i);
+      if (rM) restaurant = rM[1].trim();
     }
   }
 
   return { month, monthName, year, restaurant, creationDate };
 }
 
-// ─── Mitarbeiter-Sektionen finden ─────────────────────────────────────────────
+// ─── Mitarbeiter-Grenzen finden ───────────────────────────────────────────────
 
 /**
- * Versucht, Zeilen zu finden, die einen neuen Mitarbeiter einleiten.
- * Mögliche Muster (variiert je Mirus-Version):
- *   "Mitarbeiter: Hans Muster"
- *   "Name: Hans Muster"
- *   "Hans Muster" (Name allein, gefolgt von Kostenstelle)
- *   "Personal-Nr.: 001  Name: Hans Muster"
+ * Primäres Signal in Mirus-PDFs: jede Seite beginnt mit "Name / Vorname".
+ * Fallback: "Mitarbeiter:", "Personal-Nr.", Kostenstelle-Nähe.
  */
 function findEmployeeBoundaries(lines: MirusLine[]): number[] {
   const boundaries: number[] = [];
@@ -330,155 +372,172 @@ function findEmployeeBoundaries(lines: MirusLine[]): number[] {
   for (let i = 0; i < lines.length; i++) {
     const t = lines[i].text;
 
-    // Explizite Marker
-    if (/^(Mitarbeiter|Mitarbeiterin|Name|MA)\s*:/i.test(t)) {
+    // ── PRIMÄR: Mirus-Format "Name / Vorname ..." ──────────────────────────
+    if (/Name\s*\/\s*Vorname/i.test(t)) {
       boundaries.push(i);
       continue;
     }
 
-    // "Personal-Nr." Zeile
-    if (/Personal.?Nr|PN\s*:/i.test(t) && /\d{3,}/.test(t)) {
+    // ── Fallback 1: "Mitarbeiter: ..." / "MA: ..." ─────────────────────────
+    if (/^(Mitarbeiter|Mitarbeiterin|MA)\s*:/i.test(t)) {
       boundaries.push(i);
       continue;
     }
 
-    // Linie, die "Kostenstelle" enthält UND auf der vorherigen oder nächsten Zeile ein Name steht
-    if (/Kostenstelle/i.test(t)) {
-      // Prüfen ob prev oder curr auch einen Namen enthält
-      const prev = i > 0 ? lines[i - 1].text : '';
-      const curr = t;
-      // Wenn die gleiche Zeile sowohl Name als auch Kostenstelle enthält
-      if (/Name\s*:/i.test(curr)) {
-        boundaries.push(i);
-      } else if (
-        // Vorherige Zeile sieht wie ein Name aus (Vorname Nachname)
-        /^[A-ZÄÖÜ][a-zäöü]+ [A-ZÄÖÜ][a-zäöü]+/.test(prev.trim()) &&
-        i > 0 && !boundaries.includes(i - 1)
-      ) {
-        boundaries.push(i - 1);
-      }
+    // ── Fallback 2: Personalnummer-Zeile ───────────────────────────────────
+    if (/Personal.?Nr\.?\s*:|P\.?Nr\.?\s*:/i.test(t) && /\d{3,}/.test(t)) {
+      boundaries.push(i);
+      continue;
     }
   }
 
-  // Deduplizieren und sortieren
   return [...new Set(boundaries)].sort((a, b) => a - b);
 }
 
 // ─── Mitarbeiter-Kopfzeile parsen ─────────────────────────────────────────────
 
+/**
+ * Liest bis zu 12 Zeilen ab startIdx und extrahiert Stammdaten.
+ *
+ * Erwartete Zeilen (Mirus-Format):
+ *   "Name / Vorname  Müller  Peter"           → name
+ *   "Wöchentliche Arbeitszeit in Stunden  42.0" → weeklyHours
+ *   "Kostenstelle  Service / Saal"            → kostenstelle + department
+ *   "Arbeitsverhältnis  Vollzeit"             → employment
+ *   "Personal-Nr.  12345"                     → personalnummer
+ */
 function parseEmployeeHeader(lines: MirusLine[], startIdx: number): Partial<MirusEmployee> {
   const result: Partial<MirusEmployee> = {
     name: null, personalnummer: null, kostenstelle: null,
     department: null, employment: null, weeklyHours: null,
   };
 
-  // Scan bis zu 8 Zeilen ab startIdx
-  const headerLines = lines.slice(startIdx, startIdx + 8);
+  const windowLines = lines.slice(startIdx, startIdx + 12);
 
-  for (const line of headerLines) {
-    const t = line.text;
+  for (let i = 0; i < windowLines.length; i++) {
+    const t = windowLines[i].text;
 
-    // Name
-    const nameMatch =
-      t.match(/(?:Mitarbeiter|Name|MA)\s*:\s*([A-ZÄÖÜa-zäöü][^\d\n,;:]{2,40})/i) ??
-      t.match(/^([A-ZÄÖÜ][a-zäöü]+ [A-ZÄÖÜ][a-zäöü]+(?:\s+[A-ZÄÖÜ][a-zäöü]+)?)\s*$/);
-    if (nameMatch && !result.name) result.name = nameMatch[1].trim();
-
-    // Personalnummer
-    const pnrMatch = t.match(/(?:Personal.?Nr|PNr|P\.?Nr|PN)\s*\.?:?\s*(\d{1,6})/i);
-    if (pnrMatch && !result.personalnummer) result.personalnummer = pnrMatch[1];
-
-    // Kostenstelle
-    const ksMatch = t.match(/Kostenstelle\s*:?\s*([^\n,;]{2,30})/i);
-    if (ksMatch && !result.kostenstelle) {
-      result.kostenstelle = ksMatch[1].trim();
-      // Abteilung aus Kostenstelle ableiten
-      if (!result.department) result.department = detectDepartment(ksMatch[1]);
+    // ── Name / Vorname ─────────────────────────────────────────────────────
+    if (/Name\s*\/\s*Vorname/i.test(t) && !result.name) {
+      // Alles nach dem Label "Name / Vorname" ist der Name
+      const after = t.replace(/Name\s*\/\s*Vorname\s*/i, '').trim();
+      if (after.length >= 2) {
+        result.name = after;
+      } else {
+        // Name könnte auf nächster Zeile stehen
+        const next = windowLines[i + 1]?.text.trim() ?? '';
+        if (next && !/Kostenstelle|Arbeitsverhältnis|Wöchentliche|TOTAL|^\d{1,2}\./i.test(next)) {
+          result.name = next;
+        }
+      }
+      continue;
     }
 
-    // Abteilung direkt
-    const deptMatch = t.match(/(?:Abteilung|Dept)\s*:?\s*([^\n,;]{2,20})/i);
-    if (deptMatch && !result.department) {
-      result.department = detectDepartment(deptMatch[1]) ?? deptMatch[1].trim();
+    // ── Wöchentliche Arbeitszeit ───────────────────────────────────────────
+    if (/Wöchentliche/i.test(t) && !result.weeklyHours) {
+      // Zahl mit Dezimalpunkt/Komma
+      const num = t.match(/(\d+[.,]\d+)/);
+      if (num) {
+        result.weeklyHours = num[1].replace(',', '.');
+      } else {
+        // Ganzzahl am Ende: "... 42 Std"
+        const intNum = t.match(/(\d{2,3})\s*(?:Std\.?|h|Stunden)?$/i);
+        if (intNum) result.weeklyHours = intNum[1];
+      }
+      continue;
     }
 
-    // Arbeitsverhältnis
-    const empMatch = t.match(/(?:Arbeitsverhältnis|Anstellung|Vertrag|Beschäftigungsart)\s*:?\s*([^\n,;]{2,30})/i);
-    if (empMatch && !result.employment) result.employment = empMatch[1].trim();
+    // ── Kostenstelle ───────────────────────────────────────────────────────
+    if (/Kostenstelle/i.test(t) && !/Kostenstelle\s*Firma/i.test(t) && !result.kostenstelle) {
+      const after = t.replace(/Kostenstelle\s*:?\s*/i, '').trim();
+      if (after.length >= 1) {
+        result.kostenstelle = after;
+        if (!result.department) result.department = detectDepartment(after);
+      }
+      continue;
+    }
 
-    // Wöchentliche Arbeitszeit
-    const whMatch = t.match(/(?:Wöchentliche|Soll.?Zeit|Soll|Wochenstunden|wöch\.)\s*.*?(\d+[.,]\d+)\s*(?:Std|h|Stunden)/i);
-    if (whMatch && !result.weeklyHours) result.weeklyHours = whMatch[1].replace(',', '.');
+    // ── Arbeitsverhältnis ──────────────────────────────────────────────────
+    if (/Arbeitsverhältnis/i.test(t) && !result.employment) {
+      const after = t.replace(/Arbeitsverhältnis\s*:?\s*/i, '').trim();
+      if (after.length >= 2) result.employment = after;
+      continue;
+    }
+
+    // ── Personal-Nr. ───────────────────────────────────────────────────────
+    if (/Personal.?Nr\.?/i.test(t) && !result.personalnummer) {
+      const pnr = t.match(/Personal.?Nr\.?\s*:?\s*(\d{1,8})/i);
+      if (pnr) result.personalnummer = pnr[1];
+      continue;
+    }
   }
 
   return result;
 }
 
-// ─── Tageszeilen parsen ───────────────────────────────────────────────────────
+// ─── Tageszeile erkennen ──────────────────────────────────────────────────────
 
 /**
- * Prüft ob eine Zeile eine Tageszeile ist (beginnt mit DD.MM oder DD.MM.YYYY).
+ * Erkennt Mirus-Tageszeilen.
+ * Mögliche Formate:
+ *   "01.02.  So  08:00  17:00  0:30  8:30"
+ *   "01.02.  So  FE  8:00"
+ *   "01.02. So"
+ *   "1.2. Mo  08:00 - 16:00  0:30  7:30"
  */
 function isDayRow(text: string): boolean {
-  return /^\s*\d{1,2}\.\d{1,2}(\.\d{4})?/.test(text);
+  // Muss mit DD.MM. oder D.M. beginnen (mit optionalem führendem Leerzeichen)
+  return /^\s*\d{1,2}\.\d{1,2}\.?\s/.test(text) ||
+         /^\s*\d{1,2}\.\d{1,2}\.?$/.test(text.trim());
 }
 
 function parseDayRow(line: MirusLine, lineIndex: number): MirusDayRow {
   const t = line.text;
 
-  // Datum extrahieren
-  const dateMatch = t.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?/);
+  // ── Datum ────────────────────────────────────────────────────────────────
+  const dateMatch = t.match(/^\s*(\d{1,2})\.(\d{1,2})\.?(?:\s|$)/);
   let date: string | null = null;
   if (dateMatch) {
     const d = dateMatch[1].padStart(2, '0');
-    const m = dateMatch[2].padStart(2, '0');
-    const y = dateMatch[3] ?? '';
-    date = y ? `${d}.${m}.${y}` : `${d}.${m}`;
+    const mo = dateMatch[2].padStart(2, '0');
+    date = `${d}.${mo}`;
   }
 
-  // Wochentag
+  // ── Wochentag ────────────────────────────────────────────────────────────
   const weekday = detectWeekday(t);
 
-  // Zeitblöcke
-  const timeBlocks = extractTimeBlocks(t);
-
-  // Absenz-Codes
+  // ── Absenz-Codes ─────────────────────────────────────────────────────────
   const absenceCodes = extractAbsenceCodes(t);
 
-  // Nachtzuschlag
-  const nightSupplement = /\bN\b/.test(t);
+  // ── Zeitblöcke ───────────────────────────────────────────────────────────
+  // Nicht suchen wenn Absenz-Code die ganzen Stunden erklärt
+  const timeBlocks = extractTimeBlocks(t);
 
-  // Pause
+  // ── Nachtzuschlag ────────────────────────────────────────────────────────
+  const nightSupplement = /(?<![A-Za-z])N(?![A-Za-z])/.test(t);
+
+  // ── Pause ────────────────────────────────────────────────────────────────
   const pause = extractPause(t);
 
-  // Totalstunden
-  const totalHours = timeBlocks.length === 0 && absenceCodes.length === 0
-    ? extractHoursValue(t)
-    : (extractHoursValue(t));
+  // ── Totalstunden ─────────────────────────────────────────────────────────
+  const totalHours = extractTotalHours(t, timeBlocks);
 
-  // Bemerkung: alles nach dem letzten erkannten Feld
+  // ── Bemerkung ────────────────────────────────────────────────────────────
   let remark: string | null = null;
-  const remarkMatch = t.match(/(?:Bemerkung|Bem\.?|Notiz)\s*:?\s*(.+)$/i);
-  if (remarkMatch) remark = remarkMatch[1].trim();
-  else {
-    // Reste, die nicht als bekannte Felder passen — könnte Bemerkung sein
-    const stripped = t
-      .replace(/^\d{1,2}\.\d{1,2}(\.\d{4})?/, '')
-      .replace(/\b(Mo|Di|Mi|Do|Fr|Sa|So)\b/i, '')
-      .replace(/\d{1,2}:\d{2}\s*[-–]\s*\d{1,2}:\d{2}/g, '')
-      .replace(/\b(0|1):\d{2}\b/g, '')
-      .replace(new RegExp(`\\b(${ABSENCE_CODES.join('|')})\\b`, 'g'), '')
-      .replace(/\bN\b/, '')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
-    if (stripped.length > 2 && !/^\d+$/.test(stripped)) remark = stripped;
-  }
+  const remarkM = t.match(/(?:Bemerkung|Bem\.?|Notiz)\s*:?\s*(.+)$/i);
+  if (remarkM) remark = remarkM[1].trim();
 
-  // Konfidenz bestimmen
+  // ── Konfidenz ────────────────────────────────────────────────────────────
   let confidence: 'high' | 'medium' | 'low' = 'high';
-  if (!date) confidence = 'low';
-  else if (!weekday && timeBlocks.length === 0 && absenceCodes.length === 0) confidence = 'low';
-  else if (!weekday || (!totalHours && absenceCodes.length === 0)) confidence = 'medium';
+  if (!date) {
+    confidence = 'low';
+  } else if (!weekday && timeBlocks.length === 0 && absenceCodes.length === 0) {
+    confidence = 'low';
+  } else if (!weekday) {
+    confidence = 'medium';
+  } else if (timeBlocks.length === 0 && absenceCodes.length === 0 && !totalHours) {
+    confidence = 'medium';
+  }
 
   return {
     lineText: t,
@@ -506,41 +565,69 @@ function parseTotals(lines: string[]): MirusTotals {
   };
 
   for (const line of lines) {
-    const l = line.toLowerCase();
-    const firstHHMM = parseTimeHHMM(line.match(/\b(\d{1,3}:\d{2})\b/)?.[1] ?? '');
-    const allHHMM   = [...line.matchAll(/\b(\d{1,3}:\d{2})\b/g)].map(m => m[1]);
-    const lastHHMM  = allHHMM.length > 0 ? allHHMM[allHHMM.length - 1] : null;
+    const allHHMM = allTimesInText(line);
+    const lastHHMM = allHHMM.length > 0 ? allHHMM[allHHMM.length - 1] : null;
 
-    if (/total.*(stunden|std|h$)|stunden.?total/i.test(line) && !totals.totalHours) {
-      totals.totalHours = lastHHMM;
-      totals.rawLines.push(line);
-    } else if (/pause.*total|total.*pause|pause.*gesamt/i.test(line) && !totals.pauseTotal) {
-      totals.pauseTotal = lastHHMM;
-      totals.rawLines.push(line);
-    } else if (/netto|neto/i.test(line) && !totals.nettoTotal) {
-      totals.nettoTotal = lastHHMM;
-      totals.rawLines.push(line);
-    } else if (/zeitzuschlag|zeit.?zuschlag/i.test(line) && !totals.zeitzuschlag) {
-      totals.zeitzuschlag = lastHHMM;
-      totals.rawLines.push(line);
-    } else if (/überzeit|uberzeit|überstunden/i.test(line) && !totals.ueberzeit) {
-      totals.ueberzeit = lastHHMM;
-      totals.rawLines.push(line);
-    } else if (/\bsaldo\b/i.test(line) && !totals.saldo) {
-      // Saldo kann +/- sein
-      const saldoMatch = line.match(/[+-]?\d{1,3}:\d{2}/);
-      totals.saldo = saldoMatch ? saldoMatch[0] : lastHHMM;
-      totals.rawLines.push(line);
-    }
-
-    if (/unterschrift|visum|datum.*unterschrift/i.test(line)) {
+    // Unterschrift
+    if (/unterschrift|visum/i.test(line)) {
       totals.signatureFound = true;
     }
 
-    // TOTAL-Zeile ohne Schlüsselwort: "TOTAL  168:30"
+    // TOTAL-Zeile (Hauptzeile)
     if (/^\s*TOTAL\b/i.test(line) && !totals.totalHours) {
       totals.totalHours = lastHHMM;
       totals.rawLines.push(line);
+      continue;
+    }
+
+    // Total Stunden (alternative Schreibweisen)
+    if (/total.*(stunden|std)|stunden.?total|gesamt.*(stunden|std)/i.test(line) && !totals.totalHours) {
+      totals.totalHours = lastHHMM;
+      totals.rawLines.push(line);
+      continue;
+    }
+
+    // Pause Total
+    if (/pause.*total|total.*pause|pause.*gesamt|gesamt.*pause/i.test(line) && !totals.pauseTotal) {
+      totals.pauseTotal = lastHHMM;
+      totals.rawLines.push(line);
+      continue;
+    }
+
+    // Netto / Nettoarbeitszeit
+    if (/\bnetto\b/i.test(line) && !totals.nettoTotal) {
+      totals.nettoTotal = lastHHMM;
+      totals.rawLines.push(line);
+      continue;
+    }
+
+    // Zeitzuschlag
+    if (/zeitzuschlag|zeit.?zuschlag/i.test(line) && !totals.zeitzuschlag) {
+      totals.zeitzuschlag = lastHHMM;
+      totals.rawLines.push(line);
+      continue;
+    }
+
+    // Überzeit / Überstunden
+    if (/überzeit|uberzeit|überstunden|ueberzeit/i.test(line) && !totals.ueberzeit) {
+      totals.ueberzeit = lastHHMM;
+      totals.rawLines.push(line);
+      continue;
+    }
+
+    // Saldo (kann positiv oder negativ sein)
+    if (/\bsaldo\b/i.test(line) && !totals.saldo) {
+      const sM = line.match(/([+-]?\d{1,3}:\d{2})/);
+      totals.saldo = sM ? sM[1] : lastHHMM;
+      totals.rawLines.push(line);
+      continue;
+    }
+
+    // Stunden als alleinstehende Zeile: "Stunden  168:30"
+    if (/^\s*Stunden\b/i.test(line) && !totals.totalHours && lastHHMM) {
+      totals.totalHours = lastHHMM;
+      totals.rawLines.push(line);
+      continue;
     }
   }
 
@@ -549,10 +636,6 @@ function parseTotals(lines: string[]): MirusTotals {
 
 // ─── Haupt-Parser ─────────────────────────────────────────────────────────────
 
-/**
- * Parst eine Mirus-PDF-Datei vollständig.
- * Gibt ein MirusParsedDocument zurück — kein Supabase-Zugriff, kein Schreibvorgang.
- */
 export async function parseMirusPDF(file: File): Promise<MirusParsedDocument> {
   const warnings: string[] = [];
 
@@ -575,12 +658,11 @@ export async function parseMirusPDF(file: File): Promise<MirusParsedDocument> {
   if (!meta.restaurant) warnings.push('Restaurant-Name konnte nicht erkannt werden.');
 
   // 3. Mitarbeiter-Grenzen finden
-  const rawTexts = allLines.map(l => l.text);
+  const rawTexts  = allLines.map(l => l.text);
   const boundaries = findEmployeeBoundaries(allLines);
 
-  // Fallback wenn keine Boundaries erkannt: ganzes Dokument als ein Mitarbeiter
   if (boundaries.length === 0) {
-    warnings.push('Keine Mitarbeiter-Abschnitte erkannt — zeige gesamten Text als einzelnen Block.');
+    warnings.push('Keine "Name / Vorname"-Zeile gefunden — prüfe den Rohtext.');
     boundaries.push(0);
   }
 
@@ -591,10 +673,10 @@ export async function parseMirusPDF(file: File): Promise<MirusParsedDocument> {
     const startIdx = boundaries[b];
     const endIdx   = b + 1 < boundaries.length ? boundaries[b + 1] : allLines.length;
 
-    const sectionLines  = allLines.slice(startIdx, endIdx);
-    const sectionTexts  = rawTexts.slice(startIdx, endIdx);
+    const sectionLines = allLines.slice(startIdx, endIdx);
+    const sectionTexts = rawTexts.slice(startIdx, endIdx);
 
-    const header  = parseEmployeeHeader(allLines, startIdx);
+    const header = parseEmployeeHeader(allLines, startIdx);
 
     const dayRows: MirusDayRow[] = [];
     const totalsLines: string[]  = [];
@@ -604,8 +686,11 @@ export async function parseMirusPDF(file: File): Promise<MirusParsedDocument> {
       const line = sectionLines[i];
       const t = line.text;
 
-      // Totale erkennen: nach "TOTAL" oder "Summe"-Marker
-      if (/^\s*TOTAL\b|^Summe\b|^Total\s+Stunden/i.test(t)) {
+      // Totale beginnen ab TOTAL-Zeile oder "Unterschrift"
+      if (!inTotals && /^\s*TOTAL\b/i.test(t)) {
+        inTotals = true;
+      }
+      if (!inTotals && /unterschrift|zeitzuschlag|überzeit|\bsaldo\b|netto.*stunden|stunden.*netto/i.test(t)) {
         inTotals = true;
       }
 
@@ -619,58 +704,54 @@ export async function parseMirusPDF(file: File): Promise<MirusParsedDocument> {
       }
     }
 
-    const totals  = parseTotals(totalsLines.length > 0 ? totalsLines : sectionTexts.slice(-15));
+    // Fallback für Totale: letzte 20 Zeilen
+    const totals = parseTotals(
+      totalsLines.length > 0 ? totalsLines : sectionTexts.slice(-20)
+    );
+
     const uncertainRows = dayRows.filter(r => r.uncertain).length;
 
     employees.push({
       ...header,
-      name: header.name ?? `Mitarbeiter ${b + 1}`,
-      personalnummer: header.personalnummer ?? null,
-      kostenstelle: header.kostenstelle ?? null,
-      department: header.department ?? null,
-      employment: header.employment ?? null,
-      weeklyHours: header.weeklyHours ?? null,
+      name:           header.name           ?? `Mitarbeiter ${b + 1}`,
+      personalnummer: header.personalnummer  ?? null,
+      kostenstelle:   header.kostenstelle    ?? null,
+      department:     header.department      ?? null,
+      employment:     header.employment      ?? null,
+      weeklyHours:    header.weeklyHours     ?? null,
       dayRows,
       totals,
-      rawLines: sectionTexts,
+      rawLines:     sectionTexts,
       uncertainRows,
-      startLine: startIdx,
-      endLine: endIdx - 1,
+      startLine:    startIdx,
+      endLine:      endIdx - 1,
     });
   }
 
   // 5. Qualitäts-Metriken
-  const totalDayRows   = employees.reduce((s, e) => s + e.dayRows.length, 0);
-  const uncertainRows  = employees.reduce((s, e) => s + e.uncertainRows, 0);
+  const totalDayRows    = employees.reduce((s, e) => s + e.dayRows.length, 0);
+  const uncertainRows   = employees.reduce((s, e) => s + e.uncertainRows, 0);
   const unassignedTotals = employees.filter(e =>
-    !e.totals.totalHours && !e.totals.nettoTotal
+    !e.totals.totalHours && !e.totals.zeitzuschlag
   ).length;
 
-  const qualityScore =
-    totalDayRows === 0 ? 0 :
-    Math.round(
-      ((totalDayRows - uncertainRows) / totalDayRows) * 70 +
-      (employees.filter(e => e.name && e.name !== `Mitarbeiter ${employees.indexOf(e) + 1}`).length / employees.length) * 15 +
-      (employees.filter(e => e.totals.totalHours).length / employees.length) * 15
-    );
+  let qualityPercent = 0;
+  if (employees.length > 0 && totalDayRows > 0) {
+    const empOk   = employees.filter(e => e.name && e.name !== `Mitarbeiter ${employees.indexOf(e) + 1}`).length;
+    const highRows = employees.reduce((s, e) => s + e.dayRows.filter(r => r.confidence === 'high').length, 0);
+    const totalsOk = employees.filter(e => !!e.totals.totalHours).length;
 
-  if (totalDayRows === 0) warnings.push('Keine Tageszeilen erkannt — Format möglicherweise unbekannt.');
+    const empScore    = (empOk / employees.length) * 25;
+    const rowScore    = (highRows / totalDayRows) * 50;
+    const totalsScore = (totalsOk / employees.length) * 25;
+    qualityPercent = Math.round(empScore + rowScore + totalsScore);
+  }
 
   return {
-    month: meta.month,
-    monthName: meta.monthName,
-    year: meta.year,
-    restaurant: meta.restaurant,
-    creationDate: meta.creationDate,
+    ...meta,
     employees,
     allLines,
     warnings,
-    quality: {
-      totalEmployees: employees.length,
-      totalDayRows,
-      uncertainRows,
-      unassignedTotals,
-      qualityPercent: qualityScore,
-    },
+    quality: { totalEmployees: employees.length, totalDayRows, uncertainRows, unassignedTotals, qualityPercent },
   };
 }

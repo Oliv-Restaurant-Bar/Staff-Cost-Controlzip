@@ -528,6 +528,24 @@ function ResultSection({ result }: { result: ParseResult }) {
       {/* Metadaten */}
       <MetaCard doc={doc} />
 
+      {/* ── Erste 80 Rohzeilen — immer sichtbar ──────────────────────────── */}
+      <Card className="border border-amber-200 dark:border-amber-800">
+        <div className="px-4 py-2.5 border-b border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20 flex items-center gap-2">
+          <FileText className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+          <span className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+            Rohtext (erste 80 Zeilen) — pdfjs-Ausgabe
+          </span>
+          <span className="text-[10px] text-amber-500 ml-auto">
+            {doc.allLines.length} Zeilen total
+          </span>
+        </div>
+        <pre className="max-h-80 overflow-y-auto p-3 text-[10px] leading-relaxed whitespace-pre-wrap font-mono text-muted-foreground bg-muted/20">
+          {doc.allLines.slice(0, 80).map((l, i) =>
+            `${String(i + 1).padStart(3, ' ')}  [S${l.pageNum}]  ${l.text}\n`
+          ).join('')}
+        </pre>
+      </Card>
+
       {/* Mitarbeiter-Karten */}
       {doc.employees.length > 0 ? (
         <div className="space-y-3">
