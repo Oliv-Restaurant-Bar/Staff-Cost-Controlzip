@@ -3123,22 +3123,6 @@ export default function PersonalFixPage() {
           );
         })}
 
-        {/* ── Gesamt-Total FIX ─────────────────────────────────────────────── */}
-        {activeFixedEmployees.length > 0 && (
-          <div className="rounded-xl border-2 border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-950/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-bold">
-              <Building2 className="h-4 w-4 text-blue-600" />
-              Total Personal FIX · alle Abteilungen
-            </div>
-            <div className="flex flex-wrap items-center gap-6 text-sm">
-              <span className="text-muted-foreground">Basis: <strong className="font-mono text-foreground">{fmtCHF(totalFixBase)}/Mt</strong></span>
-              <span className="text-blue-700 dark:text-blue-300 font-bold text-base font-mono">{fmtCHF(totalFixCost)}/Mt</span>
-              <span className="text-muted-foreground">|</span>
-              <span className="text-muted-foreground">Jahr: <strong className="font-mono text-foreground">{fmtCHF(totalFixAnnual)}</strong></span>
-            </div>
-          </div>
-        )}
-
         {/* ── Variable Budget-Planung ──────────────────────────────────────── */}
         {personnelBudget > 0 && (
           <section className="rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-card shadow-sm overflow-hidden">
@@ -3201,77 +3185,98 @@ export default function PersonalFixPage() {
             </div>
 
             {/* Budget-Rechnung — AKTUELL */}
-            {forecastViewMode === 'actual' && (
-            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* LEFT: Budgetverteilung — wie viel ist für Flex verfügbar */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-                  Budgetverteilung {cutoffLabel ? `bis ${cutoffLabel}` : ''}
-                </p>
-                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                  <div className="flex flex-col">
-                    <span className="text-sm text-muted-foreground">Budget {budgetLabel}</span>
-                    {proRataDay !== null && (
-                      <span className="text-[10px] text-muted-foreground font-mono">
-                        {fmtCHF(personnelBudget)} · wochentagsgewichtet bis Tag {proRataDay}
-                      </span>
-                    )}
-                  </div>
-                  <span className="font-mono font-semibold">{fmtCHF(pfixBudget)}</span>
-                </div>
-                <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">− Personal FIX Ist {budgetLabel}</span>
-                  <span className="font-mono text-blue-700 dark:text-blue-400 shrink-0">− {fmtCHF(pfix.active.fix)}</span>
-                </div>
-                <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg',
-                  pfixAvailableVar > 0
-                    ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
-                    : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
-                  <span className="text-sm font-bold">= Verfügbar für Flex</span>
-                  <span className="font-mono font-bold text-base">{fmtCHF(pfixAvailableVar)}</span>
-                </div>
-              </div>
-
-              {/* RIGHT: IST-Vergleich */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-                  IST-Vergleich {cutoffLabel ? `bis ${cutoffLabel}` : ''}
-                </p>
-                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">Verfügbar für Flex</span>
-                  <span className="font-mono font-semibold">{fmtCHF(pfixAvailableVar)}</span>
-                </div>
-                <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground whitespace-nowrap">− Flex Arbeit Ist {budgetLabel}</span>
-                  <span className="font-mono text-orange-700 dark:text-orange-400 shrink-0">− {fmtCHF(pfix.active.istWork)}</span>
-                </div>
-                {pfix.active.istHoliday > 0 && (
-                  <div className="flex justify-between items-baseline gap-2 py-1.5 border-b border-dashed border-border/60">
-                    <div className="flex flex-col">
-                      <span className="text-xs text-muted-foreground/60 italic">Ferienabbau FE Ist {budgetLabel}</span>
-                      <span className="text-[10px] text-muted-foreground/50">nur Information — nicht budgetwirksam</span>
+            {forecastViewMode === 'actual' && (() => {
+              const gesamtGenutzt  = pfix.active.fix + pfix.active.istWork;
+              const gesamtPct      = pfixBudget > 0 ? Math.min(100, (gesamtGenutzt / pfixBudget) * 100) : 0;
+              const flexPct        = pfixAvailableVar > 0 ? Math.min(100, (pfix.active.istWork / pfixAvailableVar) * 100) : 0;
+              const barBg = (pct: number) =>
+                pct < 80 ? 'bg-emerald-500' : pct < 95 ? 'bg-amber-500' : 'bg-red-500';
+              const pctColor = (pct: number) =>
+                pct < 80 ? 'text-emerald-600 dark:text-emerald-400'
+                  : pct < 95 ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-red-600 dark:text-red-400';
+              const remainingFlex  = Math.max(0, pfixIstVarDelta);
+              const remainingHours = avgHourlyWage > 0 ? Math.floor(remainingFlex / avgHourlyWage) : 0;
+              return (
+                <div className="px-4 pt-4 pb-3 space-y-5">
+                  {/* Kompakte Top-KPIs */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-lg bg-muted/40 px-3 py-2.5 text-center">
+                      <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-0.5">
+                        Budget {budgetLabel}
+                        {proRataDay !== null && <span className="block text-[8px] opacity-60">({fmtCHF(personnelBudget)} pro-rata)</span>}
+                      </p>
+                      <p className="text-sm font-bold font-mono">{fmtCHF(pfixBudget)}</p>
                     </div>
-                    <span className="font-mono text-xs text-muted-foreground/50 shrink-0">{fmtCHF(pfix.active.istHoliday)}</span>
+                    <div className="rounded-lg bg-blue-50/60 dark:bg-blue-950/20 px-3 py-2.5 text-center">
+                      <p className="text-[9px] uppercase tracking-wide text-blue-600 dark:text-blue-400 mb-0.5">FIX Personal</p>
+                      <p className="text-sm font-bold font-mono text-blue-700 dark:text-blue-300">{fmtCHF(pfix.active.fix)}</p>
+                    </div>
+                    <div className={cn('rounded-lg px-3 py-2.5 text-center',
+                      pfixAvailableVar > 0
+                        ? 'bg-emerald-50/60 dark:bg-emerald-950/20'
+                        : 'bg-red-50/60 dark:bg-red-950/20')}>
+                      <p className={cn('text-[9px] uppercase tracking-wide mb-0.5',
+                        pfixAvailableVar > 0
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-red-600 dark:text-red-400')}>Verfügbar Flex</p>
+                      <p className={cn('text-sm font-bold font-mono',
+                        pfixAvailableVar > 0
+                          ? 'text-emerald-700 dark:text-emerald-300'
+                          : 'text-red-700 dark:text-red-300')}>{fmtCHF(pfixAvailableVar)}</p>
+                    </div>
                   </div>
-                )}
-                <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg',
-                  flexBudgetStatus === 'on_track'
-                    ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
-                    : flexBudgetStatus === 'warning'
-                      ? 'bg-yellow-50 dark:bg-yellow-950/30 text-yellow-800 dark:text-yellow-300'
-                      : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
-                  <span className="text-sm font-bold">
-                    {flexBudgetStatus === 'on_track' ? '✓ Auf Kurs — Verbleibend'
-                      : flexBudgetStatus === 'warning' ? '⚠ Achtung — Leicht überzogen'
-                      : '✗ Nicht auf Kurs — Überzogen'}
-                  </span>
-                  <span className="font-mono font-bold text-base">
-                    {pfixIstVarDelta >= 0 ? '+ ' : '− '}{fmtCHF(Math.abs(pfixIstVarDelta))}
-                  </span>
+
+                  {/* Balken A: Gesamtbudget genutzt */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Gesamtbudget genutzt</span>
+                      <span className={cn('text-sm font-bold', pctColor(gesamtPct))}>{Math.round(gesamtPct)} %</span>
+                    </div>
+                    <div className="relative h-8 rounded-full bg-muted/40 overflow-hidden">
+                      <div
+                        className={cn('h-full rounded-full transition-all duration-500', barBg(gesamtPct))}
+                        style={{ width: `${gesamtPct}%` }}
+                      />
+                      <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold text-white drop-shadow pointer-events-none">
+                        {gesamtPct >= 10 ? `${fmtCHF(gesamtGenutzt)} / ${fmtCHF(pfixBudget)}` : ''}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Balken B: Flexbudget genutzt */}
+                  {pfixAvailableVar > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Flexbudget genutzt</span>
+                        <span className={cn('text-sm font-bold', pctColor(flexPct))}>{Math.round(flexPct)} %</span>
+                      </div>
+                      <div className="relative h-8 rounded-full bg-muted/40 overflow-hidden">
+                        <div
+                          className={cn('h-full rounded-full transition-all duration-500', barBg(flexPct))}
+                          style={{ width: `${flexPct}%` }}
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold text-white drop-shadow pointer-events-none">
+                          {flexPct >= 10 ? `${fmtCHF(pfix.active.istWork)} / ${fmtCHF(pfixAvailableVar)}` : ''}
+                        </span>
+                      </div>
+                      {pfixIstVarDelta >= 0 ? (
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-emerald-700 dark:text-emerald-400 mt-0.5">
+                          <span className="font-semibold">✓ Noch {fmtCHF(remainingFlex)} verfügbar</span>
+                          {remainingHours > 0 && (
+                            <span className="text-muted-foreground">→ ca. {remainingHours} h zusätzlich planbar</span>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-red-600 dark:text-red-400 font-semibold mt-0.5">
+                          ⛔ {fmtCHF(Math.abs(pfixIstVarDelta))} über Flexbudget
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            </div>
-            )}
+              );
+            })()}
 
             {/* Budget-Rechnung — FORECAST MONATSENDE */}
             {forecastViewMode === 'forecast' && (<>
@@ -3357,74 +3362,61 @@ export default function PersonalFixPage() {
             </div>
             </>)}
 
-            {/* ── Operativer Status-Banner ─────────────────────────────── */}
+            {/* ── Operativer Status-Banner (vereinfacht) ───────────────── */}
             {(() => {
-              const activeStatus = forecastViewMode === 'forecast' ? forecastStatus : flexBudgetStatus;
-              const activeDelta  = forecastViewMode === 'forecast' ? forecastDelta : pfixIstVarDelta;
-              const activeLabel  = forecastViewMode === 'forecast'
-                ? (activeStatus === 'on_track' ? `Auf Kurs gemäss restlichem Plan — Puffer bis Monatsende`
-                    : activeStatus === 'warning' ? `Achtung: Prognose leicht über Budget bis Monatsende`
-                    : `Nicht auf Kurs: Forecast überschreitet Budget bis Monatsende`)
-                : (pfix.active.istWork === 0
-                    ? `Noch kein Flex Arbeit Ist erfasst — Budget ${budgetLabel}: ${fmtCHF(pfixAvailableVar)} verfügbar`
-                    : activeStatus === 'on_track'
-                      ? `Auf Kurs per Stichtag: Flex-Arbeit liegt ${fmtCHF(activeDelta)} unter Budget ${budgetLabel}`
-                      : activeStatus === 'warning'
-                        ? `Achtung: Flex-Arbeit liegt ${fmtCHF(Math.abs(activeDelta))} über Budget ${budgetLabel}`
-                        : `Nicht auf Kurs: Flex-Arbeit liegt ${fmtCHF(Math.abs(activeDelta))} über Budget ${budgetLabel}`);
+              const isForecast    = forecastViewMode === 'forecast';
+              const gesamtGenutzt = isForecast
+                ? pfix.month.fix + forecastFlexTotal
+                : pfix.active.fix + pfix.active.istWork;
+              const budgetBase    = isForecast ? personnelBudget : pfixBudget;
+              const gesamtPct     = budgetBase > 0 ? (gesamtGenutzt / budgetBase) * 100 : 0;
+              const restPct       = Math.max(0, 100 - gesamtPct);
+              const activeDelta   = isForecast ? forecastDelta : pfixIstVarDelta;
+              const isRed         = gesamtPct >= 95;
+              const isOrange      = gesamtPct >= 80 && gesamtPct < 95;
+              const statusTitle   = isRed
+                ? '⛔ Budget überschritten'
+                : isOrange
+                  ? '⚠ Personalbudget fast ausgeschöpft'
+                  : '✓ Auf Kurs';
+              const statusSub     = isRed
+                ? 'Flexeinsätze reduzieren'
+                : isOrange
+                  ? `Nur noch ${fmtCHF(Math.max(0, activeDelta))} verfügbar`
+                  : `Noch ${restPct.toFixed(0)} % Personalbudget verfügbar`;
               return (
-              <div className={cn(
-                'mx-4 mb-4 p-3 rounded-lg border flex flex-wrap items-start gap-3',
-                activeStatus === 'on_track'
-                  ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20'
-                  : activeStatus === 'warning'
-                    ? 'border-yellow-200 dark:border-yellow-800 bg-yellow-50/60 dark:bg-yellow-950/20'
-                    : 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
-              )}>
-                <Lightbulb className={cn('h-4 w-4 mt-0.5 shrink-0',
-                  activeStatus === 'on_track' ? 'text-emerald-600'
-                    : activeStatus === 'warning' ? 'text-yellow-600'
-                    : 'text-red-600'
-                )} />
-                <div className="flex-1 min-w-0 space-y-1.5">
-                  <p className={cn('text-sm font-semibold',
-                    activeStatus === 'on_track' ? 'text-emerald-800 dark:text-emerald-300'
-                      : activeStatus === 'warning' ? 'text-yellow-800 dark:text-yellow-300'
-                      : 'text-red-800 dark:text-red-300'
-                  )}>
-                    {activeLabel}
-                  </p>
-                  {avgHourlyWage > 0 && (
-                    <div className="text-xs text-muted-foreground space-y-0.5">
-                      <p>
-                        Ø Stundenlohn Flex: <strong className="font-mono text-foreground">{fmtCHFDec(avgHourlyWage)}/h</strong>
-                        {pfixMaxVarHours > 0 && (
-                          <> · Budget reicht für max. <strong className="font-mono text-foreground">{pfixMaxVarHours} h</strong></>
-                        )}
+                <div className={cn(
+                  'mx-4 mb-4 p-3 rounded-lg border flex items-center gap-3',
+                  isRed
+                    ? 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
+                    : isOrange
+                      ? 'border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20'
+                      : 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20'
+                )}>
+                  {/* Ampel */}
+                  <div className="flex flex-col gap-1 items-center shrink-0">
+                    <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
+                      isRed ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)]' : 'bg-red-200 dark:bg-red-900')} />
+                    <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
+                      isOrange ? 'bg-amber-500 shadow-[0_0_6px_rgba(234,179,8,0.7)]' : 'bg-amber-200 dark:bg-amber-900')} />
+                    <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
+                      (!isRed && !isOrange) ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={cn('text-sm font-bold',
+                      isRed    ? 'text-red-700 dark:text-red-400'
+                        : isOrange ? 'text-amber-700 dark:text-amber-400'
+                        : 'text-emerald-700 dark:text-emerald-400')}>
+                      {statusTitle}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{statusSub}</p>
+                    {avgHourlyWage > 0 && pfixMaxVarHours > 0 && !isRed && (
+                      <p className="text-[11px] text-muted-foreground/60 mt-1">
+                        Ø Stundenlohn {fmtCHFDec(avgHourlyWage)}/h · max. {pfixMaxVarHours} h Flex planbar
                       </p>
-                      {activeStatus !== 'on_track' && (
-                        <p className={cn(activeStatus === 'warning' ? 'text-yellow-700 dark:text-yellow-500' : 'text-red-600 dark:text-red-400')}>
-                          → Überschreitung entspricht ca. {Math.ceil(Math.abs(activeDelta) / avgHourlyWage)} h zu viel
-                        </p>
-                      )}
-                      {activeStatus === 'on_track' && pfixMaxVarHours > 0 && totalVarHours > 0 && (
-                        <p className="text-emerald-600 dark:text-emerald-400">
-                          → Noch ca. {Math.max(0, pfixMaxVarHours - Math.round(pfix.active.istWork / avgHourlyWage))} h planbar ohne Budgetüberschreitung
-                        </p>
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
-                {/* Ampel */}
-                <div className="flex flex-col gap-1 items-center shrink-0 self-center">
-                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
-                    activeStatus === 'off_track' ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)]' : 'bg-red-200 dark:bg-red-900')} />
-                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
-                    activeStatus === 'warning' ? 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.7)]' : 'bg-yellow-200 dark:bg-yellow-900')} />
-                  <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
-                    activeStatus === 'on_track' ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
-                </div>
-              </div>
               );
             })()}
           </section>

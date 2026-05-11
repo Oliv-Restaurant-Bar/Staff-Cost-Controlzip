@@ -1,0 +1,91 @@
+Bitte überarbeite den Bereich „Budget Planung Personal“ im Dashboard.
+
+Ziel:
+Der bisherige zusätzliche Analyseblock „Total Personal FIX – alle Abteilungen“ soll vollständig entfernt werden, weil er keinen ausreichenden Mehrwert bringt und Zahlen doppelt darstellt.
+
+Bitte entfernen:
+• Den kompletten Block „Total Personal FIX – alle Abteilungen“
+• Basis / Monatswert
+• Jahreshochrechnung
+• zusätzliche FIX Analyse
+• doppelte Vergleichswerte
+
+Der Bereich „Budget Planung Personal“ soll dafür schlanker und aussagekräftiger werden.
+
+Neue Struktur im Block „Budget Planung Personal“:
+
+1. Obere Kennzahlen kompakt darstellen:
+• Budget gesamt
+• FIX Personal
+• Verfügbar für Flex
+
+2. Danach zwei moderne Fortschrittsbalken integrieren:
+
+A) Gesamtbudget genutzt
+
+Berechnung:
+Genutztes Gesamtbudget = Personal FIX Ist gesamt + Flex Arbeit Ist gesamt
+
+Anzeige:
+„Gesamtbudget genutzt“
+CHF [genutzt] / CHF [Budget gesamt]
+Fortschrittsbalken mit Prozentwert
+
+Beispiel:
+CHF 71’422 / CHF 106’400
+67%
+
+B) Flexbudget genutzt
+
+Berechnung:
+Flexbudget genutzt = Flex Arbeit Ist gesamt
+Flexbudget verfügbar = Budget gesamt minus Personal FIX Ist gesamt
+
+Anzeige:
+„Flexbudget genutzt“
+CHF [Flex Ist] / CHF [Verfügbar für Flex]
+Fortschrittsbalken mit Prozentwert
+
+Zusätzlich darunter anzeigen:
+✓ Noch CHF [Rest Flexbudget] verfügbar
+→ ca. [Reststunden]h zusätzlich planbar
+
+Berechnung Reststunden:
+Rest Flexbudget / durchschnittlicher Flex-Stundensatz
+
+3. Die bisherige grosse Statusbox vereinfachen.
+
+Statt langer Texte bitte kurze Statusmeldungen verwenden:
+
+Wenn alles im grünen Bereich ist:
+✓ Auf Kurs
+Noch [x]% Personalbudget verfügbar
+
+Wenn Budgetauslastung hoch ist:
+⚠ Personalbudget fast ausgeschöpft
+Nur noch CHF [Restbudget] verfügbar
+
+Wenn Budget überschritten ist:
+⛔ Budget überschritten
+Flexeinsätze reduzieren
+
+4. Design der Balken:
+• Deutlich dicker als normale Progressbars
+• Weiche Rundungen
+• Prozentwert im oder direkt neben dem Balken
+• Modernes KPI-Dashboard Design
+• Weniger Boxen, weniger visuelle Unruhe
+
+5. Farb-Logik:
+• Grün bei 0 bis 79%
+• Orange bei 80 bis 94%
+• Rot ab 95%
+
+Wichtig:
+Der Fokus soll nicht mehr auf zusätzlicher FIX-Analyse liegen, sondern auf diesen Fragen:
+• Wie viel Personalbudget wurde bereits genutzt?
+• Wie viel Flexbudget ist bereits verbraucht?
+• Wie viel Handlungsspielraum bleibt noch?
+• Wie viele Flex-Stunden können noch geplant werden?
+
+Bitte bestehende Berechnungen wiederverwenden, wo möglich, und keine bestehende Budgetlogik beschädigen.
