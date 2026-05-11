@@ -25,7 +25,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2 } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -207,7 +207,7 @@ const SchedulePlanner = () => {
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [empFilterOpen, setEmpFilterOpen] = useState(false);
   const [empSearchQuery, setEmpSearchQuery] = useState('');
-  const [calendarView, setCalendarView] = useState<CalendarView>('month');
+  const [calendarView, setCalendarView] = useState<CalendarView>('week');
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
   const [visibleWeekInMonth, setVisibleWeekInMonth] = useState(0);
   const [selectedDayOffset, setSelectedDayOffset] = useState(0);
@@ -262,6 +262,9 @@ const SchedulePlanner = () => {
   const [pkDetailOpen, setPkDetailOpen]                       = useState(false);
   const [zielwertEditOpen, setZielwertEditOpen]               = useState(false);
   const [zielwertDraft, setZielwertDraft]                     = useState<{ service: string; küche: string; global: string; autoGlobal: boolean }>({ service: '20.0', küche: '20.0', global: '40.0', autoGlobal: true });
+  const [legendSidebarOpen, setLegendSidebarOpen]             = useState(true);
+  const [empTypeFilter, setEmpTypeFilter]                     = useState<'vollzeit' | 'teilzeit' | 'stundenlohn' | null>(null);
+  const [hintsCollapsed, setHintsCollapsed]                   = useState(false);
 
   // ── Sortierungsmodus & Zellfarben ────────────────────────────────────────
   const [sortModeActive, setSortModeActive]                   = useState(false);
@@ -2140,6 +2143,13 @@ const SchedulePlanner = () => {
     } else {
       base = applySort(activeEmployees.filter(e => e.department === activeDepartment), activeDepartment as 'service' | 'küche');
     }
+    if (empTypeFilter === 'vollzeit') {
+      base = base.filter(e => e.employmentType === 'vollzeit');
+    } else if (empTypeFilter === 'teilzeit') {
+      base = base.filter(e => e.employmentType === 'teilzeit' || e.employmentType === 'minijob' || e.employmentType === 'aushilfe');
+    } else if (empTypeFilter === 'stundenlohn') {
+      base = base.filter(e => !e.monthlySalary || e.monthlySalary === 0);
+    }
     if (selectedEmployeeIds.length > 0) {
       const idSet = new Set(selectedEmployeeIds);
       base = base.filter(e => idSet.has(e.id));
@@ -2808,6 +2818,39 @@ const SchedulePlanner = () => {
 
             <div className="w-px h-5 bg-border shrink-0 hidden sm:block" />
 
+            {/* Beschäftigungstyp Quick-Filter */}
+            {canSwitchDepartment && (
+              <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
+                {([
+                  { key: null,          label: 'Alle' },
+                  { key: 'vollzeit',    label: 'VZ' },
+                  { key: 'teilzeit',    label: 'TZ' },
+                  { key: 'stundenlohn', label: 'SL' },
+                ] as const).map(({ key, label }) => (
+                  <button
+                    key={String(key)}
+                    onClick={() => setEmpTypeFilter(empTypeFilter === key ? null : key)}
+                    className={cn(
+                      "h-7 px-2 text-xs font-medium rounded-md transition-colors",
+                      empTypeFilter === key
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    title={
+                      key === null        ? 'Alle Mitarbeiter' :
+                      key === 'vollzeit'  ? 'Nur Vollzeit' :
+                      key === 'teilzeit'  ? 'Nur Teilzeit/Aushilfen' :
+                                           'Nur Stundenlohn (ohne Monatslohn)'
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="w-px h-5 bg-border shrink-0 hidden sm:block" />
+
             {/* Abteilung */}
             {canSwitchDepartment ? (
               <div className="flex items-center gap-1.5 flex-wrap">
@@ -3011,200 +3054,267 @@ const SchedulePlanner = () => {
         </div>
       </header>
 
-      <main className="max-w-[1800px] mx-auto w-full px-4 pt-2 pb-8 flex flex-col gap-2">
+      <main className="max-w-[1800px] mx-auto w-full px-4 pt-2 pb-8">
+        <div className="flex gap-3 items-start">
 
-        {/* ── Aktiver-Zielwert Info-Banner ─────────────────────────────── */}
-        {(() => {
-          const srcLabel = (src: string): string => (({
-            'month+dept':   'Monat + Abt.',
-            'year+dept':    'Jahr + Abt.',
-            'month+global': 'Monat global',
-            'year+global':  'Jahr global',
-            'fallback':     'Fallback',
-          } as Record<string, string>)[src] ?? src);
+          {/* ══════════════ LEFT SIDEBAR: Legend + Quick stats ══════════════ */}
+          <aside className={cn(
+            "shrink-0 flex flex-col gap-2 transition-[width] duration-200",
+            legendSidebarOpen ? "w-52" : "w-8"
+          )}>
+            <button
+              onClick={() => setLegendSidebarOpen(v => !v)}
+              className="flex items-center gap-1.5 px-1.5 py-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors text-[11px] w-full"
+              title={legendSidebarOpen ? 'Legende einklappen' : 'Legende ausklappen'}
+            >
+              <PanelLeftClose className={cn("h-4 w-4 shrink-0 transition-transform duration-200", !legendSidebarOpen && "rotate-180")} />
+              {legendSidebarOpen && <span className="font-medium truncate">Schichten</span>}
+            </button>
 
-          const items: { label: string; pct: number; src: string; color: string }[] = [];
-          if (activeDepartment !== 'küche') {
-            items.push({ label: 'Service', pct: _serviceResolved.targetPercent, src: _serviceResolved.source,
-              color: 'text-blue-700 bg-blue-50 border-blue-200 dark:text-blue-300 dark:bg-blue-950/30 dark:border-blue-700' });
-          }
-          if (activeDepartment !== 'service') {
-            items.push({ label: 'Küche', pct: _kücheResolved.targetPercent, src: _kücheResolved.source,
-              color: 'text-orange-700 bg-orange-50 border-orange-200 dark:text-orange-300 dark:bg-orange-950/30 dark:border-orange-700' });
-          }
-          if (activeDepartment === 'all') {
-            items.push({ label: 'Global', pct: _globalResolved.targetPercent, src: _globalResolved.source,
-              color: 'text-muted-foreground bg-muted border-border' });
-          }
+            {legendSidebarOpen && (
+              <>
+                <ShiftLegend
+                  onEditClick={() => setShiftConfigDialogOpen(true)}
+                  department={activeDepartment === 'all' ? 'all' : activeDepartment as 'service' | 'küche'}
+                  activeTool={paintTool}
+                  onToolSelect={setPaintTool}
+                  mode="sidebar"
+                />
 
-          return (
-            <div className="shrink-0 flex flex-wrap gap-2 items-center py-1">
-              <span className="text-xs text-muted-foreground font-medium shrink-0">Aktiver Zielwert:</span>
-              {items.map(({ label, pct, src, color }) => (
-                <span key={label} className={cn(
-                  'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border',
-                  color
-                )}>
-                  <span className="font-semibold">{label}:</span>
-                  <span className="tabular-nums">{pct.toFixed(1)}&thinsp;%</span>
-                  <span className="opacity-60 font-normal">({srcLabel(src)})</span>
-                </span>
-              ))}
-              <span className="text-[10px] text-muted-foreground/50 ml-0.5">für {pkqPeriodLabel}</span>
-              <button
-                onClick={handleOpenZielwertEdit}
-                className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/60 hover:text-foreground transition-colors ml-1 px-1.5 py-0.5 rounded border border-transparent hover:border-border"
-                title="Zielwerte bearbeiten"
-              >
-                <Pencil className="h-2.5 w-2.5" />
-                <span>bearbeiten</span>
-              </button>
-            </div>
-          );
-        })()}
-
-        {/* Summary Cards */}
-        <div className="shrink-0 grid grid-cols-2 md:grid-cols-4 gap-2">
-          <Card>
-            <CardContent className="py-2 px-3">
-              <div className="flex items-center gap-2">
-                <Users className="h-5 w-5 text-primary shrink-0" />
-                <div>
-                  <p className="text-lg font-bold leading-tight">{departmentEmployeeCount}</p>
-                  <p className="text-xs text-muted-foreground leading-tight">Mitarbeiter</p>
+                {/* Mini sidebar KPIs */}
+                <div className="rounded-lg border bg-card px-3 py-2.5 space-y-1.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {pkqPeriodLabel}
+                  </p>
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-muted-foreground">Mitarbeiter</span>
+                      <span className="font-bold">{departmentEmployeeCount}</span>
+                    </div>
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-muted-foreground">Geplant</span>
+                      <span className="font-bold tabular-nums">{departmentPlannedHours.toFixed(1)} h</span>
+                    </div>
+                    {gesamtCostRatio !== null && (
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-muted-foreground">PKQ</span>
+                        <button
+                          onClick={() => setPkDetailOpen(true)}
+                          className={cn(
+                            "font-black tabular-nums hover:underline cursor-pointer text-sm",
+                            gesamtCostRatioStatus === 'good'  && "text-green-600 dark:text-green-400",
+                            gesamtCostRatioStatus === 'ok'    && "text-yellow-600 dark:text-yellow-400",
+                            gesamtCostRatioStatus === 'high'  && "text-red-600 dark:text-red-400",
+                          )}
+                        >
+                          {gesamtCostRatio.toFixed(1)} %
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-muted-foreground">Ziel</span>
+                      <span className="font-semibold tabular-nums">{laborCostThreshold} %</span>
+                    </div>
+                    {departmentWarningCount > 0 && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3 text-amber-500" />
+                          Warnungen
+                        </span>
+                        <span className="font-bold text-amber-600 dark:text-amber-400">{departmentWarningCount}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="py-2 px-3">
-              <div className="flex items-center gap-2">
-                <Clock className="h-5 w-5 text-blue-500 shrink-0" />
-                <div>
-                  <p className="text-lg font-bold leading-tight">{departmentPlannedHours.toFixed(1)}h</p>
-                  <p className="text-xs text-muted-foreground leading-tight">Geplant</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="py-2 px-3">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-5 w-5 text-success shrink-0" />
-                <div>
-                  <p className="text-lg font-bold leading-tight">{departmentOkCount}</p>
-                  <p className="text-xs text-muted-foreground leading-tight">Im Ziel</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="py-2 px-3">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-warning shrink-0" />
-                <div>
-                  <p className="text-lg font-bold leading-tight">{departmentWarningCount}</p>
-                  <p className="text-xs text-muted-foreground leading-tight">Warnung</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
 
-        {/* ════════════════════════════════════════════════════════════
-            PERSONALKOSTENQUOTE BANNER (nach Summary Cards)
-            ════════════════════════════════════════════════════════════ */}
-        <div className={cn(
-          "shrink-0 rounded-xl border-2 px-4 py-2 flex flex-col gap-1.5",
-          gesamtCostRatioStatus === 'good'    && "border-green-500 bg-green-50 dark:bg-green-950/30",
-          gesamtCostRatioStatus === 'ok'      && "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30",
-          gesamtCostRatioStatus === 'high'    && "border-red-500 bg-red-50 dark:bg-red-950/30",
-          gesamtCostRatioStatus === 'unknown' && "border-slate-300 bg-slate-50 dark:bg-slate-800/40"
-        )}>
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Personalquote Gesamt (Küche + Service)
-            </p>
-            <p className="text-xs text-muted-foreground">{pkqPeriodLabel}</p>
-          </div>
+                {/* Zielwerte */}
+                <div className="rounded-lg border bg-card px-3 py-2.5 space-y-1.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Zielwerte</p>
+                  <div className="space-y-1.5 text-xs">
+                    {activeDepartment !== 'küche' && (
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-blue-600 dark:text-blue-400 font-medium">Service</span>
+                        <span className="tabular-nums font-semibold">{_serviceResolved.targetPercent.toFixed(1)} %</span>
+                      </div>
+                    )}
+                    {activeDepartment !== 'service' && (
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-orange-600 dark:text-orange-400 font-medium">Küche</span>
+                        <span className="tabular-nums font-semibold">{_kücheResolved.targetPercent.toFixed(1)} %</span>
+                      </div>
+                    )}
+                    {activeDepartment === 'all' && (
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-muted-foreground">Global</span>
+                        <span className="tabular-nums font-semibold">{_globalResolved.targetPercent.toFixed(1)} %</span>
+                      </div>
+                    )}
+                    <button
+                      onClick={handleOpenZielwertEdit}
+                      className="text-[10px] text-muted-foreground/60 hover:text-foreground flex items-center gap-1 pt-0.5"
+                    >
+                      <Pencil className="h-2.5 w-2.5" />
+                      bearbeiten
+                    </button>
+                  </div>
+                </div>
 
-          <div className="flex flex-row items-center justify-between gap-4">
-            {/* Left: icon + big % (clickable) */}
-            <div className="flex items-center gap-2">
-              <div className={cn(
-                "w-9 h-9 rounded-full flex items-center justify-center text-white text-base font-black shrink-0",
-                gesamtCostRatioStatus === 'good'    && "bg-green-500",
-                gesamtCostRatioStatus === 'ok'      && "bg-yellow-400",
-                gesamtCostRatioStatus === 'high'    && "bg-red-500",
-                gesamtCostRatioStatus === 'unknown' && "bg-slate-400"
-              )}>
-                {gesamtCostRatioStatus === 'good'    && '✓'}
-                {gesamtCostRatioStatus === 'ok'      && '!'}
-                {gesamtCostRatioStatus === 'high'    && '✗'}
-                {gesamtCostRatioStatus === 'unknown' && '?'}
-              </div>
-              <div>
+                {/* Smart Hinweise */}
+                {(patternWarnings.length > 0 || overhoursEmployees.length > 0 || gesamtCostRatioStatus === 'high') && (
+                  <div className="rounded-lg border bg-card overflow-hidden">
+                    <button
+                      onClick={() => setHintsCollapsed(v => !v)}
+                      className="flex items-center gap-1.5 w-full px-2.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted/50 transition-colors"
+                    >
+                      <Lightbulb className="h-3 w-3 text-amber-500 shrink-0" />
+                      <span className="flex-1 text-left">Hinweise</span>
+                      {(() => {
+                        const total = patternWarnings.filter(w => w.severity === 'critical').length + overhoursEmployees.length + (gesamtCostRatioStatus === 'high' ? 1 : 0);
+                        return total > 0 ? <span className="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400 rounded-full px-1.5 py-0 font-bold">{total}</span> : null;
+                      })()}
+                      <ChevronDown className={cn("h-3 w-3 transition-transform", hintsCollapsed && "rotate-180")} />
+                    </button>
+                    {!hintsCollapsed && (
+                      <div className="px-2.5 pb-2.5 space-y-1">
+                        {/* PKQ over target */}
+                        {gesamtCostRatioStatus === 'high' && gesamtCostRatio !== null && (
+                          <div className="flex items-start gap-1.5 text-[10px] text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 rounded px-1.5 py-1">
+                            <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
+                            <span>PKQ {gesamtCostRatio.toFixed(1)} % über Ziel ({laborCostThreshold} %)</span>
+                          </div>
+                        )}
+                        {/* Overtime employees */}
+                        {overhoursEmployees.slice(0, 3).map(({ employee, difference }) => (
+                          <div key={employee.id} className="flex items-start gap-1.5 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded px-1.5 py-1">
+                            <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
+                            <span className="truncate">{getEmployeeDisplayName(employee)} +{difference.toFixed(1)} h</span>
+                          </div>
+                        ))}
+                        {/* Pattern warnings — show up to 4 */}
+                        {patternWarnings.slice(0, 4).map((w, i) => (
+                          <div
+                            key={i}
+                            className={cn(
+                              "flex items-start gap-1.5 text-[10px] rounded px-1.5 py-1 cursor-pointer hover:opacity-80",
+                              w.severity === 'critical'
+                                ? "text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30"
+                                : "text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30"
+                            )}
+                            onClick={() => {
+                              const d = new Date(w.firstDate);
+                              handleJumpToDay(d, w.empId);
+                            }}
+                            title={w.detail}
+                          >
+                            <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
+                            <span className="leading-tight">{w.empName}: {w.message}</span>
+                          </div>
+                        ))}
+                        {patternWarnings.length > 4 && (
+                          <p className="text-[10px] text-muted-foreground text-center py-0.5">
+                            +{patternWarnings.length - 4} weitere Warnungen
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </aside>
+
+          {/* ══════════════ MAIN CONTENT ══════════════ */}
+          <div className="flex-1 min-w-0 flex flex-col gap-2">
+
+            {/* ── Compact KPI Strip ───────────────────────────────────── */}
+            <div className={cn(
+              "shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 rounded-xl border-2",
+              gesamtCostRatioStatus === 'good'    && "border-green-400/60 bg-green-50/60 dark:bg-green-950/20",
+              gesamtCostRatioStatus === 'ok'      && "border-yellow-400/60 bg-yellow-50/60 dark:bg-yellow-950/20",
+              gesamtCostRatioStatus === 'high'    && "border-red-400/60 bg-red-50/60 dark:bg-red-950/20",
+              gesamtCostRatioStatus === 'unknown' && "border-border bg-muted/30"
+            )}>
+              <span className="text-[11px] font-semibold text-muted-foreground shrink-0">{pkqPeriodLabel}</span>
+              <div className="w-px h-4 bg-border/60 shrink-0" />
+
+              {/* PKQ */}
+              <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => setPkDetailOpen(true)}
                   className={cn(
-                    "text-2xl font-black leading-none underline-offset-4 hover:underline cursor-pointer",
+                    "text-xl font-black tabular-nums leading-none hover:underline underline-offset-2 cursor-pointer",
                     gesamtCostRatioStatus === 'good'    && "text-green-700 dark:text-green-400",
                     gesamtCostRatioStatus === 'ok'      && "text-yellow-600 dark:text-yellow-400",
                     gesamtCostRatioStatus === 'high'    && "text-red-700 dark:text-red-400",
-                    gesamtCostRatioStatus === 'unknown' && "text-slate-500"
+                    gesamtCostRatioStatus === 'unknown' && "text-muted-foreground"
                   )}
-                  title="Details anzeigen"
+                  title="PKQ Details anzeigen"
                 >
                   {gesamtCostRatio !== null ? `${gesamtCostRatio.toFixed(1)} %` : '– %'}
                 </button>
-                <p className="text-xs mt-0.5">
-                  {gesamtCostRatioStatus === 'good'    && <span className="text-green-700 dark:text-green-400 font-medium">Gut – Ziel von {laborCostThreshold}% erreicht</span>}
-                  {gesamtCostRatioStatus === 'ok'      && <span className="text-yellow-600 dark:text-yellow-400 font-medium">Knapp – leicht über Ziel ({laborCostThreshold}%)</span>}
-                  {gesamtCostRatioStatus === 'high'    && <span className="text-red-700 dark:text-red-400 font-medium">Zu hoch – Ziel {laborCostThreshold}% überschritten <span className="text-xs font-normal cursor-pointer underline" onClick={() => setPkDetailOpen(true)}>→ Details</span></span>}
-                  {gesamtCostRatioStatus === 'unknown' && <span className="text-muted-foreground">Kein Umsatzbudget – Quote noch nicht berechenbar</span>}
-                </p>
+                <span className="text-[10px] text-muted-foreground leading-tight">PKQ<br />Ziel {laborCostThreshold} %</span>
               </div>
-            </div>
-            {/* Right: three key numbers */}
-            <div className="flex gap-4 flex-wrap sm:flex-nowrap">
-              <div className="text-center">
-                <p className="text-base font-bold tabular-nums leading-tight">
-                  {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(gesamtActiveLaborCost)}
-                </p>
-                <p className="text-[10px] text-muted-foreground leading-tight">
-                  PK Gesamt / {pkqPeriodName}
-                </p>
-              </div>
-              <div className="text-center">
-                <p className="text-base font-bold tabular-nums leading-tight">
-                  {activeRevenue > 0
-                    ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue)
-                    : <span className="text-muted-foreground text-sm">{scheduleMode === 'ist' ? 'kein Ist-Umsatz' : 'kein Budget'}</span>}
-                </p>
-                <p className="text-[10px] text-muted-foreground leading-tight">
-                  {scheduleMode === 'ist' ? 'Ist-Umsatz' : 'Budget'} / {pkqPeriodName}
-                </p>
-              </div>
-              <div className="text-center">
-                <p className="text-base font-bold tabular-nums leading-tight">{laborCostThreshold} %</p>
-                <p className="text-[10px] text-muted-foreground leading-tight">Zielwert Gesamt</p>
-              </div>
-            </div>
-          </div>
-        </div>
+              <div className="w-px h-4 bg-border/60 shrink-0" />
 
-        {/* Shift Legend */}
-        <div className="shrink-0">
-          <ShiftLegend 
-            onEditClick={() => setShiftConfigDialogOpen(true)}
-            department={activeDepartment === 'all' ? 'all' : activeDepartment as 'service' | 'küche'}
-            activeTool={paintTool}
-            onToolSelect={setPaintTool}
-          />
-        </div>
+              {/* PK Kosten */}
+              <div className="flex items-baseline gap-1 text-sm">
+                <span className="font-bold tabular-nums">
+                  {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(gesamtActiveLaborCost)}
+                </span>
+                <span className="text-[10px] text-muted-foreground">PK</span>
+              </div>
+
+              {/* Revenue */}
+              {activeRevenue > 0 && (
+                <>
+                  <div className="w-px h-4 bg-border/60 shrink-0" />
+                  <div className="flex items-baseline gap-1 text-sm">
+                    <span className="font-bold tabular-nums">
+                      {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(activeRevenue)}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">{scheduleMode === 'ist' ? 'Ist-Umsatz' : 'Budget'}</span>
+                  </div>
+                </>
+              )}
+              <div className="w-px h-4 bg-border/60 shrink-0" />
+
+              {/* Hours */}
+              <div className="flex items-baseline gap-1 text-sm">
+                <span className="font-bold tabular-nums">{departmentPlannedHours.toFixed(1)} h</span>
+                <span className="text-[10px] text-muted-foreground">geplant</span>
+              </div>
+
+              {/* MA Count */}
+              <div className="flex items-center gap-1 text-sm">
+                <Users className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span className="font-bold tabular-nums">{departmentEmployeeCount}</span>
+                <span className="text-[10px] text-muted-foreground">MA</span>
+              </div>
+
+              {/* Im Ziel */}
+              {departmentOkCount > 0 && (
+                <>
+                  <div className="w-px h-4 bg-border/60 shrink-0 hidden sm:block" />
+                  <div className="hidden sm:flex items-center gap-1 text-sm">
+                    <CheckCircle className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                    <span className="font-bold tabular-nums text-green-600 dark:text-green-400">{departmentOkCount}</span>
+                    <span className="text-[10px] text-muted-foreground">im Ziel</span>
+                  </div>
+                </>
+              )}
+
+              {/* Warnings */}
+              {departmentWarningCount > 0 && (
+                <>
+                  <div className="w-px h-4 bg-border/60 shrink-0" />
+                  <div className="flex items-center gap-1 text-sm">
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                    <span className="font-bold tabular-nums text-amber-600 dark:text-amber-400">{departmentWarningCount}</span>
+                    <span className="text-[10px] text-muted-foreground">Warn.</span>
+                  </div>
+                </>
+              )}
+            </div>
 
         {/* Schedule Grid with Plan/Ist Tabs */}
         <Card className="flex flex-col">
@@ -4025,6 +4135,8 @@ const SchedulePlanner = () => {
             </CardContent>
           </Card>
         )}
+          </div>{/* end flex-1 content */}
+        </div>{/* end flex gap-3 */}
       </main>
 
       {/* Copy Week Dialog */}

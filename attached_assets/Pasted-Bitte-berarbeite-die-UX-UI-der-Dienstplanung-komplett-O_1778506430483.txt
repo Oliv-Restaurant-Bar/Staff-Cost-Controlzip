@@ -1,0 +1,247 @@
+Bitte überarbeite die UX/UI der Dienstplanung komplett, OHNE die bestehende Berechnungslogik, Kostenlogik, Soll/Ist-Logik, Forecasts oder Synchronisationen zu verändern.
+
+Ziel:
+Die Dienstplanung soll wie ein modernes professionelles Workforce-/Restaurant-Planning-Tool wirken.
+Schneller, intuitiver, weniger Scrollen, einfacher für Service- und Küchenleiter.
+
+WICHTIG:
+- KEINE bestehende Berechnungslogik verändern
+- KEINE Datenstruktur verändern
+- KEINE Kostenlogik verändern
+- KEINE Soll/Ist-Synchronisation verändern
+- Nur UI/UX + Bedienlogik modernisieren
+
+====================================================
+1. STANDARDANSICHT
+====================================================
+
+- Wochenansicht als neue Default-Ansicht
+- Monat bleibt verfügbar
+- Tag bleibt verfügbar
+- Auswahl oben kompakter
+
+Beim Öffnen:
+→ immer Woche zuerst
+
+====================================================
+2. LEGENDE LINKS STATT OBEN
+====================================================
+
+Die komplette obere Legendenleiste entfernen.
+
+Die Legende soll links in die Sidebar integriert werden
+(dort wo aktuell Stichtag / Netto-Brutto / Restaurantblock ist).
+
+Dort:
+- gruppiert nach:
+  - Service
+  - Küche
+  - Abwesenheiten
+  - Spezialschichten
+
+Jede Legende als:
+- kompakte Card
+- Farbe
+- Zeit
+- Dauer
+- Kürzel
+
+====================================================
+3. DRAG & DROP PLANUNG
+====================================================
+
+Ganz wichtig:
+
+Schichten aus der linken Legende:
+- anklickbar
+- draggable
+
+Dann:
+- direkt auf Mitarbeiter-Zellen ziehen
+- automatisch einfügen
+
+Features:
+- Hover-Highlighting
+- Snap-Effekt
+- Mobile kompatibel
+- Smooth Animation
+
+Zusätzlich:
+- Shift verschieben per Drag&Drop
+- Shift kopieren mit ALT/OPTION
+- Mehrfachbelegung verhindern
+- Konfliktwarnungen
+
+====================================================
+4. MITARBEITER-FILTER
+====================================================
+
+Oben neue Sticky Toolbar:
+
+Filter:
+- Alle
+- Service
+- Küche
+- Vollzeit
+- Teilzeit
+- Stundenlohn
+- Monatslohn
+- Nur aktive Mitarbeiter
+- Nur heute eingeplante
+- Nur Unterdeckung
+- Nur Überstundenrisiko
+
+Zusätzlich:
+Suchfeld:
+- Mitarbeiter suchen
+
+====================================================
+5. SCROLL-VERHALTEN VERBESSERN
+====================================================
+
+Aktuell ist horizontales und vertikales Scrollen unpraktisch.
+
+Bitte:
+
+- Sticky Mitarbeiter-Spalte links
+- Sticky Tagesheader oben
+- Smooth horizontal scroll
+- Sync Scrollbars
+- Wochenansicht kompakter
+- Weniger Leerraum
+
+Desktop Fokus:
+→ maximale Übersicht ohne Dauer-Scrollen
+
+====================================================
+6. VISUELLE VERBESSERUNG DER ZELLEN
+====================================================
+
+Dienstplan-Zellen modernisieren:
+
+Aktuell:
+- textlastig
+- unruhig
+
+Neu:
+- kompakte Chips
+- klare Farben
+- Zeit besser lesbar
+- kleine Icons
+- Hover-Zustände
+- Kostenindikator klein unten rechts
+- Warnungen nur subtil
+
+Optional:
+- kleine Badges:
+  - Überzeit
+  - Spät
+  - Doppelschicht
+  - Ferien
+  - Krank
+
+====================================================
+7. SMART PLANUNGSHINWEISE
+====================================================
+
+Neue rechte Seitenleiste (optional einklappbar):
+
+Live Hinweise:
+- Dienstag Service überplant (+12h)
+- Küche Freitag Unterdeckung
+- Samstag Personalkosten über Ziel
+- Mitarbeiter mit vielen Minusstunden
+- Mitarbeiter mit Überstundenrisiko
+- Keine Küchenleitung eingeplant
+- Zu viele Personen gleichzeitig
+
+Mit Farben:
+- grün
+- orange
+- rot
+
+====================================================
+8. SCHNELLPLANUNG
+====================================================
+
+Neue Schnellaktionen:
+
+- Woche kopieren
+- Mitarbeiterwoche kopieren
+- Nur Service kopieren
+- Nur Küche kopieren
+- Automatisch gleiche Woche erzeugen
+- Auto-Vorschlag basierend auf Vorwoche
+
+====================================================
+9. WOCHEN-KPI LEISTE
+====================================================
+
+Oben kompakte Sticky KPI-Leiste:
+
+- Umsatz Soll
+- Umsatz Forecast
+- Personalkosten %
+- Stunden Soll/Ist
+- Unterdeckung
+- Überplanung
+- MA Anzahl pro Tag
+- Forecast Monatsende
+
+Sehr kompakt und modern.
+
+====================================================
+10. PERFORMANCE
+====================================================
+
+Wichtig:
+Die neue UI darf NICHT langsamer werden.
+
+Bitte:
+- Virtualisierung prüfen
+- unnötige Re-Renders vermeiden
+- Memoization
+- performantes Drag&Drop
+
+====================================================
+11. DESIGNRICHTUNG
+====================================================
+
+Design:
+- moderner
+- ruhiger
+- weniger Text
+- mehr visuelle Führung
+- professionelles SaaS Gefühl
+
+Orientierung:
+- Deputy
+- Planday
+- Quinyx
+- Kenjo
+- Factorial
+
+ABER:
+für Gastronomie optimiert.
+
+====================================================
+12. WICHTIG
+====================================================
+
+NICHT verändern:
+- Datenmodelle
+- Kostenberechnung
+- Soll/Ist-Logik
+- Reporting-Verknüpfungen
+- Forecast-Logik
+- Personal FIX Synchronisation
+
+Nur:
+UI/UX + Bedienbarkeit modernisieren.
+
+Bitte zuerst:
+- neue Layoutstruktur bauen
+- dann Drag&Drop
+- dann neue Filter
+- dann Scroll-Verhalten
+- dann Visual Polish

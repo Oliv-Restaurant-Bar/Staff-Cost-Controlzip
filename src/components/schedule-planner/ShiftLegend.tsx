@@ -18,10 +18,9 @@ import {
 interface ShiftLegendProps {
   onEditClick?: () => void;
   department?: 'service' | 'küche' | 'all';
-  /** Currently active paint tool: absence abbrev ('FE') or work shift ('shift:Früh') */
   activeTool?: string | null;
-  /** Called when user clicks a legend item to select/deselect it as paint tool */
   onToolSelect?: (tool: string | null) => void;
+  mode?: 'bar' | 'sidebar';
 }
 
 export const ShiftLegend = ({
@@ -29,6 +28,7 @@ export const ShiftLegend = ({
   department = 'all',
   activeTool,
   onToolSelect,
+  mode = 'bar',
 }: ShiftLegendProps) => {
   const { shiftMap, workShifts, absenceShifts } = useShiftConfig();
 
@@ -57,7 +57,6 @@ export const ShiftLegend = ({
     return `${formatted}h`;
   };
 
-  // Auto-expand when a tool is active so user can see which item is selected
   const [isOpen, setIsOpen] = useState(false);
   useEffect(() => {
     if (activeTool) setIsOpen(true);
@@ -71,6 +70,149 @@ export const ShiftLegend = ({
   };
 
   const isToolActive = (toolValue: string) => activeTool === toolValue;
+
+  const handleDragStart = (e: React.DragEvent, toolValue: string) => {
+    e.dataTransfer.setData('application/shift-tool', toolValue);
+    e.dataTransfer.effectAllowed = 'copy';
+    if (onToolSelect) onToolSelect(toolValue);
+  };
+
+  const handleDragEnd = () => {
+  };
+
+  if (mode === 'sidebar') {
+    return (
+      <TooltipProvider>
+        <div className={cn(
+          "rounded-lg border bg-card overflow-hidden",
+          activeTool && "ring-2 ring-primary/40"
+        )}>
+          {/* Active tool banner */}
+          {activeTool && onToolSelect && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-primary/10 border-b border-primary/20">
+              <Paintbrush className="h-3 w-3 text-primary shrink-0" />
+              <span className="text-[10px] font-semibold text-primary flex-1 truncate">
+                {activeTool.startsWith('shift:') ? activeTool.slice(6) : activeTool} aktiv
+              </span>
+              <button
+                onClick={() => onToolSelect(null)}
+                className="text-muted-foreground hover:text-foreground"
+                title="Deaktivieren (Esc)"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Work shifts */}
+          {filteredWorkShifts.length > 0 && (
+            <div className="px-2 py-1.5 space-y-0.5">
+              <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-1">Schichten</p>
+              {filteredWorkShifts.map(shiftName => {
+                const config = shiftMap[shiftName];
+                if (!config) return null;
+                const toolValue = `shift:${shiftName}`;
+                const active = isToolActive(toolValue);
+                const isSplitShift = config.start2 && config.end2;
+                const formatT = (t: string) => t.replace(':00', '').replace(':30', ':30');
+
+                return (
+                  <div
+                    key={shiftName}
+                    draggable={hasPaintMode}
+                    onDragStart={hasPaintMode ? (e) => handleDragStart(e, toolValue) : undefined}
+                    onDragEnd={hasPaintMode ? handleDragEnd : undefined}
+                    onClick={() => hasPaintMode && handleShiftClick(toolValue)}
+                    className={cn(
+                      "flex items-center gap-1.5 w-full px-1.5 py-1 rounded-md text-[11px] font-medium border cursor-pointer select-none transition-all",
+                      config.color,
+                      active && "ring-2 ring-offset-1 ring-primary shadow-sm",
+                      !active && hasPaintMode && activeTool && "opacity-50",
+                      hasPaintMode && "hover:ring-1 hover:ring-foreground/30"
+                    )}
+                    title={hasPaintMode ? (active ? 'Klicken zum Deaktivieren' : `${shiftName} aktivieren oder ziehen`) : undefined}
+                  >
+                    <span className="flex-1 truncate">{shiftName}</span>
+                    <span className="text-[10px] opacity-60 shrink-0">
+                      {isSplitShift
+                        ? `${formatT(config.start)}-${formatT(config.end)}`
+                        : config.start && config.end
+                          ? `${formatT(config.start)}-${formatT(config.end)}`
+                          : formatHours(config.hours)}
+                    </span>
+                    {hasPaintMode && active && <Paintbrush className="h-2.5 w-2.5 shrink-0 opacity-80" />}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Divider */}
+          {filteredWorkShifts.length > 0 && filteredAbsenceShifts.length > 0 && (
+            <div className="border-t border-border/50 mx-2" />
+          )}
+
+          {/* Absence shifts */}
+          {filteredAbsenceShifts.length > 0 && (
+            <div className="px-2 py-1.5 space-y-0.5">
+              <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-1">Abwesenheiten</p>
+              {filteredAbsenceShifts.map(shiftName => {
+                const config = shiftMap[shiftName];
+                if (!config) return null;
+                const toolValue = config.abbrev || shiftName;
+                const active = isToolActive(toolValue);
+
+                return (
+                  <div
+                    key={shiftName}
+                    draggable={hasPaintMode}
+                    onDragStart={hasPaintMode ? (e) => handleDragStart(e, toolValue) : undefined}
+                    onDragEnd={hasPaintMode ? handleDragEnd : undefined}
+                    onClick={() => hasPaintMode && handleShiftClick(toolValue)}
+                    className={cn(
+                      "flex items-center gap-1.5 w-full px-1.5 py-1 rounded-md text-[11px] font-medium border cursor-pointer select-none transition-all",
+                      config.color,
+                      active && "ring-2 ring-offset-1 ring-primary shadow-sm",
+                      !active && hasPaintMode && activeTool && "opacity-50",
+                      hasPaintMode && "hover:ring-1 hover:ring-foreground/30"
+                    )}
+                    title={hasPaintMode ? (active ? 'Klicken zum Deaktivieren' : `${shiftName} aktivieren oder ziehen`) : undefined}
+                  >
+                    <span className="font-bold shrink-0">{config.abbrev || shiftName}</span>
+                    <span className="flex-1 truncate opacity-70 text-[10px]">{shiftName}</span>
+                    {config.hours > 0 && (
+                      <span className="text-[10px] opacity-60 shrink-0">{formatHours(config.hours)}</span>
+                    )}
+                    {hasPaintMode && active && <Paintbrush className="h-2.5 w-2.5 shrink-0 opacity-80" />}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Custom time */}
+          <div className="px-2 pb-1.5">
+            <div className="flex items-center gap-1.5 w-full px-1.5 py-1 rounded-md text-[11px] font-medium border bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-700 select-none">
+              <span className="flex-1">Eigene Zeit</span>
+            </div>
+          </div>
+
+          {/* Edit button */}
+          {onEditClick && (
+            <div className="px-2 pb-2 pt-0.5 border-t border-border/50">
+              <button
+                onClick={onEditClick}
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground w-full px-1.5 py-1 rounded hover:bg-muted transition-colors"
+              >
+                <Settings className="h-3 w-3" />
+                Schichten bearbeiten
+              </button>
+            </div>
+          )}
+        </div>
+      </TooltipProvider>
+    );
+  }
 
   return (
     <TooltipProvider>
@@ -109,7 +251,6 @@ export const ShiftLegend = ({
                 )}
               </span>
 
-              {/* Cancel button when tool is active */}
               {activeTool && onToolSelect && (
                 <Button
                   variant="ghost"
@@ -139,7 +280,6 @@ export const ShiftLegend = ({
           <CollapsibleContent>
             <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
 
-              {/* Work shifts */}
               {filteredWorkShifts.map(shiftName => {
                 const config = shiftMap[shiftName];
                 if (!config) return null;
@@ -151,6 +291,9 @@ export const ShiftLegend = ({
                 const badge = (
                   <div
                     key={shiftName}
+                    draggable={hasPaintMode}
+                    onDragStart={hasPaintMode ? (e) => handleDragStart(e, toolValue) : undefined}
+                    onDragEnd={hasPaintMode ? handleDragEnd : undefined}
                     role={hasPaintMode ? 'button' : undefined}
                     tabIndex={hasPaintMode ? 0 : undefined}
                     onClick={() => hasPaintMode && handleShiftClick(toolValue)}
@@ -237,10 +380,8 @@ export const ShiftLegend = ({
                 return badge;
               })}
 
-              {/* Separator */}
               <span className="text-muted-foreground/30 self-center">|</span>
 
-              {/* Absence shifts */}
               {filteredAbsenceShifts.map(shiftName => {
                 const config = shiftMap[shiftName];
                 if (!config) return null;
@@ -250,6 +391,9 @@ export const ShiftLegend = ({
                 return (
                   <div
                     key={shiftName}
+                    draggable={hasPaintMode}
+                    onDragStart={hasPaintMode ? (e) => handleDragStart(e, toolValue) : undefined}
+                    onDragEnd={hasPaintMode ? handleDragEnd : undefined}
                     role={hasPaintMode ? 'button' : undefined}
                     tabIndex={hasPaintMode ? 0 : undefined}
                     onClick={() => hasPaintMode && handleShiftClick(toolValue)}
@@ -286,12 +430,10 @@ export const ShiftLegend = ({
                 );
               })}
 
-              {/* Custom time indicator */}
               <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-700">
                 <span>Eigene Zeit</span>
               </div>
 
-              {/* Footnote */}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="flex items-center gap-1 text-[10px] text-muted-foreground self-center ml-2 cursor-help">
@@ -316,7 +458,6 @@ export const ShiftLegend = ({
                 </div>
               )}
 
-              {/* Edit button */}
               {onEditClick && (
                 <Button
                   variant="ghost"

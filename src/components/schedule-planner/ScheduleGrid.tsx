@@ -523,6 +523,31 @@ export const ScheduleGrid = ({
   // Track which inline suggestion popover is currently open (key = cellKey-slot)
   const [openInlineId, setOpenInlineId] = useState<string | null>(null);
 
+  // Drag-over tracking for shift drop highlighting
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+
+  const handleDropShift = (
+    e: React.DragEvent<HTMLTableCellElement>,
+    employeeId: string,
+    dateStr: string,
+  ) => {
+    e.preventDefault();
+    setDragOverKey(null);
+    const tool = e.dataTransfer.getData('application/shift-tool');
+    if (!tool) return;
+    if (tool.startsWith('shift:')) {
+      const shiftName = tool.slice(6);
+      const config = shiftMap[shiftName];
+      if (!config) return;
+      const startHour = config.start ? parseInt(config.start.split(':')[0], 10) : 0;
+      const targetSlot: 'früh' | 'spät' = startHour >= 16 ? 'spät' : 'früh';
+      onSlotChange(employeeId, dateStr, targetSlot, { start: config.start, end: config.end }, null);
+    } else {
+      onSlotChange(employeeId, dateStr, 'früh', null, tool as 'FE' | 'K' | 'F' | null);
+      onSlotChange(employeeId, dateStr, 'spät', null, tool as 'FE' | 'K' | 'F' | null);
+    }
+  };
+
   const handleApplySuggestion = (s: CorrectionSuggestion, dateStr: string) => {
     if (s.actionType === 'remove_all' || s.actionType === 'remove_frueh') {
       onSlotChange(s.employeeId, dateStr, 'früh', null, null);
@@ -1113,14 +1138,15 @@ export const ScheduleGrid = ({
                         {/* Früh cell */}
                         <td
                           className={cn(
-                            "px-0 py-0 border-b border-r border-border/30 text-center relative align-top",
+                            "px-0 py-0 border-b border-r border-border/30 text-center relative align-top transition-colors",
                             isWeekendDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-100/30 dark:bg-amber-900/15",
                             isSundayDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-200/40 dark:bg-amber-900/25",
                             isConfiguredDayOff && !isAfterExitDate && "bg-slate-300 dark:bg-slate-600",
                             isAfterExitDate && "bg-zinc-800 dark:bg-zinc-900",
                             isOverlapping && !isAfterExitDate && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
                             hasShortBreakWarning && !isOverlapping && !isAfterExitDate && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset",
-                            isSuggestedFrüh && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset"
+                            isSuggestedFrüh && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset",
+                            dragOverKey === `${employee.id}-${dateStr}-f` && !isAfterExitDate && !isConfiguredDayOff && "bg-primary/15 ring-2 ring-primary ring-inset"
                           )}
                           title={
                             isAfterExitDate ? `Nach Austritt gesperrt (${employee.employmentEndDate})` :
@@ -1129,6 +1155,14 @@ export const ScheduleGrid = ({
                             isConfiguredDayOff ? "📅 Konfigurierter wöchentlicher Ruhetag" :
                             undefined
                           }
+                          onDragOver={(e) => {
+                            if (!isAfterExitDate && !isConfiguredDayOff && e.dataTransfer.types.includes('application/shift-tool')) {
+                              e.preventDefault();
+                              setDragOverKey(`${employee.id}-${dateStr}-f`);
+                            }
+                          }}
+                          onDragLeave={() => setDragOverKey(null)}
+                          onDrop={(e) => handleDropShift(e, employee.id, dateStr)}
                         >
                           {isAfterExitDate ? (
                             <div className="flex items-center justify-center min-h-[28px] h-full">
@@ -1177,7 +1211,7 @@ export const ScheduleGrid = ({
                         {/* Spät cell */}
                         <td
                           className={cn(
-                            "px-0 py-0 border-b text-center relative align-top",
+                            "px-0 py-0 border-b text-center relative align-top transition-colors",
                             "border-r-4 border-r-primary/30",
                             isWeekendDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-100/30 dark:bg-amber-900/15",
                             isSundayDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-200/40 dark:bg-amber-900/25 border-r-primary/50",
@@ -1185,7 +1219,8 @@ export const ScheduleGrid = ({
                             isAfterExitDate && "bg-zinc-800 dark:bg-zinc-900",
                             isOverlapping && !isAfterExitDate && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
                             hasShortBreakWarning && !isOverlapping && !isAfterExitDate && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset",
-                            isSuggestedSpät && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset"
+                            isSuggestedSpät && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset",
+                            dragOverKey === `${employee.id}-${dateStr}-s` && !isAfterExitDate && !isConfiguredDayOff && "bg-primary/15 ring-2 ring-primary ring-inset"
                           )}
                           title={
                             isAfterExitDate ? `Nach Austritt gesperrt (${employee.employmentEndDate})` :
@@ -1194,6 +1229,14 @@ export const ScheduleGrid = ({
                             isConfiguredDayOff ? "📅 Konfigurierter wöchentlicher Ruhetag" :
                             undefined
                           }
+                          onDragOver={(e) => {
+                            if (!isAfterExitDate && !isConfiguredDayOff && e.dataTransfer.types.includes('application/shift-tool')) {
+                              e.preventDefault();
+                              setDragOverKey(`${employee.id}-${dateStr}-s`);
+                            }
+                          }}
+                          onDragLeave={() => setDragOverKey(null)}
+                          onDrop={(e) => handleDropShift(e, employee.id, dateStr)}
                         >
                           {isAfterExitDate ? (
                             <div className="flex items-center justify-center min-h-[28px] h-full">
