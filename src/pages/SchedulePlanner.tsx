@@ -25,7 +25,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -69,6 +69,8 @@ import { StationMatrixDialog } from '@/components/schedule-planner/StationMatrix
 import { AvailabilityDialog } from '@/components/schedule-planner/AvailabilityDialog';
 import BulkActionsDialog from '@/components/schedule-planner/BulkActionsDialog';
 import TimeSlotStaffingDialog from '@/components/schedule-planner/TimeSlotStaffingDialog';
+import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
+import { useStichtag } from '@/contexts/StichtagContext';
 import { detectPatternWarnings, PatternWarning } from '@/lib/pattern-warnings';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -305,6 +307,10 @@ const SchedulePlanner = () => {
   // ── Planungshilfe: Highlight + Jump ──────────────────────────────────────
   const [highlightedEmpId, setHighlightedEmpId] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [onlyWithWarnings, setOnlyWithWarnings] = useState(false);
+
+  const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
+  const { stichtag, isActive: stichtagActive, setStichtag, clearStichtag, formatted: stichtagFormatted } = useStichtag();
 
   // ── Rollenbasierter Zugriff ───────────────────────────────────────────────
   // Wenn der User kein Admin ist, wird die Abteilung automatisch gesetzt
@@ -2274,6 +2280,11 @@ const SchedulePlanner = () => {
     [employees, daysInMonth, scheduleData],
   );
 
+  // ── Display employees: apply "Nur mit Warnungen" filter as a post-pass ────
+  const displayEmployees = onlyWithWarnings
+    ? filteredEmployees.filter(e => patternWarnings.some(w => w.empId === e.id))
+    : filteredEmployees;
+
   // ── Feature 1: Personalkostenquote ──────────────────────────────────────
   const _planYear  = currentMonth.getFullYear();
   const _planMonth = currentMonth.getMonth() + 1;
@@ -3100,9 +3111,9 @@ const SchedulePlanner = () => {
           <div className="rounded-lg border bg-card overflow-hidden">
             <div className="px-2.5 py-1.5 border-b border-border/50 flex items-center justify-between">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Filter</p>
-              {(selectedEmployeeIds.length > 0 || empTypeFilter !== null) && (
+              {(selectedEmployeeIds.length > 0 || empTypeFilter !== null || onlyWithWarnings) && (
                 <button
-                  onClick={() => { setSelectedEmployeeIds([]); setEmpTypeFilter(null); setSidebarEmpSearch(''); }}
+                  onClick={() => { setSelectedEmployeeIds([]); setEmpTypeFilter(null); setSidebarEmpSearch(''); setOnlyWithWarnings(false); }}
                   className="text-[10px] text-primary hover:underline"
                   title="Alle Filter zurücksetzen"
                 >
@@ -3158,6 +3169,25 @@ const SchedulePlanner = () => {
                   </button>
                 ))}
               </div>
+
+              {/* Nur mit Warnungen */}
+              <button
+                onClick={() => setOnlyWithWarnings(v => !v)}
+                className={cn(
+                  "w-full flex items-center gap-1.5 h-6 px-2 text-[11px] font-medium rounded-md transition-colors border",
+                  onlyWithWarnings
+                    ? "bg-red-100 text-red-700 border-red-300 dark:bg-red-950/40 dark:text-red-400 dark:border-red-700"
+                    : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+                )}
+              >
+                <TriangleAlert className="h-3 w-3 shrink-0" />
+                Nur mit Warnungen
+                {onlyWithWarnings && patternWarnings.length > 0 && (
+                  <span className="ml-auto text-[10px] font-bold">
+                    {filteredEmployees.filter(e => patternWarnings.some(w => w.empId === e.id)).length}
+                  </span>
+                )}
+              </button>
 
               {/* Employee multi-select — inline search + checklist */}
               <div className="space-y-1">
@@ -3368,6 +3398,78 @@ const SchedulePlanner = () => {
           )}
 
         </div>
+
+        {/* ── Netto/Brutto + Stichtag — pinned to bottom of sidebar ── */}
+        <div className="shrink-0 border-t border-border bg-card">
+          {/* Umsatzbasis */}
+          <div className="px-3 py-2 space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Umsatzbasis</p>
+            <div className="flex rounded-md overflow-hidden border border-border text-xs h-7">
+              <button
+                type="button"
+                onClick={() => setShowNetRevenue(true)}
+                className={cn(
+                  "flex-1 transition-colors font-medium",
+                  showNetRevenue ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                Netto
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowNetRevenue(false)}
+                className={cn(
+                  "flex-1 transition-colors font-medium",
+                  !showNetRevenue ? "bg-amber-500 text-white" : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                Brutto
+              </button>
+            </div>
+          </div>
+          {/* Stichtag */}
+          <div className={cn(
+            "mx-3 mb-2 rounded-md border p-2 space-y-1 transition-colors",
+            stichtagActive
+              ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30"
+              : "border-border bg-muted/30",
+          )}>
+            <div className="flex items-center gap-1.5">
+              <CalendarClock className={cn("h-3.5 w-3.5 shrink-0", stichtagActive ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")} />
+              <span className={cn("text-[10px] font-semibold uppercase tracking-wider", stichtagActive ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
+                Stichtag
+              </span>
+              {stichtagActive && (
+                <button
+                  onClick={clearStichtag}
+                  className="ml-auto h-4 w-4 flex items-center justify-center rounded-full bg-amber-200 dark:bg-amber-800 hover:bg-amber-300 dark:hover:bg-amber-700 text-amber-700 dark:text-amber-300 transition-colors"
+                  title="Stichtag aufheben"
+                >
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              )}
+            </div>
+            {stichtagActive
+              ? <p className="text-xs font-bold text-amber-800 dark:text-amber-300">per {stichtagFormatted}</p>
+              : <p className="text-[10px] text-muted-foreground leading-tight">Auswertungen begrenzen</p>
+            }
+            <input
+              type="date"
+              value={stichtag ? stichtag.toISOString().split('T')[0] : ''}
+              onChange={e => {
+                const val = e.target.value;
+                if (!val) clearStichtag();
+                else setStichtag(new Date(val + 'T12:00:00'));
+              }}
+              max={new Date().toISOString().split('T')[0]}
+              className={cn(
+                "w-full text-[11px] rounded px-1.5 py-1 border bg-background transition-colors",
+                stichtagActive ? "border-amber-300 dark:border-amber-700" : "border-border",
+              )}
+            />
+          </div>
+        </div>
+
       </aside>
       )} {/* end legendSidebarOpen */}
 
@@ -3583,7 +3685,7 @@ const SchedulePlanner = () => {
               </div>
             )}
             {/* ── Warnung: Schichtdaten fehlen nach dem Laden ──────────────── */}
-            {scheduleSource !== 'loading' && loadedEntryCount === 0 && filteredEmployees.length > 0 && !dataLoading && (
+            {scheduleSource !== 'loading' && loadedEntryCount === 0 && displayEmployees.length > 0 && !dataLoading && (
               <div className="mx-6 mt-4 mb-2 flex items-start gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm dark:border-amber-700 dark:bg-amber-950/30">
                 <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
                 <div className="flex-1 min-w-0">
@@ -3609,7 +3711,7 @@ const SchedulePlanner = () => {
               {calendarView === 'day' && displayDays[0] ? (
                 // ── Mobile Tagesansicht ────────────────────────────────────
                 <MobileDayView
-                  employees={filteredEmployees}
+                  employees={displayEmployees}
                   day={displayDays[0]}
                   scheduleData={scheduleData}
                   actualHoursData={actualHoursData}
@@ -3627,13 +3729,13 @@ const SchedulePlanner = () => {
                 // ── Plan/Ist-Vergleich ─────────────────────────────────────
                 <>
                   <PlanVsIstGrid
-                    employees={filteredEmployees}
+                    employees={displayEmployees}
                     days={displayDays}
                     scheduleData={scheduleData}
                     actualHoursData={actualHoursData}
                   />
                   <PlanVsIstTable
-                    employees={filteredEmployees}
+                    employees={displayEmployees}
                     days={displayDays}
                     scheduleData={scheduleData}
                     actualHoursData={actualHoursData}
@@ -3672,7 +3774,7 @@ const SchedulePlanner = () => {
                       />
                     )}
                     <ScheduleGrid
-                      employees={filteredEmployees}
+                      employees={displayEmployees}
                       days={displayDays}
                       scheduleData={scheduleData}
                       onSlotChange={handleSlotChange}
@@ -3723,7 +3825,7 @@ const SchedulePlanner = () => {
                   </div>
 
                   <ActualHoursGrid
-                    employees={filteredEmployees}
+                    employees={displayEmployees}
                     days={displayDays}
                     actualHoursData={actualHoursData}
                     onHoursChange={handleActualHoursChange}
@@ -4338,7 +4440,7 @@ const SchedulePlanner = () => {
         currentMonth={currentMonth}
         currentWeekStart={weeksInMonth[selectedWeekIndex] ?? weeksInMonth[0]}
         scheduleData={scheduleData}
-        employeeIds={filteredEmployees.map(e => e.id)}
+        employeeIds={displayEmployees.map(e => e.id)}
         tenantKey={tenantKey}
         onCopy={(newScheduleData) => {
           setScheduleData(newScheduleData);
@@ -4353,7 +4455,7 @@ const SchedulePlanner = () => {
       <PrintScheduleDialog
         open={printDialogOpen}
         onOpenChange={setPrintDialogOpen}
-        employees={filteredEmployees}
+        employees={displayEmployees}
         days={daysInMonth}
         scheduleData={scheduleData}
         currentMonth={currentMonth}

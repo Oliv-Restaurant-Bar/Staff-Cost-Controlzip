@@ -1,0 +1,182 @@
+Bitte die Dienstplanung UX nochmals grundlegend verbessern.
+
+====================================================
+1. NORMALE LINKE SIDEBAR STANDARDMÄSSIG AUSBLENDEN
+====================================================
+
+Aktuell ist links immer sichtbar:
+- OLIV Restaurant & Bar
+- Dienstplanung
+- Stichtag
+- Netto/Brutto
+- Restaurant
+- Userkarte
+
+Diese komplette linke Sidebar soll standardmässig verschwinden.
+
+Sie nimmt zu viel Platz weg.
+
+====================================================
+2. MENÜBUTTON OBEN LINKS = SIDEBAR TOGGLE
+====================================================
+
+Der Button mit den 3 Strichen oben links soll die Sidebar öffnen/schliessen.
+
+STANDARD:
+- Sidebar geschlossen
+- maximaler Platz für Dienstplan
+
+KLICK:
+- Sidebar fährt links hinein
+- wieder klickbar zum Schliessen
+
+====================================================
+3. WENN SIDEBAR GESCHLOSSEN
+====================================================
+
+Links soll NUR sichtbar bleiben:
+- kleines Menü-Icon
+- optional kleines Home-Icon
+
+Keine grosse freie Fläche.
+
+Der Dienstplan soll fast Fullscreen sein.
+
+====================================================
+4. SIDEBAR-INHALT
+====================================================
+
+Wenn geöffnet:
+
+Die Sidebar enthält:
+- Schichten
+- Abwesenheiten
+- Mitarbeiterfilter
+- Suchfeld
+- Netto/Brutto
+- Stichtag
+
+ENTFERNEN:
+- Restaurant-Auswahl
+- grosse Userkarte
+- unnötige Infos
+
+Service-/Küchenleiter haben ohnehin nur Zugriff auf ein Restaurant.
+
+====================================================
+5. SCHNELLERE DIENSTPLANUNG
+====================================================
+
+Bitte folgende UX-Verbesserungen ergänzen:
+
+A) DRAG & DROP OPTIMIEREN
+- Schicht anklicken
+- über mehrere Zellen ziehen
+- automatisch auf mehrere Tage anwenden
+
+B) QUICK FILL
+Rechtsklick oder Hover:
+- „ganze Woche kopieren“
+- „auf alle Werktage anwenden“
+- „letzte Woche übernehmen“
+
+C) MEHRFACH-AUSWAHL
+- mehrere Mitarbeiter markieren
+- gleiche Schicht gleichzeitig setzen
+
+D) SMART VORSCHLÄGE
+Beim Hover auf leere Zelle:
+- häufigste Schicht vorschlagen
+- letzte Woche vorschlagen
+- Stamm-Schicht vorschlagen
+
+====================================================
+6. MITARBEITERFILTER VERBESSERN
+====================================================
+
+Echter Filter:
+- nur ausgewählte Mitarbeiter anzeigen
+- Suchfeld live
+- Küche / Service
+- Vollzeit / Teilzeit
+- Nur offene Mitarbeiter
+- Nur Mitarbeiter mit Warnungen
+
+====================================================
+7. SCROLLEN VERBESSERN
+====================================================
+
+Aktuell ist horizontales Scrollen mühsam.
+
+Verbessern:
+
+- sticky Mitarbeiter-Spalte
+- sticky Tagesheader
+- smoother horizontal scroll
+- optional horizontales Scrollen mit Shift+Mausrad
+- bessere Scrollbar sichtbar unten
+
+====================================================
+8. WOCHENANSICHT ALS STANDARD
+====================================================
+
+Die Wochenansicht soll immer die Standardansicht sein.
+
+Nicht Monat.
+
+====================================================
+9. MITARBEITER-ZEILEN OPTIMIEREN
+====================================================
+
+Die Mitarbeiterzeilen sollen kompakter werden.
+
+Standardmässig nur:
+- Name
+- Stundenbalance
+
+Warnungen:
+- nur rote Schrift oder kleines Icon
+
+Alle Details:
+→ erst im Popup beim Klick auf Mitarbeitername.
+
+====================================================
+10. SCHNELLERE VISUELLE ORIENTIERUNG
+====================================================
+
+Verbesserungen:
+
+- Mitarbeiter mit Warnungen leicht rot hinterlegen
+- Unterbesetzung gelb markieren
+- Überplanung rot markieren
+- Gute Tage grün markieren
+
+====================================================
+11. TAGESANSICHT VERBESSERN
+====================================================
+
+In Tagesansicht:
+optional Toggle:
+
+„Nur geplante Mitarbeiter anzeigen“
+
+Dann:
+ungeplante Mitarbeiter automatisch ausblenden.
+
+====================================================
+12. PERFORMANCE
+====================================================
+
+Wichtig:
+Keine bestehende Logik verändern.
+
+Behalten:
+- Kostenlogik
+- Ist-Synchronisierung
+- Stundenberechnung
+- Reporting
+- Forecast
+- Personal FIX
+- PDF-Exporte
+
+Nur UX/UI modernisieren.

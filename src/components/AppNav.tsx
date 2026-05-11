@@ -321,6 +321,10 @@ export const AppSidebar = () => {
   const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
   const { tenant } = useTenant();
 
+  // Auto-hide sidebar on schedule planner — it has its own inline panel
+  const isSchedulePlannerRoute = location.pathname === '/personal' || location.pathname === '/schedule-planner';
+  if (isSchedulePlannerRoute) return null;
+
   const roleConfig = ROLE_CONFIG[role as keyof typeof ROLE_CONFIG] ?? ROLE_CONFIG.admin;
   const RoleIcon = isGuest ? Eye : roleConfig.Icon;
 

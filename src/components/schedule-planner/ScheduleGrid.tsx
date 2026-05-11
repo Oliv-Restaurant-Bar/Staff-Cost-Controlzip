@@ -896,6 +896,8 @@ export const ScheduleGrid = ({
                 <tr key={employee.id} className={cn(
                   "group hover:bg-muted/30 transition-colors",
                   highlightedEmployeeId === employee.id && "ring-2 ring-inset ring-indigo-400 dark:ring-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/20",
+                  highlightedEmployeeId !== employee.id && empPatternWarnings.some(w => w.severity === 'critical') && "bg-red-50/50 dark:bg-red-950/10",
+                  highlightedEmployeeId !== employee.id && !empPatternWarnings.some(w => w.severity === 'critical') && empPatternWarnings.length > 0 && "bg-amber-50/40 dark:bg-amber-950/10",
                 )}>
                   {/* Employee name cell */}
                   <td className={cn(
