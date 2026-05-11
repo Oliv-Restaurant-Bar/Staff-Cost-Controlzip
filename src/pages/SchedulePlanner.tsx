@@ -3433,6 +3433,8 @@ const SchedulePlanner = () => {
                   getEmployeeActualHours={calculateEmployeeActualHours}
                   getTargetHours={getMonthlyTargetHours}
                   showCosts={effectiveShowCosts}
+                  dailyBudgets={dailyBudgets}
+                  daysInMonth={daysInMonth.length}
                 />
               ) : scheduleMode === 'compare' ? (
                 // ── Plan/Ist-Vergleich ─────────────────────────────────────
