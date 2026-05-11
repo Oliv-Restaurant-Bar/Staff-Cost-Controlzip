@@ -543,8 +543,16 @@ export const ScheduleGrid = ({
       const config = shiftMap[shiftName];
       if (!config) return;
       const startHour = config.start ? parseInt(config.start.split(':')[0], 10) : 0;
-      const targetSlot: 'früh' | 'spät' = startHour >= 16 ? 'spät' : 'früh';
-      onSlotChange(employeeId, dateStr, targetSlot, { start: config.start, end: config.end }, null);
+      const primarySlot: 'früh' | 'spät' = startHour >= 16 ? 'spät' : 'früh';
+      const secondarySlot: 'früh' | 'spät' = primarySlot === 'früh' ? 'spät' : 'früh';
+      onSlotChange(employeeId, dateStr, primarySlot, { start: config.start, end: config.end }, null);
+      if (config.start2 && config.end2) {
+        // Split shift: automatically fill the secondary slot with the second time block
+        onSlotChange(employeeId, dateStr, secondarySlot, { start: config.start2, end: config.end2 }, null);
+      } else {
+        // Single shift: clear the other slot so no stale data remains
+        onSlotChange(employeeId, dateStr, secondarySlot, null, null);
+      }
     } else {
       onSlotChange(employeeId, dateStr, 'früh', null, tool as 'FE' | 'K' | 'F' | null);
       onSlotChange(employeeId, dateStr, 'spät', null, tool as 'FE' | 'K' | 'F' | null);
