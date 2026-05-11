@@ -1,0 +1,211 @@
+Bitte den PDF-Parser vorerst NICHT weiter ausbauen und stattdessen den stabileren Excel-Import für Mirus Monatsblätter umsetzen.
+
+Ziel:
+Die Mirus Monatsblätter sollen primär über Excel (.xls / .xlsx) eingelesen werden, nicht über PDF.
+
+Grund:
+Excel ist strukturierter, stabiler und weniger fehleranfällig als PDF.
+PDF bleibt nur Backup / Archiv, aber nicht Hauptimport.
+
+Testdateien:
+- Monatsblatt Januar 2026.xls
+- Monatsblatt Februar 2026.xls
+
+====================================================
+1. NEUER TESTIMPORT FÜR EXCEL
+====================================================
+
+Bitte zuerst eine Testseite erstellen:
+
+/mirus-excel-test
+
+Ziel:
+Nur prüfen, wie sauber die Excel-Dateien gelesen werden können.
+
+Wichtig:
+- keine Daten in Supabase speichern
+- keine Monatsblätter produktiv erstellen
+- nur Analyse / Parser-Test
+
+Die Seite soll anzeigen:
+
+- erkannter Monat
+- erkanntes Jahr
+- erkannte Mitarbeiter
+- Tageszeilen pro Mitarbeiter
+- Totale pro Mitarbeiter
+- nicht erkannte Zeilen
+- Parser-Qualität in %
+
+====================================================
+2. EXCEL PARSER BAUEN
+====================================================
+
+Neue Datei:
+
+src/lib/mirus-excel-parser.ts
+
+Der Parser soll .xls und .xlsx unterstützen.
+
+Bitte prüfen, welches Paket bereits vorhanden ist.
+Falls nötig xlsx SheetJS verwenden.
+
+Der Parser soll aus den Mirus Monatsblatt Excel-Dateien erkennen:
+
+A) Dokumentdaten
+- Monat
+- Jahr
+- Restaurant
+- Erstellungsdatum falls vorhanden
+- Anzahl Seiten / Mitarbeiter falls erkennbar
+
+B) Mitarbeiterdaten
+- Name / Vorname
+- Personalnummer falls vorhanden
+- Kostenstelle
+- Abteilung Küche oder Service
+- Arbeitsverhältnis
+- wöchentliche Arbeitszeit
+- Eintritt / Austritt falls vorhanden
+
+C) Tageszeilen
+Pro Mitarbeiter und Tag:
+- Datum
+- Wochentag
+- Zeitblöcke
+- Abteilung / Einsatzbereich
+- Pause
+- Nettozeit / Totalstunden
+- Absenzcode
+- Zuschläge
+- Bemerkung
+- Original-Zellenwerte als raw_data
+
+D) Totale
+- Total Stunden
+- Pause total
+- Netto / Total
+- Zeitzuschlag
+- Überzeit
+- Saldo
+- Ferien
+- Frei
+- Krankheit falls vorhanden
+
+====================================================
+3. WICHTIG: ORIGINALDATEN SPEICHERBAR MACHEN
+====================================================
+
+Auch im Test soll angezeigt werden:
+
+- welche Zellen gelesen wurden
+- Sheetname
+- Zeilenindex
+- Spaltenindex
+- Rohwerte
+
+Noch nichts in Supabase speichern, aber die Datenstruktur soll später 1:1 übernommen werden können.
+
+====================================================
+4. TESTSEITE /mirus-excel-test
+====================================================
+
+Die Testseite soll können:
+
+- Excel Datei hochladen
+- mehrere Dateien gleichzeitig
+- Januar und Februar vergleichen
+- pro Datei Qualität anzeigen
+- pro Mitarbeiter Karte anzeigen
+- Tageszeilen als Tabelle anzeigen
+- Rohdaten einklappbar anzeigen
+
+Qualität bewerten anhand:
+
+- Mitarbeiter erkannt
+- Tageszeilen erkannt
+- Totale erkannt
+- Datum korrekt
+- Stunden korrekt
+- Absenzcodes erkannt
+
+Zielqualität:
+mindestens 90 %
+
+====================================================
+5. VERGLEICH PDF VS EXCEL
+====================================================
+
+Bitte auf der Testseite zusätzlich einen kurzen Vergleich anzeigen:
+
+PDF Parser Qualität:
+falls vorhanden
+
+Excel Parser Qualität:
+aktuell
+
+Erwartung:
+Excel soll als Hauptimport empfohlen werden, wenn Qualität höher ist.
+
+====================================================
+6. UI DER TESTSEITE
+====================================================
+
+Oben klare Zusammenfassung:
+
+Beispiel:
+
+Monatsblatt Januar 2026.xls
+- 41 Mitarbeiter erkannt
+- 1’200 Tageszeilen erkannt
+- 41 Totale erkannt
+- Qualität 96 %
+
+Dann pro Mitarbeiter:
+- Name
+- Abteilung
+- Wochenstunden
+- Totalstunden
+- Status grün/gelb/rot
+
+Mitarbeiterkarten standardmässig eingeklappt.
+
+====================================================
+7. KEINE PRODUKTIVE LOGIK
+====================================================
+
+Noch NICHT bauen:
+
+- Mitarbeiterportal
+- Freigabeprozess
+- Beanstandungen
+- Archivierung
+- Supabase Tabellen
+
+Erst Excel-Erkennung testen.
+
+====================================================
+8. NACH DEM TEST
+====================================================
+
+Wenn Excel stabil ist, bauen wir danach das produktive Modul:
+
+"Arbeitszeiten & Monatsblätter"
+
+mit:
+- Excel Import
+- Mitarbeiter Matching
+- digitale Monatsfreigabe
+- Beanstandungen
+- Versionierung
+- Archivierung
+- persönlichem Mitarbeiterlink
+- WhatsApp Nummer im Mitarbeiterstamm
+- Planversand und Monatsblatt-Link
+
+====================================================
+9. WICHTIG
+====================================================
+
+PDF Parser bitte bestehen lassen, aber nicht weiter priorisieren.
+Excel ist ab jetzt Hauptweg.

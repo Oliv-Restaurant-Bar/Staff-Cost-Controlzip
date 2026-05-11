@@ -56,6 +56,7 @@ import TagesControllingPage from "./pages/TagesControllingPage";
 import WarenrechnungenPage from "./pages/Warenrechnungen";
 import ForecastPlanung from "./pages/ForecastPlanung";
 import MirusParserTest from "./pages/MirusParserTest";
+import MirusExcelTest from "./pages/MirusExcelTest";
 
 const queryClient = new QueryClient();
 
@@ -273,6 +274,9 @@ const App = () => {
   // Muss VOR jedem Provider stehen, damit nichts dazwischenfunken kann.
   if (window.location.pathname === '/mirus-parser-test') {
     return <MirusParserTest />;
+  }
+  if (window.location.pathname === '/mirus-excel-test') {
+    return <MirusExcelTest />;
   }
 
   return (
