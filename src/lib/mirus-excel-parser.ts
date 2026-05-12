@@ -565,6 +565,9 @@ function computeTotalsCheck(totals: EmployeeTotals, days: DayRecord[]): void {
 // ─── MITARBEITER-META ─────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const DEPT_PATTERN = /küche|service|housekeeping|büro|kitchen|bar|restaurant|sala|saal|administration|admin|empfang|reception/i;
+const DEPT_NUMBERED = /^\d[\s.]+/;
+
 function readMetaRow(ws: XLSX.WorkSheet, row: number): { costCenter: string | null; employmentPeriod: string | null; text: string } {
   const ref = ws['!ref'];
   if (!ref) return { costCenter: null, employmentPeriod: null, text: '' };
@@ -581,11 +584,27 @@ function readMetaRow(ws: XLSX.WorkSheet, row: number): { costCenter: string | nu
     if (!text) continue;
     parts.push(text);
 
-    if (!costCenter && /Küche|Service|Housekeeping|Büro|Kitchen|Bar|Restaurant/i.test(text))
-      costCenter = text;
+    // Kostenstelle: "Küche", "1 Küche", "2. Service", "3 Bar" usw.
+    if (!costCenter && DEPT_PATTERN.test(text))
+      costCenter = text.replace(DEPT_NUMBERED, '').trim() || text;
+
+    // Datum für Beschäftigungsperiode
     if (!employmentPeriod && /\d{2}\.\d{2}\.\d{4}/.test(text))
       employmentPeriod = text;
   }
+
+  // Zweiter Pass: kombinierte Felder "Kostenstelle: Küche" oder "Kü" / "Sv" Kürzel
+  if (!costCenter) {
+    for (const part of parts) {
+      const low = part.toLowerCase();
+      if (/\bkü\b/.test(low) || /^ku$/i.test(low))              { costCenter = 'Küche'; break; }
+      if (/\bsv\b/.test(low) || /^serv$/i.test(low))            { costCenter = 'Service'; break; }
+      if (/kostenstelle\s*:?\s*([\w\s]+)/i.test(part)) {
+        costCenter = RegExp.$1.trim(); break;
+      }
+    }
+  }
+
   return { costCenter, employmentPeriod, text: parts.join(' | ') };
 }
 
@@ -621,8 +640,11 @@ function parseBlock(
   // Abteilung ableiten
   let department: string | null = null;
   if (costCenter) {
-    if (/küche|kitchen|koch/i.test(costCenter))   department = 'küche';
-    else if (/service|sala|saal/i.test(costCenter)) department = 'service';
+    if (/küche|kitchen|koch/i.test(costCenter))     department = 'Küche';
+    else if (/service|sala|saal/i.test(costCenter)) department = 'Service';
+    else if (/bar/i.test(costCenter))               department = 'Bar';
+    else if (/housekeeping|hk/i.test(costCenter))   department = 'Housekeeping';
+    else if (/büro|admin|office/i.test(costCenter)) department = 'Büro';
     else department = costCenter;
   }
 
@@ -636,6 +658,20 @@ function parseBlock(
   // Totale
   const totals = readTotals(ws, blockStart, blockEnd);
   computeTotalsCheck(totals, days);
+
+  // Fallback: Abteilung aus Bemerkungen in Tageszeilen ableiten (falls Meta-Zeile leer)
+  if (!department && days.length > 0) {
+    const deptHints = days
+      .map(d => d.notes ?? '')
+      .filter(Boolean)
+      .flatMap(n => {
+        if (/küche|kitchen/i.test(n)) return ['Küche'];
+        if (/service/i.test(n))       return ['Service'];
+        if (/\bbar\b/i.test(n))       return ['Bar'];
+        return [];
+      });
+    if (deptHints.length > 0) department = deptHints[0];
+  }
 
   // Detected-ColMap als lesbare Strings
   const detectedForDisplay: Record<string, string> = {
@@ -675,22 +711,32 @@ function parseBlock(
 
 function employeeQuality(emp: ExcelEmployee): number {
   let s = 0;
-  if (emp.name)        s += 25;  // Name erkannt
-  if (emp.weeklyHours) s += 8;   // Wochenstunden erkannt
-  if (emp.costCenter)  s += 8;   // Kostenstelle / Abteilung erkannt
-  // Tagesdaten
-  if      (emp.days.length >= 20) s += 27;
-  else if (emp.days.length >= 10) s += 20;
-  else if (emp.days.length >= 5)  s += 13;
-  else if (emp.days.length >= 1)  s += 6;
-  // Zeitblöcke oder Absenzen
-  const active = emp.days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length;
-  if      (active >= 15) s += 14;
-  else if (active >= 5)  s += 9;
+  const days   = emp.days;
+  const totals = emp.totals;
+  const active = days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length;
+
+  if (emp.name)                         s += 25;
+  if (emp.weeklyHours)                  s += 8;
+  if (emp.costCenter || emp.department) s += 8;
+
+  // Tagesdaten: validierter Cross-Check → volle Punktzahl unabhängig von Tagesanzahl
+  // (Aushilfen, Krankenmonate, Eintritt/Austritt haben oft weniger Tage)
+  if (totals.totalsValidated && days.length > 0) {
+    s += 27;
+  } else if (days.length >= 20) s += 27;
+  else if   (days.length >= 14) s += 22;
+  else if   (days.length >= 7)  s += 15;
+  else if   (days.length >= 1)  s += 8;
+
+  // Aktive Tage (Schichten oder Absenzen)
+  if      (active >= 10) s += 14;
+  else if (active >= 3)  s += 9;
   else if (active >= 1)  s += 4;
+
   // Totale erkannt (+8) + validiert (+10)
-  if (emp.totals.totalHours)      s += 8;
-  if (emp.totals.totalsValidated) s += 10;
+  if (totals.totalHours)      s += 8;
+  if (totals.totalsValidated) s += 10;
+
   return Math.min(100, s);
 }
 
@@ -836,20 +882,50 @@ const MONTH_MAP: Record<string, [number, string]> = {
   dezember: [12, 'Dezember'],
 };
 
-function metaFromFileName(fileName: string): { month: number | null; monthName: string | null; year: number | null } {
-  const lower = fileName.toLowerCase();
+function metaFromFileName(fileName: string): { month: number | null; monthName: string | null; year: number | null; restaurant: string | null } {
+  const lower = fileName.toLowerCase().replace(/[_\-]/g, ' ');
   let month: number | null = null;
   let monthName: string | null = null;
+  let restaurant: string | null = null;
+
+  // Restaurant aus Dateiname
+  if (/\boliv\b/.test(lower))    restaurant = 'oliv';
+  else if (/beaulieu/.test(lower)) restaurant = 'beaulieu';
+
   for (const [token, [m, n]] of Object.entries(MONTH_MAP)) {
     if (lower.includes(token)) { month = m; monthName = n; break; }
   }
   const ym = fileName.match(/20\d{2}/);
-  return { month, monthName, year: ym ? parseInt(ym[0]) : null };
+  return { month, monthName, year: ym ? parseInt(ym[0]) : null, restaurant };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ─── HAUPT-EXPORT ─────────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/** Versucht Restaurant aus Workbook-Inhalt zu erkennen (Tabellenblatt-Namen + erste Zellen) */
+function restaurantFromWorkbook(wb: XLSX.WorkBook): string | null {
+  // 1. Tabellenblatt-Namen prüfen
+  for (const sn of wb.SheetNames) {
+    const snl = sn.toLowerCase();
+    if (/\boliv\b/.test(snl))   return 'oliv';
+    if (/beaulieu/.test(snl))   return 'beaulieu';
+  }
+  // 2. Ersten Sheet nach Text in A1–AZ10 durchsuchen
+  const firstWs = wb.Sheets[wb.SheetNames[0]];
+  if (firstWs) {
+    for (let r = 0; r < 10; r++) {
+      for (let c = 0; c < 52; c++) {
+        const cell = firstWs[XLSX.utils.encode_cell({ r, c })];
+        if (!cell) continue;
+        const txt = String(cell.v ?? '').toLowerCase();
+        if (/\boliv\b/.test(txt))  return 'oliv';
+        if (/beaulieu/.test(txt))  return 'beaulieu';
+      }
+    }
+  }
+  return null;
+}
 
 export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> {
   const buf = await file.arrayBuffer();
@@ -859,6 +935,9 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
   const employees: ExcelEmployee[] = [];
   const warnings:  string[]        = [];
   const sheetsProcessed: string[]  = [];
+
+  // Restaurant: erst aus Dateiname, dann aus Workbook-Inhalt
+  const restaurant = meta.restaurant ?? restaurantFromWorkbook(wb);
 
   for (const sheetName of wb.SheetNames) {
     const ws     = wb.Sheets[sheetName];
@@ -896,7 +975,7 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
   return {
     fileName: file.name,
     ...meta,
-    restaurant:   null,
+    restaurant:   restaurant,
     creationDate: null,
     employees:    merged,
     quality:      docQuality(merged),

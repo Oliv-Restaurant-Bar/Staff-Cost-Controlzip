@@ -34,19 +34,29 @@ function qualityScore(emp: ExcelEmployee): number {
   let s = 0;
   const days   = emp.days   ?? [];
   const totals = emp.totals ?? {};
-  if (emp.name)        s += 25;
-  if (emp.weeklyHours) s += 8;
-  if (emp.costCenter)  s += 8;
-  if      (days.length >= 20) s += 27;
-  else if (days.length >= 10) s += 20;
-  else if (days.length >= 5)  s += 13;
-  else if (days.length >= 1)  s += 6;
   const active = days.filter(d => (d.shifts ?? []).length > 0 || !!d.absenceCode).length;
-  if      (active >= 15) s += 14;
-  else if (active >= 5)  s += 9;
+
+  if (emp.name)                              s += 25;
+  if (emp.weeklyHours)                       s += 8;
+  if (emp.costCenter || emp.department)      s += 8;
+
+  // Tagesdaten: validierte Totale → volle Punktzahl (egal wie viele Tage)
+  // Aushilfen/Krankenmonaten/Eintritt haben oft weniger Tage — nicht bestrafen wenn Cross-Check ok
+  if (totals.totalsValidated && days.length > 0) {
+    s += 27;
+  } else if (days.length >= 20) s += 27;
+  else if   (days.length >= 14) s += 22;
+  else if   (days.length >= 7)  s += 15;
+  else if   (days.length >= 1)  s += 8;
+
+  // Aktive Tage (Schichten oder Absenzen)
+  if      (active >= 10) s += 14;
+  else if (active >= 3)  s += 9;
   else if (active >= 1)  s += 4;
+
   if (totals.totalHours)      s += 8;
   if (totals.totalsValidated) s += 10;
+
   return Math.min(100, s);
 }
 
@@ -90,26 +100,72 @@ function buildWarnings(emp: ExcelEmployee, idx: number): PreviewImportWarning[] 
   const days   = emp.days   ?? [];
   const totals = emp.totals ?? {};
 
+  // Fehler: kein Name → ausgeschlossen
   if (!emp.name)
-    warns.push({ severity: 'error',   category: 'name',       message: 'Kein Name erkannt',         employeeName: label });
-  if (!emp.costCenter)
-    warns.push({ severity: 'warning', category: 'costCenter', message: 'Keine Kostenstelle',         employeeName: label });
-  if (days.length === 0)
-    warns.push({ severity: 'warning', category: 'days',       message: 'Keine Tageszeilen erkannt',  employeeName: label });
-  if (days.length > 0 && days.length < 20)
-    warns.push({ severity: 'info',    category: 'days',       message: `Nur ${days.length} Tage erkannt (erwartet ~28–31)`, employeeName: label });
+    warns.push({
+      severity: 'error', category: 'name',
+      message: 'Kein Name erkannt — Mitarbeiter wird ausgeschlossen.',
+      employeeName: label,
+    });
 
+  // Warnung: weder Abteilung noch Kostenstelle bekannt
+  if (!emp.costCenter && !emp.department)
+    warns.push({
+      severity: 'warning', category: 'costCenter',
+      message: 'Keine Abteilung/Kostenstelle erkannt — bitte vor Import manuell ergänzen. Import ist trotzdem möglich.',
+      employeeName: label,
+    });
+
+  // Keine Daten überhaupt
+  const hasAnyData = days.length > 0 || !!totals.totalHours;
+  if (!hasAnyData)
+    warns.push({
+      severity: 'warning', category: 'days',
+      message: 'Keine Tages- und keine Totaldaten erkannt — Mitarbeiter wahrscheinlich unvollständig geparst.',
+      employeeName: label,
+    });
+
+  // Wenig Tage UND keine Totale → kontextuell (nicht bei Aushilfen/Krankheit hinderlich)
+  else if (days.length > 0 && days.length < 15 && !totals.totalHours)
+    warns.push({
+      severity: 'info', category: 'days',
+      message: `${days.length} Tage erkannt, keine Monatstotale — mögliche Aushilfe, Eintritt/Austritt oder Krankenmonat. Import möglich.`,
+      employeeName: label,
+    });
+
+  // Ungewöhnlich viele Stunden
   const totalH = totals.calculatedTotalHours ?? 0;
   if (totalH > 250)
-    warns.push({ severity: 'warning', category: 'hours',  message: `Sehr viele Stunden: ${totalH} h`, employeeName: label });
-  if (totals.totalsDiff !== undefined && totals.totalsDiff > 3)
-    warns.push({ severity: 'warning', category: 'totals', message: `Totale weichen von Tageszeilen ab: ±${totals.totalsDiff} h`, employeeName: label });
-  if ((emp.mergedFromCount ?? 0) > 1)
-    warns.push({ severity: 'info',    category: 'merge',  message: `Aus ${emp.mergedFromCount} Teilblöcken zusammengeführt`, employeeName: label });
+    warns.push({
+      severity: 'warning', category: 'hours',
+      message: `Ungewöhnlich viele Stunden: ${totalH} h — möglicher Mehrfachblock-Fehler, bitte prüfen. Import möglich.`,
+      employeeName: label,
+    });
 
+  // Totale-Abweichung > 3 h
+  if (totals.totalsDiff !== undefined && totals.totalsDiff > 3)
+    warns.push({
+      severity: 'warning', category: 'totals',
+      message: `Totale weichen um ±${totals.totalsDiff} h von Tageszeilen ab — Datei möglicherweise fehlerhaft. Import möglich, aber bitte prüfen.`,
+      employeeName: label,
+    });
+
+  // Merge-Info (nur informativ, kein Hindernis)
+  if ((emp.mergedFromCount ?? 0) > 1)
+    warns.push({
+      severity: 'info', category: 'merge',
+      message: `Aus ${emp.mergedFromCount} Teilblöcken zusammengeführt (mehrseitiges Monatsblatt). Import möglich.`,
+      employeeName: label,
+    });
+
+  // Qualität unter 80 %
   const q = qualityScore(emp);
-  if (q < 85)
-    warns.push({ severity: 'warning', category: 'quality', message: `Qualität ${q}% — unter 85%`, employeeName: label });
+  if (q < 80)
+    warns.push({
+      severity: 'warning', category: 'quality',
+      message: `Qualität ${q}% — Daten möglicherweise unvollständig. Bitte prüfen, Import ist trotzdem möglich.`,
+      employeeName: label,
+    });
 
   return warns;
 }
@@ -128,9 +184,10 @@ function buildPreviewSession(parsed: ExcelParsedDocument, file: File): PreviewIm
 
     const quality  = qualityScore(safeEmp);
     const warnings = buildWarnings(safeEmp, idx);
+    // check nur bei echten Problemen (warning/error), nicht bei info-Hinweisen
     const hasWarn  = warnings.some(w => w.severity === 'warning' || w.severity === 'error');
     const importStatus: PreviewEmployee['importStatus'] =
-      !emp.name ? 'excluded' : hasWarn || quality < 85 ? 'check' : 'ready';
+      !emp.name ? 'excluded' : hasWarn || quality < 80 ? 'check' : 'ready';
 
     return {
       tempId:           nextId(),
@@ -463,12 +520,35 @@ function EmployeeCard({
             </div>
           </div>
 
-          <div className="shrink-0 flex flex-col items-end gap-1.5 min-w-[120px]">
+          <div className="shrink-0 flex flex-col items-end gap-1.5 min-w-[130px]">
             <div className="flex gap-3 text-[11px] text-muted-foreground">
               <span>{emp.days.length} Tage</span>
               <span>{activeShifts} Blöcke</span>
-              {totalH > 0 && <span className="font-mono font-semibold text-foreground">{totalH} h</span>}
             </div>
+            {/* Plausibilitätsbox: immer sichtbar */}
+            {emp.totals.calculatedTotalHours !== undefined && (() => {
+              const calc  = emp.totals.calculatedTotalHours;
+              const mirus = emp.totals.totalHours;
+              const diff  = emp.totals.totalsDiff;
+              const valid = emp.totals.totalsValidated;
+              return (
+                <div className={cn(
+                  'flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border font-mono',
+                  valid
+                    ? 'border-green-200 bg-green-50/70 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400'
+                    : diff !== undefined && diff > 3
+                    ? 'border-red-200 bg-red-50/70 text-red-700'
+                    : 'border-border bg-muted/40 text-muted-foreground',
+                )}>
+                  <span className="font-bold">{calc}h</span>
+                  {mirus && <span className="opacity-60">/ {mirus}</span>}
+                  {valid
+                    ? <span className="text-green-600 font-bold">✓</span>
+                    : diff !== undefined && <span>±{diff}h</span>
+                  }
+                </div>
+              );
+            })()}
             <QualityBar pct={emp.quality} />
           </div>
 
@@ -569,32 +649,79 @@ function UploadZone({ onFile }: { onFile: (f: File) => void }) {
 // ─── SUMMARY PANEL ────────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function SummaryPanel({ session }: { session: PreviewImportSession }) {
-  const totalWarn = session.employees.flatMap(e => e.warnings).filter(w => w.severity !== 'info').length;
-  const selected  = session.employees.filter(e => e.importSelected).length;
+function StatBox({ label, value, color = 'default' }: {
+  label: string; value: string; color?: 'green' | 'yellow' | 'red' | 'default';
+}) {
+  const cls = color === 'green' ? 'text-green-600 dark:text-green-400'
+    : color === 'yellow' ? 'text-yellow-600 dark:text-yellow-400'
+    : color === 'red'    ? 'text-red-600 dark:text-red-400'
+    : 'text-foreground';
+  return (
+    <div className="space-y-0.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={cn('text-sm font-mono font-bold', cls)}>{value}</p>
+    </div>
+  );
+}
 
-  const statItems = [
-    { label: 'Datei',          value: session.sourceFileName },
-    { label: 'Periode',        value: session.monthName && session.year ? `${session.monthName} ${session.year}` : '—' },
-    { label: 'Restaurant',     value: session.restaurant ?? '—' },
-    { label: 'Mitarbeiter',    value: String(session.employees.length) },
-    { label: 'Ausgewählt',     value: `${selected} / ${session.employees.length}` },
-    { label: 'Gesamtstunden',  value: `${session.totalHours} h` },
-    { label: 'Ø Qualität',     value: `${session.averageQuality}%` },
-    { label: 'Hinweise',       value: String(totalWarn) },
-  ];
+function SummaryPanel({ session, onRestaurantChange }: {
+  session: PreviewImportSession;
+  onRestaurantChange: (r: string) => void;
+}) {
+  const ready    = session.employees.filter(e => e.importStatus === 'ready').length;
+  const check    = session.employees.filter(e => e.importStatus === 'check').length;
+  const excluded = session.employees.filter(e => e.importStatus === 'excluded').length;
+  const openWarns = session.employees.flatMap(e => e.warnings).filter(w => w.severity === 'warning' || w.severity === 'error').length;
+  const selected  = session.employees.filter(e => e.importSelected).length;
+  const qColor = session.averageQuality >= 90 ? 'green' : session.averageQuality >= 80 ? 'yellow' : 'red';
 
   return (
-    <div className="rounded-lg border bg-card p-4 space-y-3">
-      <h2 className="font-semibold text-sm">Import-Vorschau</h2>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {statItems.map(({ label, value }) => (
-          <div key={label} className="space-y-0.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-            <p className="text-sm font-mono font-semibold truncate">{value}</p>
-          </div>
-        ))}
+    <div className="rounded-lg border bg-card p-4 space-y-4">
+      {/* Titel + Periode */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="font-semibold text-sm">Import-Vorschau</h2>
+          <p className="text-[11px] text-muted-foreground mt-0.5 truncate max-w-xs">{session.sourceFileName}</p>
+        </div>
+        {session.monthName && session.year && (
+          <span className="text-[11px] font-semibold px-2 py-1 rounded border border-border bg-muted/30">
+            {session.monthName} {session.year}
+          </span>
+        )}
       </div>
+
+      {/* Statusübersicht */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-lg border border-border/60 bg-muted/10 px-4 py-3">
+        <StatBox label="Importfähig"      value={String(ready)}      color={ready > 0 ? 'green' : 'default'} />
+        <StatBox label="Prüfen"           value={String(check)}      color={check > 0 ? 'yellow' : 'green'} />
+        <StatBox label="Ausgeschlossen"   value={String(excluded)}   color={excluded > 0 ? 'red' : 'default'} />
+        <StatBox label="Offene Warnungen" value={String(openWarns)}  color={openWarns > 0 ? 'yellow' : 'green'} />
+      </div>
+
+      {/* Weitere Felder */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {/* Restaurant: entweder erkannt oder Dropdown */}
+        <div className="space-y-0.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Restaurant</p>
+          {session.restaurant ? (
+            <p className="text-sm font-mono font-bold capitalize">{session.restaurant}</p>
+          ) : (
+            <select
+              className="text-sm border border-yellow-300 rounded px-1.5 py-0.5 bg-background mt-0.5 w-full font-semibold"
+              defaultValue=""
+              onChange={e => { if (e.target.value) onRestaurantChange(e.target.value); }}
+            >
+              <option value="" disabled>Bitte wählen</option>
+              <option value="oliv">Oliv</option>
+              <option value="beaulieu">Beaulieu</option>
+            </select>
+          )}
+        </div>
+        <StatBox label="Ausgewählt"    value={`${selected} / ${session.employees.length}`} />
+        <StatBox label="Gesamtstunden" value={`${session.totalHours} h`} />
+        <StatBox label="Ø Qualität"    value={`${session.averageQuality}%`} color={qColor} />
+      </div>
+
       {session.globalWarnings.length > 0 && (
         <div className="border-t border-border pt-2">
           <WarnList warnings={session.globalWarnings} />
@@ -675,13 +802,15 @@ export default function MirusImportPreview() {
   const [error,    setError]    = useState<string | null>(null);
 
   // Lokale Kopie der Session für Checkbox-Änderungen
-  const [localEmployees, setLocalEmployees] = useState<PreviewEmployee[]>([]);
+  const [localEmployees,  setLocalEmployees]  = useState<PreviewEmployee[]>([]);
+  // Restaurant-Auswahl (falls aus Datei nicht erkennbar)
+  const [localRestaurant, setLocalRestaurant] = useState<string | null>(null);
 
   const handleFile = useCallback(async (file: File) => {
     setLoading(true);
     setError(null);
+    setLocalRestaurant(null);
     try {
-      // parseMirusExcel ist async und liest die Datei selbst
       const parsed  = await parseMirusExcel(file);
       const session = buildPreviewSession(parsed, file);
       setSession(session);
@@ -712,7 +841,12 @@ export default function MirusImportPreview() {
   );
 
   const currentSession: PreviewImportSession | null = session
-    ? { ...session, employees: localEmployees, selectedCount: localEmployees.filter(e => e.importSelected).length }
+    ? {
+        ...session,
+        restaurant:    localRestaurant ?? session.restaurant,
+        employees:     localEmployees,
+        selectedCount: localEmployees.filter(e => e.importSelected).length,
+      }
     : null;
 
   const handleExportJson = () => {
@@ -784,7 +918,7 @@ export default function MirusImportPreview() {
         {/* Preview */}
         {currentSession && (
           <>
-            <SummaryPanel session={currentSession} />
+            <SummaryPanel session={currentSession} onRestaurantChange={setLocalRestaurant} />
 
             {/* Auswahl-Controls */}
             <div className="flex flex-wrap items-center gap-2">

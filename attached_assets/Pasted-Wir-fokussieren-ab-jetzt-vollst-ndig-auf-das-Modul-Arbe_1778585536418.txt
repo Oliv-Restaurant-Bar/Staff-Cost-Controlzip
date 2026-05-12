@@ -1,0 +1,127 @@
+Wir fokussieren ab jetzt vollständig auf das Modul:
+
+"Arbeitszeiten & Monatsblätter"
+
+Ziel:
+Mirus Monatsblätter zu 100 % stabil importieren, digitalisieren, von Mitarbeitern prüfen/bestätigen lassen, Korrekturen abwickeln, archivieren und später Dienstpläne an Mitarbeiter verteilen.
+
+Bitte jetzt keine anderen Module bearbeiten.
+
+====================================================
+PHASE 1: PARSER AUF 95–100 % BRINGEN
+====================================================
+
+Aktueller Stand:
+- Mirus Excel Parser funktioniert
+- Januar/Februar ca. 87–88 % Qualität
+- 20/20 Mitarbeiter erkannt
+- 20/20 Totale erkannt
+- 0 blockiert
+- Import Preview funktioniert
+
+Offene Punkte:
+- Qualität soll Richtung 95–100 %
+- Restaurant-Erkennung verbessern
+- Kostenstellen-Warnung lösen
+- Mitarbeiter mit "Prüfen" reduzieren
+- Qualitätslogik für Aushilfen/Teilzeit/kurze Monate sauber machen
+- Tagesdaten und Totale gegeneinander besser validieren
+
+Bitte zuerst nur diese Parser-/Preview-Verbesserungen machen:
+
+1. Restaurant-Erkennung
+- Restaurant aus Dateiname erkennen:
+  - OLIV
+  - Beaulieu
+- zusätzlich aus Excel-Inhalt prüfen
+- falls nicht eindeutig: Dropdown in Preview anzeigen
+- Auswahl merken innerhalb der PreviewSession
+
+2. Kostenstelle verbessern
+Aktuell gibt es Warnung "Kostenstelle fehlt".
+Bitte Kostenstelle robuster aus blockStart+1 erkennen:
+- alle Zellen der Meta-Zeile scannen
+- Werte wie "1 Küche", "2 Service" erkennen
+- department daraus ableiten
+- falls leer: department aus Zeitblöcken oder Einsatzbereich ableiten
+- Kostenstelle-Warnung nur anzeigen, wenn wirklich gar keine Abteilung erkennbar ist
+
+3. Qualitätslogik verbessern
+Nicht jeder Mitarbeiter braucht 20+ Tage.
+Aushilfen, Eintritt, Austritt, Ferien, Krankheit oder Teilzeit können weniger Tage haben.
+
+Bitte Qualität nicht nur nach Anzahl Tage bewerten, sondern:
+- Name erkannt
+- Wochenstunden erkannt
+- Abteilung erkannt
+- mindestens Tagesdaten ODER Totale erkannt
+- Zeitblöcke ODER Absenzcodes erkannt
+- Totale erkannt
+- Cross-Check plausibel
+
+Wenn Mitarbeiter wenige Tage hat, aber Totale und Zeitdaten plausibel sind:
+nicht automatisch Qualität tief setzen.
+
+4. Prüfen-Status reduzieren
+Status "Prüfen" nur wenn:
+- Kostenstelle und Abteilung fehlen
+- Totale stark von Tagesdaten abweichen
+- keine Zeitdaten und keine Absenzdaten vorhanden
+- Name nicht matchbar
+- Qualität unter 80 %
+
+5. Import Preview verbessern
+Oben anzeigen:
+- Importfähig
+- Prüfen
+- Blockiert
+- Durchschnittsqualität
+- offene Warnungen
+
+Mitarbeiter mit Warnung anklickbar machen.
+Warnung muss konkret sagen:
+- was fehlt
+- warum es wichtig ist
+- ob Import trotzdem möglich ist
+
+6. Debug-Vergleich
+Bitte pro Mitarbeiter eine kleine Plausibilitätsbox:
+- Summe Tagesstunden
+- Mirus Totalstunden
+- Differenz
+- Status OK / Prüfen
+
+7. Ziel nach dieser Phase
+Mit Januar und Februar Excel soll erreicht werden:
+- 0 blockiert
+- möglichst 20/20 importfähig
+- Durchschnittsqualität 95 % oder höher
+- keine unnötigen Warnungen
+- Restaurant korrekt erkannt
+- Kostenstelle/Abteilung korrekt erkannt
+
+====================================================
+PHASE 2 NOCH NICHT BAUEN
+====================================================
+
+Noch nicht bauen:
+- Supabase Import
+- Mitarbeiterportal
+- Freigabeprozess
+- Beanstandungen
+- WhatsApp Versand
+
+Erst Parser/Preview finalisieren.
+
+====================================================
+WICHTIG
+====================================================
+
+Bitte danach:
+- TypeScript prüfen
+- /mirus-import-preview testen
+- Januar und Februar Excel erneut testen
+- kurze Zusammenfassung geben:
+  - Qualität vorher/nachher
+  - offene Warnungen
+  - Importfähig/Prüfen/Blockiert
