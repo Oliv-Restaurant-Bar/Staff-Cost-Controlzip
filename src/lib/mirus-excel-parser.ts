@@ -49,15 +49,17 @@ const LAYOUT = {
 const ABSENCE_CODES = ['FR', 'FE', 'KR', 'Frei', 'Ferien', 'Krank', 'Unfall', 'Kompensation', 'KO'];
 
 const TOTAL_LABELS: { key: keyof EmployeeTotals; patterns: string[] }[] = [
-  { key: 'totalHours',   patterns: ['total stunden', 'total h', 'gesamtarbeitszeit', 'bruttoarbeitszeit'] },
-  { key: 'pauseTotal',   patterns: ['pause', 'pausen total'] },
-  { key: 'nettoTotal',   patterns: ['netto', 'nettoarbeitszeit'] },
+  { key: 'totalHours',   patterns: ['total stunden', 'total h', 'gesamtarbeitszeit', 'bruttoarbeitszeit', 'brutto'] },
+  { key: 'pauseTotal',   patterns: ['pausen total', 'pause total', 'pause'] },
+  { key: 'nettoTotal',   patterns: ['nettoarbeitszeit', 'netto'] },
+  { key: 'sollStunden',  patterns: ['sollstunden', 'soll'] },
   { key: 'zeitzuschlag', patterns: ['zeitzuschlag', 'zuschlag'] },
   { key: 'ueberzeit',    patterns: ['überzeit', 'ueberzeit', 'überstunden'] },
   { key: 'saldo',        patterns: ['saldo'] },
-  { key: 'ferien',       patterns: ['ferien'] },
-  { key: 'frei',         patterns: ['frei', 'freizeit', 'kompensation'] },
-  { key: 'krankheit',    patterns: ['krank', 'unfall'] },
+  { key: 'ferien',       patterns: ['feriensaldo', 'ferien'] },
+  { key: 'feiertag',     patterns: ['feiertag'] },
+  { key: 'kompensation', patterns: ['kompensation', 'komp'] },
+  { key: 'krankheit',    patterns: ['krankheit', 'krank', 'unfall'] },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -92,12 +94,18 @@ export interface EmployeeTotals {
   totalHours?: string;
   pauseTotal?: string;
   nettoTotal?: string;
+  sollStunden?: string;
   zeitzuschlag?: string;
   ueberzeit?: string;
   saldo?: string;
   ferien?: string;
-  frei?: string;
+  feiertag?: string;
+  kompensation?: string;
   krankheit?: string;
+  // Berechnet aus Tageszeilen (nach Parsing befüllt)
+  calculatedTotalHours?: number;
+  totalsValidated?: boolean;
+  totalsDiff?: number;
 }
 
 export interface RawBlock {
@@ -219,6 +227,63 @@ function detectAbsence(text: string): string | null {
     if (text.toLowerCase().includes(code.toLowerCase())) return code;
   }
   return null;
+}
+
+// ─── TOTALE-HELFER ────────────────────────────────────────────────────────────
+
+/** Normalisiert Label-Text: lowercase, Punkte entfernen, Mehrfach-Space → 1 */
+function normLabel(text: string): string {
+  return text.toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Parst einen Zellwert als Dezimalstunden.
+ * Akzeptiert: HH:MM-String, Excel-Zeitfraktion (0..~3), direkte Dezimalzahl.
+ */
+function parseHoursValue(cell: XLSX.CellObject | undefined): { display: string; decimal: number } | null {
+  if (!cell) return null;
+
+  // Formatierter Text — zuerst auf HH:MM prüfen
+  const w = (cell.w ?? '').trim();
+  const hhmmW = w.match(/^(\d{1,3}):(\d{2})$/);
+  if (hhmmW) {
+    const decimal = parseInt(hhmmW[1]) + parseInt(hhmmW[2]) / 60;
+    return { display: w, decimal: Math.round(decimal * 100) / 100 };
+  }
+
+  if (cell.t === 'n' && typeof cell.v === 'number') {
+    const v = cell.v;
+    // Excel-Zeitfraktion (Bruchteile eines Tages, < 3 = < 72 h)
+    if (v > 0 && v < 3) {
+      const decimal = Math.round(v * 24 * 100) / 100;
+      return { display: w || String(decimal), decimal };
+    }
+    // Direkte Dezimalstunden
+    if (v > 0 && v < 500) return { display: w || String(v), decimal: v };
+    return null;
+  }
+
+  const s = String(cell.v ?? '').trim();
+  if (!s || s === '0' || s === '-') return null;
+
+  // HH:MM im Rohwert
+  const hhmmS = s.match(/^(\d{1,3}):(\d{2})$/);
+  if (hhmmS) {
+    const decimal = parseInt(hhmmS[1]) + parseInt(hhmmS[2]) / 60;
+    return { display: s, decimal: Math.round(decimal * 100) / 100 };
+  }
+
+  const d = parseFloat(s.replace(',', '.'));
+  if (!isNaN(d) && d > 0 && d < 500) return { display: s, decimal: d };
+  return null;
+}
+
+/** Konvertiert "HH:MM" oder Dezimalstring → Dezimalstunden (null wenn nicht parsebar) */
+function toDecimalHours(s: string): number | null {
+  const hmm = s.match(/^(\d{1,3}):(\d{2})$/);
+  if (hmm) return parseInt(hmm[1]) + parseInt(hmm[2]) / 60;
+  const d = parseFloat(s.replace(',', '.'));
+  return isNaN(d) || d <= 0 ? null : d;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -420,30 +485,58 @@ function readDayRows(
 // ─── TOTALE ───────────────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Zonenbasierte Totale-Erkennung:
+ * Scannt nur die obersten 15 und untersten 15 Zeilen des Blocks,
+ * wo Mirus-Monatstotale typischerweise stehen.
+ * Konvertiert HH:MM automatisch zu Dezimalstunden.
+ */
 function readTotals(ws: XLSX.WorkSheet, blockStart: number, blockEnd: number): EmployeeTotals {
   const totals: EmployeeTotals = {};
   const ref = ws['!ref'];
   if (!ref) return totals;
   const range = XLSX.utils.decode_range(ref);
 
-  for (let r = blockStart; r <= blockEnd; r++) {
-    // Scan all cells in this row for label text
-    for (let c = range.s.c; c <= Math.min(range.e.c, 40); c++) {
-      const cell = getCell(ws, c, r);
-      if (!cell) continue;
-      const text = String(cell.v ?? cell.w ?? '').toLowerCase().trim();
-      if (!text) continue;
+  // Nur obere und untere Zone scannen (Totale stehen nie in der Mitte)
+  const topEnd      = Math.min(blockStart + 14, blockEnd);
+  const bottomStart = Math.max(blockEnd - 14, topEnd + 1);
+  const zones: [number, number][] = [[blockStart, topEnd]];
+  if (bottomStart <= blockEnd) zones.push([bottomStart, blockEnd]);
 
-      for (const { key, patterns } of TOTAL_LABELS) {
-        if (totals[key]) continue; // already found
-        if (patterns.some(p => text.includes(p))) {
-          // Look for numeric/text value in next 6 cells
-          for (let dc = 1; dc <= 6; dc++) {
+  for (const [zStart, zEnd] of zones) {
+    for (let r = zStart; r <= zEnd; r++) {
+      for (let c = range.s.c; c <= Math.min(range.e.c, 80); c++) {
+        const cell = getCell(ws, c, r);
+        if (!cell) continue;
+        // Labels sind immer Strings — Zahlen-Zellen überspringen
+        const rawText = String(cell.v ?? cell.w ?? '').trim();
+        if (!rawText || rawText.length < 2) continue;
+        const norm = normLabel(rawText);
+
+        for (const { key, patterns } of TOTAL_LABELS) {
+          if (totals[key]) continue; // bereits gefunden
+          // Exakter Match oder Pattern ist vollständiges Wort am Anfang
+          const hit = patterns.some(p =>
+            norm === p ||
+            norm.startsWith(p + ' ') ||
+            norm === p.replace(/\s/g, '')
+          );
+          if (!hit) continue;
+
+          // Wert in den nächsten 5 Spalten suchen
+          for (let dc = 1; dc <= 5; dc++) {
             const valCell = getCell(ws, c + dc, r);
             if (!valCell) continue;
-            const val = (valCell.w ?? String(valCell.v ?? '')).trim();
-            if (val && val !== '0' && val !== '-') {
-              totals[key] = val;
+            // Zuerst als Stundenwert interpretieren (HH:MM oder Dezimal)
+            const parsed = parseHoursValue(valCell);
+            if (parsed) {
+              totals[key] = parsed.display || String(parsed.decimal);
+              break;
+            }
+            // Fallback: beliebiger nicht-leerer String
+            const s = (valCell.w ?? String(valCell.v ?? '')).trim();
+            if (s && s !== '0' && s !== '-') {
+              totals[key] = s;
               break;
             }
           }
@@ -452,6 +545,20 @@ function readTotals(ws: XLSX.WorkSheet, blockStart: number, blockEnd: number): E
     }
   }
   return totals;
+}
+
+/** Berechnet Gesamtstunden aus Tageszeilen und vergleicht mit geparsten Totalen. */
+function computeTotalsCheck(totals: EmployeeTotals, days: DayRecord[]): void {
+  const daySum = days.reduce((s, d) => s + (d.totalHours ?? 0), 0);
+  totals.calculatedTotalHours = Math.round(daySum * 100) / 100;
+
+  if (totals.totalHours) {
+    const parsed = toDecimalHours(totals.totalHours);
+    if (parsed !== null && parsed > 0) {
+      totals.totalsDiff      = Math.round(Math.abs(parsed - daySum) * 100) / 100;
+      totals.totalsValidated = totals.totalsDiff < 1.0;
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -528,6 +635,7 @@ function parseBlock(
 
   // Totale
   const totals = readTotals(ws, blockStart, blockEnd);
+  computeTotalsCheck(totals, days);
 
   // Detected-ColMap als lesbare Strings
   const detectedForDisplay: Record<string, string> = {
@@ -567,21 +675,22 @@ function parseBlock(
 
 function employeeQuality(emp: ExcelEmployee): number {
   let s = 0;
-  if (emp.name)        s += 25;   // Name erkannt
-  if (emp.weeklyHours) s += 10;   // Wochenstunden erkannt
-  if (emp.costCenter)  s += 10;   // Kostenstelle / Abteilung erkannt
+  if (emp.name)        s += 25;  // Name erkannt
+  if (emp.weeklyHours) s += 8;   // Wochenstunden erkannt
+  if (emp.costCenter)  s += 8;   // Kostenstelle / Abteilung erkannt
   // Tagesdaten
-  if      (emp.days.length >= 20) s += 30;
-  else if (emp.days.length >= 10) s += 22;
-  else if (emp.days.length >= 5)  s += 15;
-  else if (emp.days.length >= 1)  s += 8;
+  if      (emp.days.length >= 20) s += 27;
+  else if (emp.days.length >= 10) s += 20;
+  else if (emp.days.length >= 5)  s += 13;
+  else if (emp.days.length >= 1)  s += 6;
   // Zeitblöcke oder Absenzen
   const active = emp.days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length;
-  if      (active >= 15) s += 15;
-  else if (active >= 5)  s += 10;
-  else if (active >= 1)  s += 5;
-  // Totale
-  if (emp.totals.totalHours) s += 10;
+  if      (active >= 15) s += 14;
+  else if (active >= 5)  s += 9;
+  else if (active >= 1)  s += 4;
+  // Totale erkannt (+8) + validiert (+10)
+  if (emp.totals.totalHours)      s += 8;
+  if (emp.totals.totalsValidated) s += 10;
   return Math.min(100, s);
 }
 
@@ -636,12 +745,18 @@ function mergeTotals(a: EmployeeTotals, b: EmployeeTotals): EmployeeTotals {
     totalHours:   a.totalHours   ?? b.totalHours,
     pauseTotal:   a.pauseTotal   ?? b.pauseTotal,
     nettoTotal:   a.nettoTotal   ?? b.nettoTotal,
+    sollStunden:  a.sollStunden  ?? b.sollStunden,
     zeitzuschlag: a.zeitzuschlag ?? b.zeitzuschlag,
     ueberzeit:    a.ueberzeit    ?? b.ueberzeit,
     saldo:        a.saldo        ?? b.saldo,
     ferien:       a.ferien       ?? b.ferien,
-    frei:         a.frei         ?? b.frei,
+    feiertag:     a.feiertag     ?? b.feiertag,
+    kompensation: a.kompensation ?? b.kompensation,
     krankheit:    a.krankheit    ?? b.krankheit,
+    // Computed fields werden nach dem Merge neu berechnet
+    calculatedTotalHours: undefined,
+    totalsValidated:      undefined,
+    totalsDiff:           undefined,
   };
 }
 
@@ -650,7 +765,7 @@ function mergeTwoBlocks(main: ExcelEmployee, extra: ExcelEmployee): ExcelEmploye
     ? main.mergedBlockRows
     : [[main.blockStartRow, main.blockEndRow ?? main.blockStartRow]] as [number, number][];
   const extraRow: [number, number] = [extra.blockStartRow, extra.blockEndRow ?? extra.blockStartRow];
-  return {
+  const merged: ExcelEmployee = {
     name:             main.name             ?? extra.name,
     department:       main.department       ?? extra.department,
     costCenter:       main.costCenter       ?? extra.costCenter,
@@ -665,6 +780,9 @@ function mergeTwoBlocks(main: ExcelEmployee, extra: ExcelEmployee): ExcelEmploye
     mergedFromCount:  main.mergedFromCount + 1,
     mergedBlockRows:  [...existingRows, extraRow],
   };
+  // Totales-Cross-Check nach Merge neu berechnen (mehr Tage verfügbar)
+  computeTotalsCheck(merged.totals, merged.days);
+  return merged;
 }
 
 /**

@@ -1,0 +1,166 @@
+Der Excel-Parser ist jetzt strukturell stabil.
+
+Nächster Schritt:
+Totals / Monatssummen vollständig und zuverlässig extrahieren.
+
+Aktuelles Problem:
+"Mit Totalen = 0"
+
+Tagesdaten und Zeitblöcke funktionieren bereits korrekt.
+Jetzt müssen die Monats-Totale sauber erkannt werden.
+
+====================================================
+1. TOTALS-EXTRAKTION VERBESSERN
+====================================================
+
+Bitte implementiere eine koordinatenbasierte Totals-Erkennung.
+
+Keine Regex-only Lösung.
+
+Ziel:
+Folgende Werte pro Mitarbeiter erkennen:
+
+- Total Stunden
+- Pause Total
+- Netto / Soll
+- Überzeit
+- Zeitzuschlag
+- Feriensaldo
+- Feiertage
+- Kompensation / Komp.
+- Saldo
+
+====================================================
+2. TOTALS-BEREICH DEFINIEREN
+====================================================
+
+Die Totals befinden sich typischerweise:
+
+- direkt vor den Tageszeilen
+ODER
+- direkt nach den Tageszeilen
+
+Scanne deshalb:
+
+blockStart → blockStart + 15
+UND
+blockEnd - 15 → blockEnd
+
+Suche dort nach Label-Zellen.
+
+====================================================
+3. LABEL-MAP IMPLEMENTIEREN
+====================================================
+
+Unterstützte Labels:
+
+TOTAL
+Total
+Saldo
+Überzeit
+Zeitzuschlag
+Ferien
+Feriensaldo
+Pause
+Netto
+Soll
+Komp.
+Kompensation
+Feiertag
+
+Labels normalisieren:
+- lowercase
+- trim
+- Punkte entfernen
+
+====================================================
+4. WERT-ERKENNUNG
+====================================================
+
+Wenn Label erkannt:
+
+Suche numerische Zellen:
+- rechts daneben
+- maximal 5 Spalten entfernt
+
+Unterstützen:
+- Excel number
+- String-Zahlen
+- HH:MM
+- Dezimalstunden
+
+Konvertiere:
+HH:MM → Dezimalstunden
+
+====================================================
+5. CROSS-CHECK MIT TAGESDATEN
+====================================================
+
+Berechne zusätzlich:
+
+calculatedTotalHours
+= Summe aller Tageszeilen
+
+Wenn:
+abs(calculatedTotalHours - parsedTotalHours) < 1.0
+
+→ totalsValidated = true
+
+Wenn Differenz > 3 Stunden:
+→ Warnung anzeigen
+
+====================================================
+6. QUALITÄTSLOGIK ERWEITERN
+====================================================
+
++10 Punkte wenn Totale erkannt
++10 Punkte wenn Totale validiert
+
+Ziel:
+Monatsblätter sollen danach:
+90–98 % Qualität erreichen.
+
+====================================================
+7. UI ERWEITERN
+====================================================
+
+Mitarbeiterkarte:
+
+Neue Sektion:
+"Monatstotale"
+
+Anzeigen:
+- Total Stunden
+- Pause Total
+- Überzeit
+- Saldo
+- Feriensaldo
+
+Zusätzlich:
+- berechnete Stunden aus Tageszeilen
+- Differenz
+- grüner Check wenn validiert
+
+====================================================
+8. VALIDIERUNG
+====================================================
+
+Nicht blockieren wenn Totale fehlen.
+Nur Warnung.
+
+Aber:
+Wenn Totale vorhanden UND starke Abweichung zu Tagesdaten:
+→ Status "Prüfen"
+
+====================================================
+9. WICHTIG
+====================================================
+
+Keine neuen Parser-Architekturen.
+Kein Rewrite.
+Auf bestehendem koordinatenbasierten Parser aufbauen.
+
+Danach:
+TypeScript prüfen
+/mirus-excel-test bereitstellen
+und Januar + Februar erneut testen.

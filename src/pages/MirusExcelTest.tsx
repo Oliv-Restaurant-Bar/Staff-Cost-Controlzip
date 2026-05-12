@@ -203,9 +203,13 @@ function validateEmployee(emp: ExcelEmployee, idx: number, _all: ExcelEmployee[]
 
   // ── Totale ────────────────────────────────────────────────────────────────
   const tp = { totalHours: !!emp.totals.totalHours, pause: !!emp.totals.pauseTotal, ueberzeit: !!emp.totals.ueberzeit, saldo: !!emp.totals.saldo, ferien: !!emp.totals.ferien };
-  // Totale fehlen ist nur eine Warnung, nicht ein Fehler (wenn Tageszeilen vorhanden)
+  // Totale fehlen ist nur eine Warnung (wenn Tageszeilen vorhanden)
   if (!tp.totalHours && emp.days.length < 5) {
     issues.push({ severity: 'warning', category: 'totals', message: 'Total Stunden fehlt', employeeName: label, employeeIndex: idx });
+  }
+  // Starke Abweichung zwischen geparsten Totalen und berechneten Tageszeilen
+  if (emp.totals.totalsDiff !== undefined && emp.totals.totalsDiff > 3.0) {
+    issues.push({ severity: 'warning', category: 'totals', message: `Totale weichen von Tageszeilen ab: ±${emp.totals.totalsDiff} h`, employeeName: label, employeeIndex: idx });
   }
 
   // ── Import-Status ─────────────────────────────────────────────────────────
@@ -380,17 +384,18 @@ function GlobalErrorList({ val }: { val: DocumentValidation }) {
 function empQualityPct(emp: ExcelEmployee): number {
   let s = 0;
   if (emp.name)        s += 25;
-  if (emp.weeklyHours) s += 10;
-  if (emp.costCenter)  s += 10;
-  if      (emp.days.length >= 20) s += 30;
-  else if (emp.days.length >= 10) s += 22;
-  else if (emp.days.length >= 5)  s += 15;
-  else if (emp.days.length >= 1)  s += 8;
+  if (emp.weeklyHours) s += 8;
+  if (emp.costCenter)  s += 8;
+  if      (emp.days.length >= 20) s += 27;
+  else if (emp.days.length >= 10) s += 20;
+  else if (emp.days.length >= 5)  s += 13;
+  else if (emp.days.length >= 1)  s += 6;
   const active = emp.days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length;
-  if      (active >= 15) s += 15;
-  else if (active >= 5)  s += 10;
-  else if (active >= 1)  s += 5;
-  if (emp.totals.totalHours) s += 10;
+  if      (active >= 15) s += 14;
+  else if (active >= 5)  s += 9;
+  else if (active >= 1)  s += 4;
+  if (emp.totals.totalHours)      s += 8;
+  if (emp.totals.totalsValidated) s += 10;
   return Math.min(100, s);
 }
 
@@ -501,14 +506,72 @@ function DayRowsTable({ days }: { days: DayRecord[] }) {
 // ─── MITARBEITERKARTE ─────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function TotalsCheck({ tp }: { tp: EmployeeValidation['totalsPresent'] }) {
+function MonatsTotaleSection({ totals }: { totals: import('@/lib/mirus-excel-parser').EmployeeTotals }) {
+  const LABELS: [string, string][] = [
+    ['totalHours',   'Total h'],
+    ['pauseTotal',   'Pause'],
+    ['nettoTotal',   'Netto'],
+    ['sollStunden',  'Soll'],
+    ['ueberzeit',    'Überzeit'],
+    ['zeitzuschlag', 'Zuschlag'],
+    ['saldo',        'Saldo'],
+    ['ferien',       'Ferien'],
+    ['feiertag',     'Feiertag'],
+    ['kompensation', 'Komp.'],
+    ['krankheit',    'Krank'],
+  ];
+  type T = import('@/lib/mirus-excel-parser').EmployeeTotals;
+  const found  = LABELS.filter(([k]) => !!(totals as Record<string, unknown>)[k]);
+  const calc   = totals.calculatedTotalHours;
+  const diff   = totals.totalsDiff;
+  const valid  = totals.totalsValidated;
+  const hasTot = found.length > 0;
+
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {([['Total h', tp.totalHours], ['Pause', tp.pause], ['Überzeit', tp.ueberzeit], ['Saldo', tp.saldo], ['Ferien', tp.ferien]] as [string, boolean][]).map(([l, ok]) => (
-        <span key={l} className={cn('text-[10px] px-1.5 py-0.5 rounded border font-medium', ok ? 'bg-green-50 border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400' : 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400')}>
-          {ok ? '✓' : '✗'} {l}
-        </span>
-      ))}
+    <div className="space-y-2">
+      {hasTot ? (
+        <div className="flex flex-wrap gap-2">
+          {found.map(([k, label]) => (
+            <span key={k} className={cn(
+              'inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border font-mono font-semibold',
+              k === 'totalHours' && valid
+                ? 'bg-green-50 border-green-300 text-green-800 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400'
+                : k === 'totalHours'
+                ? 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-700 dark:text-blue-400'
+                : 'bg-muted/60 border-border text-foreground',
+            )}>
+              <span className="text-muted-foreground font-normal text-[9px] uppercase tracking-wide mr-0.5">{label}</span>
+              {(totals as T & Record<string, string>)[k]}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted-foreground italic">Keine Monatstotale erkannt.</p>
+      )}
+
+      {calc !== undefined && (
+        <div className={cn(
+          'flex flex-wrap items-center gap-3 text-[11px] rounded border px-3 py-2',
+          valid
+            ? 'border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-900/10'
+            : diff !== undefined && diff > 3
+            ? 'border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-900/10'
+            : 'border-border bg-muted/20',
+        )}>
+          <span className="text-muted-foreground">Berechnet aus Tagen:</span>
+          <span className="font-mono font-bold">{calc} h</span>
+          {diff !== undefined && totals.totalHours && (
+            <>
+              <span className="text-muted-foreground">Diff:</span>
+              <span className={cn('font-mono font-bold',
+                diff < 1 ? 'text-green-600' : diff < 3 ? 'text-yellow-600' : 'text-red-600'
+              )}>±{diff} h</span>
+            </>
+          )}
+          {valid  && <span className="text-green-600 font-semibold text-[10px]">✓ validiert</span>}
+          {diff !== undefined && diff >= 3 && <span className="text-red-600 font-semibold text-[10px]">⚠ Abweichung prüfen</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -598,17 +661,10 @@ function EmployeeCard({ emp, ev, index }: { emp: ExcelEmployee; ev: EmployeeVali
             </div>
           )}
 
-          {/* Totale */}
+          {/* Monatstotale */}
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Totale-Prüfung</p>
-            <TotalsCheck tp={ev.totalsPresent} />
-            {Object.entries(emp.totals).some(([, v]) => !!v) && (
-              <div className="flex flex-wrap gap-3 text-xs rounded border border-border bg-muted/20 p-2 mt-2">
-                {Object.entries(emp.totals).map(([k, v]) => v ? (
-                  <span key={k}><span className="text-muted-foreground">{k}: </span><span className="font-mono font-bold">{v}</span></span>
-                ) : null)}
-              </div>
-            )}
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Monatstotale</p>
+            <MonatsTotaleSection totals={emp.totals} />
           </div>
 
           {/* Tageszeilen (ausgeklappt) */}
