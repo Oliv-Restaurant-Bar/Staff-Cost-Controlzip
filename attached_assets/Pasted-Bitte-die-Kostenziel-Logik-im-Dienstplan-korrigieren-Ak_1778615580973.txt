@@ -1,0 +1,120 @@
+Bitte die Kostenziel-Logik im Dienstplan korrigieren.
+
+Aktuell wird im Tages-Kostenmodal:
+"Kostenziel (20%)"
+angezeigt.
+
+Das ist falsch.
+
+Wichtig:
+Die Ziel-Kostenquote von 20 % gilt aktuell offenbar pro Abteilung.
+Dadurch wird Küche und Service getrennt mit je 20 % gerechnet.
+
+Realität:
+Das Gesamtkostenziel für Küche + Service zusammen beträgt 40 %.
+
+Bitte folgende Logik umsetzen:
+
+====================================================
+1. TAGES-KOSTENMODAL KORRIGIEREN
+====================================================
+
+Im Modal:
+- "Kostenziel (20%)"
+ändern zu:
+"Kostenziel gesamt (40%)"
+
+Berechnung:
+(Servicekosten + Küchenkosten)
+gegen
+(Tagesumsatz × 40%)
+
+Nicht mehr separat 20 % je Abteilung.
+
+====================================================
+2. ÜBERSCHUSS-BERECHNUNG KORRIGIEREN
+====================================================
+
+Die Warnung:
+"CHF XXXX über Kostenziel"
+
+muss auf Basis von:
+GESAMTE Personalkosten
+vs.
+40%-Gesamtziel
+
+berechnet werden.
+
+====================================================
+3. SERVICE/KÜCHE TROTZDEM TRENNEN
+====================================================
+
+Die Detail-Aufteilung:
+- Frühdienst
+- Spätdienst
+- Service
+- Küche
+
+soll weiterhin angezeigt werden.
+
+Aber:
+die Zielquote darf NICHT pro Abteilung einzeln gerechnet werden.
+
+====================================================
+4. KPI-LOGIK PRÜFEN
+====================================================
+
+Bitte prüfen:
+
+- Tages KPI
+- Wochen KPI
+- Monats KPI
+- Soll/Ist Kostenboxen
+- Warnungen
+- Farblogik
+
+ob irgendwo noch hartcodierte 20 % verwendet werden.
+
+Falls ja:
+auf Gesamtlogik umstellen.
+
+====================================================
+5. FLEXIBEL FÜR SPÄTER
+====================================================
+
+Bitte KEINE hardcodierten 40 %.
+
+Stattdessen:
+
+settings.laborCostTargetPercent
+
+verwenden.
+
+Fallback:
+40
+
+So können wir später:
+- global
+- pro Restaurant
+- pro Abteilung
+
+eigene Ziele definieren.
+
+====================================================
+6. WICHTIG
+====================================================
+
+Keine UI kaputt machen.
+Keine bestehenden Berechnungen zerstören.
+Keine Migration nötig.
+Keine Supabase-Änderung.
+
+Nur:
+- Zielquote korrigieren
+- Gesamtlogik korrekt anwenden
+- Anzeige anpassen
+
+Danach:
+- TypeScript prüfen
+- Tagesmodal testen
+- kurze Zusammenfassung geben

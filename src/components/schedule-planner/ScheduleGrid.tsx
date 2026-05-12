@@ -1154,6 +1154,7 @@ export const ScheduleGrid = ({
                                   cellColor={frühCellColor}
                                   onCellColorChange={onCellColorChange ? (c) => onCellColorChange(frühInlineKey, c) : undefined}
                                   onCopyToIst={onCopyToIst ? (slot) => onCopyToIst(employee.id, dateStr, 'früh', slot) : undefined}
+                                  onSplitTimeSelect={(sec) => onSlotChange(employee.id, dateStr, 'spät', sec, null)}
                                 />
                               </div>
                               {isSuggestedFrüh && !isOverlapping && frühSuggestion && (
@@ -1228,6 +1229,7 @@ export const ScheduleGrid = ({
                                   cellColor={spätCellColor}
                                   onCellColorChange={onCellColorChange ? (c) => onCellColorChange(spätInlineKey, c) : undefined}
                                   onCopyToIst={onCopyToIst ? (slot) => onCopyToIst(employee.id, dateStr, 'spät', slot) : undefined}
+                                  onSplitTimeSelect={(sec) => onSlotChange(employee.id, dateStr, 'früh', sec, null)}
                                 />
                               </div>
                               {isSuggestedSpät && !isOverlapping && spätSuggestion && (

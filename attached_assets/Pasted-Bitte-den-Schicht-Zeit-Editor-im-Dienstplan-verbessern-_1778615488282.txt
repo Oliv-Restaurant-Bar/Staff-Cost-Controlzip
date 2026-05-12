@@ -1,0 +1,185 @@
+Bitte den Schicht-Zeit-Editor im Dienstplan verbessern.
+
+Ziel:
+Wenn ich eine Zelle im Dienstplan anklicke und eine Schicht/Zeit eintragen möchte, soll ich flexibel entscheiden können:
+
+1. eigene Zeit manuell schreiben
+2. Zeit per halbstündiger Vorauswahl auswählen
+3. eigene Schnellauswahl-Buttons bearbeiten
+
+====================================================
+1. ZEIT-EINGABE MODUS
+====================================================
+
+Im Popover für die Schichtauswahl bitte oben einen Umschalter ergänzen:
+
+- Schnellwahl
+- Zeit auswählen
+- Eigene Zeit
+
+====================================================
+2. SCHNELLWAHL
+====================================================
+
+Im Tab "Schnellwahl" sollen die bestehenden Buttons wie:
+
+- 10-14
+- 11-14
+- 11-15
+- 12-15
+- 10-14 / 17:30
+- 11:15-14 / 17:30
+
+weiterhin angezeigt werden.
+
+Aber:
+Diese Schnellwahl soll bearbeitbar sein.
+
+Bitte Button ergänzen:
+"Schnellwahl bearbeiten"
+
+Dort soll man:
+- bestehende Schnellwahl bearbeiten
+- neue Schnellwahl hinzufügen
+- Schnellwahl löschen
+- Bezeichnung ändern
+- Startzeit / Endzeit ändern
+- optional zweite Schichtzeit hinzufügen
+- Farbe / Kategorie wählen
+- Reihenfolge ändern
+
+Noch keine Datenbank nötig.
+Vorerst in localStorage speichern.
+
+Später wird es in Supabase gespeichert.
+
+====================================================
+3. ZEIT AUSWÄHLEN
+====================================================
+
+Im Tab "Zeit auswählen":
+
+Zwei Dropdowns oder Select-Felder:
+
+Startzeit:
+- 06:00
+- 06:30
+- 07:00
+- 07:30
+...
+bis 02:00
+
+Endzeit:
+- 06:00
+- 06:30
+- 07:00
+- 07:30
+...
+bis 02:00
+
+Intervall:
+30 Minuten.
+
+Zusätzlich Button:
+"Zweite Schicht hinzufügen"
+
+Dann erscheinen nochmals:
+Startzeit 2
+Endzeit 2
+
+Beispiel:
+10:00 - 14:00
+17:30 - 23:00
+
+Button:
+"Übernehmen"
+
+====================================================
+4. EIGENE ZEIT
+====================================================
+
+Im Tab "Eigene Zeit":
+
+Freitextfeld:
+
+Beispiele erlaubt:
+- 10-14
+- 10:00-14:00
+- 10:00-14:00 / 17:30-23:00
+- 11:15-14 / 17:30-23:30
+
+Beim Übernehmen bitte normalisieren zu:
+HH:mm-HH:mm
+
+Wenn ungültig:
+verständliche Fehlermeldung anzeigen.
+
+====================================================
+5. VALIDIERUNG
+====================================================
+
+Bitte prüfen:
+
+- Startzeit muss vor Endzeit liegen
+- Nachtschichten über Mitternacht erlauben, z.B. 18:00-00:30
+- zweite Schicht darf sich nicht mit erster überschneiden
+- leere Zeiten nicht speichern
+- ungültige Eingaben nicht übernehmen
+
+====================================================
+6. ANZEIGE IM DIENSTPLAN
+====================================================
+
+Wenn mehrere Zeitblöcke eingetragen werden, sollen diese in der Zelle sauber untereinander angezeigt werden.
+
+Beispiel:
+10:00-14:00
+17:30-23:00
+
+Nicht zusammengequetscht.
+
+====================================================
+7. AUCH IST ÜBERNEHMEN
+====================================================
+
+Die bestehende Option:
+"Auch ins IST übernehmen"
+
+muss weiterhin funktionieren.
+
+Wenn zwei Zeitblöcke vorhanden sind:
+beide Blöcke ins IST übernehmen.
+
+====================================================
+8. SCHICHTEN-PALETTE LINKS
+====================================================
+
+Die linke Schichten-Palette soll ebenfalls die bearbeitete Schnellwahl übernehmen.
+
+Wenn ich eine Schnellwahl speichere, soll sie:
+- im Popover erscheinen
+- in der linken Palette erscheinen
+- nach Reload erhalten bleiben
+
+Vorerst localStorage.
+
+====================================================
+9. WICHTIG
+====================================================
+
+Bitte keine bestehende Kostenlogik beschädigen.
+Keine Supabase-Migration.
+Keine Datenbankänderung.
+Keine Änderung an Berechnung von Soll/Ist/Kosten.
+
+Nur:
+- Zeit-Eingabe verbessern
+- halbstündige Auswahl
+- eigene Zeit
+- Schnellwahl bearbeitbar
+- Speicherung lokal in localStorage
+
+Danach:
+- TypeScript prüfen
+- Dienstplan testen
+- kurze Zusammenfassung geben
