@@ -1,0 +1,289 @@
+Der Mirus Excel Parser ist jetzt stabil genug für die nächste Phase.
+
+Bitte implementiere jetzt eine sichere Import-Preview-Pipeline.
+
+WICHTIG:
+Noch KEIN produktiver Supabase-Import.
+Noch KEIN Überschreiben echter Daten.
+Noch KEINE echten Monatsblätter speichern.
+
+====================================================
+ZIEL
+====================================================
+
+Die Excel-Datei soll vollständig verarbeitet werden,
+aber zuerst nur in eine temporäre Import-Vorschau geladen werden.
+
+Der Benutzer muss vor dem echten Import prüfen können:
+
+- alle Mitarbeiter
+- alle Tagesdaten
+- alle Zeitblöcke
+- Monatstotale
+- Warnungen
+- Qualität
+- ausgeschlossene Mitarbeiter
+
+Erst später bauen wir den echten Speichern-Button.
+
+====================================================
+1. NEUE ROUTE
+====================================================
+
+Bitte neue Route erstellen:
+
+/mirus-import-preview
+
+Diese Route soll unabhängig testbar sein.
+
+Funktion:
+1. Excel hochladen
+2. Parser analysiert Datei
+3. Daten werden nur im lokalen State als PreviewImportSession gehalten
+4. Vorschau wird angezeigt
+5. Kein Supabase Write
+
+====================================================
+2. PREVIEW-DATENSTRUKTUR
+====================================================
+
+Bitte neue Typen anlegen:
+
+PreviewImportSession
+PreviewEmployee
+PreviewDayEntry
+PreviewImportWarning
+
+Die Struktur soll vom Parser-Output getrennt sein.
+
+Beispiel:
+
+PreviewImportSession:
+- id
+- sourceFileName
+- month
+- year
+- restaurant
+- createdAt
+- employees
+- warnings
+- averageQuality
+- totalHours
+- status = "preview"
+
+PreviewEmployee:
+- tempId
+- name
+- department
+- costCenter
+- weeklyHours
+- employmentPeriod
+- quality
+- importSelected
+- warnings
+- days
+- totals
+- rawSource
+
+PreviewDayEntry:
+- date
+- weekday
+- shifts
+- breakMinutes
+- totalHours
+- absenceCode
+- notes
+- rawCells
+
+====================================================
+3. IMPORT-VORSCHAU UI
+====================================================
+
+Oben eine Zusammenfassung anzeigen:
+
+- Datei
+- Monat / Jahr
+- Restaurant
+- Mitarbeiter total
+- importiert ausgewählt
+- Gesamtstunden
+- Durchschnittsqualität
+- Warnungen total
+
+====================================================
+4. MITARBEITERLISTE
+====================================================
+
+Pro Mitarbeiter eine Karte anzeigen:
+
+- Checkbox: "Importieren"
+- Name
+- Abteilung
+- Kostenstelle
+- Wochenstunden
+- Anzahl Tage
+- Anzahl Zeitblöcke
+- Totalstunden
+- Überzeit
+- Qualität %
+- Status: Importfähig / Prüfen / Ausgeschlossen
+
+Mitarbeiterkarten standardmässig eingeklappt.
+
+====================================================
+5. TAGESVORSCHAU
+====================================================
+
+Beim Aufklappen eines Mitarbeiters:
+
+Tabelle anzeigen:
+
+- Datum
+- Wochentag
+- Zeitblöcke
+- Pause
+- Nettozeit
+- Absenzcode
+- Bemerkung
+
+Wenn mehrere Zeitblöcke:
+alle sauber untereinander anzeigen.
+
+====================================================
+6. MONATSTOTALE
+====================================================
+
+Beim Mitarbeiter ebenfalls anzeigen:
+
+- Total Stunden
+- Pause Total
+- Überzeit
+- Saldo
+- Ferien
+- Feiertage
+- Kompensation
+- berechnete Stunden aus Tageszeilen
+- Differenz
+- Validiert ja/nein
+
+====================================================
+7. WARNUNGEN
+====================================================
+
+Warnungen prominent anzeigen:
+
+- fehlende Kostenstelle
+- Totale-Abweichung
+- ungewöhnlich viele Stunden
+- fehlende Tage
+- Merge aus mehreren Teilblöcken
+- Qualität unter 85 %
+
+Warnungen sollen den Import nicht blockieren.
+Sie sollen nur zur Prüfung markieren.
+
+====================================================
+8. AUSWAHL / AUSSCHLUSS
+====================================================
+
+Der Benutzer soll pro Mitarbeiter entscheiden können:
+
+☑ Importieren
+☐ Nicht importieren
+
+Zusätzlich Buttons:
+
+- Alle auswählen
+- Alle mit Warnung abwählen
+- Nur importfähige auswählen
+
+====================================================
+9. IMPORT-SUMMARY
+====================================================
+
+Unten eine finale Vorschau:
+
+- ausgewählte Mitarbeiter
+- ausgeschlossene Mitarbeiter
+- total zu importierende Tageszeilen
+- total Stunden
+- Warnungen
+
+Noch KEIN finaler Import-Button mit Supabase Write.
+
+Stattdessen Button disabled oder Hinweis:
+
+"Echter Import wird im nächsten Schritt aktiviert."
+
+====================================================
+10. PREPARE IMPORT PAYLOAD
+====================================================
+
+Bitte Funktion vorbereiten:
+
+prepareImportPayload(session)
+
+Diese Funktion soll aus der PreviewSession bereits finale normalisierte Objekte erzeugen.
+
+Aber:
+Sie darf noch nichts speichern.
+
+Nur Konsolenlog / Debug JSON Export.
+
+====================================================
+11. DEBUG EXPORT
+====================================================
+
+Button:
+
+"Preview JSON exportieren"
+
+Exportiert:
+- PreviewImportSession
+- selected employees
+- day entries
+- totals
+- warnings
+- prepared import payload
+
+====================================================
+12. KEINE PRODUKTIVE LOGIK
+====================================================
+
+Nicht bauen:
+
+- Supabase Insert
+- Monatsblatt speichern
+- Mitarbeiterportal
+- Freigabeprozess
+- Archivierung
+- WhatsApp Versand
+
+Nur sichere Import-Vorschau.
+
+====================================================
+13. ROUTE EINBINDEN
+====================================================
+
+Bitte Route einbinden:
+
+/mirus-import-preview
+
+Wenn Auth Redirect stört:
+für diese Testseite public/isoliert machen wie /mirus-excel-test.
+
+====================================================
+14. TEST
+====================================================
+
+Nach Umsetzung:
+
+- TypeScript prüfen
+- App starten
+- /mirus-import-preview testen
+- Januar und Februar Excel hochladen
+- sicherstellen:
+  - keine Supabase Writes
+  - keine Datenveränderung
+  - Preview funktioniert
+  - JSON Export funktioniert

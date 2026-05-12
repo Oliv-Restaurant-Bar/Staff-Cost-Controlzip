@@ -1,0 +1,817 @@
+/**
+ * Mirus Import Preview — /mirus-import-preview
+ * =============================================
+ * Sichere Import-Vorschau-Pipeline.
+ * KEIN Supabase-Write, KEINE Produktionsdaten.
+ * Nur lokaler State — rein diagnostisch + Vorschau.
+ */
+
+import { useState, useCallback, useRef } from 'react';
+import { cn } from '@/lib/utils';
+import { parseMirusExcel } from '@/lib/mirus-excel-parser';
+import type {
+  ExcelEmployee,
+  ExcelParsedDocument,
+  EmployeeTotals,
+  DayRecord,
+} from '@/lib/mirus-excel-parser';
+import type {
+  PreviewImportSession,
+  PreviewEmployee,
+  PreviewDayEntry,
+  PreviewImportWarning,
+  PreviewTotals,
+  ImportPayload,
+  ImportPayloadEmployee,
+  ImportPayloadDay,
+} from '@/types/mirus-import-preview';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── BUILDER: Parser-Output → PreviewSession ──────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function qualityScore(emp: ExcelEmployee): number {
+  let s = 0;
+  if (emp.name)        s += 25;
+  if (emp.weeklyHours) s += 8;
+  if (emp.costCenter)  s += 8;
+  if      (emp.days.length >= 20) s += 27;
+  else if (emp.days.length >= 10) s += 20;
+  else if (emp.days.length >= 5)  s += 13;
+  else if (emp.days.length >= 1)  s += 6;
+  const active = emp.days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length;
+  if      (active >= 15) s += 14;
+  else if (active >= 5)  s += 9;
+  else if (active >= 1)  s += 4;
+  if (emp.totals.totalHours)      s += 8;
+  if (emp.totals.totalsValidated) s += 10;
+  return Math.min(100, s);
+}
+
+function mapDay(d: DayRecord): PreviewDayEntry {
+  return {
+    date:         d.date,
+    weekday:      d.weekday,
+    shifts:       d.shifts,
+    breakMinutes: d.breakMinutes,
+    totalHours:   d.totalHours,
+    absenceCode:  d.absenceCode,
+    notes:        d.notes,
+    rawCells:     d.rawCells,
+    confidence:   d.confidence,
+  };
+}
+
+function mapTotals(t: EmployeeTotals): PreviewTotals {
+  return {
+    totalHours:           t.totalHours,
+    pauseTotal:           t.pauseTotal,
+    nettoTotal:           t.nettoTotal,
+    sollStunden:          t.sollStunden,
+    zeitzuschlag:         t.zeitzuschlag,
+    ueberzeit:            t.ueberzeit,
+    saldo:                t.saldo,
+    ferien:               t.ferien,
+    feiertag:             t.feiertag,
+    kompensation:         t.kompensation,
+    krankheit:            t.krankheit,
+    calculatedTotalHours: t.calculatedTotalHours,
+    totalsValidated:      t.totalsValidated,
+    totalsDiff:           t.totalsDiff,
+  };
+}
+
+function buildWarnings(emp: ExcelEmployee, idx: number): PreviewImportWarning[] {
+  const label = emp.name ?? `Block #${idx + 1}`;
+  const warns: PreviewImportWarning[] = [];
+
+  if (!emp.name)
+    warns.push({ severity: 'error', category: 'name', message: 'Kein Name erkannt', employeeName: label });
+  if (!emp.costCenter)
+    warns.push({ severity: 'warning', category: 'costCenter', message: 'Keine Kostenstelle', employeeName: label });
+  if (emp.days.length === 0)
+    warns.push({ severity: 'warning', category: 'days', message: 'Keine Tageszeilen erkannt', employeeName: label });
+  if (emp.days.length > 0 && emp.days.length < 20)
+    warns.push({ severity: 'info', category: 'days', message: `Nur ${emp.days.length} Tage erkannt (erwartet ~28–31)`, employeeName: label });
+
+  const totalH = emp.totals.calculatedTotalHours ?? 0;
+  if (totalH > 250)
+    warns.push({ severity: 'warning', category: 'hours', message: `Sehr viele Stunden: ${totalH} h`, employeeName: label });
+
+  if (emp.totals.totalsDiff !== undefined && emp.totals.totalsDiff > 3)
+    warns.push({ severity: 'warning', category: 'totals', message: `Totale weichen von Tageszeilen ab: ±${emp.totals.totalsDiff} h`, employeeName: label });
+
+  if (emp.mergedFromCount > 1)
+    warns.push({ severity: 'info', category: 'merge', message: `Aus ${emp.mergedFromCount} Teilblöcken zusammengeführt`, employeeName: label });
+
+  const q = qualityScore(emp);
+  if (q < 85)
+    warns.push({ severity: 'warning', category: 'quality', message: `Qualität ${q}% — unter 85%`, employeeName: label });
+
+  return warns;
+}
+
+let _idCounter = 0;
+function nextId() { return `prev-${Date.now()}-${++_idCounter}`; }
+
+function buildPreviewSession(parsed: ExcelParsedDocument, file: File): PreviewImportSession {
+  const employees: PreviewEmployee[] = parsed.employees.map((emp, idx) => {
+    const quality  = qualityScore(emp);
+    const warnings = buildWarnings(emp, idx);
+    const hasError = warnings.some(w => w.severity === 'error');
+    const hasWarn  = warnings.some(w => w.severity === 'warning');
+    const importStatus = !emp.name ? 'excluded' : hasWarn || quality < 85 ? 'check' : 'ready';
+
+    return {
+      tempId:           nextId(),
+      name:             emp.name,
+      department:       emp.department,
+      costCenter:       emp.costCenter,
+      weeklyHours:      emp.weeklyHours,
+      employmentPeriod: emp.employmentPeriod,
+      quality,
+      importSelected:   importStatus !== 'excluded',
+      importStatus,
+      warnings,
+      days:             emp.days.map(mapDay),
+      totals:           mapTotals(emp.totals),
+      rawSource: {
+        sheetName:       emp.sheetName,
+        blockStartRow:   emp.blockStartRow,
+        blockEndRow:     emp.blockEndRow,
+        mergedFromCount: emp.mergedFromCount,
+        mergedBlockRows: emp.mergedBlockRows,
+      },
+    } satisfies PreviewEmployee;
+  });
+
+  const globalWarnings: PreviewImportWarning[] = parsed.warnings.map(w => ({
+    severity: 'warning' as const,
+    category: 'meta' as const,
+    message:  w,
+  }));
+
+  const avgQ = employees.length
+    ? Math.round(employees.reduce((s, e) => s + e.quality, 0) / employees.length)
+    : 0;
+  const totalHours = employees.reduce((s, e) => s + (e.totals.calculatedTotalHours ?? 0), 0);
+  const selectedCount = employees.filter(e => e.importSelected).length;
+
+  return {
+    id:             nextId(),
+    sourceFileName: file.name,
+    month:          parsed.month,
+    monthName:      parsed.monthName,
+    year:           parsed.year,
+    restaurant:     parsed.restaurant,
+    createdAt:      new Date().toISOString(),
+    employees,
+    globalWarnings,
+    averageQuality: avgQ,
+    totalHours:     Math.round(totalHours * 10) / 10,
+    selectedCount,
+    status:         'preview',
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── PREPARE IMPORT PAYLOAD (kein Speichern — nur Debug) ──────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export function prepareImportPayload(session: PreviewImportSession): ImportPayload {
+  const selected = session.employees.filter(e => e.importSelected);
+
+  const employees: ImportPayloadEmployee[] = selected.map(emp => {
+    const days: ImportPayloadDay[] = emp.days
+      .filter(d => d.date)
+      .map(d => ({
+        employeeName: emp.name ?? '(unbekannt)',
+        costCenter:   emp.costCenter,
+        department:   emp.department,
+        date:         d.date!,
+        weekday:      d.weekday,
+        shifts:       d.shifts,
+        breakMinutes: d.breakMinutes,
+        totalHours:   d.totalHours,
+        absenceCode:  d.absenceCode,
+        notes:        d.notes,
+      }));
+
+    return {
+      name:             emp.name ?? '(unbekannt)',
+      department:       emp.department,
+      costCenter:       emp.costCenter,
+      weeklyHours:      emp.weeklyHours,
+      employmentPeriod: emp.employmentPeriod,
+      totalHours:       emp.totals.calculatedTotalHours ?? 0,
+      dayCount:         days.length,
+      days,
+      totals:           emp.totals,
+    };
+  });
+
+  const allDays       = employees.flatMap(e => e.days);
+  const totalHours    = employees.reduce((s, e) => s + e.totalHours, 0);
+  const allWarnings   = session.employees.flatMap(e => e.warnings);
+
+  const payload: ImportPayload = {
+    sourceFileName: session.sourceFileName,
+    month:          session.month,
+    year:           session.year,
+    restaurant:     session.restaurant,
+    preparedAt:     new Date().toISOString(),
+    employees,
+    totalDayLines:  allDays.length,
+    totalHours:     Math.round(totalHours * 10) / 10,
+    warnings:       allWarnings,
+  };
+
+  console.log('[MirusImportPreview] prepareImportPayload:', JSON.stringify(payload, null, 2));
+  return payload;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── UI-HELFER ─────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function QualityBar({ pct }: { pct: number }) {
+  const color = pct >= 85 ? 'bg-green-500' : pct >= 60 ? 'bg-yellow-400' : 'bg-red-400';
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+        <div className={cn('h-full rounded-full transition-all', color)} style={{ width: `${pct}%` }} />
+      </div>
+      <span className={cn('text-[11px] font-mono font-bold tabular-nums shrink-0',
+        pct >= 85 ? 'text-green-600' : pct >= 60 ? 'text-yellow-600' : 'text-red-600'
+      )}>{pct}%</span>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: PreviewEmployee['importStatus'] }) {
+  const map = {
+    ready:    { label: 'Importfähig', cls: 'bg-green-50 border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400' },
+    check:    { label: 'Prüfen',     cls: 'bg-yellow-50 border-yellow-200 text-yellow-700 dark:bg-yellow-900/20 dark:border-yellow-700 dark:text-yellow-400' },
+    excluded: { label: 'Ausgeschlossen', cls: 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-700 dark:text-red-400' },
+  } as const;
+  const { label, cls } = map[status];
+  return (
+    <span className={cn('text-[10px] px-1.5 py-0.5 rounded border font-semibold', cls)}>{label}</span>
+  );
+}
+
+function SevBadge({ severity }: { severity: PreviewImportWarning['severity'] }) {
+  const cls = severity === 'error'
+    ? 'text-red-600'
+    : severity === 'warning'
+    ? 'text-yellow-600'
+    : 'text-blue-500';
+  const icon = severity === 'error' ? '✗' : severity === 'warning' ? '⚠' : 'ℹ';
+  return <span className={cn('font-bold text-[11px]', cls)}>{icon}</span>;
+}
+
+function WarnList({ warnings }: { warnings: PreviewImportWarning[] }) {
+  if (!warnings.length) return null;
+  return (
+    <ul className="space-y-0.5">
+      {warnings.map((w, i) => (
+        <li key={i} className="flex items-start gap-1.5 text-[11px]">
+          <SevBadge severity={w.severity} />
+          <span className="text-muted-foreground">{w.message}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function MonatsTotaleRow({ totals }: { totals: PreviewTotals }) {
+  const FIELDS: [keyof PreviewTotals, string][] = [
+    ['totalHours',   'Total h'],
+    ['pauseTotal',   'Pause'],
+    ['nettoTotal',   'Netto'],
+    ['sollStunden',  'Soll'],
+    ['ueberzeit',    'Überzeit'],
+    ['zeitzuschlag', 'Zuschlag'],
+    ['saldo',        'Saldo'],
+    ['ferien',       'Ferien'],
+    ['feiertag',     'Feiertag'],
+    ['kompensation', 'Komp.'],
+    ['krankheit',    'Krank'],
+  ];
+  const found = FIELDS.filter(([k]) => !!(totals as Record<string, unknown>)[k]);
+  const calc  = totals.calculatedTotalHours;
+  const valid = totals.totalsValidated;
+  const diff  = totals.totalsDiff;
+
+  return (
+    <div className="space-y-2">
+      {found.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {found.map(([k, label]) => (
+            <span key={k} className={cn(
+              'inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border font-mono font-semibold',
+              k === 'totalHours' && valid
+                ? 'bg-green-50 border-green-300 text-green-800'
+                : k === 'totalHours'
+                ? 'bg-blue-50 border-blue-200 text-blue-800'
+                : 'bg-muted/60 border-border text-foreground',
+            )}>
+              <span className="text-muted-foreground font-normal text-[9px] uppercase tracking-wide mr-0.5">{label}</span>
+              {(totals as Record<string, unknown>)[k] as string}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted-foreground italic">Keine Monatstotale erkannt.</p>
+      )}
+      {calc !== undefined && (
+        <div className={cn(
+          'flex flex-wrap items-center gap-3 text-[11px] rounded border px-3 py-2',
+          valid ? 'border-green-200 bg-green-50/50' : diff !== undefined && diff > 3 ? 'border-red-200 bg-red-50/50' : 'border-border bg-muted/20',
+        )}>
+          <span className="text-muted-foreground">Berechnet:</span>
+          <span className="font-mono font-bold">{calc} h</span>
+          {diff !== undefined && totals.totalHours && (
+            <>
+              <span className="text-muted-foreground">Diff:</span>
+              <span className={cn('font-mono font-bold', diff < 1 ? 'text-green-600' : diff < 3 ? 'text-yellow-600' : 'text-red-600')}>±{diff} h</span>
+            </>
+          )}
+          {valid && <span className="text-green-600 font-semibold">✓ validiert</span>}
+          {diff !== undefined && diff >= 3 && <span className="text-red-600 font-semibold">⚠ Abweichung</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DayTable({ days }: { days: PreviewDayEntry[] }) {
+  if (!days.length) return <p className="text-[11px] text-muted-foreground italic">Keine Tageszeilen.</p>;
+  return (
+    <div className="overflow-x-auto rounded border border-border">
+      <table className="w-full text-[11px] border-collapse">
+        <thead>
+          <tr className="bg-muted/40 border-b border-border">
+            {['Datum', 'Tag', 'Zeitblöcke', 'Pause', 'Total', 'Absenz', 'Bemerkung'].map(h => (
+              <th key={h} className="text-left px-2 py-1.5 font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {days.map((d, i) => (
+            <tr key={i} className={cn(
+              'border-b border-border/50 hover:bg-muted/20 transition-colors',
+              d.absenceCode ? 'bg-yellow-50/30' : '',
+            )}>
+              <td className="px-2 py-1 font-mono whitespace-nowrap">{d.date ?? '—'}</td>
+              <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">{d.weekday ?? '—'}</td>
+              <td className="px-2 py-1">
+                {d.shifts.length > 0 ? (
+                  <div className="flex flex-col gap-0.5">
+                    {d.shifts.map((s, j) => (
+                      <span key={j} className="font-mono bg-blue-50 border border-blue-100 rounded px-1 py-0.5 text-blue-800 whitespace-nowrap">
+                        {s.from}–{s.to}{s.department ? ` (${s.department})` : ''}
+                      </span>
+                    ))}
+                  </div>
+                ) : <span className="text-muted-foreground">—</span>}
+              </td>
+              <td className="px-2 py-1 font-mono whitespace-nowrap">
+                {d.breakMinutes != null ? `${d.breakMinutes}'` : '—'}
+              </td>
+              <td className="px-2 py-1 font-mono font-semibold whitespace-nowrap">
+                {d.totalHours != null ? `${d.totalHours} h` : '—'}
+              </td>
+              <td className="px-2 py-1 whitespace-nowrap">
+                {d.absenceCode ? (
+                  <span className="bg-yellow-100 border border-yellow-200 text-yellow-800 rounded px-1 py-0.5 font-semibold">{d.absenceCode}</span>
+                ) : '—'}
+              </td>
+              <td className="px-2 py-1 text-muted-foreground max-w-[180px] truncate">{d.notes ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── EMPLOYEE CARD ─────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function EmployeeCard({
+  emp,
+  onToggleSelect,
+}: {
+  emp: PreviewEmployee;
+  onToggleSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [tab,  setTab]  = useState<'days' | 'totals' | 'warnings'>('days');
+
+  const activeShifts = emp.days.reduce((s, d) => s + d.shifts.length, 0);
+  const totalH       = emp.totals.calculatedTotalHours ?? 0;
+  const warnCount    = emp.warnings.filter(w => w.severity !== 'info').length;
+
+  return (
+    <div className={cn(
+      'rounded-lg border bg-card transition-shadow',
+      emp.importSelected ? 'border-border' : 'border-dashed border-muted-foreground/30 opacity-60',
+      open && 'shadow-md',
+    )}>
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <input
+          type="checkbox"
+          checked={emp.importSelected}
+          disabled={emp.importStatus === 'excluded'}
+          onChange={() => onToggleSelect(emp.tempId)}
+          className="h-4 w-4 rounded border-border cursor-pointer"
+        />
+
+        <button
+          onClick={() => setOpen(v => !v)}
+          className="flex-1 flex items-center gap-3 text-left min-w-0"
+        >
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-sm truncate">{emp.name ?? <span className="text-red-500 italic">Kein Name</span>}</span>
+              <StatusBadge status={emp.importStatus} />
+              {warnCount > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border bg-yellow-50 border-yellow-200 text-yellow-700 font-semibold">
+                  {warnCount} Hinweis{warnCount > 1 ? 'e' : ''}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+              {emp.department   && <span className="text-[11px] text-muted-foreground">{emp.department}</span>}
+              {emp.costCenter   && <span className="text-[11px] bg-muted/60 rounded px-1.5 py-0.5 font-mono">{emp.costCenter}</span>}
+              {emp.weeklyHours  && <span className="text-[11px] text-muted-foreground">{emp.weeklyHours} h/Wo</span>}
+            </div>
+          </div>
+
+          <div className="shrink-0 flex flex-col items-end gap-1.5 min-w-[120px]">
+            <div className="flex gap-3 text-[11px] text-muted-foreground">
+              <span>{emp.days.length} Tage</span>
+              <span>{activeShifts} Blöcke</span>
+              {totalH > 0 && <span className="font-mono font-semibold text-foreground">{totalH} h</span>}
+            </div>
+            <QualityBar pct={emp.quality} />
+          </div>
+
+          <span className="text-muted-foreground text-[11px] shrink-0">{open ? '▲' : '▼'}</span>
+        </button>
+      </div>
+
+      {/* Expanded */}
+      {open && (
+        <div className="border-t border-border px-4 pb-4 pt-3 space-y-3">
+          {/* Tab nav */}
+          <div className="flex gap-1">
+            {(['days', 'totals', 'warnings'] as const).map(t => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={cn(
+                  'text-[11px] px-3 py-1 rounded border font-medium transition-colors',
+                  tab === t
+                    ? 'bg-foreground text-background border-foreground'
+                    : 'border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground',
+                )}
+              >
+                {t === 'days'     ? `Tage (${emp.days.length})`         : null}
+                {t === 'totals'   ? 'Monatstotale'                      : null}
+                {t === 'warnings' ? `Hinweise (${emp.warnings.length})` : null}
+              </button>
+            ))}
+          </div>
+
+          {tab === 'days'     && <DayTable days={emp.days} />}
+          {tab === 'totals'   && <MonatsTotaleRow totals={emp.totals} />}
+          {tab === 'warnings' && (
+            emp.warnings.length
+              ? <WarnList warnings={emp.warnings} />
+              : <p className="text-[11px] text-green-600 font-semibold">✓ Keine Hinweise</p>
+          )}
+
+          {/* Raw source info */}
+          <div className="text-[10px] text-muted-foreground/60 border-t border-border/40 pt-2">
+            Blatt: <span className="font-mono">{emp.rawSource.sheetName}</span>
+            {' · '}Zeilen: <span className="font-mono">{emp.rawSource.blockStartRow}–{emp.rawSource.blockEndRow ?? '?'}</span>
+            {emp.rawSource.mergedFromCount > 1 && (
+              <span className="ml-2 text-muted-foreground">⊞ Merged ×{emp.rawSource.mergedFromCount}</span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── UPLOAD ZONE ───────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function UploadZone({ onFile }: { onFile: (f: File) => void }) {
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) onFile(file);
+  }, [onFile]);
+
+  return (
+    <div
+      onDragOver={e => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={handleDrop}
+      onClick={() => inputRef.current?.click()}
+      className={cn(
+        'flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed cursor-pointer transition-colors p-16',
+        dragging
+          ? 'border-blue-400 bg-blue-50/40 dark:bg-blue-900/10'
+          : 'border-border hover:border-muted-foreground/40 hover:bg-muted/20',
+      )}
+    >
+      <span className="text-4xl">📊</span>
+      <div className="text-center">
+        <p className="font-semibold">Mirus Excel-Datei hier ablegen</p>
+        <p className="text-sm text-muted-foreground mt-0.5">oder klicken zum Auswählen (.xlsx)</p>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); }}
+      />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── SUMMARY PANEL ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function SummaryPanel({ session }: { session: PreviewImportSession }) {
+  const totalWarn = session.employees.flatMap(e => e.warnings).filter(w => w.severity !== 'info').length;
+  const selected  = session.employees.filter(e => e.importSelected).length;
+
+  const statItems = [
+    { label: 'Datei',          value: session.sourceFileName },
+    { label: 'Periode',        value: session.monthName && session.year ? `${session.monthName} ${session.year}` : '—' },
+    { label: 'Restaurant',     value: session.restaurant ?? '—' },
+    { label: 'Mitarbeiter',    value: String(session.employees.length) },
+    { label: 'Ausgewählt',     value: `${selected} / ${session.employees.length}` },
+    { label: 'Gesamtstunden',  value: `${session.totalHours} h` },
+    { label: 'Ø Qualität',     value: `${session.averageQuality}%` },
+    { label: 'Hinweise',       value: String(totalWarn) },
+  ];
+
+  return (
+    <div className="rounded-lg border bg-card p-4 space-y-3">
+      <h2 className="font-semibold text-sm">Import-Vorschau</h2>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {statItems.map(({ label, value }) => (
+          <div key={label} className="space-y-0.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+            <p className="text-sm font-mono font-semibold truncate">{value}</p>
+          </div>
+        ))}
+      </div>
+      {session.globalWarnings.length > 0 && (
+        <div className="border-t border-border pt-2">
+          <WarnList warnings={session.globalWarnings} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── IMPORT SUMMARY (unten) ───────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function ImportSummary({
+  session,
+  onExportJson,
+}: {
+  session: PreviewImportSession;
+  onExportJson: () => void;
+}) {
+  const selected   = session.employees.filter(e => e.importSelected);
+  const excluded   = session.employees.filter(e => !e.importSelected);
+  const totalDays  = selected.reduce((s, e) => s + e.days.filter(d => !!d.date).length, 0);
+  const totalH     = selected.reduce((s, e) => s + (e.totals.calculatedTotalHours ?? 0), 0);
+  const warnCount  = selected.flatMap(e => e.warnings).filter(w => w.severity !== 'info').length;
+
+  return (
+    <div className="rounded-lg border bg-card p-4 space-y-4">
+      <h2 className="font-semibold text-sm">Import-Zusammenfassung</h2>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: 'Ausgewählt',    value: `${selected.length} MA` },
+          { label: 'Ausgeschlossen', value: `${excluded.length} MA` },
+          { label: 'Tageszeilen',   value: String(totalDays) },
+          { label: 'Stunden total', value: `${Math.round(totalH * 10) / 10} h` },
+        ].map(({ label, value }) => (
+          <div key={label} className="space-y-0.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+            <p className="text-sm font-mono font-semibold">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      {warnCount > 0 && (
+        <p className="text-[11px] text-yellow-600 font-semibold">
+          ⚠ {warnCount} offene Hinweis{warnCount > 1 ? 'e' : ''} bei ausgewählten Mitarbeitern
+        </p>
+      )}
+
+      <div className="flex flex-wrap gap-3 pt-2 border-t border-border">
+        <button
+          onClick={onExportJson}
+          className="px-4 py-2 rounded border border-border text-sm font-medium hover:bg-muted/40 transition-colors"
+        >
+          Preview JSON exportieren
+        </button>
+
+        <button
+          disabled
+          title="Echter Import wird im nächsten Schritt aktiviert."
+          className="px-4 py-2 rounded text-sm font-medium bg-muted text-muted-foreground cursor-not-allowed opacity-50 border border-border"
+        >
+          Echter Import — wird im nächsten Schritt aktiviert
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── HAUPTSEITE ───────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export default function MirusImportPreview() {
+  const [session,  setSession]  = useState<PreviewImportSession | null>(null);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState<string | null>(null);
+
+  // Lokale Kopie der Session für Checkbox-Änderungen
+  const [localEmployees, setLocalEmployees] = useState<PreviewEmployee[]>([]);
+
+  const handleFile = useCallback(async (file: File) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const buffer  = await file.arrayBuffer();
+      const parsed  = parseMirusExcel(buffer, file.name) as ExcelParsedDocument;
+      const session = buildPreviewSession(parsed, file);
+      setSession(session);
+      setLocalEmployees(session.employees);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const toggleSelect = useCallback((id: string) => {
+    setLocalEmployees(prev =>
+      prev.map(e => e.tempId === id ? { ...e, importSelected: !e.importSelected } : e)
+    );
+  }, []);
+
+  const selectAll = () => setLocalEmployees(prev =>
+    prev.map(e => e.importStatus !== 'excluded' ? { ...e, importSelected: true } : e)
+  );
+  const deselectWarnings = () => setLocalEmployees(prev =>
+    prev.map(e => e.warnings.some(w => w.severity !== 'info') ? { ...e, importSelected: false } : e)
+  );
+  const selectReadyOnly = () => setLocalEmployees(prev =>
+    prev.map(e => ({ ...e, importSelected: e.importStatus === 'ready' }))
+  );
+
+  const currentSession: PreviewImportSession | null = session
+    ? { ...session, employees: localEmployees, selectedCount: localEmployees.filter(e => e.importSelected).length }
+    : null;
+
+  const handleExportJson = () => {
+    if (!currentSession) return;
+    const payload = prepareImportPayload(currentSession);
+    const blob    = new Blob([JSON.stringify({ session: currentSession, payload }, null, 2)], { type: 'application/json' });
+    const url     = URL.createObjectURL(blob);
+    const a       = document.createElement('a');
+    a.href        = url;
+    a.download    = `mirus-preview-${currentSession.sourceFileName.replace(/\.[^.]+$/, '')}-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      {/* Top bar */}
+      <div className="border-b border-border bg-card/60 backdrop-blur sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span className="text-lg font-bold">Mirus Import-Vorschau</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full border bg-yellow-50 border-yellow-200 text-yellow-700 font-semibold">
+              Kein Supabase-Write
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <a
+              href="/mirus-excel-test"
+              className="text-[11px] px-3 py-1.5 rounded border border-border hover:bg-muted/40 transition-colors text-muted-foreground"
+            >
+              → Diagnose-Test
+            </a>
+            {session && (
+              <button
+                onClick={() => { setSession(null); setLocalEmployees([]); setError(null); }}
+                className="text-[11px] px-3 py-1.5 rounded border border-border hover:bg-muted/40 transition-colors"
+              >
+                Neue Datei
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
+
+        {/* Upload */}
+        {!session && !loading && (
+          <div className="max-w-xl mx-auto mt-12">
+            <UploadZone onFile={handleFile} />
+          </div>
+        )}
+
+        {/* Loading */}
+        {loading && (
+          <div className="flex flex-col items-center gap-3 py-20 text-muted-foreground">
+            <div className="h-8 w-8 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
+            <p className="text-sm">Datei wird analysiert…</p>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50/50 px-4 py-3 text-sm text-red-700">
+            <strong>Fehler:</strong> {error}
+          </div>
+        )}
+
+        {/* Preview */}
+        {currentSession && (
+          <>
+            <SummaryPanel session={currentSession} />
+
+            {/* Auswahl-Controls */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-muted-foreground font-semibold mr-1">Auswahl:</span>
+              {[
+                { label: 'Alle auswählen',           fn: selectAll },
+                { label: 'Alle mit Warnung abwählen', fn: deselectWarnings },
+                { label: 'Nur importfähige',          fn: selectReadyOnly },
+              ].map(({ label, fn }) => (
+                <button
+                  key={label}
+                  onClick={fn}
+                  className="text-[11px] px-2.5 py-1 rounded border border-border hover:bg-muted/40 transition-colors"
+                >
+                  {label}
+                </button>
+              ))}
+              <span className="ml-auto text-[11px] text-muted-foreground">
+                {localEmployees.filter(e => e.importSelected).length} / {localEmployees.length} ausgewählt
+              </span>
+            </div>
+
+            {/* Employee Cards */}
+            <div className="space-y-2">
+              {localEmployees.map(emp => (
+                <EmployeeCard
+                  key={emp.tempId}
+                  emp={emp}
+                  onToggleSelect={toggleSelect}
+                />
+              ))}
+            </div>
+
+            {/* Import Summary */}
+            <ImportSummary
+              session={currentSession}
+              onExportJson={handleExportJson}
+            />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

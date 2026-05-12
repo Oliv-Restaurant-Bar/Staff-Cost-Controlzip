@@ -57,6 +57,7 @@ import WarenrechnungenPage from "./pages/Warenrechnungen";
 import ForecastPlanung from "./pages/ForecastPlanung";
 import MirusParserTest from "./pages/MirusParserTest";
 import MirusExcelTest from "./pages/MirusExcelTest";
+import MirusImportPreview from "./pages/MirusImportPreview";
 
 const queryClient = new QueryClient();
 
@@ -277,6 +278,9 @@ const App = () => {
   }
   if (window.location.pathname === '/mirus-excel-test') {
     return <MirusExcelTest />;
+  }
+  if (window.location.pathname === '/mirus-import-preview') {
+    return <MirusImportPreview />;
   }
 
   return (
