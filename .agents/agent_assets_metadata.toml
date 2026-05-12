@@ -6,3 +6,9 @@ id = "0gL4iG3M4GwRTftd38XVu"
 uri = "file://BACKUP_NOTES.md"
 type = "text"
 title = "BACKUP_NOTES.md — Projektstand 12. Mai 2026"
+
+[[outputs]]
+id = "BQkZ2NFzbojrvvjt6sdpi"
+uri = "file://docs/mirus_monthly_reports_database_plan.md"
+type = "text"
+title = "Datenbankarchitektur — Arbeitszeiten & Monatsblätter"
