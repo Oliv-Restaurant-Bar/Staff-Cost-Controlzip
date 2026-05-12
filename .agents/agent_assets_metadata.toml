@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "0gL4iG3M4GwRTftd38XVu"
+uri = "file://BACKUP_NOTES.md"
+type = "text"
+title = "BACKUP_NOTES.md — Projektstand 12. Mai 2026"
