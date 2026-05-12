@@ -119,9 +119,10 @@ interface SalaryExtension {
 
 /** Lokal gespeicherte Felder (nur noch active, notes, contractFileName) */
 interface LocalEmployeeData {
-  active:              boolean;
-  notes:               string;
-  contract?:           ContractFields;
+  active:                    boolean;
+  notes:                     string;
+  no_time_tracking_required?: boolean;
+  contract?:                 ContractFields;
   contractFileName?:   string;
   // Legacy-Felder (nur für Migration, danach leer):
   personalInfo?:       PersonalInfo;
@@ -383,8 +384,9 @@ const Personalstamm = () => {
   const [selectedId, setSelectedId]       = useState<string | null>(null);
   const [editMode, setEditMode]           = useState(false);
   const [editData, setEditData]           = useState<Employee | null>(null);
-  const [editNotes, setEditNotes]         = useState('');
-  const [editActive, setEditActive]       = useState(true);
+  const [editNotes, setEditNotes]             = useState('');
+  const [editActive, setEditActive]           = useState(true);
+  const [editNoTimeTracking, setEditNoTimeTracking] = useState(false);
   const [showMobile, setShowMobile]       = useState<'list' | 'detail'>('list');
   const [showContractInfo, setShowContractInfo] = useState(false);
 
@@ -580,6 +582,7 @@ const Personalstamm = () => {
     const local = getLocalEntry(localData, emp.id);
     setEditNotes(local.notes);
     setEditActive(local.active);
+    setEditNoTimeTracking(local.no_time_tracking_required ?? false);
     setShowMobile('detail');
     setShowContractInfo(false);
     setOpenPersonal(false);
@@ -605,6 +608,7 @@ const Personalstamm = () => {
     const local = getLocalEntry(localData, selectedId);
     setEditNotes(local.notes);
     setEditActive(local.active);
+    setEditNoTimeTracking(local.no_time_tracking_required ?? false);
     setEditMode(false);
   };
 
@@ -686,6 +690,7 @@ const Personalstamm = () => {
     setSelectedId(newId);
     setEditNotes('');
     setEditActive(true);
+    setEditNoTimeTracking(false);
     setEditMode(true);
     setShowMobile('detail');
     setOpenPersonal(false);
@@ -775,8 +780,9 @@ const Personalstamm = () => {
       const prevLocal = getLocalEntry(newLocal, finalData.id);
       newLocal[finalData.id] = {
         ...prevLocal,
-        active: editActive,
-        notes:  editNotes,
+        active:                    editActive,
+        notes:                     editNotes,
+        no_time_tracking_required: editNoTimeTracking,
       };
       setLocalData(newLocal);
       saveLocalData(newLocal);
@@ -1758,6 +1764,26 @@ CREATE POLICY "Anon self-register new employee"
                           Mitarbeiter aktiv
                         </Label>
                       </div>
+                      {isAdmin && (
+                        <div className="flex items-start gap-2 mt-1 pt-2 border-t border-border/40">
+                          <input
+                            type="checkbox"
+                            id="noTimeTrackingCheck"
+                            checked={editNoTimeTracking}
+                            onChange={e => setEditNoTimeTracking(e.target.checked)}
+                            className="h-4 w-4 rounded border-input mt-0.5 shrink-0"
+                          />
+                          <div>
+                            <Label htmlFor="noTimeTrackingCheck" className="text-sm cursor-pointer flex items-center gap-1.5">
+                              <Shield className="h-3 w-3 text-muted-foreground" />
+                              Keine Zeiterfassung erforderlich
+                            </Label>
+                            <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">
+                              Mirus-Import: 0 Stunden werden automatisch als 100 % verifiziert akzeptiert.
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -1770,6 +1796,12 @@ CREATE POLICY "Anon self-register new employee"
                           : <DataRow label="Wochenstunden" value={selectedEmp?.weeklyHours ? `${selectedEmp.weeklyHours} h` : '–'} />
                         }
                       </div>
+                      {isAdmin && selectedLocal.no_time_tracking_required && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-blue-700 bg-blue-50 border border-blue-200 rounded px-2.5 py-1.5">
+                          <Shield className="h-3 w-3 shrink-0" />
+                          Keine Zeiterfassung erforderlich
+                        </div>
+                      )}
                       {selectedEmp && (() => {
                         const pr = calcProRataEntitlement(selectedEmp);
                         return (

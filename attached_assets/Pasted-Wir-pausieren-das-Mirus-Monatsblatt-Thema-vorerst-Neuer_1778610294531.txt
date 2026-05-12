@@ -1,0 +1,231 @@
+Wir pausieren das Mirus Monatsblatt-Thema vorerst.
+
+Neuer Fokus:
+Dienstplan verbessern.
+
+Ziel:
+Die Dienstplanung soll für Serviceleiter/Küchenleiter deutlich einfacher, schneller und optisch moderner werden. Berechnungen, Kostenlogik und bestehende Synchronisierung müssen erhalten bleiben.
+
+Bitte keine bestehenden Berechnungslogiken riskant verändern.
+
+====================================================
+1. UX-REDESIGN DIENSTPLAN
+====================================================
+
+Bitte die Dienstplan-Seite optisch und bedienerfreundlich überarbeiten.
+
+Ziele:
+- Wochenansicht als Standard
+- mehr Platz für den Plan
+- weniger unnötige Seitenleisten
+- klarere Mitarbeiterzeilen
+- bessere Lesbarkeit der Namen
+- schnellere Schichtzuweisung
+- bessere Filter
+- Veröffentlichung an Mitarbeiter vorbereiten
+
+====================================================
+2. LINKE HAUPT-SIDEBAR AUSBLENDBAR
+====================================================
+
+Die ganz linke Navigation mit:
+- Stichtag
+- Umsatzbasis
+- Restaurant
+- Login-Info
+
+soll im Dienstplan standardmässig eingeklappt sein.
+
+Sie soll nur über den Button oben links mit den 3 Strichen geöffnet werden.
+
+Ziel:
+Mehr Platz für den Dienstplan.
+
+Wichtig:
+Die Restaurant-Auswahl ist für Service-/Küchenleiter nicht nötig, da sie nur ihr Restaurant sehen.
+
+====================================================
+3. SCHICHTEN-PALETTE LINKS
+====================================================
+
+Anstelle der alten Sidebar soll links im Plan eine kompakte Schichten-Palette angezeigt werden:
+
+Bereiche:
+- Schichten
+- Abwesenheiten
+- eigene Zeit
+
+Diese Palette soll:
+- links fixiert sein
+- kompakt sein
+- scrollfähig sein
+- Drag & Drop vorbereiten
+- Schicht anklicken und dann im Plan einfügen ermöglichen
+
+Noch nicht zwingend vollständiges Drag & Drop, aber Architektur vorbereiten.
+
+====================================================
+4. MITARBEITERSPALTE VERBESSERN
+====================================================
+
+Die Mitarbeiter-Namen müssen immer vollständig lesbar sein.
+
+Bitte:
+- Mitarbeiter-Spalte breiter machen
+- sticky/fixiert beim horizontalen Scrollen
+- nur Name anzeigen
+- keine TZ/VZ/Spät-Badges in der Hauptzeile
+- Warnungen nur als kleines Icon neben dem Namen
+- Klick auf Namen öffnet Mitarbeiter-Info-Popup
+
+Im Popup anzeigen:
+- Anstellung
+- Abteilung
+- Pensum
+- Stundenstand
+- Warnungen
+- geplante Stunden
+- Ist-Stunden falls vorhanden
+
+====================================================
+5. MITARBEITERFILTER
+====================================================
+
+Bitte echten Mitarbeiterfilter ergänzen:
+
+- Suchfeld nach Namen
+- Filter nach Abteilung
+- Filter nach Anstellung
+- Filter nach Warnung
+- Toggle: Nur geplante Mitarbeiter anzeigen
+- Toggle: Nur Mitarbeiter mit Warnung anzeigen
+
+Wenn Filter aktiv ist:
+- nur passende Mitarbeiter im Dienstplan anzeigen
+- Zähler anzeigen, z.B. 8 von 24 Mitarbeiter
+
+====================================================
+6. SCHNELLE SCHICHTPLANUNG
+====================================================
+
+Bitte Arbeitsweise vorbereiten:
+
+A) Klick-Modus:
+- Schicht links auswählen
+- danach Zellen im Dienstplan anklicken
+- Schicht wird direkt eingetragen
+
+B) Drag & Drop vorbereitet:
+- Schicht von links auf Zelle ziehen
+- Schicht eintragen
+
+C) Mehrfachauswahl:
+- gleiche Schicht auf mehrere Tage/Mitarbeiter anwenden
+
+Bitte mindestens Klick-Modus stabil umsetzen, falls Drag & Drop zu riskant ist.
+
+====================================================
+7. SCROLLING VERBESSERN
+====================================================
+
+Aktuell ist Scrollen unpraktisch.
+
+Bitte:
+- Mitarbeiter-Spalte sticky
+- Tageskopf sticky
+- horizontales Scrollen nur im Planbereich
+- vertikales Scrollen sauber innerhalb Planbereich
+- Summenzeile unten sticky, falls möglich
+
+====================================================
+8. VISUELLE VERBESSERUNGEN
+====================================================
+
+Bitte moderner und ruhiger:
+
+- grössere Tagesköpfe
+- klarere Wochenendmarkierung
+- bessere Abgrenzung der Tage
+- kompaktere Schichtchips
+- bessere Farben für Frei/Ferien/Krank
+- weniger visuelle Unruhe
+- klare Warnungsfarbe nur wenn wirklich nötig
+
+====================================================
+9. VERÖFFENTLICHUNG VORBEREITEN
+====================================================
+
+Bitte UI vorbereiten für Dienstplan veröffentlichen:
+
+Button:
+"Dienstplan veröffentlichen"
+
+Dialog:
+- Woche
+- Restaurant
+- Abteilung
+- Empfängeranzahl
+- Versandkanal: Link / WhatsApp vorbereitet
+- Option:
+  - Gesamtplan für Abteilung
+  - persönlicher Plan pro Mitarbeiter
+- Vorschau-Link anzeigen
+- Status:
+  - Entwurf
+  - Veröffentlicht
+  - Geändert nach Veröffentlichung
+
+Noch kein echter WhatsApp-Versand nötig.
+Aber Link-/Verteilungslogik vorbereiten.
+
+====================================================
+10. MITARBEITER-ANSICHT VORBEREITEN
+====================================================
+
+Neue öffentliche Route vorbereiten:
+
+/staff-schedule/:token
+
+Noch mit Mock-Daten.
+
+Ansicht:
+- nur eigener Dienstplan
+- aktuelle Woche
+- Schichten
+- Abwesenheiten
+- Hinweis: "Bei Fragen an Leitung wenden"
+
+Später wird der Token pro Mitarbeiter generiert.
+
+====================================================
+11. NICHT VERÄNDERN
+====================================================
+
+Bitte nicht verändern:
+- Kostenberechnung
+- Ist/Soll-Logik
+- Budgetlogik
+- Supabase-Struktur
+- bestehende Speicherung
+- Mirus Import
+
+Nur:
+- Dienstplan UX
+- Bedienung
+- Filter
+- Veröffentlichungsvorbereitung
+- Mitarbeiteransicht Mock
+
+====================================================
+12. TEST
+====================================================
+
+Nach Umsetzung:
+- TypeScript prüfen
+- Dienstplanung öffnen
+- Woche als Standard prüfen
+- Filter testen
+- Mitarbeiter-Spalte prüfen
+- Schicht-Klickmodus testen
+- Veröffentlichungsdialog testen
+- /staff-schedule/test öffnen

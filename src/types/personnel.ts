@@ -65,6 +65,12 @@ export interface Employee {
   onboardingStatus?: 'none' | 'prepared' | 'sent' | 'in_progress' | 'completed';
   onboardingToken?: string;         // UUID-Token für persönlichen Onboarding-Link
   onboardingDocuments?: string;     // JSON-Array: [{type, name, url, uploadedAt}]
+
+  // ─── Zeiterfassung ─────────────────────────────────────────────────────
+  /** Admin-Einstellung: Mitarbeiter benötigt keine Zeiterfassung (z.B. Geschäftsführer).
+   *  Mirus-Import: 0 Stunden werden als 100 % verifiziert akzeptiert.
+   *  TODO: Spalte `no_time_tracking_required` in Supabase employees-Tabelle ergänzen. */
+  no_time_tracking_required?: boolean;
 }
 
 export interface TimeEntry {

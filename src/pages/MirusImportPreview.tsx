@@ -9,6 +9,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { parseMirusExcel } from '@/lib/mirus-excel-parser';
+import { isNoTimeTracking } from '@/lib/no-time-tracking';
 import type {
   ExcelEmployee,
   ExcelParsedDocument,
@@ -434,8 +435,9 @@ type VerificationResult = {
   hoursDiff:   number | null;
   activeDays:  number;
   absenceDays: number;
-  shiftCount:  number;
-  messages:    string[];
+  shiftCount:     number;
+  noTimeTracking: boolean;
+  messages:       string[];
 };
 
 function computeVerification(emp: PreviewEmployee): VerificationResult {
@@ -448,6 +450,32 @@ function computeVerification(emp: PreviewEmployee): VerificationResult {
   const absenceDays = emp.days.filter(d => !!d.absenceCode).length;
   const shiftCount  = emp.days.reduce((s, d) => s + d.shifts.length, 0);
   const openWarnCount = emp.warnings.filter(w => w.severity === 'error' || w.severity === 'warning').length;
+  const hasErrors   = emp.warnings.some(w => w.severity === 'error');
+
+  // ── Sonderfall: Keine Zeiterfassung erforderlich ─────────────────────────────
+  // Nur wenn manuell im Personalstamm konfiguriert (Mock: NO_TIME_TRACKING_EMPLOYEES).
+  // Keine Heuristik — ausschliesslich explizite Konfiguration.
+  if (isNoTimeTracking(emp.name) && !hasErrors && activeDays === 0 && (calc === null || calc === 0)) {
+    return {
+      verified:       true,
+      noTimeTracking: true,
+      checks: {
+        nameRecognized:   !!emp.name,
+        deptRecognized:   true,
+        daysPresent:      true,
+        totalsRecognized: true,
+        hoursMatch:       true,
+        noOpenWarnings:   openWarnCount === 0,
+      },
+      calcHours:   calc,
+      mirusHours:  mirus,
+      hoursDiff:   null,
+      activeDays:  0,
+      absenceDays,
+      shiftCount:  0,
+      messages:    ['Keine Zeiterfassung erforderlich — im Personalstamm explizit konfiguriert.'],
+    };
+  }
 
   const nameRecognized   = !!emp.name;
   const deptRecognized   = !!(emp.department || emp.costCenter);
@@ -483,7 +511,7 @@ function computeVerification(emp: PreviewEmployee): VerificationResult {
     messages.push('Kostenstelle und Abteilung fehlen');
   }
 
-  return { verified, checks, calcHours: calc, mirusHours: mirus, hoursDiff, activeDays, absenceDays, shiftCount, messages };
+  return { verified, noTimeTracking: false, checks, calcHours: calc, mirusHours: mirus, hoursDiff, activeDays, absenceDays, shiftCount, messages };
 }
 
 function VerificationBadge({ result, status }: { result: VerificationResult; status: PreviewEmployee['importStatus'] }) {
@@ -491,6 +519,13 @@ function VerificationBadge({ result, status }: { result: VerificationResult; sta
     return (
       <span className="text-[10px] px-2 py-0.5 rounded border bg-red-50 border-red-200 text-red-700 font-semibold whitespace-nowrap">
         Blockiert
+      </span>
+    );
+  }
+  if (result.noTimeTracking) {
+    return (
+      <span className="text-[10px] px-2 py-0.5 rounded border bg-blue-50 border-blue-200 text-blue-700 font-semibold whitespace-nowrap">
+        Keine Zeiterfassung
       </span>
     );
   }
@@ -509,6 +544,14 @@ function VerificationBadge({ result, status }: { result: VerificationResult; sta
 }
 
 function KontrollBox({ result }: { result: VerificationResult }) {
+  if (result.noTimeTracking) {
+    return (
+      <div className="rounded-lg border border-blue-200/60 bg-blue-50/30 px-3 py-2.5 text-[11px] text-blue-700 flex items-center gap-2">
+        <span className="font-bold shrink-0">ℹ</span>
+        Keine Zeiterfassung erforderlich — im Personalstamm explizit konfiguriert.
+      </div>
+    );
+  }
   const rows: { label: string; ok: boolean; detail?: string }[] = [
     { label: 'Name erkannt',            ok: result.checks.nameRecognized },
     { label: 'Abteilung erkannt',       ok: result.checks.deptRecognized },

@@ -8,6 +8,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
+import { isNoTimeTracking } from '@/lib/no-time-tracking';
 import type { PreviewImportSession, PreviewEmployee, PreviewDayEntry, PreviewShift, PreviewMonthlyAccounts } from '@/types/mirus-import-preview';
 import type {
   ReviewState, ReviewEmployeeState, ReviewAction,
@@ -421,8 +422,9 @@ function EmployeeReviewCard({
   const warns     = emp.warnings.filter(w => w.severity !== 'info');
   const overrideCount = Object.keys(empState.dayOverrides).length;
 
-  const action     = empState.action;
-  const actionInfo = action ? ACTION_MAP[action] : null;
+  const action         = empState.action;
+  const actionInfo     = action ? ACTION_MAP[action] : null;
+  const noTimeTracking = isNoTimeTracking(emp.name) && emp.days.filter(d => d.shifts.length > 0).length === 0;
 
   return (
     <div className={cn(
@@ -465,6 +467,11 @@ function EmployeeReviewCard({
               {overrideCount > 0 && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded border bg-blue-50 border-blue-200 text-blue-700 font-semibold">
                   ✎ {overrideCount} Korrektur{overrideCount !== 1 ? 'en' : ''}
+                </span>
+              )}
+              {noTimeTracking && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border bg-blue-50 border-blue-200 text-blue-700 font-semibold">
+                  Keine Zeiterfassung
                 </span>
               )}
             </div>
