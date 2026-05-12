@@ -415,6 +415,144 @@ function formatHours(value: number | null | undefined): string {
   return Number(value).toFixed(2) + ' h';
 }
 
+// ─── VERIFICATION LOGIC ────────────────────────────────────────────────────────
+
+type VerificationChecks = {
+  nameRecognized:   boolean;
+  deptRecognized:   boolean;
+  daysPresent:      boolean;
+  totalsRecognized: boolean;
+  hoursMatch:       boolean;
+  noOpenWarnings:   boolean;
+};
+
+type VerificationResult = {
+  verified:    boolean;
+  checks:      VerificationChecks;
+  calcHours:   number | null;
+  mirusHours:  number | null;
+  hoursDiff:   number | null;
+  activeDays:  number;
+  absenceDays: number;
+  shiftCount:  number;
+  messages:    string[];
+};
+
+function computeVerification(emp: PreviewEmployee): VerificationResult {
+  const totals    = emp.totals;
+  const calc      = totals.calculatedTotalHours ?? null;
+  const mirus     = totals.totalHours ?? null;
+  const hoursDiff = calc != null && mirus != null ? Math.abs(calc - mirus) : null;
+
+  const activeDays  = emp.days.filter(d => d.shifts.length > 0).length;
+  const absenceDays = emp.days.filter(d => !!d.absenceCode).length;
+  const shiftCount  = emp.days.reduce((s, d) => s + d.shifts.length, 0);
+  const openWarnCount = emp.warnings.filter(w => w.severity === 'error' || w.severity === 'warning').length;
+
+  const nameRecognized   = !!emp.name;
+  const deptRecognized   = !!(emp.department || emp.costCenter);
+  const daysPresent      = emp.days.length > 0;
+  const totalsRecognized = mirus != null;
+  const hoursMatch       = !totalsRecognized ? true : (hoursDiff != null && hoursDiff <= 0.05);
+  const noOpenWarnings   = openWarnCount === 0;
+
+  const checks: VerificationChecks = {
+    nameRecognized, deptRecognized, daysPresent, totalsRecognized, hoursMatch, noOpenWarnings,
+  };
+  const verified = Object.values(checks).every(Boolean);
+
+  const messages: string[] = [];
+  if (calc != null && mirus != null) {
+    messages.push(
+      `Mirus Total: ${formatHours(mirus)}, erkannte Tagesstunden: ${formatHours(calc)}, Differenz: ${(hoursDiff ?? 0).toFixed(2)} h`
+    );
+  } else if (calc != null) {
+    messages.push(`Berechnete Tagesstunden: ${formatHours(calc)} (kein Mirus-Total vorhanden)`);
+  }
+  if (absenceDays > 0) {
+    const codes = [...new Set(emp.days.filter(d => !!d.absenceCode).map(d => d.absenceCode!))];
+    messages.push(`Absenzen erkannt: ${absenceDays} Tage (${codes.join(', ')})`);
+  }
+  if (shiftCount > activeDays) {
+    messages.push(`Mehrere Schichten an ${activeDays} Arbeitstagen erkannt (${shiftCount} Schichten total)`);
+  }
+  if (!emp.department && emp.costCenter) {
+    messages.push(`Abteilung nicht erkannt — Kostenstelle: ${emp.costCenter}`);
+  }
+  if (!emp.department && !emp.costCenter) {
+    messages.push('Kostenstelle und Abteilung fehlen');
+  }
+
+  return { verified, checks, calcHours: calc, mirusHours: mirus, hoursDiff, activeDays, absenceDays, shiftCount, messages };
+}
+
+function VerificationBadge({ result, status }: { result: VerificationResult; status: PreviewEmployee['importStatus'] }) {
+  if (status === 'excluded') {
+    return (
+      <span className="text-[10px] px-2 py-0.5 rounded border bg-red-50 border-red-200 text-red-700 font-semibold whitespace-nowrap">
+        Blockiert
+      </span>
+    );
+  }
+  if (result.verified) {
+    return (
+      <span className="text-[10px] px-2 py-0.5 rounded border bg-green-50 border-green-200 text-green-700 font-semibold whitespace-nowrap">
+        ✓ 100 % verifiziert
+      </span>
+    );
+  }
+  return (
+    <span className="text-[10px] px-2 py-0.5 rounded border bg-yellow-50 border-yellow-200 text-yellow-700 font-semibold whitespace-nowrap">
+      Prüfung nötig
+    </span>
+  );
+}
+
+function KontrollBox({ result }: { result: VerificationResult }) {
+  const rows: { label: string; ok: boolean; detail?: string }[] = [
+    { label: 'Name erkannt',            ok: result.checks.nameRecognized },
+    { label: 'Abteilung erkannt',       ok: result.checks.deptRecognized },
+    {
+      label: 'Tagesdaten vorhanden',
+      ok: result.checks.daysPresent,
+      detail: result.checks.daysPresent
+        ? `${result.activeDays} Arbeitstage, ${result.absenceDays} Absenztage, ${result.shiftCount} Schichten`
+        : undefined,
+    },
+    {
+      label: 'Mirus-Total erkannt',
+      ok: result.checks.totalsRecognized,
+      detail: result.mirusHours != null ? formatHours(result.mirusHours) : undefined,
+    },
+    {
+      label: 'Stunden abgestimmt',
+      ok: result.checks.hoursMatch,
+      detail: result.hoursDiff != null ? `Diff: ${result.hoursDiff.toFixed(2)} h` : undefined,
+    },
+    { label: 'Keine offenen Warnungen', ok: result.checks.noOpenWarnings },
+  ];
+
+  return (
+    <div className="rounded-lg border border-border/60 overflow-hidden text-[11px]">
+      {rows.map(({ label, ok, detail }) => (
+        <div
+          key={label}
+          className={cn(
+            'flex items-center gap-2 px-3 py-2 border-b border-border/40 last:border-b-0',
+            ok ? 'bg-background' : 'bg-yellow-50/50',
+          )}
+        >
+          <span className={cn('font-bold shrink-0 w-4 text-center', ok ? 'text-green-600' : 'text-yellow-600')}>
+            {ok ? '✓' : '⚠'}
+          </span>
+          <span className={cn('font-medium flex-1', ok ? 'text-foreground' : 'text-yellow-800')}>{label}</span>
+          {detail && <span className="text-muted-foreground text-[10px] shrink-0">{detail}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function WarnList({ warnings }: { warnings: PreviewImportWarning[] }) {
   if (!warnings.length) return null;
   return (
@@ -658,6 +796,7 @@ function EmployeeDetailModal({ emp, onClose }: { emp: PreviewEmployee; onClose: 
   const absCount   = emp.days.filter(d => !!d.absenceCode).length;
   const vacCount   = emp.days.filter(d => d.absenceCode === 'FE').length;
   const sickCount  = emp.days.filter(d => d.absenceCode === 'KR').length;
+  const vr         = computeVerification(emp);
 
   const TABS: [string, string][] = [
     ['overview',  'Übersicht'],
@@ -715,12 +854,32 @@ function EmployeeDetailModal({ emp, onClose }: { emp: PreviewEmployee; onClose: 
 
           {tab === 'overview' && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {/* Verification banner */}
+              <div className={cn(
+                'rounded-lg border p-4 flex items-center gap-3',
+                vr.verified ? 'border-green-200 bg-green-50/40' : 'border-yellow-200 bg-yellow-50/30',
+              )}>
+                <div className={cn('text-2xl font-bold leading-none shrink-0', vr.verified ? 'text-green-600' : 'text-yellow-600')}>
+                  {vr.verified ? '✓' : '⚠'}
+                </div>
+                <div>
+                  <p className={cn('font-bold text-sm', vr.verified ? 'text-green-700' : 'text-yellow-700')}>
+                    {vr.verified ? '100 % verifiziert' : 'Prüfung nötig'}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {vr.verified
+                      ? `${vr.activeDays} Arbeitstage · ${formatHours(vr.calcHours)} bestätigt`
+                      : 'Mindestens eine Kontrollprüfung nicht bestanden'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Quick stats */}
+              <div className="grid grid-cols-3 gap-3">
                 {([
-                  { label: 'Gesamtstunden',     value: formatHours(calc) },
-                  { label: 'Arbeitstage',        value: `${activeDays}` },
-                  { label: 'Absenzen',           value: `${absCount}` },
-                  { label: 'Erkennungsqualität', value: `${emp.quality}%` },
+                  { label: 'Gesamtstunden', value: formatHours(vr.calcHours) },
+                  { label: 'Arbeitstage',   value: `${vr.activeDays}` },
+                  { label: 'Absenzen',      value: `${vr.absenceDays}` },
                 ] as const).map(({ label, value }) => (
                   <div key={label} className="rounded-lg border bg-muted/20 px-3 py-2.5 space-y-0.5">
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
@@ -729,46 +888,23 @@ function EmployeeDetailModal({ emp, onClose }: { emp: PreviewEmployee; onClose: 
                 ))}
               </div>
 
-              {absCount > 0 && (
-                <div className="rounded-lg border border-border/60 p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Absenzen</p>
-                  <div className="flex flex-wrap gap-2">
-                    {vacCount  > 0 && <span className="text-[11px] px-2 py-1 rounded border bg-blue-50 border-blue-200 text-blue-700 font-semibold">{vacCount} Ferientage</span>}
-                    {sickCount > 0 && <span className="text-[11px] px-2 py-1 rounded border bg-orange-50 border-orange-200 text-orange-700 font-semibold">{sickCount} Krankheitstage</span>}
-                    {absCount - vacCount - sickCount > 0 && (
-                      <span className="text-[11px] px-2 py-1 rounded border bg-muted/60 border-border font-semibold">{absCount - vacCount - sickCount} Weitere</span>
-                    )}
-                  </div>
+              {/* Kontrollbox */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Automatische Kontrollprüfung</p>
+                <KontrollBox result={vr} />
+              </div>
+
+              {/* Concrete messages */}
+              {vr.messages.length > 0 && (
+                <div className="rounded-lg border border-border/60 p-3 space-y-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Details</p>
+                  {vr.messages.map((m, i) => (
+                    <p key={i} className="text-[11px] text-foreground leading-relaxed">{m}</p>
+                  ))}
                 </div>
               )}
 
-              {calc !== undefined && (
-                <div className={cn(
-                  'rounded-lg border p-3',
-                  valid ? 'border-green-200 bg-green-50/40' :
-                  diff !== undefined && diff > 3 ? 'border-red-200 bg-red-50/40' :
-                  'border-border bg-muted/10',
-                )}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Stunden-Plausibilität</p>
-                  <div className="flex items-center gap-4 flex-wrap text-sm">
-                    <span>
-                      <span className="text-muted-foreground text-xs mr-1">Berechnet</span>
-                      <span className="font-mono font-bold">{formatHours(calc)}</span>
-                    </span>
-                    {totals.totalHours != null && (
-                      <span>
-                        <span className="text-muted-foreground text-xs mr-1">Mirus</span>
-                        <span className="font-mono font-bold">{formatHours(totals.totalHours)}</span>
-                      </span>
-                    )}
-                    {valid && <span className="text-green-600 font-semibold text-xs">✓ Validiert</span>}
-                    {diff !== undefined && diff > 0.1 && (
-                      <span className="text-yellow-600 font-semibold text-xs">⚠ Diff ±{formatHours(diff)}</span>
-                    )}
-                  </div>
-                </div>
-              )}
-
+              {/* Warnings */}
               {warnCount > 0 && (
                 <div className="rounded-lg border border-yellow-200 bg-yellow-50/30 p-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-yellow-700 mb-2">⚠ {warnCount} Hinweis{warnCount > 1 ? 'e' : ''}</p>
@@ -881,26 +1017,16 @@ function EmployeeCard({
             )}
           </div>
 
-          {/* Right: quality + warnings + button */}
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="hidden md:flex flex-col items-end gap-1 min-w-[80px]">
-              <QualityBar pct={emp.quality} />
-              {warnCount > 0 && (
-                <span className="text-[10px] text-yellow-600 font-semibold">⚠ {warnCount} Hinweis{warnCount > 1 ? 'e' : ''}</span>
-              )}
-              {valid && <span className="text-[10px] text-green-600 font-semibold">✓ Validiert</span>}
-              {diff !== undefined && diff > 3 && <span className="text-[10px] text-red-600 font-semibold">⚠ Diff</span>}
+          {/* Right: verification badge + button */}
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="hidden sm:block">
+              <VerificationBadge result={computeVerification(emp)} status={emp.importStatus} />
             </div>
             <button
               onClick={() => setShowDetail(true)}
-              className={cn(
-                'text-[11px] px-3 py-1.5 rounded border font-medium transition-colors whitespace-nowrap',
-                warnCount > 0
-                  ? 'border-yellow-300 bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
-                  : 'border-border hover:bg-muted/40',
-              )}
+              className="text-[11px] px-3 py-1.5 rounded border border-border hover:bg-muted/40 transition-colors font-medium whitespace-nowrap"
             >
-              Details prüfen
+              Details
             </button>
           </div>
         </div>
@@ -1135,12 +1261,14 @@ function SummaryPanel({ session, onRestaurantChange }: {
   session: PreviewImportSession;
   onRestaurantChange: (r: string) => void;
 }) {
-  const ready    = session.employees.filter(e => e.importStatus === 'ready').length;
-  const check    = session.employees.filter(e => e.importStatus === 'check').length;
-  const excluded = session.employees.filter(e => e.importStatus === 'excluded').length;
-  const openWarns = session.employees.flatMap(e => e.warnings).filter(w => w.severity === 'warning' || w.severity === 'error').length;
-  const selected  = session.employees.filter(e => e.importSelected).length;
-  const qColor = session.averageQuality >= 90 ? 'green' : session.averageQuality >= 80 ? 'yellow' : 'red';
+  const verResults  = session.employees.map(e => computeVerification(e));
+  const verified    = verResults.filter(r => r.verified).length;
+  const excluded    = session.employees.filter(e => e.importStatus === 'excluded').length;
+  const needsCheck  = session.employees.length - verified;
+  const selected    = session.employees.filter(e => e.importSelected).length;
+  const totalCalcH  = verResults.reduce((s, r) => s + (r.calcHours ?? 0), 0);
+  const totalMirusH = verResults.reduce((s, r) => s + (r.mirusHours ?? 0), 0);
+  const totalDiff   = Math.abs(totalCalcH - totalMirusH);
 
   return (
     <div className="rounded-lg border bg-card p-4 space-y-4">
@@ -1158,11 +1286,16 @@ function SummaryPanel({ session, onRestaurantChange }: {
       </div>
 
       {/* Statusübersicht */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-lg border border-border/60 bg-muted/10 px-4 py-3">
-        <StatBox label="Importfähig"      value={String(ready)}      color={ready > 0 ? 'green' : 'default'} />
-        <StatBox label="Prüfung nötig"    value={String(check)}      color={check > 0 ? 'yellow' : 'green'} />
-        <StatBox label="Ausgeschlossen"   value={String(excluded)}   color={excluded > 0 ? 'red' : 'default'} />
-        <StatBox label="Offene Warnungen" value={String(openWarns)}  color={openWarns > 0 ? 'yellow' : 'green'} />
+      <div className={cn(
+        'grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-lg border px-4 py-3',
+        verified === session.employees.length
+          ? 'border-green-200 bg-green-50/20'
+          : 'border-border/60 bg-muted/10',
+      )}>
+        <StatBox label="100 % verifiziert"  value={`${verified} / ${session.employees.length}`} color={verified === session.employees.length ? 'green' : 'default'} />
+        <StatBox label="Prüfung nötig"      value={String(Math.max(0, needsCheck - excluded))}  color={needsCheck - excluded > 0 ? 'yellow' : 'green'} />
+        <StatBox label="Blockiert"          value={String(excluded)}    color={excluded > 0 ? 'red' : 'default'} />
+        <StatBox label="Differenz gesamt"   value={`${totalDiff.toFixed(2)} h`} color={totalDiff < 0.1 ? 'green' : 'yellow'} />
       </div>
 
       {/* Weitere Felder */}
@@ -1184,9 +1317,9 @@ function SummaryPanel({ session, onRestaurantChange }: {
             </select>
           )}
         </div>
-        <StatBox label="Ausgewählt"    value={`${selected} / ${session.employees.length}`} />
-        <StatBox label="Gesamtstunden" value={formatHours(session.totalHours)} />
-        <StatBox label="Ø Qualität"    value={`${session.averageQuality}%`} color={qColor} />
+        <StatBox label="Ausgewählt"       value={`${selected} / ${session.employees.length}`} />
+        <StatBox label="Stunden (berechn.)" value={formatHours(totalCalcH)} />
+        <StatBox label="Mirus-Total"      value={formatHours(totalMirusH)} />
       </div>
 
       {session.globalWarnings.length > 0 && (

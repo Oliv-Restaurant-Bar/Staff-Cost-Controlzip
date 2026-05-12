@@ -1,0 +1,190 @@
+Ich brauche beim Mirus Import keine 86–90 % Qualitätsanzeige, sondern eine 100%-Übernahme-Kontrolle.
+
+Ziel:
+Der Benutzer soll NICHT jeden Mitarbeiter und jeden Tag manuell prüfen müssen.
+
+Der Import darf nur als "100 % verifiziert" gelten, wenn automatisch bewiesen ist:
+
+1. Alle Mitarbeiter wurden erkannt
+2. Alle Tageszeilen wurden erkannt
+3. Alle Zeitblöcke wurden übernommen
+4. Tagesstunden stimmen mit Mirus-Totalen überein
+5. Ferien / Frei / Krankheit / Feiertage wurden übernommen
+6. Monatstotale stimmen
+7. Keine ungeprüften Parser-Warnungen bestehen
+
+====================================================
+1. QUALITÄT NICHT MEHR ALS HAUPTLOGIK
+====================================================
+
+Bitte die Anzeige "Qualität 86%" nicht als Hauptentscheid verwenden.
+
+Stattdessen neue Hauptanzeige:
+
+Import-Status:
+- 100 % verifiziert
+- Prüfung nötig
+- Blockiert
+
+Qualität darf weiterhin technisch bleiben, aber nur in technischen Details.
+
+====================================================
+2. 100%-VERIFIZIERUNG PRO MITARBEITER
+====================================================
+
+Ein Mitarbeiter ist nur "100 % verifiziert", wenn:
+
+- Name erkannt
+- Abteilung erkannt
+- alle Tageszeilen vorhanden
+- alle Zeitblöcke übernommen
+- Summe der Tagesstunden stimmt mit Mirus Totalstunden überein
+- Differenz <= 0.05 Stunden
+- Absenzcodes erkannt
+- Monatstotale erkannt
+- keine offenen Warnungen
+
+Wenn das erfüllt ist:
+Badge anzeigen:
+"100 % verifiziert"
+
+Wenn nicht:
+"Prüfung nötig"
+
+====================================================
+3. AUTOMATISCHE KONTROLLSUMMEN
+====================================================
+
+Bitte pro Mitarbeiter automatisch berechnen:
+
+A) Aus Tageszeilen:
+- Summe Arbeitsstunden
+- Summe Pausen
+- Anzahl Arbeitstage
+- Anzahl Absenz-Tage
+- Anzahl Zeitblöcke
+
+B) Aus Mirus-Totalen:
+- Totalstunden
+- Pause
+- Ferien
+- Feiertage
+- Krankheit
+- Saldo
+- Überzeit
+
+Dann vergleichen:
+- Tagesstunden vs. Mirus Total
+- Absenzen aus Tageszeilen vs. Mirus Totale
+- Pausen aus Tageszeilen vs. Mirus Pause
+
+Abweichungen > 0.05 h = Prüfung nötig.
+
+====================================================
+4. KEINE MANUELLE TAGESKONTROLLE
+====================================================
+
+Die UI soll nicht suggerieren, dass der Benutzer jeden Tag kontrollieren muss.
+
+Stattdessen pro Mitarbeiter eine Kontrollbox:
+
+- Tagesdaten vollständig: Ja/Nein
+- Stunden abgestimmt: Ja/Nein
+- Absenzen abgestimmt: Ja/Nein
+- Totale abgestimmt: Ja/Nein
+- Ergebnis: 100 % verifiziert / Prüfung nötig
+
+Tagesdetails nur bei Klick anzeigen.
+
+====================================================
+5. WARNUNGEN VERBESSERN
+====================================================
+
+Warnungen müssen konkret sein:
+
+Nicht:
+"Qualität 82%"
+
+Sondern:
+- "Mirus Total: 117.83 h, erkannte Tagesstunden: 117.80 h, Differenz 0.03 h"
+- "Absenz FE erkannt: 2 Tage"
+- "Kostenstelle fehlt, Abteilung wurde aus Tagesdaten als Küche erkannt"
+- "Mehrere Zeitblöcke erkannt und übernommen"
+
+====================================================
+6. IMPORT-ZUSAMMENFASSUNG
+====================================================
+
+Oben anzeigen:
+
+- Mitarbeiter total
+- 100 % verifiziert
+- Prüfung nötig
+- Blockiert
+- Stunden total
+- Mirus-Kontrollsumme
+- Differenz total
+
+Beispiel:
+21 Mitarbeiter
+19 vollständig verifiziert
+2 Prüfung nötig
+0 blockiert
+Differenz gesamt: 0.00 h
+
+====================================================
+7. FREIGABE-LOGIK
+====================================================
+
+Button "Zum Review öffnen" soll nur warnen, wenn nicht alle Mitarbeiter verifiziert sind.
+
+Wenn alle verifiziert:
+"Alle Mitarbeiter automatisch geprüft"
+
+Wenn nicht:
+"2 Mitarbeiter benötigen Prüfung"
+
+====================================================
+8. TECHNISCHE DETAILS AUSBLENDEN
+====================================================
+
+Begriffe wie:
+- Qualität 86 %
+- Restblöcke
+- Roh-Blöcke
+- Parser-Score
+
+sollen nur noch unter "Technische Details" sichtbar sein.
+
+Im Hauptscreen zählt nur:
+- verifiziert
+- Prüfung nötig
+- blockiert
+
+====================================================
+9. ZIEL
+====================================================
+
+Ich will nach Upload sofort sehen:
+
+Kann ich diesen Monat übernehmen?
+Ja oder Nein.
+
+Nicht:
+Ich muss jeden Mitarbeiter jeden Tag prüfen.
+
+====================================================
+10. WICHTIG
+====================================================
+
+Keine Supabase Writes.
+Keine Migration.
+Keine neue Parser-Architektur.
+
+Nur:
+- Verifizierungslogik
+- Kontrollsummen
+- bessere Import-Statuslogik
+- benutzerfreundlichere Anzeige
+
+Danach TypeScript prüfen und mit April testen.
