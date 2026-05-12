@@ -25,11 +25,12 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
+import { savePublishedSchedule, PublishType, PublishDept, PublicEmployee } from '@/lib/schedule-publish-store';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
 import { MobileDayView } from '@/components/schedule-planner/MobileDayView';
@@ -56,7 +57,7 @@ import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { MirusDailyImportEntry, MirusImportMode } from '@/types/personnel';
 import { importScheduleFromExcelV2, exportScheduleToPDF, exportScheduleTemplate, NameMatchInfo } from '@/lib/schedule-export-import';
 import { toast } from 'sonner';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval, isSameDay } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval, isSameDay, getISOWeek } from 'date-fns';
 import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import PlanningAssistant from '@/components/schedule-planner/PlanningAssistant';
@@ -279,6 +280,9 @@ const SchedulePlanner = () => {
   const [publishStatus, setPublishStatus]                     = useState<'draft' | 'published' | 'changed'>('draft');
   const [publishToken, setPublishToken]                       = useState<string | null>(null);
   const [publishCopied, setPublishCopied]                     = useState(false);
+  const [publishType, setPublishType]                         = useState<PublishType>('department');
+  const [publishDept, setPublishDept]                         = useState<PublishDept>('all');
+  const [publishEmpId, setPublishEmpId]                       = useState<string | null>(null);
 
   // ── Sortierungsmodus & Zellfarben ────────────────────────────────────────
   const [sortModeActive, setSortModeActive]                   = useState(false);
@@ -4764,7 +4768,7 @@ const SchedulePlanner = () => {
 
       {/* ── Dienstplan Veröffentlichen Dialog ───────────────────────────── */}
       <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-[520px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Globe className="h-4 w-4 text-emerald-600" />
@@ -4772,8 +4776,9 @@ const SchedulePlanner = () => {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4 py-1">
-            {/* Status */}
+          <div className="space-y-5 py-1">
+
+            {/* ── Status ──────────────────────────────────────────────── */}
             <div className="flex items-center gap-3 rounded-lg border p-3">
               <div className={cn(
                 "h-8 w-8 rounded-full flex items-center justify-center shrink-0",
@@ -4789,7 +4794,7 @@ const SchedulePlanner = () => {
                   <Share2 className="h-4 w-4 text-muted-foreground" />
                 )}
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-sm font-semibold">
                   {publishStatus === 'published' ? 'Veröffentlicht' :
                    publishStatus === 'changed'   ? 'Nicht aktuell – Änderungen vorhanden' :
@@ -4803,70 +4808,230 @@ const SchedulePlanner = () => {
               </div>
             </div>
 
-            {/* Published link */}
-            {publishToken && (
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">Freigabe-Link</p>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0 rounded-md border bg-muted/40 px-3 py-2 text-xs font-mono truncate text-muted-foreground select-all">
-                    {`${window.location.origin}/staff-schedule/${publishToken}`}
+            {/* ── Veröffentlichungsart ─────────────────────────────────── */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Veröffentlichungsart</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPublishType('department')}
+                  className={cn(
+                    "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
+                    publishType === 'department'
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-border bg-background hover:bg-muted/40 text-foreground"
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4" />
+                    <span className="text-sm font-semibold">Abteilungsplan</span>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 gap-1.5 shrink-0"
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/staff-schedule/${publishToken}`);
-                      setPublishCopied(true);
-                      setTimeout(() => setPublishCopied(false), 2000);
-                    }}
-                  >
-                    {publishCopied ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-                    {publishCopied ? 'Kopiert' : 'Kopieren'}
-                  </Button>
-                </div>
-                <div className="flex items-center gap-2 pt-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 gap-1.5 text-xs border-green-400 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400"
-                    onClick={() => {
-                      const url = `${window.location.origin}/staff-schedule/${publishToken}`;
-                      const text = `Dienstplan ${pkqPeriodLabel}: ${url}`;
-                      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
-                    }}
-                  >
-                    <Send className="h-3 w-3" />
-                    WhatsApp
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 gap-1.5 text-xs text-muted-foreground"
-                    onClick={() => window.open(`/staff-schedule/${publishToken}`, '_blank')}
-                  >
-                    <Eye className="h-3 w-3" />
-                    Vorschau
-                  </Button>
+                  <span className="text-xs text-muted-foreground leading-snug">
+                    Alle Mitarbeitenden einer Abteilung
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPublishType('personal')}
+                  className={cn(
+                    "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
+                    publishType === 'personal'
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-border bg-background hover:bg-muted/40 text-foreground"
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <User className="h-4 w-4" />
+                    <span className="text-sm font-semibold">Persönlicher Plan</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground leading-snug">
+                    Nur ein Mitarbeiter sieht seinen Plan
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* ── Abteilungsauswahl ────────────────────────────────────── */}
+            {publishType === 'department' && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Abteilung</p>
+                <div className="flex gap-2">
+                  {(['all', 'service', 'küche'] as const).map(d => (
+                    <Button
+                      key={d}
+                      size="sm"
+                      variant={publishDept === d ? 'default' : 'outline'}
+                      className="flex-1 h-8 text-xs"
+                      onClick={() => setPublishDept(d)}
+                    >
+                      {d === 'all' ? 'Alle' : d === 'service' ? 'Service' : 'Küche'}
+                    </Button>
+                  ))}
                 </div>
               </div>
             )}
 
-            {/* Info note */}
+            {/* ── Mitarbeiterauswahl ───────────────────────────────────── */}
+            {publishType === 'personal' && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Mitarbeiter</p>
+                <div className="max-h-44 overflow-y-auto rounded-lg border border-border divide-y divide-border/50">
+                  {employees.filter(e => isEmployeeActiveInMonth(e, currentMonth)).map(emp => {
+                    const name = getEmployeeDisplayName(emp);
+                    const sel = publishEmpId === emp.id;
+                    return (
+                      <button
+                        key={emp.id}
+                        type="button"
+                        onClick={() => setPublishEmpId(emp.id)}
+                        className={cn(
+                          "w-full flex items-center justify-between px-3 py-2.5 text-left transition-colors text-sm",
+                          sel ? "bg-primary/8 text-primary font-semibold" : "bg-background hover:bg-muted/40"
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={cn(
+                            "w-2 h-2 rounded-full shrink-0",
+                            emp.department === 'service' ? "bg-blue-500" : "bg-orange-500"
+                          )} />
+                          <span>{name}</span>
+                        </div>
+                        {sel && <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── Aktiver Link ─────────────────────────────────────────── */}
+            {publishToken && (() => {
+              const url = `${window.location.origin}/staff-schedule/${publishToken}`;
+              const selectedEmp = employees.find(e => e.id === publishEmpId);
+              const empName = selectedEmp ? getEmployeeDisplayName(selectedEmp) : null;
+              const kw = getISOWeek(displayDays[0] ?? currentMonth);
+              const waText = publishType === 'personal' && empName
+                ? `Hallo ${empName}, hier ist dein Dienstplan für KW ${kw}: ${url}`
+                : `Hallo zusammen, hier ist der Dienstplan für KW ${kw}: ${url}`;
+              return (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Freigabe-Link</p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0 rounded-md border bg-muted/40 px-3 py-2 text-xs font-mono truncate text-muted-foreground select-all">
+                      {url}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-1.5 shrink-0"
+                      onClick={() => {
+                        navigator.clipboard.writeText(url);
+                        setPublishCopied(true);
+                        setTimeout(() => setPublishCopied(false), 2000);
+                      }}
+                    >
+                      {publishCopied ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                      {publishCopied ? 'Kopiert' : 'Link'}
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1.5 text-xs border-green-400 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400"
+                      onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(waText)}`, '_blank')}
+                    >
+                      <MessageCircle className="h-3 w-3" />
+                      WhatsApp
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 gap-1.5 text-xs text-muted-foreground"
+                      onClick={() => window.open(url, '_blank')}
+                    >
+                      <Eye className="h-3 w-3" />
+                      Vorschau
+                    </Button>
+                  </div>
+                  {/* WhatsApp text preview */}
+                  <div className="rounded-md bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 px-3 py-2 text-xs text-green-800 dark:text-green-300">
+                    <p className="font-semibold mb-0.5">WhatsApp-Text:</p>
+                    <p className="leading-snug">{waText}</p>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── Info note ────────────────────────────────────────────── */}
             <div className="rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2.5 text-xs text-blue-700 dark:text-blue-400 flex items-start gap-2">
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <span>
                 Der Link gibt den Dienstplan <strong>ohne Lohnangaben</strong> frei. Mitarbeitende sehen nur Namen und Schichtzeiten.
               </span>
             </div>
+
           </div>
 
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setPublishDialogOpen(false)}>Schliessen</Button>
+          <DialogFooter className="gap-2 flex-col sm:flex-row">
+            <Button variant="outline" onClick={() => setPublishDialogOpen(false)} className="sm:mr-auto">
+              Schliessen
+            </Button>
             <Button
               className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+              disabled={publishType === 'personal' && !publishEmpId}
               onClick={() => {
-                const token = `${tenantId}-${format(currentMonth, 'yyyyMM')}-${Math.random().toString(36).slice(2, 8)}`;
+                const restaurantName = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
+                const token = `${tenantId}-${format(currentMonth, 'yyyyMM')}-${publishType === 'personal' ? 'p' : 'd'}-${Math.random().toString(36).slice(2, 8)}`;
+                const days = displayDays.length > 0 ? displayDays : [currentMonth];
+                const weekStart = days[0];
+                const weekEnd = days[days.length - 1];
+                const kw = getISOWeek(weekStart);
+                const weekLabel = `KW ${kw} · ${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM yyyy', { locale: de })}`;
+
+                // Serialize employees & schedule data
+                let targetEmps = employees.filter(e => isEmployeeActiveInMonth(e, currentMonth));
+                if (publishType === 'personal' && publishEmpId) {
+                  targetEmps = targetEmps.filter(e => e.id === publishEmpId);
+                } else if (publishType === 'department' && publishDept !== 'all') {
+                  targetEmps = targetEmps.filter(e => e.department === publishDept);
+                }
+
+                const publicEmployees: PublicEmployee[] = targetEmps.map(emp => ({
+                  id: emp.id,
+                  name: getEmployeeDisplayName(emp),
+                  department: emp.department,
+                  days: days.map(day => {
+                    const dateStr = format(day, 'yyyy-MM-dd');
+                    const slot = scheduleData[`${emp.id}-${dateStr}`] ?? {};
+                    return {
+                      date: dateStr,
+                      dayLabel: format(day, 'EEEE, d. MMMM', { locale: de }),
+                      früh: slot.früh ?? null,
+                      spät: slot.spät ?? null,
+                      frühAbsence: slot.frühAbsence ?? null,
+                      spätAbsence: slot.spätAbsence ?? null,
+                    };
+                  }),
+                }));
+
+                const selectedEmp = employees.find(e => e.id === publishEmpId);
+
+                savePublishedSchedule(token, {
+                  type: publishType,
+                  restaurant: restaurantName,
+                  kw,
+                  weekLabel,
+                  weekStart: format(weekStart, 'yyyy-MM-dd'),
+                  weekEnd: format(weekEnd, 'yyyy-MM-dd'),
+                  publishedAt: new Date().toISOString(),
+                  status: 'published',
+                  department: publishType === 'department' ? publishDept : undefined,
+                  employees: publicEmployees,
+                  employeeId: publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
+                  employeeName: publishType === 'personal' && selectedEmp ? getEmployeeDisplayName(selectedEmp) : undefined,
+                });
+
                 setPublishToken(token);
                 setPublishStatus('published');
                 toast.success('Dienstplan veröffentlicht – Link ist jetzt aktiv');
