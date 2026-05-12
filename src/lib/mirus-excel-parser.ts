@@ -108,6 +108,37 @@ export interface EmployeeTotals {
   totalsDiff?: number;
 }
 
+// ─── MONATSKONTEN ─────────────────────────────────────────────────────────────
+
+export interface MonthlyAccountEntry {
+  openingBalance: string | null;
+  correction:     string | null;
+  planned:        string | null;
+  actual:         string | null;
+  paidOut:        string | null;
+  difference:     string | null;
+  compensation:   string | null;
+  surcharge:      string | null;
+  days:           string | null;
+  closingBalance: string | null;
+}
+
+export interface AccountRawLine {
+  label:       string;
+  value:       string;
+  cellAddr:    string;
+  accountType: string;
+}
+
+export interface MonthlyAccounts {
+  hours:    Partial<MonthlyAccountEntry>;
+  vacation: Partial<MonthlyAccountEntry>;
+  holiday:  Partial<MonthlyAccountEntry>;
+  overtime: Partial<MonthlyAccountEntry>;
+  comp:     Partial<MonthlyAccountEntry>;
+  rawLines: AccountRawLine[];
+}
+
 export interface RawBlock {
   markerCell: string;
   nameCell: string;
@@ -127,6 +158,7 @@ export interface ExcelEmployee {
   blockEndRow: number | null;
   days: DayRecord[];
   totals: EmployeeTotals;
+  monthlyAccounts: MonthlyAccounts;
   rawBlock: RawBlock;
   mergedFromCount: number;           // 1 = einzelner Block, ≥2 = zusammengeführt
   mergedBlockRows: [number, number][]; // [startRow, endRow] jedes Teil-Blocks
@@ -606,6 +638,172 @@ function computeTotalsCheck(totals: EmployeeTotals, days: DayRecord[]): void {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// ─── MONATSKONTEN ─────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+type AcctKey = 'hours' | 'vacation' | 'holiday' | 'overtime' | 'comp';
+type SubKey  = keyof MonthlyAccountEntry;
+
+const ACCT_SECTION_PATS: { type: AcctKey; pats: string[] }[] = [
+  { type: 'hours',    pats: ['stundenkonto', 'zeitkonto', 'std-kto', 'stunden-kto', 'stunden kto'] },
+  { type: 'vacation', pats: ['ferienkonto', 'ferien-kto', 'ferien kto', 'ferien-konto'] },
+  { type: 'holiday',  pats: ['feiertagskonto', 'feiertag konto', 'feiertag-kto', 'feiertagsk.'] },
+  { type: 'overtime', pats: ['überzeitkonto', 'ueberzeit konto', 'überzeit-kto', 'überstdkonto', 'überstunden'] },
+  { type: 'comp',     pats: ['kompensationskonto', 'kompens.-kto', 'komp-konto', 'kompkonto'] },
+];
+
+const ACCT_SUB_PATS: { key: SubKey; pats: string[] }[] = [
+  { key: 'openingBalance', pats: ['vortr', 'vorsaldo', 'übertrag', 'übertr.', 'anfangss'] },
+  { key: 'correction',     pats: ['korr', 'korrekt'] },
+  { key: 'planned',        pats: ['soll', 'gut.', 'gutschr'] },
+  { key: 'actual',         pats: ['ist', 'bez.', 'bezug'] },
+  { key: 'paidOut',        pats: ['ausbez.', 'ausb.', 'ausbez'] },
+  { key: 'difference',     pats: ['diff.', 'diff'] },
+  { key: 'compensation',   pats: ['komp.', 'kompens'] },
+  { key: 'surcharge',      pats: ['zus.', 'zuschlag', 'zeitzu'] },
+  { key: 'days',           pats: ['tage', 'arbeitstage'] },
+  { key: 'closingBalance', pats: ['saldo', 'endsaldo'] },
+];
+
+function readMonthlyAccounts(ws: XLSX.WorkSheet, blockStart: number, blockEnd: number): MonthlyAccounts {
+  const result: MonthlyAccounts = {
+    hours: {}, vacation: {}, holiday: {}, overtime: {}, comp: {},
+    rawLines: [],
+  };
+  const ref = ws['!ref'];
+  if (!ref) return result;
+  const range = XLSX.utils.decode_range(ref);
+  // Accounts appear in the header zone — scan top 15 rows of block
+  const scanEnd = Math.min(blockStart + 14, blockEnd);
+
+  function toNorm(s: string): string {
+    return s.toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  function matchSection(norm: string): AcctKey | null {
+    for (const { type, pats } of ACCT_SECTION_PATS) {
+      if (pats.some(p => norm === p || norm.startsWith(p) || norm.includes(p))) return type;
+    }
+    return null;
+  }
+  function matchSub(norm: string): SubKey | null {
+    for (const { key, pats } of ACCT_SUB_PATS) {
+      if (pats.some(p => norm === p || norm.startsWith(p + ' ') || norm.startsWith(p))) return key;
+    }
+    return null;
+  }
+  function readRight(c: number, r: number): string | null {
+    for (let dc = 1; dc <= 4; dc++) {
+      const vc = getCell(ws, c + dc, r);
+      if (!vc) continue;
+      const ph = parseHoursValue(vc);
+      if (ph) return ph.display || String(ph.decimal);
+      const s = (vc.w ?? String(vc.v ?? '')).trim();
+      // Accept numeric-ish values (incl. negative) but not label text
+      if (s && s !== '0' && s !== '-' && s.length < 20 && /^-?[\d:.,]/.test(s)) return s;
+    }
+    return null;
+  }
+
+  let currentSection: AcctKey | null = null;
+
+  for (let r = blockStart; r <= scanEnd; r++) {
+    for (let c = range.s.c; c <= Math.min(range.e.c, 80); c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell) continue;
+      const raw  = (cell.w ?? String(cell.v ?? '')).trim();
+      if (!raw || raw.length < 2) continue;
+      const norm = toNorm(raw);
+
+      // 1. Section header detection — takes priority
+      const sec = matchSection(norm);
+      if (sec) {
+        currentSection = sec;
+        result.rawLines.push({ label: raw, value: '', cellAddr: XLSX.utils.encode_cell({ r, c }), accountType: sec });
+        continue;
+      }
+
+      // 2. Sub-label detection (needs active section context)
+      if (currentSection) {
+        const sub = matchSub(norm);
+        if (sub) {
+          const acct = result[currentSection] as Record<string, string | null>;
+          if (!acct[sub]) {
+            const val = readRight(c, r);
+            if (val) {
+              acct[sub] = val;
+              result.rawLines.push({ label: raw, value: val, cellAddr: XLSX.utils.encode_cell({ r, c }), accountType: currentSection });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Compound-label fallback: e.g. "Feriensaldo", "Ferien Vortr." without explicit section header
+  type CompoundRule = { acct: AcctKey; sub: SubKey; pats: string[] };
+  const COMPOUND: CompoundRule[] = [
+    { acct: 'vacation', sub: 'closingBalance', pats: ['feriensaldo', 'ferien saldo', 'ferien endsaldo'] },
+    { acct: 'vacation', sub: 'openingBalance', pats: ['ferien vortr', 'ferien vorsaldo', 'ferienvortrag'] },
+    { acct: 'hours',    sub: 'closingBalance', pats: ['stundensaldo', 'std saldo', 'zeit saldo'] },
+    { acct: 'hours',    sub: 'openingBalance', pats: ['stunden vortr', 'std vortr', 'stundenvortrag'] },
+    { acct: 'holiday',  sub: 'closingBalance', pats: ['feiertagssaldo', 'feiertage saldo'] },
+    { acct: 'holiday',  sub: 'openingBalance', pats: ['feiertage vortr', 'feiertag vortrag'] },
+    { acct: 'overtime', sub: 'closingBalance', pats: ['überzeitsaldo', 'ueberzeit saldo', 'überstd saldo'] },
+    { acct: 'overtime', sub: 'openingBalance', pats: ['überzeit vortr', 'ueberzeit vortr'] },
+  ];
+  for (let r = blockStart; r <= scanEnd; r++) {
+    for (let c = range.s.c; c <= Math.min(range.e.c, 80); c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell || cell.t !== 's') continue;
+      const raw  = String(cell.v ?? '').trim();
+      if (!raw) continue;
+      const norm = toNorm(raw);
+      for (const { acct, sub, pats } of COMPOUND) {
+        if (!pats.some(p => norm === p || norm.includes(p))) continue;
+        const a = result[acct] as Record<string, string | null>;
+        if (a[sub]) break;
+        const val = readRight(c, r);
+        if (val) {
+          a[sub] = val;
+          result.rawLines.push({ label: raw, value: val, cellAddr: XLSX.utils.encode_cell({ r, c }), accountType: acct });
+        }
+        break;
+      }
+    }
+  }
+
+  return result;
+}
+
+function mergeMonthlyAccounts(a: MonthlyAccounts, b: MonthlyAccounts): MonthlyAccounts {
+  function mergeEntry(
+    x: Partial<MonthlyAccountEntry>,
+    y: Partial<MonthlyAccountEntry>,
+  ): Partial<MonthlyAccountEntry> {
+    return {
+      openingBalance: x.openingBalance ?? y.openingBalance ?? null,
+      correction:     x.correction     ?? y.correction     ?? null,
+      planned:        x.planned        ?? y.planned        ?? null,
+      actual:         x.actual         ?? y.actual         ?? null,
+      paidOut:        x.paidOut        ?? y.paidOut        ?? null,
+      difference:     x.difference     ?? y.difference     ?? null,
+      compensation:   x.compensation   ?? y.compensation   ?? null,
+      surcharge:      x.surcharge      ?? y.surcharge      ?? null,
+      days:           x.days           ?? y.days           ?? null,
+      closingBalance: x.closingBalance ?? y.closingBalance ?? null,
+    };
+  }
+  return {
+    hours:    mergeEntry(a.hours,    b.hours),
+    vacation: mergeEntry(a.vacation, b.vacation),
+    holiday:  mergeEntry(a.holiday,  b.holiday),
+    overtime: mergeEntry(a.overtime, b.overtime),
+    comp:     mergeEntry(a.comp,     b.comp),
+    rawLines: [...a.rawLines, ...b.rawLines],
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ─── MITARBEITER-META ─────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -703,6 +901,9 @@ function parseBlock(
   const totals = readTotals(ws, blockStart, blockEnd);
   computeTotalsCheck(totals, days);
 
+  // Monatskonten (Vorsaldi, Endsaldi)
+  const monthlyAccounts = readMonthlyAccounts(ws, blockStart, blockEnd);
+
   // Fallback: Abteilung aus Bemerkungen in Tageszeilen ableiten (falls Meta-Zeile leer)
   if (!department && days.length > 0) {
     const deptHints = days
@@ -736,7 +937,7 @@ function parseBlock(
     sheetName,
     blockStartRow: startRow1,
     blockEndRow:   endRow1,
-    days, totals,
+    days, totals, monthlyAccounts,
     rawBlock: {
       markerCell:       XLSX.utils.encode_cell({ r: blockStart, c: LAYOUT.markerCol }),
       nameCell:         XLSX.utils.encode_cell({ r: blockStart, c: LAYOUT.nameCol }),
@@ -780,6 +981,11 @@ function employeeQuality(emp: ExcelEmployee): number {
   // Totale erkannt (+8) + validiert (+10)
   if (totals.totalHours)      s += 8;
   if (totals.totalsValidated) s += 10;
+
+  // Monatskonten erkannt: Vorsaldo+Endsaldo Stunden (+4), Ferien (+2)
+  const ma = emp.monthlyAccounts;
+  if (ma?.hours?.openingBalance && ma?.hours?.closingBalance) s += 4;
+  if (ma?.vacation?.closingBalance)                           s += 2;
 
   return Math.min(100, s);
 }
@@ -866,6 +1072,7 @@ function mergeTwoBlocks(main: ExcelEmployee, extra: ExcelEmployee): ExcelEmploye
     blockEndRow:      extra.blockEndRow ?? main.blockEndRow,
     days:             [...main.days, ...extra.days],
     totals:           mergeTotals(main.totals, extra.totals),
+    monthlyAccounts:  mergeMonthlyAccounts(main.monthlyAccounts, extra.monthlyAccounts),
     rawBlock:         main.rawBlock,
     mergedFromCount:  main.mergedFromCount + 1,
     mergedBlockRows:  [...existingRows, extraRow],

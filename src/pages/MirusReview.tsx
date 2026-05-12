@@ -8,7 +8,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
-import type { PreviewImportSession, PreviewEmployee, PreviewDayEntry, PreviewShift } from '@/types/mirus-import-preview';
+import type { PreviewImportSession, PreviewEmployee, PreviewDayEntry, PreviewShift, PreviewMonthlyAccounts } from '@/types/mirus-import-preview';
 import type {
   ReviewState, ReviewEmployeeState, ReviewAction,
   ReviewStatus, DistributionStatus, AuditEntry, DayOverride,
@@ -252,6 +252,106 @@ function DayCorrectionModal({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// ─── ACCOUNTS PANEL (Review) ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function ReviewAccountsPanel({ accounts }: { accounts: PreviewMonthlyAccounts | undefined }) {
+  if (!accounts) return <p className="text-[11px] text-muted-foreground italic">Keine Kontodaten verfügbar.</p>;
+
+  type AcctKey = 'hours' | 'vacation' | 'holiday' | 'overtime' | 'comp';
+  const SECTIONS: { key: AcctKey; label: string }[] = [
+    { key: 'hours',    label: 'Stundenkonto' },
+    { key: 'vacation', label: 'Ferienkonto' },
+    { key: 'holiday',  label: 'Feiertagskonto' },
+    { key: 'overtime', label: 'Überzeitkonto' },
+    { key: 'comp',     label: 'Kompensation' },
+  ];
+  const SUB_LABELS: [string, string][] = [
+    ['openingBalance', 'Vortr.'],
+    ['correction',     'Korr.'],
+    ['planned',        'Soll'],
+    ['actual',         'Ist'],
+    ['paidOut',        'Ausbez.'],
+    ['difference',     'Diff.'],
+    ['compensation',   'Komp.'],
+    ['surcharge',      'Zus.'],
+    ['days',           'Tage'],
+    ['closingBalance', 'Saldo'],
+  ];
+
+  const hasSomeData = SECTIONS.some(({ key }) =>
+    Object.values(accounts[key] ?? {}).some(Boolean)
+  );
+
+  return (
+    <div className="space-y-3">
+      {!hasSomeData && (
+        <p className="text-[11px] text-muted-foreground italic">
+          Keine Monatskonten erkannt — Layout möglicherweise nicht unterstützt.
+        </p>
+      )}
+      {hasSomeData && SECTIONS.map(({ key, label }) => {
+        const acct = accounts[key] as Record<string, string | null | undefined>;
+        const fields = SUB_LABELS.filter(([fk]) => !!acct[fk]);
+        if (!fields.length) return null;
+        return (
+          <div key={key} className="rounded border border-border/60 overflow-hidden">
+            <div className="px-3 py-1.5 bg-muted/30 border-b border-border/40">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+            </div>
+            <div className="flex flex-wrap gap-2 px-3 py-2">
+              {fields.map(([fk, fLabel]) => {
+                const val = acct[fk];
+                if (!val) return null;
+                const isKey = fk === 'openingBalance' || fk === 'closingBalance';
+                return (
+                  <span key={fk} className={cn(
+                    'inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border font-mono font-semibold',
+                    isKey ? 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-700 dark:text-blue-300'
+                          : 'bg-muted/60 border-border text-foreground',
+                  )}>
+                    <span className="text-muted-foreground font-normal text-[9px] uppercase tracking-wide mr-0.5">{fLabel}</span>
+                    {val}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+      {accounts.rawLines.length > 0 && (
+        <details className="text-[10px]">
+          <summary className="text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
+            Rohzellen ({accounts.rawLines.length})
+          </summary>
+          <div className="mt-1 overflow-x-auto rounded border border-border/40">
+            <table className="text-[10px] border-collapse w-full">
+              <thead>
+                <tr className="bg-muted/40">
+                  {['Konto', 'Label', 'Wert', 'Zelle'].map(h => (
+                    <th key={h} className="px-2 py-1 text-left font-semibold text-muted-foreground">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {accounts.rawLines.map((l, i) => (
+                  <tr key={i} className="border-b border-border/30 hover:bg-muted/20">
+                    <td className="px-2 py-0.5 font-mono text-muted-foreground">{l.accountType}</td>
+                    <td className="px-2 py-0.5">{l.label}</td>
+                    <td className="px-2 py-0.5 font-mono font-semibold">{l.value || '—'}</td>
+                    <td className="px-2 py-0.5 font-mono text-muted-foreground">{l.cellAddr}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ─── EMPLOYEE REVIEW CARD ─────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -271,7 +371,7 @@ function EmployeeReviewCard({
   onSetDistribution:  (status: DistributionStatus) => void;
 }) {
   const [open,       setOpen]       = useState(false);
-  const [tab,        setTab]        = useState<'days' | 'audit' | 'distribute'>('days');
+  const [tab,        setTab]        = useState<'days' | 'accounts' | 'audit' | 'distribute'>('days');
   const [matchInput, setMatchInput] = useState(empState.matchedName ?? '');
   const [remember,   setRemember]   = useState(empState.rememberMatch);
 
@@ -451,15 +551,16 @@ function EmployeeReviewCard({
 
           {/* Tabs */}
           <div className="flex gap-1 border-b border-border pb-2">
-            {(['days', 'audit', 'distribute'] as const).map(t => (
+            {(['days', 'accounts', 'audit', 'distribute'] as const).map(t => (
               <button key={t} onClick={() => setTab(t)}
                 className={cn('text-[11px] px-3 py-1 rounded border font-medium transition-colors',
                   tab === t ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:text-foreground',
                 )}
               >
-                {t === 'days'       ? `Tage (${emp.days.length})`          : null}
+                {t === 'days'       ? `Tage (${emp.days.length})`                        : null}
+                {t === 'accounts'   ? 'Konten & Saldi'                                   : null}
                 {t === 'audit'      ? `Änderungsprotokoll (${empState.auditLog.length})` : null}
-                {t === 'distribute' ? 'Verteilung'                          : null}
+                {t === 'distribute' ? 'Verteilung'                                        : null}
               </button>
             ))}
           </div>
@@ -528,6 +629,11 @@ function EmployeeReviewCard({
                 <p className="text-center py-6 text-[11px] text-muted-foreground italic">Keine Tageszeilen erkannt.</p>
               )}
             </div>
+          )}
+
+          {/* Konten-Tab */}
+          {tab === 'accounts' && (
+            <ReviewAccountsPanel accounts={emp.monthlyAccounts} />
           )}
 
           {/* Audit-Tab */}

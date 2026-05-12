@@ -1,0 +1,226 @@
+Nächster Fokus im Modul "Arbeitszeiten & Monatsblätter":
+
+Bitte jetzt die Monatskonten / Vorsaldi aus den Mirus Excel Monatsblättern sauber einlesen und über mehrere Monate validieren.
+
+Wichtig:
+Noch kein Supabase-Write.
+Keine Migration.
+Kein Mitarbeiterportal.
+Kein WhatsApp-Versand.
+
+====================================================
+ZIEL
+====================================================
+
+Der Parser soll nicht nur Tageszeiten und Monatstotale lesen, sondern auch die Kontenlogik:
+
+- Vorsaldo vom Vormonat
+- Monatsbewegung
+- Endsaldo
+- Ferien
+- Feiertage
+- Überzeit
+- Kompensation
+- Krankheit
+- Saldo Stunden
+
+Danach soll die Multi-Month Preview prüfen:
+
+Januar → Februar → März → April
+
+ob die Endsaldi des Vormonats mit den Vorsaldi des Folgemonats übereinstimmen.
+
+====================================================
+1. PARSER ERWEITERN
+====================================================
+
+Bitte in mirus-excel-parser.ts die Totale-/Konten-Erkennung erweitern.
+
+Gesucht werden pro Mitarbeiter:
+
+A) Stundenkonto
+- Vorsaldo Stunden
+- Monat Stunden
+- Endsaldo Stunden
+- Soll
+- Ist
+- Total
+- Überzeit
+- Kompensation
+
+B) Ferienkonto
+- Ferien Vorsaldo
+- Ferien Bezug
+- Ferien Gutschrift
+- Ferien Endsaldo
+
+C) Feiertagskonto
+- Feiertag Vorsaldo
+- Feiertag Bezug
+- Feiertag Gutschrift
+- Feiertag Endsaldo
+
+D) Krankheit/Absenzen
+- Krankheitstage
+- Unfall
+- Frei
+- Kompensation
+- Feiertage
+- Ferien
+
+Bitte nicht nur Labels wie "Saldo" lesen, sondern auch Zeilen wie:
+- Vortr.
+- Korr.
+- Soll
+- Ist
+- Ausb.
+- Diff.
+- Komp.
+- Zus.
+- Tage
+- Saldo
+
+Diese stehen im Mirus-Blatt offenbar oberhalb der Tagesdaten.
+
+====================================================
+2. NEUE DATENSTRUKTUR
+====================================================
+
+Bitte ergänzen:
+
+monthlyAccounts: {
+  hours: {
+    openingBalance,
+    correction,
+    planned,
+    actual,
+    paidOut,
+    difference,
+    compensation,
+    surcharge,
+    days,
+    closingBalance
+  },
+  vacation: {
+    openingBalance,
+    accrued,
+    used,
+    correction,
+    closingBalance
+  },
+  holiday: {
+    openingBalance,
+    accrued,
+    used,
+    correction,
+    closingBalance
+  },
+  overtime: {
+    openingBalance,
+    accrued,
+    used,
+    correction,
+    closingBalance
+  },
+  rawCells
+}
+
+====================================================
+3. MULTI-MONTH VALIDATION
+====================================================
+
+In /mirus-import-preview:
+
+Wenn mehrere Monate geladen sind, bitte eine neue Sektion anzeigen:
+
+"Monatsketten-Prüfung"
+
+Pro Mitarbeiter:
+- Januar Endsaldo
+- Februar Vorsaldo
+- Differenz
+- Status OK / Prüfen
+
+Dasselbe für:
+- Stunden
+- Ferien
+- Feiertage
+- Überzeit
+
+Wenn Abweichung > 0.1:
+Warnung anzeigen:
+"Vorsaldo Februar stimmt nicht mit Endsaldo Januar überein"
+
+====================================================
+4. REVIEW UI ERWEITERN
+====================================================
+
+In /mirus-review:
+
+Pro Mitarbeiter neue Sektion:
+
+"Konten & Saldi"
+
+Anzeigen:
+- Vorsaldo
+- Monatsbewegung
+- Endsaldo
+- Ferienkonto
+- Feiertagskonto
+- Überzeitkonto
+
+Zusätzlich:
+- Status OK / Prüfen
+- Differenz zum Vormonat falls vorhanden
+
+====================================================
+5. QUALITÄT UND WARNUNGEN
+====================================================
+
+Qualität erhöhen, wenn Monatskonten erkannt und plausibel sind.
+
+Warnungen:
+- Vorsaldo fehlt
+- Endsaldo fehlt
+- Ferienkonto fehlt
+- Feiertagskonto fehlt
+- Vormonat passt nicht
+- ungewöhnlicher Sprung
+
+Diese Warnungen sollen nicht sofort blockieren, aber Status "Prüfen" auslösen.
+
+====================================================
+6. DEBUG
+====================================================
+
+Bitte in /mirus-excel-test und /mirus-import-preview die Rohzellen der Konten anzeigen:
+
+- Label
+- Wert
+- Zelladresse
+- erkannter Kontotyp
+
+Damit wir sehen, ob Vorträge und Saldi korrekt gelesen werden.
+
+====================================================
+7. TEST
+====================================================
+
+Nach Umsetzung:
+- TypeScript prüfen
+- Januar, Februar, März, April hochladen
+- prüfen:
+  - Monatskonten erkannt?
+  - Vorsaldo / Endsaldo sichtbar?
+  - Monatsketten-Prüfung sichtbar?
+  - Warnungen korrekt?
+
+====================================================
+8. WICHTIG
+====================================================
+
+Bestehenden Parser nicht komplett neu schreiben.
+Nur die Totale-/Konten-Erkennung erweitern.
+
+Keine produktive Speicherung.
+Noch kein echter Import.

@@ -16,7 +16,8 @@ export type PreviewWarningCategory =
   | 'hours'
   | 'quality'
   | 'merge'
-  | 'meta';
+  | 'meta'
+  | 'accounts';
 
 export interface PreviewImportWarning {
   severity:  PreviewWarningSeverity;
@@ -70,6 +71,37 @@ export interface PreviewTotals {
   totalsDiff?:          number;
 }
 
+// ─── Monatskonten ─────────────────────────────────────────────────────────────
+
+export interface PreviewMonthlyAccountEntry {
+  openingBalance: string | null;
+  correction:     string | null;
+  planned:        string | null;
+  actual:         string | null;
+  paidOut:        string | null;
+  difference:     string | null;
+  compensation:   string | null;
+  surcharge:      string | null;
+  days:           string | null;
+  closingBalance: string | null;
+}
+
+export interface PreviewAccountRawLine {
+  label:       string;
+  value:       string;
+  cellAddr:    string;
+  accountType: string;
+}
+
+export interface PreviewMonthlyAccounts {
+  hours:    Partial<PreviewMonthlyAccountEntry>;
+  vacation: Partial<PreviewMonthlyAccountEntry>;
+  holiday:  Partial<PreviewMonthlyAccountEntry>;
+  overtime: Partial<PreviewMonthlyAccountEntry>;
+  comp:     Partial<PreviewMonthlyAccountEntry>;
+  rawLines: PreviewAccountRawLine[];
+}
+
 // ─── Mitarbeiter ─────────────────────────────────────────────────────────────
 
 export type PreviewImportStatus = 'ready' | 'check' | 'excluded';
@@ -87,6 +119,7 @@ export interface PreviewEmployee {
   warnings:         PreviewImportWarning[];
   days:             PreviewDayEntry[];
   totals:           PreviewTotals;
+  monthlyAccounts?: PreviewMonthlyAccounts;
   rawSource: {
     sheetName:       string;
     blockStartRow:   number;
@@ -141,6 +174,7 @@ export interface ImportPayloadEmployee {
   dayCount:         number;
   days:             ImportPayloadDay[];
   totals:           PreviewTotals;
+  monthlyAccounts?: PreviewMonthlyAccounts;
 }
 
 export interface ImportPayload {

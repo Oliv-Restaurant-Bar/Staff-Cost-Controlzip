@@ -1,0 +1,216 @@
+Der Mirus Import funktioniert technisch schon gut, aber die Oberfläche ist noch zu technisch, nicht elegant genug und für den Alltag nicht benutzerfreundlich genug.
+
+Bitte jetzt keine neue Parser-Architektur bauen.
+
+Ziel:
+Die Seiten /mirus-import-preview und /mirus-review sollen wie ein professioneller Monatsabschluss-Assistent wirken, nicht wie ein Debug-Tool.
+
+====================================================
+1. NEUER WIZARD-AUFBAU
+====================================================
+
+Bitte den Prozess als klaren 4-Schritte-Wizard darstellen:
+
+1. Datei hochladen
+2. Import prüfen
+3. Mitarbeiter kontrollieren
+4. Freigabe vorbereiten
+
+Oben eine Fortschrittsleiste:
+Upload → Prüfung → Review → Bereit zur Freigabe
+
+====================================================
+2. IMPORT PREVIEW VEREINFACHEN
+====================================================
+
+Auf /mirus-import-preview bitte die Ansicht vereinfachen.
+
+Oben nur die wichtigsten KPIs:
+
+- Monat
+- Restaurant
+- Mitarbeiter
+- Importfähig
+- Prüfen
+- Qualität
+- Gesamtstunden
+
+Debug-Infos wie:
+- Restblöcke
+- Merge-Hinweise
+- Rohdaten
+- Struktur JSON
+
+nur noch in einem einklappbaren Bereich:
+"Technische Details"
+
+====================================================
+3. MITARBEITERLISTE BENUTZERFREUNDLICHER
+====================================================
+
+Pro Mitarbeiter kompakte Karte:
+
+Links:
+- Name
+- Abteilung
+- Kostenstelle
+- Status-Badge
+
+Mitte:
+- Stunden total
+- Tage erkannt
+- Ferien/Krank/Frei kurz zusammengefasst
+
+Rechts:
+- Qualität
+- Hinweis falls Prüfung nötig
+- Button "Details prüfen"
+
+Nicht alle technischen Werte direkt anzeigen.
+
+====================================================
+4. DETAILSICHT PRO MITARBEITER
+====================================================
+
+Beim Klick auf "Details prüfen":
+
+Drawer oder Modal öffnen mit Tabs:
+
+- Übersicht
+- Tagesdaten
+- Saldi & Konten
+- Hinweise
+- Technische Details
+
+Tagesdaten sollen lesbar sein:
+- Datum
+- Arbeitszeiten
+- Pause
+- Total
+- Absenz
+- Bemerkung
+
+Mehrere Zeitblöcke untereinander sauber darstellen.
+
+====================================================
+5. REVIEW-SEITE NEU STRUKTURIEREN
+====================================================
+
+/mirus-review soll wie eine Arbeitsliste aussehen:
+
+Bereiche:
+
+A) Übersicht
+- Fortschritt: z.B. 17 von 21 geprüft
+- Offene Prüfungen
+- Kritische Hinweise
+- Bereit zur Freigabe ja/nein
+
+B) Prüfliste
+- Nur Mitarbeiter mit Problemen zuerst anzeigen
+- Filter:
+  - Alle
+  - Muss geprüft werden
+  - Akzeptiert
+  - Ausgeschlossen
+  - Korrigiert
+
+C) Mitarbeiterdetail rechts oder als Drawer
+
+====================================================
+6. BESSERE SPRACHE
+====================================================
+
+Bitte technische Begriffe ersetzen:
+
+"Block-Raster" → "Technische Details"
+"Restblöcke" → nur technische Details
+"Zeitbl." → "Schichten"
+"Mit Totalen" → "Monatstotale"
+"Qualität" → "Erkennungsqualität"
+"Prüfen" → "Prüfung nötig"
+
+Hinweise sollen verständlich sein:
+- "Kostenstelle fehlt"
+statt:
+- "NAME issue"
+
+====================================================
+7. FARBLOGIK
+====================================================
+
+Einheitlich:
+
+Grün:
+- Importfähig
+- akzeptiert
+- validiert
+
+Gelb:
+- Prüfung nötig
+- Hinweis
+- unvollständig
+
+Rot:
+- blockiert
+- kritischer Fehler
+
+Blau:
+- technische Info
+- gemergte Daten
+- Debug
+
+====================================================
+8. KEINE DEBUG-LAST IM HAUPTSCREEN
+====================================================
+
+Im Alltag sollen Admins nicht mit technischen Informationen überfordert werden.
+
+Debug nur:
+- einklappbar
+- klein
+- nicht prominent
+
+====================================================
+9. MONATSKETTEN UND VORSALDI
+====================================================
+
+Bitte schon Platzhalter vorbereiten für:
+
+"Saldi & Konten"
+
+Dort später:
+- Vorsaldo
+- Ferien
+- Feiertage
+- Überzeit
+- Endsaldo
+- Vergleich zum Vormonat
+
+Noch nicht alles final berechnen, aber UI vorbereiten.
+
+====================================================
+10. MOBILE / TABLET
+====================================================
+
+Die Ansicht soll auch auf Laptop/Tablet gut funktionieren:
+- keine zu breiten Tabellen
+- Details in Drawer
+- Tabellen horizontal scrollfähig
+- Buttons klar erkennbar
+
+====================================================
+11. WICHTIG
+====================================================
+
+Keine Supabase Writes.
+Keine Migration.
+Keine neue Parser-Architektur.
+
+Nur:
+- UI/UX verbessern
+- Prozess klarer machen
+- technische Details aus Hauptansicht entfernen
+- Review als echten Arbeitsprozess gestalten
+
+Danach TypeScript prüfen und kurze Zusammenfassung geben.

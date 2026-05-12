@@ -14,6 +14,7 @@ import type {
   ExcelParsedDocument,
   EmployeeTotals,
   DayRecord,
+  MonthlyAccounts,
 } from '@/lib/mirus-excel-parser';
 import type {
   PreviewImportSession,
@@ -21,6 +22,7 @@ import type {
   PreviewDayEntry,
   PreviewImportWarning,
   PreviewTotals,
+  PreviewMonthlyAccounts,
   ImportPayload,
   ImportPayloadEmployee,
   ImportPayloadDay,
@@ -57,6 +59,11 @@ function qualityScore(emp: ExcelEmployee): number {
   if (totals.totalHours)      s += 8;
   if (totals.totalsValidated) s += 10;
 
+  // Monatskonten erkannt: Vorsaldo+Endsaldo Stunden (+4), Ferien (+2)
+  const ma = emp.monthlyAccounts;
+  if (ma?.hours?.openingBalance && ma?.hours?.closingBalance) s += 4;
+  if (ma?.vacation?.closingBalance)                           s += 2;
+
   return Math.min(100, s);
 }
 
@@ -91,6 +98,19 @@ function mapTotals(t: EmployeeTotals | undefined): PreviewTotals {
     calculatedTotalHours: t.calculatedTotalHours,
     totalsValidated:      t.totalsValidated,
     totalsDiff:           t.totalsDiff,
+  };
+}
+
+function mapMonthlyAccounts(ma: MonthlyAccounts | undefined): PreviewMonthlyAccounts {
+  const empty = { hours: {}, vacation: {}, holiday: {}, overtime: {}, comp: {}, rawLines: [] };
+  if (!ma) return empty;
+  return {
+    hours:    { ...ma.hours },
+    vacation: { ...ma.vacation },
+    holiday:  { ...ma.holiday },
+    overtime: { ...ma.overtime },
+    comp:     { ...ma.comp },
+    rawLines: ma.rawLines ?? [],
   };
 }
 
@@ -167,6 +187,21 @@ function buildWarnings(emp: ExcelEmployee, idx: number): PreviewImportWarning[] 
       employeeName: label,
     });
 
+  // Monatskonten: Info wenn keine Saldodaten erkannt
+  const ma = emp.monthlyAccounts;
+  const hasAnyAcct = ma && (
+    Object.values(ma.hours).some(Boolean)    ||
+    Object.values(ma.vacation).some(Boolean) ||
+    Object.values(ma.holiday).some(Boolean)  ||
+    Object.values(ma.overtime).some(Boolean)
+  );
+  if (!hasAnyAcct)
+    warns.push({
+      severity: 'info', category: 'accounts',
+      message: 'Keine Monatskonten (Vorsaldi/Endsaldi) erkannt — Ketten-Prüfung für diesen Mitarbeiter nicht möglich.',
+      employeeName: label,
+    });
+
   return warns;
 }
 
@@ -202,6 +237,7 @@ function buildPreviewSession(parsed: ExcelParsedDocument, file: File): PreviewIm
       warnings,
       days:             safeDays.map(mapDay),
       totals:           mapTotals(safeTotals),
+      monthlyAccounts:  mapMonthlyAccounts(emp.monthlyAccounts),
       rawSource: {
         sheetName:       emp.sheetName       ?? '',
         blockStartRow:   emp.blockStartRow   ?? 0,
@@ -276,6 +312,7 @@ function prepareImportPayload(session: PreviewImportSession): ImportPayload {
       dayCount:         days.length,
       days,
       totals:           emp.totals,
+      monthlyAccounts:  emp.monthlyAccounts,
     };
   });
 
@@ -414,6 +451,104 @@ function MonatsTotaleRow({ totals }: { totals: PreviewTotals }) {
   );
 }
 
+// ─── ACCOUNTS PANEL ──────────────────────────────────────────────────────────
+
+function AccountsPanel({ accounts }: { accounts: PreviewMonthlyAccounts | undefined }) {
+  if (!accounts) return <p className="text-[11px] text-muted-foreground italic">Keine Kontodaten verfügbar.</p>;
+
+  type AcctKey = 'hours' | 'vacation' | 'holiday' | 'overtime' | 'comp';
+  const SECTIONS: { key: AcctKey; label: string }[] = [
+    { key: 'hours',    label: 'Stundenkonto' },
+    { key: 'vacation', label: 'Ferienkonto' },
+    { key: 'holiday',  label: 'Feiertagskonto' },
+    { key: 'overtime', label: 'Überzeitkonto' },
+    { key: 'comp',     label: 'Kompensation' },
+  ];
+  const SUB_LABELS: [string, string][] = [
+    ['openingBalance', 'Vortr.'],
+    ['correction',     'Korr.'],
+    ['planned',        'Soll'],
+    ['actual',         'Ist'],
+    ['paidOut',        'Ausbez.'],
+    ['difference',     'Diff.'],
+    ['compensation',   'Komp.'],
+    ['surcharge',      'Zus.'],
+    ['days',           'Tage'],
+    ['closingBalance', 'Saldo'],
+  ];
+
+  const hasSomeData = SECTIONS.some(({ key }) =>
+    Object.values(accounts[key] ?? {}).some(Boolean)
+  );
+
+  return (
+    <div className="space-y-3">
+      {!hasSomeData && (
+        <p className="text-[11px] text-muted-foreground italic">
+          Keine Monatskonten erkannt — Layout in dieser Datei möglicherweise nicht unterstützt.
+        </p>
+      )}
+      {hasSomeData && SECTIONS.map(({ key, label }) => {
+        const acct = accounts[key] as Record<string, string | null | undefined>;
+        const fields = SUB_LABELS.filter(([fk]) => !!acct[fk]);
+        if (!fields.length) return null;
+        return (
+          <div key={key} className="rounded border border-border/60 overflow-hidden">
+            <div className="px-3 py-1.5 bg-muted/30 border-b border-border/40">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+            </div>
+            <div className="flex flex-wrap gap-2 px-3 py-2">
+              {fields.map(([fk, fLabel]) => {
+                const val = acct[fk];
+                if (!val) return null;
+                const isKey = fk === 'openingBalance' || fk === 'closingBalance';
+                return (
+                  <span key={fk} className={cn(
+                    'inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border font-mono font-semibold',
+                    isKey ? 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-700 dark:text-blue-300'
+                          : 'bg-muted/60 border-border text-foreground',
+                  )}>
+                    <span className="text-muted-foreground font-normal text-[9px] uppercase tracking-wide mr-0.5">{fLabel}</span>
+                    {val}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+      {accounts.rawLines.length > 0 && (
+        <details className="text-[10px]">
+          <summary className="text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
+            Rohzellen ({accounts.rawLines.length})
+          </summary>
+          <div className="mt-1 overflow-x-auto rounded border border-border/40">
+            <table className="text-[10px] border-collapse w-full">
+              <thead>
+                <tr className="bg-muted/40">
+                  {['Konto', 'Label', 'Wert', 'Zelle'].map(h => (
+                    <th key={h} className="px-2 py-1 text-left font-semibold text-muted-foreground">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {accounts.rawLines.map((l, i) => (
+                  <tr key={i} className="border-b border-border/30 hover:bg-muted/20">
+                    <td className="px-2 py-0.5 font-mono text-muted-foreground">{l.accountType}</td>
+                    <td className="px-2 py-0.5">{l.label}</td>
+                    <td className="px-2 py-0.5 font-mono font-semibold">{l.value || '—'}</td>
+                    <td className="px-2 py-0.5 font-mono text-muted-foreground">{l.cellAddr}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function DayTable({ days }: { days: PreviewDayEntry[] }) {
   if (!days.length) return <p className="text-[11px] text-muted-foreground italic">Keine Tageszeilen.</p>;
   return (
@@ -480,7 +615,7 @@ function EmployeeCard({
   onToggleSelect: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [tab,  setTab]  = useState<'days' | 'totals' | 'warnings'>('days');
+  const [tab,  setTab]  = useState<'days' | 'totals' | 'accounts' | 'warnings'>('days');
 
   const activeShifts = emp.days.reduce((s, d) => s + d.shifts.length, 0);
   const totalH       = emp.totals.calculatedTotalHours ?? 0;
@@ -564,7 +699,7 @@ function EmployeeCard({
         <div className="border-t border-border px-4 pb-4 pt-3 space-y-3">
           {/* Tab nav */}
           <div className="flex gap-1">
-            {(['days', 'totals', 'warnings'] as const).map(t => (
+            {(['days', 'totals', 'accounts', 'warnings'] as const).map(t => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -577,6 +712,7 @@ function EmployeeCard({
               >
                 {t === 'days'     ? `Tage (${emp.days.length})`         : null}
                 {t === 'totals'   ? 'Monatstotale'                      : null}
+                {t === 'accounts' ? 'Konten & Saldi'                    : null}
                 {t === 'warnings' ? `Hinweise (${emp.warnings.length})` : null}
               </button>
             ))}
@@ -584,6 +720,7 @@ function EmployeeCard({
 
           {tab === 'days'     && <DayTable days={emp.days} />}
           {tab === 'totals'   && <MonatsTotaleRow totals={emp.totals} />}
+          {tab === 'accounts' && <AccountsPanel accounts={emp.monthlyAccounts} />}
           {tab === 'warnings' && (
             emp.warnings.length
               ? <WarnList warnings={emp.warnings} />
@@ -600,6 +737,165 @@ function EmployeeCard({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── MONATSKETTEN-PRÜFUNG ─────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function MonthChainingValidation({ sessions }: { sessions: LoadedSession[] }) {
+  if (sessions.length < 2) return null;
+
+  // Sort sessions by year + month
+  const sorted = [...sessions].sort((a, b) => {
+    const ya = (a.session.year ?? 0) * 100 + (a.session.month ?? 0);
+    const yb = (b.session.year ?? 0) * 100 + (b.session.month ?? 0);
+    return ya - yb;
+  });
+
+  function parseBalance(s: string | null | undefined): number | null {
+    if (!s) return null;
+    const neg = s.startsWith('-');
+    const abs = neg ? s.slice(1) : s;
+    const m = abs.match(/^(\d+):(\d+)$/);
+    if (m) {
+      const v = parseInt(m[1]) + parseInt(m[2]) / 60;
+      return Math.round((neg ? -v : v) * 100) / 100;
+    }
+    const n = parseFloat(abs.replace(',', '.'));
+    return isNaN(n) ? null : Math.round((neg ? -n : n) * 100) / 100;
+  }
+
+  function balanceDiff(closing?: string | null, opening?: string | null): number | null {
+    const c = parseBalance(closing);
+    const o = parseBalance(opening);
+    if (c === null || o === null) return null;
+    return Math.round(Math.abs(c - o) * 100) / 100;
+  }
+
+  type ChainAcctKey = 'hours' | 'vacation' | 'holiday' | 'overtime';
+  const CHAIN_ACCTS: { key: ChainAcctKey; label: string }[] = [
+    { key: 'hours',    label: 'Stunden' },
+    { key: 'vacation', label: 'Ferien' },
+    { key: 'holiday',  label: 'Feiertage' },
+    { key: 'overtime', label: 'Überzeit' },
+  ];
+
+  // Collect all unique employee names across sessions
+  const allNames = Array.from(new Set(
+    sorted.flatMap(s => s.localEmployees.map(e => e.name).filter(Boolean) as string[])
+  )).sort();
+
+  type ChainCheck = {
+    monthPair: string;
+    acct: ChainAcctKey;
+    acctLabel: string;
+    closing: string | null;
+    opening: string | null;
+    diffVal: number | null;
+    ok: boolean;
+  };
+  type EmpChain = { name: string; checks: ChainCheck[] };
+
+  const chains: EmpChain[] = [];
+  for (const name of allNames) {
+    const checks: ChainCheck[] = [];
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const mA = sorted[i];
+      const mB = sorted[i + 1];
+      const labelPair = `${mA.session.monthName ?? '?'} → ${mB.session.monthName ?? '?'}`;
+      const empA = mA.localEmployees.find(e => e.name === name);
+      const empB = mB.localEmployees.find(e => e.name === name);
+      if (!empA?.monthlyAccounts && !empB?.monthlyAccounts) continue;
+      for (const { key, label: aLabel } of CHAIN_ACCTS) {
+        const closing = empA?.monthlyAccounts?.[key]?.closingBalance;
+        const opening = empB?.monthlyAccounts?.[key]?.openingBalance;
+        if (!closing && !opening) continue;
+        const d = balanceDiff(closing, opening);
+        checks.push({
+          monthPair: labelPair,
+          acct:      key,
+          acctLabel: aLabel,
+          closing:   closing ?? null,
+          opening:   opening ?? null,
+          diffVal:   d,
+          ok:        d !== null && d < 0.1,
+        });
+      }
+    }
+    if (checks.length > 0) chains.push({ name, checks });
+  }
+
+  if (!chains.length) return null;
+
+  const totalChecks = chains.reduce((s, c) => s + c.checks.length, 0);
+  const okChecks    = chains.reduce((s, c) => s + c.checks.filter(ch => ch.ok).length, 0);
+  const badChecks   = totalChecks - okChecks;
+
+  return (
+    <div className="rounded-lg border bg-card overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-border bg-muted/20 flex items-center justify-between gap-4 flex-wrap">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Monatsketten-Prüfung
+        </span>
+        <div className="flex items-center gap-3 text-[11px]">
+          <span className="text-green-600 font-semibold">✓ {okChecks} OK</span>
+          {badChecks > 0 && (
+            <span className="text-yellow-600 font-semibold">⚠ {badChecks} Prüfen</span>
+          )}
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="border-b border-border bg-muted/10">
+              {['Mitarbeiter', 'Zeitraum', 'Konto', 'Endsaldo', 'Vorsaldo', 'Diff.', 'Status'].map(h => (
+                <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {chains.flatMap(({ name, checks }) =>
+              checks.map((ch, i) => (
+                <tr
+                  key={`${name}-${ch.monthPair}-${ch.acct}`}
+                  className={cn('border-b border-border/50 transition-colors',
+                    ch.ok       ? 'hover:bg-muted/10'
+                    : ch.diffVal !== null ? 'bg-yellow-50/40 hover:bg-yellow-50/60 dark:bg-yellow-900/10'
+                    : 'hover:bg-muted/10',
+                  )}
+                >
+                  <td className="px-3 py-1.5 font-semibold whitespace-nowrap">
+                    {i === 0 ? name : ''}
+                  </td>
+                  <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">{ch.monthPair}</td>
+                  <td className="px-3 py-1.5 text-muted-foreground">{ch.acctLabel}</td>
+                  <td className="px-3 py-1.5 font-mono">{ch.closing ?? <span className="text-muted-foreground/40">—</span>}</td>
+                  <td className="px-3 py-1.5 font-mono">{ch.opening ?? <span className="text-muted-foreground/40">—</span>}</td>
+                  <td className="px-3 py-1.5 font-mono">
+                    {ch.diffVal !== null
+                      ? <span className={ch.ok ? 'text-green-600' : 'text-yellow-600 font-semibold'}>
+                          {ch.ok ? '0' : `±${ch.diffVal}`}
+                        </span>
+                      : <span className="text-muted-foreground/40">—</span>
+                    }
+                  </td>
+                  <td className="px-3 py-1.5">
+                    {ch.ok
+                      ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-green-200 bg-green-50 text-green-700 font-semibold dark:bg-green-900/20 dark:border-green-700 dark:text-green-400">OK</span>
+                      : ch.diffVal !== null
+                      ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-yellow-200 bg-yellow-50 text-yellow-700 font-semibold">⚠ Prüfen</span>
+                      : <span className="text-[10px] px-1.5 py-0.5 rounded border border-border text-muted-foreground font-semibold">—</span>
+                    }
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1038,6 +1334,11 @@ export default function MirusImportPreview() {
               }
             }}
           />
+        )}
+
+        {/* Monatsketten-Prüfung: erst ab 2 geladenen Dateien */}
+        {loadedSessions.length >= 2 && (
+          <MonthChainingValidation sessions={loadedSessions} />
         )}
 
         {/* Upload — immer sichtbar (kompakt wenn Sessions geladen) */}
