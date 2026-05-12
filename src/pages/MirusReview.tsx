@@ -120,6 +120,40 @@ function formatHours(value: number | null | undefined): string {
   return Number(value).toFixed(2) + ' h';
 }
 
+function WizardBar({ step }: { step: 1 | 2 | 3 | 4 }) {
+  const STEPS: { n: 1 | 2 | 3 | 4; label: string }[] = [
+    { n: 1, label: 'Datei hochladen' },
+    { n: 2, label: 'Import prüfen' },
+    { n: 3, label: 'Mitarbeiter kontrollieren' },
+    { n: 4, label: 'Freigabe vorbereiten' },
+  ];
+  return (
+    <div className="flex items-center justify-center gap-0">
+      {STEPS.map((s, i) => (
+        <div key={s.n} className="flex items-center">
+          {i > 0 && (
+            <div className={cn('h-px w-8 sm:w-12 shrink-0', s.n <= step ? 'bg-foreground/80' : 'bg-border')} />
+          )}
+          <div className="flex flex-col items-center gap-0.5">
+            <div className={cn(
+              'w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border-2 transition-all',
+              s.n < step  ? 'bg-foreground border-foreground text-background' :
+              s.n === step ? 'bg-background border-foreground text-foreground' :
+              'bg-background border-border text-muted-foreground',
+            )}>
+              {s.n < step ? '✓' : s.n}
+            </div>
+            <span className={cn(
+              'text-[9px] whitespace-nowrap font-medium hidden sm:block',
+              s.n === step ? 'text-foreground' : 'text-muted-foreground',
+            )}>{s.label}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ─── DAY CORRECTION MODAL ─────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -870,6 +904,16 @@ export default function MirusReview() {
     if (filter === 'held')       return es?.action === 'held';
     if (filter === 'unreviewed') return !es?.action;
     return true;
+  }).sort((a, b) => {
+    const priority = (emp: typeof a) => {
+      const es = employeeStates[emp.tempId];
+      if (emp.importStatus === 'check' && !es?.action) return 0;
+      if (!es?.action) return 1;
+      if (es.action === 'held') return 2;
+      if (es.action === 'accepted') return 3;
+      return 4;
+    };
+    return priority(a) - priority(b);
   });
 
   const stats = calcStats(reviewState);
@@ -878,9 +922,9 @@ export default function MirusReview() {
     <div className="min-h-screen bg-background text-foreground">
       {/* Top bar */}
       <div className="border-b border-border bg-card/60 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+        <div className="max-w-6xl mx-auto px-4 pt-3 pb-2 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <span className="text-lg font-bold">Monatsblatt-Review</span>
+            <span className="text-base font-bold">Monatsabschluss-Assistent</span>
             <ReviewStatusBadge status={reviewState.reviewStatus} />
             <span className="text-[10px] px-2 py-0.5 rounded-full border bg-yellow-50 border-yellow-200 text-yellow-700 font-semibold">
               Kein Supabase-Write
@@ -904,6 +948,9 @@ export default function MirusReview() {
               JSON exportieren
             </button>
           </div>
+        </div>
+        <div className="max-w-6xl mx-auto px-4 pb-3">
+          <WizardBar step={3} />
         </div>
       </div>
 
@@ -939,7 +986,7 @@ export default function MirusReview() {
           {([
             { key: 'all',        label: `Alle (${stats.total})` },
             { key: 'unreviewed', label: `Ungeprüft (${stats.total - stats.reviewed})` },
-            { key: 'check',      label: `Prüfen (${stats.check})` },
+            { key: 'check',      label: `Prüfung nötig (${stats.check})` },
             { key: 'accepted',   label: `Akzeptiert (${stats.accepted})` },
             { key: 'held',       label: `Zurückgestellt (${stats.held})` },
           ] as const).map(({ key, label }) => (

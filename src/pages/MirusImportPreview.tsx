@@ -354,10 +354,44 @@ function QualityBar({ pct }: { pct: number }) {
   );
 }
 
+function WizardBar({ step }: { step: 1 | 2 | 3 | 4 }) {
+  const STEPS: { n: 1 | 2 | 3 | 4; label: string }[] = [
+    { n: 1, label: 'Datei hochladen' },
+    { n: 2, label: 'Import prüfen' },
+    { n: 3, label: 'Mitarbeiter kontrollieren' },
+    { n: 4, label: 'Freigabe vorbereiten' },
+  ];
+  return (
+    <div className="flex items-center justify-center gap-0">
+      {STEPS.map((s, i) => (
+        <div key={s.n} className="flex items-center">
+          {i > 0 && (
+            <div className={cn('h-px w-8 sm:w-12 shrink-0', s.n <= step ? 'bg-foreground/80' : 'bg-border')} />
+          )}
+          <div className="flex flex-col items-center gap-0.5">
+            <div className={cn(
+              'w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border-2 transition-all',
+              s.n < step  ? 'bg-foreground border-foreground text-background' :
+              s.n === step ? 'bg-background border-foreground text-foreground' :
+              'bg-background border-border text-muted-foreground',
+            )}>
+              {s.n < step ? '✓' : s.n}
+            </div>
+            <span className={cn(
+              'text-[9px] whitespace-nowrap font-medium hidden sm:block',
+              s.n === step ? 'text-foreground' : 'text-muted-foreground',
+            )}>{s.label}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function StatusBadge({ status }: { status: PreviewEmployee['importStatus'] }) {
   const map = {
     ready:    { label: 'Importfähig', cls: 'bg-green-50 border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400' },
-    check:    { label: 'Prüfen',     cls: 'bg-yellow-50 border-yellow-200 text-yellow-700 dark:bg-yellow-900/20 dark:border-yellow-700 dark:text-yellow-400' },
+    check:    { label: 'Prüfung nötig', cls: 'bg-yellow-50 border-yellow-200 text-yellow-700 dark:bg-yellow-900/20 dark:border-yellow-700 dark:text-yellow-400' },
     excluded: { label: 'Ausgeschlossen', cls: 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-700 dark:text-red-400' },
   } as const;
   const { label, cls } = map[status];
@@ -609,8 +643,177 @@ function DayTable({ days }: { days: PreviewDayEntry[] }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ─── EMPLOYEE CARD ─────────────────────────────────────────────────────────────
+// ─── EMPLOYEE DETAIL MODAL + CARD ─────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
+
+function EmployeeDetailModal({ emp, onClose }: { emp: PreviewEmployee; onClose: () => void }) {
+  const [tab, setTab] = useState<'overview' | 'days' | 'accounts' | 'warnings' | 'technical'>('overview');
+
+  const totals     = emp.totals;
+  const calc       = totals.calculatedTotalHours;
+  const diff       = totals.totalsDiff;
+  const valid      = totals.totalsValidated;
+  const warnCount  = emp.warnings.filter(w => w.severity !== 'info').length;
+  const activeDays = emp.days.filter(d => d.shifts.length > 0).length;
+  const absCount   = emp.days.filter(d => !!d.absenceCode).length;
+  const vacCount   = emp.days.filter(d => d.absenceCode === 'FE').length;
+  const sickCount  = emp.days.filter(d => d.absenceCode === 'KR').length;
+
+  const TABS: [string, string][] = [
+    ['overview',  'Übersicht'],
+    ['days',      `Tagesdaten (${emp.days.length})`],
+    ['accounts',  'Saldi & Konten'],
+    ['warnings',  `Hinweise${warnCount > 0 ? ` (${warnCount})` : ''}`],
+    ['technical', 'Technische Details'],
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-background rounded-t-2xl sm:rounded-xl border shadow-2xl w-full sm:max-w-3xl max-h-[92vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-border shrink-0">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="font-bold text-base">{emp.name ?? <span className="text-red-500 italic">Kein Name</span>}</h3>
+              <StatusBadge status={emp.importStatus} />
+            </div>
+            <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
+              {emp.department       && <span>{emp.department}</span>}
+              {emp.costCenter       && <span className="font-mono bg-muted/60 rounded px-1.5 py-0.5">{emp.costCenter}</span>}
+              {emp.weeklyHours      && <span>{emp.weeklyHours} h/Wo</span>}
+              {emp.employmentPeriod && <span>{emp.employmentPeriod}</span>}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xl leading-none shrink-0 mt-0.5">✕</button>
+        </div>
+
+        {/* Tab nav */}
+        <div className="flex border-b border-border overflow-x-auto shrink-0">
+          {TABS.map(([t, label]) => (
+            <button
+              key={t}
+              onClick={() => setTab(t as typeof tab)}
+              className={cn(
+                'text-[11px] px-4 py-2.5 font-medium whitespace-nowrap border-b-2 transition-colors shrink-0',
+                tab === t
+                  ? 'border-foreground text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground',
+                t === 'warnings' && warnCount > 0 && tab !== t && 'text-yellow-600 hover:text-yellow-700',
+              )}
+            >{label}</button>
+          ))}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+
+          {tab === 'overview' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {([
+                  { label: 'Gesamtstunden',     value: formatHours(calc) },
+                  { label: 'Arbeitstage',        value: `${activeDays}` },
+                  { label: 'Absenzen',           value: `${absCount}` },
+                  { label: 'Erkennungsqualität', value: `${emp.quality}%` },
+                ] as const).map(({ label, value }) => (
+                  <div key={label} className="rounded-lg border bg-muted/20 px-3 py-2.5 space-y-0.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+                    <p className="text-lg font-bold font-mono">{value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {absCount > 0 && (
+                <div className="rounded-lg border border-border/60 p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Absenzen</p>
+                  <div className="flex flex-wrap gap-2">
+                    {vacCount  > 0 && <span className="text-[11px] px-2 py-1 rounded border bg-blue-50 border-blue-200 text-blue-700 font-semibold">{vacCount} Ferientage</span>}
+                    {sickCount > 0 && <span className="text-[11px] px-2 py-1 rounded border bg-orange-50 border-orange-200 text-orange-700 font-semibold">{sickCount} Krankheitstage</span>}
+                    {absCount - vacCount - sickCount > 0 && (
+                      <span className="text-[11px] px-2 py-1 rounded border bg-muted/60 border-border font-semibold">{absCount - vacCount - sickCount} Weitere</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {calc !== undefined && (
+                <div className={cn(
+                  'rounded-lg border p-3',
+                  valid ? 'border-green-200 bg-green-50/40' :
+                  diff !== undefined && diff > 3 ? 'border-red-200 bg-red-50/40' :
+                  'border-border bg-muted/10',
+                )}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Stunden-Plausibilität</p>
+                  <div className="flex items-center gap-4 flex-wrap text-sm">
+                    <span>
+                      <span className="text-muted-foreground text-xs mr-1">Berechnet</span>
+                      <span className="font-mono font-bold">{formatHours(calc)}</span>
+                    </span>
+                    {totals.totalHours != null && (
+                      <span>
+                        <span className="text-muted-foreground text-xs mr-1">Mirus</span>
+                        <span className="font-mono font-bold">{formatHours(totals.totalHours)}</span>
+                      </span>
+                    )}
+                    {valid && <span className="text-green-600 font-semibold text-xs">✓ Validiert</span>}
+                    {diff !== undefined && diff > 0.1 && (
+                      <span className="text-yellow-600 font-semibold text-xs">⚠ Diff ±{formatHours(diff)}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {warnCount > 0 && (
+                <div className="rounded-lg border border-yellow-200 bg-yellow-50/30 p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-yellow-700 mb-2">⚠ {warnCount} Hinweis{warnCount > 1 ? 'e' : ''}</p>
+                  <WarnList warnings={emp.warnings.filter(w => w.severity !== 'info')} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'days'     && <DayTable days={emp.days} />}
+          {tab === 'accounts' && <AccountsPanel accounts={emp.monthlyAccounts} />}
+          {tab === 'warnings' && (
+            emp.warnings.length
+              ? <WarnList warnings={emp.warnings} />
+              : <p className="text-[11px] text-green-600 font-semibold">✓ Keine Hinweise</p>
+          )}
+
+          {tab === 'technical' && (
+            <div className="space-y-3">
+              <div className="rounded border border-blue-100 bg-blue-50/30 p-3 space-y-1 text-[11px]">
+                <p className="font-semibold text-blue-700 mb-1.5">Excel-Quellinfo</p>
+                <p><span className="text-muted-foreground w-28 inline-block">Blatt:</span> <span className="font-mono">{emp.rawSource.sheetName}</span></p>
+                <p><span className="text-muted-foreground w-28 inline-block">Zeilen:</span> <span className="font-mono">{emp.rawSource.blockStartRow}–{emp.rawSource.blockEndRow ?? '?'}</span></p>
+                <p><span className="text-muted-foreground w-28 inline-block">Blöcke merged:</span> <span className="font-mono">{emp.rawSource.mergedFromCount}</span></p>
+                {emp.rawSource.mergedBlockRows.length > 0 && (
+                  <p><span className="text-muted-foreground w-28 inline-block">Block-Zeilen:</span> <span className="font-mono">{emp.rawSource.mergedBlockRows.join(', ')}</span></p>
+                )}
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Monatstotale (Roh)</p>
+                <MonatsTotaleRow totals={emp.totals} />
+              </div>
+              {emp.warnings.filter(w => w.severity === 'info').length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Technische Hinweise</p>
+                  <WarnList warnings={emp.warnings.filter(w => w.severity === 'info')} />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function EmployeeCard({
   emp,
@@ -619,130 +822,90 @@ function EmployeeCard({
   emp: PreviewEmployee;
   onToggleSelect: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [tab,  setTab]  = useState<'days' | 'totals' | 'accounts' | 'warnings'>('days');
+  const [showDetail, setShowDetail] = useState(false);
 
-  const activeShifts = emp.days.reduce((s, d) => s + d.shifts.length, 0);
-  const totalH       = emp.totals.calculatedTotalHours ?? 0;
-  const warnCount    = emp.warnings.filter(w => w.severity !== 'info').length;
+  const totals     = emp.totals;
+  const calc       = totals.calculatedTotalHours;
+  const valid      = totals.totalsValidated;
+  const diff       = totals.totalsDiff;
+  const warnCount  = emp.warnings.filter(w => w.severity !== 'info').length;
+  const activeDays = emp.days.filter(d => d.shifts.length > 0).length;
+  const absCount   = emp.days.filter(d => !!d.absenceCode).length;
+  const vacCount   = emp.days.filter(d => d.absenceCode === 'FE').length;
+  const sickCount  = emp.days.filter(d => d.absenceCode === 'KR').length;
 
   return (
-    <div className={cn(
-      'rounded-lg border bg-card transition-shadow',
-      emp.importSelected ? 'border-border' : 'border-dashed border-muted-foreground/30 opacity-60',
-      open && 'shadow-md',
-    )}>
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3">
-        <input
-          type="checkbox"
-          checked={emp.importSelected}
-          disabled={emp.importStatus === 'excluded'}
-          onChange={() => onToggleSelect(emp.tempId)}
-          className="h-4 w-4 rounded border-border cursor-pointer"
-        />
+    <>
+      {showDetail && <EmployeeDetailModal emp={emp} onClose={() => setShowDetail(false)} />}
+      <div className={cn(
+        'rounded-lg border bg-card transition-shadow hover:shadow-sm',
+        !emp.importSelected             ? 'border-dashed border-muted-foreground/30 opacity-60' :
+        emp.importStatus === 'excluded' ? 'border-red-200/60 opacity-70' :
+        emp.importStatus === 'check'    ? 'border-yellow-200' :
+        'border-border',
+      )}>
+        <div className="flex items-center gap-3 px-4 py-3">
+          {/* Checkbox */}
+          <input
+            type="checkbox"
+            checked={emp.importSelected}
+            disabled={emp.importStatus === 'excluded'}
+            onChange={() => onToggleSelect(emp.tempId)}
+            className="h-4 w-4 rounded border-border cursor-pointer shrink-0"
+          />
 
-        <button
-          onClick={() => setOpen(v => !v)}
-          className="flex-1 flex items-center gap-3 text-left min-w-0"
-        >
+          {/* Left: Name + meta */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-semibold text-sm truncate">{emp.name ?? <span className="text-red-500 italic">Kein Name</span>}</span>
+              <span className="font-semibold text-sm">{emp.name ?? <span className="text-red-500 italic">Kein Name</span>}</span>
               <StatusBadge status={emp.importStatus} />
-              {warnCount > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded border bg-yellow-50 border-yellow-200 text-yellow-700 font-semibold">
-                  {warnCount} Hinweis{warnCount > 1 ? 'e' : ''}
-                </span>
-              )}
             </div>
-            <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-              {emp.department   && <span className="text-[11px] text-muted-foreground">{emp.department}</span>}
-              {emp.costCenter   && <span className="text-[11px] bg-muted/60 rounded px-1.5 py-0.5 font-mono">{emp.costCenter}</span>}
-              {emp.weeklyHours  && <span className="text-[11px] text-muted-foreground">{emp.weeklyHours} h/Wo</span>}
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap text-[11px] text-muted-foreground">
+              {emp.department && <span>{emp.department}</span>}
+              {emp.costCenter && <span className="font-mono bg-muted/50 rounded px-1.5 py-0.5">{emp.costCenter}</span>}
             </div>
           </div>
 
-          <div className="shrink-0 flex flex-col items-end gap-1.5 min-w-[130px]">
-            <div className="flex gap-3 text-[11px] text-muted-foreground">
-              <span>{emp.days.length} Tage</span>
-              <span>{activeShifts} Blöcke</span>
+          {/* Middle: hours + days + absences */}
+          <div className="hidden sm:flex flex-col items-center gap-0.5 min-w-[120px]">
+            <span className="font-mono font-bold text-sm">{formatHours(calc)}</span>
+            <div className="flex gap-2 text-[10px] text-muted-foreground">
+              <span>{activeDays} Arbeitstage</span>
+              {absCount > 0 && <span>· {absCount} Abs.</span>}
             </div>
-            {/* Plausibilitätsbox: immer sichtbar */}
-            {emp.totals.calculatedTotalHours !== undefined && (() => {
-              const calc  = emp.totals.calculatedTotalHours;
-              const mirus = emp.totals.totalHours;
-              const diff  = emp.totals.totalsDiff;
-              const valid = emp.totals.totalsValidated;
-              return (
-                <div className={cn(
-                  'flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border font-mono',
-                  valid
-                    ? 'border-green-200 bg-green-50/70 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400'
-                    : diff !== undefined && diff > 3
-                    ? 'border-red-200 bg-red-50/70 text-red-700'
-                    : 'border-border bg-muted/40 text-muted-foreground',
-                )}>
-                  <span className="font-bold">{formatHours(calc)}</span>
-                  {mirus != null && <span className="opacity-60">/ {formatHours(mirus)}</span>}
-                  {valid
-                    ? <span className="text-green-600 font-bold">✓</span>
-                    : diff !== undefined && <span>±{formatHours(diff)}</span>
-                  }
-                </div>
-              );
-            })()}
-            <QualityBar pct={emp.quality} />
-          </div>
-
-          <span className="text-muted-foreground text-[11px] shrink-0">{open ? '▲' : '▼'}</span>
-        </button>
-      </div>
-
-      {/* Expanded */}
-      {open && (
-        <div className="border-t border-border px-4 pb-4 pt-3 space-y-3">
-          {/* Tab nav */}
-          <div className="flex gap-1">
-            {(['days', 'totals', 'accounts', 'warnings'] as const).map(t => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={cn(
-                  'text-[11px] px-3 py-1 rounded border font-medium transition-colors',
-                  tab === t
-                    ? 'bg-foreground text-background border-foreground'
-                    : 'border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground',
-                )}
-              >
-                {t === 'days'     ? `Tage (${emp.days.length})`         : null}
-                {t === 'totals'   ? 'Monatstotale'                      : null}
-                {t === 'accounts' ? 'Konten & Saldi'                    : null}
-                {t === 'warnings' ? `Hinweise (${emp.warnings.length})` : null}
-              </button>
-            ))}
-          </div>
-
-          {tab === 'days'     && <DayTable days={emp.days} />}
-          {tab === 'totals'   && <MonatsTotaleRow totals={emp.totals} />}
-          {tab === 'accounts' && <AccountsPanel accounts={emp.monthlyAccounts} />}
-          {tab === 'warnings' && (
-            emp.warnings.length
-              ? <WarnList warnings={emp.warnings} />
-              : <p className="text-[11px] text-green-600 font-semibold">✓ Keine Hinweise</p>
-          )}
-
-          {/* Raw source info */}
-          <div className="text-[10px] text-muted-foreground/60 border-t border-border/40 pt-2">
-            Blatt: <span className="font-mono">{emp.rawSource.sheetName}</span>
-            {' · '}Zeilen: <span className="font-mono">{emp.rawSource.blockStartRow}–{emp.rawSource.blockEndRow ?? '?'}</span>
-            {emp.rawSource.mergedFromCount > 1 && (
-              <span className="ml-2 text-muted-foreground">⊞ Merged ×{emp.rawSource.mergedFromCount}</span>
+            {(vacCount > 0 || sickCount > 0) && (
+              <div className="flex gap-1 mt-0.5">
+                {vacCount  > 0 && <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 font-semibold">{vacCount} FE</span>}
+                {sickCount > 0 && <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-50 border border-orange-200 text-orange-700 font-semibold">{sickCount} KR</span>}
+              </div>
             )}
           </div>
+
+          {/* Right: quality + warnings + button */}
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="hidden md:flex flex-col items-end gap-1 min-w-[80px]">
+              <QualityBar pct={emp.quality} />
+              {warnCount > 0 && (
+                <span className="text-[10px] text-yellow-600 font-semibold">⚠ {warnCount} Hinweis{warnCount > 1 ? 'e' : ''}</span>
+              )}
+              {valid && <span className="text-[10px] text-green-600 font-semibold">✓ Validiert</span>}
+              {diff !== undefined && diff > 3 && <span className="text-[10px] text-red-600 font-semibold">⚠ Diff</span>}
+            </div>
+            <button
+              onClick={() => setShowDetail(true)}
+              className={cn(
+                'text-[11px] px-3 py-1.5 rounded border font-medium transition-colors whitespace-nowrap',
+                warnCount > 0
+                  ? 'border-yellow-300 bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
+                  : 'border-border hover:bg-muted/40',
+              )}
+            >
+              Details prüfen
+            </button>
+          </div>
         </div>
-      )}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -997,7 +1160,7 @@ function SummaryPanel({ session, onRestaurantChange }: {
       {/* Statusübersicht */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-lg border border-border/60 bg-muted/10 px-4 py-3">
         <StatBox label="Importfähig"      value={String(ready)}      color={ready > 0 ? 'green' : 'default'} />
-        <StatBox label="Prüfen"           value={String(check)}      color={check > 0 ? 'yellow' : 'green'} />
+        <StatBox label="Prüfung nötig"    value={String(check)}      color={check > 0 ? 'yellow' : 'green'} />
         <StatBox label="Ausgeschlossen"   value={String(excluded)}   color={excluded > 0 ? 'red' : 'default'} />
         <StatBox label="Offene Warnungen" value={String(openWarns)}  color={openWarns > 0 ? 'yellow' : 'green'} />
       </div>
@@ -1298,28 +1461,26 @@ export default function MirusImportPreview() {
     <div className="min-h-screen bg-background text-foreground">
       {/* Top bar */}
       <div className="border-b border-border bg-card/60 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+        <div className="max-w-6xl mx-auto px-4 pt-3 pb-2 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <span className="text-lg font-bold">Mirus Import-Vorschau</span>
+            <span className="text-base font-bold">Monatsabschluss-Assistent</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full border bg-yellow-50 border-yellow-200 text-yellow-700 font-semibold">
               Kein Supabase-Write
             </span>
-            {loadedSessions.length > 0 && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full border bg-blue-50 border-blue-200 text-blue-700 font-semibold">
-                {loadedSessions.length} Datei{loadedSessions.length !== 1 ? 'en' : ''} geladen
-              </span>
-            )}
           </div>
           <div className="flex gap-2">
             <a href="/mirus-excel-test"
               className="text-[11px] px-3 py-1.5 rounded border border-border hover:bg-muted/40 transition-colors text-muted-foreground">
-              → Diagnose
+              Diagnose
             </a>
             <a href="/mirus-review"
-              className="text-[11px] px-3 py-1.5 rounded border border-border hover:bg-muted/40 transition-colors text-muted-foreground">
-              → Review
+              className="text-[11px] px-3 py-1.5 rounded border border-border hover:bg-muted/40 transition-colors font-medium">
+              Weiter zum Review →
             </a>
           </div>
+        </div>
+        <div className="max-w-6xl mx-auto px-4 pb-3">
+          <WizardBar step={loadedSessions.length > 0 ? 2 : 1} />
         </div>
       </div>
 
@@ -1343,7 +1504,15 @@ export default function MirusImportPreview() {
 
         {/* Monatsketten-Prüfung: erst ab 2 geladenen Dateien */}
         {loadedSessions.length >= 2 && (
-          <MonthChainingValidation sessions={loadedSessions} />
+          <details className="rounded-lg border overflow-hidden">
+            <summary className="px-4 py-2.5 bg-card cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:bg-muted/10 select-none flex items-center gap-2">
+              <span>Monatsketten-Prüfung</span>
+              <span className="text-muted-foreground/50 normal-case font-normal">(aufklappen)</span>
+            </summary>
+            <div>
+              <MonthChainingValidation sessions={loadedSessions} />
+            </div>
+          </details>
         )}
 
         {/* Upload — immer sichtbar (kompakt wenn Sessions geladen) */}
