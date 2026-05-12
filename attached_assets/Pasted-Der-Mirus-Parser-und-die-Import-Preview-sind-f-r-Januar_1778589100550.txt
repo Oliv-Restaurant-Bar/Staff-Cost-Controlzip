@@ -1,0 +1,145 @@
+Der Mirus Parser und die Import Preview sind für Januar/Februar stabil genug.
+
+Bitte jetzt zuerst ermöglichen, dass wir auch März und April sauber testen können und danach den Review-Workflow vorbereiten.
+
+Wichtig:
+Keine Supabase-Writes.
+Keine Migration.
+Kein echter Import.
+Nur Test, Preview und Review-Frontend.
+
+Teil A: Weitere Testmonate prüfen
+
+Bitte /mirus-import-preview so erweitern, dass mehrere Monatsdateien nacheinander getestet werden können:
+
+- Januar
+- Februar
+- März
+- April
+
+Wenn eine neue Datei hochgeladen wird:
+- klare Anzeige, welche Datei aktuell aktiv ist
+- Möglichkeit zwischen hochgeladenen Monaten zu wechseln
+- Vergleichsübersicht pro Datei:
+  - Monat
+  - Mitarbeiter
+  - Importfähig
+  - Prüfen
+  - Blockiert
+  - Qualität
+  - Warnungen
+  - Gesamtstunden
+
+Ziel:
+Wir wollen sehen, ob März und April dieselbe Qualität erreichen wie Januar/Februar.
+
+Teil B: Review-Workflow vorbereiten
+
+Bitte eine neue isolierte Seite bauen:
+
+/mirus-review
+
+Ziel:
+Monatsimport prüfen, Mitarbeiter kontrollieren, Korrekturen vorbereiten und Freigabeprozess simulieren.
+
+Noch alles nur Frontend-State / Mock / Preview-Daten.
+Kein Supabase Write.
+
+1. Review Dashboard
+
+Anzeigen:
+- Monat / Jahr
+- Restaurant
+- Importfähig
+- Prüfen
+- Blockiert
+- Fehlende Zuordnungen
+- Stundenabweichungen
+- Qualitätsdurchschnitt
+- Freigabestatus
+
+Statusmodell:
+- preview
+- in_review
+- approved
+- distributed
+- archived
+
+2. Mitarbeiter Review Karten
+
+Pro Mitarbeiter:
+- Name
+- Abteilung
+- Kostenstelle
+- Wochenstunden
+- Monatsstunden
+- Sollstunden falls vorhanden
+- Differenz
+- Tage erkannt
+- Zeitblöcke
+- Totale validiert ja/nein
+- Qualitätswert
+- Hinweise/Warnungen
+
+Aktionen:
+- Akzeptieren
+- Zurückstellen
+- Ausschliessen
+- Manuell korrigieren
+
+3. Matching Workflow vorbereiten
+
+Falls Name nicht eindeutig:
+- Dropdown mit Mitarbeiterliste
+- Button „Zuordnen“
+- Checkbox „Für Zukunft merken“
+
+Noch keine echte DB-Speicherung.
+
+4. Tageskorrektur Modal
+
+Beim Klick auf „Manuell korrigieren“:
+- Tageszeilen editierbar
+- Zeitblöcke editierbar
+- Pause editierbar
+- Absenzcode editierbar
+- Kommentar Pflichtfeld bei Änderung
+
+Änderungen nur im lokalen State speichern.
+
+5. Audit-Historie vorbereiten
+
+Mock-History anzeigen:
+- Wer
+- Wann
+- Was geändert
+- Kommentar
+
+6. Mitarbeiter-Verteilung vorbereiten
+
+Noch kein WhatsApp Versand.
+Aber UI vorbereiten für:
+- Monatsblatt an Mitarbeiter senden
+- Persönlicher Link
+- Status: Nicht gesendet / Gesendet / Beanstandet / Bestätigt
+
+7. UI-Ziel
+
+Die Seite soll nicht wie ein Diagnose-Tool wirken, sondern wie ein professionelles Monatsabschluss- und HR-Reviewtool.
+
+8. Architektur
+
+Bitte sauber trennen:
+- Parser
+- Preview
+- Review
+- Distribution
+
+Keine riskanten Refactors am bestehenden Parser.
+Parser nur minimal anfassen, falls März/April Fehler zeigen.
+
+Danach:
+- TypeScript prüfen
+- /mirus-import-preview testen
+- /mirus-review bereitstellen
+- Zusammenfassung geben, was umgesetzt wurde

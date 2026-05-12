@@ -58,6 +58,7 @@ import ForecastPlanung from "./pages/ForecastPlanung";
 import MirusParserTest from "./pages/MirusParserTest";
 import MirusExcelTest from "./pages/MirusExcelTest";
 import MirusImportPreview from "./pages/MirusImportPreview";
+import MirusReview from "./pages/MirusReview";
 
 const queryClient = new QueryClient();
 
@@ -281,6 +282,9 @@ const App = () => {
   }
   if (window.location.pathname === '/mirus-import-preview') {
     return <MirusImportPreview />;
+  }
+  if (window.location.pathname === '/mirus-review') {
+    return <MirusReview />;
   }
 
   return (

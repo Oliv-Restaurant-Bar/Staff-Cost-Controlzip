@@ -738,9 +738,11 @@ function SummaryPanel({ session, onRestaurantChange }: {
 function ImportSummary({
   session,
   onExportJson,
+  onSendToReview,
 }: {
-  session: PreviewImportSession;
-  onExportJson: () => void;
+  session:        PreviewImportSession;
+  onExportJson:   () => void;
+  onSendToReview: () => void;
 }) {
   const selected   = session.employees.filter(e => e.importSelected);
   const excluded   = session.employees.filter(e => !e.importSelected);
@@ -754,10 +756,10 @@ function ImportSummary({
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Ausgewählt',    value: `${selected.length} MA` },
+          { label: 'Ausgewählt',     value: `${selected.length} MA` },
           { label: 'Ausgeschlossen', value: `${excluded.length} MA` },
-          { label: 'Tageszeilen',   value: String(totalDays) },
-          { label: 'Stunden total', value: `${Math.round(totalH * 10) / 10} h` },
+          { label: 'Tageszeilen',    value: String(totalDays) },
+          { label: 'Stunden total',  value: `${Math.round(totalH * 10) / 10} h` },
         ].map(({ label, value }) => (
           <div key={label} className="space-y-0.5">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
@@ -781,11 +783,10 @@ function ImportSummary({
         </button>
 
         <button
-          disabled
-          title="Echter Import wird im nächsten Schritt aktiviert."
-          className="px-4 py-2 rounded text-sm font-medium bg-muted text-muted-foreground cursor-not-allowed opacity-50 border border-border"
+          onClick={onSendToReview}
+          className="px-4 py-2 rounded text-sm font-semibold bg-foreground text-background hover:opacity-90 transition-opacity"
         >
-          Echter Import — wird im nächsten Schritt aktiviert
+          Zum Review öffnen →
         </button>
       </div>
     </div>
@@ -796,25 +797,125 @@ function ImportSummary({
 // ─── HAUPTSEITE ───────────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export default function MirusImportPreview() {
-  const [session,  setSession]  = useState<PreviewImportSession | null>(null);
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState<string | null>(null);
+// ─── Multi-Session State ─────────────────────────────────────────────────────
 
-  // Lokale Kopie der Session für Checkbox-Änderungen
-  const [localEmployees,  setLocalEmployees]  = useState<PreviewEmployee[]>([]);
-  // Restaurant-Auswahl (falls aus Datei nicht erkennbar)
-  const [localRestaurant, setLocalRestaurant] = useState<string | null>(null);
+interface LoadedSession {
+  id:             string;
+  session:        PreviewImportSession;
+  localEmployees: PreviewEmployee[];
+  localRestaurant: string | null;
+}
+
+// ─── Session Comparison Table ─────────────────────────────────────────────────
+
+function SessionComparisonTable({
+  sessions,
+  activeId,
+  onSwitch,
+  onRemove,
+}: {
+  sessions:  LoadedSession[];
+  activeId:  string | null;
+  onSwitch:  (id: string) => void;
+  onRemove:  (id: string) => void;
+}) {
+  if (sessions.length === 0) return null;
+  return (
+    <div className="rounded-lg border bg-card overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-border bg-muted/20 flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Geladene Dateien — {sessions.length} Monat{sessions.length !== 1 ? 'e' : ''}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="border-b border-border bg-muted/10">
+              {['Monat', 'Restaurant', 'Datei', 'MA', 'Importfähig', 'Prüfen', 'Blockiert', 'Ø Qualität', 'Stunden', 'Warnungen', ''].map(h => (
+                <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sessions.map(({ id, session: s, localEmployees: emps, localRestaurant }) => {
+              const restaurant = localRestaurant ?? s.restaurant;
+              const ready    = emps.filter(e => e.importStatus === 'ready').length;
+              const check    = emps.filter(e => e.importStatus === 'check').length;
+              const excluded = emps.filter(e => e.importStatus === 'excluded').length;
+              const warns    = emps.flatMap(e => e.warnings).filter(w => w.severity === 'warning' || w.severity === 'error').length;
+              const avgQ     = emps.length ? Math.round(emps.reduce((a, e) => a + e.quality, 0) / emps.length) : 0;
+              const totalH   = Math.round(emps.reduce((a, e) => a + (e.totals.calculatedTotalHours ?? 0), 0) * 10) / 10;
+              const isActive = id === activeId;
+              return (
+                <tr
+                  key={id}
+                  onClick={() => onSwitch(id)}
+                  className={cn(
+                    'border-b border-border/50 cursor-pointer transition-colors',
+                    isActive ? 'bg-blue-50/60 dark:bg-blue-900/10' : 'hover:bg-muted/20',
+                  )}
+                >
+                  <td className="px-3 py-2 font-semibold whitespace-nowrap">
+                    {s.monthName ?? '—'} {s.year ?? ''}
+                    {isActive && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-blue-100 border border-blue-200 text-blue-700 font-bold">aktiv</span>}
+                  </td>
+                  <td className="px-3 py-2 capitalize text-muted-foreground">{restaurant ?? <span className="text-yellow-600 font-semibold">Wählen</span>}</td>
+                  <td className="px-3 py-2 text-muted-foreground max-w-[160px] truncate">{s.sourceFileName}</td>
+                  <td className="px-3 py-2 font-mono font-semibold">{emps.length}</td>
+                  <td className="px-3 py-2 font-mono font-semibold text-green-600">{ready}</td>
+                  <td className="px-3 py-2 font-mono font-semibold text-yellow-600">{check}</td>
+                  <td className="px-3 py-2 font-mono font-semibold text-red-600">{excluded}</td>
+                  <td className="px-3 py-2 font-mono font-semibold">
+                    <span className={avgQ >= 90 ? 'text-green-600' : avgQ >= 80 ? 'text-yellow-600' : 'text-red-600'}>{avgQ}%</span>
+                  </td>
+                  <td className="px-3 py-2 font-mono">{totalH} h</td>
+                  <td className="px-3 py-2 font-mono">{warns > 0 ? <span className="text-yellow-600">⚠ {warns}</span> : <span className="text-green-600">✓ 0</span>}</td>
+                  <td className="px-3 py-2">
+                    <button
+                      onClick={e => { e.stopPropagation(); onRemove(id); }}
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-border hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors text-muted-foreground"
+                      title="Entfernen"
+                    >✕</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── Hauptseite ───────────────────────────────────────────────────────────────
+
+export default function MirusImportPreview() {
+  const [loadedSessions, setLoadedSessions] = useState<LoadedSession[]>([]);
+  const [activeId,       setActiveId]       = useState<string | null>(null);
+  const [loading,        setLoading]        = useState(false);
+  const [error,          setError]          = useState<string | null>(null);
 
   const handleFile = useCallback(async (file: File) => {
     setLoading(true);
     setError(null);
-    setLocalRestaurant(null);
     try {
       const parsed  = await parseMirusExcel(file);
       const session = buildPreviewSession(parsed, file);
-      setSession(session);
-      setLocalEmployees(session.employees);
+      const entry: LoadedSession = {
+        id:             session.id,
+        session,
+        localEmployees: session.employees,
+        localRestaurant: null,
+      };
+      setLoadedSessions(prev => {
+        // Gleiche Datei nicht doppelt laden (gleicher Hash / Name+Monat)
+        const dup = prev.find(s => s.session.sourceFileName === session.sourceFileName &&
+                                   s.session.month === session.month &&
+                                   s.session.year  === session.year);
+        if (dup) return prev.map(s => s.id === dup.id ? entry : s);
+        return [...prev, entry];
+      });
+      setActiveId(session.id);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[MirusImportPreview] handleFile Fehler:', e);
@@ -824,30 +925,52 @@ export default function MirusImportPreview() {
     }
   }, []);
 
-  const toggleSelect = useCallback((id: string) => {
-    setLocalEmployees(prev =>
-      prev.map(e => e.tempId === id ? { ...e, importSelected: !e.importSelected } : e)
-    );
-  }, []);
+  const updateActive = useCallback((updater: (entry: LoadedSession) => LoadedSession) => {
+    setLoadedSessions(prev => prev.map(s => s.id === activeId ? updater(s) : s));
+  }, [activeId]);
 
-  const selectAll = () => setLocalEmployees(prev =>
-    prev.map(e => e.importStatus !== 'excluded' ? { ...e, importSelected: true } : e)
-  );
-  const deselectWarnings = () => setLocalEmployees(prev =>
-    prev.map(e => e.warnings.some(w => w.severity !== 'info') ? { ...e, importSelected: false } : e)
-  );
-  const selectReadyOnly = () => setLocalEmployees(prev =>
-    prev.map(e => ({ ...e, importSelected: e.importStatus === 'ready' }))
-  );
+  const toggleSelect = useCallback((empId: string) => {
+    updateActive(entry => ({
+      ...entry,
+      localEmployees: entry.localEmployees.map(e =>
+        e.tempId === empId ? { ...e, importSelected: !e.importSelected } : e
+      ),
+    }));
+  }, [updateActive]);
 
-  const currentSession: PreviewImportSession | null = session
+  const setLocalRestaurant = useCallback((r: string) => {
+    updateActive(entry => ({ ...entry, localRestaurant: r }));
+  }, [updateActive]);
+
+  const selectAll = () => updateActive(entry => ({
+    ...entry,
+    localEmployees: entry.localEmployees.map(e =>
+      e.importStatus !== 'excluded' ? { ...e, importSelected: true } : e
+    ),
+  }));
+  const deselectWarnings = () => updateActive(entry => ({
+    ...entry,
+    localEmployees: entry.localEmployees.map(e =>
+      e.warnings.some(w => w.severity !== 'info') ? { ...e, importSelected: false } : e
+    ),
+  }));
+  const selectReadyOnly = () => updateActive(entry => ({
+    ...entry,
+    localEmployees: entry.localEmployees.map(e => ({ ...e, importSelected: e.importStatus === 'ready' })),
+  }));
+
+  const activeEntry = loadedSessions.find(s => s.id === activeId) ?? null;
+
+  const currentSession: PreviewImportSession | null = activeEntry
     ? {
-        ...session,
-        restaurant:    localRestaurant ?? session.restaurant,
-        employees:     localEmployees,
-        selectedCount: localEmployees.filter(e => e.importSelected).length,
+        ...activeEntry.session,
+        restaurant:    activeEntry.localRestaurant ?? activeEntry.session.restaurant,
+        employees:     activeEntry.localEmployees,
+        selectedCount: activeEntry.localEmployees.filter(e => e.importSelected).length,
       }
     : null;
+
+  const localEmployees = activeEntry?.localEmployees ?? [];
 
   const handleExportJson = () => {
     if (!currentSession) return;
@@ -861,6 +984,12 @@ export default function MirusImportPreview() {
     URL.revokeObjectURL(url);
   };
 
+  const handleSendToReview = () => {
+    if (!currentSession) return;
+    localStorage.setItem('mirus_review_session', JSON.stringify(currentSession));
+    window.location.href = '/mirus-review';
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       {/* Top bar */}
@@ -871,37 +1000,72 @@ export default function MirusImportPreview() {
             <span className="text-[10px] px-2 py-0.5 rounded-full border bg-yellow-50 border-yellow-200 text-yellow-700 font-semibold">
               Kein Supabase-Write
             </span>
+            {loadedSessions.length > 0 && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full border bg-blue-50 border-blue-200 text-blue-700 font-semibold">
+                {loadedSessions.length} Datei{loadedSessions.length !== 1 ? 'en' : ''} geladen
+              </span>
+            )}
           </div>
           <div className="flex gap-2">
-            <a
-              href="/mirus-excel-test"
-              className="text-[11px] px-3 py-1.5 rounded border border-border hover:bg-muted/40 transition-colors text-muted-foreground"
-            >
-              → Diagnose-Test
+            <a href="/mirus-excel-test"
+              className="text-[11px] px-3 py-1.5 rounded border border-border hover:bg-muted/40 transition-colors text-muted-foreground">
+              → Diagnose
             </a>
-            {session && (
-              <button
-                onClick={() => { setSession(null); setLocalEmployees([]); setError(null); }}
-                className="text-[11px] px-3 py-1.5 rounded border border-border hover:bg-muted/40 transition-colors"
-              >
-                Neue Datei
-              </button>
-            )}
+            <a href="/mirus-review"
+              className="text-[11px] px-3 py-1.5 rounded border border-border hover:bg-muted/40 transition-colors text-muted-foreground">
+              → Review
+            </a>
           </div>
         </div>
       </div>
 
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
 
-        {/* Upload */}
-        {!session && !loading && (
-          <div className="max-w-xl mx-auto mt-12">
-            <UploadZone onFile={handleFile} />
+        {/* Vergleichstabelle */}
+        {loadedSessions.length > 0 && (
+          <SessionComparisonTable
+            sessions={loadedSessions}
+            activeId={activeId}
+            onSwitch={setActiveId}
+            onRemove={id => {
+              setLoadedSessions(prev => prev.filter(s => s.id !== id));
+              if (activeId === id) {
+                const remaining = loadedSessions.filter(s => s.id !== id);
+                setActiveId(remaining.length > 0 ? remaining[remaining.length - 1].id : null);
+              }
+            }}
+          />
+        )}
+
+        {/* Upload — immer sichtbar (kompakt wenn Sessions geladen) */}
+        {loadedSessions.length === 0 ? (
+          !loading && (
+            <div className="max-w-xl mx-auto mt-12">
+              <UploadZone onFile={handleFile} />
+            </div>
+          )
+        ) : (
+          <div className="flex items-center gap-3">
+            <label className={cn(
+              'flex items-center gap-2 px-4 py-2 rounded border text-sm font-medium cursor-pointer transition-colors',
+              loading ? 'opacity-50 cursor-not-allowed' : 'border-border hover:bg-muted/40',
+            )}>
+              <span>+ Weiteren Monat hinzufügen</span>
+              <input
+                type="file" accept=".xlsx,.xls" className="hidden"
+                disabled={loading}
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
+              />
+            </label>
+            {loading && <span className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin inline-block" />
+              Analysiere…
+            </span>}
           </div>
         )}
 
-        {/* Loading */}
-        {loading && (
+        {/* Loading (initial) */}
+        {loading && loadedSessions.length === 0 && (
           <div className="flex flex-col items-center gap-3 py-20 text-muted-foreground">
             <div className="h-8 w-8 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
             <p className="text-sm">Datei wird analysiert…</p>
@@ -915,7 +1079,7 @@ export default function MirusImportPreview() {
           </div>
         )}
 
-        {/* Preview */}
+        {/* Aktive Session Detail */}
         {currentSession && (
           <>
             <SummaryPanel session={currentSession} onRestaurantChange={setLocalRestaurant} />
@@ -924,15 +1088,12 @@ export default function MirusImportPreview() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[11px] text-muted-foreground font-semibold mr-1">Auswahl:</span>
               {[
-                { label: 'Alle auswählen',           fn: selectAll },
+                { label: 'Alle auswählen',            fn: selectAll },
                 { label: 'Alle mit Warnung abwählen', fn: deselectWarnings },
-                { label: 'Nur importfähige',          fn: selectReadyOnly },
+                { label: 'Nur importfähige',           fn: selectReadyOnly },
               ].map(({ label, fn }) => (
-                <button
-                  key={label}
-                  onClick={fn}
-                  className="text-[11px] px-2.5 py-1 rounded border border-border hover:bg-muted/40 transition-colors"
-                >
+                <button key={label} onClick={fn}
+                  className="text-[11px] px-2.5 py-1 rounded border border-border hover:bg-muted/40 transition-colors">
                   {label}
                 </button>
               ))}
@@ -944,11 +1105,7 @@ export default function MirusImportPreview() {
             {/* Employee Cards */}
             <div className="space-y-2">
               {localEmployees.map(emp => (
-                <EmployeeCard
-                  key={emp.tempId}
-                  emp={emp}
-                  onToggleSelect={toggleSelect}
-                />
+                <EmployeeCard key={emp.tempId} emp={emp} onToggleSelect={toggleSelect} />
               ))}
             </div>
 
@@ -956,8 +1113,16 @@ export default function MirusImportPreview() {
             <ImportSummary
               session={currentSession}
               onExportJson={handleExportJson}
+              onSendToReview={handleSendToReview}
             />
           </>
+        )}
+
+        {/* Kein aktiver Monat gewählt */}
+        {loadedSessions.length > 0 && !currentSession && !loading && (
+          <div className="text-center py-12 text-muted-foreground text-sm">
+            Monat in der Tabelle oben auswählen
+          </div>
         )}
       </div>
     </div>
