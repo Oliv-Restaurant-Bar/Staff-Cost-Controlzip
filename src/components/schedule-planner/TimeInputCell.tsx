@@ -3,7 +3,6 @@ import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import {
   Popover,
   PopoverContent,
@@ -25,7 +24,7 @@ import {
 import { useShiftConfig } from '@/hooks/useShiftConfig';
 import { useQuickTimes, QuickTimePreset, DEFAULT_QUICK_PRESETS } from '@/hooks/useQuickTimes';
 import {
-  Zap, Clock, PenLine, Settings2, Plus, Trash2,
+  Clock, Settings2, Plus, Trash2,
   ChevronUp, ChevronDown, RotateCcw, Check, X, Pencil,
 } from 'lucide-react';
 
@@ -37,8 +36,6 @@ interface TimeSlot {
   start: string;
   end: string;
 }
-
-type TabType = 'schnellwahl' | 'zeitwaehlen' | 'eigenezeit';
 
 interface TimeInputCellProps {
   value: TimeSlot | null;
@@ -86,7 +83,6 @@ function generateTimeOptions(): string[] {
       slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
     }
   }
-  // midnight → 02:00
   for (let h = 0; h <= 2; h++) {
     for (const m of [0, 15, 30, 45]) {
       if (h === 2 && m > 0) break;
@@ -100,7 +96,7 @@ function generateTimeOptions(): string[] {
 function timeToOrdinal(t: string): number {
   const [h, m] = t.split(':').map(Number);
   const total = h * 60 + m;
-  return total < 360 ? total + 1440 : total; // 00:xx–05:xx treated as next-day
+  return total < 360 ? total + 1440 : total;
 }
 
 const TIME_OPTIONS = generateTimeOptions();
@@ -428,40 +424,65 @@ function QuickTimesEditorDialog({
 }
 
 // ---------------------------------------------------------------------------
-// TimeSelectDropdowns — for "Zeit auswählen" tab
+// InlineTimePicker — shown below a field when clock icon is clicked
 // ---------------------------------------------------------------------------
 
-interface TimeSelectProps {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
+type PickerTarget = 'start1' | 'end1' | 'start2' | 'end2' | null;
+
+interface InlineTimePickerProps {
+  currentValue: string;
+  onConfirm: (time: string) => void;
+  onClose: () => void;
 }
 
-function TimeSelectDropdown({ label, value, onChange }: TimeSelectProps) {
-  // If the existing value is off the 15-min grid (e.g. legacy "17:23"), keep it
-  // visible in the list but don't add it as a new choosable option going forward.
-  const options = useMemo(() => {
-    if (!value || TIME_OPTIONS.includes(value)) return TIME_OPTIONS;
-    const list = [...TIME_OPTIONS];
-    const ord = timeToOrdinal(value);
-    const idx = list.findIndex(t => timeToOrdinal(t) > ord);
-    list.splice(idx === -1 ? list.length : idx, 0, value);
-    return list;
-  }, [value]);
+function InlineTimePicker({ currentValue, onConfirm, onClose }: InlineTimePickerProps) {
+  const parsed = parseTimeStr(currentValue);
+  const initH = parsed ? parsed.split(':')[0] : '10';
+  const initM = parsed ? parsed.split(':')[1] : '00';
+  const safeM = ['00', '15', '30', '45'].includes(initM) ? initM : '00';
+
+  const [ph, setPh] = useState(initH);
+  const [pm, setPm] = useState(safeM);
+
+  const HOURS = useMemo(() => {
+    const result: string[] = [];
+    for (let i = 6; i < 24; i++) result.push(String(i).padStart(2, '0'));
+    for (let i = 0; i <= 3; i++) result.push(String(i).padStart(2, '0'));
+    return result;
+  }, []);
 
   return (
-    <div className="flex-1">
-      <div className="text-[10px] text-muted-foreground mb-0.5">{label}</div>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="h-7 text-xs">
-          <SelectValue placeholder="—" />
-        </SelectTrigger>
-        <SelectContent className="max-h-52">
-          {options.map(t => (
-            <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+    <div className="flex items-center gap-1.5 bg-muted/60 border border-border rounded-md px-2 py-1.5 mt-1">
+      <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
+      <select
+        value={ph}
+        onChange={e => setPh(e.target.value)}
+        className="text-xs border border-border rounded px-1 py-0.5 bg-background w-12"
+      >
+        {HOURS.map(h => <option key={h} value={h}>{h}</option>)}
+      </select>
+      <span className="text-muted-foreground text-xs font-bold">:</span>
+      <select
+        value={pm}
+        onChange={e => setPm(e.target.value)}
+        className="text-xs border border-border rounded px-1 py-0.5 bg-background w-12"
+      >
+        {['00', '15', '30', '45'].map(m => (
+          <option key={m} value={m}>{m}</option>
+        ))}
+      </select>
+      <button
+        onClick={() => onConfirm(`${ph}:${pm}`)}
+        className="text-[10px] bg-primary text-primary-foreground rounded px-2 py-0.5 hover:bg-primary/90 transition-colors font-medium"
+      >
+        OK
+      </button>
+      <button
+        onClick={onClose}
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <X className="h-3 w-3" />
+      </button>
     </div>
   );
 }
@@ -493,19 +514,19 @@ export const TimeInputCell = ({
   const copiedInSession = useRef(false);
   const [open, setOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabType>('schnellwahl');
 
-  // Zeit auswählen state
-  const [selStart, setSelStart] = useState('10:00');
-  const [selEnd, setSelEnd] = useState('14:00');
+  // Unified time input state (replaces all 3 tabs)
+  const defaultStart = slotType === 'früh' ? '10:00' : '17:00';
+  const defaultEnd   = slotType === 'früh' ? '14:00' : '23:00';
+  const [selStart, setSelStart]   = useState(defaultStart);
+  const [selEnd, setSelEnd]       = useState(defaultEnd);
   const [selStart2, setSelStart2] = useState('17:30');
-  const [selEnd2, setSelEnd2] = useState('23:00');
+  const [selEnd2, setSelEnd2]     = useState('23:00');
   const [showSecond, setShowSecond] = useState(false);
-  const [selError, setSelError] = useState('');
+  const [selError, setSelError]   = useState('');
 
-  // Eigene Zeit state
-  const [freeText, setFreeText] = useState('');
-  const [freeError, setFreeError] = useState('');
+  // Inline clock picker state
+  const [pickerTarget, setPickerTarget] = useState<PickerTarget>(null);
 
   const { shiftMap, absenceShifts, workShifts } = useShiftConfig();
   const { presets, addPreset, updatePreset, deletePreset, movePreset, resetToDefaults } = useQuickTimes();
@@ -523,7 +544,7 @@ export const TimeInputCell = ({
     p.slotType === 'all' || p.slotType === slotType
   );
 
-  // Split shifts from shiftConfig (Früh only: multi-block configured shifts)
+  // Split shifts from shiftConfig (multi-block configured shifts)
   const splitShifts = workShifts.filter(shift => {
     const cfg = shiftMap[shift];
     if (!cfg || !cfg.start2 || !cfg.end2) return false;
@@ -533,22 +554,29 @@ export const TimeInputCell = ({
     return true;
   });
 
-  // Sync selStart/selEnd to current value when popover opens
+  // Sync fields to current value when popover opens
   useEffect(() => {
-    if (open && value?.start) {
-      setSelStart(value.start);
-      setSelEnd(value.end || '14:00');
+    if (open) {
+      setPickerTarget(null);
+      setSelError('');
+      if (value?.start) {
+        setSelStart(value.start);
+        setSelEnd(value.end || defaultEnd);
+      } else {
+        setSelStart(defaultStart);
+        setSelEnd(defaultEnd);
+      }
     }
   }, [open]);
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
       copiedInSession.current = false;
-      setFreeError('');
       setSelError('');
     }
     if (!nextOpen) {
       setBlockedOverride(false);
+      setPickerTarget(null);
       if (copyToIst && onCopyToIst && value?.start && value?.end && !copiedInSession.current) {
         onCopyToIst({ start: value.start, end: value.end });
       }
@@ -572,46 +600,40 @@ export const TimeInputCell = ({
   };
 
   // ---------------------------------------------------------------------------
-  // Zeit auswählen commit
+  // Unified time commit
   // ---------------------------------------------------------------------------
   const handleSelCommit = () => {
-    if (!selStart || !selEnd) { setSelError('Bitte Start- und Endzeit wählen'); return; }
-    if (toMin(selStart) === toMin(selEnd)) { setSelError('Start- und Endzeit dürfen nicht gleich sein'); return; }
+    const ns = parseTimeStr(selStart);
+    const ne = parseTimeStr(selEnd);
+    if (!ns) { setSelError(`Ungültige Startzeit: "${selStart}"`); return; }
+    if (!ne) { setSelError(`Ungültige Endzeit: "${selEnd}"`); return; }
+    if (toMin(ns) === toMin(ne)) { setSelError('Start- und Endzeit dürfen nicht gleich sein'); return; }
+
     if (showSecond) {
-      if (!selStart2 || !selEnd2) { setSelError('Bitte auch für die zweite Schicht Start- und Endzeit wählen'); return; }
-      if (rangesOverlap(selStart, selEnd, selStart2, selEnd2)) {
+      const ns2 = parseTimeStr(selStart2);
+      const ne2 = parseTimeStr(selEnd2);
+      if (!ns2) { setSelError(`Ungültige Startzeit 2: "${selStart2}"`); return; }
+      if (!ne2) { setSelError(`Ungültige Endzeit 2: "${selEnd2}"`); return; }
+      if (toMin(ns2) === toMin(ne2)) { setSelError('Start und Ende der 2. Schicht dürfen nicht gleich sein'); return; }
+      if (rangesOverlap(ns, ne, ns2, ne2)) {
         setSelError('Die zwei Zeitblöcke überschneiden sich'); return;
       }
-    }
-    setSelError('');
-    onChange({ start: selStart, end: selEnd }, null);
-    if (showSecond && onSplitTimeSelect) {
-      onSplitTimeSelect({ start: selStart2, end: selEnd2 });
-    }
-    if (copyToIst && onCopyToIst) {
-      onCopyToIst({ start: selStart, end: selEnd });
-      copiedInSession.current = true;
-    }
-    setOpen(false);
-  };
-
-  // ---------------------------------------------------------------------------
-  // Eigene Zeit commit
-  // ---------------------------------------------------------------------------
-  const handleFreeCommit = () => {
-    const result = parseFreeText(freeText);
-    if (typeof result === 'string') { setFreeError(result); return; }
-    setFreeError('');
-    onChange({ start: result.primary.start, end: result.primary.end }, null);
-    if (result.secondary && onSplitTimeSelect) {
-      onSplitTimeSelect(result.secondary);
-    }
-    if (copyToIst && onCopyToIst) {
-      onCopyToIst({ start: result.primary.start, end: result.primary.end });
-      copiedInSession.current = true;
+      setSelError('');
+      onChange({ start: ns, end: ne }, null);
+      if (onSplitTimeSelect) onSplitTimeSelect({ start: ns2, end: ne2 });
+      if (copyToIst && onCopyToIst) {
+        onCopyToIst({ start: ns, end: ne });
+        copiedInSession.current = true;
+      }
+    } else {
+      setSelError('');
+      onChange({ start: ns, end: ne }, null);
+      if (copyToIst && onCopyToIst) {
+        onCopyToIst({ start: ns, end: ne });
+        copiedInSession.current = true;
+      }
     }
     setOpen(false);
-    setFreeText('');
   };
 
   const handleAbsenceSelect = (abbrev: string) => {
@@ -726,15 +748,23 @@ export const TimeInputCell = ({
   // ---------------------------------------------------------------------------
   // Normal popover mode
   // ---------------------------------------------------------------------------
-  const isEmptyDayOff      = isDayOff && !value?.start && !absenceType;
+  const isEmptyDayOff        = isDayOff && !value?.start && !absenceType;
   const isEmptyRequestedFree = isRequestedFree && !value?.start && !absenceType && !isDayOff;
   const isEmptyBlocked       = isBlocked && !value?.start && !absenceType && !isDayOff;
 
-  const tabs: { key: TabType; label: string; icon: React.ReactNode }[] = [
-    { key: 'schnellwahl', label: 'Schnellwahl', icon: <Zap className="h-3 w-3" /> },
-    { key: 'zeitwaehlen', label: 'Auswählen',   icon: <Clock className="h-3 w-3" /> },
-    { key: 'eigenezeit',  label: 'Eigene Zeit', icon: <PenLine className="h-3 w-3" /> },
-  ];
+  // Helper: open clock picker for a target field
+  const openPicker = (target: PickerTarget, currentVal: string) => {
+    setPickerTarget(prev => prev === target ? null : target);
+  };
+
+  const applyPicker = (time: string) => {
+    if (pickerTarget === 'start1') setSelStart(time);
+    else if (pickerTarget === 'end1') setSelEnd(time);
+    else if (pickerTarget === 'start2') setSelStart2(time);
+    else if (pickerTarget === 'end2') setSelEnd2(time);
+    setPickerTarget(null);
+    setSelError('');
+  };
 
   return (
     <>
@@ -762,8 +792,9 @@ export const TimeInputCell = ({
         </PopoverTrigger>
 
         <PopoverContent className="w-72 p-2 z-50" align="center">
-          <div className="space-y-2">
-            {/* Wunschfrei warning */}
+          <div className="space-y-2.5">
+
+            {/* ── Wunschfrei warning ── */}
             {isRequestedFree && (
               <div className="flex items-start gap-1.5 rounded bg-amber-50 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 px-2 py-1.5 -mx-0.5">
                 <span className="text-amber-600 font-bold text-[11px] leading-tight shrink-0 mt-0.5">WF</span>
@@ -773,7 +804,7 @@ export const TimeInputCell = ({
               </div>
             )}
 
-            {/* Blocked warning */}
+            {/* ── Blocked warning ── */}
             {isBlocked && !blockedOverride && (
               <div className="space-y-2 -mx-0.5">
                 <div className="flex items-start gap-1.5 rounded bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-700 px-2 py-1.5">
@@ -798,175 +829,286 @@ export const TimeInputCell = ({
 
             {(!isBlocked || blockedOverride) && (
               <>
-                {/* Slot label */}
-                <div className="text-xs font-medium text-muted-foreground">
-                  {slotType === 'früh' ? 'Frühschicht' : 'Spätschicht'}
-                </div>
-
-                {/* Tab switcher */}
-                <div className="flex rounded-md border overflow-hidden text-[10px] font-medium">
-                  {tabs.map(tab => (
+                {/* ── Header: slot label + clear ── */}
+                <div className="flex items-center justify-between -mb-0.5">
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    {slotType === 'früh' ? 'Frühschicht' : 'Spätschicht'}
+                  </span>
+                  {(value?.start || absenceType) && (
                     <button
-                      key={tab.key}
-                      onClick={() => { setActiveTab(tab.key); setSelError(''); setFreeError(''); }}
-                      className={cn(
-                        "flex-1 flex items-center justify-center gap-1 py-1.5 transition-colors",
-                        activeTab === tab.key
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:bg-muted/60"
-                      )}
+                      onClick={handleClear}
+                      className="text-[10px] text-muted-foreground hover:text-destructive flex items-center gap-0.5 transition-colors"
                     >
-                      {tab.icon}
-                      <span>{tab.label}</span>
+                      <X className="h-3 w-3" /> Löschen
                     </button>
-                  ))}
+                  )}
                 </div>
 
-                {/* ── Tab: Schnellwahl ── */}
-                {activeTab === 'schnellwahl' && (
-                  <div className="space-y-2">
-                    {filteredPresets.length > 0 ? (
-                      <div className="grid grid-cols-3 gap-1">
-                        {filteredPresets.map(p => {
-                          const hasSecond = !!(p.start2 && p.end2);
-                          const lbl = hasSecond
-                            ? `${formatShort(p.start)}-${formatShort(p.end)} +`
-                            : p.label;
-                          return (
+                {/* ════ SCHNELLWAHL ════════════════════════════════════ */}
+                {filteredPresets.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Schnellwahl</div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {filteredPresets.map(p => {
+                        const hasSecond = !!(p.start2 && p.end2);
+                        const lbl = hasSecond
+                          ? `${formatShort(p.start)}-${formatShort(p.end)} +`
+                          : p.label;
+                        return (
+                          <button
+                            key={p.id}
+                            onClick={() => handlePresetSelect(p)}
+                            title={hasSecond
+                              ? `${p.start}–${p.end} + ${p.start2}–${p.end2}`
+                              : `${p.start}–${p.end}`}
+                            className={cn(
+                              "px-1 py-1.5 text-[10px] rounded border transition-colors font-medium text-center leading-tight",
+                              "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700",
+                              "text-blue-700 dark:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-800/50"
+                            )}
+                          >
+                            {lbl}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Split shifts from ShiftConfig */}
+                {splitShifts.length > 0 && slotType === 'früh' && (
+                  <div className="space-y-1">
+                    <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Geteilt</div>
+                    <div className="flex flex-wrap gap-1">
+                      {splitShifts.map(shift => {
+                        const cfg = shiftMap[shift];
+                        if (!cfg) return null;
+                        const lbl = `${formatShort(cfg.start)}-${formatShort(cfg.end)} / ${formatShort(cfg.start2!)}`;
+                        return (
+                          <button
+                            key={shift}
+                            onClick={() => handlePresetSelect(cfg as { start: string; end: string; start2?: string; end2?: string })}
+                            title={`${cfg.start}-${cfg.end} + ${cfg.start2}-${cfg.end2} = ${cfg.hours}h`}
+                            className={cn(
+                              "px-2 py-1 text-[10px] rounded border transition-colors font-medium",
+                              cfg.color, "hover:opacity-80"
+                            )}
+                          >
+                            {lbl}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Schnellwahl bearbeiten */}
+                <button
+                  onClick={() => { setOpen(false); setEditorOpen(true); }}
+                  className="w-full text-[10px] text-muted-foreground hover:text-foreground border border-dashed rounded py-1 flex items-center justify-center gap-1 hover:border-primary/40 hover:bg-muted/30 transition-colors"
+                >
+                  <Settings2 className="h-3 w-3" />
+                  Schnellwahl bearbeiten
+                </button>
+
+                {/* ════ MANUELLE ZEITEINGABE ════════════════════════════ */}
+                <div className="border-t pt-2 space-y-2">
+                  {/* 1. Schicht */}
+                  <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">1. Schicht</div>
+                  <div className="flex items-center gap-1.5">
+                    {/* Von */}
+                    <div className="flex-1">
+                      <div className="text-[9px] text-muted-foreground mb-0.5">Von</div>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          value={selStart}
+                          onChange={e => { setSelStart(e.target.value); setSelError(''); }}
+                          onKeyDown={e => { if (e.key === 'Enter') handleSelCommit(); }}
+                          placeholder="10:00"
+                          className="h-7 text-xs font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => openPicker('start1', selStart)}
+                          className={cn(
+                            "h-7 w-7 shrink-0 flex items-center justify-center rounded border transition-colors",
+                            pickerTarget === 'start1'
+                              ? "border-primary text-primary bg-primary/5"
+                              : "border-border text-muted-foreground hover:text-foreground hover:border-primary/40"
+                          )}
+                        >
+                          <Clock className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {pickerTarget === 'start1' && (
+                        <InlineTimePicker
+                          currentValue={selStart}
+                          onConfirm={applyPicker}
+                          onClose={() => setPickerTarget(null)}
+                        />
+                      )}
+                    </div>
+                    <span className="text-muted-foreground text-sm mt-3">–</span>
+                    {/* Bis */}
+                    <div className="flex-1">
+                      <div className="text-[9px] text-muted-foreground mb-0.5">Bis</div>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          value={selEnd}
+                          onChange={e => { setSelEnd(e.target.value); setSelError(''); }}
+                          onKeyDown={e => { if (e.key === 'Enter') handleSelCommit(); }}
+                          placeholder="14:00"
+                          className="h-7 text-xs font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => openPicker('end1', selEnd)}
+                          className={cn(
+                            "h-7 w-7 shrink-0 flex items-center justify-center rounded border transition-colors",
+                            pickerTarget === 'end1'
+                              ? "border-primary text-primary bg-primary/5"
+                              : "border-border text-muted-foreground hover:text-foreground hover:border-primary/40"
+                          )}
+                        >
+                          <Clock className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {pickerTarget === 'end1' && (
+                        <InlineTimePicker
+                          currentValue={selEnd}
+                          onConfirm={applyPicker}
+                          onClose={() => setPickerTarget(null)}
+                        />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* + Zweite Schicht toggle */}
+                  <button
+                    onClick={() => { setShowSecond(v => !v); setSelError(''); setPickerTarget(null); }}
+                    className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                  >
+                    {showSecond ? (
+                      <><X className="h-3 w-3" /> Zweite Schicht entfernen</>
+                    ) : (
+                      <><span className="font-bold">+</span> Zweite Schicht</>
+                    )}
+                  </button>
+
+                  {/* 2. Schicht */}
+                  {showSecond && (
+                    <div className="pl-2 border-l-2 border-blue-200 dark:border-blue-800 space-y-1.5">
+                      <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">2. Schicht</div>
+                      <div className="flex items-center gap-1.5">
+                        {/* Von 2 */}
+                        <div className="flex-1">
+                          <div className="text-[9px] text-muted-foreground mb-0.5">Von</div>
+                          <div className="flex items-center gap-1">
+                            <Input
+                              value={selStart2}
+                              onChange={e => { setSelStart2(e.target.value); setSelError(''); }}
+                              onKeyDown={e => { if (e.key === 'Enter') handleSelCommit(); }}
+                              placeholder="17:30"
+                              className="h-7 text-xs font-mono"
+                            />
                             <button
-                              key={p.id}
-                              onClick={() => handlePresetSelect(p)}
-                              title={hasSecond
-                                ? `${p.start}–${p.end} + ${p.start2}–${p.end2}`
-                                : `${p.start}–${p.end}`}
+                              type="button"
+                              onClick={() => openPicker('start2', selStart2)}
                               className={cn(
-                                "px-1 py-1.5 text-[10px] rounded border transition-colors font-medium text-center leading-tight",
-                                "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700",
-                                "text-blue-700 dark:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-800/50"
+                                "h-7 w-7 shrink-0 flex items-center justify-center rounded border transition-colors",
+                                pickerTarget === 'start2'
+                                  ? "border-primary text-primary bg-primary/5"
+                                  : "border-border text-muted-foreground hover:text-foreground hover:border-primary/40"
                               )}
                             >
-                              {lbl}
+                              <Clock className="h-3.5 w-3.5" />
                             </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-[10px] text-muted-foreground text-center py-2">
-                        Keine Schnellwahl für diesen Slot
-                      </div>
-                    )}
-
-                    {/* Split shifts from ShiftConfig */}
-                    {splitShifts.length > 0 && slotType === 'früh' && (
-                      <div className="pt-1 border-t">
-                        <div className="text-[10px] text-muted-foreground mb-1">8.4h Geteilt</div>
-                        <div className="flex flex-wrap gap-1">
-                          {splitShifts.map(shift => {
-                            const cfg = shiftMap[shift];
-                            if (!cfg) return null;
-                            const lbl = `${formatShort(cfg.start)}-${formatShort(cfg.end)} / ${formatShort(cfg.start2!)}`;
-                            return (
-                              <button
-                                key={shift}
-                                onClick={() => handlePresetSelect(cfg as { start: string; end: string; start2?: string; end2?: string })}
-                                title={`${cfg.start}-${cfg.end} + ${cfg.start2}-${cfg.end2} = ${cfg.hours}h`}
-                                className={cn(
-                                  "px-2 py-1 text-[10px] rounded border transition-colors font-medium",
-                                  cfg.color, "hover:opacity-80"
-                                )}
-                              >
-                                {lbl}
-                              </button>
-                            );
-                          })}
+                          </div>
+                          {pickerTarget === 'start2' && (
+                            <InlineTimePicker
+                              currentValue={selStart2}
+                              onConfirm={applyPicker}
+                              onClose={() => setPickerTarget(null)}
+                            />
+                          )}
+                        </div>
+                        <span className="text-muted-foreground text-sm mt-3">–</span>
+                        {/* Bis 2 */}
+                        <div className="flex-1">
+                          <div className="text-[9px] text-muted-foreground mb-0.5">Bis</div>
+                          <div className="flex items-center gap-1">
+                            <Input
+                              value={selEnd2}
+                              onChange={e => { setSelEnd2(e.target.value); setSelError(''); }}
+                              onKeyDown={e => { if (e.key === 'Enter') handleSelCommit(); }}
+                              placeholder="23:00"
+                              className="h-7 text-xs font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => openPicker('end2', selEnd2)}
+                              className={cn(
+                                "h-7 w-7 shrink-0 flex items-center justify-center rounded border transition-colors",
+                                pickerTarget === 'end2'
+                                  ? "border-primary text-primary bg-primary/5"
+                                  : "border-border text-muted-foreground hover:text-foreground hover:border-primary/40"
+                              )}
+                            >
+                              <Clock className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          {pickerTarget === 'end2' && (
+                            <InlineTimePicker
+                              currentValue={selEnd2}
+                              onConfirm={applyPicker}
+                              onClose={() => setPickerTarget(null)}
+                            />
+                          )}
                         </div>
                       </div>
-                    )}
-
-                    <button
-                      onClick={() => { setOpen(false); setEditorOpen(true); }}
-                      className="w-full text-[10px] text-muted-foreground hover:text-foreground border border-dashed rounded py-1.5 flex items-center justify-center gap-1 hover:border-primary/40 hover:bg-muted/30 transition-colors"
-                    >
-                      <Settings2 className="h-3 w-3" />
-                      Schnellwahl bearbeiten
-                    </button>
-                  </div>
-                )}
-
-                {/* ── Tab: Zeit auswählen ── */}
-                {activeTab === 'zeitwaehlen' && (
-                  <div className="space-y-2">
-                    <div className="flex gap-2 items-end">
-                      <TimeSelectDropdown label="Start" value={selStart} onChange={v => { setSelStart(v); setSelError(''); }} />
-                      <span className="text-muted-foreground pb-1.5">–</span>
-                      <TimeSelectDropdown label="Ende" value={selEnd} onChange={v => { setSelEnd(v); setSelError(''); }} />
                     </div>
+                  )}
 
-                    {showSecond && (
-                      <div className="space-y-1 pl-2 border-l-2 border-blue-200 dark:border-blue-800">
-                        <div className="text-[10px] text-muted-foreground">2. Schicht</div>
-                        <div className="flex gap-2 items-end">
-                          <TimeSelectDropdown label="Start 2" value={selStart2} onChange={v => { setSelStart2(v); setSelError(''); }} />
-                          <span className="text-muted-foreground pb-1.5">–</span>
-                          <TimeSelectDropdown label="Ende 2" value={selEnd2} onChange={v => { setSelEnd2(v); setSelError(''); }} />
-                        </div>
-                      </div>
-                    )}
-
-                    <button
-                      onClick={() => { setShowSecond(v => !v); setSelError(''); }}
-                      className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline"
-                    >
-                      {showSecond ? '✕ Zweite Schicht entfernen' : '+ Zweite Schicht hinzufügen'}
-                    </button>
-
-                    {selError && (
-                      <div className="text-[10px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded px-2 py-1">
-                        {selError}
-                      </div>
-                    )}
-
-                    <button
-                      onClick={handleSelCommit}
-                      className="w-full text-xs bg-primary text-primary-foreground rounded py-1.5 hover:bg-primary/90 transition-colors font-medium"
-                    >
-                      Übernehmen
-                    </button>
-                  </div>
-                )}
-
-                {/* ── Tab: Eigene Zeit ── */}
-                {activeTab === 'eigenezeit' && (
-                  <div className="space-y-2">
-                    <div className="text-[10px] text-muted-foreground leading-snug">
-                      Beispiele: <code className="font-mono">10-14</code>, <code className="font-mono">10:00-14:00</code>,{' '}
-                      <code className="font-mono">10-14 / 17:30-23</code>
+                  {/* Error */}
+                  {selError && (
+                    <div className="text-[10px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded px-2 py-1">
+                      {selError}
                     </div>
-                    <Input
-                      value={freeText}
-                      onChange={e => { setFreeText(e.target.value); setFreeError(''); }}
-                      onKeyDown={e => { if (e.key === 'Enter') handleFreeCommit(); }}
-                      placeholder="z.B. 11:15-14 / 17:30-23:30"
-                      className="h-8 text-xs font-mono"
-                      autoFocus
-                    />
-                    {freeError && (
-                      <div className="text-[10px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded px-2 py-1">
-                        {freeError}
-                      </div>
-                    )}
-                    <button
-                      onClick={handleFreeCommit}
-                      className="w-full text-xs bg-primary text-primary-foreground rounded py-1.5 hover:bg-primary/90 transition-colors font-medium"
+                  )}
+
+                  {/* IST checkbox — shown here before Übernehmen */}
+                  {onCopyToIst && !absenceType && (
+                    <div
+                      className="flex items-center gap-2"
+                      onClick={e => e.stopPropagation()}
                     >
-                      Übernehmen
-                    </button>
-                  </div>
-                )}
+                      <Checkbox
+                        id="copy-to-ist-cb"
+                        checked={copyToIst}
+                        onCheckedChange={checked => setCopyToIst(!!checked)}
+                        className="h-3.5 w-3.5 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600"
+                      />
+                      <label
+                        htmlFor="copy-to-ist-cb"
+                        className="text-[10px] text-foreground cursor-pointer select-none leading-tight"
+                      >
+                        Auch ins IST übernehmen
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Übernehmen */}
+                  <button
+                    onClick={handleSelCommit}
+                    className="w-full text-xs bg-primary text-primary-foreground rounded py-1.5 hover:bg-primary/90 transition-colors font-medium"
+                  >
+                    Übernehmen
+                  </button>
+                </div>
 
                 {/* ── Absence shortcuts ── */}
                 {filteredAbsenceShifts.length > 0 && (
-                  <div className="flex flex-wrap gap-1 pt-2 border-t">
+                  <div className="flex flex-wrap gap-1 pt-1.5 border-t">
                     {filteredAbsenceShifts.map(shift => {
                       const cfg = shiftMap[shift];
                       if (!cfg) return null;
@@ -1041,34 +1183,15 @@ export const TimeInputCell = ({
                   </div>
                 )}
 
-                {/* ── IST Checkbox ── */}
-                {onCopyToIst && !absenceType && (
-                  <div
-                    className="flex items-center gap-2 pt-1.5 border-t"
-                    onClick={e => e.stopPropagation()}
+                {/* ── Delete (fallback, shown when value already set) ── */}
+                {(value?.start || absenceType) && (
+                  <button
+                    onClick={handleClear}
+                    className="w-full text-xs text-muted-foreground hover:text-foreground py-1 border-t"
                   >
-                    <Checkbox
-                      id="copy-to-ist-cb"
-                      checked={copyToIst}
-                      onCheckedChange={checked => setCopyToIst(!!checked)}
-                      className="h-3.5 w-3.5 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600"
-                    />
-                    <label
-                      htmlFor="copy-to-ist-cb"
-                      className="text-[10px] text-foreground cursor-pointer select-none leading-tight"
-                    >
-                      Auch ins IST übernehmen
-                    </label>
-                  </div>
+                    Löschen
+                  </button>
                 )}
-
-                {/* ── Löschen ── */}
-                <button
-                  onClick={handleClear}
-                  className="w-full text-xs text-muted-foreground hover:text-foreground py-1 border-t"
-                >
-                  Löschen
-                </button>
               </>
             )}
           </div>

@@ -1,0 +1,162 @@
+Bitte den Zeit-Editor im Dienstplan vereinfachen und die Schnellauswahl bearbeitbar machen.
+
+Aktuell ist der Editor zu kompliziert mit Kategorien/Tabs. Ich möchte wieder eine einfache Bedienung wie früher.
+
+====================================================
+1. KEINE TABS / KATEGORIEN
+====================================================
+
+Bitte entfernen:
+
+- Schnellwahl Tab
+- Zeit auswählen Tab
+- Eigene Zeit Tab
+
+Der Editor soll direkt alles auf einer Ansicht zeigen.
+
+====================================================
+2. SCHNELLAUSWAHL OBEN
+====================================================
+
+Oben sollen weiterhin die Schnellauswahl-Buttons stehen, z.B.:
+
+- 10-14
+- 11-14
+- 17-23
+- 10-14 / 17:30-23
+
+Diese Buttons sollen direkt anklickbar sein.
+
+Wichtig:
+Ich möchte diese Schnellauswahl-Zeiten selbst ändern können.
+
+Bitte eine kleine Funktion ergänzen:
+
+"Schnellauswahl bearbeiten"
+
+Dort soll ich können:
+
+- bestehende Schnellwahl umbenennen
+- Startzeit ändern
+- Endzeit ändern
+- zweite Schicht hinzufügen
+- zweite Schicht ändern
+- Schnellwahl löschen
+- neue Schnellwahl hinzufügen
+- Reihenfolge ändern, falls einfach möglich
+
+Vorerst Speicherung in localStorage.
+Keine Supabase-Änderung.
+
+====================================================
+3. NORMALE ZEITEINGABE DARUNTER
+====================================================
+
+Unter der Schnellauswahl sollen normale Eingabezeilen bleiben:
+
+1. Schicht:
+- Von Feld
+- Bis Feld
+
+Optional:
+Button "+ zweite Schicht"
+
+Wenn geklickt:
+2. Schicht:
+- Von Feld
+- Bis Feld
+
+Man soll direkt in diese Felder schreiben können.
+
+Beispiele:
+10
+10:00
+10-14
+17:30
+
+Bitte beim Speichern normalisieren auf:
+HH:mm-HH:mm
+
+====================================================
+4. UHRSYMBOL FÜR VORAUSWAHL
+====================================================
+
+Neben jedem Von/Bis-Feld soll ein kleines Uhrsymbol sein.
+
+Nur wenn man auf dieses Uhrsymbol klickt, öffnet sich der Zeitpicker.
+
+Der Zeitpicker soll:
+- Stunden auswählen
+- Minuten auswählen
+
+Minuten dürfen nur sein:
+
+00
+15
+30
+45
+
+Keine anderen Minuten anzeigen.
+
+Wichtig:
+Die Dropdown-Auswahl ist nur eine Hilfe.
+Die manuelle Eingabe im Feld muss weiterhin möglich sein.
+
+====================================================
+5. ZWEITE SCHICHT
+====================================================
+
+Wenn mehrere Zeitblöcke eingetragen werden, sollen diese im Dienstplan sauber untereinander angezeigt werden:
+
+10:00-14:00
+17:30-23:00
+
+Auch die Option:
+"Auch ins IST übernehmen"
+muss für alle Zeitblöcke funktionieren.
+
+====================================================
+6. VALIDIERUNG
+====================================================
+
+Beim Übernehmen prüfen:
+
+- Von und Bis vorhanden
+- gültiges Zeitformat
+- Nachtschichten über Mitternacht erlauben, z.B. 18:00-00:30
+- zweite Schicht darf sich nicht mit erster überschneiden
+- ungültige Eingabe mit verständlicher Fehlermeldung anzeigen
+
+====================================================
+7. SCHICHTEN-PALETTE LINKS
+====================================================
+
+Die bearbeiteten Schnellauswahl-Zeiten sollen auch links in der Schichten-Palette erscheinen.
+
+Wenn ich eine Schnellwahl ändere oder neu erstelle:
+- im Popover anzeigen
+- links in der Palette anzeigen
+- nach Reload erhalten bleiben
+
+Speicherung vorerst localStorage.
+
+====================================================
+8. WICHTIG
+====================================================
+
+Keine Kostenlogik ändern.
+Keine Soll/Ist-Berechnung ändern.
+Keine Speicherlogik ändern.
+Keine Supabase-Migration.
+Keine Datenbankänderung.
+
+Nur:
+- Zeit-Editor einfacher machen
+- Schnellauswahl oben bearbeitbar machen
+- manuelle Zeiteingabe behalten
+- Uhrsymbol-Vorauswahl mit 00/15/30/45 Minuten
+
+Danach:
+- TypeScript prüfen
+- Dienstplan testen
+- kurze Zusammenfassung geben
