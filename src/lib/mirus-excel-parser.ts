@@ -375,7 +375,12 @@ function readDayRows(
   if (!ref) return records;
   const range = XLSX.utils.decode_range(ref);
 
+  // Rows consumed as continuation blocks (no date, belong to previous day)
+  const skipRows = new Set<number>();
+
   for (let r = startRow; r <= endRow; r++) {
+    if (skipRows.has(r)) continue;
+
     const dateCell = getCell(ws, map.dateCol, r);
     const date     = parseDateCell(dateCell);
 
@@ -390,7 +395,7 @@ function readDayRows(
 
     if (!date && !absenceCode) continue;
 
-    // Schichten
+    // ── Schichten ─────────────────────────────────────────────────────────────
     const shifts: TimeBlock[] = [];
     const fromCell = getCell(ws, map.fromCol, r);
     const fromTime = parseTimeCell(fromCell);
@@ -398,27 +403,66 @@ function readDayRows(
     if (fromTime) {
       const toTime = map.toCol !== null ? parseTimeCell(getCell(ws, map.toCol, r)) : null;
 
-      // Sometimes from/to are encoded "HH:MM–HH:MM" in one cell
+      // FIX 1: matchAll — handles "10:00-14:00 / 17:00-22:00" in a single cell
       const rawW = (fromCell?.w ?? String(fromCell?.v ?? '')).trim();
-      const rangeMatch = rawW.match(/(\d{1,2}[:\. ]\d{2})\s*[-–]\s*(\d{1,2}[:\. ]\d{2})/);
-      if (rangeMatch) {
-        shifts.push({
-          from: rangeMatch[1].replace(/[. ]/, ':'),
-          to:   rangeMatch[2].replace(/[. ]/, ':'),
-        });
+      const allRanges = [...rawW.matchAll(/(\d{1,2}[:\. ]\d{2})\s*[-–]\s*(\d{1,2}[:\. ]\d{2})/g)];
+
+      if (allRanges.length > 0) {
+        for (const m of allRanges) {
+          shifts.push({
+            from: m[1].replace(/[. ]/, ':'),
+            to:   m[2].replace(/[. ]/, ':'),
+          });
+        }
       } else if (toTime) {
         shifts.push({ from: fromTime, to: toTime });
+
+        // FIX 3: Wider column scan — up to 15 columns right of toCol for second shift pair.
+        // Mirus layouts can have gap columns between the first and second shift columns.
+        if (map.toCol !== null) {
+          for (let offset = 1; offset <= 15; offset++) {
+            const f2 = parseTimeCell(getCell(ws, map.toCol + offset, r));
+            if (!f2 || f2 === fromTime || f2 === toTime) continue;
+            const t2 = parseTimeCell(getCell(ws, map.toCol + offset + 1, r));
+            if (t2) {
+              shifts.push({ from: f2, to: t2 });
+              break;
+            }
+          }
+        }
       } else {
         shifts.push({ from: fromTime, to: '?' });
       }
+    }
 
-      // Check for a second shift further right in the same row
-      if (map.toCol !== null) {
-        const nextFromCol = map.toCol + 1;
-        const nextToCol   = map.toCol + 2;
-        const from2 = parseTimeCell(getCell(ws, nextFromCol, r));
-        const to2   = parseTimeCell(getCell(ws, nextToCol, r));
-        if (from2 && to2) shifts.push({ from: from2, to: to2 });
+    // FIX 2: Continuation rows — in Mirus, split shifts often occupy multiple consecutive
+    // rows where only the FIRST row has a date cell; subsequent rows have no date.
+    // Without this fix, those rows are silently dropped by the `!date && !absenceCode` guard.
+    if (date) {
+      for (let cr = r + 1; cr <= endRow; cr++) {
+        const crDate = parseDateCell(getCell(ws, map.dateCol, cr));
+        if (crDate) break; // A new calendar day starts — stop looking
+
+        // If the row already has an absence code, it's its own entry — stop
+        let crAbsence: string | null = null;
+        for (let c = range.s.c; c <= Math.min(range.e.c, 25); c++) {
+          const cell = getCell(ws, c, cr);
+          if (!cell) continue;
+          const code = detectAbsence(String(cell.v ?? ''));
+          if (code) { crAbsence = code; break; }
+        }
+        if (crAbsence) break;
+
+        // Check for a time block on this dateless continuation row
+        const crFrom = parseTimeCell(getCell(ws, map.fromCol, cr));
+        if (!crFrom) break; // No time value — not a continuation shift row
+        const crTo = map.toCol !== null ? parseTimeCell(getCell(ws, map.toCol, cr)) : null;
+        if (crTo) {
+          shifts.push({ from: crFrom, to: crTo });
+          skipRows.add(cr); // Mark so outer loop skips this row
+        } else {
+          break;
+        }
       }
     }
 

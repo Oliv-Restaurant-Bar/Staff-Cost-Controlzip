@@ -442,6 +442,9 @@ function DayTable({ days }: { days: PreviewDayEntry[] }) {
                         {s.from}–{s.to}{s.department ? ` (${s.department})` : ''}
                       </span>
                     ))}
+                    {d.shifts.length > 1 && (
+                      <span className="text-[9px] text-blue-600 font-semibold">{d.shifts.length} Blöcke</span>
+                    )}
                   </div>
                 ) : <span className="text-muted-foreground">—</span>}
               </td>

@@ -496,6 +496,9 @@ function EmployeeReviewCard({
                                   {s.from}–{s.to}
                                 </span>
                               ))}
+                              {effectiveShifts.length > 1 && (
+                                <span className="text-[9px] text-blue-600 font-semibold">{effectiveShifts.length} Blöcke</span>
+                              )}
                             </div>
                           ) : <span className="text-muted-foreground">—</span>}
                         </td>
