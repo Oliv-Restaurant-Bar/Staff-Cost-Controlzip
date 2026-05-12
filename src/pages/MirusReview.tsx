@@ -115,6 +115,11 @@ function QualityDot({ q }: { q: number }) {
   return <span className={cn('text-[11px] font-mono font-bold', cls)}>{q}%</span>;
 }
 
+function formatHours(value: number | null | undefined): string {
+  if (value == null) return '—';
+  return Number(value).toFixed(2) + ' h';
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ─── DAY CORRECTION MODAL ─────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -450,10 +455,10 @@ function EmployeeReviewCard({
                 diff !== undefined && diff > 3 ? 'border-red-200 bg-red-50/70 text-red-700' :
                 'border-border bg-muted/40 text-muted-foreground',
               )}>
-                <span className="font-bold">{calc}h</span>
-                {totals.totalHours && <span className="opacity-60">/ {totals.totalHours}</span>}
+                <span className="font-bold">{formatHours(calc)}</span>
+                {totals.totalHours != null && <span className="opacity-60">/ {formatHours(totals.totalHours)}</span>}
                 {validated ? <span className="text-green-600 font-bold">✓</span>
-                  : diff !== undefined && <span>±{diff}h</span>}
+                  : diff !== undefined && <span>±{formatHours(diff)}</span>}
               </div>
             )}
             <QualityDot q={emp.quality} />
@@ -605,7 +610,7 @@ function EmployeeReviewCard({
                         </td>
                         <td className="px-2 py-1 font-mono whitespace-nowrap">{effectivePause != null ? `${effectivePause}'` : '—'}</td>
                         <td className="px-2 py-1 font-mono font-semibold whitespace-nowrap">
-                          {d.totalHours != null ? `${d.totalHours} h` : '—'}
+                          {formatHours(d.totalHours)}
                         </td>
                         <td className="px-2 py-1">
                           {effectiveAbsence ? (
@@ -744,7 +749,7 @@ function ReviewDashboard({ state, onStatusChange }: {
         <StatCard label="Korrekturen"  value={stats.corr}       color={stats.corr > 0 ? 'blue' : 'default'} />
         <StatCard label="Ausgeschl."   value={stats.excl}       color={stats.excl > 0 ? 'red' : 'default'} />
         <StatCard label="Ø Qualität"   value={`${stats.avgQ}%`} color={stats.avgQ >= 90 ? 'green' : stats.avgQ >= 80 ? 'yellow' : 'red'} />
-        <StatCard label="Std. total"   value={`${stats.totalH}h`} />
+        <StatCard label="Std. total"   value={formatHours(stats.totalH)} />
         <StatCard label="Offene Warn." value={stats.openWarns}  color={stats.openWarns > 0 ? 'yellow' : 'green'} />
       </div>
     </div>

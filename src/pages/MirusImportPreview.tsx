@@ -158,7 +158,7 @@ function buildWarnings(emp: ExcelEmployee, idx: number): PreviewImportWarning[] 
   if (totalH > 250)
     warns.push({
       severity: 'warning', category: 'hours',
-      message: `Ungewöhnlich viele Stunden: ${totalH} h — möglicher Mehrfachblock-Fehler, bitte prüfen. Import möglich.`,
+      message: `Ungewöhnlich viele Stunden: ${formatHours(totalH)} — möglicher Mehrfachblock-Fehler, bitte prüfen. Import möglich.`,
       employeeName: label,
     });
 
@@ -166,7 +166,7 @@ function buildWarnings(emp: ExcelEmployee, idx: number): PreviewImportWarning[] 
   if (totals.totalsDiff !== undefined && totals.totalsDiff > 3)
     warns.push({
       severity: 'warning', category: 'totals',
-      message: `Totale weichen um ±${totals.totalsDiff} h von Tageszeilen ab — Datei möglicherweise fehlerhaft. Import möglich, aber bitte prüfen.`,
+      message: `Totale weichen um ±${formatHours(totals.totalsDiff)} von Tageszeilen ab — Datei möglicherweise fehlerhaft. Import möglich, aber bitte prüfen.`,
       employeeName: label,
     });
 
@@ -376,6 +376,11 @@ function SevBadge({ severity }: { severity: PreviewImportWarning['severity'] }) 
   return <span className={cn('font-bold text-[11px]', cls)}>{icon}</span>;
 }
 
+function formatHours(value: number | null | undefined): string {
+  if (value == null) return '—';
+  return Number(value).toFixed(2) + ' h';
+}
+
 function WarnList({ warnings }: { warnings: PreviewImportWarning[] }) {
   if (!warnings.length) return null;
   return (
@@ -423,7 +428,7 @@ function MonatsTotaleRow({ totals }: { totals: PreviewTotals }) {
                 : 'bg-muted/60 border-border text-foreground',
             )}>
               <span className="text-muted-foreground font-normal text-[9px] uppercase tracking-wide mr-0.5">{label}</span>
-              {(totals as Record<string, unknown>)[k] as string}
+              {formatHours((totals as Record<string, unknown>)[k] as number | undefined | null)}
             </span>
           ))}
         </div>
@@ -436,11 +441,11 @@ function MonatsTotaleRow({ totals }: { totals: PreviewTotals }) {
           valid ? 'border-green-200 bg-green-50/50' : diff !== undefined && diff > 3 ? 'border-red-200 bg-red-50/50' : 'border-border bg-muted/20',
         )}>
           <span className="text-muted-foreground">Berechnet:</span>
-          <span className="font-mono font-bold">{calc} h</span>
+          <span className="font-mono font-bold">{formatHours(calc)}</span>
           {diff !== undefined && totals.totalHours && (
             <>
               <span className="text-muted-foreground">Diff:</span>
-              <span className={cn('font-mono font-bold', diff < 1 ? 'text-green-600' : diff < 3 ? 'text-yellow-600' : 'text-red-600')}>±{diff} h</span>
+              <span className={cn('font-mono font-bold', diff < 1 ? 'text-green-600' : diff < 3 ? 'text-yellow-600' : 'text-red-600')}>±{formatHours(diff)}</span>
             </>
           )}
           {valid && <span className="text-green-600 font-semibold">✓ validiert</span>}
@@ -587,7 +592,7 @@ function DayTable({ days }: { days: PreviewDayEntry[] }) {
                 {d.breakMinutes != null ? `${d.breakMinutes}'` : '—'}
               </td>
               <td className="px-2 py-1 font-mono font-semibold whitespace-nowrap">
-                {d.totalHours != null ? `${d.totalHours} h` : '—'}
+                {formatHours(d.totalHours)}
               </td>
               <td className="px-2 py-1 whitespace-nowrap">
                 {d.absenceCode ? (
@@ -678,11 +683,11 @@ function EmployeeCard({
                     ? 'border-red-200 bg-red-50/70 text-red-700'
                     : 'border-border bg-muted/40 text-muted-foreground',
                 )}>
-                  <span className="font-bold">{calc}h</span>
-                  {mirus && <span className="opacity-60">/ {mirus}</span>}
+                  <span className="font-bold">{formatHours(calc)}</span>
+                  {mirus != null && <span className="opacity-60">/ {formatHours(mirus)}</span>}
                   {valid
                     ? <span className="text-green-600 font-bold">✓</span>
-                    : diff !== undefined && <span>±{diff}h</span>
+                    : diff !== undefined && <span>±{formatHours(diff)}</span>
                   }
                 </div>
               );
@@ -877,7 +882,7 @@ function MonthChainingValidation({ sessions }: { sessions: LoadedSession[] }) {
                   <td className="px-3 py-1.5 font-mono">
                     {ch.diffVal !== null
                       ? <span className={ch.ok ? 'text-green-600' : 'text-yellow-600 font-semibold'}>
-                          {ch.ok ? '0' : `±${ch.diffVal}`}
+                          {ch.ok ? '0.00' : `±${Number(ch.diffVal).toFixed(2)}`}
                         </span>
                       : <span className="text-muted-foreground/40">—</span>
                     }
@@ -1017,7 +1022,7 @@ function SummaryPanel({ session, onRestaurantChange }: {
           )}
         </div>
         <StatBox label="Ausgewählt"    value={`${selected} / ${session.employees.length}`} />
-        <StatBox label="Gesamtstunden" value={`${session.totalHours} h`} />
+        <StatBox label="Gesamtstunden" value={formatHours(session.totalHours)} />
         <StatBox label="Ø Qualität"    value={`${session.averageQuality}%`} color={qColor} />
       </div>
 
@@ -1058,7 +1063,7 @@ function ImportSummary({
           { label: 'Ausgewählt',     value: `${selected.length} MA` },
           { label: 'Ausgeschlossen', value: `${excluded.length} MA` },
           { label: 'Tageszeilen',    value: String(totalDays) },
-          { label: 'Stunden total',  value: `${Math.round(totalH * 10) / 10} h` },
+          { label: 'Stunden total',  value: formatHours(totalH) },
         ].map(({ label, value }) => (
           <div key={label} className="space-y-0.5">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
@@ -1167,7 +1172,7 @@ function SessionComparisonTable({
                   <td className="px-3 py-2 font-mono font-semibold">
                     <span className={avgQ >= 90 ? 'text-green-600' : avgQ >= 80 ? 'text-yellow-600' : 'text-red-600'}>{avgQ}%</span>
                   </td>
-                  <td className="px-3 py-2 font-mono">{totalH} h</td>
+                  <td className="px-3 py-2 font-mono">{formatHours(totalH)}</td>
                   <td className="px-3 py-2 font-mono">{warns > 0 ? <span className="text-yellow-600">⚠ {warns}</span> : <span className="text-green-600">✓ 0</span>}</td>
                   <td className="px-3 py-2">
                     <button
