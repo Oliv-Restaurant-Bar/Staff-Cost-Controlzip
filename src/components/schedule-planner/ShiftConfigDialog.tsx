@@ -354,6 +354,7 @@ export const ShiftConfigDialog = ({
                     <Label className="text-[10px] text-muted-foreground">{isSplit ? '1. Beginn' : 'Beginn'}</Label>
                     <Input
                       type="time"
+                      step="900"
                       value={shift.start}
                       onChange={e => updateShift(index, { start: e.target.value })}
                       className="h-8 text-sm"
@@ -363,6 +364,7 @@ export const ShiftConfigDialog = ({
                     <Label className="text-[10px] text-muted-foreground">{isSplit ? '1. Ende' : 'Ende'}</Label>
                     <Input
                       type="time"
+                      step="900"
                       value={shift.end}
                       onChange={e => updateShift(index, { end: e.target.value })}
                       className="h-8 text-sm"
@@ -374,6 +376,7 @@ export const ShiftConfigDialog = ({
                         <Label className="text-[10px] text-muted-foreground">2. Beginn</Label>
                         <Input
                           type="time"
+                          step="900"
                           value={shift.start2 || ''}
                           onChange={e => updateShift(index, { start2: e.target.value })}
                           className="h-8 text-sm"
@@ -383,6 +386,7 @@ export const ShiftConfigDialog = ({
                         <Label className="text-[10px] text-muted-foreground">2. Ende</Label>
                         <Input
                           type="time"
+                          step="900"
                           value={shift.end2 || ''}
                           onChange={e => updateShift(index, { end2: e.target.value })}
                           className="h-8 text-sm"

@@ -234,19 +234,19 @@ function PlanEditDialog({ open, onClose, employee, date, plan, onSlotChange }: P
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
                 <Label className="text-[10px]">Früh von</Label>
-                <Input type="time" value={frühStart} onChange={e => setFrühStart(e.target.value)} className="h-9 text-sm" />
+                <Input type="time" step="900" value={frühStart} onChange={e => setFrühStart(e.target.value)} className="h-9 text-sm" />
               </div>
               <div className="space-y-1">
                 <Label className="text-[10px]">Früh bis</Label>
-                <Input type="time" value={frühEnd} onChange={e => setFrühEnd(e.target.value)} className="h-9 text-sm" />
+                <Input type="time" step="900" value={frühEnd} onChange={e => setFrühEnd(e.target.value)} className="h-9 text-sm" />
               </div>
               <div className="space-y-1">
                 <Label className="text-[10px]">Spät von</Label>
-                <Input type="time" value={spätStart} onChange={e => setSpätStart(e.target.value)} className="h-9 text-sm" />
+                <Input type="time" step="900" value={spätStart} onChange={e => setSpätStart(e.target.value)} className="h-9 text-sm" />
               </div>
               <div className="space-y-1">
                 <Label className="text-[10px]">Spät bis</Label>
-                <Input type="time" value={spätEnd} onChange={e => setSpätEnd(e.target.value)} className="h-9 text-sm" />
+                <Input type="time" step="900" value={spätEnd} onChange={e => setSpätEnd(e.target.value)} className="h-9 text-sm" />
               </div>
             </div>
           </div>
@@ -333,11 +333,11 @@ function IstEditDialog({ open, onClose, employee, date, entry, onSave }: IstEdit
           <div className="grid grid-cols-2 gap-3 border-t pt-3">
             <div className="space-y-1">
               <Label className="text-xs">Von</Label>
-              <Input type="time" value={startVal} onChange={e => setStartVal(e.target.value)} className="h-9 text-sm" />
+              <Input type="time" step="900" value={startVal} onChange={e => setStartVal(e.target.value)} className="h-9 text-sm" />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Bis</Label>
-              <Input type="time" value={endVal} onChange={e => setEndVal(e.target.value)} className="h-9 text-sm" />
+              <Input type="time" step="900" value={endVal} onChange={e => setEndVal(e.target.value)} className="h-9 text-sm" />
             </div>
           </div>
         </div>

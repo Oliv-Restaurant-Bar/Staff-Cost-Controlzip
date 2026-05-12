@@ -391,6 +391,7 @@ export const ShiftDropdown = ({ value, customShift, onChange, department }: Shif
                   <Input
                     id="start"
                     type="time"
+                    step="900"
                     value={customStart}
                     onChange={(e) => setCustomStart(e.target.value)}
                   />
@@ -400,6 +401,7 @@ export const ShiftDropdown = ({ value, customShift, onChange, department }: Shif
                   <Input
                     id="end"
                     type="time"
+                    step="900"
                     value={customEnd}
                     onChange={(e) => setCustomEnd(e.target.value)}
                   />
@@ -434,6 +436,7 @@ export const ShiftDropdown = ({ value, customShift, onChange, department }: Shif
                     <Input
                       id="start2"
                       type="time"
+                      step="900"
                       value={customStart2}
                       onChange={(e) => setCustomStart2(e.target.value)}
                     />
@@ -443,6 +446,7 @@ export const ShiftDropdown = ({ value, customShift, onChange, department }: Shif
                     <Input
                       id="end2"
                       type="time"
+                      step="900"
                       value={customEnd2}
                       onChange={(e) => setCustomEnd2(e.target.value)}
                     />

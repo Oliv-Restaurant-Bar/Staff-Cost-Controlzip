@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -78,19 +78,29 @@ const CELL_COLORS: { hex: string; label: string }[] = [
 // Time utilities
 // ---------------------------------------------------------------------------
 
-/** Generate 30-min time slots from 06:00 to 02:00 (next day) */
+/** Generate 15-min time slots from 06:00 to 02:00 (next day) */
 function generateTimeOptions(): string[] {
   const slots: string[] = [];
   for (let h = 6; h < 24; h++) {
-    slots.push(`${String(h).padStart(2, '0')}:00`);
-    slots.push(`${String(h).padStart(2, '0')}:30`);
+    for (const m of [0, 15, 30, 45]) {
+      slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+    }
   }
   // midnight → 02:00
   for (let h = 0; h <= 2; h++) {
-    slots.push(`${String(h).padStart(2, '0')}:00`);
-    if (h < 2) slots.push(`${String(h).padStart(2, '0')}:30`);
+    for (const m of [0, 15, 30, 45]) {
+      if (h === 2 && m > 0) break;
+      slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+    }
   }
   return slots;
+}
+
+/** Normalize HH:MM to minutes-since-06:00 for ordering (handles overnight wrap) */
+function timeToOrdinal(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  const total = h * 60 + m;
+  return total < 360 ? total + 1440 : total; // 00:xx–05:xx treated as next-day
 }
 
 const TIME_OPTIONS = generateTimeOptions();
@@ -428,6 +438,17 @@ interface TimeSelectProps {
 }
 
 function TimeSelectDropdown({ label, value, onChange }: TimeSelectProps) {
+  // If the existing value is off the 15-min grid (e.g. legacy "17:23"), keep it
+  // visible in the list but don't add it as a new choosable option going forward.
+  const options = useMemo(() => {
+    if (!value || TIME_OPTIONS.includes(value)) return TIME_OPTIONS;
+    const list = [...TIME_OPTIONS];
+    const ord = timeToOrdinal(value);
+    const idx = list.findIndex(t => timeToOrdinal(t) > ord);
+    list.splice(idx === -1 ? list.length : idx, 0, value);
+    return list;
+  }, [value]);
+
   return (
     <div className="flex-1">
       <div className="text-[10px] text-muted-foreground mb-0.5">{label}</div>
@@ -436,7 +457,7 @@ function TimeSelectDropdown({ label, value, onChange }: TimeSelectProps) {
           <SelectValue placeholder="—" />
         </SelectTrigger>
         <SelectContent className="max-h-52">
-          {TIME_OPTIONS.map(t => (
+          {options.map(t => (
             <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>
           ))}
         </SelectContent>
