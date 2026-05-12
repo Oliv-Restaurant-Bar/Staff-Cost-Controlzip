@@ -59,6 +59,7 @@ import MirusParserTest from "./pages/MirusParserTest";
 import MirusExcelTest from "./pages/MirusExcelTest";
 import MirusImportPreview from "./pages/MirusImportPreview";
 import MirusReview from "./pages/MirusReview";
+import StaffSchedulePage from "./pages/StaffSchedulePage";
 
 const queryClient = new QueryClient();
 
@@ -301,6 +302,7 @@ const App = () => {
                   <Routes>
                     {/* ── Öffentliche Routen — kein Login erforderlich ── */}
                     <Route path="/onboarding/:token" element={<OnboardingForm />} />
+                    <Route path="/staff-schedule/:token" element={<StaffSchedulePage />} />
                     <Route path="/gast" element={<GuestAccess />} />
 
                     {/* ── Alle anderen Routen → Auth-Check ── */}

@@ -725,7 +725,7 @@ export const ScheduleGrid = ({
               <th 
                 className={cn(
                   "sticky left-0 z-20 bg-card px-2 py-1 text-left text-xs font-semibold border-b border-r-2 border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
-                  isWeekView ? "w-[160px] min-w-[160px] max-w-[160px]" : "w-[160px] min-w-[160px] max-w-[160px]"
+                  isWeekView ? "w-[190px] min-w-[190px] max-w-[190px]" : "w-[160px] min-w-[160px] max-w-[160px]"
                 )}
                 rowSpan={2}
               >
@@ -769,14 +769,15 @@ export const ScheduleGrid = ({
                           title={stats.isOverBudget ? "⚠️ Ziel überschritten – Klicken für Details" : "Klicken für Tagesdetails"}
                         >
                           <div className={cn(
-                            "text-muted-foreground text-[9px]",
+                            isWeekView ? "text-[10px] font-semibold" : "text-muted-foreground text-[9px]",
                             isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400 font-semibold",
-                            stats.isOverBudget && "text-red-800 dark:text-red-300 font-bold"
+                            stats.isOverBudget && "text-red-800 dark:text-red-300 font-bold",
+                            !isWeekendDay && !stats.isOverBudget && isWeekView && "text-muted-foreground"
                           )}>
                             {WEEKDAY_NAMES[day.getDay()]}
                           </div>
                           <div className={cn(
-                            "font-semibold text-[10px]",
+                            isWeekView ? "font-bold text-sm" : "font-semibold text-[10px]",
                             isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400",
                             stats.isOverBudget && "text-red-800 dark:text-red-300"
                           )}>
@@ -913,7 +914,7 @@ export const ScheduleGrid = ({
                     "px-1.5 py-1 border-b border-r-2 border-border overflow-hidden",
                     "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
                     isWeekView
-                      ? "w-[160px] min-w-[160px] max-w-[160px]"
+                      ? "w-[190px] min-w-[190px] max-w-[190px]"
                       : "w-[160px] min-w-[160px] max-w-[160px]"
                   )}>
                     <TooltipProvider>

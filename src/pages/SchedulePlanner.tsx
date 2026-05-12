@@ -25,7 +25,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2 } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -272,9 +272,13 @@ const SchedulePlanner = () => {
   const [pkDetailOpen, setPkDetailOpen]                       = useState(false);
   const [zielwertEditOpen, setZielwertEditOpen]               = useState(false);
   const [zielwertDraft, setZielwertDraft]                     = useState<{ service: string; küche: string; global: string; autoGlobal: boolean }>({ service: '20.0', küche: '20.0', global: '40.0', autoGlobal: true });
-  const [legendSidebarOpen, setLegendSidebarOpen]             = useState(false);
+  const [legendSidebarOpen, setLegendSidebarOpen]             = useState(true);
   const [empTypeFilter, setEmpTypeFilter]                     = useState<'vollzeit' | 'teilzeit' | 'stundenlohn' | null>(null);
   const [hintsCollapsed, setHintsCollapsed]                   = useState(false);
+  const [publishDialogOpen, setPublishDialogOpen]             = useState(false);
+  const [publishStatus, setPublishStatus]                     = useState<'draft' | 'published' | 'changed'>('draft');
+  const [publishToken, setPublishToken]                       = useState<string | null>(null);
+  const [publishCopied, setPublishCopied]                     = useState(false);
 
   // ── Sortierungsmodus & Zellfarben ────────────────────────────────────────
   const [sortModeActive, setSortModeActive]                   = useState(false);
@@ -2709,6 +2713,22 @@ const SchedulePlanner = () => {
                 <Save className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">{isSaving ? 'Speichert…' : 'Speichern'}</span>
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "gap-1.5 h-8",
+                  publishStatus === 'published' && "border-emerald-400 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-600 dark:text-emerald-400 dark:hover:bg-emerald-950/20",
+                  publishStatus === 'changed' && "border-amber-400 text-amber-700 hover:bg-amber-50 dark:border-amber-600 dark:text-amber-400 dark:hover:bg-amber-950/20"
+                )}
+                onClick={() => setPublishDialogOpen(true)}
+                title="Dienstplan veröffentlichen"
+              >
+                <Share2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">
+                  {publishStatus === 'published' ? 'Veröffentlicht' : publishStatus === 'changed' ? 'Geändert' : 'Teilen'}
+                </span>
+              </Button>
               <Link to="/settings">
                 <Button variant="ghost" size="icon" className="h-8 w-8" title="Einstellungen">
                   <Settings className="h-4 w-4" />
@@ -4745,6 +4765,123 @@ const SchedulePlanner = () => {
         dailyBudgets={dailyBudgets}
         restaurantName={tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv'}
       />
+
+      {/* ── Dienstplan Veröffentlichen Dialog ───────────────────────────── */}
+      <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Globe className="h-4 w-4 text-emerald-600" />
+              Dienstplan teilen
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-1">
+            {/* Status */}
+            <div className="flex items-center gap-3 rounded-lg border p-3">
+              <div className={cn(
+                "h-8 w-8 rounded-full flex items-center justify-center shrink-0",
+                publishStatus === 'published' ? "bg-emerald-100 dark:bg-emerald-950/40" :
+                publishStatus === 'changed'   ? "bg-amber-100 dark:bg-amber-950/40" :
+                "bg-muted"
+              )}>
+                {publishStatus === 'published' ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                ) : publishStatus === 'changed' ? (
+                  <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                ) : (
+                  <Share2 className="h-4 w-4 text-muted-foreground" />
+                )}
+              </div>
+              <div>
+                <p className="text-sm font-semibold">
+                  {publishStatus === 'published' ? 'Veröffentlicht' :
+                   publishStatus === 'changed'   ? 'Nicht aktuell – Änderungen vorhanden' :
+                   'Noch nicht veröffentlicht'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {publishStatus === 'published' ? `Link aktiv · ${pkqPeriodLabel}` :
+                   publishStatus === 'changed'   ? 'Bitte erneut veröffentlichen um den Link zu aktualisieren' :
+                   'Erstelle einen Link damit Mitarbeitende den Plan einsehen können'}
+                </p>
+              </div>
+            </div>
+
+            {/* Published link */}
+            {publishToken && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">Freigabe-Link</p>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0 rounded-md border bg-muted/40 px-3 py-2 text-xs font-mono truncate text-muted-foreground select-all">
+                    {`${window.location.origin}/staff-schedule/${publishToken}`}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1.5 shrink-0"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/staff-schedule/${publishToken}`);
+                      setPublishCopied(true);
+                      setTimeout(() => setPublishCopied(false), 2000);
+                    }}
+                  >
+                    {publishCopied ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                    {publishCopied ? 'Kopiert' : 'Kopieren'}
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1.5 text-xs border-green-400 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400"
+                    onClick={() => {
+                      const url = `${window.location.origin}/staff-schedule/${publishToken}`;
+                      const text = `Dienstplan ${pkqPeriodLabel}: ${url}`;
+                      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+                    }}
+                  >
+                    <Send className="h-3 w-3" />
+                    WhatsApp
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 gap-1.5 text-xs text-muted-foreground"
+                    onClick={() => window.open(`/staff-schedule/${publishToken}`, '_blank')}
+                  >
+                    <Eye className="h-3 w-3" />
+                    Vorschau
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Info note */}
+            <div className="rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2.5 text-xs text-blue-700 dark:text-blue-400 flex items-start gap-2">
+              <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>
+                Der Link gibt den Dienstplan <strong>ohne Lohnangaben</strong> frei. Mitarbeitende sehen nur Namen und Schichtzeiten.
+              </span>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setPublishDialogOpen(false)}>Schliessen</Button>
+            <Button
+              className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => {
+                const token = `${tenantId}-${format(currentMonth, 'yyyyMM')}-${Math.random().toString(36).slice(2, 8)}`;
+                setPublishToken(token);
+                setPublishStatus('published');
+                toast.success('Dienstplan veröffentlicht – Link ist jetzt aktiv');
+              }}
+            >
+              <Globe className="h-3.5 w-3.5" />
+              {publishStatus === 'published' ? 'Erneut veröffentlichen' : publishStatus === 'changed' ? 'Aktualisieren' : 'Veröffentlichen'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Mitarbeiter Detail Dialog ─────────────────────────────────── */}
       {employeeDetailEmp && (() => {
