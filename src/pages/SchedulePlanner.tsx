@@ -2426,18 +2426,14 @@ const SchedulePlanner = () => {
   const _serviceResolved = resolveZielwert(_planYear, _planMonth, 'service', false);
   const _kücheResolved   = resolveZielwert(_planYear, _planMonth, 'küche',   false);
 
-  // Zielwerte direkt aus dem Store (Fallback im Store bereits dept-spezifisch: 20 % je Abt.)
+  // Abteilungs-Einzelziele nur noch für info, nicht für die Kostenziel-Anzeige verwendet.
+  // Das Gesamtkostenziel (Küche + Service kombiniert) ist immer laborCostThreshold (z.B. 40%).
   const serviceThreshold = _serviceResolved.targetPercent;
   const kücheThreshold   = _kücheResolved.targetPercent;
 
-  const effectiveLaborCostThreshold = activeDepartment === 'service'
-    ? serviceThreshold
-    : activeDepartment === 'küche'
-      ? kücheThreshold
-      : laborCostThreshold; // global für 'all'
-
-  // ScheduleGrid-Schwellwert: abteilungsspezifisch oder global bei Gesamtansicht
-  const gridLaborCostThreshold = effectiveLaborCostThreshold;
+  // Immer das globale Gesamtziel verwenden — niemals 20 % je Abteilung.
+  // (settings.laborCostTargetPercent via zielwerte-store, Fallback: 40 %)
+  const gridLaborCostThreshold = laborCostThreshold;
 
   // ── Label für die aktive Periode ─────────────────────────────────────────
   const pkqPeriodLabel = useMemo(() => {
@@ -2500,8 +2496,8 @@ const SchedulePlanner = () => {
     : null;
   const costRatioStatus: 'good' | 'ok' | 'high' | 'unknown' =
     plannedCostRatio === null ? 'unknown' :
-    plannedCostRatio <= effectiveLaborCostThreshold ? 'good' :
-    plannedCostRatio <= effectiveLaborCostThreshold + 5 ? 'ok' : 'high';
+    plannedCostRatio <= laborCostThreshold ? 'good' :
+    plannedCostRatio <= laborCostThreshold + 5 ? 'ok' : 'high';
 
   // ── Feature 3: Soll/Ist-Vergleich ────────────────────────────────────────
   // Stunden ebenfalls nur für die sichtbare Abteilung
@@ -4020,15 +4016,15 @@ const SchedulePlanner = () => {
                     <span className={cn(
                       "text-base font-bold tabular-nums",
                       actualCostRatio === null                                  ? "text-muted-foreground" :
-                      actualCostRatio <= effectiveLaborCostThreshold            ? "text-green-600" :
-                      actualCostRatio <= effectiveLaborCostThreshold + 5        ? "text-yellow-600" : "text-red-600"
+                      actualCostRatio <= laborCostThreshold            ? "text-green-600" :
+                      actualCostRatio <= laborCostThreshold + 5        ? "text-yellow-600" : "text-red-600"
                     )}>
                       {actualCostRatio !== null ? `${actualCostRatio.toFixed(1)} %` : '–'}
                     </span>
                   </div>
                   <div className="flex justify-between items-baseline border-t pt-2 mt-1">
                     <span className="text-sm text-muted-foreground">Ziel</span>
-                    <span className="text-base font-bold tabular-nums">{effectiveLaborCostThreshold} %</span>
+                    <span className="text-base font-bold tabular-nums">{laborCostThreshold} %</span>
                   </div>
                 </div>
               </div>

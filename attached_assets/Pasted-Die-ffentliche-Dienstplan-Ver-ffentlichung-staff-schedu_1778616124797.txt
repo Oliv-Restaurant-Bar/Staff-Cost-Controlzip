@@ -1,0 +1,223 @@
+Die öffentliche Dienstplan-Veröffentlichung /staff-schedule/:token ist aktuell nicht brauchbar.
+
+Probleme:
+- falsche Mock-Namen
+- nicht mobiloptimiert
+- zu tabellarisch
+- Mitarbeiteransicht fehlt
+- persönlicher Plan pro Mitarbeiter muss möglich sein
+
+Bitte komplett überarbeiten.
+
+Wichtig:
+Keine Kostenlogik ändern.
+Keine Dienstplan-Berechnungen ändern.
+Keine Supabase-Migration.
+Nur Veröffentlichungsansicht und Datenübergabe verbessern.
+
+====================================================
+1. KEINE MOCK-NAMEN MEHR
+====================================================
+
+Die öffentliche Dienstplanansicht darf nicht mehr feste Namen wie Anna Müller, Thomas Berger usw. anzeigen.
+
+Wenn vom Dienstplan aus geteilt wird, sollen echte Daten aus dem aktuellen Dienstplan-State verwendet werden:
+
+- echte Mitarbeiter
+- echte Abteilungen
+- echte Schichten
+- echte Woche
+- echtes Restaurant
+
+Falls noch kein echtes Backend vorhanden:
+Daten beim Teilen lokal serialisieren oder über localStorage/sessionStorage für die Vorschau übergeben.
+
+Mock-Daten nur noch als Fallback, klar mit Hinweis:
+"Demo-Daten"
+
+====================================================
+2. ZWEI VERÖFFENTLICHUNGSARTEN
+====================================================
+
+Im Teilen-Dialog zwei Optionen:
+
+A) Abteilungsplan
+- Service komplett
+- Küche komplett
+- Alle Abteilungen
+
+B) Persönlicher Mitarbeiterplan
+- Mitarbeiter auswählen
+- Link zeigt nur diesen Mitarbeiter
+
+====================================================
+3. MOBILE-FIRST MITARBEITERANSICHT
+====================================================
+
+Für persönlichen Mitarbeiter-Link:
+
+Ansicht soll auf Handy perfekt funktionieren.
+
+Kein breiter Tabellenplan.
+
+Stattdessen:
+
+Header:
+- Restaurant
+- Mitarbeitername
+- Kalenderwoche
+- Zeitraum
+- Status: Nur Ansicht
+
+Darunter Tageskarten untereinander:
+
+Montag, 18. Mai
+- 10:00 bis 14:00
+- 17:30 bis 23:00
+
+Dienstag, 19. Mai
+- Frei
+
+Mittwoch, 20. Mai
+- Ferien
+
+Jeder Tag als eigene Karte:
+- Wochentag
+- Datum
+- Schichtzeiten
+- Abwesenheit
+- optional Bemerkung
+
+====================================================
+4. ABTEILUNGSPLAN MOBIL
+====================================================
+
+Für Abteilungsplan:
+
+Desktop:
+- kompakte Tabelle erlaubt
+
+Mobile:
+- Umschalter:
+  - Nach Mitarbeiter
+  - Nach Tag
+
+Nach Mitarbeiter:
+- Mitarbeiterkarte
+- darunter alle Tage
+
+Nach Tag:
+- Tageskarte
+- darunter alle Mitarbeiter mit Schichten
+
+====================================================
+5. DESIGN VERBESSERN
+====================================================
+
+Optisch moderner und ruhiger:
+
+- grössere Abstände
+- klare Tageskarten
+- keine überladene Tabelle auf Mobile
+- bessere Farbchips für:
+  - Schichtzeit
+  - Frei
+  - Ferien
+  - Krank
+- Wochenende leicht hervorgehoben
+- keine Lohn- oder Kostendaten anzeigen
+
+====================================================
+6. TEILEN-DIALOG VERBESSERN
+====================================================
+
+Im Dienstplan beim Klick auf "Teilen":
+
+Dialog mit:
+
+- Woche
+- Restaurant
+- Veröffentlichungsart:
+  - Abteilungsplan
+  - Persönlicher Plan
+- Abteilungsauswahl falls Abteilungsplan:
+  - Service
+  - Küche
+  - Alle
+- Mitarbeiterauswahl falls persönlicher Plan
+- Vorschau öffnen
+- Link kopieren
+- WhatsApp Text vorbereiten
+
+WhatsApp Text:
+"Hallo {Name}, hier ist dein Dienstplan für KW xx: {Link}"
+
+Für Abteilungsplan:
+"Hallo zusammen, hier ist der Dienstplan für KW xx: {Link}"
+
+====================================================
+7. PERSÖNLICHE ANSICHT
+====================================================
+
+Wenn persönlicher Link:
+
+- nur dieser Mitarbeiter sichtbar
+- keine anderen Namen
+- keine Abteilungsübersicht
+- keine Kosten
+- keine internen Warnungen
+- keine Stundenstände anderer Mitarbeiter
+
+====================================================
+8. ÄNDERUNGSSTATUS VORBEREITEN
+====================================================
+
+Bitte Status vorbereiten:
+
+- Entwurf
+- Veröffentlicht
+- Geändert nach Veröffentlichung
+
+Noch keine echte Datenbank nötig.
+Aber UI anzeigen.
+
+====================================================
+9. RESPONSIVE TEST
+====================================================
+
+Bitte testen:
+
+- Desktop breit
+- Laptop
+- Mobile Breite ca. 390 px
+
+Die persönliche Ansicht muss auf Mobile gut lesbar sein.
+
+====================================================
+10. ROUTE
+====================================================
+
+Bestehende Route weiter verwenden:
+
+/staff-schedule/:token
+
+Token soll unterscheiden können:
+- department plan
+- personal plan
+
+Fallback:
+Wenn keine Daten gefunden:
+saubere Fehlermeldung anzeigen:
+"Dieser Dienstplan-Link ist nicht mehr verfügbar oder wurde noch nicht veröffentlicht."
+
+====================================================
+11. WICHTIG
+====================================================
+
+Keine Mock-Namen in echter Vorschau.
+Keine Kosten anzeigen.
+Keine Lohninformationen.
+Keine internen Admin-Daten.
+
+Nur:
+saubere öffentliche Dienstplanansicht für Mitarbeiter und Abteilungen.

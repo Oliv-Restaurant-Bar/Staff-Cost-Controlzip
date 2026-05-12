@@ -535,7 +535,7 @@ export const DayDetailDialog = ({
                 {costTarget !== null && (
                   <>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Kostenziel ({laborCostThreshold}%)</span>
+                      <span className="text-muted-foreground">Kostenziel gesamt ({laborCostThreshold}%)</span>
                       <span className="font-semibold">CHF {costTarget.toFixed(0)}</span>
                     </div>
                     <div className={cn(
