@@ -32,37 +32,40 @@ import type {
 
 function qualityScore(emp: ExcelEmployee): number {
   let s = 0;
+  const days   = emp.days   ?? [];
+  const totals = emp.totals ?? {};
   if (emp.name)        s += 25;
   if (emp.weeklyHours) s += 8;
   if (emp.costCenter)  s += 8;
-  if      (emp.days.length >= 20) s += 27;
-  else if (emp.days.length >= 10) s += 20;
-  else if (emp.days.length >= 5)  s += 13;
-  else if (emp.days.length >= 1)  s += 6;
-  const active = emp.days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length;
+  if      (days.length >= 20) s += 27;
+  else if (days.length >= 10) s += 20;
+  else if (days.length >= 5)  s += 13;
+  else if (days.length >= 1)  s += 6;
+  const active = days.filter(d => (d.shifts ?? []).length > 0 || !!d.absenceCode).length;
   if      (active >= 15) s += 14;
   else if (active >= 5)  s += 9;
   else if (active >= 1)  s += 4;
-  if (emp.totals.totalHours)      s += 8;
-  if (emp.totals.totalsValidated) s += 10;
+  if (totals.totalHours)      s += 8;
+  if (totals.totalsValidated) s += 10;
   return Math.min(100, s);
 }
 
 function mapDay(d: DayRecord): PreviewDayEntry {
   return {
-    date:         d.date,
-    weekday:      d.weekday,
-    shifts:       d.shifts,
-    breakMinutes: d.breakMinutes,
-    totalHours:   d.totalHours,
-    absenceCode:  d.absenceCode,
-    notes:        d.notes,
-    rawCells:     d.rawCells,
-    confidence:   d.confidence,
+    date:         d.date        ?? null,
+    weekday:      d.weekday     ?? null,
+    shifts:       d.shifts      ?? [],
+    breakMinutes: d.breakMinutes ?? null,
+    totalHours:   d.totalHours  ?? null,
+    absenceCode:  d.absenceCode ?? null,
+    notes:        d.notes       ?? null,
+    rawCells:     d.rawCells    ?? {},
+    confidence:   d.confidence  ?? 'low',
   };
 }
 
-function mapTotals(t: EmployeeTotals): PreviewTotals {
+function mapTotals(t: EmployeeTotals | undefined): PreviewTotals {
+  if (!t) return {};
   return {
     totalHours:           t.totalHours,
     pauseTotal:           t.pauseTotal,
@@ -82,27 +85,27 @@ function mapTotals(t: EmployeeTotals): PreviewTotals {
 }
 
 function buildWarnings(emp: ExcelEmployee, idx: number): PreviewImportWarning[] {
-  const label = emp.name ?? `Block #${idx + 1}`;
+  const label  = emp.name ?? `Block #${idx + 1}`;
   const warns: PreviewImportWarning[] = [];
+  const days   = emp.days   ?? [];
+  const totals = emp.totals ?? {};
 
   if (!emp.name)
-    warns.push({ severity: 'error', category: 'name', message: 'Kein Name erkannt', employeeName: label });
+    warns.push({ severity: 'error',   category: 'name',       message: 'Kein Name erkannt',         employeeName: label });
   if (!emp.costCenter)
-    warns.push({ severity: 'warning', category: 'costCenter', message: 'Keine Kostenstelle', employeeName: label });
-  if (emp.days.length === 0)
-    warns.push({ severity: 'warning', category: 'days', message: 'Keine Tageszeilen erkannt', employeeName: label });
-  if (emp.days.length > 0 && emp.days.length < 20)
-    warns.push({ severity: 'info', category: 'days', message: `Nur ${emp.days.length} Tage erkannt (erwartet ~28–31)`, employeeName: label });
+    warns.push({ severity: 'warning', category: 'costCenter', message: 'Keine Kostenstelle',         employeeName: label });
+  if (days.length === 0)
+    warns.push({ severity: 'warning', category: 'days',       message: 'Keine Tageszeilen erkannt',  employeeName: label });
+  if (days.length > 0 && days.length < 20)
+    warns.push({ severity: 'info',    category: 'days',       message: `Nur ${days.length} Tage erkannt (erwartet ~28–31)`, employeeName: label });
 
-  const totalH = emp.totals.calculatedTotalHours ?? 0;
+  const totalH = totals.calculatedTotalHours ?? 0;
   if (totalH > 250)
-    warns.push({ severity: 'warning', category: 'hours', message: `Sehr viele Stunden: ${totalH} h`, employeeName: label });
-
-  if (emp.totals.totalsDiff !== undefined && emp.totals.totalsDiff > 3)
-    warns.push({ severity: 'warning', category: 'totals', message: `Totale weichen von Tageszeilen ab: ±${emp.totals.totalsDiff} h`, employeeName: label });
-
-  if (emp.mergedFromCount > 1)
-    warns.push({ severity: 'info', category: 'merge', message: `Aus ${emp.mergedFromCount} Teilblöcken zusammengeführt`, employeeName: label });
+    warns.push({ severity: 'warning', category: 'hours',  message: `Sehr viele Stunden: ${totalH} h`, employeeName: label });
+  if (totals.totalsDiff !== undefined && totals.totalsDiff > 3)
+    warns.push({ severity: 'warning', category: 'totals', message: `Totale weichen von Tageszeilen ab: ±${totals.totalsDiff} h`, employeeName: label });
+  if ((emp.mergedFromCount ?? 0) > 1)
+    warns.push({ severity: 'info',    category: 'merge',  message: `Aus ${emp.mergedFromCount} Teilblöcken zusammengeführt`, employeeName: label });
 
   const q = qualityScore(emp);
   if (q < 85)
@@ -115,55 +118,62 @@ let _idCounter = 0;
 function nextId() { return `prev-${Date.now()}-${++_idCounter}`; }
 
 function buildPreviewSession(parsed: ExcelParsedDocument, file: File): PreviewImportSession {
-  const employees: PreviewEmployee[] = parsed.employees.map((emp, idx) => {
-    const quality  = qualityScore(emp);
-    const warnings = buildWarnings(emp, idx);
-    const hasError = warnings.some(w => w.severity === 'error');
-    const hasWarn  = warnings.some(w => w.severity === 'warning');
-    const importStatus = !emp.name ? 'excluded' : hasWarn || quality < 85 ? 'check' : 'ready';
+  const rawEmployees = parsed?.employees ?? [];
+  const rawWarnings  = parsed?.warnings  ?? [];
+
+  const employees: PreviewEmployee[] = rawEmployees.map((emp, idx) => {
+    const safeDays   = emp.days   ?? [];
+    const safeTotals = emp.totals ?? {};
+    const safeEmp    = { ...emp, days: safeDays, totals: safeTotals } as ExcelEmployee;
+
+    const quality  = qualityScore(safeEmp);
+    const warnings = buildWarnings(safeEmp, idx);
+    const hasWarn  = warnings.some(w => w.severity === 'warning' || w.severity === 'error');
+    const importStatus: PreviewEmployee['importStatus'] =
+      !emp.name ? 'excluded' : hasWarn || quality < 85 ? 'check' : 'ready';
 
     return {
       tempId:           nextId(),
-      name:             emp.name,
-      department:       emp.department,
-      costCenter:       emp.costCenter,
-      weeklyHours:      emp.weeklyHours,
-      employmentPeriod: emp.employmentPeriod,
+      name:             emp.name             ?? null,
+      department:       emp.department       ?? null,
+      costCenter:       emp.costCenter       ?? null,
+      weeklyHours:      emp.weeklyHours      ?? null,
+      employmentPeriod: emp.employmentPeriod ?? null,
       quality,
       importSelected:   importStatus !== 'excluded',
       importStatus,
       warnings,
-      days:             emp.days.map(mapDay),
-      totals:           mapTotals(emp.totals),
+      days:             safeDays.map(mapDay),
+      totals:           mapTotals(safeTotals),
       rawSource: {
-        sheetName:       emp.sheetName,
-        blockStartRow:   emp.blockStartRow,
-        blockEndRow:     emp.blockEndRow,
-        mergedFromCount: emp.mergedFromCount,
-        mergedBlockRows: emp.mergedBlockRows,
+        sheetName:       emp.sheetName       ?? '',
+        blockStartRow:   emp.blockStartRow   ?? 0,
+        blockEndRow:     emp.blockEndRow     ?? null,
+        mergedFromCount: emp.mergedFromCount ?? 1,
+        mergedBlockRows: emp.mergedBlockRows ?? [],
       },
     } satisfies PreviewEmployee;
   });
 
-  const globalWarnings: PreviewImportWarning[] = parsed.warnings.map(w => ({
+  const globalWarnings: PreviewImportWarning[] = rawWarnings.map(w => ({
     severity: 'warning' as const,
-    category: 'meta' as const,
+    category: 'meta'    as const,
     message:  w,
   }));
 
   const avgQ = employees.length
     ? Math.round(employees.reduce((s, e) => s + e.quality, 0) / employees.length)
     : 0;
-  const totalHours = employees.reduce((s, e) => s + (e.totals.calculatedTotalHours ?? 0), 0);
+  const totalHours    = employees.reduce((s, e) => s + (e.totals.calculatedTotalHours ?? 0), 0);
   const selectedCount = employees.filter(e => e.importSelected).length;
 
   return {
     id:             nextId(),
     sourceFileName: file.name,
-    month:          parsed.month,
-    monthName:      parsed.monthName,
-    year:           parsed.year,
-    restaurant:     parsed.restaurant,
+    month:          parsed.month     ?? null,
+    monthName:      parsed.monthName ?? null,
+    year:           parsed.year      ?? null,
+    restaurant:     parsed.restaurant ?? null,
     createdAt:      new Date().toISOString(),
     employees,
     globalWarnings,
@@ -178,11 +188,13 @@ function buildPreviewSession(parsed: ExcelParsedDocument, file: File): PreviewIm
 // ─── PREPARE IMPORT PAYLOAD (kein Speichern — nur Debug) ──────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export function prepareImportPayload(session: PreviewImportSession): ImportPayload {
-  const selected = session.employees.filter(e => e.importSelected);
+function prepareImportPayload(session: PreviewImportSession): ImportPayload {
+  const allEmps  = session.employees ?? [];
+  const selected = allEmps.filter(e => e.importSelected);
 
   const employees: ImportPayloadEmployee[] = selected.map(emp => {
-    const days: ImportPayloadDay[] = emp.days
+    const empDays = emp.days ?? [];
+    const days: ImportPayloadDay[] = empDays
       .filter(d => d.date)
       .map(d => ({
         employeeName: emp.name ?? '(unbekannt)',
@@ -212,7 +224,7 @@ export function prepareImportPayload(session: PreviewImportSession): ImportPaylo
 
   const allDays       = employees.flatMap(e => e.days);
   const totalHours    = employees.reduce((s, e) => s + e.totalHours, 0);
-  const allWarnings   = session.employees.flatMap(e => e.warnings);
+  const allWarnings   = (session.employees ?? []).flatMap(e => e.warnings ?? []);
 
   const payload: ImportPayload = {
     sourceFileName: session.sourceFileName,
@@ -669,13 +681,15 @@ export default function MirusImportPreview() {
     setLoading(true);
     setError(null);
     try {
-      const buffer  = await file.arrayBuffer();
-      const parsed  = parseMirusExcel(buffer, file.name) as ExcelParsedDocument;
+      // parseMirusExcel ist async und liest die Datei selbst
+      const parsed  = await parseMirusExcel(file);
       const session = buildPreviewSession(parsed, file);
       setSession(session);
       setLocalEmployees(session.employees);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[MirusImportPreview] handleFile Fehler:', e);
+      setError(`Parsing-Fehler: ${msg}`);
     } finally {
       setLoading(false);
     }
