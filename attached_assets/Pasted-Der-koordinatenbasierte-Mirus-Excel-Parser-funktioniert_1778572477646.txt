@@ -1,0 +1,174 @@
+Der koordinatenbasierte Mirus Excel Parser funktioniert jetzt grundsätzlich korrekt.
+
+Aktuelles Hauptproblem:
+Pro Mitarbeiter entstehen oft mehrere Blöcke.
+
+Beispiele:
+- Bedzeti Mensur Zeile 6–59 = echter Hauptblock
+- Bedzeti Mensur Zeile 60–84 = Restblock
+- Blaku Artin Zeile 85–140 = echter Hauptblock
+- Blaku Artin Zeile 141–158 = Restblock
+
+Dadurch entstehen:
+- Duplicate-Fehler
+- viele blockierte Mitarbeiter
+- schlechte Qualitätsbewertung
+
+Bitte implementiere jetzt eine intelligente Block-Zusammenführung.
+
+====================================================
+1. DUPLICATE MERGE
+====================================================
+
+Wenn zwei aufeinanderfolgende Blöcke denselben normalisierten Namen haben:
+
+Beispiel:
+"Bedzeti Mensur"
+"Bedzeti Mensur"
+
+Dann sollen sie zu einem einzigen Mitarbeiter zusammengeführt werden.
+
+Bedingungen:
+- gleicher normalisierter Name
+- gleiche oder ähnliche Kostenstelle / Abteilung
+- zweiter Block beginnt weniger als 30 Zeilen nach dem ersten Blockende
+
+Dann:
+mergeBlocks(first, second)
+
+====================================================
+2. RESTBLOCK-ERKENNUNG
+====================================================
+
+Ein Block gilt als Restblock wenn mindestens eines zutrifft:
+
+- weniger als 8 erkannte Tage
+- 0 Zeitblöcke
+- keine Totale
+- Qualität unter 45 %
+
+Restblöcke sollen nicht als eigener Mitarbeiter erscheinen.
+
+Sie sollen entweder:
+- mit dem vorherigen gleichnamigen Mitarbeiter zusammengeführt werden
+oder
+- als Warnung im Hauptblock angezeigt werden
+
+====================================================
+3. MERGE-VERHALTEN
+====================================================
+
+Beim Zusammenführen:
+
+Der finale Mitarbeiter enthält:
+- alle Tageszeilen aus beiden Blöcken
+- alle Zeitblöcke aus beiden Blöcken
+- alle Totale aus beiden Blöcken
+- alle RawCells / Zellreferenzen
+- Startzeile vom ersten Block
+- Endzeile vom letzten Block
+- Name aus dem Hauptblock
+- Wochenstunden aus dem Hauptblock
+- Kostenstelle aus dem Hauptblock
+- Abteilung aus dem Hauptblock
+
+Falls der Hauptblock ein Feld leer hat:
+- Wert aus Restblock übernehmen
+
+====================================================
+4. DUPLICATE-FEHLER ENTFERNEN
+====================================================
+
+Nach dem Merge dürfen diese Fehler nicht mehr erscheinen:
+
+- "Duplikat von Mitarbeiter X"
+
+Stattdessen:
+- im Block-Raster Badge anzeigen: "Merged"
+- anzeigen: "2 Teilblöcke kombiniert"
+
+====================================================
+5. VALIDIERUNG ANPASSEN
+====================================================
+
+Ein Mitarbeiter soll nur noch blockiert werden wenn:
+
+- kein Name vorhanden
+oder
+- keine Tageszeilen UND keine Totalstunden vorhanden
+oder
+- Struktur komplett unlesbar
+
+Nicht blockieren bei:
+- einzelnen fehlenden Tagen
+- wenigen Tagen wegen Eintritt / Austritt
+- Restblock wurde gemerged
+- Totale fehlen, aber Tageszeilen vorhanden
+
+Statuslogik:
+
+Importfähig:
+- Name vorhanden
+- mindestens 10 Tageszeilen oder Totalstunden vorhanden
+- Zeitblöcke oder Absenzcodes vorhanden
+
+Prüfen:
+- wenige Tage
+- Totale fehlen
+- auffällige Abweichungen
+- Restblock gemerged
+
+Blockiert:
+- kein Name
+- keine verwertbaren Daten
+
+====================================================
+6. QUALITÄTSLOGIK ANPASSEN
+====================================================
+
+Neue Qualitätsbewertung:
+
++25 Punkte Name erkannt
++10 Punkte Wochenstunden erkannt
++10 Punkte Kostenstelle / Abteilung erkannt
++30 Punkte Tagesdaten erkannt
++15 Punkte Zeitblöcke oder Absenzcodes erkannt
++10 Punkte Totale erkannt
+
+Ziel:
+Nach Merge sollte die Datei mindestens 85–95 % erreichen.
+
+====================================================
+7. UI ANPASSEN
+====================================================
+
+Im Block-Raster anzeigen:
+
+- Startzeile
+- Endzeile
+- Name
+- Tageszeilen
+- Zeitblöcke
+- Totale
+- Qualität
+- Badge "Merged", wenn zusammengeführt
+- Anzahl kombinierter Teilblöcke
+
+In der Mitarbeiterliste:
+- keine doppelten Namen mehr
+- Restblöcke nicht separat anzeigen
+- Status Importfähig / Prüfen / Blockiert sauber darstellen
+
+====================================================
+8. WICHTIG
+====================================================
+
+Keine Supabase Speicherung.
+Kein produktiver Import.
+Kein Mitarbeiterportal.
+Kein Freigabeprozess.
+
+Nur:
+Block-Zusammenführung, Validierung und Qualitätsbewertung des Mirus Excel Parsers verbessern.
+
+Danach TypeScript prüfen und /mirus-excel-test bereitstellen.

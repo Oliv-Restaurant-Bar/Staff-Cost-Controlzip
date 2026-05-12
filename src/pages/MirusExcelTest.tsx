@@ -165,7 +165,7 @@ function getExpectedDays(month: number, year: number): string[] {
 
 function normName(name: string | null) { return (name ?? '').toLowerCase().replace(/\s+/g, ' ').trim(); }
 
-function validateEmployee(emp: ExcelEmployee, idx: number, all: ExcelEmployee[], expected: string[]): EmployeeValidation {
+function validateEmployee(emp: ExcelEmployee, idx: number, _all: ExcelEmployee[], expected: string[]): EmployeeValidation {
   const issues: ValidationIssue[] = [];
   const label = emp.name ?? `Mitarbeiter ${idx + 1}`;
 
@@ -176,17 +176,11 @@ function validateEmployee(emp: ExcelEmployee, idx: number, all: ExcelEmployee[],
     issues.push({ severity: 'error', category: 'name', message: `Name enthält Zusatztext: „${emp.name}"`, employeeName: label, employeeIndex: idx });
   }
 
-  // ── Duplikat ───────────────────────────────────────────────────────────────
-  const myN = normName(emp.name);
-  const dup = all.findIndex((e, i) => i !== idx && normName(e.name) === myN && myN !== '');
-  if (dup >= 0) issues.push({ severity: 'error', category: 'duplicate', message: `Duplikat von Mitarbeiter ${dup + 1}`, employeeName: label, employeeIndex: idx });
-
   // ── Kostenstelle / Abteilung ───────────────────────────────────────────────
   if (!emp.costCenter) issues.push({ severity: 'warning', category: 'name', message: 'Kostenstelle fehlt', employeeName: label, employeeIndex: idx });
 
   // ── Tageszeilen ────────────────────────────────────────────────────────────
   const actualDates  = new Set(emp.days.map(d => d.date).filter(Boolean) as string[]);
-  // Only check dates with DD.MM format (strip year if needed)
   const normalised   = new Set(Array.from(actualDates).map(d => d.slice(0, 5)));
   const missingDates = expected.filter(d => !normalised.has(d));
   const daysWithData = emp.days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length;
@@ -195,28 +189,39 @@ function validateEmployee(emp: ExcelEmployee, idx: number, all: ExcelEmployee[],
     issues.push({ severity: 'error', category: 'dayrow', message: 'Keine Tageszeilen und keine Totale erkannt', employeeName: label, employeeIndex: idx });
   } else if (emp.days.length === 0) {
     issues.push({ severity: 'warning', category: 'dayrow', message: 'Keine Tageszeilen, aber Totale vorhanden', employeeName: label, employeeIndex: idx });
-  } else if (daysWithData === 0) {
-    issues.push({ severity: 'warning', category: 'dayrow', message: 'Tageszeilen ohne Zeitdaten (nur Datumsreihen)', employeeName: label, employeeIndex: idx });
+  } else if (daysWithData === 0 && emp.days.length < 5) {
+    issues.push({ severity: 'warning', category: 'dayrow', message: 'Sehr wenige Tageszeilen ohne Zeitdaten', employeeName: label, employeeIndex: idx });
   }
-  // Missing days only as info — not structural error
-  if (missingDates.length > 10 && emp.days.length > 0) {
-    issues.push({ severity: 'warning', category: 'date', message: `${missingDates.length} Tage nicht erkannt`, employeeName: label, employeeIndex: idx });
+  // Missing days: only warn if many missing AND data was expected (full month)
+  if (expected.length > 0 && missingDates.length > 15 && emp.days.length > 0) {
+    issues.push({ severity: 'warning', category: 'date', message: `${missingDates.length} von ${expected.length} Tagen nicht erkannt`, employeeName: label, employeeIndex: idx });
+  }
+  // Merged blocks: note (not error)
+  if (emp.mergedFromCount > 1) {
+    issues.push({ severity: 'info', category: 'meta', message: `${emp.mergedFromCount} Teilblöcke zusammengeführt (Zeilen: ${emp.mergedBlockRows.map(([s, e]) => `${s}–${e}`).join(', ')})`, employeeName: label, employeeIndex: idx });
   }
 
   // ── Totale ────────────────────────────────────────────────────────────────
   const tp = { totalHours: !!emp.totals.totalHours, pause: !!emp.totals.pauseTotal, ueberzeit: !!emp.totals.ueberzeit, saldo: !!emp.totals.saldo, ferien: !!emp.totals.ferien };
-  if (!tp.totalHours && emp.days.length === 0) {
-    issues.push({ severity: 'error', category: 'totals', message: 'Total Stunden fehlt', employeeName: label, employeeIndex: idx });
+  // Totale fehlen ist nur eine Warnung, nicht ein Fehler (wenn Tageszeilen vorhanden)
+  if (!tp.totalHours && emp.days.length < 5) {
+    issues.push({ severity: 'warning', category: 'totals', message: 'Total Stunden fehlt', employeeName: label, employeeIndex: idx });
   }
 
   // ── Import-Status ─────────────────────────────────────────────────────────
-  const errors   = issues.filter(i => i.severity === 'error').length;
-  const warnings = issues.filter(i => i.severity === 'warning').length;
-  const hasData  = emp.days.length > 0 || !!emp.totals.totalHours;
+  // Blocked: nur wenn kein Name ODER gar keine verwertbaren Daten
+  const hasData        = emp.days.length > 0 || !!emp.totals.totalHours;
+  const hasErrors      = issues.some(i => i.severity === 'error');
+  const hasWarnings    = issues.some(i => i.severity === 'warning');
+  const hasEnoughDays  = emp.days.length >= 10 || !!emp.totals.totalHours;
+  const hasTimeData    = daysWithData > 0;
+  const wasMerged      = emp.mergedFromCount > 1;
+
   const importStatus: 'ready' | 'review' | 'blocked' =
-    errors > 0         ? 'blocked' :
-    !hasData           ? 'blocked' :
-    warnings > 0       ? 'review'  : 'ready';
+    !emp.name || !hasData ? 'blocked' :
+    hasErrors             ? 'blocked' :
+    hasEnoughDays && hasTimeData && !hasWarnings ? 'ready' :
+    wasMerged || hasWarnings || !hasEnoughDays   ? 'review' : 'ready';
 
   return {
     index: idx, name: emp.name, issues,
@@ -372,49 +377,84 @@ function GlobalErrorList({ val }: { val: DocumentValidation }) {
 // ─── BLOCK-RASTER ─────────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
+function empQualityPct(emp: ExcelEmployee): number {
+  let s = 0;
+  if (emp.name)        s += 25;
+  if (emp.weeklyHours) s += 10;
+  if (emp.costCenter)  s += 10;
+  if      (emp.days.length >= 20) s += 30;
+  else if (emp.days.length >= 10) s += 22;
+  else if (emp.days.length >= 5)  s += 15;
+  else if (emp.days.length >= 1)  s += 8;
+  const active = emp.days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length;
+  if      (active >= 15) s += 15;
+  else if (active >= 5)  s += 10;
+  else if (active >= 1)  s += 5;
+  if (emp.totals.totalHours) s += 10;
+  return Math.min(100, s);
+}
+
 function BlockRasterPanel({ employees }: { employees: ExcelEmployee[] }) {
   if (employees.length === 0) return (
     <p className="text-xs text-muted-foreground italic">Keine Blöcke erkannt.</p>
   );
+  const totalMerged = employees.filter(e => e.mergedFromCount > 1).length;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[11px] border-collapse font-mono">
-        <thead>
-          <tr className="border-b border-border text-muted-foreground text-[10px]">
-            <th className="text-left py-1 pr-3 font-medium">#</th>
-            <th className="text-left py-1 pr-3 font-medium">Name-Zelle</th>
-            <th className="text-left py-1 pr-3 font-medium">Name</th>
-            <th className="text-left py-1 pr-3 font-medium">Start</th>
-            <th className="text-left py-1 pr-3 font-medium">Ende</th>
-            <th className="text-left py-1 pr-3 font-medium">Wochenstd-Zelle</th>
-            <th className="text-left py-1 pr-3 font-medium">Spalten-Map</th>
-            <th className="text-right py-1 pr-3 font-medium">Tage</th>
-            <th className="text-right py-1 pr-3 font-medium">Zeitbl.</th>
-            <th className="text-right py-1 font-medium">Totale</th>
-          </tr>
-        </thead>
-        <tbody>
-          {employees.map((emp, i) => {
-            const colMapEntries = Object.entries(emp.rawBlock.detectedColMap).slice(0, 4).map(([k, v]) => `${k}:${v}`).join(' ');
-            const shiftCount = emp.days.reduce((s, d) => s + d.shifts.length, 0);
-            const totalCount = Object.values(emp.totals).filter(Boolean).length;
-            return (
-              <tr key={i} className="border-b border-border/40 hover:bg-muted/20">
-                <td className="py-0.5 pr-3 text-primary font-bold">{i + 1}</td>
-                <td className="py-0.5 pr-3 text-primary">{emp.rawBlock.nameCell}</td>
-                <td className="py-0.5 pr-3 font-sans font-semibold">{emp.name ?? <span className="text-red-500">—</span>}</td>
-                <td className="py-0.5 pr-3">{emp.blockStartRow}</td>
-                <td className="py-0.5 pr-3">{emp.blockEndRow ?? '—'}</td>
-                <td className="py-0.5 pr-3">{emp.rawBlock.weeklyHoursCell}: {emp.weeklyHours ?? '—'}</td>
-                <td className="py-0.5 pr-3 text-muted-foreground text-[9px] max-w-[150px] truncate">{colMapEntries || '(default)'}</td>
-                <td className={cn('py-0.5 pr-3 text-right tabular-nums', emp.days.length === 0 ? 'text-red-500' : 'text-green-600')}>{emp.days.length}</td>
-                <td className="py-0.5 pr-3 text-right tabular-nums">{shiftCount}</td>
-                <td className={cn('py-0.5 text-right tabular-nums', totalCount === 0 ? 'text-muted-foreground' : 'text-green-600')}>{totalCount}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="space-y-2">
+      {totalMerged > 0 && (
+        <p className="text-[11px] text-blue-600 dark:text-blue-400 font-medium">
+          {totalMerged} Mitarbeiter aus mehreren Teilblöcken zusammengeführt
+        </p>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px] border-collapse font-mono">
+          <thead>
+            <tr className="border-b border-border text-muted-foreground text-[10px]">
+              <th className="text-left py-1 pr-3 font-medium">#</th>
+              <th className="text-left py-1 pr-3 font-medium">Name-Zelle</th>
+              <th className="text-left py-1 pr-3 font-medium">Name</th>
+              <th className="text-left py-1 pr-3 font-medium">Zeilen</th>
+              <th className="text-left py-1 pr-3 font-medium">Status</th>
+              <th className="text-right py-1 pr-3 font-medium">Tage</th>
+              <th className="text-right py-1 pr-3 font-medium">Zeitbl.</th>
+              <th className="text-right py-1 pr-3 font-medium">Totale</th>
+              <th className="text-right py-1 font-medium">Qual.</th>
+            </tr>
+          </thead>
+          <tbody>
+            {employees.map((emp, i) => {
+              const shiftCount = emp.days.reduce((s, d) => s + d.shifts.length, 0);
+              const totalCount = Object.values(emp.totals).filter(Boolean).length;
+              const q          = empQualityPct(emp);
+              const isMerged   = emp.mergedFromCount > 1;
+              const rowRange   = isMerged
+                ? emp.mergedBlockRows.map(([s, e]) => `${s}–${e}`).join(' + ')
+                : `${emp.blockStartRow}–${emp.blockEndRow ?? '?'}`;
+              return (
+                <tr key={i} className={cn('border-b border-border/40 hover:bg-muted/20', isMerged && 'bg-blue-50/20 dark:bg-blue-900/10')}>
+                  <td className="py-0.5 pr-3 text-primary font-bold">{i + 1}</td>
+                  <td className="py-0.5 pr-3 text-primary">{emp.rawBlock.nameCell}</td>
+                  <td className="py-0.5 pr-3 font-sans font-semibold">
+                    {emp.name ?? <span className="text-red-500">—</span>}
+                  </td>
+                  <td className="py-0.5 pr-3 text-[10px]">{rowRange}</td>
+                  <td className="py-0.5 pr-3">
+                    {isMerged && (
+                      <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-100 border border-blue-300 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700 dark:text-blue-400">
+                        ⊞ Merged ×{emp.mergedFromCount}
+                      </span>
+                    )}
+                  </td>
+                  <td className={cn('py-0.5 pr-3 text-right tabular-nums', emp.days.length === 0 ? 'text-red-500' : 'text-green-600')}>{emp.days.length}</td>
+                  <td className="py-0.5 pr-3 text-right tabular-nums">{shiftCount}</td>
+                  <td className={cn('py-0.5 pr-3 text-right tabular-nums', totalCount === 0 ? 'text-muted-foreground' : 'text-green-600')}>{totalCount}</td>
+                  <td className={cn('py-0.5 text-right tabular-nums font-bold', q >= 80 ? 'text-green-600' : q >= 50 ? 'text-yellow-600' : 'text-red-500')}>{q}%</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -476,25 +516,39 @@ function TotalsCheck({ tp }: { tp: EmployeeValidation['totalsPresent'] }) {
 function EmployeeCard({ emp, ev, index }: { emp: ExcelEmployee; ev: EmployeeValidation; index: number }) {
   const [expanded,  setExpanded]  = useState(false);
   const [showDays,  setShowDays]  = useState(false);
-  const hasErrors  = ev.issues.some(i => i.severity === 'error');
+  const hasErrors   = ev.issues.some(i => i.severity === 'error');
   const hasWarnings = ev.issues.some(i => i.severity === 'warning');
+  const isMerged    = emp.mergedFromCount > 1;
+  const q           = empQualityPct(emp);
 
   return (
-    <Card className={cn('border', cardBorder(ev.importStatus))}>
+    <Card className={cn('border', cardBorder(ev.importStatus), isMerged && 'ring-1 ring-blue-200 dark:ring-blue-800')}>
       <button className="w-full text-left" onClick={() => setExpanded(e => !e)}>
         <div className="flex items-center justify-between px-4 py-2.5">
           <div className="flex items-center gap-3 min-w-0">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">{index + 1}</div>
             <div className="min-w-0">
-              <p className="text-sm font-bold truncate">{emp.name ?? <span className="text-red-500 italic">Name fehlt</span>}</p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <p className="text-sm font-bold truncate">{emp.name ?? <span className="text-red-500 italic">Name fehlt</span>}</p>
+                {isMerged && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-100 border border-blue-300 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700 dark:text-blue-400 shrink-0">
+                    ⊞ Merged ×{emp.mergedFromCount}
+                  </span>
+                )}
+              </div>
               <p className="text-[10px] text-muted-foreground">
                 {emp.costCenter ?? '—'}{emp.weeklyHours ? ` · ${emp.weeklyHours} h/W` : ''}{' · '}
-                Zeile {emp.blockStartRow}–{emp.blockEndRow ?? '?'}
+                {isMerged
+                  ? `Zeilen: ${emp.mergedBlockRows.map(([s, e]) => `${s}–${e}`).join(' + ')}`
+                  : `Zeile ${emp.blockStartRow}–${emp.blockEndRow ?? '?'}`}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0 ml-2">
-            <span className="text-[11px] text-muted-foreground hidden sm:block">{ev.dayRowsCount} Tage · {emp.days.reduce((s, d) => s + d.shifts.length, 0)} Zeitbl.</span>
+            <span className="text-[11px] text-muted-foreground hidden sm:block">
+              {ev.dayRowsCount} Tage · {emp.days.reduce((s, d) => s + d.shifts.length, 0)} Zeitbl.
+              {' · '}<span className={cn('font-semibold', q >= 80 ? 'text-green-600' : q >= 50 ? 'text-yellow-600' : 'text-red-500')}>{q}%</span>
+            </span>
             {hasErrors && <XCircle className="h-3.5 w-3.5 text-red-500" />}
             {!hasErrors && hasWarnings && <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />}
             {!hasErrors && !hasWarnings && <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />}
@@ -506,13 +560,23 @@ function EmployeeCard({ emp, ev, index }: { emp: ExcelEmployee; ev: EmployeeVali
 
       {expanded && (
         <div className="border-t border-border px-4 pb-4 pt-3 space-y-4">
+          {/* Merged sub-blocks info */}
+          {isMerged && (
+            <div className="flex flex-wrap items-center gap-2 text-[11px] rounded border border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-900/10 px-3 py-2">
+              <span className="font-bold text-blue-700 dark:text-blue-400">⊞ {emp.mergedFromCount} Teilblöcke zusammengeführt:</span>
+              {emp.mergedBlockRows.map(([s, e], idx) => (
+                <span key={idx} className="font-mono text-blue-600 dark:text-blue-400">Zeile {s}–{e}</span>
+              ))}
+            </div>
+          )}
+
           {/* Stammdaten */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             {[
               ['Name', emp.name], ['Kostenstelle', emp.costCenter],
               ['Abteilung', emp.department], ['Wochenstunden', emp.weeklyHours ? `${emp.weeklyHours} h` : null],
               ['Arbeitsverhältnis', emp.employmentPeriod], ['Sheet', emp.sheetName],
-              ['Block', `Zeile ${emp.blockStartRow}–${emp.blockEndRow ?? '?'}`],
+              ['Qualität', `${q}%`],
             ].map(([l, v]) => v ? (
               <div key={String(l)}><p className="text-muted-foreground mb-0.5">{l}</p><p className="font-semibold truncate">{v}</p></div>
             ) : null)}

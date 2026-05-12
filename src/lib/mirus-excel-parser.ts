@@ -120,6 +120,8 @@ export interface ExcelEmployee {
   days: DayRecord[];
   totals: EmployeeTotals;
   rawBlock: RawBlock;
+  mergedFromCount: number;           // 1 = einzelner Block, ≥2 = zusammengeführt
+  mergedBlockRows: [number, number][]; // [startRow, endRow] jedes Teil-Blocks
 }
 
 export interface ExcelDocQuality {
@@ -539,11 +541,13 @@ function parseBlock(
     ...detected,
   };
 
+  const startRow1 = blockStart + 1;
+  const endRow1   = blockEnd + 1;
   return {
     name, department, costCenter, weeklyHours, employmentPeriod,
     sheetName,
-    blockStartRow: blockStart + 1,
-    blockEndRow:   blockEnd + 1,
+    blockStartRow: startRow1,
+    blockEndRow:   endRow1,
     days, totals,
     rawBlock: {
       markerCell:       XLSX.utils.encode_cell({ r: blockStart, c: LAYOUT.markerCol }),
@@ -552,6 +556,8 @@ function parseBlock(
       metaRowText:      meta.text,
       detectedColMap:   detectedForDisplay,
     },
+    mergedFromCount: 1,
+    mergedBlockRows: [[startRow1, endRow1]],
   };
 }
 
@@ -561,15 +567,21 @@ function parseBlock(
 
 function employeeQuality(emp: ExcelEmployee): number {
   let s = 0;
-  if (emp.name)        s += 25;
-  if (emp.weeklyHours) s += 10;
-  if (emp.costCenter)  s += 10;
+  if (emp.name)        s += 25;   // Name erkannt
+  if (emp.weeklyHours) s += 10;   // Wochenstunden erkannt
+  if (emp.costCenter)  s += 10;   // Kostenstelle / Abteilung erkannt
+  // Tagesdaten
+  if      (emp.days.length >= 20) s += 30;
+  else if (emp.days.length >= 10) s += 22;
+  else if (emp.days.length >= 5)  s += 15;
+  else if (emp.days.length >= 1)  s += 8;
+  // Zeitblöcke oder Absenzen
   const active = emp.days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length;
-  if      (active >= 20) s += 40;
-  else if (active >= 10) s += 30;
-  else if (active >= 5)  s += 20;
-  else if (active >= 1)  s += 10;
-  if (emp.totals.totalHours) s += 15;
+  if      (active >= 15) s += 15;
+  else if (active >= 5)  s += 10;
+  else if (active >= 1)  s += 5;
+  // Totale
+  if (emp.totals.totalHours) s += 10;
   return Math.min(100, s);
 }
 
@@ -585,6 +597,113 @@ function docQuality(employees: ExcelEmployee[]): ExcelDocQuality {
   const daysWithShifts      = employees.reduce((s, e) => s + e.days.filter(d => d.shifts.length > 0 || !!d.absenceCode).length, 0);
   const avg = employees.reduce((s, e) => s + employeeQuality(e), 0) / employees.length;
   return { totalEmployees: employees.length, employeesWithName, employeesWithDays, employeesWithTotals, totalDayRecords, daysWithShifts, qualityPercent: Math.round(avg) };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── BLOCK-ZUSAMMENFÜHRUNG ────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Normalisierter Name für Vergleich (Akzente, Gross/Klein, Leerzeichen) */
+function normName(name: string | null): string {
+  return (name ?? '')
+    .toLowerCase()
+    .replace(/[àáâãäå]/g, 'a').replace(/[èéêë]/g, 'e')
+    .replace(/[ìíîï]/g, 'i').replace(/[òóôõö]/g, 'o')
+    .replace(/[ùúûü]/g, 'u').replace(/ñ/g, 'n')
+    .replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Restblock-Erkennung:
+ * Ein Block gilt als Restblock wenn Tagesdaten oder Qualität sehr gering sind.
+ * Restblöcke sollen mit dem vorangegangenen Block zusammengeführt werden.
+ */
+function isRestBlock(emp: ExcelEmployee): boolean {
+  const shifts   = emp.days.reduce((s, d) => s + d.shifts.length, 0);
+  const absences = emp.days.filter(d => !!d.absenceCode).length;
+  const hasTotals = Object.values(emp.totals).some(Boolean);
+  const q = employeeQuality(emp);
+  return (
+    emp.days.length < 8 ||
+    (shifts === 0 && absences === 0) ||
+    (!hasTotals && emp.days.length < 5) ||
+    q < 45
+  );
+}
+
+function mergeTotals(a: EmployeeTotals, b: EmployeeTotals): EmployeeTotals {
+  return {
+    totalHours:   a.totalHours   ?? b.totalHours,
+    pauseTotal:   a.pauseTotal   ?? b.pauseTotal,
+    nettoTotal:   a.nettoTotal   ?? b.nettoTotal,
+    zeitzuschlag: a.zeitzuschlag ?? b.zeitzuschlag,
+    ueberzeit:    a.ueberzeit    ?? b.ueberzeit,
+    saldo:        a.saldo        ?? b.saldo,
+    ferien:       a.ferien       ?? b.ferien,
+    frei:         a.frei         ?? b.frei,
+    krankheit:    a.krankheit    ?? b.krankheit,
+  };
+}
+
+function mergeTwoBlocks(main: ExcelEmployee, extra: ExcelEmployee): ExcelEmployee {
+  const existingRows = main.mergedBlockRows.length > 0
+    ? main.mergedBlockRows
+    : [[main.blockStartRow, main.blockEndRow ?? main.blockStartRow]] as [number, number][];
+  const extraRow: [number, number] = [extra.blockStartRow, extra.blockEndRow ?? extra.blockStartRow];
+  return {
+    name:             main.name             ?? extra.name,
+    department:       main.department       ?? extra.department,
+    costCenter:       main.costCenter       ?? extra.costCenter,
+    weeklyHours:      main.weeklyHours      ?? extra.weeklyHours,
+    employmentPeriod: main.employmentPeriod ?? extra.employmentPeriod,
+    sheetName:        main.sheetName,
+    blockStartRow:    main.blockStartRow,
+    blockEndRow:      extra.blockEndRow ?? main.blockEndRow,
+    days:             [...main.days, ...extra.days],
+    totals:           mergeTotals(main.totals, extra.totals),
+    rawBlock:         main.rawBlock,
+    mergedFromCount:  main.mergedFromCount + 1,
+    mergedBlockRows:  [...existingRows, extraRow],
+  };
+}
+
+/**
+ * Hauptfunktion: fügt Blöcke mit gleichem Namen oder Restblöcke zusammen.
+ *
+ * Merge-Bedingungen (eine genügt):
+ *   A) Gleicher normalisierter Name, Abstand ≤ 30 Zeilen
+ *   B) Block ist ein Restblock (< 8 Tage / Qualität < 45 %), Abstand ≤ 8 Zeilen
+ */
+function mergeBlocks(raw: ExcelEmployee[]): ExcelEmployee[] {
+  const tagged: ExcelEmployee[] = raw.map(e => ({
+    ...e,
+    mergedFromCount: 1,
+    mergedBlockRows: [[e.blockStartRow, e.blockEndRow ?? e.blockStartRow]] as [number, number][],
+  }));
+
+  const result: ExcelEmployee[] = [];
+  for (const emp of tagged) {
+    const last = result[result.length - 1];
+    if (!last) { result.push(emp); continue; }
+
+    const gap = emp.blockStartRow - (last.blockEndRow ?? last.blockStartRow);
+
+    // Condition A: same name, close gap
+    const sameNorm = normName(emp.name) === normName(last.name) && normName(emp.name) !== '';
+    if (sameNorm && gap <= 30) {
+      result[result.length - 1] = mergeTwoBlocks(last, emp);
+      continue;
+    }
+
+    // Condition B: rest block very close (continuation page, different marker)
+    if (isRestBlock(emp) && gap <= 8) {
+      result[result.length - 1] = mergeTwoBlocks(last, emp);
+      continue;
+    }
+
+    result.push(emp);
+  }
+  return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -648,13 +767,21 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
     }
   }
 
+  // Blöcke mit gleichem Namen oder Restblöcke zusammenführen
+  const rawCount   = employees.length;
+  const merged     = mergeBlocks(employees);
+  const mergedCount = rawCount - merged.length;
+  if (mergedCount > 0) {
+    warnings.push(`${mergedCount} Restblock${mergedCount !== 1 ? 'e' : ''} zusammengeführt (${rawCount} Roh-Blöcke → ${merged.length} Mitarbeiter)`);
+  }
+
   return {
     fileName: file.name,
     ...meta,
     restaurant:   null,
     creationDate: null,
-    employees,
-    quality:  docQuality(employees),
+    employees:    merged,
+    quality:      docQuality(merged),
     warnings,
     sheetsProcessed,
   };
