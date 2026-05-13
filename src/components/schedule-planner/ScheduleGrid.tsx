@@ -1107,17 +1107,29 @@ export const ScheduleGrid = ({
                             <div className="flex items-center justify-center min-h-[28px] h-full">
                               <span className="text-zinc-500 dark:text-zinc-600 text-[10px] font-bold select-none">✕</span>
                             </div>
-                          ) : (
+                          ) : (() => {
+                            // Always show the slot that has data in row 1 of the editor.
+                            // If only spät is set (früh is null), treat spät as primary so
+                            // old data is never stranded in the invisible "row 2".
+                            const primarySlot: 'früh' | 'spät' =
+                              daySchedule.früh || daySchedule.frühAbsence ? 'früh' : 'spät';
+                            const secondarySlot: 'früh' | 'spät' =
+                              primarySlot === 'früh' ? 'spät' : 'früh';
+                            const primaryAbsence =
+                              (primarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ||
+                              (secondarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ||
+                              null;
+                            return (
                             <div className="flex flex-col">
                               <div className="py-0.5">
                                 <TimeInputCell
-                                  value={daySchedule.früh || null}
-                                  absenceType={daySchedule.frühAbsence || daySchedule.spätAbsence || null}
-                                  onChange={(val, absence) => handleCellChange(employee.id, dateStr, 'früh', val, absence)}
-                                  slotType="früh"
-                                  secondaryValue={daySchedule.spät || null}
-                                  onSplitTimeSelect={(sec) => onSlotChange(employee.id, dateStr, 'spät', sec, null)}
-                                  onClearSecondary={() => onSlotChange(employee.id, dateStr, 'spät', null, null)}
+                                  value={daySchedule[primarySlot] || null}
+                                  absenceType={primaryAbsence}
+                                  onChange={(val, absence) => handleCellChange(employee.id, dateStr, primarySlot, val, absence)}
+                                  slotType={primarySlot}
+                                  secondaryValue={daySchedule[secondarySlot] || null}
+                                  onSplitTimeSelect={(sec) => onSlotChange(employee.id, dateStr, secondarySlot, sec, null)}
+                                  onClearSecondary={() => onSlotChange(employee.id, dateStr, secondarySlot, null, null)}
                                   isWeekend={isWeekendDay}
                                   isDayOff={isConfiguredDayOff}
                                   isRequestedFree={cellIsRequestedFree}
@@ -1127,7 +1139,7 @@ export const ScheduleGrid = ({
                                   onCopyShift={onCopyShift}
                                   cellColor={frühCellColor || spätCellColor}
                                   onCellColorChange={onCellColorChange ? (c) => onCellColorChange(frühInlineKey, c) : undefined}
-                                  onCopyToIst={onCopyToIst ? (slot) => onCopyToIst(employee.id, dateStr, 'früh', slot) : undefined}
+                                  onCopyToIst={onCopyToIst ? (slot) => onCopyToIst(employee.id, dateStr, primarySlot, slot) : undefined}
                                 />
                               </div>
                               {(isSuggestedFrüh || isSuggestedSpät) && !isOverlapping && (
@@ -1159,7 +1171,7 @@ export const ScheduleGrid = ({
                                 </>
                               )}
                             </div>
-                          )}
+                          ); })()}
                           {isOverlapping && !isAfterExitDate && (
                             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center" title="Schichten überlappen sich!">
                               <span className="text-white text-[8px] font-bold">!</span>
