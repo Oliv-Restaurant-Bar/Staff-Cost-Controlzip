@@ -33,6 +33,7 @@ import { PatternWarning, PatternType } from '@/lib/pattern-warnings';
 export interface TimeSlot {
   start: string;
   end: string;
+  secondary?: { start: string; end: string } | null;
 }
 
 export interface DaySchedule {

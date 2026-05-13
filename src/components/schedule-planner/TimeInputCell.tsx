@@ -27,6 +27,7 @@ import {
 interface TimeSlot {
   start: string;
   end: string;
+  secondary?: { start: string; end: string } | null;
 }
 
 interface TimeInputCellProps {
@@ -583,7 +584,7 @@ export const TimeInputCell = ({
   // Inline clock picker
   const [pickerTarget, setPickerTarget] = useState<PickerTarget>(null);
 
-  const { shiftMap, absenceShifts, workShifts } = useShiftConfig();
+  const { shiftMap, absenceShifts } = useShiftConfig();
   const { presets, addPreset, updatePreset, deletePreset, movePreset, resetToDefaults } = useQuickTimes();
 
   // Filter absence shifts by department
@@ -597,15 +598,9 @@ export const TimeInputCell = ({
   // All presets visible (no slotType filter — concept removed from UX)
   const visiblePresets = presets;
 
-  // Split shifts from shiftConfig
-  const splitShifts = workShifts.filter(shift => {
-    const cfg = shiftMap[shift];
-    if (!cfg || !cfg.start2 || !cfg.end2) return false;
-    if (department && department !== 'all') {
-      return cfg.department === department || !cfg.department;
-    }
-    return true;
-  });
+  // Split presets from localStorage (has start2/end2) vs simple (single shift)
+  const simplePresets = visiblePresets.filter(p => !(p.start2 && p.end2));
+  const splitPresets  = visiblePresets.filter(p => !!(p.start2 && p.end2));
 
   // Sync fields when popover opens
   useEffect(() => {
@@ -932,51 +927,43 @@ export const TimeInputCell = ({
                 </div>
 
                 {/* ════ SCHNELLWAHL ════════════════════════════════════ */}
-                {visiblePresets.length > 0 && (
+                {simplePresets.length > 0 && (
                   <div className="space-y-1.5">
-                    <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Schnellwahl</div>
+                    <div className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-widest">Schnellwahl</div>
                     <div className="grid grid-cols-2 gap-1.5">
-                      {visiblePresets.map(p => {
-                        const hasSecond = !!(p.start2 && p.end2);
-                        const lbl = hasSecond
-                          ? `${formatShort(p.start)}-${formatShort(p.end)} +`
-                          : p.label;
-                        return (
-                          <button key={p.id}
-                            onClick={() => handlePresetSelect(p)}
-                            title={hasSecond
-                              ? `1. Einsatz ${p.start}–${p.end} · 2. Einsatz ${p.start2}–${p.end2}`
-                              : `${p.start}–${p.end}`}
-                            className={cn(
-                              "px-2 py-2 text-[11px] rounded-lg border transition-all font-medium text-center leading-tight",
-                              "bg-slate-50 dark:bg-slate-800/60 border-border/50",
-                              "text-foreground/80 hover:bg-primary/10 hover:border-primary/30 hover:text-primary active:scale-95"
-                            )}>
-                            {lbl}
-                          </button>
-                        );
-                      })}
+                      {simplePresets.map(p => (
+                        <button key={p.id}
+                          onClick={() => handlePresetSelect(p)}
+                          title={`${p.start}–${p.end}`}
+                          className={cn(
+                            "px-2 py-2 text-[11px] rounded-lg border transition-all font-medium text-center leading-tight",
+                            "bg-slate-50 dark:bg-slate-800/60 border-border/50",
+                            "text-foreground/80 hover:bg-primary/10 hover:border-primary/30 hover:text-primary active:scale-95"
+                          )}>
+                          {p.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 )}
 
-                {/* Split shifts from ShiftConfig */}
-                {splitShifts.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Geteilt</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {splitShifts.map(shift => {
-                        const cfg = shiftMap[shift];
-                        if (!cfg) return null;
-                        return (
-                          <button key={shift}
-                            onClick={() => handlePresetSelect(cfg as { start: string; end: string; start2?: string; end2?: string })}
-                            title={`${cfg.start}-${cfg.end} + ${cfg.start2}-${cfg.end2} = ${cfg.hours}h`}
-                            className={cn("px-2 py-1 text-[10px] rounded border transition-colors font-medium", cfg.color, "hover:opacity-80")}>
-                            {formatShort(cfg.start)}-{formatShort(cfg.end)} / {formatShort(cfg.start2!)}
-                          </button>
-                        );
-                      })}
+                {/* ════ GETEILT (split presets from localStorage) ══════ */}
+                {splitPresets.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-widest">Geteilt</div>
+                    <div className="grid grid-cols-1 gap-1.5">
+                      {splitPresets.map(p => (
+                        <button key={p.id}
+                          onClick={() => handlePresetSelect(p)}
+                          title={`1. Einsatz ${p.start}–${p.end} · 2. Einsatz ${p.start2}–${p.end2}`}
+                          className={cn(
+                            "px-2 py-2 text-[11px] rounded-lg border transition-all font-medium text-center leading-tight",
+                            "bg-indigo-50/70 dark:bg-indigo-900/20 border-indigo-200/60 dark:border-indigo-700/40",
+                            "text-indigo-800 dark:text-indigo-200 hover:bg-indigo-100/70 dark:hover:bg-indigo-800/30 hover:border-indigo-300 active:scale-95"
+                          )}>
+                          {formatShort(p.start)}–{formatShort(p.end)} / {formatShort(p.start2!)}–{formatShort(p.end2!)}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -1073,16 +1060,22 @@ export const TimeInputCell = ({
                 {/* ── Copy / Paste ── */}
                 <div className="flex gap-1.5 pt-2 border-t">
                   {value?.start && (
-                    <button onClick={() => { onCopyShift?.(value); setOpen(false); }}
+                    <button onClick={() => { onCopyShift?.({ ...value!, secondary: secondaryValue || null }); setOpen(false); }}
                       className="flex-1 text-xs text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 py-1.5 rounded-lg border border-blue-200/70 dark:border-blue-700/60 transition-all font-medium active:scale-95">
                       📋 Kopieren
                     </button>
                   )}
                   {copiedShift?.start && (
-                    <button onClick={() => { onChange(copiedShift, null); setOpen(false); }}
-                      title={`${copiedShift.start}–${copiedShift.end} einfügen`}
+                    <button onClick={() => {
+                        onChange({ start: copiedShift.start, end: copiedShift.end }, null);
+                        if (copiedShift.secondary?.start && onSplitTimeSelect) {
+                          onSplitTimeSelect({ start: copiedShift.secondary.start, end: copiedShift.secondary.end });
+                        }
+                        setOpen(false);
+                      }}
+                      title={`${copiedShift.start}–${copiedShift.end}${copiedShift.secondary ? ` / ${copiedShift.secondary.start}–${copiedShift.secondary.end}` : ''} einfügen`}
                       className="flex-1 text-xs text-green-700 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/30 py-1.5 rounded-lg border border-green-200/70 dark:border-green-700/60 transition-all font-medium active:scale-95">
-                      📌 {formatShort(copiedShift.start)}-{formatShort(copiedShift.end)}
+                      📌 {formatShort(copiedShift.start)}–{formatShort(copiedShift.end)}{copiedShift.secondary ? ` / ${formatShort(copiedShift.secondary.start)}–${formatShort(copiedShift.secondary.end)}` : ''}
                     </button>
                   )}
                 </div>

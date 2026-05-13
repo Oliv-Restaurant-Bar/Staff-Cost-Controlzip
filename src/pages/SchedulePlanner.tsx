@@ -219,10 +219,13 @@ const SchedulePlanner = () => {
   const [visibleWeekInMonth, setVisibleWeekInMonth] = useState(0);
   const [selectedDayOffset, setSelectedDayOffset] = useState(0);
   const [copyWeekDialogOpen, setCopyWeekDialogOpen] = useState(false);
-  const [copiedShift, setCopiedShift] = useState<{ start: string; end: string } | null>(null);
-  const handleCopyShift = (slot: { start: string; end: string }) => {
+  const [copiedShift, setCopiedShift] = useState<{ start: string; end: string; secondary?: { start: string; end: string } | null } | null>(null);
+  const handleCopyShift = (slot: { start: string; end: string; secondary?: { start: string; end: string } | null }) => {
     setCopiedShift(slot);
-    toast.success(`Schicht ${slot.start}–${slot.end} kopiert — öffne eine Zelle zum Einfügen`);
+    const label = slot.secondary
+      ? `${slot.start}–${slot.end} / ${slot.secondary.start}–${slot.secondary.end}`
+      : `${slot.start}–${slot.end}`;
+    toast.success(`Schicht ${label} kopiert — öffne eine Zelle zum Einfügen`);
   };
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [weeklyReportOpen, setWeeklyReportOpen] = useState(false);
