@@ -30,7 +30,7 @@ import { TimeSlot, DaySchedule } from './ScheduleGrid';
 import { PatternWarning } from '@/lib/pattern-warnings';
 import { buildAvailabilityMap } from '@/lib/availability-store';
 import { cn } from '@/lib/utils';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, CalendarOff } from 'lucide-react';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -71,6 +71,7 @@ export interface ModernScheduleGridProps {
     slot: TimeSlot,
   ) => void;
   onEmployeeClick?: (employee: Employee) => void;
+  onConfigureDaysOff?: (employee: Employee) => void;
   externalActiveTool?: string | null;
   highlightedEmployeeId?: string | null;
 }
@@ -99,6 +100,7 @@ export function ModernScheduleGrid({
   showDepartmentBadge,
   onCopyToIst,
   onEmployeeClick,
+  onConfigureDaysOff,
   externalActiveTool,
   highlightedEmployeeId,
 }: ModernScheduleGridProps) {
@@ -352,7 +354,28 @@ export function ModernScheduleGrid({
                       </div>
                     </div>
 
-                    {/* Warning icon — only when there's a pattern warning */}
+                    {/* Days-off config button — matches classic view behaviour */}
+                    {onConfigureDaysOff && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onConfigureDaysOff(employee); }}
+                        title={
+                          employee.daysOff?.length
+                            ? `${employee.daysOff.length} Ruhetag${employee.daysOff.length !== 1 ? 'e' : ''}/Wo. – klicken zum Bearbeiten`
+                            : 'Ruhetage konfigurieren'
+                        }
+                        className={cn(
+                          "shrink-0 h-5 w-5 flex items-center justify-center rounded transition-colors",
+                          "hover:bg-muted/60",
+                          employee.daysOff?.length
+                            ? "opacity-60 text-primary"
+                            : "opacity-0 group-hover:opacity-40 text-muted-foreground",
+                        )}
+                      >
+                        <CalendarOff className="h-3 w-3" />
+                      </button>
+                    )}
+
+                    {/* Warning icon */}
                     {hasWarning && (
                       <AlertTriangle className={cn(
                         "h-3 w-3 shrink-0",

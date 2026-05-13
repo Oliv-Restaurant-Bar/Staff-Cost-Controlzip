@@ -1,0 +1,185 @@
+Bitte bei der Dienstplan-Umstellung die mobile Handy-Ansicht besonders sauber und stabil umsetzen.
+
+Sehr wichtig:
+Die Mitarbeiter werden den Dienstplan hauptsächlich am Handy anschauen.
+
+====================================================
+1. MOBILE FIRST FÜR MITARBEITER-LINK
+====================================================
+
+Die öffentliche Route:
+
+/staff-schedule/:token
+
+muss auf dem Handy perfekt lesbar sein.
+
+Keine breite Tabelle für persönliche Mitarbeiteransicht.
+
+Stattdessen:
+
+Header:
+- Restaurant
+- Mitarbeitername
+- Kalenderwoche
+- Zeitraum
+- Status: Nur Ansicht
+
+Darunter Tageskarten untereinander:
+
+Montag, 18. Mai
+10:00–14:00
+17:30–23:00
+
+Dienstag, 19. Mai
+Frei
+
+Mittwoch, 20. Mai
+Ferien
+
+====================================================
+2. PERSÖNLICHER PLAN
+====================================================
+
+Wenn Link für einzelnen Mitarbeiter:
+
+- nur dieser Mitarbeiter sichtbar
+- keine anderen Namen
+- keine Kosten
+- keine internen Warnungen
+- keine Admin-Daten
+- keine Stundenkosten
+- keine Lohninfos
+
+Nur:
+- Tage
+- Einsatzzeiten
+- Abwesenheiten
+- kurze Hinweise
+
+====================================================
+3. ABTEILUNGSPLAN AUF MOBILE
+====================================================
+
+Wenn Link für Service/Küche/Alle:
+
+Mobile Ansicht mit Umschalter:
+
+- Nach Tag
+- Nach Mitarbeiter
+
+Nach Tag:
+Tageskarten:
+Montag
+- Arber: 10:00–14:00 / 17:30–23:00
+- Carlos: 17:00–23:00
+
+Nach Mitarbeiter:
+Mitarbeiterkarten:
+Arber
+- Mo 10:00–14:00
+- Di Frei
+- Mi 17:30–23:00
+
+====================================================
+4. MOBILE DESIGN
+====================================================
+
+Bitte mobile Ansicht modern und ruhig gestalten:
+
+- grosse gut klickbare Karten
+- klare Schriftgrössen
+- genug Abstand
+- keine kleinen Tabellenzellen
+- keine abgeschnittenen Zeiten
+- Schichtzeiten als Chips
+- Frei/Ferien/Krank als klare Badges
+- Wochenende dezent markieren
+- heutiger Tag leicht hervorheben
+
+====================================================
+5. STABILITÄT
+====================================================
+
+Mobile muss stabil funktionieren bei:
+
+- iPhone Breite ca. 390px
+- Android ca. 360px
+- Safari
+- Chrome
+- langer Mitarbeitername
+- zwei Einsätze pro Tag
+- Nacht über Mitternacht
+- Ferien/Frei/Krank
+- leere Tage
+
+====================================================
+6. TEILEN-DIALOG
+====================================================
+
+Im Dienstplan-Teilen-Dialog:
+
+Option:
+- Persönlicher Mitarbeiterplan
+- Abteilungsplan
+
+Bei persönlichem Plan:
+- Mitarbeiter auswählen
+- Link erzeugen
+- Vorschau öffnen
+- Link kopieren
+- WhatsApp Text vorbereiten
+
+WhatsApp Text:
+Hallo {Name}, hier ist dein Dienstplan für KW {kw}: {link}
+
+Bei Abteilungsplan:
+Hallo zusammen, hier ist der Dienstplan für KW {kw}: {link}
+
+====================================================
+7. KEINE MOCK-NAMEN IN ECHTER VORSCHAU
+====================================================
+
+Wenn der Link aus dem echten Dienstplan generiert wird:
+- echte Mitarbeiter verwenden
+- echte Schichten verwenden
+- echte Woche verwenden
+- echtes Restaurant verwenden
+
+Mock-Daten nur als Fallback mit deutlichem Hinweis:
+Demo-Daten
+
+====================================================
+8. DATENLOGIK NICHT ÄNDERN
+====================================================
+
+Nicht ändern:
+- Kostenlogik
+- Dienstplan-Speicherung
+- Supabase-Struktur
+- Soll/Ist-Berechnung
+- Mirus Import
+
+Nur:
+- mobile Veröffentlichungsansicht
+- Teilen-Dialog
+- Link-Vorschau
+- Darstellung für Mitarbeiter
+
+====================================================
+9. TEST
+====================================================
+
+Nach Umsetzung bitte testen:
+
+- /staff-schedule/test auf Desktop
+- /staff-schedule/test mit Mobile Breite
+- persönlicher Link mit einem Mitarbeiter
+- Abteilungsplan nach Tag
+- Abteilungsplan nach Mitarbeiter
+- zwei Einsätze an einem Tag
+- Frei/Ferien/Krank
+
+Bitte bestätigen:
+- mobile Ansicht ist ohne horizontales Scrollen lesbar
+- keine Kosten/Löhne sichtbar
+- persönliche Ansicht zeigt nur diesen Mitarbeiter

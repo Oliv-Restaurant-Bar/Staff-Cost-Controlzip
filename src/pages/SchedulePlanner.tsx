@@ -3752,6 +3752,7 @@ const SchedulePlanner = () => {
                         showDepartmentBadge={activeDepartment === 'all'}
                         onCopyToIst={handleCopyPlanToIst}
                         onEmployeeClick={setEmployeeDetailEmp}
+                        onConfigureDaysOff={handleConfigureDaysOff}
                         externalActiveTool={paintTool}
                         highlightedEmployeeId={highlightedEmpId}
                       />
