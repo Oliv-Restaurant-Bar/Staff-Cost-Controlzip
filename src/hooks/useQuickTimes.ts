@@ -12,41 +12,36 @@ export interface QuickTimePreset {
 }
 
 const LS_KEY = 'dienstplan:quick-times';
-const MIGRATION_KEY = 'dienstplan:quick-times-split-migrated-v1';
+const MIGRATION_KEY = 'dienstplan:quick-times-split-migrated-v2';
 
+// Exactly 6 simple + 4 split = 10 canonical defaults
 export const DEFAULT_QUICK_PRESETS: QuickTimePreset[] = [
-  // Simple — single shift
-  { id: 'f1', label: '10–14',      start: '10:00', end: '14:00', slotType: 'all' },
-  { id: 'f2', label: '11–14',      start: '11:00', end: '14:00', slotType: 'all' },
-  { id: 'f3', label: '11–15',      start: '11:00', end: '15:00', slotType: 'all' },
-  { id: 'f4', label: '12–15',      start: '12:00', end: '15:00', slotType: 'all' },
-  { id: 's1', label: '17–22',      start: '17:00', end: '22:00', slotType: 'all' },
-  { id: 's2', label: '17–23',      start: '17:00', end: '23:00', slotType: 'all' },
-  { id: 's3', label: '17:30–23',   start: '17:30', end: '23:00', slotType: 'all' },
-  { id: 's4', label: '18–23',      start: '18:00', end: '23:00', slotType: 'all' },
-  // Split — two shifts in one day
-  { id: 'sp1', label: '10–14 / 17:30–23',   start: '10:00', end: '14:00', start2: '17:30', end2: '23:00',  slotType: 'all' },
-  { id: 'sp2', label: '11–14 / 17–23',      start: '11:00', end: '14:00', start2: '17:00', end2: '23:00',  slotType: 'all' },
-  { id: 'sp3', label: '11–14 / 17–23:30',   start: '11:00', end: '14:00', start2: '17:00', end2: '23:30',  slotType: 'all' },
-  { id: 'sp4', label: '11:15–14 / 17:30–23',start: '11:15', end: '14:00', start2: '17:30', end2: '23:00',  slotType: 'all' },
+  // ── 6 simple single-shift presets ──────────────────────────────────────────
+  { id: 'f1',  label: '10–14',     start: '10:00', end: '14:00', slotType: 'all' },
+  { id: 'f2',  label: '11–14',     start: '11:00', end: '14:00', slotType: 'all' },
+  { id: 'f3',  label: '11–15',     start: '11:00', end: '15:00', slotType: 'all' },
+  { id: 'f4',  label: '12–15',     start: '12:00', end: '15:00', slotType: 'all' },
+  { id: 's1',  label: '17–23',     start: '17:00', end: '23:00', slotType: 'all' },
+  { id: 's2',  label: '18–23:30',  start: '18:00', end: '23:30', slotType: 'all' },
+  // ── 4 split two-shift presets ───────────────────────────────────────────────
+  { id: 'sp1', label: '10–14 / 17:30–23',     start: '10:00', end: '14:00', start2: '17:30', end2: '23:00',  slotType: 'all' },
+  { id: 'sp2', label: '11:15–14 / 17:30–23',  start: '11:15', end: '14:00', start2: '17:30', end2: '23:00',  slotType: 'all' },
+  { id: 'sp3', label: '10–14 / 17:30–23:30',  start: '10:00', end: '14:00', start2: '17:30', end2: '23:30',  slotType: 'all' },
+  { id: 'sp4', label: '11–14 / 17–23',        start: '11:00', end: '14:00', start2: '17:00', end2: '23:00',  slotType: 'all' },
 ];
 
-// Default split presets only — used by the migration
-const DEFAULT_SPLIT_PRESETS: QuickTimePreset[] = DEFAULT_QUICK_PRESETS.filter(
-  p => !!(p.start2 && p.end2)
-);
+const DEFAULT_SPLIT_IDS = new Set(['sp1', 'sp2', 'sp3', 'sp4']);
 
 /**
  * Loads presets from localStorage.
- * Runs a one-time migration to append split presets to any existing list that
- * has no splits yet, so users who had the old simple-only list get them back.
+ * One-time migration (v2): appends any missing split presets to existing lists
+ * that have none, so users upgrading from simple-only lists get them back.
  */
 function load(): QuickTimePreset[] {
   try {
     const raw = localStorage.getItem(LS_KEY);
 
     if (!raw) {
-      // Fresh start — store full defaults immediately
       persist(DEFAULT_QUICK_PRESETS);
       return DEFAULT_QUICK_PRESETS;
     }
@@ -57,15 +52,17 @@ function load(): QuickTimePreset[] {
       return DEFAULT_QUICK_PRESETS;
     }
 
-    // One-time migration: if the stored list has no split presets, append the defaults
+    // One-time v2 migration: merge default split presets if none present
     const alreadyMigrated = localStorage.getItem(MIGRATION_KEY) === '1';
     if (!alreadyMigrated) {
+      const existingIds = new Set(parsed.map(p => p.id));
       const hasSplits = parsed.some(p => !!(p.start2 && p.end2));
-      if (!hasSplits) {
-        // Append split presets that aren't already present (by id)
-        const existingIds = new Set(parsed.map(p => p.id));
-        const toAdd = DEFAULT_SPLIT_PRESETS.filter(p => !existingIds.has(p.id));
-        const merged = [...parsed, ...toAdd];
+      const missingDefaults = DEFAULT_QUICK_PRESETS.filter(
+        p => DEFAULT_SPLIT_IDS.has(p.id) && !existingIds.has(p.id)
+      );
+
+      if (!hasSplits || missingDefaults.length > 0) {
+        const merged = [...parsed, ...missingDefaults];
         persist(merged);
         localStorage.setItem(MIGRATION_KEY, '1');
         return merged;

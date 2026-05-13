@@ -926,12 +926,12 @@ export const TimeInputCell = ({
                   )}
                 </div>
 
-                {/* ════ SCHNELLWAHL ════════════════════════════════════ */}
+                {/* ════ SCHNELLWAHL — max 6 simple ════════════════════ */}
                 {simplePresets.length > 0 && (
                   <div className="space-y-1.5">
                     <div className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-widest">Schnellwahl</div>
                     <div className="grid grid-cols-2 gap-1.5">
-                      {simplePresets.map(p => (
+                      {simplePresets.slice(0, 6).map(p => (
                         <button key={p.id}
                           onClick={() => handlePresetSelect(p)}
                           title={`${p.start}–${p.end}`}
@@ -947,17 +947,17 @@ export const TimeInputCell = ({
                   </div>
                 )}
 
-                {/* ════ GETEILT (split presets from localStorage) ══════ */}
+                {/* ════ GETEILT — max 4 split ══════════════════════════ */}
                 {splitPresets.length > 0 && (
                   <div className="space-y-1.5">
-                    <div className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-widest">Geteilt</div>
-                    <div className="grid grid-cols-1 gap-1.5">
-                      {splitPresets.map(p => (
+                    <div className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-widest">Geteilte Einsätze</div>
+                    <div className="grid grid-cols-1 gap-1">
+                      {splitPresets.slice(0, 4).map(p => (
                         <button key={p.id}
                           onClick={() => handlePresetSelect(p)}
                           title={`1. Einsatz ${p.start}–${p.end} · 2. Einsatz ${p.start2}–${p.end2}`}
                           className={cn(
-                            "px-2 py-2 text-[11px] rounded-lg border transition-all font-medium text-center leading-tight",
+                            "px-2 py-1.5 text-[11px] rounded-lg border transition-all font-medium text-center leading-tight",
                             "bg-indigo-50/70 dark:bg-indigo-900/20 border-indigo-200/60 dark:border-indigo-700/40",
                             "text-indigo-800 dark:text-indigo-200 hover:bg-indigo-100/70 dark:hover:bg-indigo-800/30 hover:border-indigo-300 active:scale-95"
                           )}>

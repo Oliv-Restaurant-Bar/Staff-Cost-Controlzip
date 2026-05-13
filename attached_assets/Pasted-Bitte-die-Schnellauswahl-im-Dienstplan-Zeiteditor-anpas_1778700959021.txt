@@ -1,0 +1,87 @@
+Bitte die Schnellauswahl im Dienstplan-Zeiteditor anpassen.
+
+Aktuell werden oben zu viele einfache Einsatzzeiten angezeigt.
+
+Gewünscht:
+
+====================================================
+1. SCHNELLAUSWAHL STRUKTUR
+====================================================
+
+Im Popover "Einsatzzeit erfassen" sollen sichtbar sein:
+
+A) 6 einfache Einsatzzeiten
+Zum Beispiel:
+- 10-14
+- 11-14
+- 11-15
+- 12-15
+- 17-23
+- 18-23:30
+
+B) 4 geteilte Einsatzzeiten
+Zum Beispiel:
+- 10-14 / 17:30-23
+- 11:15-14 / 17:30-23
+- 10-14 / 17:30-23:30
+- 11-14 / 17-23
+
+====================================================
+2. ANZEIGE
+====================================================
+
+Die 6 einfachen Einsatzzeiten oben als 2 Spalten à 3 Zeilen anzeigen.
+
+Darunter eigener Bereich:
+
+"Geteilte Einsätze"
+
+Dort die 4 geteilten Einsatzzeiten als Chips anzeigen.
+
+Nicht mehr 8 einfache Einsatzzeiten anzeigen.
+
+====================================================
+3. SCHNELLAUSWAHL BEARBEITEN
+====================================================
+
+"Schnellwahl bearbeiten" muss weiterhin alle 10 Einträge bearbeiten können:
+
+- 6 einfache
+- 4 geteilte
+
+Bei geteilten:
+- Einsatz 1 Von/Bis
+- Einsatz 2 Von/Bis
+
+====================================================
+4. LOCALSTORAGE DEFAULTS
+====================================================
+
+Falls localStorage leer ist, diese 10 Defaults verwenden.
+
+Falls alte localStorage-Daten existieren:
+- nicht kaputt machen
+- aber maximal 6 einfache im Hauptbereich anzeigen
+- maximal 4 geteilte im geteilten Bereich anzeigen
+- im Bearbeiten-Dialog trotzdem alle verwalten
+
+====================================================
+5. KLICKVERHALTEN
+====================================================
+
+Einfache Schnellwahl:
+setzt Einsatz 1.
+
+Geteilte Schnellwahl:
+setzt Einsatz 1 und Einsatz 2.
+
+====================================================
+6. WICHTIG
+====================================================
+
+Keine Kostenlogik ändern.
+Keine Speicherlogik ändern.
+Keine Datenbankänderung.
+Nur Schnellauswahl-Anzeige und Defaults anpassen.
+
+Danach TypeScript prüfen und kurz testen.
