@@ -1,5 +1,5 @@
 // Schedule Grid Component - Updated to use onOpen8HoursDialog
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { format, isWeekend, getDay, isSunday, parseISO, isAfter } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
@@ -489,6 +489,32 @@ export const ScheduleGrid = ({
 
   // Over-budget dialog state
   const [openDialogDay, setOpenDialogDay] = useState<string | null>(null);
+
+  // Resizable name column
+  const [nameColWidth, setNameColWidth] = useState(140);
+  const resizingRef = useRef(false);
+  const resizeStartXRef = useRef(0);
+  const resizeStartWidthRef = useRef(0);
+
+  const handleResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    resizingRef.current = true;
+    resizeStartXRef.current = e.clientX;
+    resizeStartWidthRef.current = nameColWidth;
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const delta = ev.clientX - resizeStartXRef.current;
+      const newWidth = Math.max(80, Math.min(320, resizeStartWidthRef.current + delta));
+      setNameColWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      resizingRef.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
   const [whatIfRevenue, setWhatIfRevenue] = useState<string>('');
 
   // Correction suggestion state
@@ -723,12 +749,15 @@ export const ScheduleGrid = ({
             {/* Date row */}
             <tr className="bg-card">
               <th 
-                className={cn(
-                  "sticky left-0 z-20 bg-card px-2 py-1 text-left text-xs font-semibold border-b border-r-2 border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
-                  isWeekView ? "w-[190px] min-w-[190px] max-w-[190px]" : "w-[160px] min-w-[160px] max-w-[160px]"
-                )}
+                className="sticky left-0 z-20 bg-card px-2 py-1 text-left text-xs font-semibold border-b border-r-2 border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] relative select-none overflow-visible"
+                style={{ width: nameColWidth, minWidth: nameColWidth, maxWidth: nameColWidth }}
               >
                 Mitarbeiter
+                <div
+                  className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-30 transition-colors"
+                  onMouseDown={handleResizeMouseDown}
+                  title="Spaltenbreite anpassen"
+                />
               </th>
               {days.map((day, idx) => {
                 const isWeekendDay = isWeekend(day);
@@ -879,14 +908,10 @@ export const ScheduleGrid = ({
                   highlightedEmployeeId !== employee.id && !empPatternWarnings.some(w => w.severity === 'critical') && empPatternWarnings.length > 0 && "bg-amber-50/40 dark:bg-amber-950/10",
                 )}>
                   {/* Employee name cell */}
-                  <td className={cn(
-                    "sticky left-0 z-10 bg-card group-hover:bg-muted",
-                    "px-1.5 py-1 border-b border-r-2 border-border overflow-hidden",
-                    "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
-                    isWeekView
-                      ? "w-[190px] min-w-[190px] max-w-[190px]"
-                      : "w-[160px] min-w-[160px] max-w-[160px]"
-                  )}>
+                  <td
+                    className="sticky left-0 z-10 bg-card group-hover:bg-muted px-1.5 py-1 border-b border-r-2 border-border overflow-hidden shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]"
+                    style={{ width: nameColWidth, minWidth: nameColWidth, maxWidth: nameColWidth }}
+                  >
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -1230,11 +1255,10 @@ export const ScheduleGrid = ({
           {showFooter && (
             <tfoot>
               <tr className="bg-muted/50 border-t-2 border-border">
-                <td className={cn(
-                  "sticky left-0 z-10 bg-muted px-1.5 py-1.5 border-b border-r-2 border-border font-semibold text-xs",
-                  "shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]",
-                  isWeekView ? "w-[160px] min-w-[160px] max-w-[160px]" : "w-[160px] min-w-[160px] max-w-[160px]"
-                )}>
+                <td
+                  className="sticky left-0 z-10 bg-muted px-1.5 py-1.5 border-b border-r-2 border-border font-semibold text-xs shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]"
+                  style={{ width: nameColWidth, minWidth: nameColWidth, maxWidth: nameColWidth }}
+                >
                   Tages-Σ
                   <span className="ml-1 text-[9px] font-normal text-muted-foreground">{employees.length} MA</span>
                 </td>
