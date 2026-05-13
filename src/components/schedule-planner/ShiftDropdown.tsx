@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ShiftType, CustomShift } from '@/pages/SchedulePlanner';
 import { useShiftConfig } from '@/hooks/useShiftConfig';
+import { useQuickTimes } from '@/hooks/useQuickTimes';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,6 +32,7 @@ interface ShiftDropdownProps {
 
 export const ShiftDropdown = ({ value, customShift, onChange, department }: ShiftDropdownProps) => {
   const { shiftMap, workShifts, absenceShifts, allShiftNames, getShiftsByDepartment } = useShiftConfig();
+  const { presets: quickPresets } = useQuickTimes();
   
   // Filter work shifts by department if specified
   const filteredWorkShifts = department && department !== 'all' 
@@ -259,6 +261,55 @@ export const ShiftDropdown = ({ value, customShift, onChange, department }: Shif
           </DropdownMenuItem>
           
           <DropdownMenuSeparator />
+
+          {/* Quick preset options from useQuickTimes */}
+          {quickPresets.length > 0 && (
+            <>
+              <div className="px-2 py-1 text-xs font-semibold text-muted-foreground">Schnellwahl</div>
+              {quickPresets.map(p => {
+                const hrs = (() => {
+                  const [sh, sm] = p.start.split(':').map(Number);
+                  const [eh, em] = p.end.split(':').map(Number);
+                  let h = eh - sh + (em - sm) / 60;
+                  if (h < 0) h += 24;
+                  const h2 = p.start2 && p.end2 ? (() => {
+                    const [sh2, sm2] = p.start2.split(':').map(Number);
+                    const [eh2, em2] = p.end2.split(':').map(Number);
+                    let hh = eh2 - sh2 + (em2 - sm2) / 60;
+                    if (hh < 0) hh += 24;
+                    return hh;
+                  })() : 0;
+                  return Math.round((h + h2) * 10) / 10;
+                })();
+                const label = p.start2 && p.end2
+                  ? `${p.start.replace(':00', '')}-${p.end.replace(':00', '')} / ${p.start2.replace(':00', '')}-${p.end2.replace(':00', '')}`
+                  : p.label;
+                return (
+                  <DropdownMenuItem
+                    key={p.id}
+                    onClick={() => {
+                      onChange(null, {
+                        start: p.start,
+                        end: p.end,
+                        hours: hrs,
+                        ...(p.start2 && p.end2 ? { start2: p.start2, end2: p.end2 } : {}),
+                      });
+                      setOpen(false);
+                    }}
+                    className="cursor-pointer p-1"
+                  >
+                    <div className="flex items-center justify-between w-full gap-2">
+                      <div className="flex-1 px-2 py-1 rounded text-xs font-medium border bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-200 truncate">
+                        {label}
+                      </div>
+                      <span className="text-xs text-muted-foreground shrink-0">{hrs}h</span>
+                    </div>
+                  </DropdownMenuItem>
+                );
+              })}
+              <DropdownMenuSeparator />
+            </>
+          )}
           
           {/* Work shift options */}
           <div className="px-2 py-1 text-xs font-semibold text-muted-foreground">
