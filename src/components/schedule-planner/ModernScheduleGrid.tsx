@@ -88,7 +88,13 @@ export function ModernScheduleGrid({
 }: ModernScheduleGridProps) {
 
   const today = useMemo(() => new Date(), []);
-  const availabilityMap = useMemo(() => buildAvailabilityMap(employees), [employees]);
+
+  const empIds   = useMemo(() => employees.map(e => e.id), [employees]);
+  const dateStrs = useMemo(() => days.map(d => format(d, 'yyyy-MM-dd')), [days]);
+  const availabilityMap = useMemo(
+    () => buildAvailabilityMap(empIds, dateStrs),
+    [empIds, dateStrs],
+  );
 
   return (
     <div className="overflow-x-auto rounded-xl">
