@@ -1,0 +1,146 @@
+Bitte Phase 2 der Modern-Dienstplanansicht umsetzen.
+
+Wichtig:
+- Nur ModernScheduleGrid.tsx bearbeiten
+- Klassisch / ScheduleGrid.tsx NICHT verändern
+- TimeInputCell nur ändern, wenn zwingend nötig und dann ohne Classic zu beschädigen
+- Datenlogik, Speicherlogik, Kostenlogik NICHT ändern
+
+Mir gefällt an Modern bereits:
+- die Zeitbalken / Schicht-Chips
+- die schmalere Mitarbeiter-Zeilenhöhe
+- die ruhigere Darstellung
+
+Bitte jetzt genau diese Richtung weiter verbessern.
+
+====================================================
+1. ZEILENHÖHE OPTIMIEREN
+====================================================
+
+Die Modern-Ansicht soll kompakt bleiben.
+
+Bitte:
+- Mitarbeiterzeilen nicht wieder höher machen
+- Zellenhöhe angenehm kompakt halten
+- trotzdem zwei Einsätze sauber anzeigen
+- keine gequetschten Texte
+- vertikalen Abstand fein abstimmen
+
+Ziel:
+Mehr Mitarbeiter auf dem Bildschirm sichtbar, aber trotzdem gut lesbar.
+
+====================================================
+2. ZEITBALKEN VERBESSERN
+====================================================
+
+Die Zeitbalken/Schicht-Chips weiter optimieren:
+
+- einheitliche Höhe
+- klare Schrift
+- schöne abgerundete Form
+- dezenter Hintergrund
+- bessere Abstände bei 2 Einsätzen
+- bei Split-Schicht zwei Chips untereinander
+- nicht zu viel Farbe
+- moderne, ruhige Optik
+
+Beispiel:
+10:00–14:00
+17:30–23:00
+
+====================================================
+3. TAGESZELLEN KOMPAKTER UND SCHÖNER
+====================================================
+
+Tageszellen:
+- weniger Innenabstand
+- klare Hover-Fläche
+- leere Zellen dezent gestrichelt oder hell
+- besetzte Zellen mit ruhigem Hintergrund
+- Wochenende subtil hinterlegt
+- heutiger Tag subtil markiert
+
+====================================================
+4. MITARBEITERSPALTE VERFEINERN
+====================================================
+
+Links:
+- Name gut lesbar
+- Stundenstand darunter kleiner
+- Warnsymbol dezent
+- kein grelles Rot/Orange ausser wirklich kritisch
+- aktive/hover Zeile leicht markieren
+
+====================================================
+5. SUMMENSPALTE RECHTS VERFEINERN
+====================================================
+
+Die Wochenstunden-/Saldo-Spalte rechts:
+- kompakter
+- klare Farben nur für Abweichung
+- Zahlen gut lesbar
+- nicht zu dominant
+
+====================================================
+6. HEADER VERFEINERN
+====================================================
+
+Tagesheader:
+- kompakter
+- klarer Wochentag
+- Datum gut sichtbar
+- kleine Tagesstunden darunter
+- keine unnötigen Linien
+
+====================================================
+7. SCROLLING UND STICKY
+====================================================
+
+Bitte prüfen:
+- Mitarbeiter-Spalte sticky
+- Header sticky falls bereits vorhanden
+- horizontales Scrollen sauber
+- keine Überlappungen
+- kein Flackern
+
+====================================================
+8. MOBILE / LAPTOP
+====================================================
+
+Modern soll auf Laptop gut wirken.
+
+Bitte nicht zu gross machen.
+Ziel:
+Auf einem normalen Laptop möglichst viele Mitarbeiter sichtbar.
+
+Mobile muss weiterhin funktionieren:
+- horizontal scroll erlaubt
+- Namen bleiben sticky
+- Chips bleiben lesbar
+
+====================================================
+9. KEINE FUNKTIONSÄNDERUNG
+====================================================
+
+Nicht ändern:
+- Speicherung
+- Berechnung
+- Kosten
+- Filter
+- Klassisch
+- Mirus
+- Veröffentlichung
+
+Nur visuelle Phase 2 der Modern-Ansicht.
+
+====================================================
+10. TEST
+====================================================
+
+Nach Umsetzung:
+- TypeScript prüfen
+- Modern öffnen
+- prüfen mit 1 Einsatz
+- prüfen mit 2 Einsätzen
+- prüfen mit Frei/Ferien/Krank
+- Klassisch öffnen und bestätigen, dass es unverändert ist
