@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useScheduleViewMode } from '@/hooks/useScheduleViewMode';
 import { useTenant } from '@/contexts/TenantContext';
 import { defaultEmployeesBeaulieu } from '@/data/defaultEmployeesBeaulieu';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -259,6 +260,9 @@ const SchedulePlanner = () => {
     nameMatches: NameMatchInfo[];
   } | null>(null);
   
+  // Ansicht-Modus: Klassisch / Modern
+  const { viewMode, setViewMode } = useScheduleViewMode();
+
   // New state for Plan/Ist toggle
   const [scheduleMode, setScheduleMode] = useState<'plan' | 'ist' | 'compare'>('plan');
   const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string; absenceType?: 'FE' | 'K' | 'F' }>>({});
@@ -2712,6 +2716,25 @@ const SchedulePlanner = () => {
                 <span>{scheduleSource === 'loading' ? '⏳' : scheduleSource === 'supabase' ? '☁' : '💾'}</span>
                 <span>{loadedEntryCount}</span>
               </span>
+              {/* ── Ansicht-Toggle: Klassisch / Modern ─────────────── */}
+              <div className="hidden sm:flex items-center gap-0.5 bg-muted rounded-lg p-0.5 border border-border/40">
+                {(['classic', 'modern'] as const).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setViewMode(m)}
+                    className={cn(
+                      "h-6 px-2 text-[11px] font-medium rounded-md transition-colors",
+                      viewMode === m
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    title={m === 'classic' ? 'Klassische Ansicht (aktuell)' : 'Moderne Ansicht (in Entwicklung)'}
+                  >
+                    {m === 'classic' ? 'Klassisch' : 'Modern'}
+                  </button>
+                ))}
+              </div>
+
               <Button onClick={handleSave} disabled={isSaving} size="sm" className="gap-1.5 h-8">
                 <Save className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">{isSaving ? 'Speichert…' : 'Speichern'}</span>
