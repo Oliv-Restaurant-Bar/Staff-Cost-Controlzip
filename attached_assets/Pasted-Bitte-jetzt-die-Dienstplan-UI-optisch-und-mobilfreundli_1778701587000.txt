@@ -1,0 +1,367 @@
+Bitte jetzt die Dienstplan-UI optisch und mobilfreundlich verbessern, aber mit sicherem Rückkehrpunkt.
+
+WICHTIG:
+Bevor du etwas änderst:
+1. Erstelle einen Git-Checkpoint / Backup-Commit mit Titel:
+   "Backup before Dienstplan visual redesign"
+2. Erstelle zusätzlich eine kurze Datei:
+   BACKUP_DIENSTPLAN_UI_BEFORE_REDESIGN.md
+
+Darin dokumentieren:
+- aktueller Stand der Dienstplanansicht
+- aktuelle Komponenten, die geändert werden
+- wie man zur alten Darstellung zurückkommt
+- Hinweis: alte Darstellung darf nicht gelöscht werden
+
+====================================================
+ZIEL
+====================================================
+
+Die Dienstplanansicht soll moderner, ruhiger, schneller verständlich und mobil-/handytauglich werden.
+
+Wichtig:
+Wenn mir die neue Ansicht nicht gefällt, muss ich zur alten aktuellen Darstellung zurückwechseln können.
+
+Deshalb:
+Neue UI nicht hart ersetzen, sondern als umschaltbare Ansicht bauen.
+
+====================================================
+1. UI-MODUS EINFÜHREN
+====================================================
+
+Bitte einen View-Modus einführen:
+
+- "Klassisch"
+- "Modern"
+
+Standard vorerst:
+Modern
+
+Aber oben rechts oder in den Dienstplan-Einstellungen ein Toggle:
+
+Ansicht:
+[ Modern ] [ Klassisch ]
+
+Klassisch muss die bisherige Darstellung behalten.
+Modern ist die neue Darstellung.
+
+Speicherung vorerst localStorage:
+schedule_view_mode = "modern" | "classic"
+
+====================================================
+2. KEINE DATENLOGIK ÄNDERN
+====================================================
+
+Nicht verändern:
+- Kostenlogik
+- Soll/Ist-Berechnung
+- Budgetlogik
+- Supabase-Speicherung
+- Schichtdatenstruktur
+- Mirus Import
+- bestehende Save-Logik
+
+Nur:
+- Darstellung
+- Bedienung
+- Responsiveness
+- mobile Mitarbeiteransicht
+- Veröffentlichungsansicht
+
+====================================================
+3. MODERNE WOCHENANSICHT
+====================================================
+
+In der Modern-Ansicht:
+
+- keine überladene Excel-Optik
+- weniger harte Linien
+- mehr Weissraum
+- weichere Karten
+- Tageszellen ruhiger
+- Einsätze als klare Chips
+- Frei/Ferien/Krank als klare Badges
+- Wochenende dezent markieren
+- heutiger Tag subtil markieren
+
+Pro Mitarbeiter und Tag:
+Eine Tageszelle.
+
+In dieser Zelle:
+- Einsatz 1
+- Einsatz 2 falls vorhanden
+
+untereinander.
+
+Beispiel:
+10:00–14:00
+17:30–23:00
+
+Keine Früh/Spät-Unterspalten sichtbar.
+
+Wichtig:
+Bestehende Früh/Spät-Daten müssen korrekt gemappt und angezeigt werden.
+
+====================================================
+4. MITARBEITERSPALTE MODERNISIEREN
+====================================================
+
+Mitarbeiter links:
+
+- Name gut lesbar
+- Stundenstand kleiner darunter
+- Warnungen nur als kleines Icon
+- aktive Zeile leicht hervorheben
+- mehr Zeilenhöhe
+- weniger rote/orange Schrift
+- keine unnötigen Badges direkt in der Hauptzeile
+
+Klick auf Name:
+öffnet Mitarbeiter-Info-Popup mit:
+- Abteilung
+- Pensum
+- geplante Stunden
+- Ist-Stunden falls vorhanden
+- Warnungen
+- Rolle/Status
+
+====================================================
+5. TAGESKOPF VERBESSERN
+====================================================
+
+Tageskopf modern darstellen:
+
+MO
+18
+Mai
+
+Darunter klein:
+- geplante Stunden
+- Kostenquote oder Warnsymbol, falls kritisch
+
+Wochenende:
+dezente Hintergrundfarbe.
+
+Warnungen:
+nur wenn nötig, nicht dauerhaft überladen.
+
+====================================================
+6. SCHICHT-CHIPS VERBESSERN
+====================================================
+
+Schicht-Chips:
+- gleiche optische Sprache
+- klare Zeit
+- keine zu kleinen Texte
+- runde Ecken
+- gute Abstände
+- bei zwei Einsätzen sauber untereinander
+- bei langer Zeit nicht überlappen
+
+Abwesenheiten:
+- Frei grün
+- Ferien blau
+- Krank rot
+- sonst grau
+
+====================================================
+7. ZEITEDITOR MODERN ABER EINFACH
+====================================================
+
+Der Zeitpopover soll bleiben, aber ruhiger:
+
+Titel:
+"Einsatzzeiten"
+
+Keine Begriffe:
+- Früh
+- Spät
+- Frühschicht
+- Spätschicht
+
+Inhalt:
+- Schnellauswahl oben
+- 6 einfache Einsatzzeiten
+- 4 geteilte Einsatzzeiten
+- Button "Schnellwahl bearbeiten"
+- 2 Einsatzzeilen sichtbar:
+  - Einsatz 1 Von/Bis
+  - Einsatz 2 Von/Bis optional
+- Uhrsymbol pro Feld
+- alter kompakter Zeitpicker:
+  - Stunden links
+  - Minuten rechts
+  - Minuten nur 00/15/30/45
+  - direkte Übernahme ohne OK Button
+
+Schnellauswahl:
+- alle 10 Einträge bearbeitbar
+- auch geteilte Einsätze
+- Speicherung localStorage
+
+Kopieren:
+- muss Einsatz 1 + Einsatz 2 übernehmen
+- Abwesenheiten ebenfalls
+
+====================================================
+8. LINKER SCHICHTBEREICH
+====================================================
+
+Linke Palette moderner machen:
+
+Titel:
+"Einsatzzeiten"
+
+Abschnitte:
+- Favoriten
+- Geteilte Einsätze
+- Abwesenheiten
+
+Suchfeld optional:
+"Schicht suchen"
+
+Palette:
+- scrollfähig
+- kompakt
+- Touch-tauglich
+
+====================================================
+9. FILTER UND BEDIENUNG
+====================================================
+
+Filter moderner darstellen:
+
+- Mitarbeiter suchen
+- Abteilung
+- VZ/TZ/SL
+- Nur mit Warnung
+- Nur geplante Mitarbeiter
+
+Wenn Filter aktiv:
+deutlich anzeigen:
+"14 von 31 Mitarbeitern angezeigt"
+
+Filter soll auf Desktop und Mobile bedienbar sein.
+
+====================================================
+10. MOBILE / HANDYTAUGLICHKEIT
+====================================================
+
+Sehr wichtig:
+Die veröffentlichte Mitarbeiteransicht muss mobil zuerst funktionieren.
+
+Für /staff-schedule/:token:
+
+Wenn persönlicher Link:
+NICHT als breite Tabelle.
+
+Mobile Ansicht:
+
+Header:
+- Restaurant
+- Name
+- KW
+- Zeitraum
+- Nur Ansicht
+
+Darunter Tageskarten:
+
+Montag, 18. Mai
+10:00–14:00
+17:30–23:00
+
+Dienstag, 19. Mai
+Frei
+
+Mittwoch, 20. Mai
+Ferien
+
+Jeder Tag als Karte:
+- Wochentag
+- Datum
+- Zeiten
+- Abwesenheit
+- optional Hinweis
+
+Für Abteilungsplan:
+Mobile Umschalter:
+- Nach Mitarbeiter
+- Nach Tag
+
+Desktop darf Tabelle bleiben, aber optisch ruhiger.
+
+Keine Kosten, keine Löhne, keine internen Warnungen öffentlich anzeigen.
+
+====================================================
+11. VERÖFFENTLICHUNG VERBESSERN
+====================================================
+
+Teilen-Dialog verbessern:
+
+Optionen:
+- Abteilungsplan
+- Persönlicher Plan
+
+Bei persönlichem Plan:
+- Mitarbeiter auswählen
+- Link nur für diesen Mitarbeiter
+- Vorschau öffnen
+- Link kopieren
+- WhatsApp Text vorbereiten
+
+WhatsApp Text:
+"Hallo {Name}, hier ist dein Dienstplan für KW xx: {Link}"
+
+Bei Abteilungsplan:
+"Hallo zusammen, hier ist der Dienstplan für KW xx: {Link}"
+
+Status vorbereiten:
+- Entwurf
+- Veröffentlicht
+- Geändert nach Veröffentlichung
+
+====================================================
+12. RESPONSIVE TESTS
+====================================================
+
+Bitte testen:
+
+- Desktop breit
+- Laptop
+- Tablet
+- Mobile ca. 390px
+
+Besonders:
+- /personal Dienstplan
+- Zeitpopover
+- /staff-schedule/:token persönlicher Link
+- /staff-schedule/:token Abteilungslink
+
+====================================================
+13. RÜCKKEHR ZUR ALTEN ANSICHT
+====================================================
+
+Ganz wichtig:
+
+Wenn Modern nicht gefällt:
+Toggle auf "Klassisch" muss die aktuelle Darstellung wieder zeigen.
+
+Also:
+- alte Komponenten nicht löschen
+- alte Darstellung weiter erreichbar halten
+- Modern als neue Komponente/Variante ergänzen
+
+====================================================
+14. TEST UND ABSCHLUSS
+====================================================
+
+Nach Umsetzung:
+
+- TypeScript prüfen
+- Screenshots oder kurze Beschreibung für:
+  - Modern Desktop
+  - Klassisch
+  - Mobile Mitarbeiteransicht
+  - Teilen-Dialog
+- bestätigen, dass keine Datenlogik geändert wurde
+- bestätigen, wie man zurück auf Klassisch schaltet
