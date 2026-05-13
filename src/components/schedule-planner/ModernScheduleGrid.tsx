@@ -18,7 +18,7 @@
  *   - laptop-optimised column widths
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState, useRef, useCallback } from 'react';
 import {
   format, isWeekend, isSunday, isSameDay,
   parseISO, isAfter, getDay,
@@ -123,6 +123,48 @@ export function ModernScheduleGrid({
     weekdayIdx: getDay(day),
   })), [days, today]);
 
+  // ── Resizable employee column ────────────────────────────────────────────────
+  const LS_COL_KEY = 'schedule_emp_col_width';
+  const MIN_COL    = 100;
+  const MAX_COL    = 320;
+  const DEFAULT_COL = 148;
+
+  const [colWidth, setColWidth] = useState<number>(() => {
+    const saved = localStorage.getItem(LS_COL_KEY);
+    const n = saved ? parseInt(saved, 10) : NaN;
+    return isNaN(n) ? DEFAULT_COL : Math.min(MAX_COL, Math.max(MIN_COL, n));
+  });
+
+  const dragState = useRef<{ startX: number; startW: number } | null>(null);
+
+  const onDragPointerMove = useCallback((e: PointerEvent) => {
+    if (!dragState.current) return;
+    const delta = e.clientX - dragState.current.startX;
+    const next  = Math.min(MAX_COL, Math.max(MIN_COL, dragState.current.startW + delta));
+    setColWidth(next);
+  }, []);
+
+  const onDragPointerUp = useCallback(() => {
+    if (!dragState.current) return;
+    dragState.current = null;
+    document.removeEventListener('pointermove', onDragPointerMove);
+    document.removeEventListener('pointerup',   onDragPointerUp);
+    document.body.style.userSelect = '';
+    document.body.style.cursor     = '';
+    setColWidth(w => { localStorage.setItem(LS_COL_KEY, String(w)); return w; });
+  }, [onDragPointerMove]);
+
+  const startDrag = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    dragState.current = { startX: e.clientX, startW: colWidth };
+    document.addEventListener('pointermove', onDragPointerMove);
+    document.addEventListener('pointerup',   onDragPointerUp);
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor     = 'col-resize';
+  }, [colWidth, onDragPointerMove, onDragPointerUp]);
+
+  const empColStyle = { width: colWidth, minWidth: colWidth, maxWidth: colWidth } as const;
+
   return (
     <div className="overflow-x-auto">
       <table
@@ -139,17 +181,29 @@ export function ModernScheduleGrid({
             {/* ── Employee column header ─────────────────────────────────── */}
             <th
               className={cn(
-                // sticky both axes: top (thead) + left (employee col)
                 "sticky left-0 z-40 bg-card",
-                "px-3 py-2 text-left",
+                "px-3 py-2 text-left relative overflow-visible",
                 "border-b-2 border-r border-border/40",
-                "min-w-[148px] w-[148px]",
                 "shadow-[2px_0_6px_-3px_rgba(0,0,0,0.1)]",
               )}
+              style={empColStyle}
             >
               <span className="text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-wider">
                 Mitarbeiter
               </span>
+
+              {/* ── Drag handle ── */}
+              <div
+                onPointerDown={startDrag}
+                title="Spaltenbreite anpassen"
+                className={cn(
+                  "absolute top-0 right-0 h-full w-1.5 cursor-col-resize z-50",
+                  "flex items-center justify-center group/handle",
+                  "hover:bg-primary/20 transition-colors",
+                )}
+              >
+                <div className="w-px h-4 bg-border/60 group-hover/handle:bg-primary/60 transition-colors rounded-full" />
+              </div>
             </th>
 
             {/* ── Day headers ───────────────────────────────────────────── */}
@@ -260,6 +314,7 @@ export function ModernScheduleGrid({
                     isHighlighted && "bg-indigo-50/50 dark:bg-indigo-950/20 group-hover:bg-indigo-50/70",
                     hasCritical   && !isHighlighted && "bg-red-50/10 dark:bg-red-950/5 group-hover:bg-red-50/20",
                   )}
+                  style={empColStyle}
                 >
                   <div className="flex items-center gap-1.5 min-w-0">
 
