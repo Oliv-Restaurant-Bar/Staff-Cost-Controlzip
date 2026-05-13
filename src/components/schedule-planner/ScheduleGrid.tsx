@@ -727,7 +727,6 @@ export const ScheduleGrid = ({
                   "sticky left-0 z-20 bg-card px-2 py-1 text-left text-xs font-semibold border-b border-r-2 border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]",
                   isWeekView ? "w-[190px] min-w-[190px] max-w-[190px]" : "w-[160px] min-w-[160px] max-w-[160px]"
                 )}
-                rowSpan={2}
               >
                 Mitarbeiter
               </th>
@@ -746,7 +745,6 @@ export const ScheduleGrid = ({
                         : null;
                       return (
                         <th
-                          colSpan={2}
                           className={cn(
                             "px-0.5 py-1 text-center font-medium border-b cursor-pointer transition-colors",
                             "border-r-4 border-r-primary/30",
@@ -756,7 +754,7 @@ export const ScheduleGrid = ({
                                 ? "bg-amber-100 dark:bg-amber-900/30 hover:bg-muted/50"
                                 : "hover:bg-muted/50",
                             isSundayDay && !stats.isOverBudget && "bg-amber-200/70 dark:bg-amber-900/50 border-r-primary/50",
-                            isWeekView ? "min-w-[120px] text-xs" : "min-w-[100px] text-[10px]"
+                            isWeekView ? "min-w-[110px] text-xs" : "min-w-[90px] text-[10px]"
                           )}
                           onClick={() => {
                             if (stats.isOverBudget && showCosts) {
@@ -826,7 +824,6 @@ export const ScheduleGrid = ({
                     {/* Weekly sum header after Sunday */}
                     {showWeekSum && (
                       <th
-                        rowSpan={2}
                         className="min-w-[50px] px-0.5 py-1 text-center text-[8px] font-semibold border-b border-r-4 border-r-primary/30 bg-primary/10 text-primary"
                       >
                         <div>ΣW</div>
@@ -859,33 +856,6 @@ export const ScheduleGrid = ({
                         })()}
                       </th>
                     )}
-                  </React.Fragment>
-                );
-              })}
-            </tr>
-            {/* Früh/Spät row */}
-            <tr className="bg-card">
-              {days.map((day, idx) => {
-                const isWeekendDay = isWeekend(day);
-                const isSundayDay = isSunday(day);
-                return (
-                  <React.Fragment key={`header-${day.toISOString()}`}>
-                    <th className={cn(
-                      "px-0.5 py-0.5 text-center text-[8px] font-medium border-b border-r border-border/30",
-                      isWeekendDay && "bg-amber-100/50 dark:bg-amber-900/20",
-                      isSundayDay && "bg-amber-200/40 dark:bg-amber-900/30",
-                      isWeekView ? "w-[55px] min-w-[55px]" : "w-[45px] min-w-[45px]"
-                    )}>
-                      F
-                    </th>
-                    <th className={cn(
-                      "px-0.5 py-0.5 text-center text-[8px] font-medium border-b border-r-4 border-r-primary/30",
-                      isWeekendDay && "bg-amber-100/50 dark:bg-amber-900/20",
-                      isSundayDay && "bg-amber-200/40 dark:bg-amber-900/30 border-r-primary/50",
-                      isWeekView ? "w-[55px] min-w-[55px]" : "w-[45px] min-w-[45px]"
-                    )}>
-                      S
-                    </th>
                   </React.Fragment>
                 );
               })}
@@ -1103,17 +1073,18 @@ export const ScheduleGrid = ({
 
                     return (
                       <React.Fragment key={dateStr}>
-                        {/* Früh cell */}
+                        {/* Merged day cell — single column, shows both shifts stacked */}
                         <td
                           className={cn(
-                            "px-0 py-0 border-b border-r border-border/30 text-center relative align-top transition-colors",
+                            "px-0.5 py-0 border-b text-center relative align-top transition-colors",
+                            "border-r-4 border-r-primary/30",
                             isWeekendDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-100/30 dark:bg-amber-900/15",
-                            isSundayDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-200/40 dark:bg-amber-900/25",
+                            isSundayDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-200/40 dark:bg-amber-900/25 border-r-primary/50",
                             isConfiguredDayOff && !isAfterExitDate && "bg-slate-300 dark:bg-slate-600",
                             isAfterExitDate && "bg-zinc-800 dark:bg-zinc-900",
                             isOverlapping && !isAfterExitDate && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
                             hasShortBreakWarning && !isOverlapping && !isAfterExitDate && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset",
-                            isSuggestedFrüh && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset",
+                            (isSuggestedFrüh || isSuggestedSpät) && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset",
                             dragOverKey === `${employee.id}-${dateStr}-f` && !isAfterExitDate && !isConfiguredDayOff && "bg-primary/15 ring-2 ring-primary ring-inset"
                           )}
                           title={
@@ -1141,10 +1112,12 @@ export const ScheduleGrid = ({
                               <div className="py-0.5">
                                 <TimeInputCell
                                   value={daySchedule.früh || null}
-                                  absenceType={daySchedule.frühAbsence || null}
+                                  absenceType={daySchedule.frühAbsence || daySchedule.spätAbsence || null}
                                   onChange={(val, absence) => handleCellChange(employee.id, dateStr, 'früh', val, absence)}
                                   slotType="früh"
                                   secondaryValue={daySchedule.spät || null}
+                                  onSplitTimeSelect={(sec) => onSlotChange(employee.id, dateStr, 'spät', sec, null)}
+                                  onClearSecondary={() => onSlotChange(employee.id, dateStr, 'spät', null, null)}
                                   isWeekend={isWeekendDay}
                                   isDayOff={isConfiguredDayOff}
                                   isRequestedFree={cellIsRequestedFree}
@@ -1152,99 +1125,38 @@ export const ScheduleGrid = ({
                                   activeTool={resolvedActiveTool}
                                   copiedShift={copiedShift}
                                   onCopyShift={onCopyShift}
-                                  cellColor={frühCellColor}
+                                  cellColor={frühCellColor || spätCellColor}
                                   onCellColorChange={onCellColorChange ? (c) => onCellColorChange(frühInlineKey, c) : undefined}
                                   onCopyToIst={onCopyToIst ? (slot) => onCopyToIst(employee.id, dateStr, 'früh', slot) : undefined}
-                                  onSplitTimeSelect={(sec) => onSlotChange(employee.id, dateStr, 'spät', sec, null)}
                                 />
                               </div>
-                              {isSuggestedFrüh && !isOverlapping && frühSuggestion && (
-                                <SuggestionStrip
-                                  s={frühSuggestion}
-                                  inlineKey={frühInlineKey}
-                                  dateStr={dateStr}
-                                  openInlineId={openInlineId}
-                                  onOpenChange={setOpenInlineId}
-                                  onApply={handleApplySuggestion}
-                                  onDismiss={(id) => setDismissedIds(prev => [...prev, id])}
-                                  onSnooze={(id) => setSnoozedIds(prev => [...prev, id])}
-                                />
-                              )}
-                            </div>
-                          )}
-                          {isOverlapping && !isAfterExitDate && (
-                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center" title="Schichten überlappen sich!">
-                              <span className="text-white text-[8px] font-bold">!</span>
-                            </div>
-                          )}
-                        </td>
-                        {/* Spät cell */}
-                        <td
-                          className={cn(
-                            "px-0 py-0 border-b text-center relative align-top transition-colors",
-                            "border-r-4 border-r-primary/30",
-                            isWeekendDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-100/30 dark:bg-amber-900/15",
-                            isSundayDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-200/40 dark:bg-amber-900/25 border-r-primary/50",
-                            isConfiguredDayOff && !isAfterExitDate && "bg-slate-300 dark:bg-slate-600",
-                            isAfterExitDate && "bg-zinc-800 dark:bg-zinc-900",
-                            isOverlapping && !isAfterExitDate && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
-                            hasShortBreakWarning && !isOverlapping && !isAfterExitDate && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset",
-                            isSuggestedSpät && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset",
-                            dragOverKey === `${employee.id}-${dateStr}-s` && !isAfterExitDate && !isConfiguredDayOff && "bg-primary/15 ring-2 ring-primary ring-inset"
-                          )}
-                          title={
-                            isAfterExitDate ? `Nach Austritt gesperrt (${employee.employmentEndDate})` :
-                            isOverlapping ? "⚠️ Schichten überlappen sich!" :
-                            hasShortBreakWarning ? "⚠️ Kurze Pause (<30 Min.)" :
-                            isConfiguredDayOff ? "📅 Konfigurierter wöchentlicher Ruhetag" :
-                            undefined
-                          }
-                          onDragOver={(e) => {
-                            if (!isAfterExitDate && !isConfiguredDayOff && e.dataTransfer.types.includes('application/shift-tool')) {
-                              e.preventDefault();
-                              setDragOverKey(`${employee.id}-${dateStr}-s`);
-                            }
-                          }}
-                          onDragLeave={() => setDragOverKey(null)}
-                          onDrop={(e) => handleDropShift(e, employee.id, dateStr)}
-                        >
-                          {isAfterExitDate ? (
-                            <div className="flex items-center justify-center min-h-[28px] h-full">
-                              <span className="text-zinc-500 dark:text-zinc-600 text-[10px] font-bold select-none">✕</span>
-                            </div>
-                          ) : (
-                            <div className="flex flex-col">
-                              <div className="py-0.5">
-                                <TimeInputCell
-                                  value={daySchedule.spät || null}
-                                  absenceType={daySchedule.spätAbsence || null}
-                                  onChange={(val, absence) => handleCellChange(employee.id, dateStr, 'spät', val, absence)}
-                                  slotType="spät"
-                                  secondaryValue={daySchedule.früh || null}
-                                  isWeekend={isWeekendDay}
-                                  isDayOff={isConfiguredDayOff}
-                                  isRequestedFree={cellIsRequestedFree}
-                                  isBlocked={cellIsBlocked}
-                                  activeTool={resolvedActiveTool}
-                                  copiedShift={copiedShift}
-                                  onCopyShift={onCopyShift}
-                                  cellColor={spätCellColor}
-                                  onCellColorChange={onCellColorChange ? (c) => onCellColorChange(spätInlineKey, c) : undefined}
-                                  onCopyToIst={onCopyToIst ? (slot) => onCopyToIst(employee.id, dateStr, 'spät', slot) : undefined}
-                                  onSplitTimeSelect={(sec) => onSlotChange(employee.id, dateStr, 'früh', sec, null)}
-                                />
-                              </div>
-                              {isSuggestedSpät && !isOverlapping && spätSuggestion && (
-                                <SuggestionStrip
-                                  s={spätSuggestion}
-                                  inlineKey={spätInlineKey}
-                                  dateStr={dateStr}
-                                  openInlineId={openInlineId}
-                                  onOpenChange={setOpenInlineId}
-                                  onApply={handleApplySuggestion}
-                                  onDismiss={(id) => setDismissedIds(prev => [...prev, id])}
-                                  onSnooze={(id) => setSnoozedIds(prev => [...prev, id])}
-                                />
+                              {(isSuggestedFrüh || isSuggestedSpät) && !isOverlapping && (
+                                <>
+                                  {isSuggestedFrüh && frühSuggestion && (
+                                    <SuggestionStrip
+                                      s={frühSuggestion}
+                                      inlineKey={frühInlineKey}
+                                      dateStr={dateStr}
+                                      openInlineId={openInlineId}
+                                      onOpenChange={setOpenInlineId}
+                                      onApply={handleApplySuggestion}
+                                      onDismiss={(id) => setDismissedIds(prev => [...prev, id])}
+                                      onSnooze={(id) => setSnoozedIds(prev => [...prev, id])}
+                                    />
+                                  )}
+                                  {isSuggestedSpät && spätSuggestion && (
+                                    <SuggestionStrip
+                                      s={spätSuggestion}
+                                      inlineKey={spätInlineKey}
+                                      dateStr={dateStr}
+                                      openInlineId={openInlineId}
+                                      onOpenChange={setOpenInlineId}
+                                      onApply={handleApplySuggestion}
+                                      onDismiss={(id) => setDismissedIds(prev => [...prev, id])}
+                                      onSnooze={(id) => setSnoozedIds(prev => [...prev, id])}
+                                    />
+                                  )}
+                                </>
                               )}
                             </div>
                           )}
@@ -1324,7 +1236,6 @@ export const ScheduleGrid = ({
                   return (
                     <React.Fragment key={`footer-${day.toISOString()}`}>
                       <td
-                        colSpan={2}
                         className={cn(
                           "px-0.5 py-1 border-b text-center",
                           "border-r-4 border-r-primary/30",

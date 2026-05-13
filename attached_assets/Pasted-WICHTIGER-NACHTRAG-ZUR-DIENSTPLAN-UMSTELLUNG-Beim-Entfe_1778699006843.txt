@@ -1,0 +1,129 @@
+WICHTIGER NACHTRAG ZUR DIENSTPLAN-UMSTELLUNG:
+
+Beim Entfernen der Früh/Spät-Spalten dürfen bestehende Einträge nicht verloren gehen.
+
+Aktuell sind Schichten teilweise getrennt gespeichert in:
+- Früh-Spalte
+- Spät-Spalte
+
+Diese müssen beim neuen Tageszellen-Modell korrekt zusammengeführt werden.
+
+====================================================
+1. BESTEHENDE EINTRÄGE MIGRIEREN / ANZEIGEN
+====================================================
+
+Wenn für denselben Mitarbeiter am selben Tag aktuell Früh UND Spät vorhanden sind:
+
+Beispiel:
+Früh: 10:00-14:00
+Spät: 17:30-23:00
+
+Dann muss die neue Tageszelle anzeigen:
+
+10:00-14:00
+17:30-23:00
+
+Keine Uhrzeit darf verloren gehen.
+
+====================================================
+2. NUR FRÜH ODER NUR SPÄT
+====================================================
+
+Wenn nur eine der beiden alten Spalten gefüllt ist:
+
+Früh: 10:00-14:00
+Spät: leer
+
+Dann neue Tageszelle:
+
+10:00-14:00
+
+Wenn:
+
+Früh leer
+Spät 17:30-23:00
+
+Dann neue Tageszelle:
+
+17:30-23:00
+
+====================================================
+3. ABWESENHEITEN
+====================================================
+
+Wenn Frei / Ferien / Krank vorhanden ist:
+- korrekt übernehmen
+- nicht doppelt anzeigen
+- nicht durch leere zweite Spalte überschreiben
+
+====================================================
+4. SPEICHERN
+====================================================
+
+Beim Speichern der neuen Tageszelle:
+
+- Einsatz 1 wird als erster Zeitblock gespeichert
+- Einsatz 2 wird als zweiter Zeitblock gespeichert
+- bestehende alte Früh/Spät-Struktur darf intern weiterverwendet werden, falls nötig
+- aber UI zeigt nur noch eine Tageszelle
+
+====================================================
+5. IST-ÜBERNAHME
+====================================================
+
+Wenn "Auch ins IST übernehmen" aktiv ist:
+- beide bisherigen Einträge aus Früh und Spät müssen ins IST übernommen werden
+- keine Zeit darf fehlen
+
+====================================================
+6. DATENKONSISTENZ
+====================================================
+
+Bitte vor der UI-Umstellung eine Mapping-Funktion bauen:
+
+getDayEntries(employeeId, date)
+
+Diese soll aus bestehender Struktur alle vorhandenen Einträge eines Tages sammeln:
+
+- Früh-Eintrag
+- Spät-Eintrag
+- zusätzliche Zeitblöcke
+- Abwesenheiten
+
+und daraus eine einheitliche Liste erzeugen:
+
+[
+  { from: "10:00", to: "14:00" },
+  { from: "17:30", to: "23:00" }
+]
+
+Diese Funktion soll die neue UI verwenden.
+
+====================================================
+7. KEIN DATENVERLUST
+====================================================
+
+Bitte besonders testen:
+
+- bestehende Früh+Spät Schicht
+- nur Früh
+- nur Spät
+- Frei
+- Ferien
+- Krank
+- Aushilfe
+- Nacht über Mitternacht
+
+Erwartung:
+Nach Umstellung sind alle Uhrzeiten und Abwesenheiten noch sichtbar.
+
+====================================================
+8. WICHTIG
+====================================================
+
+Keine Daten löschen.
+Keine Uhrzeiten überschreiben.
+Keine bestehende Speicherung zerstören.
+Keine Kostenlogik ändern.
+
+Nur Anzeige und Bearbeitung umbauen, aber mit sicherem Mapping alter Früh/Spät-Einträge in neue Tageszelle.

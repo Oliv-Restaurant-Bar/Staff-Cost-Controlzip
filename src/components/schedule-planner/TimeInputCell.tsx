@@ -47,8 +47,10 @@ interface TimeInputCellProps {
   cellColor?: string | null;
   onCellColorChange?: (color: string | null) => void;
   onCopyToIst?: (slot: TimeSlot) => void;
-  /** Called when user sets a 2nd shift — writes into the OTHER slot */
-  onSplitTimeSelect?: (secondary: TimeSlot) => void;
+  /** Called when user sets a 2nd shift — writes into the OTHER slot (null = clear it) */
+  onSplitTimeSelect?: (secondary: TimeSlot | null) => void;
+  /** Called when the primary "Löschen" should also clear the secondary slot */
+  onClearSecondary?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -508,6 +510,7 @@ export const TimeInputCell = ({
   onCellColorChange,
   onCopyToIst,
   onSplitTimeSelect,
+  onClearSecondary,
 }: TimeInputCellProps) => {
   const [blockedOverride, setBlockedOverride] = useState(false);
   const [copyToIst, setCopyToIst] = useState(false);
@@ -521,6 +524,9 @@ export const TimeInputCell = ({
   const [selStart2, setSelStart2] = useState('');
   const [selEnd2, setSelEnd2]     = useState('');
   const [selError, setSelError]   = useState('');
+
+  // Track whether row 2 was pre-filled when popover opened (for smart clear)
+  const secondaryWasPreFilled = useRef(false);
 
   // Inline clock picker
   const [pickerTarget, setPickerTarget] = useState<PickerTarget>(null);
@@ -557,8 +563,11 @@ export const TimeInputCell = ({
       setSelStart(value?.start || '');
       setSelEnd(value?.end || '');
       // 2nd row: init from secondaryValue if available
-      setSelStart2(secondaryValue?.start || '');
-      setSelEnd2(secondaryValue?.end || '');
+      const s2 = secondaryValue?.start || '';
+      const e2 = secondaryValue?.end || '';
+      setSelStart2(s2);
+      setSelEnd2(e2);
+      secondaryWasPreFilled.current = !!(s2 && e2);
     }
   }, [open]);
 
@@ -649,6 +658,11 @@ export const TimeInputCell = ({
         copiedInSession.current = true;
       }
     } else {
+      // Row 2 empty — if it was pre-filled when opened, clear the secondary slot
+      if (secondaryWasPreFilled.current) {
+        onClearSecondary?.();
+        if (onSplitTimeSelect) onSplitTimeSelect(null);
+      }
       setSelError('');
       onChange({ start: ns, end: ne }, null);
       if (copyToIst && onCopyToIst) {
@@ -666,6 +680,7 @@ export const TimeInputCell = ({
 
   const handleClear = () => {
     onChange(null, null);
+    onClearSecondary?.();
     setOpen(false);
   };
 
@@ -693,6 +708,8 @@ export const TimeInputCell = ({
   const absenceConfig = absenceType ? getAbsenceConfig(absenceType) : null;
   const hasCellColor = !absenceType && !!value?.start && !!cellColor;
   const hasSecondaryDisplay = !absenceType && !!value?.start && !!secondaryValue?.start;
+  // Only the secondary slot has data (e.g. merged cell where früh is null but spät exists)
+  const onlySecondaryDisplay = !absenceType && !value?.start && !!secondaryValue?.start;
 
   // ---------------------------------------------------------------------------
   // Paint-tool mode (unchanged)
@@ -773,8 +790,8 @@ export const TimeInputCell = ({
               "w-full px-1 text-[10px] font-medium border rounded transition-all",
               "hover:ring-1 hover:ring-ring focus:outline-none focus:ring-1 focus:ring-ring",
               // Height: taller when two stacked times shown
-              hasSecondaryDisplay ? "min-h-[40px] py-0.5" : "h-8",
-              !absenceType && !value?.start && !isDayOff && !isRequestedFree && !isBlocked && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground",
+              (hasSecondaryDisplay || onlySecondaryDisplay) ? "min-h-[40px] py-0.5" : "h-8",
+              !absenceType && !value?.start && !onlySecondaryDisplay && !isDayOff && !isRequestedFree && !isBlocked && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground",
               isWeekend && !isDayOff && !isRequestedFree && !isBlocked && "bg-primary/5",
               isEmptyDayOff && "bg-slate-300 dark:bg-slate-600 border-slate-400 dark:border-slate-500 text-slate-600 dark:text-slate-300 font-bold",
               isDayOff && !isEmptyDayOff && "ring-1 ring-slate-400/40 dark:ring-slate-500/40",
@@ -783,7 +800,7 @@ export const TimeInputCell = ({
               isEmptyBlocked && "bg-red-100 dark:bg-red-900/30 border-red-300 dark:border-red-700 text-red-800 dark:text-red-300 font-semibold",
               isBlocked && !isEmptyBlocked && "ring-1 ring-red-400/60 dark:ring-red-600/60",
               absenceType && absenceConfig?.color,
-              !absenceType && value?.start && !isRequestedFree && !isBlocked && !hasCellColor && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
+              !absenceType && (value?.start || onlySecondaryDisplay) && !isRequestedFree && !isBlocked && !hasCellColor && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
             )}
             style={hasCellColor ? { backgroundColor: cellColor!, borderColor: cellColor!, color: '#1e3a5f' } : undefined}
           >
@@ -792,6 +809,8 @@ export const TimeInputCell = ({
                 <span>{formatShort(value!.start)}–{formatShort(value!.end)}</span>
                 <span className="opacity-75">{formatShort(secondaryValue!.start)}–{formatShort(secondaryValue!.end)}</span>
               </div>
+            ) : onlySecondaryDisplay ? (
+              <span className="opacity-90">{formatShort(secondaryValue!.start)}–{formatShort(secondaryValue!.end)}</span>
             ) : (
               displayValue || (isEmptyDayOff ? 'F' : isEmptyRequestedFree ? 'WF' : isEmptyBlocked ? '⛔' : '—')
             )}

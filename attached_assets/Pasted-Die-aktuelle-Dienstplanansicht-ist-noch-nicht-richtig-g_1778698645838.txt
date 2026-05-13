@@ -1,0 +1,199 @@
+Die aktuelle Dienstplanansicht ist noch nicht richtig gelöst.
+
+Problem:
+Es gibt weiterhin getrennte Spalten für Früh und Spät.
+Das möchte ich nicht mehr.
+
+Ziel:
+Pro Mitarbeiter und pro Tag soll es nur noch EINE Zelle geben.
+In dieser Tageszelle sollen alle Einsätze untereinander angezeigt werden.
+
+Beispiel:
+Montag
+10:00 bis 14:00
+17:30 bis 23:00
+
+Nicht mehr:
+Früh-Spalte
+Spät-Spalte
+
+====================================================
+1. FRÜH/SPÄT SPALTEN ENTFERNEN
+====================================================
+
+Bitte in der Wochenansicht die Unterspalten F und S entfernen.
+
+Pro Tag nur noch eine Spalte anzeigen.
+
+Also statt:
+Mo Früh | Mo Spät
+
+neu:
+Mo
+
+In der Tageszelle werden alle Einsätze dargestellt.
+
+====================================================
+2. TAGESZELLE NEU DARSTELLEN
+====================================================
+
+Eine Zelle soll mehrere Einsatzzeiten anzeigen können:
+
+10:00 bis 14:00
+17:30 bis 23:00
+
+Optisch:
+- jeder Einsatz als eigene kleine Zeile
+- ruhig und gut lesbar
+- nicht gequetscht
+- Zelle darf höher werden
+- bei Frei/Ferien/Krank nur ein klarer Badge
+
+====================================================
+3. ZEITEDITOR VEREINFACHEN
+====================================================
+
+Beim Klick auf eine Tageszelle öffnet sich ein Popover:
+
+Titel:
+Einsatzzeit erfassen
+
+Keine Begriffe:
+- Früh
+- Spät
+- Frühschicht
+- Spätschicht
+
+Inhalt:
+
+Schnellauswahl oben:
+- 10:00 bis 14:00
+- 17:30 bis 23:00
+- 10:00 bis 14:00 und 17:30 bis 23:00
+
+Darunter immer zwei Einsatzzeilen:
+
+1. Einsatz
+Von [  ] Uhrsymbol
+Bis [  ] Uhrsymbol
+
+2. Einsatz
+Von [  ] Uhrsymbol
+Bis [  ] Uhrsymbol
+
+Die zweite Zeile darf leer bleiben.
+
+Button:
+Übernehmen
+
+====================================================
+4. UHRSYMBOL
+====================================================
+
+Wenn man auf das Uhrsymbol klickt:
+- Zeitpicker öffnet sich direkt
+- Stunden auswählen
+- Minuten auswählen
+
+Minuten nur:
+00
+15
+30
+45
+
+Keine anderen Minuten anzeigen.
+
+Manuelle Eingabe muss trotzdem möglich bleiben.
+
+====================================================
+5. SCHNELLAUSWAHL BEARBEITEN
+====================================================
+
+Schnellauswahl bearbeiten soll bleiben.
+
+Aber:
+Es geht nur um Einsatzzeiten, nicht um Kategorien.
+
+Bearbeitbar:
+- Label
+- Einsatz 1 Von/Bis
+- Einsatz 2 Von/Bis optional
+- Reihenfolge
+- löschen
+- neu hinzufügen
+
+Speicherung vorerst localStorage.
+
+====================================================
+6. LINKER SCHICHTBEREICH
+====================================================
+
+Die linke Palette soll nicht mehr wirken wie Kategorien Früh/Spät.
+
+Bitte umbenennen zu:
+Einsatzzeiten
+
+Darin:
+- gespeicherte Schnellauswahlen
+- Abwesenheiten darunter separat
+
+Keine Kategorie Früh oder Spät anzeigen.
+
+====================================================
+7. OPTIK VERBESSERN
+====================================================
+
+Die Wochenansicht soll moderner und ruhiger werden:
+
+- breitere Tageszellen
+- keine F/S Unterzeilen
+- weniger Linien
+- grössere Namen
+- saubere Tagesüberschriften
+- Wochenende dezent farbig
+- Einsätze als klare Chips untereinander
+- Warnungen nur als Icon oder farbiger Rand
+
+====================================================
+8. SPEICHERLOGIK
+====================================================
+
+Wichtig:
+Die bestehende Datenstruktur darf intern weiterhin mehrere Blöcke speichern.
+
+Aber die UI soll nicht mehr Früh/Spät-Spalten zeigen.
+
+Beim Speichern:
+- Einsatz 1 wird als erster Zeitblock gespeichert
+- Einsatz 2 wird als zweiter Zeitblock gespeichert
+- beide müssen in Plan und Ist übernommen werden können, wenn "Auch ins IST übernehmen" aktiv ist
+
+====================================================
+9. KOSTENLOGIK NICHT ÄNDERN
+====================================================
+
+Bitte nicht verändern:
+- Kostenberechnung
+- Soll/Ist Berechnung
+- Budgetlogik
+- Supabase Struktur
+- bestehende Speicherlogik
+
+Nur:
+- Wochenansicht optisch umbauen
+- Früh/Spät Spalten entfernen
+- Tageszelle mit mehreren Einsätzen
+- Zeiteditor vereinfachen
+- Schnellauswahl als Einsatzzeiten bearbeiten
+
+====================================================
+10. TEST
+====================================================
+
+Nach Umsetzung:
+- TypeScript prüfen
+- Wochenansicht testen
+- eine Zelle mit zwei Einsätzen erfassen
+- prüfen, ob beide Einsätze untereinander angezeigt werden
+- prüfen, ob Kosten weiterhin berechnet werden
+- prüfen, ob Speichern weiterhin funktioniert
