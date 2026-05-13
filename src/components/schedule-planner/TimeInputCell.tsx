@@ -584,7 +584,7 @@ export const TimeInputCell = ({
   // Inline clock picker
   const [pickerTarget, setPickerTarget] = useState<PickerTarget>(null);
 
-  const { shiftMap, absenceShifts } = useShiftConfig();
+  const { shiftMap, absenceShifts, workShifts } = useShiftConfig();
   const { presets, addPreset, updatePreset, deletePreset, movePreset, resetToDefaults } = useQuickTimes();
 
   // Filter absence shifts by department
