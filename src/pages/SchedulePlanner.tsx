@@ -33,6 +33,7 @@ import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
 import { savePublishedSchedule, PublishType, PublishDept, PublicEmployee } from '@/lib/schedule-publish-store';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
+import { ModernScheduleGrid } from '@/components/schedule-planner/ModernScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
 import { MobileDayView } from '@/components/schedule-planner/MobileDayView';
 import { PlanVsIstGrid } from '@/components/schedule-planner/PlanVsIstGrid';
@@ -3757,41 +3758,66 @@ const SchedulePlanner = () => {
                         department={activeDepartment as 'service' | 'küche'}
                       />
                     )}
-                    <ScheduleGrid
-                      employees={displayEmployees}
-                      days={displayDays}
-                      scheduleData={scheduleData}
-                      onSlotChange={handleSlotChange}
-                      onRemoveEmployee={handleRemoveEmployee}
-                      onConfigureDaysOff={handleConfigureDaysOff}
-                      onOpen8HoursDialog={handleOpen8HoursDialog}
-                      getEmployeeHours={calculateEmployeeHours}
-                      getTargetHours={getMonthlyTargetHours}
-                      getWeeklyHours={calculateWeeklyHours}
-                      getWeeklyTargetHours={getWeeklyTargetHours}
-                      onDayClick={handleDayClick}
-                      showFooter={showFooter}
-                      showCosts={effectiveShowCosts}
-                      dailyBudgets={dailyBudgets}
-                      laborCostThreshold={gridLaborCostThreshold}
-                      scheduleMode={scheduleMode}
-                      externalActiveTool={paintTool}
-                      onExternalToolChange={setPaintTool}
-                      highlightedEmployeeId={highlightedEmpId}
-                      patternWarnings={patternWarnings}
-                      copiedShift={copiedShift}
-                      onCopyShift={handleCopyShift}
-                      onMoveEmployee={
-                        sortModeActive && activeDepartment !== 'all'
-                          ? (id, dir) => handleMoveEmployee(id, activeDepartment as 'service' | 'küche', dir)
-                          : undefined
-                      }
-                      cellColors={cellColors}
-                      onCellColorChange={handleCellColorChange}
-                      showDepartmentBadge={activeDepartment === 'all'}
-                      onCopyToIst={handleCopyPlanToIst}
-                      onEmployeeClick={setEmployeeDetailEmp}
-                    />
+                    {viewMode === 'modern' ? (
+                      /* ── MODERN VIEW ── visual redesign, identical data logic ── */
+                      <ModernScheduleGrid
+                        employees={displayEmployees}
+                        days={displayDays}
+                        scheduleData={scheduleData}
+                        onSlotChange={handleSlotChange}
+                        getEmployeeHours={calculateEmployeeHours}
+                        getTargetHours={getMonthlyTargetHours}
+                        getWeeklyHours={calculateWeeklyHours}
+                        getWeeklyTargetHours={getWeeklyTargetHours}
+                        patternWarnings={patternWarnings}
+                        copiedShift={copiedShift}
+                        onCopyShift={handleCopyShift}
+                        cellColors={cellColors}
+                        onCellColorChange={handleCellColorChange}
+                        showDepartmentBadge={activeDepartment === 'all'}
+                        onCopyToIst={handleCopyPlanToIst}
+                        onEmployeeClick={setEmployeeDetailEmp}
+                        externalActiveTool={paintTool}
+                        highlightedEmployeeId={highlightedEmpId}
+                      />
+                    ) : (
+                      /* ── CLASSIC VIEW — untouched ────────────────────────── */
+                      <ScheduleGrid
+                        employees={displayEmployees}
+                        days={displayDays}
+                        scheduleData={scheduleData}
+                        onSlotChange={handleSlotChange}
+                        onRemoveEmployee={handleRemoveEmployee}
+                        onConfigureDaysOff={handleConfigureDaysOff}
+                        onOpen8HoursDialog={handleOpen8HoursDialog}
+                        getEmployeeHours={calculateEmployeeHours}
+                        getTargetHours={getMonthlyTargetHours}
+                        getWeeklyHours={calculateWeeklyHours}
+                        getWeeklyTargetHours={getWeeklyTargetHours}
+                        onDayClick={handleDayClick}
+                        showFooter={showFooter}
+                        showCosts={effectiveShowCosts}
+                        dailyBudgets={dailyBudgets}
+                        laborCostThreshold={gridLaborCostThreshold}
+                        scheduleMode={scheduleMode}
+                        externalActiveTool={paintTool}
+                        onExternalToolChange={setPaintTool}
+                        highlightedEmployeeId={highlightedEmpId}
+                        patternWarnings={patternWarnings}
+                        copiedShift={copiedShift}
+                        onCopyShift={handleCopyShift}
+                        onMoveEmployee={
+                          sortModeActive && activeDepartment !== 'all'
+                            ? (id, dir) => handleMoveEmployee(id, activeDepartment as 'service' | 'küche', dir)
+                            : undefined
+                        }
+                        cellColors={cellColors}
+                        onCellColorChange={handleCellColorChange}
+                        showDepartmentBadge={activeDepartment === 'all'}
+                        onCopyToIst={handleCopyPlanToIst}
+                        onEmployeeClick={setEmployeeDetailEmp}
+                      />
+                    )}
                 </>
               ) : (
                 // Ist-Dienstplan (actual hours grid)
