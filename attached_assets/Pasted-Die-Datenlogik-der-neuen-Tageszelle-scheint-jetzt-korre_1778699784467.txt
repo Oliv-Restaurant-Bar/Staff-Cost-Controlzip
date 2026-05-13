@@ -1,0 +1,180 @@
+Die Datenlogik der neuen Tageszelle scheint jetzt korrekt zu funktionieren.
+
+Nächster Schritt:
+Die Wochenansicht optisch und UX-mässig sauber modernisieren.
+
+Aktuell wirkt die neue Tageszelle noch:
+- gequetscht
+- unruhig
+- technisch
+- zu viele Linien
+- nicht elegant
+- nicht mobiloptimiert
+
+Bitte jetzt rein auf UI/UX fokussieren.
+
+====================================================
+1. TAGESZELLEN MODERNISIEREN
+====================================================
+
+Jede Tageszelle soll ruhiger und moderner aussehen.
+
+Ziel:
+Mehr wie modernes Scheduling-Tool.
+Weniger wie Excel.
+
+Bitte:
+
+- mehr Innenabstand
+- weichere Ränder
+- weniger harte Tabellenlinien
+- grössere Zeilenhöhe
+- bessere vertikale Ausrichtung
+- sauberere Schriftgrössen
+- bessere Lesbarkeit
+
+====================================================
+2. EINSÄTZE ALS MODERNE CHIPS
+====================================================
+
+Aktuell sehen die Zeiten zu technisch aus.
+
+Bitte neue Einsatz-Chips:
+
+- kompakter
+- ruhiger
+- gleiche Breite
+- bessere Höhe
+- moderner Radius
+- bessere Abstände
+
+Beispiel pro Zelle:
+
+10:00–14:00
+17:30–23:00
+
+untereinander als eigene Chips.
+
+Nicht gequetscht.
+Nicht überlappend.
+
+====================================================
+3. ABWESENHEITEN OPTISCH KLARER
+====================================================
+
+Frei / Ferien / Krank sollen sofort visuell verständlich sein.
+
+Beispiele:
+- Frei → grün
+- Ferien → blau
+- Krank → rot
+- Unbezahlt → grau
+
+Nur ein klarer Badge.
+Nicht zusätzlich viel Text.
+
+====================================================
+4. MITARBEITERSPALTE VERBESSERN
+====================================================
+
+Die linke Mitarbeiterspalte soll professioneller wirken.
+
+Bitte:
+- Name grösser
+- Stunden kleiner darunter
+- Warnungen dezent
+- weniger harte Farben
+- mehr Weissraum
+
+====================================================
+5. WOCHENHEADER VERBESSERN
+====================================================
+
+Die Tagesüberschrift soll moderner werden.
+
+Pro Tag:
+MO
+18
+Mai
+
+Wochenende leicht hinterlegt.
+Heute subtil markiert.
+
+Keine dicken Linien.
+
+====================================================
+6. MOBILE / LAPTOP OPTIMIERUNG
+====================================================
+
+Bitte testen:
+
+Desktop
+Laptop
+iPad
+390px Mobile
+
+Mobile:
+- horizontales Scrollen erlaubt
+- Sticky Mitarbeiter-Spalte
+- Zellen dürfen höher werden
+- Schichten lesbar bleiben
+
+====================================================
+7. ZEITEDITOR MODERNISIEREN
+====================================================
+
+Das Popover soll moderner aussehen:
+
+- weniger technisch
+- bessere Abstände
+- grössere Inputs
+- ruhigere Buttons
+- Zeitpicker kompakter
+- Schnellwahl schöner gruppieren
+
+Keine Früh/Spät Begriffe mehr.
+
+Titel:
+"Einsatzzeiten"
+
+====================================================
+8. SCHNELLAUSWAHL DESIGN
+====================================================
+
+Schnellauswahl-Chips:
+- einheitliche Breite
+- bessere Farben
+- Hover-Effekt
+- aktive Auswahl markieren
+
+====================================================
+9. WARNUNGEN REDUZIEREN
+====================================================
+
+Nicht überall rot/orange Zahlen anzeigen.
+
+Warnungen:
+- dezenter
+- nur wenn relevant
+- lieber kleiner Punkt/Icon
+- keine visuelle Überladung
+
+====================================================
+10. WICHTIG
+====================================================
+
+Keine Datenlogik ändern.
+Keine Speicherlogik ändern.
+Keine Kostenlogik ändern.
+Keine Supabase-Änderung.
+
+Nur:
+- visuelle Modernisierung
+- UX verbessern
+- Lesbarkeit verbessern
+- mobile Tauglichkeit verbessern
+
+Danach:
+- TypeScript prüfen
+- Screenshots von Desktop + Mobile machen
+- kurze UX-Zusammenfassung geben

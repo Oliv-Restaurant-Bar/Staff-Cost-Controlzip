@@ -1,0 +1,98 @@
+Bitte den Zeitpicker beim Klick auf das Uhrsymbol im Dienstplan zurück auf die alte Ansicht ändern.
+
+Aktuell erscheint eine neue kleine Auswahl mit:
+- Stunden
+- Minuten
+- OK Button
+
+Das möchte ich nicht.
+
+Ich möchte wieder die alte Ansicht wie vorher:
+
+- zwei Spalten
+- links Stunden
+- rechts Minuten
+- direkt auswählbar
+- kein OK Button nötig
+- Auswahl übernimmt den Wert sofort ins Feld
+
+====================================================
+1. ALTE ZEITPICKER-ANSICHT WIEDERHERSTELLEN
+====================================================
+
+Beim Klick auf das Uhrsymbol soll wieder die alte kompakte Timepicker-Ansicht erscheinen:
+
+Beispiel:
+
+[23]   [30]
+ 00     45
+ 01     00
+ 02     15
+ 03     30
+ 04     45
+
+Also:
+- Stunde links
+- Minute rechts
+- aktive Auswahl blau
+- keine zusätzliche OK-Bestätigung
+
+====================================================
+2. MINUTEN NUR 15ER SCHRITTE
+====================================================
+
+Die Minutenliste soll nur anzeigen:
+
+00
+15
+30
+45
+
+Keine anderen Minuten.
+
+====================================================
+3. DIREKT ÜBERNEHMEN
+====================================================
+
+Wenn ich Stunde oder Minute anklicke:
+- Feld wird direkt aktualisiert
+- Picker bleibt offen bis man ausserhalb klickt oder anderes Feld anklickt
+- kein OK Button
+
+====================================================
+4. GILT FÜR ALLE ZEITFELDER
+====================================================
+
+Bitte für alle Uhrsymbole im Zeiteditor:
+
+- 1. Einsatz Von
+- 1. Einsatz Bis
+- 2. Einsatz Von
+- 2. Einsatz Bis
+
+====================================================
+5. MANUELLE EINGABE BLEIBT
+====================================================
+
+Direktes Schreiben in die Felder muss weiterhin möglich bleiben.
+
+Beispiele:
+10
+10:00
+17:30
+
+====================================================
+6. WICHTIG
+====================================================
+
+Bitte nur den Picker ändern.
+Keine Kostenlogik ändern.
+Keine Speicherlogik ändern.
+Keine Soll/Ist-Logik ändern.
+Keine Supabase-Änderung.
+
+Danach:
+- TypeScript prüfen
+- Dienstplan öffnen
+- Uhrsymbol testen
+- prüfen, dass wieder die alte Ansicht erscheint

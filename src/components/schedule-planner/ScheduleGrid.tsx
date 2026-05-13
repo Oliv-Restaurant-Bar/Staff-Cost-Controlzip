@@ -1,6 +1,6 @@
 // Schedule Grid Component - Updated to use onOpen8HoursDialog
 import React, { useState, useMemo, useRef } from 'react';
-import { format, isWeekend, getDay, isSunday, parseISO, isAfter } from 'date-fns';
+import { format, isWeekend, getDay, isSunday, parseISO, isAfter, isSameDay } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { getEmployeeDisplayName } from '@/lib/personnel-utils';
@@ -772,18 +772,20 @@ export const ScheduleGrid = ({
                       const laborCostQuote = stats.effectiveRevenue > 0
                         ? (stats.totalCosts / stats.effectiveRevenue * 100)
                         : null;
+                      const isToday = isSameDay(day, new Date());
                       return (
                         <th
                           className={cn(
-                            "px-0.5 py-1 text-center font-medium border-b cursor-pointer transition-colors",
-                            "border-r-4 border-r-primary/30",
+                            "px-1 py-2 text-center font-medium border-b cursor-pointer transition-colors",
+                            "border-r border-border/30",
                             stats.isOverBudget
-                              ? "bg-red-200 dark:bg-red-950/80 hover:bg-red-300 dark:hover:bg-red-900/80 border-b-2 border-b-red-500 dark:border-b-red-600"
+                              ? "bg-red-50 dark:bg-red-950/60 hover:bg-red-100 dark:hover:bg-red-900/60 border-b-2 border-b-red-400 dark:border-b-red-600"
                               : isWeekendDay
-                                ? "bg-amber-100 dark:bg-amber-900/30 hover:bg-muted/50"
-                                : "hover:bg-muted/50",
-                            isSundayDay && !stats.isOverBudget && "bg-amber-200/70 dark:bg-amber-900/50 border-r-primary/50",
-                            isWeekView ? "min-w-[110px] text-xs" : "min-w-[90px] text-[10px]"
+                                ? "bg-amber-50/60 dark:bg-amber-900/20 hover:bg-amber-100/60 dark:hover:bg-amber-900/30"
+                                : "hover:bg-muted/40",
+                            isSundayDay && !stats.isOverBudget && "bg-amber-100/60 dark:bg-amber-900/30 border-r-2 border-r-border/50",
+                            isToday && !stats.isOverBudget && "bg-blue-50/70 dark:bg-blue-950/30",
+                            isWeekView ? "min-w-[110px]" : "min-w-[90px]"
                           )}
                           onClick={() => {
                             if (stats.isOverBudget && showCosts) {
@@ -795,52 +797,67 @@ export const ScheduleGrid = ({
                           }}
                           title={stats.isOverBudget ? "⚠️ Ziel überschritten – Klicken für Details" : "Klicken für Tagesdetails"}
                         >
+                          {/* Weekday name */}
                           <div className={cn(
-                            isWeekView ? "text-[10px] font-semibold" : "text-muted-foreground text-[9px]",
-                            isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400 font-semibold",
-                            stats.isOverBudget && "text-red-800 dark:text-red-300 font-bold",
-                            !isWeekendDay && !stats.isOverBudget && isWeekView && "text-muted-foreground"
+                            "text-[9px] font-semibold uppercase tracking-widest",
+                            isWeekendDay && !stats.isOverBudget && "text-amber-600 dark:text-amber-400",
+                            stats.isOverBudget && "text-red-600 dark:text-red-400",
+                            isToday && !stats.isOverBudget && !isWeekendDay && "text-blue-600 dark:text-blue-400",
+                            !isWeekendDay && !stats.isOverBudget && !isToday && "text-muted-foreground/70"
                           )}>
                             {WEEKDAY_NAMES[day.getDay()]}
                           </div>
+                          {/* Day number */}
                           <div className={cn(
-                            isWeekView ? "font-bold text-sm" : "font-semibold text-[10px]",
-                            isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-400",
-                            stats.isOverBudget && "text-red-800 dark:text-red-300"
+                            "font-bold leading-tight mt-0.5",
+                            isWeekView ? "text-lg" : "text-sm",
+                            isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-300",
+                            stats.isOverBudget && "text-red-700 dark:text-red-300",
+                            isToday && !stats.isOverBudget && !isWeekendDay && "text-blue-700 dark:text-blue-300",
+                            !isWeekendDay && !stats.isOverBudget && !isToday && "text-foreground"
                           )}>
-                            {format(day, 'd.M.')}
+                            {format(day, 'd')}
+                            {isToday && (
+                              <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-blue-500 dark:bg-blue-400 align-middle mb-0.5" />
+                            )}
                           </div>
-                          {/* Always-visible planned hours indicator — red whenever overbudget */}
+                          {/* Month name */}
                           <div className={cn(
-                            "text-[8px] font-medium mt-0.5",
-                            stats.totalHours === 0
-                              ? "text-muted-foreground/50"
-                              : stats.isOverBudget
-                                ? "text-red-600 dark:text-red-400 font-bold"
-                                : "text-blue-600 dark:text-blue-400"
+                            "text-[8px] leading-tight",
+                            isWeekendDay && !stats.isOverBudget ? "text-amber-500/70 dark:text-amber-500/60" : "text-muted-foreground/50"
                           )}>
-                            {stats.totalHours > 0 ? `${stats.totalHours.toFixed(1)}h` : '–'}
+                            {format(day, 'MMM', { locale: de })}
+                          </div>
+                          {/* Hours summary */}
+                          <div className={cn(
+                            "text-[8px] font-medium mt-1 tabular-nums",
+                            stats.totalHours === 0
+                              ? "text-muted-foreground/30"
+                              : stats.isOverBudget
+                                ? "text-red-500 dark:text-red-400 font-bold"
+                                : "text-blue-500/70 dark:text-blue-400/70"
+                          )}>
+                            {stats.totalHours > 0 ? `${stats.totalHours.toFixed(1)}h` : ''}
                           </div>
                           {showCosts && (
                             <div className="flex flex-col items-center mt-0.5">
                               {stats.isOverBudget ? (
-                                <div className="flex items-center gap-0.5 bg-red-200 dark:bg-red-900/60 border border-red-400 dark:border-red-700 rounded px-1 py-0.5 mt-0.5">
-                                  <AlertTriangle className="h-2.5 w-2.5 text-red-700 dark:text-red-400 shrink-0" />
-                                  <span className="text-[8px] font-bold text-red-700 dark:text-red-400">
-                                    +{stats.excessCosts.toFixed(0)} CHF
+                                <div className="flex items-center gap-0.5 rounded px-1 py-0.5">
+                                  <AlertTriangle className="h-2.5 w-2.5 text-red-500 dark:text-red-400 shrink-0" />
+                                  <span className="text-[8px] font-bold text-red-500 dark:text-red-400">
+                                    +{stats.excessCosts.toFixed(0)}
                                   </span>
                                 </div>
                               ) : (
                                 <>
-                                  <div className={cn(
-                                    "text-[8px] font-medium",
-                                    stats.totalCosts > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
-                                  )}>
-                                    {stats.totalCosts > 0 ? `CHF ${stats.totalCosts.toFixed(0)}` : '-'}
-                                  </div>
+                                  {stats.totalCosts > 0 && (
+                                    <div className="text-[7px] text-emerald-600/70 dark:text-emerald-400/60 tabular-nums">
+                                      {stats.totalCosts.toFixed(0)}
+                                    </div>
+                                  )}
                                   {laborCostQuote !== null && (
-                                    <div className="text-[7px] font-medium text-emerald-600 dark:text-emerald-400">
-                                      {laborCostQuote.toFixed(1)}%
+                                    <div className="text-[7px] text-emerald-600/70 dark:text-emerald-400/60">
+                                      {laborCostQuote.toFixed(0)}%
                                     </div>
                                   )}
                                 </>
@@ -902,14 +919,14 @@ export const ScheduleGrid = ({
 
               return (
                 <tr key={employee.id} className={cn(
-                  "group hover:bg-muted/30 transition-colors",
-                  highlightedEmployeeId === employee.id && "ring-2 ring-inset ring-indigo-400 dark:ring-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/20",
-                  highlightedEmployeeId !== employee.id && empPatternWarnings.some(w => w.severity === 'critical') && "bg-red-50/50 dark:bg-red-950/10",
-                  highlightedEmployeeId !== employee.id && !empPatternWarnings.some(w => w.severity === 'critical') && empPatternWarnings.length > 0 && "bg-amber-50/40 dark:bg-amber-950/10",
+                  "group hover:bg-muted/20 transition-colors",
+                  highlightedEmployeeId === employee.id && "ring-1 ring-inset ring-indigo-300 dark:ring-indigo-600 bg-indigo-50/30 dark:bg-indigo-950/15",
+                  highlightedEmployeeId !== employee.id && empPatternWarnings.some(w => w.severity === 'critical') && "bg-red-50/20 dark:bg-red-950/10",
+                  highlightedEmployeeId !== employee.id && !empPatternWarnings.some(w => w.severity === 'critical') && empPatternWarnings.length > 0 && "bg-amber-50/20 dark:bg-amber-950/10",
                 )}>
                   {/* Employee name cell */}
                   <td
-                    className="sticky left-0 z-10 bg-card group-hover:bg-muted px-1.5 py-1 border-b border-r-2 border-border overflow-hidden shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]"
+                    className="sticky left-0 z-10 bg-card group-hover:bg-muted/60 px-2 py-2 border-b border-r border-border/40 overflow-hidden shadow-[2px_0_6px_-2px_rgba(0,0,0,0.10)] dark:shadow-[2px_0_6px_-2px_rgba(0,0,0,0.35)]"
                     style={{ width: nameColWidth, minWidth: nameColWidth, maxWidth: nameColWidth }}
                   >
                     <TooltipProvider>
@@ -917,34 +934,33 @@ export const ScheduleGrid = ({
                         <TooltipTrigger asChild>
                           <div className="flex items-center justify-between gap-0.5 w-full">
                             <div className="flex-1 min-w-0 overflow-hidden">
-                              <div className="flex items-center gap-0.5 font-medium text-xs min-w-0">
+                              <div className="flex items-center gap-1 font-semibold text-[13px] min-w-0">
                                 {showDepartmentBadge && (
                                   <span className={cn(
-                                    "w-1.5 h-1.5 rounded-full shrink-0",
+                                    "w-2 h-2 rounded-full shrink-0 opacity-70",
                                     employee.department === 'service' ? "bg-blue-500" : "bg-orange-500"
                                   )} />
                                 )}
                                 <span
-                                  className={cn(
-                                    "truncate min-w-0",
-                                    onEmployeeClick && "cursor-pointer hover:underline underline-offset-2",
-                                    empPatternWarnings.some(w => w.severity === 'critical')
-                                      ? "text-red-600 dark:text-red-400"
-                                      : empPatternWarnings.some(w => w.severity === 'warning')
-                                        ? "text-amber-600 dark:text-amber-400"
-                                        : undefined
-                                  )}
+                                  className="truncate min-w-0 text-foreground/90"
                                   onClick={onEmployeeClick ? (e) => { e.stopPropagation(); onEmployeeClick(employee); } : undefined}
                                   title={onEmployeeClick ? "Details anzeigen" : undefined}
+                                  style={onEmployeeClick ? { cursor: 'pointer' } : undefined}
                                 >
                                   {getEmployeeDisplayName(employee)}
                                 </span>
+                                {empPatternWarnings.some(w => w.severity === 'critical') && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-red-400/70 dark:bg-red-500/60 shrink-0" title="Kritische Warnung" />
+                                )}
+                                {!empPatternWarnings.some(w => w.severity === 'critical') && empPatternWarnings.length > 0 && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 dark:bg-amber-500/60 shrink-0" title="Warnung" />
+                                )}
                               </div>
                               <div className={cn(
-                                "text-[10px] font-semibold tabular-nums leading-tight",
-                                isInRange ? "text-emerald-600 dark:text-emerald-400"
-                                : isUnder ? "text-amber-600 dark:text-amber-400"
-                                : "text-red-600 dark:text-red-400"
+                                "text-[9px] tabular-nums leading-tight mt-0.5",
+                                isInRange ? "text-emerald-500/70 dark:text-emerald-400/60"
+                                : isUnder ? "text-amber-500/70 dark:text-amber-400/60"
+                                : "text-red-500/70 dark:text-red-400/60"
                               )}>
                                 {(() => { const d = plannedHours - targetHours; return d >= 0 ? `+${d.toFixed(1)}h` : `${d.toFixed(1)}h`; })()}
                               </div>
@@ -1101,10 +1117,10 @@ export const ScheduleGrid = ({
                         {/* Merged day cell — single column, shows both shifts stacked */}
                         <td
                           className={cn(
-                            "px-0.5 py-0 border-b text-center relative align-top transition-colors",
-                            "border-r-4 border-r-primary/30",
-                            isWeekendDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-100/30 dark:bg-amber-900/15",
-                            isSundayDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-200/40 dark:bg-amber-900/25 border-r-primary/50",
+                            "px-1 py-1.5 border-b border-border/30 text-center relative align-top transition-colors",
+                            "border-r border-border/20",
+                            isWeekendDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-50/40 dark:bg-amber-900/10",
+                            isSundayDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-100/50 dark:bg-amber-900/20 border-r border-r-border/40",
                             isConfiguredDayOff && !isAfterExitDate && "bg-slate-300 dark:bg-slate-600",
                             isAfterExitDate && "bg-zinc-800 dark:bg-zinc-900",
                             isOverlapping && !isAfterExitDate && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",

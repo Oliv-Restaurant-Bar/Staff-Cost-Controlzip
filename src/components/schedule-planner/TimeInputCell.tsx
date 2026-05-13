@@ -436,7 +436,7 @@ function TimeRow({
 }) {
   return (
     <div className="space-y-1">
-      <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">{label}</div>
+      <div className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-widest">{label}</div>
       <div className="flex items-start gap-1.5">
         {/* Von */}
         <div className="flex-1">
@@ -787,38 +787,53 @@ export const TimeInputCell = ({
         <PopoverTrigger asChild>
           <button
             className={cn(
-              "w-full px-1 text-[10px] font-medium border rounded transition-all",
-              "hover:ring-1 hover:ring-ring focus:outline-none focus:ring-1 focus:ring-ring",
-              // Height: taller when two stacked times shown
-              (hasSecondaryDisplay || onlySecondaryDisplay) ? "min-h-[40px] py-0.5" : "h-8",
-              !absenceType && !value?.start && !onlySecondaryDisplay && !isDayOff && !isRequestedFree && !isBlocked && "bg-muted/30 border-dashed border-muted-foreground/20 text-muted-foreground",
-              isWeekend && !isDayOff && !isRequestedFree && !isBlocked && "bg-primary/5",
-              isEmptyDayOff && "bg-slate-300 dark:bg-slate-600 border-slate-400 dark:border-slate-500 text-slate-600 dark:text-slate-300 font-bold",
-              isDayOff && !isEmptyDayOff && "ring-1 ring-slate-400/40 dark:ring-slate-500/40",
-              isEmptyRequestedFree && "bg-amber-100 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 font-semibold",
-              isRequestedFree && !isEmptyRequestedFree && "ring-1 ring-amber-400/60 dark:ring-amber-600/60",
-              isEmptyBlocked && "bg-red-100 dark:bg-red-900/30 border-red-300 dark:border-red-700 text-red-800 dark:text-red-300 font-semibold",
-              isBlocked && !isEmptyBlocked && "ring-1 ring-red-400/60 dark:ring-red-600/60",
+              "w-full text-[11px] font-medium border rounded-lg transition-all",
+              "hover:ring-1 hover:ring-ring/50 focus:outline-none focus:ring-1 focus:ring-ring",
+              // Height
+              hasSecondaryDisplay ? "min-h-[52px] py-1.5 px-1" : "min-h-[36px] py-1 px-1",
+              onlySecondaryDisplay && "min-h-[36px] py-1 px-1",
+              // Empty / default
+              !absenceType && !value?.start && !onlySecondaryDisplay && !isDayOff && !isRequestedFree && !isBlocked && "bg-transparent border-dashed border-border/30 text-muted-foreground/40 hover:border-border/60 hover:bg-muted/20",
+              isWeekend && !isDayOff && !isRequestedFree && !isBlocked && "bg-amber-50/30 dark:bg-amber-900/10",
+              // Day off / free / blocked empty states
+              isEmptyDayOff && "bg-slate-200/80 dark:bg-slate-700/60 border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-300 font-semibold",
+              isDayOff && !isEmptyDayOff && "ring-1 ring-slate-300/50 dark:ring-slate-600/40",
+              isEmptyRequestedFree && "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 font-medium",
+              isRequestedFree && !isEmptyRequestedFree && "ring-1 ring-amber-300/60 dark:ring-amber-700/50",
+              isEmptyBlocked && "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 font-medium",
+              isBlocked && !isEmptyBlocked && "ring-1 ring-red-300/60 dark:ring-red-700/50",
+              // Absence with semantic colors
               absenceType && absenceConfig?.color,
-              !absenceType && (value?.start || onlySecondaryDisplay) && !isRequestedFree && !isBlocked && !hasCellColor && "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200",
+              // Has shift data
+              !absenceType && (value?.start || onlySecondaryDisplay) && !isRequestedFree && !isBlocked && !hasCellColor && "bg-indigo-50/80 dark:bg-indigo-900/25 border-indigo-200/60 dark:border-indigo-700/40",
             )}
             style={hasCellColor ? { backgroundColor: cellColor!, borderColor: cellColor!, color: '#1e3a5f' } : undefined}
           >
             {hasSecondaryDisplay ? (
-              <div className="flex flex-col items-center leading-tight gap-px">
-                <span>{formatShort(value!.start)}–{formatShort(value!.end)}</span>
-                <span className="opacity-75">{formatShort(secondaryValue!.start)}–{formatShort(secondaryValue!.end)}</span>
+              <div className="flex flex-col items-center gap-0.5">
+                <span className="font-semibold text-indigo-700 dark:text-indigo-300 tabular-nums tracking-tight">
+                  {formatShort(value!.start)}–{formatShort(value!.end)}
+                </span>
+                <span className="font-medium text-indigo-500/80 dark:text-indigo-400/70 tabular-nums tracking-tight text-[10px]">
+                  {formatShort(secondaryValue!.start)}–{formatShort(secondaryValue!.end)}
+                </span>
               </div>
             ) : onlySecondaryDisplay ? (
-              <span className="opacity-90">{formatShort(secondaryValue!.start)}–{formatShort(secondaryValue!.end)}</span>
+              <span className="font-semibold text-indigo-700 dark:text-indigo-300 tabular-nums tracking-tight">
+                {formatShort(secondaryValue!.start)}–{formatShort(secondaryValue!.end)}
+              </span>
+            ) : (value?.start && !absenceType && !hasCellColor) ? (
+              <span className="font-semibold text-indigo-700 dark:text-indigo-300 tabular-nums tracking-tight">
+                {displayValue}
+              </span>
             ) : (
-              displayValue || (isEmptyDayOff ? 'F' : isEmptyRequestedFree ? 'WF' : isEmptyBlocked ? '⛔' : '—')
+              displayValue || (isEmptyDayOff ? 'F' : isEmptyRequestedFree ? 'WF' : isEmptyBlocked ? '⛔' : '')
             )}
           </button>
         </PopoverTrigger>
 
-        <PopoverContent className="w-72 p-2 z-50" align="center">
-          <div className="space-y-2.5">
+        <PopoverContent className="w-80 p-3 z-50" align="center">
+          <div className="space-y-2">
 
             {/* ── Wunschfrei warning ── */}
             {isRequestedFree && (
@@ -855,7 +870,7 @@ export const TimeInputCell = ({
               <>
                 {/* ── Header ── */}
                 <div className="flex items-center justify-between -mb-0.5">
-                  <span className="text-[11px] font-semibold text-foreground">Einsatzzeit erfassen</span>
+                  <span className="text-[13px] font-semibold text-foreground">Einsatzzeit erfassen</span>
                   {(value?.start || absenceType) && (
                     <button onClick={handleClear}
                       className="text-[10px] text-muted-foreground hover:text-destructive flex items-center gap-0.5 transition-colors">
@@ -868,7 +883,7 @@ export const TimeInputCell = ({
                 {visiblePresets.length > 0 && (
                   <div className="space-y-1.5">
                     <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Schnellwahl</div>
-                    <div className="grid grid-cols-3 gap-1">
+                    <div className="grid grid-cols-2 gap-1.5">
                       {visiblePresets.map(p => {
                         const hasSecond = !!(p.start2 && p.end2);
                         const lbl = hasSecond
@@ -881,9 +896,9 @@ export const TimeInputCell = ({
                               ? `1. Einsatz ${p.start}–${p.end} · 2. Einsatz ${p.start2}–${p.end2}`
                               : `${p.start}–${p.end}`}
                             className={cn(
-                              "px-1 py-1.5 text-[10px] rounded border transition-colors font-medium text-center leading-tight",
-                              "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700",
-                              "text-blue-700 dark:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-800/50"
+                              "px-2 py-2 text-[11px] rounded-lg border transition-all font-medium text-center leading-tight",
+                              "bg-slate-50 dark:bg-slate-800/60 border-border/50",
+                              "text-foreground/80 hover:bg-primary/10 hover:border-primary/30 hover:text-primary active:scale-95"
                             )}>
                             {lbl}
                           </button>
@@ -897,7 +912,7 @@ export const TimeInputCell = ({
                 {splitShifts.length > 0 && (
                   <div className="space-y-1">
                     <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Geteilt</div>
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1.5">
                       {splitShifts.map(shift => {
                         const cfg = shiftMap[shift];
                         if (!cfg) return null;
@@ -915,13 +930,13 @@ export const TimeInputCell = ({
                 )}
 
                 <button onClick={() => { setOpen(false); setEditorOpen(true); }}
-                  className="w-full text-[10px] text-muted-foreground hover:text-foreground border border-dashed rounded py-1 flex items-center justify-center gap-1 hover:border-primary/40 hover:bg-muted/30 transition-colors">
+                  className="w-full text-[10px] text-muted-foreground/60 hover:text-foreground border border-dashed border-border/40 rounded-lg py-1.5 flex items-center justify-center gap-1 hover:border-primary/30 hover:bg-muted/20 transition-colors">
                   <Settings2 className="h-3 w-3" />
                   Schnellwahl bearbeiten
                 </button>
 
                 {/* ════ EINSATZZEITEN ══════════════════════════════════ */}
-                <div className="border-t pt-2 space-y-3">
+                <div className="border-t pt-2.5 space-y-3">
                   <TimeRow
                     label="1. Einsatz"
                     startVal={selStart} endVal={selEnd}
@@ -968,40 +983,53 @@ export const TimeInputCell = ({
                   )}
 
                   <button onClick={handleSelCommit}
-                    className="w-full text-xs bg-primary text-primary-foreground rounded py-1.5 hover:bg-primary/90 transition-colors font-medium">
+                    className="w-full text-sm bg-primary text-primary-foreground rounded-lg py-2 hover:bg-primary/90 active:scale-[0.99] transition-all font-semibold shadow-sm">
                     Übernehmen
                   </button>
                 </div>
 
                 {/* ── Absence shortcuts ── */}
                 {filteredAbsenceShifts.length > 0 && (
-                  <div className="flex flex-wrap gap-1 pt-1.5 border-t">
-                    {filteredAbsenceShifts.map(shift => {
-                      const cfg = shiftMap[shift];
-                      if (!cfg) return null;
-                      return (
-                        <button key={shift}
-                          onClick={() => handleAbsenceSelect(cfg.abbrev)}
-                          className={cn("px-2 py-0.5 text-xs rounded border transition-colors", cfg.color, "hover:opacity-80")}>
-                          {cfg.abbrev}
-                        </button>
-                      );
-                    })}
+                  <div className="pt-2 border-t space-y-1.5">
+                    <div className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-widest">Abwesenheit</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {filteredAbsenceShifts.map(shift => {
+                        const cfg = shiftMap[shift];
+                        if (!cfg) return null;
+                        const abbrev = cfg.abbrev;
+                        const semanticCls = abbrev === 'F' || abbrev === 'Frei'
+                          ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-800/50'
+                          : abbrev === 'U' || abbrev === 'Urlaub' || abbrev === 'Ferien'
+                          ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-800/50'
+                          : abbrev === 'K' || abbrev === 'Krank'
+                          ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-800/50'
+                          : abbrev === 'UB' || abbrev === 'Unbezahlt'
+                          ? 'bg-slate-100 dark:bg-slate-800/60 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700/60'
+                          : cn(cfg.color, 'hover:opacity-80');
+                        return (
+                          <button key={shift}
+                            onClick={() => handleAbsenceSelect(cfg.abbrev)}
+                            className={cn("px-3 py-1 text-xs font-medium rounded-lg border transition-all active:scale-95", semanticCls)}>
+                            {cfg.abbrev}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
 
                 {/* ── Copy / Paste ── */}
-                <div className="flex gap-1 pt-1 border-t">
+                <div className="flex gap-1.5 pt-2 border-t">
                   {value?.start && (
                     <button onClick={() => { onCopyShift?.(value); setOpen(false); }}
-                      className="flex-1 text-xs text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 py-1 rounded border border-blue-200 dark:border-blue-700 transition-colors">
+                      className="flex-1 text-xs text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 py-1.5 rounded-lg border border-blue-200/70 dark:border-blue-700/60 transition-all font-medium active:scale-95">
                       📋 Kopieren
                     </button>
                   )}
                   {copiedShift?.start && (
                     <button onClick={() => { onChange(copiedShift, null); setOpen(false); }}
                       title={`${copiedShift.start}–${copiedShift.end} einfügen`}
-                      className="flex-1 text-xs text-green-700 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/30 py-1 rounded border border-green-200 dark:border-green-700 transition-colors">
+                      className="flex-1 text-xs text-green-700 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/30 py-1.5 rounded-lg border border-green-200/70 dark:border-green-700/60 transition-all font-medium active:scale-95">
                       📌 {formatShort(copiedShift.start)}-{formatShort(copiedShift.end)}
                     </button>
                   )}
@@ -1034,7 +1062,7 @@ export const TimeInputCell = ({
                 {/* ── Delete ── */}
                 {(value?.start || absenceType) && (
                   <button onClick={handleClear}
-                    className="w-full text-xs text-muted-foreground hover:text-foreground py-1 border-t">
+                    className="w-full text-xs text-muted-foreground/60 hover:text-destructive py-1.5 border-t transition-colors">
                     Löschen
                   </button>
                 )}
