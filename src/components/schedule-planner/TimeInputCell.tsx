@@ -382,8 +382,11 @@ function InlineTimePicker({
   const initM = parsed ? parsed.split(':')[1] : '00';
   const safeM = ['00', '15', '30', '45'].includes(initM) ? initM : '00';
 
-  const [ph, setPh] = useState(initH);
-  const [pm, setPm] = useState(safeM);
+  const [selH, setSelH] = useState(initH);
+  const [selM, setSelM] = useState(safeM);
+
+  const hourRef = useRef<HTMLDivElement>(null);
+  const minRef  = useRef<HTMLDivElement>(null);
 
   const HOURS = useMemo(() => {
     const result: string[] = [];
@@ -391,26 +394,75 @@ function InlineTimePicker({
     for (let i = 0; i <= 3; i++) result.push(String(i).padStart(2, '0'));
     return result;
   }, []);
+  const MINUTES = ['00', '15', '30', '45'];
+
+  // Scroll active item into view on mount & when selection changes
+  useEffect(() => {
+    const el = hourRef.current?.querySelector('[data-active="true"]') as HTMLElement | null;
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [selH]);
+  useEffect(() => {
+    const el = minRef.current?.querySelector('[data-active="true"]') as HTMLElement | null;
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [selM]);
+
+  const pickHour = (h: string) => {
+    setSelH(h);
+    onConfirm(`${h}:${selM}`);
+  };
+  const pickMin = (m: string) => {
+    setSelM(m);
+    onConfirm(`${selH}:${m}`);
+  };
 
   return (
-    <div className="flex items-center gap-1.5 bg-muted/60 border border-border rounded-md px-2 py-1.5 mt-1">
-      <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
-      <select value={ph} onChange={e => setPh(e.target.value)}
-        className="text-xs border border-border rounded px-1 py-0.5 bg-background w-12">
-        {HOURS.map(h => <option key={h} value={h}>{h}</option>)}
-      </select>
-      <span className="text-muted-foreground text-xs font-bold">:</span>
-      <select value={pm} onChange={e => setPm(e.target.value)}
-        className="text-xs border border-border rounded px-1 py-0.5 bg-background w-12">
-        {['00', '15', '30', '45'].map(m => <option key={m} value={m}>{m}</option>)}
-      </select>
-      <button onClick={() => onConfirm(`${ph}:${pm}`)}
-        className="text-[10px] bg-primary text-primary-foreground rounded px-2 py-0.5 hover:bg-primary/90 transition-colors font-medium">
-        OK
-      </button>
-      <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-        <X className="h-3 w-3" />
-      </button>
+    <div className="mt-1 border border-border rounded-lg bg-popover shadow-md overflow-hidden z-10">
+      <div className="flex divide-x divide-border">
+        {/* Hours column */}
+        <div
+          ref={hourRef}
+          className="flex-1 overflow-y-auto max-h-[140px] py-0.5 scrollbar-thin"
+          style={{ scrollbarWidth: 'none' }}
+        >
+          {HOURS.map(h => (
+            <button
+              key={h}
+              data-active={h === selH ? 'true' : 'false'}
+              onClick={() => pickHour(h)}
+              className={cn(
+                "w-full text-center text-xs font-mono py-1 leading-tight transition-colors",
+                h === selH
+                  ? "bg-primary text-primary-foreground font-semibold"
+                  : "text-foreground/80 hover:bg-muted/60"
+              )}
+            >
+              {h}
+            </button>
+          ))}
+        </div>
+        {/* Minutes column */}
+        <div
+          ref={minRef}
+          className="flex-1 overflow-y-auto max-h-[140px] py-0.5"
+          style={{ scrollbarWidth: 'none' }}
+        >
+          {MINUTES.map(m => (
+            <button
+              key={m}
+              data-active={m === selM ? 'true' : 'false'}
+              onClick={() => pickMin(m)}
+              className={cn(
+                "w-full text-center text-xs font-mono py-1 leading-tight transition-colors",
+                m === selM
+                  ? "bg-primary text-primary-foreground font-semibold"
+                  : "text-foreground/80 hover:bg-muted/60"
+              )}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

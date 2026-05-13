@@ -1,0 +1,160 @@
+Bitte die Schnellauswahl im Dienstplan vollständig korrigieren.
+
+Aktuelles Problem:
+Die normalen Schnellauswahlen sind teilweise bearbeitbar, aber die geteilten Schnellauswahlen wie:
+
+- 10-14 / 17:30
+- 11:15-14 / 17:30
+- 10-14 / 17:30
+- 11-14 / 17
+
+stimmen nicht immer und müssen ebenfalls bearbeitbar sein.
+
+Zusätzlich soll Kopieren auch für geteilte Einsätze funktionieren.
+
+====================================================
+1. GETEILTE SCHNELLAUSWAHL BEARBEITBAR MACHEN
+====================================================
+
+Im Bereich "Schnellauswahl bearbeiten" müssen auch die geteilten Einsätze bearbeitbar sein.
+
+Jede Schnellauswahl soll diese Struktur haben:
+
+- Label
+- Einsatz 1 Von
+- Einsatz 1 Bis
+- Einsatz 2 Von optional
+- Einsatz 2 Bis optional
+- Farbe optional
+- Reihenfolge
+
+Beispiele:
+
+Label: 10-14 / 17:30-23
+Einsatz 1: 10:00 bis 14:00
+Einsatz 2: 17:30 bis 23:00
+
+Label: 11:15-14 / 17:30-23
+Einsatz 1: 11:15 bis 14:00
+Einsatz 2: 17:30 bis 23:00
+
+====================================================
+2. KEINE FEST CODIERTEN GETEILT-BUTTONS
+====================================================
+
+Die geteilten Buttons dürfen nicht separat hardcoded sein.
+
+Alle Schnellauswahlen, egal ob einfach oder geteilt, sollen aus derselben localStorage-Konfiguration kommen.
+
+Wenn eine Schnellauswahl zwei Einsätze hat:
+- im Bereich "Geteilt" anzeigen
+
+Wenn eine Schnellauswahl nur einen Einsatz hat:
+- im normalen Bereich anzeigen
+
+====================================================
+3. KOPIEREN MUSS ALLES ÜBERNEHMEN
+====================================================
+
+Der Button "Kopieren" im Zeit-Editor soll den kompletten Zellinhalt kopieren:
+
+- Einsatz 1
+- Einsatz 2 falls vorhanden
+- Abwesenheit falls vorhanden
+- Farbe falls vorhanden
+- Auch ins IST falls relevant
+
+Wichtig:
+Wenn eine Zelle zwei Einsätze hat, muss Kopieren beide Einsätze übernehmen.
+
+Beispiel kopiert:
+10:00-14:00
+17:30-23:00
+
+Beim Einfügen in eine andere Zelle:
+beide Einsätze müssen wieder erscheinen.
+
+====================================================
+4. SCHNELLAUSWAHL ANKLICKEN
+====================================================
+
+Wenn ich eine geteilte Schnellauswahl anklicke:
+
+Beispiel:
+10-14 / 17:30-23
+
+Dann muss automatisch gesetzt werden:
+
+1. Einsatz:
+Von 10:00
+Bis 14:00
+
+2. Einsatz:
+Von 17:30
+Bis 23:00
+
+Nicht nur der erste Einsatz.
+
+====================================================
+5. ANZEIGE IN DER ZELLE
+====================================================
+
+Wenn eine geteilte Schnellauswahl übernommen wird, muss die Tageszelle anzeigen:
+
+10:00-14:00
+17:30-23:00
+
+untereinander.
+
+====================================================
+6. BEARBEITUNGS-DIALOG
+====================================================
+
+Der Dialog "Schnellauswahl bearbeiten" soll alle vorhandenen Einträge zeigen:
+
+- einfache Einsätze
+- geteilte Einsätze
+
+Pro Eintrag:
+- Label-Feld
+- Einsatz 1 Von/Bis
+- Einsatz 2 Von/Bis optional
+- löschen
+- speichern
+
+Neue Schnellauswahl hinzufügen:
+- standardmässig mit leerem Einsatz 1
+- optional Einsatz 2 aktivierbar
+
+====================================================
+7. LOCALSTORAGE
+====================================================
+
+Die bearbeiteten Schnellauswahlen sollen in localStorage gespeichert werden.
+
+Nach Reload müssen sie weiterhin vorhanden sein.
+
+Bitte bestehende alte localStorage-Daten migrieren, falls nötig.
+
+====================================================
+8. WICHTIG
+====================================================
+
+Keine Kostenlogik ändern.
+Keine Soll/Ist-Berechnung ändern.
+Keine Speicherlogik ändern.
+Keine Supabase-Änderung.
+
+Nur:
+- geteilte Schnellauswahl bearbeitbar machen
+- Kopieren/Einfügen für zwei Einsätze korrekt machen
+- Anzeige in Tageszelle korrekt lassen
+
+Danach:
+- TypeScript prüfen
+- testen:
+  1. geteilte Schnellauswahl bearbeiten
+  2. geteilte Schnellauswahl anwenden
+  3. Zelle kopieren
+  4. in andere Zelle einfügen
+  5. prüfen, ob beide Einsätze erhalten bleiben
