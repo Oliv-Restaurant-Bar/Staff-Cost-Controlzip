@@ -1,0 +1,160 @@
+Bitte den Dienstplan-Zeiteditor nochmals vereinfachen.
+
+Ziel:
+Keine Kategorien wie Frühschicht oder Spätschicht im Popover. Es soll nur um den konkreten Tag und die Einsatzzeit gehen.
+
+====================================================
+1. TITEL VEREINFACHEN
+====================================================
+
+Im Popover nicht mehr anzeigen:
+- Frühschicht
+- Spätschicht
+- Kategorie
+
+Stattdessen anzeigen:
+"Einsatzzeit erfassen"
+
+Optional darunter:
+Datum / Mitarbeitername falls verfügbar.
+
+====================================================
+2. ZEITFELDER
+====================================================
+
+Standardmässig sollen zwei mögliche Schichtzeilen sichtbar sein:
+
+1. Einsatz
+- Von
+- Bis
+
+2. Einsatz
+- Von
+- Bis
+
+Die zweite Zeile darf leer bleiben.
+
+Kein Button "+ zweite Schicht" nötig, wenn zwei Zeilen immer sichtbar sind.
+
+====================================================
+3. UHRSYMBOL
+====================================================
+
+Wenn man auf das Uhrsymbol neben einem Zeitfeld klickt:
+
+- sofort Zeitpicker öffnen
+- Stunden auswählen
+- Minuten auswählen
+
+Minuten-Auswahl darf nur zeigen:
+00
+15
+30
+45
+
+Keine anderen Minuten.
+
+====================================================
+4. MANUELLE EINGABE
+====================================================
+
+Man soll weiterhin direkt in die Felder schreiben können:
+
+Beispiele:
+10
+10:00
+17:30
+
+Beim Übernehmen normalisieren:
+10 → 10:00
+17:30 bleibt 17:30
+
+====================================================
+5. ÜBERNEHMEN
+====================================================
+
+Beim Klick auf "Übernehmen":
+
+Wenn nur 1. Einsatz gefüllt:
+- eine Schicht speichern
+
+Wenn 1. und 2. Einsatz gefüllt:
+- beide Schichten speichern
+
+Wenn zweite Zeile leer:
+- ignorieren
+
+Validierung:
+- Von/Bis müssen paarweise gefüllt sein
+- Nachtschichten über Mitternacht erlauben
+- zwei Einsätze dürfen sich nicht überschneiden
+- bei Fehler verständliche Meldung anzeigen
+
+====================================================
+6. ANZEIGE IM DIENSTPLAN
+====================================================
+
+Wenn zwei Einsätze vorhanden sind, sollen sie in der Zelle untereinander angezeigt werden:
+
+10:00–14:00
+17:30–23:00
+
+Nicht als eine zusammengequetschte Zeile.
+
+Zelle soll optisch höher werden dürfen, wenn zwei Schichten vorhanden sind.
+
+====================================================
+7. SCHNELLAUSWAHL
+====================================================
+
+Die Schnellauswahl oben darf bleiben.
+
+Aber sie soll nur Zeiten setzen, nicht Kategorien.
+
+Beispiel:
+Button 17–23 setzt:
+1. Einsatz 17:00 bis 23:00
+
+Button 10–14 / 17:30–23 setzt:
+1. Einsatz 10:00 bis 14:00
+2. Einsatz 17:30 bis 23:00
+
+====================================================
+8. SCHNELLAUSWAHL BEARBEITEN
+====================================================
+
+"Schnellauswahl bearbeiten" soll bleiben.
+
+Dort soll man eigene Einsatzzeiten ändern können:
+- Label
+- Einsatz 1 Von/Bis
+- Einsatz 2 Von/Bis optional
+- Reihenfolge
+
+Keine Kategorien Früh/Spät nötig.
+
+====================================================
+9. AUCH INS IST ÜBERNEHMEN
+====================================================
+
+Die Option "Auch ins IST übernehmen" muss weiterhin funktionieren.
+
+Wenn zwei Einsätze vorhanden sind:
+- beide Einsätze auch ins IST übernehmen
+
+====================================================
+10. WICHTIG
+====================================================
+
+Keine Kostenlogik ändern.
+Keine Soll/Ist-Berechnung ändern.
+Keine Speicherlogik ändern.
+Keine Supabase-Änderung.
+
+Nur:
+- Editor einfacher machen
+- Uhrzeit-Auswahl auf 00/15/30/45
+- zwei Einsatzzeilen sichtbar machen
+- mehrere Einsätze sauber untereinander anzeigen
+
+Danach TypeScript prüfen und Dienstplan testen.

@@ -1144,6 +1144,7 @@ export const ScheduleGrid = ({
                                   absenceType={daySchedule.frühAbsence || null}
                                   onChange={(val, absence) => handleCellChange(employee.id, dateStr, 'früh', val, absence)}
                                   slotType="früh"
+                                  secondaryValue={daySchedule.spät || null}
                                   isWeekend={isWeekendDay}
                                   isDayOff={isConfiguredDayOff}
                                   isRequestedFree={cellIsRequestedFree}
@@ -1219,6 +1220,7 @@ export const ScheduleGrid = ({
                                   absenceType={daySchedule.spätAbsence || null}
                                   onChange={(val, absence) => handleCellChange(employee.id, dateStr, 'spät', val, absence)}
                                   slotType="spät"
+                                  secondaryValue={daySchedule.früh || null}
                                   isWeekend={isWeekendDay}
                                   isDayOff={isConfiguredDayOff}
                                   isRequestedFree={cellIsRequestedFree}
