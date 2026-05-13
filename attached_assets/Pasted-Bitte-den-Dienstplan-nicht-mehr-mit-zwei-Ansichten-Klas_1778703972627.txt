@@ -1,0 +1,192 @@
+Bitte den Dienstplan nicht mehr mit zwei Ansichten Klassisch/Modern führen.
+
+Ich möchte nur noch EINE finale Ansicht.
+
+Ziel:
+Die finale Ansicht soll das Beste aus Klassisch und Modern kombinieren.
+
+Wichtig:
+Vor der Änderung bitte nochmals einen Backup-Checkpoint erstellen:
+"Backup before merging classic and modern schedule view"
+
+Die bisherige Klassisch/Modern-Sicherung darf im Git-Verlauf erhalten bleiben, aber in der App soll der Toggle weg.
+
+====================================================
+1. TOGGLE ENTFERNEN
+====================================================
+
+Bitte den Toggle:
+Klassisch | Modern
+
+aus der App entfernen.
+
+Es soll nur noch eine Dienstplanansicht geben.
+
+====================================================
+2. FINALE ANSICHT = MIX AUS KLASSISCH UND MODERN
+====================================================
+
+Bitte eine finale Ansicht bauen mit:
+
+Aus Modern übernehmen:
+- eine Tageszelle pro Mitarbeiter und Tag
+- keine Früh/Spät-Spalten sichtbar
+- mehrere Einsätze untereinander
+- kompaktere Zeilenhöhe
+- moderne Zeitbalken/Chips
+- ruhigere Darstellung
+- weniger Tabellen-Look
+- Mitarbeiter-Spalte sticky
+- Tageskopf ruhiger
+
+Aus Klassisch übernehmen:
+- klare Wochenstruktur
+- gute Übersicht
+- bewährte Bedienlogik
+- schnelle Erkennung von Frei/Ferien/Krank
+- bestehender Zeiteditor
+- bestehende Filter / Kosten / Soll-Ist / Speichern
+- vertraute Navigation und Toolbar
+
+====================================================
+3. DATENLOGIK BEIBEHALTEN
+====================================================
+
+Keine Änderung an:
+- Kostenlogik
+- Soll/Ist-Berechnung
+- Budgetlogik
+- Speicherlogik
+- Supabase-Struktur
+- Save-Funktion
+- Mirus Import
+- Personalfilter
+
+Nur UI zusammenführen.
+
+====================================================
+4. GRID FINALISIEREN
+====================================================
+
+Die finale Wochenansicht soll so aussehen:
+
+- Links Mitarbeiter
+- Pro Tag eine Spalte
+- Rechts Wochenstunden / Saldo
+- In jeder Tageszelle:
+  - Einsatz 1
+  - Einsatz 2 optional
+  - oder Frei/Ferien/Krank
+
+Beispiel:
+10:00–14:00
+17:30–23:00
+
+====================================================
+5. ZEILENHÖHE
+====================================================
+
+Bitte kompakt halten wie Modern.
+
+Ziel:
+Auf Laptop möglichst viele Mitarbeiter sichtbar.
+
+Aber:
+- zwei Einsätze müssen sauber lesbar sein
+- nichts überlappen
+- keine abgeschnittenen Zeiten
+
+====================================================
+6. ZEITBALKEN / CHIPS
+====================================================
+
+Die Zeitbalken aus Modern gefallen mir.
+
+Bitte diese behalten und verfeinern:
+- ruhig
+- kompakt
+- sauber untereinander
+- schöne Rundungen
+- klare Schrift
+- dezente Farben
+
+====================================================
+7. ZEITEDITOR
+====================================================
+
+Den bestehenden Zeiteditor weiter verwenden.
+
+Aber:
+- keine Begriffe Früh/Spät anzeigen
+- Titel "Einsatzzeit erfassen"
+- 6 einfache Schnellwahlen
+- 4 geteilte Schnellwahlen
+- Schnellwahl bearbeitbar
+- zwei Einsatzzeilen
+- Uhrpicker wie alte kompakte Ansicht
+- Minuten nur 00/15/30/45
+
+====================================================
+8. BESTEHENDE FRÜH/SPÄT-DATEN
+====================================================
+
+Wichtig:
+Bestehende Früh/Spät-Daten müssen weiterhin korrekt gemappt werden.
+
+Wenn alte Daten:
+Früh = 10:00–14:00
+Spät = 17:30–23:00
+
+Dann finale Tageszelle:
+10:00–14:00
+17:30–23:00
+
+Keine Uhrzeit darf verloren gehen.
+
+====================================================
+9. MOBILE UND VERÖFFENTLICHUNG
+====================================================
+
+Die finale Ansicht soll auf Laptop/Desktop gut funktionieren.
+
+Für Mitarbeiter-Veröffentlichung:
+- /staff-schedule/:token separat mobil optimieren
+- persönliche Ansicht als Tageskarten
+- keine Mock-Namen
+- keine Kosten
+- keine internen Infos
+
+====================================================
+10. AUFRÄUMEN
+====================================================
+
+Bitte nach dem Zusammenführen:
+- ungenutzte Modern/Klassisch Toggle-Logik entfernen
+- unnötige localStorage schedule_view_mode Logik entfernen
+- nur wenn sicher nicht mehr gebraucht
+- Komponenten sauber benennen
+
+Aber:
+Nicht riskant löschen, falls Komponenten noch referenziert werden.
+
+====================================================
+11. TEST
+====================================================
+
+Nach Umsetzung:
+- TypeScript prüfen
+- Dienstplan öffnen
+- eine vorhandene Früh+Spät Schicht prüfen
+- nur Früh prüfen
+- nur Spät prüfen
+- Frei/Ferien/Krank prüfen
+- neue geteilte Schicht erfassen
+- Speichern testen
+- Kostenbox prüfen
+- Veröffentlichung nicht beschädigen
+
+Bitte bestätigen:
+- eine finale Ansicht aktiv
+- Toggle entfernt
+- keine Datenlogik geändert
+- alte Zeiten bleiben erhalten

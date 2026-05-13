@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useScheduleViewMode } from '@/hooks/useScheduleViewMode';
 import { useTenant } from '@/contexts/TenantContext';
 import { defaultEmployeesBeaulieu } from '@/data/defaultEmployeesBeaulieu';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -32,7 +31,7 @@ import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
 import { savePublishedSchedule, PublishType, PublishDept, PublicEmployee } from '@/lib/schedule-publish-store';
-import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
+import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ModernScheduleGrid } from '@/components/schedule-planner/ModernScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
 import { MobileDayView } from '@/components/schedule-planner/MobileDayView';
@@ -261,9 +260,6 @@ const SchedulePlanner = () => {
     nameMatches: NameMatchInfo[];
   } | null>(null);
   
-  // Ansicht-Modus: Klassisch / Modern
-  const { viewMode, setViewMode } = useScheduleViewMode();
-
   // New state for Plan/Ist toggle
   const [scheduleMode, setScheduleMode] = useState<'plan' | 'ist' | 'compare'>('plan');
   const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string; absenceType?: 'FE' | 'K' | 'F' }>>({});
@@ -2717,25 +2713,6 @@ const SchedulePlanner = () => {
                 <span>{scheduleSource === 'loading' ? '⏳' : scheduleSource === 'supabase' ? '☁' : '💾'}</span>
                 <span>{loadedEntryCount}</span>
               </span>
-              {/* ── Ansicht-Toggle: Klassisch / Modern ─────────────── */}
-              <div className="hidden sm:flex items-center gap-0.5 bg-muted rounded-lg p-0.5 border border-border/40">
-                {(['classic', 'modern'] as const).map(m => (
-                  <button
-                    key={m}
-                    onClick={() => setViewMode(m)}
-                    className={cn(
-                      "h-6 px-2 text-[11px] font-medium rounded-md transition-colors",
-                      viewMode === m
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                    title={m === 'classic' ? 'Klassische Ansicht (aktuell)' : 'Moderne Ansicht (in Entwicklung)'}
-                  >
-                    {m === 'classic' ? 'Klassisch' : 'Modern'}
-                  </button>
-                ))}
-              </div>
-
               <Button onClick={handleSave} disabled={isSaving} size="sm" className="gap-1.5 h-8">
                 <Save className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">{isSaving ? 'Speichert…' : 'Speichern'}</span>
@@ -3758,9 +3735,7 @@ const SchedulePlanner = () => {
                         department={activeDepartment as 'service' | 'küche'}
                       />
                     )}
-                    {viewMode === 'modern' ? (
-                      /* ── MODERN VIEW ── visual redesign, identical data logic ── */
-                      <ModernScheduleGrid
+                    <ModernScheduleGrid
                         employees={displayEmployees}
                         days={displayDays}
                         scheduleData={scheduleData}
@@ -3780,44 +3755,6 @@ const SchedulePlanner = () => {
                         externalActiveTool={paintTool}
                         highlightedEmployeeId={highlightedEmpId}
                       />
-                    ) : (
-                      /* ── CLASSIC VIEW — untouched ────────────────────────── */
-                      <ScheduleGrid
-                        employees={displayEmployees}
-                        days={displayDays}
-                        scheduleData={scheduleData}
-                        onSlotChange={handleSlotChange}
-                        onRemoveEmployee={handleRemoveEmployee}
-                        onConfigureDaysOff={handleConfigureDaysOff}
-                        onOpen8HoursDialog={handleOpen8HoursDialog}
-                        getEmployeeHours={calculateEmployeeHours}
-                        getTargetHours={getMonthlyTargetHours}
-                        getWeeklyHours={calculateWeeklyHours}
-                        getWeeklyTargetHours={getWeeklyTargetHours}
-                        onDayClick={handleDayClick}
-                        showFooter={showFooter}
-                        showCosts={effectiveShowCosts}
-                        dailyBudgets={dailyBudgets}
-                        laborCostThreshold={gridLaborCostThreshold}
-                        scheduleMode={scheduleMode}
-                        externalActiveTool={paintTool}
-                        onExternalToolChange={setPaintTool}
-                        highlightedEmployeeId={highlightedEmpId}
-                        patternWarnings={patternWarnings}
-                        copiedShift={copiedShift}
-                        onCopyShift={handleCopyShift}
-                        onMoveEmployee={
-                          sortModeActive && activeDepartment !== 'all'
-                            ? (id, dir) => handleMoveEmployee(id, activeDepartment as 'service' | 'küche', dir)
-                            : undefined
-                        }
-                        cellColors={cellColors}
-                        onCellColorChange={handleCellColorChange}
-                        showDepartmentBadge={activeDepartment === 'all'}
-                        onCopyToIst={handleCopyPlanToIst}
-                        onEmployeeClick={setEmployeeDetailEmp}
-                      />
-                    )}
                 </>
               ) : (
                 // Ist-Dienstplan (actual hours grid)
