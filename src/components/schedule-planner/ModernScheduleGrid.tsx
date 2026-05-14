@@ -229,7 +229,7 @@ export function ModernScheduleGrid({
 
                   {/* Weekday label */}
                   <span className={cn(
-                    "text-[8px] font-bold uppercase tracking-widest leading-none",
+                    "text-[9px] font-bold uppercase tracking-widest leading-none",
                     isToday  && "text-blue-500 dark:text-blue-400",
                     !isToday && isWknd && "text-amber-500 dark:text-amber-400",
                     !isToday && !isWknd && "text-muted-foreground/50",
@@ -248,13 +248,13 @@ export function ModernScheduleGrid({
                       {format(day, 'd')}
                     </span>
                     {isToday && (
-                      <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-blue-500" />
+                      <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-5 h-0.5 rounded-full bg-blue-500/70" />
                     )}
                   </div>
 
                   {/* Month abbrev */}
                   <span className={cn(
-                    "text-[8px] mt-1 leading-none",
+                    "text-[8px] mt-1.5 leading-none",
                     isToday  && "text-blue-400/70 dark:text-blue-500/60",
                     !isToday && isWknd && "text-amber-400/70 dark:text-amber-500/60",
                     !isToday && !isWknd && "text-muted-foreground/35",
@@ -334,7 +334,7 @@ export function ModernScheduleGrid({
                     <div className="flex-1 min-w-0">
                       <div
                         className={cn(
-                          "font-semibold text-[12px] text-foreground/90 truncate leading-snug",
+                          "font-semibold text-[13px] text-foreground/90 truncate leading-snug",
                           onEmployeeClick && "cursor-pointer hover:text-primary transition-colors",
                         )}
                         title={onEmployeeClick ? 'Details anzeigen' : undefined}
@@ -422,11 +422,11 @@ export function ModernScheduleGrid({
                     <td
                       key={dateStr}
                       className={cn(
-                        "px-0.5 py-0.5 border-b border-border/20 align-middle",
+                        "px-1 py-0.5 border-b border-border/20 align-middle transition-colors",
                         idx < days.length - 1 && "border-r border-border/10",
                         // Column tints (applied only when cell has no special state)
                         !isDayOff && !isAfterExit && isToday
-                          && "bg-blue-50/30 dark:bg-blue-950/10",
+                          && "bg-blue-50/40 dark:bg-blue-950/15",
                         !isDayOff && !isAfterExit && !isToday && isSun
                           && "bg-amber-50/40 dark:bg-amber-900/10",
                         !isDayOff && !isAfterExit && !isToday && !isSun && isWknd

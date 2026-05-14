@@ -488,15 +488,17 @@ function TimeRow({
   onPickerClose: () => void;
 }) {
   return (
-    <div className="space-y-1">
-      <div className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-widest">{label}</div>
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <div className="w-1 h-3 rounded-full bg-primary/30 shrink-0" />
+        <span className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-widest">{label}</span>
+      </div>
       <div className="flex items-start gap-1.5">
         {/* Von */}
         <div className="flex-1">
-          <div className="text-[9px] text-muted-foreground mb-0.5">Von</div>
           <div className="flex items-center gap-1">
             <Input value={startVal} onChange={e => onStartChange(e.target.value)}
-              placeholder="10:00" className="h-7 text-xs font-mono" />
+              placeholder="Von 10:00" className="h-7 text-xs font-mono" />
             <button type="button"
               onClick={() => onPickerOpen(pickerTarget === startTarget ? null : startTarget)}
               className={cn(
@@ -513,13 +515,12 @@ function TimeRow({
               onConfirm={onPickerConfirm} onClose={onPickerClose} />
           )}
         </div>
-        <span className="text-muted-foreground text-sm mt-5">–</span>
+        <span className="text-muted-foreground/50 text-sm mt-1.5">–</span>
         {/* Bis */}
         <div className="flex-1">
-          <div className="text-[9px] text-muted-foreground mb-0.5">Bis</div>
           <div className="flex items-center gap-1">
             <Input value={endVal} onChange={e => onEndChange(e.target.value)}
-              placeholder="23:00" className="h-7 text-xs font-mono" />
+              placeholder="Bis 23:00" className="h-7 text-xs font-mono" />
             <button type="button"
               onClick={() => onPickerOpen(pickerTarget === endTarget ? null : endTarget)}
               className={cn(
@@ -916,11 +917,14 @@ export const TimeInputCell = ({
             {(!isBlocked || blockedOverride) && (
               <>
                 {/* ── Header ── */}
-                <div className="flex items-center justify-between -mb-0.5">
-                  <span className="text-[13px] font-semibold text-foreground">Einsatzzeit erfassen</span>
+                <div className="flex items-center justify-between pb-1.5 border-b border-border/40">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="h-3.5 w-3.5 text-primary/50" />
+                    <span className="text-[12px] font-semibold text-foreground/80 tracking-tight">Einsatz planen</span>
+                  </div>
                   {(value?.start || absenceType) && (
                     <button onClick={handleClear}
-                      className="text-[10px] text-muted-foreground hover:text-destructive flex items-center gap-0.5 transition-colors">
+                      className="text-[10px] text-muted-foreground hover:text-destructive flex items-center gap-0.5 transition-colors rounded px-1.5 py-0.5 hover:bg-destructive/8">
                       <X className="h-3 w-3" /> Löschen
                     </button>
                   )}
@@ -929,16 +933,16 @@ export const TimeInputCell = ({
                 {/* ════ SCHNELLWAHL — max 6 simple ════════════════════ */}
                 {simplePresets.length > 0 && (
                   <div className="space-y-1.5">
-                    <div className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-widest">Schnellwahl</div>
-                    <div className="grid grid-cols-2 gap-1.5">
+                    <div className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-widest">Schnellwahl</div>
+                    <div className="grid grid-cols-3 gap-1">
                       {simplePresets.slice(0, 6).map(p => (
                         <button key={p.id}
                           onClick={() => handlePresetSelect(p)}
                           title={`${p.start}–${p.end}`}
                           className={cn(
-                            "px-2 py-2 text-[11px] rounded-lg border transition-all font-medium text-center leading-tight",
-                            "bg-slate-50 dark:bg-slate-800/60 border-border/50",
-                            "text-foreground/80 hover:bg-primary/10 hover:border-primary/30 hover:text-primary active:scale-95"
+                            "px-1.5 py-2 text-[11px] rounded-lg border transition-all font-semibold text-center leading-tight tabular-nums",
+                            "bg-slate-50 dark:bg-slate-800/60 border-border/40",
+                            "text-foreground/75 hover:bg-primary/10 hover:border-primary/30 hover:text-primary active:scale-95"
                           )}>
                           {p.label}
                         </button>
@@ -950,18 +954,22 @@ export const TimeInputCell = ({
                 {/* ════ GETEILT — max 4 split ══════════════════════════ */}
                 {splitPresets.length > 0 && (
                   <div className="space-y-1.5">
-                    <div className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-widest">Geteilte Einsätze</div>
+                    <div className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-widest">Geteilt</div>
                     <div className="grid grid-cols-1 gap-1">
                       {splitPresets.slice(0, 4).map(p => (
                         <button key={p.id}
                           onClick={() => handlePresetSelect(p)}
                           title={`1. Einsatz ${p.start}–${p.end} · 2. Einsatz ${p.start2}–${p.end2}`}
                           className={cn(
-                            "px-2 py-1.5 text-[11px] rounded-lg border transition-all font-medium text-center leading-tight",
-                            "bg-indigo-50/70 dark:bg-indigo-900/20 border-indigo-200/60 dark:border-indigo-700/40",
-                            "text-indigo-800 dark:text-indigo-200 hover:bg-indigo-100/70 dark:hover:bg-indigo-800/30 hover:border-indigo-300 active:scale-95"
+                            "px-2 py-1.5 text-[11px] rounded-lg border transition-all font-semibold text-left leading-tight tabular-nums",
+                            "bg-indigo-50/60 dark:bg-indigo-900/20 border-indigo-200/50 dark:border-indigo-700/40",
+                            "text-indigo-800 dark:text-indigo-200 hover:bg-indigo-100/80 dark:hover:bg-indigo-800/30 hover:border-indigo-300 active:scale-95"
                           )}>
-                          {formatShort(p.start)}–{formatShort(p.end)} / {formatShort(p.start2!)}–{formatShort(p.end2!)}
+                          <span className="text-indigo-600/80 dark:text-indigo-400/70 text-[10px] font-medium mr-1.5">①</span>
+                          {formatShort(p.start)}–{formatShort(p.end)}
+                          <span className="mx-1.5 text-indigo-400/60">·</span>
+                          <span className="text-indigo-600/80 dark:text-indigo-400/70 text-[10px] font-medium mr-1.5">②</span>
+                          {formatShort(p.start2!)}–{formatShort(p.end2!)}
                         </button>
                       ))}
                     </div>
@@ -1037,18 +1045,18 @@ export const TimeInputCell = ({
                         if (!cfg) return null;
                         const abbrev = cfg.abbrev;
                         const semanticCls = abbrev === 'F' || abbrev === 'Frei'
-                          ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-800/50'
+                          ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-800/50 shadow-sm'
                           : abbrev === 'U' || abbrev === 'Urlaub' || abbrev === 'Ferien'
-                          ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-800/50'
+                          ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-800/50 shadow-sm'
                           : abbrev === 'K' || abbrev === 'Krank'
-                          ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-800/50'
+                          ? 'bg-red-50 dark:bg-red-900/30 border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-800/50 shadow-sm'
                           : abbrev === 'UB' || abbrev === 'Unbezahlt'
-                          ? 'bg-slate-100 dark:bg-slate-800/60 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700/60'
-                          : cn(cfg.color, 'hover:opacity-80');
+                          ? 'bg-slate-100 dark:bg-slate-800/60 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700/60 shadow-sm'
+                          : cn(cfg.color, 'hover:opacity-80 shadow-sm');
                         return (
                           <button key={shift}
                             onClick={() => handleAbsenceSelect(cfg.abbrev)}
-                            className={cn("px-3 py-1 text-xs font-medium rounded-lg border transition-all active:scale-95", semanticCls)}>
+                            className={cn("px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all active:scale-95", semanticCls)}>
                             {cfg.abbrev}
                           </button>
                         );
