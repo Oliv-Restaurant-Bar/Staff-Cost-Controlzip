@@ -1,0 +1,224 @@
+Wir starten jetzt mit PHASE 2 — Mitarbeiterportal & Veröffentlichung.
+
+Ziel:
+Der Dienstplan soll für Mitarbeiter auf dem Handy wie eine moderne kleine App wirken.
+
+Wichtig:
+Keine Kostenlogik ändern.
+Keine Soll/Ist-Berechnung ändern.
+Keine Supabase-Migration.
+Keine Lohn-/Kostendaten öffentlich anzeigen.
+
+Fokus:
+Mobile UX, Veröffentlichung, persönliche Links, Änderungen sichtbar machen.
+
+====================================================
+1. PERSÖNLICHES MITARBEITERPORTAL FINALISIEREN
+====================================================
+
+Die Route:
+/staff-schedule/:token
+
+soll sich wie ein echtes Mitarbeiterportal anfühlen.
+
+Wenn persönlicher Link:
+- nur eigener Dienstplan sichtbar
+- keine anderen Mitarbeiter
+- keine Kosten
+- keine internen Warnungen
+- keine Admin-Daten
+
+====================================================
+2. MOBILE-FIRST LISTENANSICHT
+====================================================
+
+Auf Mobile soll STANDARDMÄSSIG die Listenansicht aktiv sein.
+
+Keine horizontale Tabelle.
+
+Darstellung:
+
+Montag, 18. Mai
+10:00–14:00
+17:30–23:00
+
+Dienstag, 19. Mai
+Frei
+
+Mittwoch, 20. Mai
+Ferien
+
+Jeder Tag als eigene Karte:
+- Wochentag
+- Datum
+- Einsätze
+- Abwesenheiten
+- optional Hinweis
+
+Heute:
+deutlich markieren.
+
+Wochenende:
+dezent markieren.
+
+====================================================
+3. MONATSANSICHT ERGÄNZEN
+====================================================
+
+Im persönlichen Portal Umschalter:
+
+- Liste
+- Kalender
+
+Kalender:
+- echter Monatskalender
+- Tage als Grid
+- Einsätze im Tag sichtbar
+- Frei/Ferien/Krank sichtbar
+- heutiger Tag markiert
+
+Auf Mobile:
+wenn Kalender zu eng wird:
+automatisch kompakter darstellen.
+
+====================================================
+4. ÄNDERUNGEN SICHTBAR MACHEN
+====================================================
+
+Wenn ein veröffentlichter Plan geändert wurde:
+
+Neue/geänderte Einsätze markieren:
+- gelber Hinweis
+- "Geändert"
+- kleiner Änderungsbadge
+
+Optional:
+"Zuletzt aktualisiert: heute 14:32"
+
+====================================================
+5. GELESEN / BESTÄTIGT VORBEREITEN
+====================================================
+
+Im persönlichen Portal vorbereiten:
+
+Buttons:
+- Gesehen
+- Bestätigt
+
+Noch keine echte DB nötig.
+Vorerst local state/mock state reicht.
+
+UI vorbereiten:
+- Plan gesehen
+- Plan bestätigt
+
+====================================================
+6. WHATSAPP FLOW VERBESSERN
+====================================================
+
+Beim Teilen:
+
+Persönlicher Link:
+WhatsApp Text:
+
+Hallo {Name},
+hier ist dein Dienstplan für {Zeitraum}:
+{Link}
+
+Wenn geändert:
+Hallo {Name},
+dein Dienstplan wurde aktualisiert:
+{Link}
+
+Abteilungsplan:
+Hallo zusammen,
+hier ist der Dienstplan für {Zeitraum}:
+{Link}
+
+====================================================
+7. APP-GEFÜHL
+====================================================
+
+Die Mitarbeiteransicht soll sich wie eine kleine App anfühlen:
+
+- ruhige Karten
+- grosse Touchflächen
+- kompakte Navigation
+- sticky Header
+- sanfte Übergänge
+- keine Tabellenoptik
+- kein Admin-Gefühl
+
+====================================================
+8. QR-CODE VORBEREITEN
+====================================================
+
+Im Teilen-Dialog:
+Button:
+"QR-Code anzeigen"
+
+QR-Code öffnet den jeweiligen Link:
+- persönlicher Plan
+- Abteilungsplan
+
+Noch kein Druck nötig.
+Nur QR-Vorschau.
+
+====================================================
+9. HOMESCREEN-HINWEIS
+====================================================
+
+Im Mitarbeiterportal kleiner Hinweis:
+
+"Zum Home-Bildschirm hinzufügen"
+
+Nur UI-Hinweis vorbereiten.
+Keine echte PWA nötig.
+
+====================================================
+10. DATENSCHUTZ
+====================================================
+
+Prüfen:
+Öffentliche Links dürfen niemals zeigen:
+- Lohn
+- Kosten
+- Stundenlohn
+- interne Warnungen
+- andere Mitarbeiter bei persönlichem Link
+
+====================================================
+11. MOBILE TESTS
+====================================================
+
+Bitte testen:
+- iPhone Breite ca. 390px
+- Android 360px
+- Safari
+- Chrome
+- zwei Einsätze pro Tag
+- Ferien/Frei/Krank
+- langer Mitarbeitername
+- Monatsansicht
+- Listenansicht
+
+====================================================
+12. WICHTIG
+====================================================
+
+Keine Planungslogik ändern.
+Keine Speicherlogik ändern.
+Keine Kostenlogik ändern.
+
+Nur:
+- Mitarbeiterportal
+- Veröffentlichung
+- Mobile UX
+- Monatsansicht
+- Änderungsstatus
+- WhatsApp/QR Vorbereitung
+
+Danach:
+- TypeScript prüfen
+- Mobile Vorschau testen
+- kurze Zusammenfassung geben

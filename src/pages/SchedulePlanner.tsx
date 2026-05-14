@@ -25,7 +25,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle, ClipboardPaste, Wand2 } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle, ClipboardPaste, Wand2, QrCode } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -304,6 +304,7 @@ const SchedulePlanner = () => {
   const [publishDept, setPublishDept]                         = useState<PublishDept>('all');
   const [publishEmpId, setPublishEmpId]                       = useState<string | null>(null);
   const [mobilePreviewUrl, setMobilePreviewUrl]               = useState<string | null>(null);
+  const [showQr, setShowQr]                                   = useState(false);
 
   // ── Sortierungsmodus & Zellfarben ────────────────────────────────────────
   const [sortModeActive, setSortModeActive]                   = useState(false);
@@ -5083,8 +5084,12 @@ const SchedulePlanner = () => {
                 ? format(_days[0], 'MMMM yyyy', { locale: de })
                 : `KW ${_kw}`;
               const waText = publishType === 'personal' && empName
-                ? `Hallo ${empName}, hier ist dein Dienstplan für ${_periodLabel}: ${url}`
-                : `Hallo zusammen, hier ist der Dienstplan für ${_periodLabel}: ${url}`;
+                ? publishStatus === 'changed'
+                  ? `Hallo ${empName},\ndein Dienstplan wurde aktualisiert:\n${url}`
+                  : `Hallo ${empName},\nhier ist dein Dienstplan für ${_periodLabel}:\n${url}`
+                : publishStatus === 'changed'
+                  ? `Hallo zusammen,\nder Dienstplan für ${_periodLabel} wurde aktualisiert:\n${url}`
+                  : `Hallo zusammen,\nhier ist der Dienstplan für ${_periodLabel}:\n${url}`;
               return (
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Freigabe-Link</p>
@@ -5134,11 +5139,35 @@ const SchedulePlanner = () => {
                       <Smartphone className="h-3 w-3" />
                       Handy
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1.5 text-xs"
+                      onClick={() => setShowQr(v => !v)}
+                    >
+                      <QrCode className="h-3 w-3" />
+                      QR-Code
+                    </Button>
                   </div>
+                  {/* QR Code preview */}
+                  {showQr && (
+                    <div className="flex flex-col items-center gap-2 rounded-lg border border-border bg-muted/30 p-3">
+                      <img
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(url)}`}
+                        alt="QR-Code"
+                        width={160}
+                        height={160}
+                        className="rounded border border-border/50 shadow-sm bg-white"
+                      />
+                      <p className="text-[11px] text-muted-foreground text-center">
+                        {publishType === 'personal' && empName ? empName : 'Abteilungsplan'} · {_periodLabel}
+                      </p>
+                    </div>
+                  )}
                   {/* WhatsApp text preview */}
                   <div className="rounded-md bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 px-3 py-2 text-xs text-green-800 dark:text-green-300">
                     <p className="font-semibold mb-0.5">WhatsApp-Text:</p>
-                    <p className="leading-snug">{waText}</p>
+                    <p className="leading-snug whitespace-pre-line">{waText}</p>
                   </div>
                 </div>
               );
