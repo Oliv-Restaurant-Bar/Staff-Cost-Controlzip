@@ -25,14 +25,14 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle, ClipboardPaste, Wand2 } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
 import { savePublishedSchedule, PublishType, PublishDept, PublicEmployee } from '@/lib/schedule-publish-store';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
-import { ModernScheduleGrid } from '@/components/schedule-planner/ModernScheduleGrid';
+import { ModernScheduleGrid, CopiedCell } from '@/components/schedule-planner/ModernScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
 import { MobileDayView } from '@/components/schedule-planner/MobileDayView';
 import { PlanVsIstGrid } from '@/components/schedule-planner/PlanVsIstGrid';
@@ -77,6 +77,7 @@ import { detectPatternWarnings, PatternWarning } from '@/lib/pattern-warnings';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
+import { useQuickTimes } from '@/hooks/useQuickTimes';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -170,6 +171,7 @@ const SchedulePlanner = () => {
   const { tenantId, tenantKey } = useTenant();
 
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
+  const { presets: quickPresets } = useQuickTimes();
 
   // Auth: user + loading + sessionVersion needed to gate data fetches correctly.
   // sessionVersion increments on every auth event (boot, TOKEN_REFRESHED, SIGNED_IN)
@@ -228,6 +230,20 @@ const SchedulePlanner = () => {
       : `${slot.start}–${slot.end}`;
     toast.success(`Schicht ${label} kopiert — öffne eine Zelle zum Einfügen`);
   };
+
+  // ── Phase 1B: cell clipboard ───────────────────────────────────────────────
+  const [copiedCell, setCopiedCell] = useState<CopiedCell | null>(null);
+  const [copiedWeek, setCopiedWeek] = useState<{
+    empId: string;
+    data: Record<string, { früh: TimeSlot | null; frühAbsence: string | null; spät: TimeSlot | null; spätAbsence: string | null }>;
+  } | null>(null);
+
+  // ── Phase 1B: multi-plan stamp mode ───────────────────────────────────────
+  const [multiPlanMode, setMultiPlanMode] = useState(false);
+  const [multiPlanPreset, setMultiPlanPreset] = useState<{
+    id: string; label: string; start: string; end: string;
+    start2?: string; end2?: string; absenceCode?: string;
+  } | null>(null);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [weeklyReportOpen, setWeeklyReportOpen] = useState(false);
   const [dayDetailDialogOpen, setDayDetailDialogOpen] = useState(false);
@@ -1005,9 +1021,10 @@ const SchedulePlanner = () => {
         return;
       }
 
-      // ESC cancels paint mode
+      // ESC cancels paint mode and multi-plan mode
       if (e.key === 'Escape') {
         setPaintTool(null);
+        if (multiPlanMode) { setMultiPlanMode(false); setMultiPlanPreset(null); }
         return;
       }
       
@@ -1399,6 +1416,99 @@ const SchedulePlanner = () => {
           },
         },
       });
+    }
+  };
+
+  // ── Phase 1B: Cell + Week clipboard handlers ────────────────────────────
+
+  const handleCopyCell = (empId: string, dateStr: string) => {
+    const ds = scheduleData[`${empId}-${dateStr}`] || {};
+    if (!ds.früh && !ds.frühAbsence && !ds.spät && !ds.spätAbsence) { toast('Zelle ist leer'); return; }
+    setCopiedCell({ primary: ds.früh || null, secondary: ds.spät || null, absence: ds.frühAbsence || ds.spätAbsence || null });
+    toast.success('Zelle kopiert');
+  };
+
+  const handlePasteCell = (empId: string, dateStr: string) => {
+    if (!copiedCell) return;
+    const ds = scheduleData[`${empId}-${dateStr}`] || {};
+    const hasExisting = !!(ds.früh || ds.spät || ds.frühAbsence || ds.spätAbsence);
+    const doPaste = () => {
+      if (copiedCell.absence) {
+        handleSlotChange(empId, dateStr, 'früh', null, copiedCell.absence);
+        handleSlotChange(empId, dateStr, 'spät', null, null);
+      } else {
+        handleSlotChange(empId, dateStr, 'früh', copiedCell.primary, null);
+        handleSlotChange(empId, dateStr, 'spät', copiedCell.secondary, null);
+      }
+    };
+    if (hasExisting) {
+      toast('Bestehende Daten überschreiben?', { action: { label: 'Ja', onClick: doPaste } });
+    } else {
+      doPaste();
+    }
+  };
+
+  const handleClearCell = (empId: string, dateStr: string) => {
+    const ds = scheduleData[`${empId}-${dateStr}`] || {};
+    if (!ds.früh && !ds.frühAbsence && !ds.spät && !ds.spätAbsence) return;
+    toast('Zelle leeren?', {
+      action: {
+        label: 'Leeren',
+        onClick: () => {
+          handleSlotChange(empId, dateStr, 'früh', null, null);
+          handleSlotChange(empId, dateStr, 'spät', null, null);
+        },
+      },
+    });
+  };
+
+  const handleCopyWeek = (empId: string) => {
+    const data: Record<string, { früh: TimeSlot | null; frühAbsence: string | null; spät: TimeSlot | null; spätAbsence: string | null }> = {};
+    displayDays.forEach(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const ds = scheduleData[`${empId}-${dateStr}`] || {};
+      data[dateStr] = { früh: ds.früh || null, frühAbsence: ds.frühAbsence || null, spät: ds.spät || null, spätAbsence: ds.spätAbsence || null };
+    });
+    const empName = employees.find(e => e.id === empId)?.name || empId;
+    setCopiedWeek({ empId, data });
+    toast.success(`Woche von ${empName} kopiert`);
+  };
+
+  const handlePasteWeek = (empId: string) => {
+    if (!copiedWeek) return;
+    const hasExisting = displayDays.some(day => {
+      const ds = scheduleData[`${empId}-${format(day, 'yyyy-MM-dd')}`] || {};
+      return !!(ds.früh || ds.spät || ds.frühAbsence || ds.spätAbsence);
+    });
+    const doPaste = () => {
+      displayDays.forEach(day => {
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const src = copiedWeek.data[dateStr];
+        if (!src) return;
+        handleSlotChange(empId, dateStr, 'früh', src.früh, src.frühAbsence);
+        handleSlotChange(empId, dateStr, 'spät', src.spät, src.spätAbsence);
+      });
+      toast.success('Woche eingefügt');
+    };
+    if (hasExisting) {
+      toast('Bestehende Einträge dieser Woche überschreiben?', { action: { label: 'Ja, überschreiben', onClick: doPaste } });
+    } else {
+      doPaste();
+    }
+  };
+
+  const handleMultiPlanCell = (empId: string, dateStr: string) => {
+    if (!multiPlanPreset) return;
+    if (multiPlanPreset.absenceCode) {
+      handleSlotChange(empId, dateStr, 'früh', null, multiPlanPreset.absenceCode);
+      handleSlotChange(empId, dateStr, 'spät', null, null);
+    } else {
+      handleSlotChange(empId, dateStr, 'früh', { start: multiPlanPreset.start, end: multiPlanPreset.end }, null);
+      if (multiPlanPreset.start2 && multiPlanPreset.end2) {
+        handleSlotChange(empId, dateStr, 'spät', { start: multiPlanPreset.start2, end: multiPlanPreset.end2 }, null);
+      } else {
+        handleSlotChange(empId, dateStr, 'spät', null, null);
+      }
     }
   };
 
@@ -2790,6 +2900,10 @@ const SchedulePlanner = () => {
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => { setMultiPlanMode(true); }}>
+                    <Wand2 className="h-4 w-4 mr-2 text-violet-500" />
+                    Mehrfach planen
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setCopyWeekDialogOpen(true)}>
                     <Copy className="h-4 w-4 mr-2" />
                     Woche kopieren
@@ -3736,6 +3850,58 @@ const SchedulePlanner = () => {
                         department={activeDepartment as 'service' | 'küche'}
                       />
                     )}
+                    {/* ── Multi-plan active bar ────────────────────── */}
+                    {multiPlanMode && (
+                      <div className="mb-2 flex items-center gap-2 flex-wrap rounded-lg border-2 border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 px-3 py-1.5">
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Wand2 className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
+                          <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">Mehrfach planen</span>
+                          {multiPlanPreset ? (
+                            <span className="ml-1 px-1.5 py-0.5 rounded text-[11px] bg-violet-600 text-white font-medium">{multiPlanPreset.label}</span>
+                          ) : (
+                            <span className="text-[11px] text-violet-500 italic">— Schicht wählen ↓</span>
+                          )}
+                        </div>
+                        <div className="flex-1 flex flex-wrap gap-1">
+                          {quickPresets.map(p => (
+                            <button
+                              key={p.id}
+                              onClick={() => setMultiPlanPreset({ id: p.id, label: p.label, start: p.start, end: p.end, start2: p.start2, end2: p.end2 })}
+                              className={cn(
+                                "px-2 py-0.5 text-[11px] rounded border font-medium transition-all",
+                                multiPlanPreset?.id === p.id
+                                  ? "bg-violet-600 text-white border-violet-600 shadow-sm"
+                                  : "bg-background border-border text-foreground hover:border-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/30",
+                              )}
+                            >{p.label}</button>
+                          ))}
+                          <div className="w-px h-4 bg-border/60 self-center mx-0.5" />
+                          {([
+                            { id: 'abs-F', label: 'Frei', absenceCode: 'F' },
+                            { id: 'abs-FE', label: 'Ferien', absenceCode: 'FE' },
+                            { id: 'abs-K', label: 'Krank', absenceCode: 'K' },
+                          ] as const).map(a => (
+                            <button
+                              key={a.id}
+                              onClick={() => setMultiPlanPreset({ id: a.id, label: a.label, start: '', end: '', absenceCode: a.absenceCode })}
+                              className={cn(
+                                "px-2 py-0.5 text-[11px] rounded border font-medium transition-all",
+                                multiPlanPreset?.id === a.id
+                                  ? "bg-violet-600 text-white border-violet-600 shadow-sm"
+                                  : "bg-background border-border text-foreground hover:border-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/30",
+                              )}
+                            >{a.label}</button>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => { setMultiPlanMode(false); setMultiPlanPreset(null); }}
+                          className="shrink-0 flex items-center gap-1 px-2.5 py-1 text-xs rounded bg-violet-600 text-white hover:bg-violet-700 transition-colors"
+                        >
+                          <X className="h-3 w-3" />Fertig
+                        </button>
+                      </div>
+                    )}
+
                     <ModernScheduleGrid
                         employees={displayEmployees}
                         days={displayDays}
@@ -3756,6 +3922,16 @@ const SchedulePlanner = () => {
                         onConfigureDaysOff={handleConfigureDaysOff}
                         externalActiveTool={paintTool}
                         highlightedEmployeeId={highlightedEmpId}
+                        copiedCell={copiedCell}
+                        onCopyCell={handleCopyCell}
+                        onPasteCell={handlePasteCell}
+                        onClearCell={handleClearCell}
+                        onCopyWeek={handleCopyWeek}
+                        onPasteWeek={handlePasteWeek}
+                        hasCopiedWeek={!!copiedWeek}
+                        multiPlanMode={multiPlanMode}
+                        multiPlanPreset={multiPlanPreset ?? undefined}
+                        onMultiPlanCell={handleMultiPlanCell}
                       />
                 </>
               ) : (

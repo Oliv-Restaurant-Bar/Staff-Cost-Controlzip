@@ -1,0 +1,143 @@
+Bitte jetzt PHASE 1B der Dienstplanung umsetzen: Schnellplanung und weniger Klicks.
+
+Wichtig:
+Keine Kostenlogik ändern.
+Keine Supabase-Struktur ändern.
+Keine Mirus-Logik ändern.
+Keine bestehenden Datenpfade riskant verändern.
+
+Ziel:
+Dienstpläne sollen deutlich schneller erstellt werden können.
+
+====================================================
+1. KOPIEREN / EINFÜGEN STABILISIEREN
+====================================================
+
+Eine Tageszelle soll komplett kopierbar sein:
+
+- Einsatz 1
+- Einsatz 2
+- Abwesenheit
+- Bemerkung falls vorhanden
+
+Wenn eine Zelle zwei Einsätze hat:
+10:00–14:00
+17:30–23:00
+
+Dann muss beim Einfügen beides übernommen werden.
+
+Aktionen:
+- Zelle kopieren
+- Zelle einfügen
+- Zelle leeren
+
+Optional über kleines Kontextmenü oder Icons in der Zelle.
+
+====================================================
+2. MITARBEITER-WOCHE KOPIEREN
+====================================================
+
+Bei jedem Mitarbeiter rechts oder im Namen-Menü:
+
+Button:
+"Woche kopieren"
+
+Dann:
+- alle 7 Tage dieses Mitarbeiters kopieren
+- bei anderem Mitarbeiter einfügen möglich
+- oder in nächste Woche einfügen vorbereiten
+
+Keine Daten löschen ohne Bestätigung.
+
+====================================================
+3. VORWOCHE ÜBERNEHMEN
+====================================================
+
+Button oben:
+
+"Vorwoche übernehmen"
+
+Dialog:
+- Ganze Woche übernehmen
+- Nur Service
+- Nur Küche
+- Nur ausgewählte Mitarbeiter
+
+Vor dem Übernehmen:
+Vorschau anzeigen:
+- wie viele Einträge werden übernommen
+- bestehende Einträge überschreiben ja/nein
+
+Standard:
+bestehende Einträge NICHT überschreiben.
+
+====================================================
+4. MEHRFACHPLANUNG
+====================================================
+
+Bitte einen einfachen Mehrfachmodus vorbereiten:
+
+Button:
+"Mehrfach planen"
+
+Wenn aktiv:
+- Schnellwahl auswählen
+- mehrere Zellen anklicken
+- dieselbe Einsatzzeit wird auf alle geklickten Zellen gesetzt
+
+Button:
+"Fertig"
+
+Das soll besonders für Ferien/Frei oder gleiche Schichten nützlich sein.
+
+====================================================
+5. QUICK ACTIONS PRO ZELLE
+====================================================
+
+Beim Hover auf eine Tageszelle:
+
+kleine Aktionen anzeigen:
+- Kopieren
+- Einfügen
+- Leeren
+- Bearbeiten
+
+Nicht dauerhaft sichtbar, nur Hover.
+
+Mobile:
+über langen Klick oder kleines Menü.
+
+====================================================
+6. SICHERHEIT
+====================================================
+
+Bei kritischen Aktionen:
+- Woche überschreiben
+- viele Zellen ändern
+- ganze Woche kopieren
+
+immer Bestätigung anzeigen.
+
+====================================================
+7. UI
+====================================================
+
+Bitte dezent halten:
+Keine visuelle Überladung.
+Quick Actions klein und ruhig.
+
+====================================================
+8. TEST
+====================================================
+
+Nach Umsetzung testen:
+
+- Zelle mit einem Einsatz kopieren/einfügen
+- Zelle mit zwei Einsätzen kopieren/einfügen
+- Frei/Ferien/Krank kopieren/einfügen
+- Mitarbeiterwoche kopieren
+- Vorwoche übernehmen ohne Überschreiben
+- Mehrfachplanung mit Schicht
+- Mehrfachplanung mit Frei
+
+Danach TypeScript prüfen und kurz zusammenfassen.

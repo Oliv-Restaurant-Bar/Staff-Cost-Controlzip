@@ -30,7 +30,14 @@ import { TimeSlot, DaySchedule } from './ScheduleGrid';
 import { PatternWarning } from '@/lib/pattern-warnings';
 import { buildAvailabilityMap } from '@/lib/availability-store';
 import { cn } from '@/lib/utils';
-import { AlertTriangle, CalendarOff } from 'lucide-react';
+import { AlertTriangle, CalendarOff, Copy, ClipboardPaste, X } from 'lucide-react';
+
+// ── Shared cell-clipboard type (also used by SchedulePlanner) ─────────────────
+export interface CopiedCell {
+  primary: { start: string; end: string } | null;
+  secondary: { start: string; end: string } | null;
+  absence: string | null;
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -74,6 +81,19 @@ export interface ModernScheduleGridProps {
   onConfigureDaysOff?: (employee: Employee) => void;
   externalActiveTool?: string | null;
   highlightedEmployeeId?: string | null;
+  // ── Phase 1B: quick copy/paste/clear ──────────────────────────────────────
+  copiedCell?: CopiedCell | null;
+  onCopyCell?: (empId: string, dateStr: string) => void;
+  onPasteCell?: (empId: string, dateStr: string) => void;
+  onClearCell?: (empId: string, dateStr: string) => void;
+  // ── Phase 1B: employee-week copy ──────────────────────────────────────────
+  onCopyWeek?: (empId: string) => void;
+  onPasteWeek?: (empId: string) => void;
+  hasCopiedWeek?: boolean;
+  // ── Phase 1B: multi-plan stamp mode ───────────────────────────────────────
+  multiPlanMode?: boolean;
+  multiPlanPreset?: { label: string; start: string; end: string; start2?: string; end2?: string; absenceCode?: string } | null;
+  onMultiPlanCell?: (empId: string, dateStr: string) => void;
 }
 
 // ── Small helper: format a numeric diff as +x.x / −x.x ───────────────────────
@@ -103,6 +123,16 @@ export function ModernScheduleGrid({
   onConfigureDaysOff,
   externalActiveTool,
   highlightedEmployeeId,
+  copiedCell,
+  onCopyCell,
+  onPasteCell,
+  onClearCell,
+  onCopyWeek,
+  onPasteWeek,
+  hasCopiedWeek = false,
+  multiPlanMode = false,
+  multiPlanPreset,
+  onMultiPlanCell,
 }: ModernScheduleGridProps) {
 
   const today = useMemo(() => new Date(), []);
@@ -409,6 +439,31 @@ export function ModernScheduleGrid({
                       </button>
                     )}
 
+                    {/* Copy-week button */}
+                    {onCopyWeek && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onCopyWeek(employee.id); }}
+                        title="Woche kopieren"
+                        className={cn(
+                          "shrink-0 h-5 w-5 flex items-center justify-center rounded transition-all",
+                          "opacity-0 group-hover:opacity-40 hover:!opacity-100 hover:bg-muted/60 text-muted-foreground",
+                        )}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </button>
+                    )}
+
+                    {/* Paste-week button — only visible when clipboard has a week */}
+                    {onPasteWeek && hasCopiedWeek && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onPasteWeek(employee.id); }}
+                        title="Kopiierte Woche hier einfügen"
+                        className="shrink-0 h-5 w-5 flex items-center justify-center rounded transition-colors text-primary opacity-70 hover:opacity-100 hover:bg-primary/10"
+                      >
+                        <ClipboardPaste className="h-3 w-3" />
+                      </button>
+                    )}
+
                     {/* Warning icon */}
                     {hasWarning && (
                       <AlertTriangle className={cn(
@@ -452,64 +507,120 @@ export function ModernScheduleGrid({
                   const frühColor = cellColors[frühKey] ?? null;
                   const spätColor = cellColors[spätKey] ?? null;
 
+                  const cellHasData = !!(
+                    daySchedule.früh || daySchedule.spät ||
+                    daySchedule.frühAbsence || daySchedule.spätAbsence
+                  );
+
                   return (
                     <td
                       key={dateStr}
                       className={cn(
-                        "px-1 py-0.5 border-b border-border/20 align-middle transition-colors",
+                        "px-1 py-0.5 border-b border-border/20 align-middle transition-colors relative group/cell",
                         idx < days.length - 1 && "border-r border-border/10",
-                        // Column tints (applied only when cell has no special state)
+                        // Column tints
                         !isDayOff && !isAfterExit && isToday
                           && "bg-blue-50/40 dark:bg-blue-950/15",
                         !isDayOff && !isAfterExit && !isToday && isSun
                           && "bg-amber-50/40 dark:bg-amber-900/10",
                         !isDayOff && !isAfterExit && !isToday && !isSun && isWknd
                           && "bg-amber-50/25 dark:bg-amber-900/6",
-                        // Special states
                         isDayOff   && !isAfterExit && "bg-slate-100/70 dark:bg-slate-700/25",
                         isAfterExit && "bg-zinc-100/50 dark:bg-zinc-800/30",
+                        // Multi-plan cursor
+                        multiPlanMode && multiPlanPreset && !isAfterExit && "cursor-crosshair",
                       )}
                     >
                       {isAfterExit ? (
-                        /* Past exit date — show dash, not editable */
                         <div className="flex items-center justify-center h-9">
                           <span className="text-muted-foreground/20 text-sm select-none">—</span>
                         </div>
                       ) : (
-                        /* TimeInputCell — identical to classic, no data logic change */
-                        <TimeInputCell
-                          value={daySchedule[primarySlot] ?? null}
-                          absenceType={primaryAbsence}
-                          onChange={(val, absence) =>
-                            onSlotChange(employee.id, dateStr, primarySlot, val, absence)
-                          }
-                          slotType={primarySlot}
-                          secondaryValue={daySchedule[secondarySlot] ?? null}
-                          onSplitTimeSelect={(sec) =>
-                            onSlotChange(employee.id, dateStr, secondarySlot, sec, null)
-                          }
-                          onClearSecondary={() =>
-                            onSlotChange(employee.id, dateStr, secondarySlot, null, null)
-                          }
-                          isWeekend={isWknd}
-                          isDayOff={isDayOff}
-                          isRequestedFree={isReqFree}
-                          isBlocked={isBlocked}
-                          activeTool={externalActiveTool}
-                          copiedShift={copiedShift}
-                          onCopyShift={onCopyShift}
-                          cellColor={frühColor || spätColor}
-                          onCellColorChange={
-                            onCellColorChange
-                              ? (c) => onCellColorChange(frühKey, c)
-                              : undefined
-                          }
-                          onCopyToIst={
-                            onCopyToIst
-                              ? (slot) => onCopyToIst(employee.id, dateStr, primarySlot, slot)
-                              : undefined
-                          }
-                        />
+                        <div className="relative">
+                          {/* ── Multi-plan stamp overlay ── */}
+                          {multiPlanMode && multiPlanPreset && (
+                            <div
+                              className="absolute inset-0 z-20 rounded-lg"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onMultiPlanCell?.(employee.id, dateStr);
+                              }}
+                            />
+                          )}
+
+                          <TimeInputCell
+                            value={daySchedule[primarySlot] ?? null}
+                            absenceType={primaryAbsence}
+                            onChange={(val, absence) =>
+                              onSlotChange(employee.id, dateStr, primarySlot, val, absence)
+                            }
+                            slotType={primarySlot}
+                            secondaryValue={daySchedule[secondarySlot] ?? null}
+                            onSplitTimeSelect={(sec) =>
+                              onSlotChange(employee.id, dateStr, secondarySlot, sec, null)
+                            }
+                            onClearSecondary={() =>
+                              onSlotChange(employee.id, dateStr, secondarySlot, null, null)
+                            }
+                            isWeekend={isWknd}
+                            isDayOff={isDayOff}
+                            isRequestedFree={isReqFree}
+                            isBlocked={isBlocked}
+                            activeTool={externalActiveTool}
+                            copiedShift={copiedShift}
+                            onCopyShift={onCopyShift}
+                            cellColor={frühColor || spätColor}
+                            onCellColorChange={
+                              onCellColorChange
+                                ? (c) => onCellColorChange(frühKey, c)
+                                : undefined
+                            }
+                            onCopyToIst={
+                              onCopyToIst
+                                ? (slot) => onCopyToIst(employee.id, dateStr, primarySlot, slot)
+                                : undefined
+                            }
+                          />
+
+                          {/* ── Hover quick-action tray ── */}
+                          {!multiPlanMode && (onCopyCell || onPasteCell || onClearCell) && (
+                            <div className={cn(
+                              "absolute -top-px right-0 hidden group-hover/cell:flex items-center z-30",
+                              "bg-background/95 backdrop-blur-sm border border-border/60 rounded shadow-sm",
+                            )}>
+                              {onCopyCell && (
+                                <button
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => { e.stopPropagation(); onCopyCell(employee.id, dateStr); }}
+                                  title="Zelle kopieren"
+                                  className="h-5 w-5 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                                >
+                                  <Copy className="h-2.5 w-2.5" />
+                                </button>
+                              )}
+                              {onPasteCell && copiedCell && (
+                                <button
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => { e.stopPropagation(); onPasteCell(employee.id, dateStr); }}
+                                  title="Zelle einfügen"
+                                  className="h-5 w-5 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                                >
+                                  <ClipboardPaste className="h-2.5 w-2.5" />
+                                </button>
+                              )}
+                              {onClearCell && cellHasData && (
+                                <button
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => { e.stopPropagation(); onClearCell(employee.id, dateStr); }}
+                                  title="Zelle leeren"
+                                  className="h-5 w-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                >
+                                  <X className="h-2.5 w-2.5" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </td>
                   );
