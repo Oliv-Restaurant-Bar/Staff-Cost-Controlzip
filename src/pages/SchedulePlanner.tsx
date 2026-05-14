@@ -287,6 +287,7 @@ const SchedulePlanner = () => {
   const [publishType, setPublishType]                         = useState<PublishType>('department');
   const [publishDept, setPublishDept]                         = useState<PublishDept>('all');
   const [publishEmpId, setPublishEmpId]                       = useState<string | null>(null);
+  const [mobilePreviewUrl, setMobilePreviewUrl]               = useState<string | null>(null);
 
   // ── Sortierungsmodus & Zellfarben ────────────────────────────────────────
   const [sortModeActive, setSortModeActive]                   = useState(false);
@@ -4948,6 +4949,15 @@ const SchedulePlanner = () => {
                       <Eye className="h-3 w-3" />
                       Vorschau
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1.5 text-xs border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400"
+                      onClick={() => setMobilePreviewUrl(url)}
+                    >
+                      <Smartphone className="h-3 w-3" />
+                      Handy
+                    </Button>
                   </div>
                   {/* WhatsApp text preview */}
                   <div className="rounded-md bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 px-3 py-2 text-xs text-green-800 dark:text-green-300">
@@ -5046,6 +5056,48 @@ const SchedulePlanner = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Mobile preview Dialog ─────────────────────────────────────── */}
+      {mobilePreviewUrl && (
+        <Dialog open={!!mobilePreviewUrl} onOpenChange={() => setMobilePreviewUrl(null)}>
+          <DialogContent className="max-w-[430px] w-full p-0 overflow-hidden bg-background rounded-2xl">
+            {/* Title bar */}
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/40">
+              <div className="flex items-center gap-2">
+                <Smartphone className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-semibold text-foreground">Handy-Vorschau</span>
+              </div>
+              <span className="text-[10px] text-muted-foreground/60 tabular-nums">390 × 844 px</span>
+            </div>
+            {/* Phone frame */}
+            <div className="flex justify-center items-start bg-slate-100 dark:bg-slate-900 py-4 px-3">
+              <div className="relative bg-black rounded-[2.4rem] p-[3px] shadow-2xl shadow-black/40" style={{ width: 315 }}>
+                {/* Notch */}
+                <div className="absolute top-[10px] left-1/2 -translate-x-1/2 w-20 h-5 bg-black rounded-full z-10" />
+                {/* Screen */}
+                <div className="rounded-[2.1rem] overflow-hidden bg-white" style={{ height: 560 }}>
+                  <iframe
+                    src={mobilePreviewUrl}
+                    title="Handy-Vorschau"
+                    className="w-full h-full border-0"
+                    style={{ transform: 'scale(0.81)', transformOrigin: 'top left', width: '390px', height: '690px' }}
+                  />
+                </div>
+                {/* Home bar */}
+                <div className="flex justify-center pt-1.5 pb-0.5">
+                  <div className="w-20 h-1 bg-white/30 rounded-full" />
+                </div>
+              </div>
+            </div>
+            <div className="px-4 py-2.5 border-t border-border flex items-center justify-between gap-3">
+              <span className="text-[11px] text-muted-foreground truncate">{mobilePreviewUrl}</span>
+              <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setMobilePreviewUrl(null)}>
+                Schliessen
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* ── Mitarbeiter Detail Dialog ─────────────────────────────────── */}
       {employeeDetailEmp && (() => {
