@@ -125,6 +125,25 @@ export function ModernScheduleGrid({
     weekdayIdx: getDay(day),
   })), [days, today]);
 
+  // Pre-compute total planned hours per day for header display
+  const dayTotals = useMemo(() => {
+    const slotHours = (slot: TimeSlot | undefined): number => {
+      if (!slot?.start || !slot?.end) return 0;
+      const [sh, sm] = slot.start.split(':').map(Number);
+      const [eh, em] = slot.end.split(':').map(Number);
+      let diff = (eh * 60 + em) - (sh * 60 + sm);
+      if (diff < 0) diff += 1440;
+      return diff / 60;
+    };
+    return dayMeta.reduce<Record<string, number>>((acc, { dateStr }) => {
+      acc[dateStr] = employees.reduce((sum, emp) => {
+        const ds: DaySchedule = scheduleData[`${emp.id}-${dateStr}`] || {};
+        return sum + slotHours(ds.früh ?? undefined) + slotHours(ds.spät ?? undefined);
+      }, 0);
+      return acc;
+    }, {});
+  }, [dayMeta, employees, scheduleData]);
+
   // ── Resizable employee column ────────────────────────────────────────────────
   const LS_COL_KEY = 'schedule_emp_col_width';
   const MIN_COL    = 100;
@@ -261,6 +280,21 @@ export function ModernScheduleGrid({
                   )}>
                     {format(day, 'MMM')}
                   </span>
+
+                  {/* Planned hours total for this day */}
+                  {(() => {
+                    const tot = dayTotals[format(day, 'yyyy-MM-dd')] ?? 0;
+                    return tot > 0 ? (
+                      <span className={cn(
+                        "text-[8px] mt-1 leading-none tabular-nums font-medium",
+                        isToday  && "text-blue-500/60 dark:text-blue-400/50",
+                        !isToday && isWknd && "text-amber-500/50 dark:text-amber-400/40",
+                        !isToday && !isWknd && "text-muted-foreground/30",
+                      )}>
+                        {tot.toFixed(1)}h
+                      </span>
+                    ) : null;
+                  })()}
                 </div>
               </th>
             ))}
@@ -543,7 +577,7 @@ export function ModernScheduleGrid({
                   <td
                     key={dateStr}
                     className={cn(
-                      "px-0.5 py-1.5 border-t-2 border-border/40 text-center",
+                      "px-1 py-1.5 border-t-2 border-border/40 text-center",
                       idx < days.length - 1 && "border-r border-border/10",
                       isToday && "bg-blue-50/40 dark:bg-blue-950/15",
                       !isToday && isSun  && "bg-amber-50/50 dark:bg-amber-950/12",

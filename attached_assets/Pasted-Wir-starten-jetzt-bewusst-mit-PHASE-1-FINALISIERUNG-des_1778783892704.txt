@@ -1,0 +1,90 @@
+Wir starten jetzt bewusst mit PHASE 1 FINALISIERUNG des Dienstplans.
+
+Ziel:
+Die Dienstplanung soll sich wie ein modernes Premium-Gastroplanungssystem anfühlen.
+
+Wichtig:
+Keine neuen komplexen Funktionen.
+Keine neue Businesslogik.
+Keine Änderungen an Kosten-/Speicherlogik.
+
+Fokus:
+UX, Geschwindigkeit, Übersicht, Mobile, Bedienbarkeit.
+
+====================================================
+PHASE 1A — FINAL GRID UX
+====================================================
+
+Bitte jetzt nur die finale Dienstplanansicht perfektionieren.
+
+1. Finale kombinierte Ansicht
+- nur noch eine finale Ansicht
+- beste Teile aus Klassisch + Modern kombinieren
+- keine Früh/Spät-Unterspalten sichtbar
+- eine Tageszelle pro Mitarbeiter/Tag
+- mehrere Einsätze untereinander
+
+2. Tageszellen perfektionieren
+- moderne Einsatz-Chips
+- kompakte Höhe
+- bessere Hover-Zustände
+- sauberer Abstand
+- keine überladenen Linien
+- Frei/Ferien/Krank als klare Badges
+
+3. Mitarbeiterspalte finalisieren
+- sticky
+- Name gross
+- Stunden klein darunter
+- Warnung nur als Icon
+- kompakt aber lesbar
+
+4. Header finalisieren
+- moderner Tageskopf
+- Wochenende subtil markieren
+- Heute markieren
+- geplante Stunden klein darunter
+
+5. Finaler Zeiteditor
+- keine Früh/Spät Begriffe
+- 6 einfache Schnellwahlen
+- 4 geteilte Schnellwahlen
+- bearbeitbar
+- zwei Einsatzzeilen sichtbar
+- alter kompakter Uhrpicker
+- Minuten nur 00/15/30/45
+
+6. Mobile/Laptop Optimierung
+- sticky Mitarbeiter links
+- horizontales Scrollen sauber
+- kein Flackern
+- keine abgeschnittenen Chips
+- möglichst viele Mitarbeiter sichtbar
+
+7. Performance/Feeling
+- sanfte Hover-Effekte
+- keine harten Re-Renders
+- flüssiges Scrollen
+- direktes visuelles Feedback
+
+====================================================
+WICHTIG
+====================================================
+
+Nicht ändern:
+- Kostenlogik
+- Soll/Ist
+- Speicherung
+- Supabase
+- Mirus
+- Veröffentlichungslogik
+
+Nur:
+finale Dienstplan-UX perfektionieren.
+
+Danach:
+- TypeScript prüfen
+- Desktop testen
+- Laptop testen
+- Mobile testen
+- kurze UX-Zusammenfassung geben
