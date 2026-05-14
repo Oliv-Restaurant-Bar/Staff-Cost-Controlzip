@@ -30,7 +30,7 @@ import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
-import { savePublishedSchedule, PublishType, PublishDept, PublicEmployee } from '@/lib/schedule-publish-store';
+import { savePublishedSchedule, PublishType, PublishDept, PublicEmployee, ChangeHistoryEntry } from '@/lib/schedule-publish-store';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ModernScheduleGrid, CopiedCell } from '@/components/schedule-planner/ModernScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
@@ -305,6 +305,9 @@ const SchedulePlanner = () => {
   const [publishEmpId, setPublishEmpId]                       = useState<string | null>(null);
   const [mobilePreviewUrl, setMobilePreviewUrl]               = useState<string | null>(null);
   const [showQr, setShowQr]                                   = useState(false);
+  const [managerNote, setManagerNote]                         = useState('');
+  const [publishHistory, setPublishHistory]                   = useState<ChangeHistoryEntry[]>([]);
+  const [notifyChannels, setNotifyChannels]                   = useState({ whatsapp: false, sms: false, push: false, email: false });
 
   // ── Sortierungsmodus & Zellfarben ────────────────────────────────────────
   const [sortModeActive, setSortModeActive]                   = useState(false);
@@ -5072,6 +5075,51 @@ const SchedulePlanner = () => {
               </div>
             )}
 
+            {/* ── Hinweis an Mitarbeiter ───────────────────────────────── */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Hinweis an Mitarbeiter <span className="normal-case font-normal">(optional)</span>
+              </p>
+              <textarea
+                value={managerNote}
+                onChange={e => setManagerNote(e.target.value)}
+                placeholder="z.B. Terrasse bei schönem Wetter · Freitag Event im Saal · Bitte 15 Min früher kommen"
+                rows={2}
+                className="w-full rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+
+            {/* ── Benachrichtigen via ───────────────────────────────────── */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Benachrichtigen via</p>
+              <div className="flex flex-wrap gap-2">
+                {(['whatsapp', 'sms', 'push', 'email'] as const).map(ch => {
+                  const labels: Record<string, string> = { whatsapp: 'WhatsApp', sms: 'SMS', push: 'Push', email: 'E-Mail' };
+                  const activeColors: Record<string, string> = {
+                    whatsapp: 'border-green-400 text-green-700 bg-green-50 dark:border-green-600 dark:text-green-400 dark:bg-green-950/30',
+                    sms:      'border-blue-400 text-blue-700 bg-blue-50 dark:border-blue-600 dark:text-blue-400 dark:bg-blue-950/30',
+                    push:     'border-violet-400 text-violet-700 bg-violet-50 dark:border-violet-600 dark:text-violet-400 dark:bg-violet-950/30',
+                    email:    'border-slate-400 text-slate-700 bg-slate-50 dark:border-slate-500 dark:text-slate-300 dark:bg-slate-800/40',
+                  };
+                  return (
+                    <button
+                      key={ch}
+                      onClick={() => setNotifyChannels(c => ({ ...c, [ch]: !c[ch] }))}
+                      className={cn(
+                        'h-7 px-3 rounded-full text-xs font-semibold border transition-all',
+                        notifyChannels[ch] ? activeColors[ch] : 'border-border text-muted-foreground hover:bg-muted/50',
+                      )}
+                    >
+                      {labels[ch]}
+                    </button>
+                  );
+                })}
+              </div>
+              {Object.values(notifyChannels).some(Boolean) && (
+                <p className="text-[11px] text-muted-foreground/60">Benachrichtigung-Integration folgt in Kürze.</p>
+              )}
+            </div>
+
             {/* ── Aktiver Link ─────────────────────────────────────────── */}
             {publishToken && (() => {
               const url = `${window.location.origin}/staff-schedule/${publishToken}`;
@@ -5233,6 +5281,15 @@ const SchedulePlanner = () => {
 
                 const selectedEmp = employees.find(e => e.id === publishEmpId);
 
+                const historyDesc = (publishStatus === 'published' || publishStatus === 'changed')
+                  ? 'Plan aktualisiert'
+                  : 'Plan veröffentlicht';
+                const newHistoryEntry: ChangeHistoryEntry = {
+                  timestamp: new Date().toISOString(),
+                  description: historyDesc,
+                };
+                const newPublishHistory = [...publishHistory, newHistoryEntry];
+
                 savePublishedSchedule(token, {
                   type: publishType,
                   period,
@@ -5247,9 +5304,12 @@ const SchedulePlanner = () => {
                   employees: publicEmployees,
                   employeeId: publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
                   employeeName: publishType === 'personal' && selectedEmp ? getEmployeeDisplayName(selectedEmp) : undefined,
+                  managerNote: managerNote.trim() || undefined,
+                  changeHistory: newPublishHistory,
                 });
-                void periodLabel; // consumed in weekLabel above
+                void periodLabel;
 
+                setPublishHistory(newPublishHistory);
                 setPublishToken(token);
                 setPublishStatus('published');
                 toast.success('Dienstplan veröffentlicht – Link ist jetzt aktiv');

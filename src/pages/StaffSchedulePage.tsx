@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import {
   Calendar, Clock, LayoutList, User, Building2, AlertCircle,
   ChevronDown, ChevronUp, Check, Home, X, RefreshCw,
+  History, ArrowRightLeft, Send, MessageCircle,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,6 +19,7 @@ import {
   PublicEmployee,
   PublicDayEntry,
   PublishedSchedulePayload,
+  ChangeHistoryEntry,
 } from '@/lib/schedule-publish-store';
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -117,7 +119,8 @@ function CalendarCell({ day }: { day: PublicDayEntry | null; date?: Date }) {
   const date    = parseISO(day.date);
   const wknd    = isWeekendDate(day.date);
   const isToday = isTodayDate(day.date);
-  const empty   = isEmptyDay(day);
+  const empty     = isEmptyDay(day);
+  const hasChange = !!day.changed;
 
   // Collect compact lines
   const lines: string[] = [];
@@ -134,19 +137,25 @@ function CalendarCell({ day }: { day: PublicDayEntry | null; date?: Date }) {
 
   return (
     <div className={cn(
-      'rounded-md border px-1 py-1 min-h-[58px] flex flex-col',
+      'rounded-md border px-1 py-1 min-h-[58px] flex flex-col relative',
       isToday
         ? 'bg-blue-50/90 border-blue-300 dark:bg-blue-950/40 dark:border-blue-700'
-        : wknd
-          ? 'bg-amber-50/50 border-amber-200/60 dark:bg-amber-950/10 dark:border-amber-800/40'
-          : 'bg-card border-border/40',
-      empty && !isToday && 'opacity-35',
+        : hasChange
+          ? 'bg-amber-50/60 border-amber-400 dark:bg-amber-950/20 dark:border-amber-600'
+          : wknd
+            ? 'bg-amber-50/50 border-amber-200/60 dark:bg-amber-950/10 dark:border-amber-800/40'
+            : 'bg-card border-border/40',
+      empty && !isToday && !hasChange && 'opacity-35',
     )}>
+      {hasChange && (
+        <div className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-amber-500" />
+      )}
       {/* Day number */}
       <div className={cn(
         'text-[11px] font-bold text-center leading-none mb-1',
-        isToday ? 'text-blue-600 dark:text-blue-400'
-        : wknd   ? 'text-amber-500 dark:text-amber-400'
+        isToday   ? 'text-blue-600 dark:text-blue-400'
+        : hasChange ? 'text-amber-600 dark:text-amber-400'
+        : wknd    ? 'text-amber-500 dark:text-amber-400'
         : 'text-muted-foreground',
       )}>
         {format(date, 'd')}
@@ -241,15 +250,134 @@ function CalendarView({ employee, payload }: { employee: PublicEmployee; payload
   );
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatRelativeTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const diffMs  = Date.now() - d.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    const diffH   = Math.floor(diffMin / 60);
+    const diffD   = Math.floor(diffH / 24);
+    if (diffMin < 1)  return 'gerade eben';
+    if (diffMin < 60) return `vor ${diffMin} Min.`;
+    if (diffH < 24)   return `vor ${diffH} Std.`;
+    if (diffD === 1)  return `gestern, ${format(d, 'HH:mm')}`;
+    if (diffD < 7)    return `${format(d, 'EEEE', { locale: de })}, ${format(d, 'HH:mm')}`;
+    return format(d, 'd. MMM, HH:mm', { locale: de });
+  } catch { return iso; }
+}
+
+// ── Manager note card ─────────────────────────────────────────────────────────
+
+function ManagerNoteCard({ note }: { note: string }) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-xl border border-blue-200 bg-blue-50/60 dark:border-blue-800 dark:bg-blue-950/20 px-4 py-3">
+      <MessageCircle className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+      <div>
+        <p className="text-[10px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-0.5">Hinweis der Leitung</p>
+        <p className="text-sm text-blue-800 dark:text-blue-300 leading-snug">{note}</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Change history modal ───────────────────────────────────────────────────────
+
+function ChangeHistoryModal({
+  entries, onClose,
+}: { entries: ChangeHistoryEntry[]; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-card w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl border border-border p-5 max-h-[70vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <History className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-base font-bold text-foreground">Änderungs-Verlauf</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="h-7 w-7 flex items-center justify-center rounded-lg hover:bg-muted/60 text-muted-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div>
+          {entries.map((entry, i) => (
+            <div key={i} className="flex gap-3">
+              <div className="flex flex-col items-center mt-1.5">
+                <div className="w-2 h-2 rounded-full bg-primary shrink-0" />
+                {i < entries.length - 1 && <div className="flex-1 w-px bg-border/60 mt-1 mb-0" />}
+              </div>
+              <div className={cn('pb-4', i === entries.length - 1 && 'pb-0')}>
+                <p className="text-xs text-muted-foreground">{formatRelativeTime(entry.timestamp)}</p>
+                <p className="text-sm font-medium text-foreground mt-0.5">{entry.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Swap request dialog ────────────────────────────────────────────────────────
+
+function SwapRequestDialog({ dayLabel, onClose }: { dayLabel: string; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="bg-card w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl border border-border p-6"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="text-center space-y-3">
+          <div className="h-12 w-12 rounded-full bg-amber-100 dark:bg-amber-950/40 flex items-center justify-center mx-auto">
+            <ArrowRightLeft className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+          </div>
+          <h2 className="text-base font-bold text-foreground">Schichttausch anfragen</h2>
+          <p className="text-sm text-muted-foreground">{dayLabel}</p>
+          <div className="rounded-xl bg-muted/50 border border-border px-4 py-3">
+            <p className="text-sm text-muted-foreground">
+              Diese Funktion ist in Vorbereitung und wird bald verfügbar sein.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-full h-10 rounded-xl bg-primary text-primary-foreground text-sm font-semibold"
+          >
+            Verstanden
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Personal View — list + calendar toggle
 // ══════════════════════════════════════════════════════════════════════════════
 
 type PersonalViewMode = 'list' | 'calendar';
+type FeedbackType = 'ok' | 'cannot' | 'question' | null;
 
 function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
   const employee = payload.employees?.[0];
-  const [viewMode, setViewMode] = useState<PersonalViewMode>('list');
+  const [viewMode, setViewMode]       = useState<PersonalViewMode>('list');
+  const [showHistory, setShowHistory] = useState(false);
+  const [swapDay, setSwapDay]         = useState<string | null>(null);
+  const [feedbackType, setFeedbackType]   = useState<FeedbackType>(null);
+  const [feedbackReason, setFeedbackReason] = useState('');
+  const [feedbackNote, setFeedbackNote]     = useState('');
+  const [feedbackSent, setFeedbackSent]     = useState(false);
   const today = useMemo(() => new Date(), []);
 
   if (!employee) {
@@ -260,49 +388,73 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
     );
   }
 
+  const historyEntries: ChangeHistoryEntry[] = payload.changeHistory ?? [];
+  const changedDayCount = employee.days.filter(d => d.changed).length;
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* ── Changed notice ── */}
       {payload.status === 'changed' && (
         <div className="flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 px-4 py-3">
           <RefreshCw className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-          <div>
+          <div className="flex-1">
             <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Plan wurde aktualisiert</p>
             <p className="text-xs text-amber-700/80 dark:text-amber-400/80 mt-0.5">Bitte prüfe deine aktualisierten Schichten.</p>
           </div>
         </div>
       )}
 
-      {/* Toggle */}
-      <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          variant={viewMode === 'list' ? 'default' : 'outline'}
-          className="h-8 gap-1.5 text-xs"
-          onClick={() => setViewMode('list')}
-        >
-          <LayoutList className="h-3.5 w-3.5" />
-          Liste
-        </Button>
-        <Button
-          size="sm"
-          variant={viewMode === 'calendar' ? 'default' : 'outline'}
-          className="h-8 gap-1.5 text-xs"
-          onClick={() => setViewMode('calendar')}
-        >
-          <Calendar className="h-3.5 w-3.5" />
-          Kalender
-        </Button>
+      {/* ── Manager note ── */}
+      {payload.managerNote && <ManagerNoteCard note={payload.managerNote} />}
+
+      {/* ── View toggle + history button ── */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-0.5 bg-muted/40 rounded-lg p-0.5">
+          <Button
+            size="sm"
+            variant={viewMode === 'list' ? 'default' : 'ghost'}
+            className="h-7 gap-1.5 text-xs px-3"
+            onClick={() => setViewMode('list')}
+          >
+            <LayoutList className="h-3.5 w-3.5" />
+            Liste
+          </Button>
+          <Button
+            size="sm"
+            variant={viewMode === 'calendar' ? 'default' : 'ghost'}
+            className="h-7 gap-1.5 text-xs px-3"
+            onClick={() => setViewMode('calendar')}
+          >
+            <Calendar className="h-3.5 w-3.5" />
+            Kalender
+          </Button>
+        </div>
+        {historyEntries.length > 0 && (
+          <button
+            onClick={() => setShowHistory(true)}
+            className="h-7 px-2.5 rounded-lg border border-border text-xs flex items-center gap-1.5 hover:bg-muted/60 transition-colors text-muted-foreground"
+          >
+            <History className="h-3 w-3" />
+            Änderungen
+            {changedDayCount > 0 && (
+              <span className="h-4 w-4 rounded-full bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center">
+                {changedDayCount}
+              </span>
+            )}
+          </button>
+        )}
       </div>
 
       {/* ── List view ── */}
       {viewMode === 'list' && (
-        <div className="space-y-2.5">
+        <div className="space-y-2">
           {employee.days.map((day) => {
-            const wknd    = isWeekendDate(day.date);
-            const isToday = isSameDay(parseISO(day.date), today);
-            const empty   = isEmptyDay(day);
-            const date    = parseISO(day.date);
+            const wknd      = isWeekendDate(day.date);
+            const isToday   = isSameDay(parseISO(day.date), today);
+            const empty     = isEmptyDay(day);
+            const date      = parseISO(day.date);
+            const hasChange = !!day.changed;
+            const hasPrev   = !!(day.previousFrüh || day.previousSpät);
             return (
               <div
                 key={day.date}
@@ -310,38 +462,81 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
                   'rounded-xl border px-4 py-3.5',
                   isToday
                     ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700'
-                    : wknd
-                      ? 'bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
-                      : 'bg-card border-border',
-                  empty && !isToday && 'opacity-45',
+                    : hasChange
+                      ? 'bg-amber-50/40 border-amber-300 dark:bg-amber-950/20 dark:border-amber-700'
+                      : wknd
+                        ? 'bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
+                        : 'bg-card border-border',
+                  empty && !isToday && !hasChange && 'opacity-45',
                 )}
               >
+                {/* Day header */}
                 <div className="flex items-center justify-between gap-2 mb-2.5">
                   <div className="flex items-baseline gap-2">
                     <span className={cn(
                       'text-[11px] font-bold uppercase tracking-widest',
-                      isToday ? 'text-blue-600 dark:text-blue-400'
-                      : wknd ? 'text-amber-600 dark:text-amber-400'
+                      isToday   ? 'text-blue-600 dark:text-blue-400'
+                      : hasChange ? 'text-amber-600 dark:text-amber-400'
+                      : wknd    ? 'text-amber-600 dark:text-amber-400'
                       : 'text-muted-foreground/60',
                     )}>
                       {format(date, 'EE', { locale: de })}
                     </span>
                     <span className={cn(
                       'text-[15px] font-semibold',
-                      isToday ? 'text-blue-800 dark:text-blue-200'
-                      : wknd ? 'text-amber-800 dark:text-amber-200'
+                      isToday   ? 'text-blue-800 dark:text-blue-200'
+                      : hasChange ? 'text-amber-800 dark:text-amber-200'
+                      : wknd    ? 'text-amber-800 dark:text-amber-200'
                       : 'text-foreground',
                     )}>
                       {format(date, 'd. MMMM', { locale: de })}
                     </span>
                   </div>
-                  {isToday && (
-                    <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/40 border border-blue-300 dark:border-blue-700 rounded-full px-2 py-0.5 uppercase tracking-wide shrink-0">
-                      Heute
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {isToday && (
+                      <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/40 border border-blue-300 dark:border-blue-700 rounded-full px-2 py-0.5 uppercase tracking-wide">
+                        Heute
+                      </span>
+                    )}
+                    {hasChange && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-600">
+                        {day.changeType === 'new' ? 'Neu' : 'Geändert'}
+                      </span>
+                    )}
+                  </div>
                 </div>
+
+                {/* Previous time (strikethrough) */}
+                {hasChange && hasPrev && (
+                  <div className="mb-1.5 flex flex-col gap-0.5">
+                    {day.previousFrüh && (
+                      <span className="text-xs text-muted-foreground/40 tabular-nums line-through">
+                        {day.previousFrüh.start}–{day.previousFrüh.end}
+                      </span>
+                    )}
+                    {day.previousSpät && (
+                      <span className="text-xs text-muted-foreground/40 tabular-nums line-through">
+                        {day.previousSpät.start}–{day.previousSpät.end}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Current content */}
                 <DayContent day={day} />
+
+                {/* Swap button */}
+                {!empty && (
+                  <div className="mt-2.5 pt-2 border-t border-border/30">
+                    <button
+                      onClick={() => setSwapDay(day.date)}
+                      className="text-[11px] text-muted-foreground/40 flex items-center gap-1 hover:text-muted-foreground transition-colors"
+                    >
+                      <ArrowRightLeft className="h-3 w-3" />
+                      Tausch anfragen
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -351,6 +546,103 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
       {/* ── Calendar view ── */}
       {viewMode === 'calendar' && (
         <CalendarView employee={employee} payload={payload} />
+      )}
+
+      {/* ── Feedback ── */}
+      <div className="rounded-xl border border-border bg-card px-4 py-4 space-y-3">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Rückmeldung</p>
+        {feedbackSent ? (
+          <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 py-1">
+            <Check className="h-4 w-4" />
+            <span className="text-sm font-medium">Danke für deine Rückmeldung!</span>
+          </div>
+        ) : (
+          <>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setFeedbackType('ok'); setFeedbackSent(true); }}
+                className={cn(
+                  'flex-1 h-10 rounded-xl text-sm font-semibold border transition-all',
+                  feedbackType === 'ok'
+                    ? 'bg-emerald-600 border-emerald-600 text-white'
+                    : 'border-border bg-background hover:bg-muted/60 text-foreground',
+                )}
+              >
+                ✓ OK
+              </button>
+              <button
+                onClick={() => setFeedbackType(f => f === 'cannot' ? null : 'cannot')}
+                className={cn(
+                  'flex-1 h-10 rounded-xl text-sm font-semibold border transition-all',
+                  feedbackType === 'cannot'
+                    ? 'bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-400'
+                    : 'border-border bg-background hover:bg-muted/60 text-foreground',
+                )}
+              >
+                Kann nicht
+              </button>
+              <button
+                onClick={() => setFeedbackType(f => f === 'question' ? null : 'question')}
+                className={cn(
+                  'flex-1 h-10 rounded-xl text-sm font-semibold border transition-all',
+                  feedbackType === 'question'
+                    ? 'bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950/30 dark:border-blue-700 dark:text-blue-400'
+                    : 'border-border bg-background hover:bg-muted/60 text-foreground',
+                )}
+              >
+                Rückfrage
+              </button>
+            </div>
+            {feedbackType === 'cannot' && (
+              <div className="space-y-2">
+                <textarea
+                  value={feedbackReason}
+                  onChange={e => setFeedbackReason(e.target.value)}
+                  placeholder="Grund (optional) …"
+                  rows={3}
+                  className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <button
+                  onClick={() => setFeedbackSent(true)}
+                  className="w-full h-9 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  Senden
+                </button>
+              </div>
+            )}
+            {feedbackType === 'question' && (
+              <div className="space-y-2">
+                <textarea
+                  value={feedbackNote}
+                  onChange={e => setFeedbackNote(e.target.value)}
+                  placeholder="Deine Frage an die Leitung …"
+                  rows={3}
+                  className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <button
+                  onClick={() => setFeedbackSent(true)}
+                  disabled={!feedbackNote.trim()}
+                  className="w-full h-9 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  Senden
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── Modals ── */}
+      {showHistory && (
+        <ChangeHistoryModal entries={historyEntries} onClose={() => setShowHistory(false)} />
+      )}
+      {swapDay && (
+        <SwapRequestDialog
+          dayLabel={employee.days.find(d => d.date === swapDay)?.dayLabel ?? swapDay}
+          onClose={() => setSwapDay(null)}
+        />
       )}
     </div>
   );

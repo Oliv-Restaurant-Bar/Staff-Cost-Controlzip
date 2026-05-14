@@ -10,6 +10,16 @@ export interface PublicDayEntry {
   spät?: PublicTimeSlot | null;
   frühAbsence?: string | null;
   spätAbsence?: string | null;
+  /** Change tracking — set when re-publishing with modifications */
+  changed?: boolean;
+  changeType?: 'new' | 'changed';
+  previousFrüh?: PublicTimeSlot | null;
+  previousSpät?: PublicTimeSlot | null;
+}
+
+export interface ChangeHistoryEntry {
+  timestamp: string;
+  description: string;
 }
 
 export interface PublicEmployee {
@@ -37,6 +47,8 @@ export interface PublishedSchedulePayload {
   employees?: PublicEmployee[];
   employeeId?: string;
   employeeName?: string;
+  managerNote?: string;
+  changeHistory?: ChangeHistoryEntry[];
 }
 
 const STORAGE_PREFIX = 'schedule-publish:';

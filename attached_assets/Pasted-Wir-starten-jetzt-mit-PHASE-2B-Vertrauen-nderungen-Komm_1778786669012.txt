@@ -1,0 +1,216 @@
+Wir starten jetzt mit PHASE 2B — Vertrauen, Änderungen & Kommunikation im Mitarbeiterportal.
+
+Ziel:
+Mitarbeiter sollen Änderungen sofort verstehen und weniger Rückfragen stellen.
+
+Wichtig:
+Keine Kostenlogik ändern.
+Keine Soll/Ist-Logik ändern.
+Keine Supabase-Migration.
+Keine Lohn-/Kostendaten öffentlich anzeigen.
+
+Fokus:
+Änderungsverfolgung, Transparenz, Kommunikation, Mobile UX.
+
+====================================================
+1. GEÄNDERTE TAGE DIREKT MARKIEREN
+====================================================
+
+Wenn ein veröffentlichter Plan geändert wurde:
+
+Nicht nur global "Geändert" anzeigen.
+
+Sondern direkt beim betroffenen Tag:
+
+- gelber Badge:
+  "Neu"
+  oder
+  "Geändert"
+
+Beispiel:
+
+Freitag, 22. Mai
+[Geändert]
+
+10:00–14:00
+17:30–23:00
+
+====================================================
+2. ALTE VS NEUE ZEIT SICHTBAR MACHEN
+====================================================
+
+Wenn sich eine Schicht geändert hat:
+
+Vorher:
+10:00–14:00
+
+Neu:
+11:00–15:00
+
+Dann anzeigen:
+
+~~10:00–14:00~~
+11:00–15:00
+
+oder:
+kleiner Hinweis:
+"Vorher 10:00–14:00"
+
+Nur für geänderte Tage.
+
+====================================================
+3. ÄNDERUNGS-HISTORIE
+====================================================
+
+Im persönlichen Mitarbeiterportal:
+
+Button:
+"Änderungen"
+
+Öffnet einfache Timeline:
+
+- Heute 14:30
+  Freitag geändert
+
+- Gestern 18:10
+  Samstag hinzugefügt
+
+- Montag 10:00
+  Plan veröffentlicht
+
+Noch kein echtes Backend nötig.
+Mock/local state reicht.
+
+Aber UI vorbereiten.
+
+====================================================
+4. HINWEISE DER LEITUNG
+====================================================
+
+Im Teilen-Dialog:
+Optionales Feld:
+
+"Hinweis an Mitarbeiter"
+
+Beispiele:
+- Terrasse bei schönem Wetter vorbereiten
+- Freitag Event im Saal
+- Bitte 15 Min früher kommen
+
+Dieser Hinweis erscheint:
+- im Mitarbeiterportal oben
+- optisch ruhig
+- als Info-Karte
+
+====================================================
+5. MITARBEITER-RÜCKMELDUNG
+====================================================
+
+Im persönlichen Plan vorbereiten:
+
+Buttons:
+- OK
+- Kann nicht
+- Rückfrage
+
+Noch keine echte DB nötig.
+Nur UI + lokaler Mock-State.
+
+Wenn:
+"Kann nicht"
+
+kleines Textfeld:
+"Grund"
+
+Wenn:
+"Rückfrage"
+
+kleines Nachrichtenfeld.
+
+====================================================
+6. SCHICHTTAUSCH VORBEREITEN
+====================================================
+
+Noch kein echter Workflow.
+
+Aber bei jedem Einsatz:
+kleiner Button:
+"Tausch anfragen"
+
+Öffnet:
+- einfacher Hinweisdialog
+- "Diese Funktion kommt bald"
+
+Nur vorbereiten.
+
+====================================================
+7. PUSH-/BENACHRICHTIGUNGSLOGIK VORBEREITEN
+====================================================
+
+Im Teilen-Dialog:
+
+Checkboxen vorbereiten:
+- WhatsApp
+- SMS
+- Push
+- E-Mail
+
+Noch keine echte Integration nötig.
+
+Nur UI vorbereiten.
+
+====================================================
+8. MOBILE UX VERFEINERN
+====================================================
+
+Persönliche Mitarbeiteransicht weiter verbessern:
+
+- grosse Touchflächen
+- Karten etwas ruhiger
+- geänderte Tage deutlicher
+- wichtige Infos oben
+- weniger leere Fläche
+- Buttons gut erreichbar mit Daumen
+
+====================================================
+9. VERTRAUEN & KLARHEIT
+====================================================
+
+Ziel:
+Mitarbeiter sollen sofort sehen:
+
+- was neu ist
+- was geändert wurde
+- ob sie bestätigt haben
+- ob Leitung etwas geschrieben hat
+
+Ohne lange suchen zu müssen.
+
+====================================================
+10. DATENSCHUTZ
+====================================================
+
+Prüfen:
+Persönliche Links zeigen weiterhin:
+- keine Kosten
+- keine Löhne
+- keine internen Warnungen
+- keine anderen Mitarbeiter
+
+====================================================
+11. TEST
+====================================================
+
+Nach Umsetzung testen:
+
+- geänderten Tag markieren
+- alte vs neue Zeit anzeigen
+- Hinweis der Leitung anzeigen
+- Rückmeldung senden
+- Änderungs-Historie öffnen
+- Mobile auf 390px prüfen
+- Bestätigt/Gesehen weiterhin testen
+
+Danach:
+- TypeScript prüfen
+- kurze Zusammenfassung geben
