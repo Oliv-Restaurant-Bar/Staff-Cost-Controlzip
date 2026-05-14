@@ -21,9 +21,11 @@ export interface PublicEmployee {
 
 export type PublishType = 'department' | 'personal';
 export type PublishDept = 'service' | 'küche' | 'all';
+export type PublishPeriod = 'week' | 'month';
 
 export interface PublishedSchedulePayload {
   type: PublishType;
+  period: PublishPeriod;
   restaurant: string;
   kw: number;
   weekLabel: string;

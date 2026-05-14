@@ -4899,10 +4899,15 @@ const SchedulePlanner = () => {
               const url = `${window.location.origin}/staff-schedule/${publishToken}`;
               const selectedEmp = employees.find(e => e.id === publishEmpId);
               const empName = selectedEmp ? getEmployeeDisplayName(selectedEmp) : null;
-              const kw = getISOWeek(displayDays[0] ?? currentMonth);
+              const _days = displayDays.length > 0 ? displayDays : [currentMonth];
+              const _period = _days.length <= 7 ? 'week' : 'month';
+              const _kw = getISOWeek(_days[0]);
+              const _periodLabel = _period === 'month'
+                ? format(_days[0], 'MMMM yyyy', { locale: de })
+                : `KW ${_kw}`;
               const waText = publishType === 'personal' && empName
-                ? `Hallo ${empName}, hier ist dein Dienstplan für KW ${kw}: ${url}`
-                : `Hallo zusammen, hier ist der Dienstplan für KW ${kw}: ${url}`;
+                ? `Hallo ${empName}, hier ist dein Dienstplan für ${_periodLabel}: ${url}`
+                : `Hallo zusammen, hier ist der Dienstplan für ${_periodLabel}: ${url}`;
               return (
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Freigabe-Link</p>
@@ -4976,8 +4981,14 @@ const SchedulePlanner = () => {
                 const days = displayDays.length > 0 ? displayDays : [currentMonth];
                 const weekStart = days[0];
                 const weekEnd = days[days.length - 1];
+                const period: import('@/lib/schedule-publish-store').PublishPeriod = days.length <= 7 ? 'week' : 'month';
                 const kw = getISOWeek(weekStart);
-                const weekLabel = `KW ${kw} · ${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM yyyy', { locale: de })}`;
+                const periodLabel = period === 'month'
+                  ? format(weekStart, 'MMMM yyyy', { locale: de })
+                  : `KW ${kw} (${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM', { locale: de })})`;
+                const weekLabel = period === 'month'
+                  ? `${format(weekStart, 'MMMM yyyy', { locale: de })}`
+                  : `KW ${kw} · ${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM yyyy', { locale: de })}`;
 
                 // Serialize employees & schedule data
                 let targetEmps = employees.filter(e => isEmployeeActiveInMonth(e, currentMonth));
@@ -5009,6 +5020,7 @@ const SchedulePlanner = () => {
 
                 savePublishedSchedule(token, {
                   type: publishType,
+                  period,
                   restaurant: restaurantName,
                   kw,
                   weekLabel,
@@ -5021,6 +5033,7 @@ const SchedulePlanner = () => {
                   employeeId: publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
                   employeeName: publishType === 'personal' && selectedEmp ? getEmployeeDisplayName(selectedEmp) : undefined,
                 });
+                void periodLabel; // consumed in weekLabel above
 
                 setPublishToken(token);
                 setPublishStatus('published');

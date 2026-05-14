@@ -1,0 +1,256 @@
+Bitte den Teilen-Dialog und die Mitarbeiter-Veröffentlichung des Dienstplans finalisieren.
+
+Ziel:
+Der Dienstplan soll sauber an Mitarbeiter verteilt werden können, besonders mobil am Handy.
+
+Wichtig:
+Keine Kostenlogik ändern.
+Keine Dienstplan-Speicherung ändern.
+Keine Supabase-Migration.
+Keine Lohn-/Kostendaten öffentlich anzeigen.
+
+====================================================
+1. TEILEN-DIALOG FINALISIEREN
+====================================================
+
+Im Dienstplan beim Button "Teilen" soll ein Dialog erscheinen mit:
+
+Veröffentlichungsart:
+- Persönlicher Mitarbeiterplan
+- Abteilungsplan
+
+Bei "Persönlicher Mitarbeiterplan":
+- Mitarbeiter auswählen
+- Woche oder Monat auswählen
+- Vorschau öffnen
+- Link kopieren
+- WhatsApp Text vorbereiten
+
+Bei "Abteilungsplan":
+- Abteilung auswählen:
+  - Service
+  - Küche
+  - Alle
+- Woche oder Monat auswählen
+- Vorschau öffnen
+- Link kopieren
+- WhatsApp Text vorbereiten
+
+====================================================
+2. PERSÖNLICHER MITARBEITERPLAN
+====================================================
+
+Wenn der Mitarbeiter nur seinen eigenen Plan öffnet:
+
+Er darf NUR sich selbst sehen.
+
+Keine anderen Mitarbeiter.
+Keine Kosten.
+Keine internen Warnungen.
+Keine Löhne.
+Keine Admin-Infos.
+
+====================================================
+3. MOBILE DARSTELLUNG PERSÖNLICH
+====================================================
+
+Am Handy soll der persönliche Plan NICHT wie der normale Dienstplan nach rechts scrollen.
+
+Stattdessen:
+
+Option A: Wochenliste untereinander
+Montag, 18. Mai
+10:00–14:00
+17:30–23:00
+
+Dienstag, 19. Mai
+Frei
+
+Mittwoch, 20. Mai
+Ferien
+
+Option B: Monatskalender
+Monat anzeigen mit einzelnen Tagen.
+In jedem Tag stehen seine Einsätze.
+
+Bitte im persönlichen Link einen Umschalter anbieten:
+
+Ansicht:
+- Liste
+- Kalender
+
+Standard auf Mobile:
+Liste
+
+Standard auf Desktop:
+Kalender oder Liste, je nachdem was besser wirkt.
+
+====================================================
+4. LISTENANSICHT
+====================================================
+
+Liste:
+- Tage untereinander
+- grosse Tageskarten
+- gut lesbar
+- keine horizontale Scrollbar
+- heutiger Tag markiert
+- Wochenende dezent markiert
+- leere Tage ausgegraut
+
+Tageskarte:
+- Wochentag
+- Datum
+- Einsatzzeiten
+- Frei/Ferien/Krank
+- optional Hinweis
+
+====================================================
+5. KALENDERANSICHT
+====================================================
+
+Kalender:
+- Woche von links nach rechts
+- mehrere Wochen untereinander
+- pro Tag kleine Einsätze anzeigen
+- auf Mobile darf der Kalender kompakt sein
+- wenn zu wenig Platz: lieber zur Listenansicht wechseln
+
+Monatsansicht:
+- Monat oben auswählbar
+- Tage als Kalendergrid
+- Einsätze in den Tagen
+
+====================================================
+6. ABTEILUNGSPLAN
+====================================================
+
+Bei Abteilungsplan:
+
+Desktop:
+- Tabelle erlaubt
+
+Mobile:
+Umschalter:
+- Nach Tag
+- Nach Mitarbeiter
+
+Nach Tag:
+Montag, 18. Mai
+- Arber: 10:00–14:00 / 17:30–23:00
+- Carlos: 17:00–23:00
+
+Nach Mitarbeiter:
+Arber
+- Mo 10:00–14:00
+- Di Frei
+- Mi 17:30–23:00
+
+====================================================
+7. ECHTE DATEN VERWENDEN
+====================================================
+
+Wenn der Link aus dem Dienstplan erzeugt wird:
+
+- echte Mitarbeiter
+- echte Schichten
+- echte Woche / echter Monat
+- echtes Restaurant
+- echte Abteilung
+
+verwenden.
+
+Wenn noch kein Backend vorhanden:
+Bitte publishedScheduleData im localStorage/sessionStorage speichern,
+damit die Vorschau mit echten aktuellen Daten funktioniert.
+
+Mock-Daten nur als Fallback mit Hinweis:
+"Demo-Daten"
+
+====================================================
+8. TOKEN-STRUKTUR VORBEREITEN
+====================================================
+
+Token soll unterscheiden können:
+
+- personal plan
+- department plan
+- week
+- month
+- restaurant
+- employeeId
+- department
+
+Beispiel Payload:
+{
+  type: "personal" | "department",
+  period: "week" | "month",
+  restaurantId,
+  employeeId,
+  department,
+  weekStart,
+  month
+}
+
+Noch keine echte DB nötig.
+Aber sauber vorbereitet.
+
+====================================================
+9. WHATSAPP TEXT
+====================================================
+
+Bei persönlichem Plan:
+
+Hallo {Name}, hier ist dein Dienstplan für {Zeitraum}: {Link}
+
+Bei Abteilungsplan:
+
+Hallo zusammen, hier ist der Dienstplan für {Zeitraum}: {Link}
+
+Button:
+"WhatsApp öffnen"
+
+====================================================
+10. LINK STATUS
+====================================================
+
+Im Teilen-Dialog anzeigen:
+
+- Entwurf
+- Veröffentlicht
+- Geändert nach Veröffentlichung
+
+Wenn Plan nach Veröffentlichung geändert wurde:
+Hinweis:
+"Plan wurde nach Veröffentlichung geändert. Bitte erneut teilen."
+
+====================================================
+11. DATENSCHUTZ
+====================================================
+
+Öffentlicher Link darf nicht zeigen:
+
+- Lohn
+- Kosten
+- Stundenlohn
+- Kostenquote
+- interne Warnungen
+- andere Mitarbeiter bei persönlichem Link
+
+====================================================
+12. TEST
+====================================================
+
+Nach Umsetzung bitte testen:
+
+- persönlicher Link Woche
+- persönlicher Link Monat
+- Listenansicht Mobile
+- Kalenderansicht Mobile
+- Abteilungsplan Mobile nach Tag
+- Abteilungsplan Mobile nach Mitarbeiter
+- WhatsApp Text
+- Link kopieren
+- Vorschau öffnen
+
+Bitte TypeScript prüfen und bestätigen, dass keine Kosten-/Speicherlogik geändert wurde.

@@ -1,11 +1,15 @@
 import { useParams } from 'react-router-dom';
 import { useState, useMemo } from 'react';
-import { format, parseISO, getDay, isSameDay } from 'date-fns';
+import {
+  format, parseISO, getDay, isSameDay,
+  startOfMonth, endOfMonth, eachDayOfInterval,
+  startOfWeek, endOfWeek,
+} from 'date-fns';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import {
-  Calendar, Clock, User, Building2,
-  AlertCircle, ChevronDown, ChevronUp,
+  Calendar, Clock, LayoutList, User, Building2, AlertCircle,
+  ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,40 +20,48 @@ import {
   PublishedSchedulePayload,
 } from '@/lib/schedule-publish-store';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Date helpers ──────────────────────────────────────────────────────────────
 
-/** Returns true for Saturday (6) and Sunday (0). */
+/** Saturday (6) or Sunday (0). */
 function isWeekendDate(dateStr: string): boolean {
   const d = getDay(parseISO(dateStr));
   return d === 0 || d === 6;
 }
 
-/** Returns true if the date string is today. */
 function isTodayDate(dateStr: string): boolean {
   return isSameDay(parseISO(dateStr), new Date());
 }
 
-/** True when the day has no shift or absence recorded. */
 function isEmptyDay(day: PublicDayEntry): boolean {
   return !day.früh && !day.spät && !day.frühAbsence && !day.spätAbsence;
 }
 
+/** Format "10:00" → "10", "10:30" → "10:30". */
+function fmtHour(t: string): string {
+  const [h, m] = t.split(':');
+  return m === '00' ? h : `${h}:${m}`;
+}
+
+/** "10:00"–"14:00" → "10–14". */
+function fmtRange(start: string, end: string): string {
+  return `${fmtHour(start)}–${fmtHour(end)}`;
+}
+
 // ── Absence styling ───────────────────────────────────────────────────────────
 
-const ABSENCE_MAP: Record<string, { label: string; cls: string }> = {
-  FE:  { label: 'Ferien',       cls: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700' },
-  UR:  { label: 'Urlaub',       cls: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700' },
-  K:   { label: 'Krank',        cls: 'bg-red-100  text-red-700  border-red-200  dark:bg-red-950/40  dark:text-red-300  dark:border-red-700'  },
-  KR:  { label: 'Krank',        cls: 'bg-red-100  text-red-700  border-red-200  dark:bg-red-950/40  dark:text-red-300  dark:border-red-700'  },
-  F:   { label: 'Frei',         cls: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:border-slate-700' },
-  UB:  { label: 'Überstunden',  cls: 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-700' },
-  AZ:  { label: 'Auszeit',      cls: 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700' },
+const ABSENCE_MAP: Record<string, { label: string; short: string; cls: string }> = {
+  FE:  { label: 'Ferien',      short: 'FE', cls: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700' },
+  UR:  { label: 'Urlaub',      short: 'UR', cls: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700' },
+  K:   { label: 'Krank',       short: 'Kr', cls: 'bg-red-100  text-red-700  border-red-200  dark:bg-red-950/40  dark:text-red-300  dark:border-red-700'  },
+  KR:  { label: 'Krank',       short: 'Kr', cls: 'bg-red-100  text-red-700  border-red-200  dark:bg-red-950/40  dark:text-red-300  dark:border-red-700'  },
+  F:   { label: 'Frei',        short: 'Fr', cls: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:border-slate-700' },
+  UB:  { label: 'Überstunden', short: 'UB', cls: 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-700' },
+  AZ:  { label: 'Auszeit',     short: 'AZ', cls: 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700' },
 };
 
 function absenceMeta(code: string) {
   return ABSENCE_MAP[code?.toUpperCase()] ?? {
-    label: code,
-    cls: 'bg-muted text-muted-foreground border-border',
+    label: code, short: code?.slice(0, 2).toUpperCase(), cls: 'bg-muted text-muted-foreground border-border',
   };
 }
 
@@ -73,7 +85,7 @@ function AbsenceChip({ code }: { code: string }) {
   );
 }
 
-/** Renders the shift/absence content for one day. */
+/** Full-size shift/absence content for list cards. */
 function DayContent({ day, compact = false }: { day: PublicDayEntry; compact?: boolean }) {
   if (isEmptyDay(day)) {
     return (
@@ -82,32 +94,164 @@ function DayContent({ day, compact = false }: { day: PublicDayEntry; compact?: b
       </span>
     );
   }
-
   const items: React.ReactNode[] = [];
-
-  // früh slot
   if (day.frühAbsence) {
     items.push(<AbsenceChip key="fa" code={day.frühAbsence} />);
   } else if (day.früh) {
     items.push(<ShiftChip key="f" start={day.früh.start} end={day.früh.end} />);
   }
-
-  // spät slot (only when different from früh absence)
   if (day.spätAbsence && day.spätAbsence !== day.frühAbsence) {
     items.push(<AbsenceChip key="sa" code={day.spätAbsence} />);
   } else if (day.spät) {
     items.push(<ShiftChip key="s" start={day.spät.start} end={day.spät.end} />);
   }
-
   return <div className={cn('flex flex-col gap-1.5', compact && 'gap-1')}>{items}</div>;
 }
 
+// ── Calendar cell — very compact ──────────────────────────────────────────────
+
+function CalendarCell({ day }: { day: PublicDayEntry | null; date?: Date }) {
+  if (!day) {
+    return <div className="rounded-md bg-muted/10 min-h-[58px]" />;
+  }
+  const date    = parseISO(day.date);
+  const wknd    = isWeekendDate(day.date);
+  const isToday = isTodayDate(day.date);
+  const empty   = isEmptyDay(day);
+
+  // Collect compact lines
+  const lines: string[] = [];
+  if (day.frühAbsence) {
+    lines.push(absenceMeta(day.frühAbsence).short);
+  } else if (day.früh) {
+    lines.push(fmtRange(day.früh.start, day.früh.end));
+  }
+  if (day.spätAbsence && day.spätAbsence !== day.frühAbsence) {
+    lines.push(absenceMeta(day.spätAbsence).short);
+  } else if (day.spät) {
+    lines.push(fmtRange(day.spät.start, day.spät.end));
+  }
+
+  return (
+    <div className={cn(
+      'rounded-md border px-1 py-1 min-h-[58px] flex flex-col',
+      isToday
+        ? 'bg-blue-50/90 border-blue-300 dark:bg-blue-950/40 dark:border-blue-700'
+        : wknd
+          ? 'bg-amber-50/50 border-amber-200/60 dark:bg-amber-950/10 dark:border-amber-800/40'
+          : 'bg-card border-border/40',
+      empty && !isToday && 'opacity-35',
+    )}>
+      {/* Day number */}
+      <div className={cn(
+        'text-[11px] font-bold text-center leading-none mb-1',
+        isToday ? 'text-blue-600 dark:text-blue-400'
+        : wknd   ? 'text-amber-500 dark:text-amber-400'
+        : 'text-muted-foreground',
+      )}>
+        {format(date, 'd')}
+      </div>
+
+      {/* Shift / absence lines */}
+      <div className="flex flex-col items-center gap-0.5 flex-1">
+        {lines.map((line, i) => {
+          const isAbsCode = !!ABSENCE_MAP[line.toUpperCase()];
+          return (
+            <span
+              key={i}
+              className={cn(
+                'text-[9px] font-semibold leading-tight text-center w-full truncate px-0.5 rounded',
+                isAbsCode
+                  ? 'text-blue-700 dark:text-blue-300'
+                  : 'text-emerald-700 dark:text-emerald-400',
+              )}
+            >
+              {line}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Calendar view (personal) ──────────────────────────────────────────────────
+
+const CAL_HEADERS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+
+function CalendarView({ employee, payload }: { employee: PublicEmployee; payload: PublishedSchedulePayload }) {
+  const days = employee.days;
+  if (days.length === 0) return null;
+
+  const isMonth = payload.period === 'month';
+
+  // Build a lookup: dateStr → PublicDayEntry
+  const dayMap = new Map<string, PublicDayEntry>(days.map(d => [d.date, d]));
+
+  // Determine the full date range to render
+  const firstPayloadDate = parseISO(days[0].date);
+  const lastPayloadDate  = parseISO(days[days.length - 1].date);
+
+  // Expand to full calendar weeks so the grid aligns Mon–Sun
+  const calStart = startOfWeek(isMonth ? startOfMonth(firstPayloadDate) : firstPayloadDate, { weekStartsOn: 1 });
+  const calEnd   = endOfWeek(isMonth ? endOfMonth(lastPayloadDate) : lastPayloadDate, { weekStartsOn: 1 });
+  const calDays  = eachDayOfInterval({ start: calStart, end: calEnd });
+
+  // Group into weeks
+  const weeks: Date[][] = [];
+  for (let i = 0; i < calDays.length; i += 7) {
+    weeks.push(calDays.slice(i, i + 7));
+  }
+
+  return (
+    <div>
+      {/* Header row */}
+      <div className="grid grid-cols-7 gap-1 mb-1.5">
+        {CAL_HEADERS.map(h => (
+          <div key={h} className={cn(
+            'text-center text-[10px] font-bold uppercase tracking-wide py-0.5',
+            h === 'Sa' || h === 'So' ? 'text-amber-500 dark:text-amber-400' : 'text-muted-foreground/60',
+          )}>
+            {h}
+          </div>
+        ))}
+      </div>
+
+      {/* Week rows */}
+      <div className="space-y-1">
+        {weeks.map((week, wi) => (
+          <div key={wi} className="grid grid-cols-7 gap-1">
+            {week.map((date, di) => {
+              const dateStr = format(date, 'yyyy-MM-dd');
+              const entry = dayMap.get(dateStr) ?? null;
+              // If outside the payload range, render a blank filler
+              const outOfRange = date < firstPayloadDate || date > lastPayloadDate;
+              return (
+                <CalendarCell key={di} day={outOfRange ? null : (entry ?? {
+                  date: dateStr,
+                  dayLabel: '',
+                  früh: null, spät: null, frühAbsence: null, spätAbsence: null,
+                })} />
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
-// Personal View — mobile-first, one card per day
+// Personal View — list + calendar toggle
 // ══════════════════════════════════════════════════════════════════════════════
+
+type PersonalViewMode = 'list' | 'calendar';
 
 function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
   const employee = payload.employees?.[0];
+  const [viewMode, setViewMode] = useState<PersonalViewMode>('list');
+  const today = useMemo(() => new Date(), []);
+
   if (!employee) {
     return (
       <div className="text-center py-12 text-muted-foreground">
@@ -116,61 +260,87 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
     );
   }
 
-  const today = new Date();
-
   return (
-    <div className="space-y-2.5">
-      {employee.days.map((day) => {
-        const wknd   = isWeekendDate(day.date);
-        const isToday = isSameDay(parseISO(day.date), today);
-        const empty  = isEmptyDay(day);
-        const date   = parseISO(day.date);
+    <div className="space-y-4">
+      {/* Toggle */}
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant={viewMode === 'list' ? 'default' : 'outline'}
+          className="h-8 gap-1.5 text-xs"
+          onClick={() => setViewMode('list')}
+        >
+          <LayoutList className="h-3.5 w-3.5" />
+          Liste
+        </Button>
+        <Button
+          size="sm"
+          variant={viewMode === 'calendar' ? 'default' : 'outline'}
+          className="h-8 gap-1.5 text-xs"
+          onClick={() => setViewMode('calendar')}
+        >
+          <Calendar className="h-3.5 w-3.5" />
+          Kalender
+        </Button>
+      </div>
 
-        return (
-          <div
-            key={day.date}
-            className={cn(
-              'rounded-xl border px-4 py-3.5 transition-colors',
-              isToday
-                ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700'
-                : wknd
-                  ? 'bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
-                  : 'bg-card border-border',
-              empty && !isToday && 'opacity-45',
-            )}
-          >
-            {/* Date row */}
-            <div className="flex items-center justify-between gap-2 mb-2.5">
-              <div className="flex items-baseline gap-2">
-                <span className={cn(
-                  'text-[11px] font-bold uppercase tracking-widest leading-none',
-                  isToday ? 'text-blue-600 dark:text-blue-400'
-                  : wknd ? 'text-amber-600 dark:text-amber-400'
-                  : 'text-muted-foreground/60',
-                )}>
-                  {format(date, 'EE', { locale: de })}
-                </span>
-                <span className={cn(
-                  'text-[15px] font-semibold leading-none',
-                  isToday ? 'text-blue-800 dark:text-blue-200'
-                  : wknd ? 'text-amber-800 dark:text-amber-200'
-                  : 'text-foreground',
-                )}>
-                  {format(date, 'd. MMMM', { locale: de })}
-                </span>
+      {/* ── List view ── */}
+      {viewMode === 'list' && (
+        <div className="space-y-2.5">
+          {employee.days.map((day) => {
+            const wknd    = isWeekendDate(day.date);
+            const isToday = isSameDay(parseISO(day.date), today);
+            const empty   = isEmptyDay(day);
+            const date    = parseISO(day.date);
+            return (
+              <div
+                key={day.date}
+                className={cn(
+                  'rounded-xl border px-4 py-3.5',
+                  isToday
+                    ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700'
+                    : wknd
+                      ? 'bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
+                      : 'bg-card border-border',
+                  empty && !isToday && 'opacity-45',
+                )}
+              >
+                <div className="flex items-center justify-between gap-2 mb-2.5">
+                  <div className="flex items-baseline gap-2">
+                    <span className={cn(
+                      'text-[11px] font-bold uppercase tracking-widest',
+                      isToday ? 'text-blue-600 dark:text-blue-400'
+                      : wknd ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-muted-foreground/60',
+                    )}>
+                      {format(date, 'EE', { locale: de })}
+                    </span>
+                    <span className={cn(
+                      'text-[15px] font-semibold',
+                      isToday ? 'text-blue-800 dark:text-blue-200'
+                      : wknd ? 'text-amber-800 dark:text-amber-200'
+                      : 'text-foreground',
+                    )}>
+                      {format(date, 'd. MMMM', { locale: de })}
+                    </span>
+                  </div>
+                  {isToday && (
+                    <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/40 border border-blue-300 dark:border-blue-700 rounded-full px-2 py-0.5 uppercase tracking-wide shrink-0">
+                      Heute
+                    </span>
+                  )}
+                </div>
+                <DayContent day={day} />
               </div>
-              {isToday && (
-                <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/40 border border-blue-300 dark:border-blue-700 rounded-full px-2 py-0.5 uppercase tracking-wide shrink-0">
-                  Heute
-                </span>
-              )}
-            </div>
+            );
+          })}
+        </div>
+      )}
 
-            {/* Shifts / absence */}
-            <DayContent day={day} />
-          </div>
-        );
-      })}
+      {/* ── Calendar view ── */}
+      {viewMode === 'calendar' && (
+        <CalendarView employee={employee} payload={payload} />
+      )}
     </div>
   );
 }
@@ -206,11 +376,10 @@ function EmployeeAccordion({ emp }: { emp: PublicEmployee }) {
       {open && (
         <div className="border-t border-border/50 divide-y divide-border/30">
           {emp.days.map((day) => {
-            const wknd   = isWeekendDate(day.date);
+            const wknd    = isWeekendDate(day.date);
             const isToday = isTodayDate(day.date);
-            const empty  = isEmptyDay(day);
-            const date   = parseISO(day.date);
-
+            const empty   = isEmptyDay(day);
+            const date    = parseISO(day.date);
             return (
               <div
                 key={day.date}
@@ -284,7 +453,7 @@ function DepartmentView({ payload }: { payload: PublishedSchedulePayload }) {
                   Mitarbeiter
                 </th>
                 {dates.map((date, i) => {
-                  const wknd = isWeekendDate(allDays[i].date);
+                  const wknd    = isWeekendDate(allDays[i].date);
                   const isToday = isTodayDate(allDays[i].date);
                   return (
                     <th key={i} className={cn(
@@ -324,9 +493,9 @@ function DepartmentView({ payload }: { payload: PublishedSchedulePayload }) {
                 )}>
                   <td className="py-2.5 px-3 font-medium text-sm whitespace-nowrap">{emp.name}</td>
                   {emp.days.map((day, di) => {
-                    const wknd   = isWeekendDate(day.date);
+                    const wknd    = isWeekendDate(day.date);
                     const isToday = isTodayDate(day.date);
-                    const empty  = isEmptyDay(day);
+                    const empty   = isEmptyDay(day);
                     return (
                       <td key={di} className={cn(
                         'py-2 px-1 text-center align-middle',
@@ -352,7 +521,7 @@ function DepartmentView({ payload }: { payload: PublishedSchedulePayload }) {
     );
   };
 
-  // ── Mobile by-employee section ─────────────────────────────────────────────
+  // ── Mobile by-employee ─────────────────────────────────────────────────────
   const MobileByEmployee = ({
     emps, label, dotColor,
   }: { emps: PublicEmployee[]; label: string; dotColor: string }) => {
@@ -370,7 +539,7 @@ function DepartmentView({ payload }: { payload: PublishedSchedulePayload }) {
     );
   };
 
-  // ── Mobile by-day section ──────────────────────────────────────────────────
+  // ── Mobile by-day ──────────────────────────────────────────────────────────
   const MobileByDay = () => (
     <div className="space-y-3">
       {allDays.map((refDay, idx) => {
@@ -390,7 +559,6 @@ function DepartmentView({ payload }: { payload: PublishedSchedulePayload }) {
                 ? 'bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
                 : 'bg-card border-border',
           )}>
-            {/* Day header */}
             <div className="flex items-center justify-between gap-2 mb-3">
               <div className="flex items-baseline gap-2">
                 <span className={cn(
@@ -416,7 +584,6 @@ function DepartmentView({ payload }: { payload: PublishedSchedulePayload }) {
                 </span>
               )}
             </div>
-
             {activeEmps.length === 0 ? (
               <p className="text-xs text-muted-foreground/40 italic">Kein Dienst</p>
             ) : (
@@ -561,23 +728,17 @@ const StaffSchedulePage = () => {
         <div className="max-w-3xl mx-auto px-4 py-3.5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-
-              {/* Restaurant */}
               <div className="flex items-center gap-1.5 mb-0.5">
                 <Building2 className="h-3 w-3 text-primary shrink-0" />
                 <p className="text-[10px] font-bold uppercase tracking-widest text-primary">
                   {payload.restaurant}
                 </p>
               </div>
-
-              {/* Name or title */}
               <h1 className="text-[17px] font-bold text-foreground leading-snug">
                 {isPersonal
                   ? (payload.employeeName ?? 'Dienstplan')
                   : `Dienstplan ${deptLabel}`}
               </h1>
-
-              {/* Week */}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1">
                 <div className="flex items-center gap-1.5">
                   <Calendar className="h-3 w-3 text-muted-foreground shrink-0" />
@@ -585,7 +746,6 @@ const StaffSchedulePage = () => {
                 </div>
               </div>
             </div>
-
             <div className="flex flex-col items-end gap-1.5 shrink-0">
               <Badge variant="outline" className="text-[10px] font-semibold border-muted-foreground/30 text-muted-foreground whitespace-nowrap">
                 Nur Ansicht
@@ -610,7 +770,6 @@ const StaffSchedulePage = () => {
           Veröffentlicht am {new Date(payload.publishedAt).toLocaleDateString('de-CH')} · Nur Ansicht
         </p>
       </main>
-
     </div>
   );
 };
