@@ -1,0 +1,139 @@
+Der veröffentlichte Dienstplan-Link funktioniert auf Mobile/WhatsApp nicht zuverlässig.
+
+Aktuelles Problem:
+Beim Öffnen erscheint:
+"Link nicht verfügbar"
+
+Das passiert wahrscheinlich weil:
+- der Token nur im lokalen State existiert
+- oder die Veröffentlichung nicht persistent gespeichert wird
+- oder der Link auf eine temporäre replit.dev Session zeigt
+- oder der Token beim Reload verloren geht
+
+Bitte den gesamten Publish-/Share-Flow stabil machen.
+
+====================================================
+1. PERSISTENTE PUBLISH TOKENS
+====================================================
+
+Der Publish-Link darf niemals nur lokal im Frontend existieren.
+
+Bitte:
+- jeden veröffentlichten Dienstplan persistent speichern
+- entweder in Supabase
+- oder mindestens in localStorage als fallback
+
+Der Token muss Reload-sicher sein.
+
+====================================================
+2. SHARE LINK FIX
+====================================================
+
+Aktuell wahrscheinlich falsch:
+random/dev-session URL.
+
+Der Link muss immer sein:
+
+/staff-schedule/:token
+
+Beispiel:
+https://app.domain.ch/staff-schedule/abc123
+
+Nicht:
+temporary replit preview url
+nicht sessionbasiert
+nicht localhost
+nicht relative URL ohne origin
+
+Bitte überall absolute URLs verwenden:
+
+window.location.origin + '/staff-schedule/' + token
+
+====================================================
+3. WHATSAPP FIX
+====================================================
+
+WhatsApp cached/opened Links müssen direkt funktionieren.
+
+Bitte prüfen:
+- token exists
+- publish payload exists
+- fetch beim ersten load funktioniert
+- loading state sauber
+- no race condition
+
+Wenn payload noch lädt:
+nicht direkt "Link nicht verfügbar" anzeigen.
+
+Zuerst:
+- loading spinner
+- retry fetch
+- dann erst error state
+
+====================================================
+4. FALLBACK STORAGE
+====================================================
+
+Wenn Supabase offline:
+- published payload zusätzlich lokal sichern
+
+Beispiel:
+localStorage:
+published_schedule_[token]
+
+Beim Öffnen:
+1. Supabase prüfen
+2. fallback localStorage
+
+====================================================
+5. TOKEN VALIDATION
+====================================================
+
+Nur Fehler anzeigen wenn:
+- token wirklich nicht existiert
+- oder payload leer
+
+Nicht bei:
+- kurzem Netzwerkdelay
+- undefined initial state
+- hydration delay
+
+====================================================
+6. MOBILE TEST
+====================================================
+
+Bitte testen:
+- WhatsApp öffnen
+- iPhone Safari
+- Android Chrome
+- direkt aus Chat öffnen
+- Reload der Seite
+- Hintergrund -> zurück zur Seite
+
+====================================================
+7. BESSERE FEHLERSEITE
+====================================================
+
+Wenn wirklich ungültig:
+
+nicht nur:
+"Link nicht verfügbar"
+
+Sondern:
+
+- Button "Erneut versuchen"
+- Hinweis:
+"Der Plan wird möglicherweise gerade veröffentlicht"
+- kleines Support-Info
+
+====================================================
+8. WICHTIG
+====================================================
+
+Keine bestehende Dienstplanlogik ändern.
+Nur Publish-/Token-/Share-System stabilisieren.
+
+Nachher:
+- TypeScript prüfen
+- erklären wo der Fehler lag
+- bestätigen dass WhatsApp-Links jetzt persistent funktionieren

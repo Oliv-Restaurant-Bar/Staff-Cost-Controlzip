@@ -16,6 +16,7 @@ export type ExportRange = 'month' | 'week' | 'custom';
 export type ExportHoursType = 'plan' | 'ist' | 'both';
 export type ExportFormat = 'excel' | 'pdf';
 export type ExportDepartment = 'service' | 'küche' | 'all';
+export type ExportType = 'aushang' | 'leitungsplan';
 
 export interface ExportOptions {
   range: ExportRange;
@@ -25,7 +26,7 @@ export interface ExportOptions {
   includeCosts: boolean;
   format: ExportFormat;
   department: ExportDepartment;
-  employeeFriendly?: boolean;
+  exportType: ExportType;
 }
 
 interface ExportOptionsDialogProps {
@@ -54,7 +55,7 @@ export const ExportOptionsDialog = ({
   const [includeCosts, setIncludeCosts] = useState(true);
   const [exportFormat, setExportFormat] = useState<ExportFormat>(initialFormat);
   const [department, setDepartment] = useState<ExportDepartment>('all');
-  const [employeeFriendly, setEmployeeFriendly] = useState(false);
+  const [exportType, setExportType] = useState<ExportType>('aushang');
 
   const handleExport = () => {
     const options: ExportOptions = {
@@ -62,10 +63,10 @@ export const ExportOptionsDialog = ({
       customStartDate,
       customEndDate,
       hoursType,
-      includeCosts: employeeFriendly ? false : includeCosts,
+      includeCosts: exportType === 'leitungsplan' ? includeCosts : false,
       format: exportFormat,
       department,
-      employeeFriendly,
+      exportType,
     };
     onExport(options);
     onOpenChange(false);
@@ -339,44 +340,58 @@ export const ExportOptionsDialog = ({
           </>
         )}
 
-        {/* Costs Option */}
-        <div className={cn("flex items-center justify-between p-3 rounded-lg border", employeeFriendly && "opacity-40 pointer-events-none")}>
-          <div className="flex items-center gap-3">
-            <Euro className="h-5 w-5 text-muted-foreground" />
-            <div>
-              <Label htmlFor="includeCosts" className="font-medium text-sm cursor-pointer">
-                Kosten inkludieren
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                Personalkosten pro Mitarbeiter und Tag
-              </p>
-            </div>
-          </div>
-          <Checkbox
-            id="includeCosts"
-            checked={employeeFriendly ? false : includeCosts}
-            onCheckedChange={(checked) => setIncludeCosts(checked === true)}
-          />
-        </div>
-
-        {/* Employee-Friendly PDF Option — nur für PDF relevant */}
+        {/* PDF Export Type — Aushang vs Leitungsplan */}
         {exportFormat === 'pdf' && (
-          <div className="flex items-center justify-between p-3 rounded-lg border border-blue-200 bg-blue-50/40">
+          <>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">PDF-Typ</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <div
+                  className={cn(
+                    "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
+                    exportType === 'aushang' ? "border-primary bg-primary/5" : "hover:bg-accent"
+                  )}
+                  onClick={() => setExportType('aushang')}
+                >
+                  <Users className={cn("h-5 w-5 mb-1", exportType === 'aushang' ? "text-primary" : "text-muted-foreground")} />
+                  <span className={cn("text-sm font-medium", exportType === 'aushang' ? "text-primary" : "")}>Aushang</span>
+                  <span className="text-xs text-muted-foreground text-center">Teamplan zum Aushängen</span>
+                </div>
+                <div
+                  className={cn(
+                    "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
+                    exportType === 'leitungsplan' ? "border-primary bg-primary/5" : "hover:bg-accent"
+                  )}
+                  onClick={() => setExportType('leitungsplan')}
+                >
+                  <ClipboardList className={cn("h-5 w-5 mb-1", exportType === 'leitungsplan' ? "text-primary" : "text-muted-foreground")} />
+                  <span className={cn("text-sm font-medium", exportType === 'leitungsplan' ? "text-primary" : "")}>Leitungsplan</span>
+                  <span className="text-xs text-muted-foreground text-center">Mit Std/Soll/+/− intern</span>
+                </div>
+              </div>
+            </div>
+            <Separator />
+          </>
+        )}
+
+        {/* Costs Option — only meaningful for Excel or Leitungsplan */}
+        {(exportFormat === 'excel' || exportType === 'leitungsplan') && (
+          <div className="flex items-center justify-between p-3 rounded-lg border">
             <div className="flex items-center gap-3">
-              <Users className="h-5 w-5 text-blue-600" />
+              <Euro className="h-5 w-5 text-muted-foreground" />
               <div>
-                <Label htmlFor="employeeFriendly" className="font-medium text-sm cursor-pointer text-blue-900">
-                  Mitarbeiter-Aushang
+                <Label htmlFor="includeCosts" className="font-medium text-sm cursor-pointer">
+                  Kosten inkludieren
                 </Label>
                 <p className="text-xs text-muted-foreground">
-                  Grössere Schrift, ohne Kostenspalte – ideal zum Aushängen
+                  Personalkosten pro Mitarbeiter und Tag
                 </p>
               </div>
             </div>
             <Checkbox
-              id="employeeFriendly"
-              checked={employeeFriendly}
-              onCheckedChange={(checked) => setEmployeeFriendly(checked === true)}
+              id="includeCosts"
+              checked={includeCosts}
+              onCheckedChange={(checked) => setIncludeCosts(checked === true)}
             />
           </div>
         )}

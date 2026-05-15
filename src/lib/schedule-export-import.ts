@@ -36,6 +36,8 @@ interface ExportOptionsV2 {
   employeeFriendly?: boolean;
   /** Optionaler Restaurantname für Dateinamen (Mandantenfähigkeit) */
   restaurantName?: string;
+  /** Exporttyp: Aushang (kein Lohn/Kosten) oder Leitungsplan (mit Stunden/Saldo) */
+  exportType?: 'aushang' | 'leitungsplan';
 }
 
 export interface NameMatchInfo {
@@ -1534,542 +1536,317 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
 }
 
 export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<void> {
-  const { employees, scheduleData, currentMonth, department = 'all', dailyBudgets = {}, showCosts = false, specificDays, employeeFriendly = false, restaurantName } = options;
-  console.log(`[PDF-SCHEDULE] exportScheduleToPDF – dept=${department} employeeFriendly=${employeeFriendly} showCosts=${showCosts} specificDays=${specificDays?.length ?? 'none'} employees=${employees.length}`);
+  const {
+    employees, scheduleData, currentMonth,
+    department = 'all', specificDays, restaurantName,
+    exportType = 'aushang', employeeFriendly = false,
+  } = options;
+  const isLeitungsplan = exportType === 'leitungsplan' && !employeeFriendly;
+  console.log(`[PDF] exportScheduleToPDF – dept=${department} type=${exportType} specificDays=${specificDays?.length ?? 'none'} employees=${employees.length}`);
   
-  const year = currentMonth.getFullYear();
-  const month = currentMonth.getMonth();
-  const days = specificDays ?? getDaysInMonth(year, month);
-  const isPartial = !!specificDays;
-  const monthName = isPartial
-    ? `${format(days[0], 'dd.MM.', { locale: de })}–${format(days[days.length - 1], 'dd.MM.yyyy', { locale: de })}`
-    : format(currentMonth, 'MMMM yyyy', { locale: de });
-  
+  // Date range
+  const rangeStart = specificDays ? specificDays[0] : startOfMonth(currentMonth);
+  const rangeEnd = specificDays ? specificDays[specificDays.length - 1] : endOfMonth(currentMonth);
+
   const shifts = getShiftConfig();
   const shiftMap = getShiftConfigMap();
   const absenceShifts = shifts.filter(s => !s.start || !s.end);
-  
-  // Load labor cost threshold
-  const LABOR_COST_THRESHOLD_KEY = 'labor_cost_threshold';
-  const laborCostThreshold = parseFloat(localStorage.getItem(LABOR_COST_THRESHOLD_KEY) || '40');
-  
-  // Sort employees by ID to maintain consistent order from Excel file
-  const sortByEmployeeId = (a: Employee, b: Employee) => parseInt(a.id) - parseInt(b.id);
-  const serviceEmployees = employees.filter(e => e.department === 'service').sort(sortByEmployeeId);
-  const kücheEmployees = employees.filter(e => e.department === 'küche').sort(sortByEmployeeId);
-  
-// Calculate daily stats
-  const getDailyStats = (day: Date, deptEmployees: Employee[]) => {
-    const dateStr = format(day, 'yyyy-MM-dd');
-    let totalHours = 0;
-    let totalCosts = 0;
 
-    deptEmployees.forEach(emp => {
-      const cellKey = `${emp.id}-${dateStr}`;
-      const daySchedule = scheduleData[cellKey];
-      
-      if (daySchedule) {
-        const frühHours = calculateSlotHours(daySchedule.früh);
-        const spätHours = calculateSlotHours(daySchedule.spät);
-        let dayHours = frühHours + spätHours;
-        
-        // Add absence hours if countsToTarget
-        if (daySchedule.frühAbsence) {
-          const absenceShift = absenceShifts.find(s => s.abbrev === daySchedule.frühAbsence);
-          if (absenceShift && shiftMap[absenceShift.name]?.countsToTarget) {
-            dayHours += absenceShift.hours;
-          }
-        }
-        if (daySchedule.spätAbsence) {
-          const absenceShift = absenceShifts.find(s => s.abbrev === daySchedule.spätAbsence);
-          if (absenceShift && shiftMap[absenceShift.name]?.countsToTarget) {
-            // Only add if different from früh absence (avoid double counting)
-            if (daySchedule.spätAbsence !== daySchedule.frühAbsence) {
-              dayHours += absenceShift.hours;
-            }
-          }
-        }
-        
-        totalHours += dayHours;
-        
-        if (emp.hourlyWage) {
-          totalCosts += dayHours * emp.hourlyWage;
-        }
-      }
-    });
+  // Sort employees
+  const sortById = (a: Employee, b: Employee) => parseInt(a.id) - parseInt(b.id);
+  const serviceEmployees = employees.filter(e => e.department === 'service').sort(sortById);
+  const kücheEmployees = employees.filter(e => e.department === 'küche').sort(sortById);
 
-    const budget = dailyBudgets[dateStr];
-    const plannedRevenue = budget?.plannedRevenue || 0;
-    const laborCostPercentage = plannedRevenue > 0 ? (totalCosts / plannedRevenue) * 100 : 0;
-    const isOverBudget = plannedRevenue > 0 && laborCostPercentage > laborCostThreshold;
-    
-    return { totalHours, totalCosts, plannedRevenue, laborCostPercentage, isOverBudget };
-  };
-  
-  // Create PDF (A4 landscape)
-  const pdf = new jsPDF({
-    orientation: 'landscape',
-    unit: 'mm',
-    format: 'a4'
-  });
-  
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-
-  // ── Branding ──────────────────────────────────────────────────
+  // ── Branding ────────────────────────────────────────────────────────────
   const brandingId = restaurantName?.toLowerCase() === 'beaulieu' ? 'beaulieu' : 'oliv';
   const branding = getBranding(brandingId);
   const logoDataUrl = await renderLogoDataUrl(branding, 240, 56);
-  const HEADER_H = 26; // mm – height of branded top bar
 
-  const drawPageHeader = (deptName: string) => {
-    pdf.setFillColor(branding.headerBg[0], branding.headerBg[1], branding.headerBg[2]);
-    pdf.rect(0, 0, pageWidth, HEADER_H, 'F');
-    pdf.setFillColor(branding.accentColor[0], branding.accentColor[1], branding.accentColor[2]);
-    pdf.rect(0, HEADER_H - 1, pageWidth, 1, 'F');
-    if (logoDataUrl) {
-      pdf.addImage(logoDataUrl, 'PNG', pageWidth - 58, 3, 52, 20);
+  // ── PDF setup ────────────────────────────────────────────────────────────
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const HEADER_H = 28;
+  let isFirstPage = true;
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  const getAbsenceType = (abbrev: string): 'frei' | 'ferien' | 'krank' | 'other' => {
+    const shift = absenceShifts.find(s => s.abbrev === abbrev);
+    const name = (shift?.name || abbrev).toLowerCase();
+    if (name.includes('frei')) return 'frei';
+    if (name.includes('ferien') || name.includes('urlaub')) return 'ferien';
+    if (name.includes('krank') || name.includes('arzt')) return 'krank';
+    return 'other';
+  };
+
+  interface CellInfo { text: string; absenceType: 'frei' | 'ferien' | 'krank' | 'other' | null; hasShift: boolean; }
+
+  const buildCellInfo = (ds: DaySchedule): CellInfo => {
+    const hasFrühAbs = !!ds.frühAbsence;
+    const hasSpätAbs = !!ds.spätAbsence;
+    const hasFrüh = !!ds.früh?.start;
+    const hasSpät = !!ds.spät?.start;
+    let absType: CellInfo['absenceType'] = null;
+    if (hasFrühAbs) absType = getAbsenceType(ds.frühAbsence!);
+    else if (hasSpätAbs) absType = getAbsenceType(ds.spätAbsence!);
+    const parts: string[] = [];
+    if (hasFrühAbs && hasSpätAbs) {
+      parts.push(ds.frühAbsence === ds.spätAbsence ? ds.frühAbsence! : `${ds.frühAbsence} / ${ds.spätAbsence}`);
+    } else {
+      if (hasFrühAbs) parts.push(ds.frühAbsence!);
+      else if (hasFrüh) parts.push(formatTimeSlot(ds.früh));
+      if (hasSpätAbs) parts.push(ds.spätAbsence!);
+      else if (hasSpät) parts.push(formatTimeSlot(ds.spät));
     }
+    return { text: parts.join('\n'), absenceType: absType, hasShift: hasFrüh || hasSpät };
+  };
+
+  const calcEmpWeekHours = (emp: Employee, weekDays: Date[]): number => {
+    let h = 0;
+    weekDays.forEach(day => {
+      const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
+      h += calculateSlotHours(ds.früh) + calculateSlotHours(ds.spät);
+      if (ds.frühAbsence) {
+        const s = absenceShifts.find(a => a.abbrev === ds.frühAbsence);
+        if (s && shiftMap[s.name]?.countsToTarget) h += shiftMap[s.name].hours || 0;
+      }
+      if (ds.spätAbsence && ds.spätAbsence !== ds.frühAbsence) {
+        const s = absenceShifts.find(a => a.abbrev === ds.spätAbsence);
+        if (s && shiftMap[s.name]?.countsToTarget) h += shiftMap[s.name].hours || 0;
+      }
+    });
+    return h;
+  };
+
+  // ── Draw branded page header ──────────────────────────────────────────────
+
+  const drawHeader = (deptLabel: string, weekDays: Date[]) => {
+    const kw = getISOWeek(weekDays[0]);
+    const from = format(weekDays[0], 'dd.MM.', { locale: de });
+    const to = format(weekDays[weekDays.length - 1], 'dd.MM.yyyy', { locale: de });
+
+    pdf.setFillColor(branding.headerBg[0], branding.headerBg[1], branding.headerBg[2]);
+    pdf.rect(0, 0, pageW, HEADER_H, 'F');
+    pdf.setFillColor(branding.accentColor[0], branding.accentColor[1], branding.accentColor[2]);
+    pdf.rect(0, HEADER_H - 1, pageW, 1, 'F');
+
+    if (logoDataUrl) pdf.addImage(logoDataUrl, 'PNG', pageW - 58, 3, 52, 22);
+
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(13);
     pdf.setTextColor(branding.textPrimary[0], branding.textPrimary[1], branding.textPrimary[2]);
     pdf.text(branding.displayName, 10, 10);
-    pdf.setFontSize(8.5);
+    pdf.setFontSize(10);
+    pdf.text(`Dienstplan KW ${kw}`, 10, 17);
+
     pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8.5);
     pdf.setTextColor(branding.textSecondary[0], branding.textSecondary[1], branding.textSecondary[2]);
-    const kwInfo = days.length <= 7 ? `KW ${getISOWeek(days[0])} · ` : '';
-    pdf.text(`${deptName} · ${kwInfo}${monthName}`, 10, 17);
-    pdf.setFontSize(7);
-    pdf.text(`Exportiert: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 10, 22);
+    pdf.text(`${from}–${to}  ·  Abteilung: ${deptLabel}`, 10, 23.5);
+
+    const typeLabel = isLeitungsplan ? 'Interner Leitungsplan' : 'Aushang / Teamplan';
+    pdf.setFontSize(6.5);
+    pdf.text(typeLabel, pageW - 65, 8.5);
+    pdf.text(`Exportiert: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, pageW - 65, 12.5);
+
     pdf.setTextColor(0, 0, 0);
-    buildCompactLegendLine(pdf, shifts, pageWidth, HEADER_H + 6);
   };
 
-  const createPage = (deptEmployees: Employee[], deptName: string, isFirstPage: boolean) => {
-    if (!isFirstPage) {
-      pdf.addPage();
-    }
+  // ── Build one weekly table page ───────────────────────────────────────────
 
-    drawPageHeader(deptName);
+  const createWeeklyPage = (deptEmployees: Employee[], deptLabel: string, weekDays: Date[]) => {
+    if (!isFirstPage) pdf.addPage();
+    isFirstPage = false;
 
-    // Prepare table data
-    const headers: string[] = ['Name'];
-    days.forEach(d => {
-      headers.push(formatDateHeader(d));
-    });
-    headers.push('Plan', 'Soll', '+/-');
-    if (showCosts) {
-      headers.push('CHF');
-    }
-    
+    drawHeader(deptLabel, weekDays);
+
+    const empCount = deptEmployees.length;
+    const fs = empCount > 32 ? 5.5 : empCount > 26 ? 6 : empCount > 20 ? 6.5 : empCount > 14 ? 7 : 7.5;
+    const cp = empCount > 26 ? 1.0 : empCount > 18 ? 1.4 : 1.8;
+    const mh = empCount > 26 ? 9  : empCount > 18 ? 11  : 13;
+
+    const DOW = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+    const headers: string[] = ['Mitarbeiter'];
+    weekDays.forEach(d => headers.push(`${DOW[d.getDay()]}\n${format(d, 'd.MM.')}`));
+    headers.push('Std');
+    if (isLeitungsplan) { headers.push('Soll'); headers.push('+/−'); }
+
     const body: (string | number)[][] = [];
-    
-    deptEmployees.forEach((emp) => {
-      const rowData: (string | number)[] = [emp.name];
-      let plannedHours = 0;
-      let empCost = 0;
-      
-      days.forEach(day => {
-        const dateStr = format(day, 'yyyy-MM-dd');
-        const cellKey = `${emp.id}-${dateStr}`;
-        const daySchedule = scheduleData[cellKey] || {};
-        
-        let cellContent = '';
-        
-        if (daySchedule.frühAbsence && daySchedule.spätAbsence) {
-          cellContent = daySchedule.frühAbsence === daySchedule.spätAbsence 
-            ? daySchedule.frühAbsence 
-            : `${daySchedule.frühAbsence}/${daySchedule.spätAbsence}`;
-        } else if (daySchedule.frühAbsence) {
-          cellContent = daySchedule.spät 
-            ? `${daySchedule.frühAbsence}/${formatTimeSlot(daySchedule.spät)}` 
-            : daySchedule.frühAbsence;
-        } else if (daySchedule.spätAbsence) {
-          cellContent = daySchedule.früh 
-            ? `${formatTimeSlot(daySchedule.früh)}/${daySchedule.spätAbsence}` 
-            : daySchedule.spätAbsence;
-        } else if (daySchedule.früh || daySchedule.spät) {
-          const parts: string[] = [];
-          if (daySchedule.früh) parts.push(formatTimeSlot(daySchedule.früh));
-          if (daySchedule.spät) parts.push(formatTimeSlot(daySchedule.spät));
-          cellContent = parts.join('\n');
-        }
-        
-        rowData.push(cellContent);
-        
-        const frühHours = calculateSlotHours(daySchedule.früh);
-        const spätHours = calculateSlotHours(daySchedule.spät);
-        plannedHours += frühHours + spätHours;
-        
-        if (daySchedule.frühAbsence) {
-          const shift = absenceShifts.find(s => shiftMap[s.name]?.abbrev === daySchedule.frühAbsence);
-          if (shift && shiftMap[shift.name]?.countsToTarget) {
-            plannedHours += shiftMap[shift.name].hours;
-          }
-        }
-        if (daySchedule.spätAbsence) {
-          const shift = absenceShifts.find(s => shiftMap[s.name]?.abbrev === daySchedule.spätAbsence);
-          if (shift && shiftMap[shift.name]?.countsToTarget) {
-            plannedHours += shiftMap[shift.name].hours;
-          }
-        }
-        
-        if (emp.hourlyWage) {
-          empCost += (frühHours + spätHours) * emp.hourlyWage;
-        }
+    deptEmployees.forEach(emp => {
+      const row: (string | number)[] = [emp.name];
+      const totalH = calcEmpWeekHours(emp, weekDays);
+      weekDays.forEach(day => {
+        const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
+        row.push(buildCellInfo(ds).text);
       });
-      
-      const targetHours = emp.weeklyHours ? emp.weeklyHours * 4.33 : 42 * 4.33;
-      const diff = plannedHours - targetHours;
-      
-      rowData.push(plannedHours.toFixed(1));
-      rowData.push(targetHours.toFixed(0));
-      rowData.push(diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1));
-      if (showCosts) {
-        rowData.push(`${empCost.toFixed(0)}€`);
+      row.push(totalH > 0 ? totalH.toFixed(1) : '');
+      if (isLeitungsplan) {
+        const soll = emp.weeklyHours ?? 42;
+        const diff = totalH - soll;
+        row.push(soll.toFixed(0));
+        row.push(totalH > 0 ? (diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)) : '');
       }
-      
-      body.push(rowData);
+      body.push(row);
     });
-    
-    // Footer rows
-    const footerRow: (string | number)[] = ['SUMME'];
-    let totalMonthHours = 0;
-    let totalMonthCosts = 0;
-    
-    days.forEach(day => {
-      const stats = getDailyStats(day, deptEmployees);
-      footerRow.push(`${stats.totalHours.toFixed(1)}h`);
-      totalMonthHours += stats.totalHours;
-      totalMonthCosts += stats.totalCosts;
+
+    // Summary row
+    const sumRow: (string | number)[] = ['Gesamt'];
+    let grandTotal = 0;
+    weekDays.forEach(day => {
+      let dayH = 0;
+      deptEmployees.forEach(emp => {
+        const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
+        dayH += calculateSlotHours(ds.früh) + calculateSlotHours(ds.spät);
+      });
+      sumRow.push(dayH > 0 ? `${dayH.toFixed(1)}h` : '');
+      grandTotal += dayH;
     });
-    footerRow.push(totalMonthHours.toFixed(1), '', '');
-    if (showCosts) {
-      footerRow.push(`${totalMonthCosts.toFixed(0)}€`);
-    }
-    body.push(footerRow);
-    
-    if (showCosts) {
-      // Costs row
-      const costRow: (string | number)[] = ['KOSTEN'];
-      days.forEach(day => {
-        const stats = getDailyStats(day, deptEmployees);
-        costRow.push(`${stats.totalCosts.toFixed(0)}€`);
-      });
-      costRow.push('', '', '', `${totalMonthCosts.toFixed(0)}€`);
-      body.push(costRow);
-      
-      // PKQ row
-      const pkqRow: (string | number)[] = ['PKQ'];
-      let totalRevenue = 0;
-      days.forEach(day => {
-        const stats = getDailyStats(day, deptEmployees);
-        pkqRow.push(stats.plannedRevenue > 0 ? `${stats.laborCostPercentage.toFixed(1)}%` : '-');
-        totalRevenue += stats.plannedRevenue;
-      });
-      const monthPKQ = totalRevenue > 0 ? (totalMonthCosts / totalRevenue * 100) : 0;
-      pkqRow.push('', '', '', monthPKQ > 0 ? `${monthPKQ.toFixed(1)}%` : '-');
-      body.push(pkqRow);
-    }
-    
-    // Calculate column widths
-    const nameColWidth = employeeFriendly ? 28 : 22;
-    const summaryColWidth = employeeFriendly ? 12 : 10;
-    const numSummaryCols = showCosts ? 4 : 3;
-    const availableWidth = pageWidth - 20 - nameColWidth - (summaryColWidth * numSummaryCols);
-    const dayColWidth = availableWidth / days.length;
-    
-    const columnStyles: Record<number, { cellWidth: number; halign?: 'left' | 'center' | 'right' }> = {
-      0: { cellWidth: nameColWidth, halign: 'left' }
+    sumRow.push(grandTotal > 0 ? grandTotal.toFixed(1) : '');
+    if (isLeitungsplan) { sumRow.push(''); sumRow.push(''); }
+    body.push(sumRow);
+
+    // Column widths
+    const endCols = isLeitungsplan ? 3 : 1;
+    const endW = isLeitungsplan ? 10 : 13;
+    const nameW = 28;
+    const availW = pageW - 20 - nameW - endCols * endW;
+    const dayW = availW / weekDays.length;
+
+    const colStyles: Record<number, { cellWidth: number; halign?: 'left' | 'center' | 'right' }> = {
+      0: { cellWidth: nameW, halign: 'left' },
     };
-    for (let i = 1; i <= days.length; i++) {
-      columnStyles[i] = { cellWidth: dayColWidth, halign: 'center' };
+    weekDays.forEach((_, i) => { colStyles[i + 1] = { cellWidth: dayW, halign: 'center' }; });
+    for (let i = 0; i < endCols; i++) {
+      colStyles[weekDays.length + 1 + i] = { cellWidth: endW, halign: 'center' };
     }
-    for (let i = 0; i < numSummaryCols; i++) {
-      columnStyles[days.length + 1 + i] = { cellWidth: summaryColWidth, halign: 'center' };
-    }
-    
+
+    // Pre-compute cell colors
+    const cellColors = new Map<string, { bg: [number,number,number]; fg?: [number,number,number]; bold?: boolean }>();
+    deptEmployees.forEach((emp, ri) => {
+      weekDays.forEach((day, ci) => {
+        const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
+        const { absenceType, hasShift } = buildCellInfo(ds);
+        const isWE = day.getDay() === 0 || day.getDay() === 6;
+        if      (absenceType === 'frei')   cellColors.set(`${ri},${ci+1}`, { bg: [209,250,229], fg: [22,101,52],   bold: true });
+        else if (absenceType === 'ferien') cellColors.set(`${ri},${ci+1}`, { bg: [219,234,254], fg: [30,64,175],   bold: true });
+        else if (absenceType === 'krank')  cellColors.set(`${ri},${ci+1}`, { bg: [254,226,226], fg: [153,27,27],   bold: true });
+        else if (absenceType === 'other')  cellColors.set(`${ri},${ci+1}`, { bg: [254,243,199], fg: [120,53,15],   bold: true });
+        else if (hasShift)                 cellColors.set(`${ri},${ci+1}`, { bg: [239,246,255], fg: [30,64,175] });
+        else if (isWE)                     cellColors.set(`${ri},${ci+1}`, { bg: [255,251,235] });
+      });
+    });
+
     autoTable(pdf, {
       head: [headers],
-      body: body,
-      startY: HEADER_H + 11,
-      theme: 'grid',
+      body,
+      startY: HEADER_H + 3,
+      theme: 'plain',
+      tableWidth: pageW - 20,
+      margin: { left: 10, right: 10, top: 0, bottom: 8 },
       styles: {
-        fontSize: employeeFriendly ? 9 : 7.5,
-        cellPadding: { top: 2.5, right: 2, bottom: 2.5, left: 2 },
-        minCellHeight: employeeFriendly ? 18 : 13,
-        lineWidth: 0.15,
-        lineColor: [215, 219, 225],
+        fontSize: fs,
+        cellPadding: cp,
+        minCellHeight: mh,
         overflow: 'linebreak',
+        lineWidth: 0.12,
+        lineColor: [220, 224, 230] as [number,number,number],
       },
       headStyles: {
-        fillColor: [branding.headerBg[0], branding.headerBg[1], branding.headerBg[2]] as [number, number, number],
-        textColor: [255, 255, 255],
+        fillColor: [branding.headerBg[0], branding.headerBg[1], branding.headerBg[2]] as [number,number,number],
+        textColor: [255, 255, 255] as [number,number,number],
         fontStyle: 'bold',
-        fontSize: employeeFriendly ? 8 : 7,
+        fontSize: fs - 0.5,
         halign: 'center',
-        minCellHeight: 10,
+        minCellHeight: 9,
+        lineWidth: 0,
       },
-      columnStyles: columnStyles,
+      columnStyles: colStyles,
       didDrawPage: () => {
         const pg = pdf.getCurrentPageInfo().pageNumber;
         const total = pdf.getNumberOfPages();
-        pdf.setFontSize(7);
-        pdf.setTextColor(150, 150, 150);
-        pdf.text(`Seite ${pg} / ${total}`, pageWidth - 22, pageHeight - 4);
+        pdf.setFontSize(6.5);
+        pdf.setTextColor(160, 160, 160);
+        pdf.text(`Seite ${pg} / ${total}`, pageW - 22, pageH - 4);
         pdf.setTextColor(0, 0, 0);
       },
-      didParseCell: function(data) {
-        const colIndex = data.column.index;
-        const rowIndex = data.row.index;
+      didParseCell: (data) => {
+        const ci = data.column.index;
+        const ri = data.row.index;
+        const isSumRow = data.section === 'body' && ri === deptEmployees.length;
 
-        // Weekend headers – use accent tint
-        if (data.section === 'head' && colIndex > 0 && colIndex <= days.length) {
-          const day = days[colIndex - 1];
-          if (day && (day.getDay() === 0 || day.getDay() === 6)) {
-            const a = branding.accentColor;
-            data.cell.styles.fillColor = [Math.min(255, a[0] + 30), Math.min(255, a[1] + 20), Math.min(255, a[2])] as [number, number, number];
+        if (data.section === 'head' && ci >= 1 && ci <= weekDays.length) {
+          const day = weekDays[ci - 1];
+          const isWE = day.getDay() === 0 || day.getDay() === 6;
+          const isToday = format(day, 'yyyy-MM-dd') === todayStr;
+          if (isToday) {
+            data.cell.styles.fillColor = [59, 130, 246] as [number,number,number];
+          } else if (isWE) {
+            const bg = branding.headerBg; const ac = branding.accentColor;
+            data.cell.styles.fillColor = [
+              Math.round((bg[0]*2 + ac[0]) / 3),
+              Math.round((bg[1]*2 + ac[1]) / 3),
+              Math.round((bg[2]*2 + ac[2]) / 3),
+            ] as [number,number,number];
           }
         }
-        
-        // Employee rows styling
-        if (data.section === 'body' && rowIndex < deptEmployees.length) {
-          // Alternating row colors
-          if (rowIndex % 2 === 1) {
-            data.cell.styles.fillColor = [249, 250, 251];
-          }
-          
-          // Day cell styling
-          if (colIndex > 0 && colIndex <= days.length) {
-            const emp = deptEmployees[rowIndex];
-            const day = days[colIndex - 1];
-            const dateStr = format(day, 'yyyy-MM-dd');
-            const cellKey = `${emp.id}-${dateStr}`;
-            const daySchedule = scheduleData[cellKey] || {};
-            
-            if (daySchedule.frühAbsence || daySchedule.spätAbsence) {
-              data.cell.styles.fillColor = [254, 243, 199];
-              data.cell.styles.fontStyle = 'bold';
-            } else if (daySchedule.früh || daySchedule.spät) {
-              data.cell.styles.fillColor = [219, 234, 254];
-              data.cell.styles.textColor = [30, 64, 175];
-            } else if (day.getDay() === 0 || day.getDay() === 6) {
-              data.cell.styles.fillColor = [254, 243, 199];
-            }
-          }
-          
-          // Diff column styling
-          const diffColIndex = days.length + 3;
-          if (colIndex === diffColIndex) {
-            const cellValue = String(data.cell.raw);
-            const diffValue = parseFloat(cellValue);
-            if (!isNaN(diffValue)) {
-              if (diffValue >= -5 && diffValue <= 5) {
-                data.cell.styles.fillColor = [220, 252, 231];
-                data.cell.styles.textColor = [21, 128, 61];
-              } else if (diffValue < -5) {
-                data.cell.styles.fillColor = [254, 243, 199];
-                data.cell.styles.textColor = [146, 64, 14];
-              } else {
-                data.cell.styles.fillColor = [254, 226, 226];
-                data.cell.styles.textColor = [153, 27, 27];
-              }
-              data.cell.styles.fontStyle = 'bold';
-            }
-          }
-        }
-        
-        // Footer rows styling
-        if (data.section === 'body' && rowIndex >= deptEmployees.length) {
-          data.cell.styles.fillColor = [229, 231, 235];
+
+        if (isSumRow) {
+          data.cell.styles.fillColor = [238, 240, 244] as [number,number,number];
           data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fontSize = fs - 0.5;
+          return;
         }
-      }
+
+        if (data.section === 'body' && ri < deptEmployees.length) {
+          const baseColor: [number,number,number] = ri % 2 === 0 ? [255,255,255] : [248,249,251];
+          if (ci === 0) {
+            data.cell.styles.fillColor = baseColor;
+            data.cell.styles.fontStyle = 'bold';
+            data.cell.styles.fontSize = fs - 0.5;
+          } else if (ci >= 1 && ci <= weekDays.length) {
+            const c = cellColors.get(`${ri},${ci}`);
+            if (c) {
+              data.cell.styles.fillColor = c.bg;
+              if (c.fg)   data.cell.styles.textColor = c.fg;
+              if (c.bold) data.cell.styles.fontStyle = 'bold';
+            } else {
+              data.cell.styles.fillColor = baseColor;
+            }
+          } else {
+            data.cell.styles.fillColor = baseColor;
+          }
+        }
+      },
     });
   };
-  
-  let isFirst = true;
-  if (department === 'all' || department === 'service') {
-    createPage(serviceEmployees, 'Service', isFirst);
-    isFirst = false;
-  }
-  
-  if (department === 'all' || department === 'küche') {
-    createPage(kücheEmployees, 'Küche', isFirst);
-  }
 
-  // ── Wochenansichten (optional) ────────────────────────────────────
-  if (options.includeWeeklyPages) {
-    const monthStart = startOfMonth(currentMonth);
-    const monthEnd = endOfMonth(currentMonth);
-    const weeks = eachWeekOfInterval({ start: monthStart, end: monthEnd }, { weekStartsOn: 1 });
+  // ── Iterate weeks, one page per dept ─────────────────────────────────────
 
-    weeks.forEach((weekStart) => {
-      const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
-      const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd }).filter(d =>
-        isWithinInterval(d, { start: monthStart, end: monthEnd })
-      );
-      if (weekDays.length === 0) return;
+  const weeks = eachWeekOfInterval({ start: rangeStart, end: rangeEnd }, { weekStartsOn: 1 });
 
-      const kwLabel = `KW ${format(weekStart, 'w')} (${format(weekStart, 'd.MM.')}–${format(weekDays[weekDays.length - 1], 'd.MM.yyyy')})`;
+  weeks.forEach(weekStart => {
+    const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+    const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd }).filter(d =>
+      isWithinInterval(d, { start: rangeStart, end: rangeEnd })
+    );
+    if (weekDays.length === 0) return;
+    if (department === 'all' || department === 'service') createWeeklyPage(serviceEmployees, 'Service', weekDays);
+    if (department === 'all' || department === 'küche')   createWeeklyPage(kücheEmployees,   'Küche',   weekDays);
+  });
 
-      const createWeekPage = (deptEmployees: Employee[], deptName: string) => {
-        pdf.addPage();
-        drawPageHeader(`${deptName} · ${kwLabel}`);
+  // ── Save ─────────────────────────────────────────────────────────────────
 
-        const headers: string[] = ['Name'];
-        weekDays.forEach(d => {
-          const wd = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][d.getDay()];
-          headers.push(`${wd} ${format(d, 'd.MM.')}`);
-        });
-        headers.push('Plan', 'Soll', '+/-');
-
-        const body: (string | number)[][] = [];
-        deptEmployees.forEach((emp) => {
-          const rowData: (string | number)[] = [emp.name];
-          let plannedHours = 0;
-          weekDays.forEach(day => {
-            const dateStr = format(day, 'yyyy-MM-dd');
-            const daySchedule = scheduleData[`${emp.id}-${dateStr}`] || {};
-            let cell = '';
-            if (daySchedule.frühAbsence && daySchedule.spätAbsence) {
-              cell = daySchedule.frühAbsence === daySchedule.spätAbsence ? daySchedule.frühAbsence : `${daySchedule.frühAbsence}/${daySchedule.spätAbsence}`;
-            } else if (daySchedule.frühAbsence) {
-              cell = daySchedule.spät ? `${daySchedule.frühAbsence}/${formatTimeSlot(daySchedule.spät)}` : daySchedule.frühAbsence;
-            } else if (daySchedule.spätAbsence) {
-              cell = daySchedule.früh ? `${formatTimeSlot(daySchedule.früh)}/${daySchedule.spätAbsence}` : daySchedule.spätAbsence;
-            } else if (daySchedule.früh || daySchedule.spät) {
-              const parts = [];
-              if (daySchedule.früh) parts.push(formatTimeSlot(daySchedule.früh));
-              if (daySchedule.spät) parts.push(formatTimeSlot(daySchedule.spät));
-              cell = parts.join('\n');
-            }
-            rowData.push(cell);
-            plannedHours += calculateSlotHours(daySchedule.früh) + calculateSlotHours(daySchedule.spät);
-            if (daySchedule.frühAbsence) {
-              const s = absenceShifts.find(a => shiftMap[a.name]?.abbrev === daySchedule.frühAbsence);
-              if (s && shiftMap[s.name]?.countsToTarget) plannedHours += shiftMap[s.name]?.hours || 0;
-            }
-            if (daySchedule.spätAbsence) {
-              const s = absenceShifts.find(a => shiftMap[a.name]?.abbrev === daySchedule.spätAbsence);
-              if (s && shiftMap[s.name]?.countsToTarget) plannedHours += shiftMap[s.name]?.hours || 0;
-            }
-          });
-          const targetHours = emp.weeklyHours ? emp.weeklyHours : 42;
-          const diff = plannedHours - targetHours;
-          rowData.push(plannedHours.toFixed(1), targetHours.toFixed(0), diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1));
-          body.push(rowData);
-        });
-
-        const footerRow: (string | number)[] = ['Gesamt'];
-        let totH = 0;
-        weekDays.forEach(day => {
-          const stats = getDailyStats(day, deptEmployees);
-          footerRow.push(`${stats.totalHours.toFixed(1)}h`);
-          totH += stats.totalHours;
-        });
-        footerRow.push(totH.toFixed(1), '', '');
-        body.push(footerRow);
-
-        const nameColW = 30;
-        const dayColW = (pageWidth - 20 - nameColW - 30) / weekDays.length;
-        const colStyles: Record<number, { cellWidth: number; halign?: 'left' | 'center' | 'right' }> = {
-          0: { cellWidth: nameColW, halign: 'left' },
-        };
-        weekDays.forEach((_, i) => { colStyles[i + 1] = { cellWidth: dayColW, halign: 'center' }; });
-        colStyles[weekDays.length + 1] = { cellWidth: 12, halign: 'center' };
-        colStyles[weekDays.length + 2] = { cellWidth: 10, halign: 'center' };
-        colStyles[weekDays.length + 3] = { cellWidth: 10, halign: 'center' };
-
-        autoTable(pdf, {
-          head: [headers],
-          body,
-          startY: HEADER_H + 11,
-          theme: 'grid',
-          styles: {
-            fontSize: 8.5,
-            cellPadding: { top: 2.5, right: 2, bottom: 2.5, left: 2 },
-            minCellHeight: 14,
-            lineWidth: 0.15,
-            lineColor: [215, 219, 225],
-            overflow: 'linebreak',
-          },
-          headStyles: {
-            fillColor: [branding.headerBg[0], branding.headerBg[1], branding.headerBg[2]] as [number, number, number],
-            textColor: [255, 255, 255],
-            fontStyle: 'bold',
-            fontSize: 8,
-            halign: 'center',
-            minCellHeight: 10,
-          },
-          columnStyles: colStyles,
-          didDrawPage: () => {
-            const pg = pdf.getCurrentPageInfo().pageNumber;
-            const total = pdf.getNumberOfPages();
-            pdf.setFontSize(7);
-            pdf.setTextColor(150, 150, 150);
-            pdf.text(`Seite ${pg} / ${total}`, pageWidth - 22, pageHeight - 4);
-            pdf.setTextColor(0, 0, 0);
-          },
-          didParseCell(data) {
-            const colIdx = data.column.index;
-            const rowIdx = data.row.index;
-            const isFooter = data.section === 'body' && rowIdx === body.length - 1;
-            if (isFooter) {
-              data.cell.styles.fillColor = [229, 231, 235];
-              data.cell.styles.fontStyle = 'bold';
-              return;
-            }
-            // Weekend column header tint
-            if (data.section === 'head' && colIdx > 0 && colIdx <= weekDays.length) {
-              const d = weekDays[colIdx - 1];
-              if (d && (d.getDay() === 0 || d.getDay() === 6)) {
-                const a = branding.accentColor;
-                data.cell.styles.fillColor = [Math.min(255, a[0] + 30), Math.min(255, a[1] + 20), Math.min(255, a[2])] as [number, number, number];
-              }
-            }
-            if (data.section === 'body' && rowIdx < deptEmployees.length && colIdx > 0 && colIdx <= weekDays.length) {
-              const day = weekDays[colIdx - 1];
-              const dateStr = format(day, 'yyyy-MM-dd');
-              const emp = deptEmployees[rowIdx];
-              const ds = scheduleData[`${emp.id}-${dateStr}`] || {};
-              if (ds.frühAbsence || ds.spätAbsence) {
-                data.cell.styles.fillColor = [254, 243, 199];
-                data.cell.styles.fontStyle = 'bold';
-              } else if (ds.früh || ds.spät) {
-                data.cell.styles.fillColor = [235, 244, 255];
-              } else if (day.getDay() === 0 || day.getDay() === 6) {
-                data.cell.styles.fillColor = [248, 249, 250];
-              }
-              if (rowIdx % 2 === 1 && !ds.frühAbsence && !ds.spätAbsence && !ds.früh && !ds.spät) {
-                data.cell.styles.fillColor = [249, 250, 251];
-              }
-            }
-          },
-        });
-      };
-
-      if (department === 'all' || department === 'service') {
-        createWeekPage(serviceEmployees, 'Service');
-      }
-      if (department === 'all' || department === 'küche') {
-        createWeekPage(kücheEmployees, 'Küche');
-      }
-    });
-  }
-
-  // Legend page at the end
-  addLegendPage(pdf, shifts, shiftMap, monthName);
-
-  // Save PDF
-  const aushangSuffix = employeeFriendly ? '_Aushang' : '';
+  const typeTag = isLeitungsplan ? '_Leitungsplan' : '_Aushang';
   const restPrefix = restaurantName ? `${restaurantName}_` : '';
-  const fileName = isPartial
-    ? `${restPrefix}Dienstplan_${format(days[0], 'dd-MM', { locale: de })}_bis_${format(days[days.length - 1], 'dd-MM-yyyy', { locale: de })}${aushangSuffix}.pdf`
-    : `${restPrefix}Dienstplan_${format(currentMonth, 'MMMM_yyyy', { locale: de })}${aushangSuffix}.pdf`;
-  console.log(`[PDF-SCHEDULE] saving PDF – filename=${fileName}`);
-  pdf.save(fileName);
+  const kwFrom = `KW${getISOWeek(rangeStart)}`;
+  const kwTo = rangeEnd > endOfWeek(rangeStart, { weekStartsOn: 1 }) ? `-${getISOWeek(rangeEnd)}` : '';
+  const yearStr = format(currentMonth, 'yyyy');
+  pdf.save(`${restPrefix}Dienstplan_${kwFrom}${kwTo}_${yearStr}${typeTag}.pdf`);
 }
+
 
 export function importScheduleFromExcelV2(
   file: File,

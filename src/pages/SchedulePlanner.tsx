@@ -1872,7 +1872,7 @@ const SchedulePlanner = () => {
           showCosts: options.includeCosts,
           includeWeeklyPages: true,
           specificDays,
-          employeeFriendly: options.employeeFriendly ?? false,
+          exportType: options.exportType ?? 'aushang',
           restaurantName,
         });
         toast.success(`PDF (${rangeLabel}) erfolgreich exportiert`);

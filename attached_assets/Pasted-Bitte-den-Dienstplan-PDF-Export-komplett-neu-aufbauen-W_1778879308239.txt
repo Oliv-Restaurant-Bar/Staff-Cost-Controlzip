@@ -1,0 +1,241 @@
+Bitte den Dienstplan-PDF-Export komplett neu aufbauen.
+
+Wichtig:
+Der aktuelle PDF-Export ist unbrauchbar, weil er wie Excel/Reporting aussieht und zu viele Seiten erzeugt.
+
+Ziel:
+Der PDF soll optisch möglichst nahe an der echten Dienstplanansicht in der App sein.
+
+====================================================
+1. WOCHENEXPORT NEU
+====================================================
+
+Beim Wochenexport soll gelten:
+
+- 1 Seite Service
+- 1 Seite Küche
+
+Alle Mitarbeiter der jeweiligen Abteilung müssen auf diese eine Seite passen.
+
+Keine 20+ Seiten.
+Keine Wiederholungen.
+Keine separaten Unterseiten pro Woche.
+Keine Excel-Optik.
+
+====================================================
+2. LAYOUT WIE DIENSTPLAN
+====================================================
+
+Der PDF soll aussehen wie die App:
+
+Links:
+Mitarbeiter
+
+Oben:
+Mo Di Mi Do Fr Sa So
+
+Rechts optional:
+Std / Saldo
+
+In jeder Tageszelle:
+- Einsatz 1
+- Einsatz 2 falls vorhanden
+- Frei / Ferien / Krank
+
+Beispiel:
+10–14
+17:30–23
+
+Keine Früh/Spät-Spalten.
+Eine Tageszelle pro Tag.
+
+====================================================
+3. ABTEILUNGEN
+====================================================
+
+PDF-Struktur:
+
+Seite 1:
+Service
+
+Seite 2:
+Küche
+
+Wenn nur Service gefiltert ist:
+nur Service exportieren.
+
+Wenn nur Küche gefiltert ist:
+nur Küche exportieren.
+
+Wenn alle:
+Service und Küche separat.
+
+====================================================
+4. OPTIK
+====================================================
+
+Bitte moderner und ruhiger:
+
+- weniger harte Linien
+- grössere Lesbarkeit
+- kompakte Mitarbeiterzeilen
+- Schichtzeiten als kleine Chips oder klare blaue Textflächen
+- Frei grün
+- Ferien blau
+- Krank rot/grau
+- Wochenende dezent gelb
+- heutiger Tag dezent blau
+- Name gut lesbar
+- keine abgeschnittenen Namen
+
+====================================================
+5. HEADER
+====================================================
+
+Oben pro Seite:
+
+Oliv Restaurant & Bar
+Dienstplan KW xx
+11.05.–17.05.2026
+Abteilung: Service
+
+Rechts:
+Logo falls vorhanden
+
+Klein:
+Exportiert am dd.mm.yyyy hh:mm
+
+====================================================
+6. KEINE TECHNISCHE LEGENDE OBEN
+====================================================
+
+Die lange Legende oben entfernen:
+
+A=10-14 ...
+DG=...
+usw.
+
+Wenn Legende nötig:
+klein unten rechts oder komplett weglassen.
+
+Der PDF soll nicht technisch wirken.
+
+====================================================
+7. ADMIN VS MITARBEITER EXPORT
+====================================================
+
+Bitte im Exportdialog unterscheiden:
+
+- Aushang / Teamplan
+- Interner Leitungsplan
+
+Aushang / Teamplan:
+- keine Kosten
+- keine Löhne
+- keine internen Warnungen
+- optional Stunden rechts, aber nicht dominant
+
+Interner Leitungsplan:
+- darf Planstunden / Soll / Saldo zeigen
+- aber trotzdem kompakt
+
+Standard:
+Aushang / Teamplan
+
+====================================================
+8. MONATSEXPORT
+====================================================
+
+Monatsexport NICHT als riesige 31-Tage-Tabelle auf A4 quer.
+
+Stattdessen:
+- pro Woche exportieren
+- je Woche Service/Küche getrennt
+- also max. 2 Seiten pro Woche
+
+Beispiel Mai:
+KW 18 Service
+KW 18 Küche
+KW 19 Service
+KW 19 Küche
+usw.
+
+Aber nur die relevanten Wochen.
+
+====================================================
+9. PERSÖNLICHER PDF EXPORT
+====================================================
+
+Persönlicher Mitarbeiter-PDF:
+
+Nicht als Tabelle.
+
+Sondern Liste:
+
+Dienstplan für Arber
+KW 20 · 11.05.–17.05.2026
+
+Montag
+10–14
+17:30–23
+
+Dienstag
+Frei
+
+Mittwoch
+Ferien
+
+Keine anderen Mitarbeiter.
+Keine Kosten.
+Keine internen Infos.
+
+====================================================
+10. SEITENPASSUNG
+====================================================
+
+Wichtig:
+Bei Wochenexport muss pro Abteilung versucht werden, alles auf eine Seite zu bekommen.
+
+Dafür:
+- Querformat A4
+- kompakte Zeilenhöhe
+- Schrift dynamisch leicht verkleinern falls viele Mitarbeiter
+- aber lesbar bleiben
+
+Wenn wirklich zu viele Mitarbeiter:
+maximal 2 Seiten pro Abteilung, aber nur als Notfall.
+
+====================================================
+11. BUGS AUS AKTUELLEM EXPORT BEHEBEN
+====================================================
+
+Aktuell falsch:
+- zu viele Seiten
+- Soll-Werte teilweise Monatswerte statt Wochenwerte
+- KW-Titel doppelt/falsch
+- Legende zu dominant
+- Namen brechen schlecht
+- Export sieht nicht wie Dienstplan aus
+
+Bitte alles beheben.
+
+====================================================
+12. TEST
+====================================================
+
+Bitte nach Umsetzung testen:
+
+- Wochenexport alle Abteilungen
+- Wochenexport nur Service
+- Wochenexport nur Küche
+- Mitarbeiter mit 2 Einsätzen
+- Frei / Ferien / Krank
+- lange Mitarbeiternamen
+- viele Mitarbeiter
+- persönlicher PDF Export
+- Monatsexport
+
+Nachher:
+- TypeScript prüfen
+- einen Screenshot oder Kurzbeschreibung des neuen PDF geben
+- bestätigen, dass keine Dienstplan-/Kosten-/Speicherlogik geändert wurde
