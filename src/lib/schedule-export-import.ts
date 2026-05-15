@@ -4,10 +4,11 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Employee } from '@/types/personnel';
 
-import { format, eachWeekOfInterval, startOfMonth, endOfMonth, endOfWeek, eachDayOfInterval, isWithinInterval } from 'date-fns';
+import { format, eachWeekOfInterval, startOfMonth, endOfMonth, endOfWeek, eachDayOfInterval, isWithinInterval, getISOWeek } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { getShiftConfig, getShiftConfigMap } from '@/hooks/useShiftConfig';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
+import { getBranding, renderLogoDataUrl } from '@/lib/pl-branding';
 
 /**
  * Normalisiert einen roh importierten Namen auf Title-Case.
@@ -1614,20 +1615,43 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
   
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
-  
+
+  // ── Branding ──────────────────────────────────────────────────
+  const brandingId = restaurantName?.toLowerCase() === 'beaulieu' ? 'beaulieu' : 'oliv';
+  const branding = getBranding(brandingId);
+  const logoDataUrl = await renderLogoDataUrl(branding, 240, 56);
+  const HEADER_H = 26; // mm – height of branded top bar
+
+  const drawPageHeader = (deptName: string) => {
+    pdf.setFillColor(branding.headerBg[0], branding.headerBg[1], branding.headerBg[2]);
+    pdf.rect(0, 0, pageWidth, HEADER_H, 'F');
+    pdf.setFillColor(branding.accentColor[0], branding.accentColor[1], branding.accentColor[2]);
+    pdf.rect(0, HEADER_H - 1, pageWidth, 1, 'F');
+    if (logoDataUrl) {
+      pdf.addImage(logoDataUrl, 'PNG', pageWidth - 58, 3, 52, 20);
+    }
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(13);
+    pdf.setTextColor(branding.textPrimary[0], branding.textPrimary[1], branding.textPrimary[2]);
+    pdf.text(branding.displayName, 10, 10);
+    pdf.setFontSize(8.5);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setTextColor(branding.textSecondary[0], branding.textSecondary[1], branding.textSecondary[2]);
+    const kwInfo = days.length <= 7 ? `KW ${getISOWeek(days[0])} · ` : '';
+    pdf.text(`${deptName} · ${kwInfo}${monthName}`, 10, 17);
+    pdf.setFontSize(7);
+    pdf.text(`Exportiert: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 10, 22);
+    pdf.setTextColor(0, 0, 0);
+    buildCompactLegendLine(pdf, shifts, pageWidth, HEADER_H + 6);
+  };
+
   const createPage = (deptEmployees: Employee[], deptName: string, isFirstPage: boolean) => {
     if (!isFirstPage) {
       pdf.addPage();
     }
-    
-    // Title
-    pdf.setFontSize(14);
-    pdf.setFont('helvetica', 'bold');
-    pdf.text(`Dienstplan ${deptName} - ${monthName}`, 10, 12);
-    
-    // Compact legend header (all shifts)
-    buildCompactLegendLine(pdf, shifts, pageWidth, 18);
-    
+
+    drawPageHeader(deptName);
+
     // Prepare table data
     const headers: string[] = ['Name'];
     days.forEach(d => {
@@ -1668,7 +1692,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
           const parts: string[] = [];
           if (daySchedule.früh) parts.push(formatTimeSlot(daySchedule.früh));
           if (daySchedule.spät) parts.push(formatTimeSlot(daySchedule.spät));
-          cellContent = parts.join(' / ');
+          cellContent = parts.join('\n');
         }
         
         rowData.push(cellContent);
@@ -1768,32 +1792,43 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     autoTable(pdf, {
       head: [headers],
       body: body,
-      startY: 22,
+      startY: HEADER_H + 11,
       theme: 'grid',
       styles: {
-        fontSize: employeeFriendly ? 7 : 6,
-        cellPadding: employeeFriendly ? 1.5 : 1,
-        lineWidth: 0.1,
-        lineColor: [200, 200, 200],
-        overflow: 'linebreak'
+        fontSize: employeeFriendly ? 9 : 7.5,
+        cellPadding: { top: 2.5, right: 2, bottom: 2.5, left: 2 },
+        minCellHeight: employeeFriendly ? 18 : 13,
+        lineWidth: 0.15,
+        lineColor: [215, 219, 225],
+        overflow: 'linebreak',
       },
       headStyles: {
-        fillColor: [30, 64, 175],
+        fillColor: [branding.headerBg[0], branding.headerBg[1], branding.headerBg[2]] as [number, number, number],
         textColor: [255, 255, 255],
         fontStyle: 'bold',
-        fontSize: employeeFriendly ? 7 : 6,
-        halign: 'center'
+        fontSize: employeeFriendly ? 8 : 7,
+        halign: 'center',
+        minCellHeight: 10,
       },
       columnStyles: columnStyles,
+      didDrawPage: () => {
+        const pg = pdf.getCurrentPageInfo().pageNumber;
+        const total = pdf.getNumberOfPages();
+        pdf.setFontSize(7);
+        pdf.setTextColor(150, 150, 150);
+        pdf.text(`Seite ${pg} / ${total}`, pageWidth - 22, pageHeight - 4);
+        pdf.setTextColor(0, 0, 0);
+      },
       didParseCell: function(data) {
         const colIndex = data.column.index;
         const rowIndex = data.row.index;
-        
-        // Weekend headers
+
+        // Weekend headers – use accent tint
         if (data.section === 'head' && colIndex > 0 && colIndex <= days.length) {
           const day = days[colIndex - 1];
           if (day && (day.getDay() === 0 || day.getDay() === 6)) {
-            data.cell.styles.fillColor = [217, 119, 6];
+            const a = branding.accentColor;
+            data.cell.styles.fillColor = [Math.min(255, a[0] + 30), Math.min(255, a[1] + 20), Math.min(255, a[2])] as [number, number, number];
           }
         }
         
@@ -1880,11 +1915,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
 
       const createWeekPage = (deptEmployees: Employee[], deptName: string) => {
         pdf.addPage();
-        pdf.setFontSize(13);
-        pdf.setFont('helvetica', 'bold');
-        pdf.text(`Dienstplan ${deptName} – ${kwLabel}`, 10, 12);
-        // Compact legend header (all shifts)
-        buildCompactLegendLine(pdf, shifts, pageWidth, 18);
+        drawPageHeader(`${deptName} · ${kwLabel}`);
 
         const headers: string[] = ['Name'];
         weekDays.forEach(d => {
@@ -1911,7 +1942,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
               const parts = [];
               if (daySchedule.früh) parts.push(formatTimeSlot(daySchedule.früh));
               if (daySchedule.spät) parts.push(formatTimeSlot(daySchedule.spät));
-              cell = parts.join('/');
+              cell = parts.join('\n');
             }
             rowData.push(cell);
             plannedHours += calculateSlotHours(daySchedule.früh) + calculateSlotHours(daySchedule.spät);
@@ -1953,11 +1984,33 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
         autoTable(pdf, {
           head: [headers],
           body,
-          startY: 22,
+          startY: HEADER_H + 11,
           theme: 'grid',
-          styles: { fontSize: 8, cellPadding: 1.5, overflow: 'linebreak' },
-          headStyles: { fillColor: [30, 64, 175], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8, halign: 'center' },
+          styles: {
+            fontSize: 8.5,
+            cellPadding: { top: 2.5, right: 2, bottom: 2.5, left: 2 },
+            minCellHeight: 14,
+            lineWidth: 0.15,
+            lineColor: [215, 219, 225],
+            overflow: 'linebreak',
+          },
+          headStyles: {
+            fillColor: [branding.headerBg[0], branding.headerBg[1], branding.headerBg[2]] as [number, number, number],
+            textColor: [255, 255, 255],
+            fontStyle: 'bold',
+            fontSize: 8,
+            halign: 'center',
+            minCellHeight: 10,
+          },
           columnStyles: colStyles,
+          didDrawPage: () => {
+            const pg = pdf.getCurrentPageInfo().pageNumber;
+            const total = pdf.getNumberOfPages();
+            pdf.setFontSize(7);
+            pdf.setTextColor(150, 150, 150);
+            pdf.text(`Seite ${pg} / ${total}`, pageWidth - 22, pageHeight - 4);
+            pdf.setTextColor(0, 0, 0);
+          },
           didParseCell(data) {
             const colIdx = data.column.index;
             const rowIdx = data.row.index;
@@ -1967,6 +2020,14 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
               data.cell.styles.fontStyle = 'bold';
               return;
             }
+            // Weekend column header tint
+            if (data.section === 'head' && colIdx > 0 && colIdx <= weekDays.length) {
+              const d = weekDays[colIdx - 1];
+              if (d && (d.getDay() === 0 || d.getDay() === 6)) {
+                const a = branding.accentColor;
+                data.cell.styles.fillColor = [Math.min(255, a[0] + 30), Math.min(255, a[1] + 20), Math.min(255, a[2])] as [number, number, number];
+              }
+            }
             if (data.section === 'body' && rowIdx < deptEmployees.length && colIdx > 0 && colIdx <= weekDays.length) {
               const day = weekDays[colIdx - 1];
               const dateStr = format(day, 'yyyy-MM-dd');
@@ -1974,10 +2035,13 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
               const ds = scheduleData[`${emp.id}-${dateStr}`] || {};
               if (ds.frühAbsence || ds.spätAbsence) {
                 data.cell.styles.fillColor = [254, 243, 199];
+                data.cell.styles.fontStyle = 'bold';
               } else if (ds.früh || ds.spät) {
-                data.cell.styles.fillColor = [219, 234, 254];
-                data.cell.styles.textColor = [30, 64, 175];
+                data.cell.styles.fillColor = [235, 244, 255];
               } else if (day.getDay() === 0 || day.getDay() === 6) {
+                data.cell.styles.fillColor = [248, 249, 250];
+              }
+              if (rowIdx % 2 === 1 && !ds.frühAbsence && !ds.spätAbsence && !ds.früh && !ds.spät) {
                 data.cell.styles.fillColor = [249, 250, 251];
               }
             }

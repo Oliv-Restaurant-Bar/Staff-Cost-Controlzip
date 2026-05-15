@@ -1,0 +1,158 @@
+Bitte den PDF-Export des Dienstplans professionell überarbeiten.
+
+Ziel:
+Der Dienstplan-PDF soll sauber, kompakt, lesefreundlich und drucktauglich sein.
+
+Wichtig:
+Keine Dienstplanlogik ändern.
+Keine Kostenlogik ändern.
+Keine Supabase-Struktur ändern.
+Nur PDF-Layout und Exportdarstellung verbessern.
+
+====================================================
+1. PDF EXPORT MODERNISIEREN
+====================================================
+
+Der PDF soll nicht wie ein Rohdaten-Export wirken, sondern wie ein professioneller Wochenplan.
+
+Oben:
+- Restaurantname
+- Kalenderwoche
+- Zeitraum
+- Abteilung falls gefiltert
+- Exportdatum
+
+====================================================
+2. LOGO / FARBE
+====================================================
+
+Falls Restaurant bekannt:
+- Oliv Logo/Farbe verwenden
+- Beaulieu Logo/Farbe verwenden
+
+Header-Balken dezent, nicht zu dunkel.
+Logo rechts oben.
+
+====================================================
+3. WOCHENPLAN DARSTELLUNG
+====================================================
+
+PDF Tabelle:
+
+Links:
+Mitarbeiter
+
+Oben:
+Montag bis Sonntag mit Datum
+
+In den Zellen:
+- Einsatz 1
+- Einsatz 2 falls vorhanden
+- Frei / Ferien / Krank
+
+Beispiel:
+10:00-14:00
+17:30-23:00
+
+Keine Früh/Spät-Spalten im PDF.
+Nur eine Tageszelle pro Tag.
+
+====================================================
+4. LESBARKEIT
+====================================================
+
+Bitte:
+- grössere Schrift für Namen
+- Zeiten gut lesbar
+- keine abgeschnittenen Texte
+- keine überfüllten Zellen
+- genug Zeilenhöhe für zwei Einsätze
+- Wochenende dezent markieren
+- Abwesenheiten farblich klar markieren
+
+====================================================
+5. KOMPAKTHEIT
+====================================================
+
+Ziel:
+Eine Woche soll möglichst auf 1 bis 2 Seiten passen.
+
+Wenn zu viele Mitarbeiter:
+- automatisch auf mehrere Seiten umbrechen
+- Header auf jeder Seite wiederholen
+- Seitenzahl unten anzeigen
+
+====================================================
+6. VERSIONEN DES EXPORTS
+====================================================
+
+Im Exportdialog bitte Auswahl:
+
+- Gesamtplan
+- Nur Service
+- Nur Küche
+- Nur ausgewählte Mitarbeiter
+- Persönlicher Mitarbeiterplan
+
+====================================================
+7. PERSÖNLICHER PDF-EXPORT
+====================================================
+
+Für einen Mitarbeiter:
+
+Nicht als breite Tabelle.
+
+Sondern als kompakte Liste:
+
+Montag, 18. Mai
+10:00-14:00
+17:30-23:00
+
+Dienstag, 19. Mai
+Frei
+
+Ideal für WhatsApp oder Ausdruck.
+
+====================================================
+8. KEINE INTERNEN DATEN
+====================================================
+
+Im Mitarbeiter-PDF niemals anzeigen:
+- Lohn
+- Kosten
+- Kostenquote
+- interne Warnungen
+- andere Mitarbeiter
+
+Im internen Leitungs-PDF optional:
+- geplante Stunden pro Tag
+- Anzahl Mitarbeiter pro Tag
+
+Aber keine Löhne.
+
+====================================================
+9. PDF EXPORT TESTEN
+====================================================
+
+Bitte testen mit:
+- Mitarbeiter mit einer Schicht
+- Mitarbeiter mit zwei Einsätzen
+- Frei / Ferien / Krank
+- langer Mitarbeitername
+- viele Mitarbeiter
+- Service-Filter
+- Küche-Filter
+
+====================================================
+10. WICHTIG
+====================================================
+
+Keine Berechnungslogik verändern.
+Keine Speicherung verändern.
+Nur PDF-Export/Layout.
+
+Nach Umsetzung:
+- TypeScript prüfen
+- PDF erzeugen
+- prüfen, dass nichts abgeschnitten ist
+- kurze Zusammenfassung geben
