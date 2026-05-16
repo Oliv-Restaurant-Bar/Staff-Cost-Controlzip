@@ -5290,7 +5290,7 @@ const SchedulePlanner = () => {
                 };
                 const newPublishHistory = [...publishHistory, newHistoryEntry];
 
-                savePublishedSchedule(token, {
+                void savePublishedSchedule(token, {
                   type: publishType,
                   period,
                   restaurant: restaurantName,

@@ -1,0 +1,163 @@
+Bitte jetzt den neuen PDF-Export visuell optimieren.
+
+Wichtig:
+Die aktuelle Version ist bereits viel besser, aber noch zu gross, zu unruhig und enthält inaktive Mitarbeiter.
+
+====================================================
+1. ZEILENHÖHE DEUTLICH REDUZIEREN
+====================================================
+
+Die Mitarbeiterzeilen müssen kompakter werden.
+
+Aktuell:
+zu viel vertikaler Abstand.
+
+Bitte:
+- row height kleiner
+- cell padding reduzieren
+- line-height reduzieren
+- Schichten enger darstellen
+
+Ziel:
+Service muss möglichst auf 1 Seite passen.
+
+====================================================
+2. INAKTIVE MITARBEITER NICHT EXPORTIEREN
+====================================================
+
+Mitarbeiter ohne relevante Einsätze sollen standardmässig NICHT erscheinen.
+
+Bitte automatisch ausblenden wenn:
+- keine Einsätze
+- keine Ferien
+- keine Krankmeldung
+- keine Frei-Einträge
+- keine Stunden
+
+Optional:
+showInactive=true nur für Leitungsplan.
+
+====================================================
+3. FARBSCHEMA BERUHIGEN
+====================================================
+
+Aktuell zu viele starke Farben gleichzeitig.
+
+Bitte ruhiger und hochwertiger machen:
+
+Arbeitsschicht:
+- sehr helles blau/grau
+- Text dunkelblau
+
+Frei:
+- nur kleines grünes Badge
+- nicht ganze Zelle grün
+
+Ferien:
+- kleines blaues Badge
+
+Krank:
+- kleines rotes Badge
+
+Wochenende:
+- nur ganz dezente Hintergrundtönung
+
+Heute:
+- leichtes Oliv-Highlight
+- nicht stark blau
+
+====================================================
+4. TYPOGRAFIE VERBESSERN
+====================================================
+
+Bitte:
+
+- Namen 1 Stufe grösser
+- Einsatzzeiten kompakter
+- Stunden rechts kleiner
+- weniger Bold insgesamt
+
+Momentan wirkt alles zu schwer.
+
+====================================================
+5. LANGE NAMEN BESSER
+====================================================
+
+Lange Namen nicht hart umbrechen.
+
+Stattdessen:
+- Name automatisch kürzen
+ODER
+- kleinere Schrift für lange Namen
+ODER
+- zweite Zeile kontrolliert mit kleinerem Abstand
+
+Aber sauber.
+
+====================================================
+6. ZWEI SCHICHTEN SCHÖNER
+====================================================
+
+Aktuell:
+2 Zeilen wirken technisch.
+
+Bitte schöner:
+
+10–14
+17:30–23
+
+- enger zusammen
+- gleiche Breite
+- vertikal kompakt
+- mittig
+
+====================================================
+7. STUNDENSPALTE RUHIGER
+====================================================
+
+Die rechte Std-Spalte:
+
+- kleiner
+- dezenter
+- hellgrau
+- nicht dominant
+
+====================================================
+8. HEADER VERKLEINERN
+====================================================
+
+Header aktuell etwas zu hoch.
+
+Bitte:
+- Logo kleiner
+- weniger obere Margin
+- kompakterer Header
+
+Mehr Platz für den Plan.
+
+====================================================
+9. SEITENOPTIMIERUNG
+====================================================
+
+Wichtig:
+Versuchen Service auf 1 Seite zu halten.
+
+Dafür:
+- kleinere margins
+- kompaktere rows
+- kompaktere fonts
+- bessere Tabellenbreite
+
+====================================================
+10. WICHTIG
+====================================================
+
+Keine Dienstplanlogik ändern.
+Keine Datenstruktur ändern.
+Nur visuelle PDF-Optimierung.
+
+Nachher:
+- neuen PDF testen
+- Screenshot zeigen
+- erklären wie viele Mitarbeiter jetzt pro Seite passen
+- bestätigen dass inaktive Mitarbeiter verschwinden

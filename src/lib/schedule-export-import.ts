@@ -1543,7 +1543,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
   } = options;
   const isLeitungsplan = exportType === 'leitungsplan' && !employeeFriendly;
   console.log(`[PDF] exportScheduleToPDF – dept=${department} type=${exportType} specificDays=${specificDays?.length ?? 'none'} employees=${employees.length}`);
-  
+
   // Date range
   const rangeStart = specificDays ? specificDays[0] : startOfMonth(currentMonth);
   const rangeEnd = specificDays ? specificDays[specificDays.length - 1] : endOfMonth(currentMonth);
@@ -1554,22 +1554,33 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
 
   // Sort employees
   const sortById = (a: Employee, b: Employee) => parseInt(a.id) - parseInt(b.id);
-  const serviceEmployees = employees.filter(e => e.department === 'service').sort(sortById);
-  const kücheEmployees = employees.filter(e => e.department === 'küche').sort(sortById);
+  const allServiceEmps = employees.filter(e => e.department === 'service').sort(sortById);
+  const allKücheEmps   = employees.filter(e => e.department === 'küche').sort(sortById);
 
-  // ── Branding ────────────────────────────────────────────────────────────
+  // ── Branding ─────────────────────────────────────────────────────────────
   const brandingId = restaurantName?.toLowerCase() === 'beaulieu' ? 'beaulieu' : 'oliv';
   const branding = getBranding(brandingId);
-  const logoDataUrl = await renderLogoDataUrl(branding, 240, 56);
+  const logoDataUrl = await renderLogoDataUrl(branding, 200, 46);
 
-  // ── PDF setup ────────────────────────────────────────────────────────────
+  // ── PDF setup ─────────────────────────────────────────────────────────────
   const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageW = pdf.internal.pageSize.getWidth();
   const pageH = pdf.internal.pageSize.getHeight();
-  const HEADER_H = 28;
+  const HEADER_H = 22; // compact header
   let isFirstPage = true;
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  // ── Palette (calm, muted) ─────────────────────────────────────────────────
+  // Working shift: very light blue-grey
+  const COL_SHIFT:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [244,247,251], fg: [37,58,94]  };
+  // Absences: very pale tints — text carries the color, not the background
+  const COL_FREI:   { bg: [number,number,number]; fg: [number,number,number] } = { bg: [242,252,245], fg: [21,90,48]  };
+  const COL_FERIEN: { bg: [number,number,number]; fg: [number,number,number] } = { bg: [240,246,255], fg: [29,70,188] };
+  const COL_KRANK:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [255,242,242], fg: [180,28,28] };
+  const COL_OTHER:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [255,251,235], fg: [113,50,14] };
+  // Weekend: barely warm
+  const WE_BG: [number,number,number] = [250,249,247];
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   const getAbsenceType = (abbrev: string): 'frei' | 'ferien' | 'krank' | 'other' => {
     const shift = absenceShifts.find(s => s.abbrev === abbrev);
@@ -1592,7 +1603,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     else if (hasSpätAbs) absType = getAbsenceType(ds.spätAbsence!);
     const parts: string[] = [];
     if (hasFrühAbs && hasSpätAbs) {
-      parts.push(ds.frühAbsence === ds.spätAbsence ? ds.frühAbsence! : `${ds.frühAbsence} / ${ds.spätAbsence}`);
+      parts.push(ds.frühAbsence === ds.spätAbsence ? ds.frühAbsence! : `${ds.frühAbsence}/${ds.spätAbsence}`);
     } else {
       if (hasFrühAbs) parts.push(ds.frühAbsence!);
       else if (hasFrüh) parts.push(formatTimeSlot(ds.früh));
@@ -1601,6 +1612,14 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     }
     return { text: parts.join('\n'), absenceType: absType, hasShift: hasFrüh || hasSpät };
   };
+
+  /** True if employee has any activity in given week days */
+  const empIsActive = (emp: Employee, weekDays: Date[]): boolean =>
+    weekDays.some(day => {
+      const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
+      if (!ds) return false;
+      return !!(ds.früh?.start || ds.spät?.start || ds.frühAbsence || ds.spätAbsence);
+    });
 
   const calcEmpWeekHours = (emp: Employee, weekDays: Date[]): number => {
     let h = 0;
@@ -1619,7 +1638,11 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     return h;
   };
 
-  // ── Draw branded page header ──────────────────────────────────────────────
+  // Truncate very long names to prevent ugly wrapping
+  const truncateName = (name: string, maxLen = 20): string =>
+    name.length > maxLen ? name.slice(0, maxLen - 1) + '…' : name;
+
+  // ── Draw compact branded header ───────────────────────────────────────────
 
   const drawHeader = (deptLabel: string, weekDays: Date[]) => {
     const kw = getISOWeek(weekDays[0]);
@@ -1629,59 +1652,68 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     pdf.setFillColor(branding.headerBg[0], branding.headerBg[1], branding.headerBg[2]);
     pdf.rect(0, 0, pageW, HEADER_H, 'F');
     pdf.setFillColor(branding.accentColor[0], branding.accentColor[1], branding.accentColor[2]);
-    pdf.rect(0, HEADER_H - 1, pageW, 1, 'F');
+    pdf.rect(0, HEADER_H - 0.8, pageW, 0.8, 'F');
 
-    if (logoDataUrl) pdf.addImage(logoDataUrl, 'PNG', pageW - 58, 3, 52, 22);
+    // Logo — compact, right-aligned
+    if (logoDataUrl) pdf.addImage(logoDataUrl, 'PNG', pageW - 46, 2, 40, 17);
 
+    // Left text block
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(13);
+    pdf.setFontSize(11);
     pdf.setTextColor(branding.textPrimary[0], branding.textPrimary[1], branding.textPrimary[2]);
-    pdf.text(branding.displayName, 10, 10);
-    pdf.setFontSize(10);
-    pdf.text(`Dienstplan KW ${kw}`, 10, 17);
+    pdf.text(`${branding.displayName}  ·  KW ${kw}`, 8, 8.5);
 
     pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(8.5);
+    pdf.setFontSize(7.5);
     pdf.setTextColor(branding.textSecondary[0], branding.textSecondary[1], branding.textSecondary[2]);
-    pdf.text(`${from}–${to}  ·  Abteilung: ${deptLabel}`, 10, 23.5);
+    pdf.text(`${from}–${to}  ·  ${deptLabel}`, 8, 14);
 
-    const typeLabel = isLeitungsplan ? 'Interner Leitungsplan' : 'Aushang / Teamplan';
-    pdf.setFontSize(6.5);
-    pdf.text(typeLabel, pageW - 65, 8.5);
-    pdf.text(`Exportiert: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, pageW - 65, 12.5);
+    const typeLabel = isLeitungsplan ? 'Leitungsplan (intern)' : 'Aushang';
+    pdf.setFontSize(6);
+    pdf.text(typeLabel, 8, 19.5);
+    pdf.text(`Stand: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, 55, 19.5);
 
     pdf.setTextColor(0, 0, 0);
   };
 
   // ── Build one weekly table page ───────────────────────────────────────────
 
-  const createWeeklyPage = (deptEmployees: Employee[], deptLabel: string, weekDays: Date[]) => {
+  const createWeeklyPage = (allDeptEmps: Employee[], deptLabel: string, weekDays: Date[]) => {
+    // Filter: Aushang hides truly inactive employees; Leitungsplan shows all
+    const deptEmployees = isLeitungsplan
+      ? allDeptEmps
+      : allDeptEmps.filter(e => empIsActive(e, weekDays));
+
+    if (deptEmployees.length === 0) return; // skip empty dept for this week
+
     if (!isFirstPage) pdf.addPage();
     isFirstPage = false;
 
     drawHeader(deptLabel, weekDays);
 
-    const empCount = deptEmployees.length;
-    const fs = empCount > 32 ? 5.5 : empCount > 26 ? 6 : empCount > 20 ? 6.5 : empCount > 14 ? 7 : 7.5;
-    const cp = empCount > 26 ? 1.0 : empCount > 18 ? 1.4 : 1.8;
-    const mh = empCount > 26 ? 9  : empCount > 18 ? 11  : 13;
+    // Dynamic sizing: tighter = more employees per page
+    const n = deptEmployees.length;
+    const fs = n > 34 ? 5   : n > 28 ? 5.5 : n > 22 ? 6   : n > 16 ? 6.5 : 7;
+    const cp = n > 28 ? 0.7 : n > 20 ? 1.0 : n > 14 ? 1.3 : 1.6;
+    const mh = n > 28 ? 7.5 : n > 20 ? 9   : n > 14 ? 10.5 : 12;
 
     const DOW = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
     const todayStr = format(new Date(), 'yyyy-MM-dd');
 
     const headers: string[] = ['Mitarbeiter'];
-    weekDays.forEach(d => headers.push(`${DOW[d.getDay()]}\n${format(d, 'd.MM.')}`));
+    weekDays.forEach(d => headers.push(`${DOW[d.getDay()]}\n${format(d, 'd.M.')}`));
     headers.push('Std');
     if (isLeitungsplan) { headers.push('Soll'); headers.push('+/−'); }
 
     const body: (string | number)[][] = [];
     deptEmployees.forEach(emp => {
-      const row: (string | number)[] = [emp.name];
+      const row: (string | number)[] = [truncateName(emp.name)];
       const totalH = calcEmpWeekHours(emp, weekDays);
       weekDays.forEach(day => {
         const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
         row.push(buildCellInfo(ds).text);
       });
+      // Hours: show only when > 0, smaller decimals for cleanliness
       row.push(totalH > 0 ? totalH.toFixed(1) : '');
       if (isLeitungsplan) {
         const soll = emp.weeklyHours ?? 42;
@@ -1692,7 +1724,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
       body.push(row);
     });
 
-    // Summary row
+    // Summary row (day totals)
     const sumRow: (string | number)[] = ['Gesamt'];
     let grandTotal = 0;
     weekDays.forEach(day => {
@@ -1701,129 +1733,160 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
         const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
         dayH += calculateSlotHours(ds.früh) + calculateSlotHours(ds.spät);
       });
-      sumRow.push(dayH > 0 ? `${dayH.toFixed(1)}h` : '');
+      sumRow.push(dayH > 0 ? `${dayH.toFixed(0)}h` : '');
       grandTotal += dayH;
     });
-    sumRow.push(grandTotal > 0 ? grandTotal.toFixed(1) : '');
+    sumRow.push(grandTotal > 0 ? `${grandTotal.toFixed(0)}` : '');
     if (isLeitungsplan) { sumRow.push(''); sumRow.push(''); }
     body.push(sumRow);
 
-    // Column widths
+    // Column widths — narrow margins, thin Std col
     const endCols = isLeitungsplan ? 3 : 1;
-    const endW = isLeitungsplan ? 10 : 13;
-    const nameW = 28;
-    const availW = pageW - 20 - nameW - endCols * endW;
+    const stdW = 9;
+    const extraW = isLeitungsplan ? 9 : 0;
+    const nameW = 30;
+    const ML = 8; const MR = 8;
+    const availW = pageW - ML - MR - nameW - stdW - extraW * (endCols - 1);
     const dayW = availW / weekDays.length;
 
     const colStyles: Record<number, { cellWidth: number; halign?: 'left' | 'center' | 'right' }> = {
       0: { cellWidth: nameW, halign: 'left' },
     };
     weekDays.forEach((_, i) => { colStyles[i + 1] = { cellWidth: dayW, halign: 'center' }; });
-    for (let i = 0; i < endCols; i++) {
-      colStyles[weekDays.length + 1 + i] = { cellWidth: endW, halign: 'center' };
+    colStyles[weekDays.length + 1] = { cellWidth: stdW, halign: 'center' };
+    if (isLeitungsplan) {
+      colStyles[weekDays.length + 2] = { cellWidth: extraW, halign: 'center' };
+      colStyles[weekDays.length + 3] = { cellWidth: extraW, halign: 'center' };
     }
 
-    // Pre-compute cell colors
-    const cellColors = new Map<string, { bg: [number,number,number]; fg?: [number,number,number]; bold?: boolean }>();
+    // Pre-compute cell styling info
+    type CellStyle = { bg: [number,number,number]; fg: [number,number,number]; bold: boolean };
+    const cellStyles = new Map<string, CellStyle>();
     deptEmployees.forEach((emp, ri) => {
       weekDays.forEach((day, ci) => {
         const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
         const { absenceType, hasShift } = buildCellInfo(ds);
         const isWE = day.getDay() === 0 || day.getDay() === 6;
-        if      (absenceType === 'frei')   cellColors.set(`${ri},${ci+1}`, { bg: [209,250,229], fg: [22,101,52],   bold: true });
-        else if (absenceType === 'ferien') cellColors.set(`${ri},${ci+1}`, { bg: [219,234,254], fg: [30,64,175],   bold: true });
-        else if (absenceType === 'krank')  cellColors.set(`${ri},${ci+1}`, { bg: [254,226,226], fg: [153,27,27],   bold: true });
-        else if (absenceType === 'other')  cellColors.set(`${ri},${ci+1}`, { bg: [254,243,199], fg: [120,53,15],   bold: true });
-        else if (hasShift)                 cellColors.set(`${ri},${ci+1}`, { bg: [239,246,255], fg: [30,64,175] });
-        else if (isWE)                     cellColors.set(`${ri},${ci+1}`, { bg: [255,251,235] });
+        const baseEven: [number,number,number] = [255,255,255];
+        const baseOdd:  [number,number,number] = [250,251,252];
+        const baseBg = ri % 2 === 0 ? baseEven : baseOdd;
+        let s: CellStyle;
+        if      (absenceType === 'frei')   s = { bg: COL_FREI.bg,   fg: COL_FREI.fg,   bold: true };
+        else if (absenceType === 'ferien') s = { bg: COL_FERIEN.bg, fg: COL_FERIEN.fg, bold: true };
+        else if (absenceType === 'krank')  s = { bg: COL_KRANK.bg,  fg: COL_KRANK.fg,  bold: true };
+        else if (absenceType === 'other')  s = { bg: COL_OTHER.bg,  fg: COL_OTHER.fg,  bold: true };
+        else if (hasShift)                 s = { bg: COL_SHIFT.bg,  fg: COL_SHIFT.fg,  bold: false };
+        else if (isWE)                     s = { bg: WE_BG, fg: [140,140,140], bold: false };
+        else                               s = { bg: baseBg, fg: [80,85,95], bold: false };
+        cellStyles.set(`${ri},${ci+1}`, s);
       });
     });
 
     autoTable(pdf, {
       head: [headers],
       body,
-      startY: HEADER_H + 3,
+      startY: HEADER_H + 2,
       theme: 'plain',
-      tableWidth: pageW - 20,
-      margin: { left: 10, right: 10, top: 0, bottom: 8 },
+      tableWidth: pageW - ML - MR,
+      margin: { left: ML, right: MR, top: 0, bottom: 6 },
       styles: {
         fontSize: fs,
         cellPadding: cp,
         minCellHeight: mh,
         overflow: 'linebreak',
-        lineWidth: 0.12,
-        lineColor: [220, 224, 230] as [number,number,number],
+        lineWidth: 0.1,
+        lineColor: [215, 220, 228] as [number,number,number],
+        valign: 'middle',
       },
       headStyles: {
         fillColor: [branding.headerBg[0], branding.headerBg[1], branding.headerBg[2]] as [number,number,number],
         textColor: [255, 255, 255] as [number,number,number],
         fontStyle: 'bold',
-        fontSize: fs - 0.5,
+        fontSize: Math.max(fs - 0.5, 5),
         halign: 'center',
-        minCellHeight: 9,
+        minCellHeight: 7,
         lineWidth: 0,
+        cellPadding: 0.8,
       },
       columnStyles: colStyles,
       didDrawPage: () => {
         const pg = pdf.getCurrentPageInfo().pageNumber;
         const total = pdf.getNumberOfPages();
-        pdf.setFontSize(6.5);
-        pdf.setTextColor(160, 160, 160);
-        pdf.text(`Seite ${pg} / ${total}`, pageW - 22, pageH - 4);
+        pdf.setFontSize(6);
+        pdf.setTextColor(175, 178, 185);
+        pdf.text(`${pg} / ${total}`, pageW - ML - 2, pageH - 3, { align: 'right' });
         pdf.setTextColor(0, 0, 0);
       },
       didParseCell: (data) => {
         const ci = data.column.index;
         const ri = data.row.index;
         const isSumRow = data.section === 'body' && ri === deptEmployees.length;
+        const nCols = weekDays.length;
+        const isHoursCol = ci > nCols;
 
-        if (data.section === 'head' && ci >= 1 && ci <= weekDays.length) {
+        // Header day columns: today highlight + weekend muted tint
+        if (data.section === 'head' && ci >= 1 && ci <= nCols) {
           const day = weekDays[ci - 1];
           const isWE = day.getDay() === 0 || day.getDay() === 6;
           const isToday = format(day, 'yyyy-MM-dd') === todayStr;
           if (isToday) {
-            data.cell.styles.fillColor = [59, 130, 246] as [number,number,number];
+            data.cell.styles.fillColor = [branding.accentColor[0], branding.accentColor[1], branding.accentColor[2]] as [number,number,number];
           } else if (isWE) {
+            // 80% header bg + 20% accent
             const bg = branding.headerBg; const ac = branding.accentColor;
             data.cell.styles.fillColor = [
-              Math.round((bg[0]*2 + ac[0]) / 3),
-              Math.round((bg[1]*2 + ac[1]) / 3),
-              Math.round((bg[2]*2 + ac[2]) / 3),
+              Math.round(bg[0]*0.75 + ac[0]*0.25),
+              Math.round(bg[1]*0.75 + ac[1]*0.25),
+              Math.round(bg[2]*0.75 + ac[2]*0.25),
             ] as [number,number,number];
           }
         }
 
+        // Summary row
         if (isSumRow) {
-          data.cell.styles.fillColor = [238, 240, 244] as [number,number,number];
-          data.cell.styles.fontStyle = 'bold';
-          data.cell.styles.fontSize = fs - 0.5;
+          data.cell.styles.fillColor  = [236, 239, 244] as [number,number,number];
+          data.cell.styles.textColor  = [60, 70, 90] as [number,number,number];
+          data.cell.styles.fontStyle  = 'bold';
+          data.cell.styles.fontSize   = Math.max(fs - 0.5, 5);
+          data.cell.styles.lineWidth  = 0.2;
+          data.cell.styles.lineColor  = [180, 188, 200] as [number,number,number];
           return;
         }
 
+        // Employee rows
         if (data.section === 'body' && ri < deptEmployees.length) {
-          const baseColor: [number,number,number] = ri % 2 === 0 ? [255,255,255] : [248,249,251];
+          const baseEven: [number,number,number] = [255,255,255];
+          const baseOdd:  [number,number,number] = [250,251,252];
+          const baseBg = ri % 2 === 0 ? baseEven : baseOdd;
+
           if (ci === 0) {
-            data.cell.styles.fillColor = baseColor;
-            data.cell.styles.fontStyle = 'bold';
-            data.cell.styles.fontSize = fs - 0.5;
-          } else if (ci >= 1 && ci <= weekDays.length) {
-            const c = cellColors.get(`${ri},${ci}`);
-            if (c) {
-              data.cell.styles.fillColor = c.bg;
-              if (c.fg)   data.cell.styles.textColor = c.fg;
-              if (c.bold) data.cell.styles.fontStyle = 'bold';
+            // Name column: slightly larger, dark, bold
+            data.cell.styles.fillColor  = baseBg;
+            data.cell.styles.textColor  = [30, 38, 55] as [number,number,number];
+            data.cell.styles.fontStyle  = 'bold';
+            data.cell.styles.fontSize   = Math.min(fs + 0.3, 7.5);
+          } else if (isHoursCol) {
+            // Hours/Soll/+- columns: small, light grey
+            data.cell.styles.fillColor  = baseBg;
+            data.cell.styles.textColor  = [140, 148, 162] as [number,number,number];
+            data.cell.styles.fontStyle  = 'normal';
+            data.cell.styles.fontSize   = Math.max(fs - 0.5, 5);
+          } else if (ci >= 1 && ci <= nCols) {
+            const s = cellStyles.get(`${ri},${ci}`);
+            if (s) {
+              data.cell.styles.fillColor = s.bg;
+              data.cell.styles.textColor = s.fg;
+              data.cell.styles.fontStyle = s.bold ? 'bold' : 'normal';
             } else {
-              data.cell.styles.fillColor = baseColor;
+              data.cell.styles.fillColor = baseBg;
             }
-          } else {
-            data.cell.styles.fillColor = baseColor;
           }
         }
       },
     });
   };
 
-  // ── Iterate weeks, one page per dept ─────────────────────────────────────
+  // ── Iterate weeks, one page per dept ──────────────────────────────────────
 
   const weeks = eachWeekOfInterval({ start: rangeStart, end: rangeEnd }, { weekStartsOn: 1 });
 
@@ -1833,11 +1896,11 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
       isWithinInterval(d, { start: rangeStart, end: rangeEnd })
     );
     if (weekDays.length === 0) return;
-    if (department === 'all' || department === 'service') createWeeklyPage(serviceEmployees, 'Service', weekDays);
-    if (department === 'all' || department === 'küche')   createWeeklyPage(kücheEmployees,   'Küche',   weekDays);
+    if (department === 'all' || department === 'service') createWeeklyPage(allServiceEmps, 'Service', weekDays);
+    if (department === 'all' || department === 'küche')   createWeeklyPage(allKücheEmps,   'Küche',   weekDays);
   });
 
-  // ── Save ─────────────────────────────────────────────────────────────────
+  // ── Save ──────────────────────────────────────────────────────────────────
 
   const typeTag = isLeitungsplan ? '_Leitungsplan' : '_Aushang';
   const restPrefix = restaurantName ? `${restaurantName}_` : '';

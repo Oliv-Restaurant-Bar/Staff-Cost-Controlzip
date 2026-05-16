@@ -1,5 +1,5 @@
 import { useParams } from 'react-router-dom';
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   format, parseISO, getDay, isSameDay,
   startOfMonth, endOfMonth, eachDayOfInterval,
@@ -10,12 +10,12 @@ import { cn } from '@/lib/utils';
 import {
   Calendar, Clock, LayoutList, User, Building2, AlertCircle,
   ChevronDown, ChevronUp, Check, Home, X, RefreshCw,
-  History, ArrowRightLeft, Send, MessageCircle,
+  History, ArrowRightLeft, Send, MessageCircle, Loader2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
-  loadPublishedSchedule,
+  loadPublishedScheduleAsync,
   PublicEmployee,
   PublicDayEntry,
   PublishedSchedulePayload,
@@ -996,26 +996,73 @@ function Legend() {
 
 const StaffSchedulePage = () => {
   const { token } = useParams<{ token: string }>();
-  const payload = useMemo(() => loadPublishedSchedule(token ?? ''), [token]);
+
+  const [payload, setPayload]   = useState<PublishedSchedulePayload | null>(null);
+  const [loading, setLoading]   = useState(true);
+  const [notFound, setNotFound] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+
   const [acknowledged, setAcknowledged] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [homescreenDismissed, setHomescreenDismissed] = useState(() => {
     try { return !!localStorage.getItem(`hs-hint-${token ?? ''}`); } catch { return false; }
   });
 
-  if (!payload) {
+  const fetchPayload = useCallback(async () => {
+    if (!token) { setLoading(false); setNotFound(true); return; }
+    setLoading(true);
+    setNotFound(false);
+    try {
+      const result = await loadPublishedScheduleAsync(token);
+      if (result) {
+        setPayload(result);
+        setNotFound(false);
+      } else {
+        setNotFound(true);
+      }
+    } catch {
+      setNotFound(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { void fetchPayload(); }, [fetchPayload, retryCount]);
+
+  if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
-        <div className="max-w-md w-full text-center space-y-4">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <Loader2 className="h-10 w-10 animate-spin text-primary/60" />
+          <p className="text-sm text-muted-foreground">Dienstplan wird geladen…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (notFound || !payload) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <div className="max-w-sm w-full text-center space-y-5">
           <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mx-auto">
             <AlertCircle className="h-8 w-8 text-muted-foreground" />
           </div>
-          <h1 className="text-xl font-bold text-foreground">Link nicht verfügbar</h1>
-          <p className="text-sm text-muted-foreground">
-            Dieser Dienstplan-Link ist nicht mehr verfügbar oder wurde noch nicht veröffentlicht.
-          </p>
-          <p className="text-xs text-muted-foreground/60">
-            Bitte wenden Sie sich an Ihre Vorgesetzte Person.
+          <div className="space-y-2">
+            <h1 className="text-xl font-bold text-foreground">Link nicht verfügbar</h1>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Dieser Dienstplan-Link konnte nicht geladen werden.<br />
+              Der Plan wird möglicherweise gerade veröffentlicht.
+            </p>
+          </div>
+          <Button
+            onClick={() => setRetryCount(c => c + 1)}
+            className="w-full gap-2"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Erneut versuchen
+          </Button>
+          <p className="text-xs text-muted-foreground/50 leading-relaxed">
+            Falls der Fehler weiterhin besteht, bitte wenden Sie sich an Ihre Vorgesetzte Person.
           </p>
         </div>
       </div>
