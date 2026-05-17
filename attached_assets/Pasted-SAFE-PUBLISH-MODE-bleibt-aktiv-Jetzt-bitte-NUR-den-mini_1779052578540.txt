@@ -1,0 +1,115 @@
+SAFE_PUBLISH_MODE bleibt aktiv.
+
+Jetzt bitte NUR den minimalen öffentlichen Speicher aktivieren.
+
+Wichtig:
+Keine zusätzlichen Features aktivieren.
+
+Ziel:
+Der veröffentlichte Dienstplan-Link soll auf anderen Geräten funktionieren.
+
+==================================================
+1. SAFE MODE BEHALTEN
+==================================================
+
+SAFE_PUBLISH_MODE bleibt TRUE.
+
+QR, WhatsApp Auto-Open, ChangeHistory usw. bleiben deaktiviert.
+
+==================================================
+2. MINIMAL SUPABASE SAVE
+==================================================
+
+Beim Klick auf "Link erstellen":
+
+Nur dieses kleine Objekt speichern:
+
+{
+  token,
+  restaurant,
+  type,
+  periodLabel,
+  weekStart,
+  employeeId,
+  createdAt
+}
+
+Optional:
+days / shifts minimalisiert.
+
+NICHT speichern:
+- komplette UI states
+- managerNote
+- history
+- notificationChannels
+- Dialogzustände
+- React states
+
+==================================================
+3. DIREKTER SUPABASE WRITE
+==================================================
+
+Kein validatePublishedSchedule.
+Kein retry loop.
+Kein fallback system.
+
+Nur:
+
+await supabase
+  .from('app_settings')
+  .upsert({
+     key: `published-schedule:${token}`,
+     value: payload
+  })
+
+Wenn Fehler:
+- toast anzeigen
+- console.error
+
+==================================================
+4. DIREKTER READ
+==================================================
+
+In StaffSchedulePage:
+
+Nur:
+
+SELECT value
+FROM app_settings
+WHERE key = published-schedule:${token}
+
+Keine retries.
+Keine cache layer.
+Keine localStorage first.
+
+Wenn nicht gefunden:
+"Link nicht gefunden"
+
+==================================================
+5. TEST
+==================================================
+
+Bitte testen:
+- veröffentlichen
+- Link kopieren
+- Inkognito öffnen
+- Handy öffnen
+- WhatsApp öffnen
+
+==================================================
+6. WICHTIG
+==================================================
+
+Noch KEINE weiteren Features reaktivieren.
+
+Erst wenn:
+- öffentlicher Link stabil funktioniert
+- kein White Screen
+- keine Endlosschleifen
+- keine Abstürze
+
+Dann erst:
+1. WhatsApp helper
+2. QR
+3. History
+4. Confirmation tracking
