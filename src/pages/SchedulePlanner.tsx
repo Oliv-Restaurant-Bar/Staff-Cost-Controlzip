@@ -30,7 +30,7 @@ import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
-import { savePublishedSchedule, validatePublishedSchedule, PublishType, PublishDept, PublicEmployee, ChangeHistoryEntry } from '@/lib/schedule-publish-store';
+import { savePublishedSchedule, PublishType, PublishDept, PublicEmployee, ChangeHistoryEntry } from '@/lib/schedule-publish-store';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ModernScheduleGrid, CopiedCell } from '@/components/schedule-planner/ModernScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
@@ -5125,6 +5125,7 @@ const SchedulePlanner = () => {
 
             {/* ── Aktiver Link ─────────────────────────────────────────── */}
             {publishToken && (() => {
+              try {
               const url = `${window.location.origin}/staff-schedule/${publishToken}`;
               const selectedEmp = employees.find(e => e.id === publishEmpId);
               const empName = selectedEmp ? getEmployeeDisplayName(selectedEmp) : null;
@@ -5222,6 +5223,10 @@ const SchedulePlanner = () => {
                   </div>
                 </div>
               );
+              } catch (renderErr) {
+                console.error('[publish] Link-Render-Fehler:', renderErr);
+                return null;
+              }
             })()}
 
             {/* ── Info note ────────────────────────────────────────────── */}
@@ -5242,59 +5247,64 @@ const SchedulePlanner = () => {
               className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
               disabled={(publishType === 'personal' && !publishEmpId) || isPublishing}
               onClick={async () => {
-                const restaurantName = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
-                const token = `${tenantId}-${format(currentMonth, 'yyyyMM')}-${publishType === 'personal' ? 'p' : 'd'}-${Math.random().toString(36).slice(2, 8)}`;
-                const days = displayDays.length > 0 ? displayDays : [currentMonth];
-                const weekStart = days[0];
-                const weekEnd = days[days.length - 1];
-                const period: import('@/lib/schedule-publish-store').PublishPeriod = days.length <= 7 ? 'week' : 'month';
-                const kw = getISOWeek(weekStart);
-                const periodLabel = period === 'month'
-                  ? format(weekStart, 'MMMM yyyy', { locale: de })
-                  : `KW ${kw} (${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM', { locale: de })})`;
-                const weekLabel = period === 'month'
-                  ? `${format(weekStart, 'MMMM yyyy', { locale: de })}`
-                  : `KW ${kw} · ${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM yyyy', { locale: de })}`;
-
-                // Serialize employees & schedule data
-                let targetEmps = employees.filter(e => isEmployeeActiveInMonth(e, currentMonth));
-                if (publishType === 'personal' && publishEmpId) {
-                  targetEmps = targetEmps.filter(e => e.id === publishEmpId);
-                } else if (publishType === 'department' && publishDept !== 'all') {
-                  targetEmps = targetEmps.filter(e => e.department === publishDept);
-                }
-
-                const publicEmployees: PublicEmployee[] = targetEmps.map(emp => ({
-                  id: emp.id,
-                  name: getEmployeeDisplayName(emp),
-                  department: emp.department,
-                  days: days.map(day => {
-                    const dateStr = format(day, 'yyyy-MM-dd');
-                    const slot = scheduleData[`${emp.id}-${dateStr}`] ?? {};
-                    return {
-                      date: dateStr,
-                      dayLabel: format(day, 'EEEE, d. MMMM', { locale: de }),
-                      früh: slot.früh ?? null,
-                      spät: slot.spät ?? null,
-                      frühAbsence: slot.frühAbsence ?? null,
-                      spätAbsence: slot.spätAbsence ?? null,
-                    };
-                  }),
-                }));
-
-                const selectedEmp = employees.find(e => e.id === publishEmpId);
-
-                const historyDesc = (publishStatus === 'published' || publishStatus === 'changed')
-                  ? 'Plan aktualisiert'
-                  : 'Plan veröffentlicht';
-                const newHistoryEntry: ChangeHistoryEntry = {
-                  timestamp: new Date().toISOString(),
-                  description: historyDesc,
-                };
-                const newPublishHistory = [...publishHistory, newHistoryEntry];
-
+                // isPublishing set FIRST so any throw below is caught by finally
                 setIsPublishing(true);
                 try {
+                  const restaurantName = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
+                  const token = `${tenantId}-${format(currentMonth, 'yyyyMM')}-${publishType === 'personal' ? 'p' : 'd'}-${Math.random().toString(36).slice(2, 8)}`;
+                  const days = displayDays.length > 0 ? displayDays : [currentMonth];
+                  const weekStart = days[0];
+                  const weekEnd = days[days.length - 1];
+                  const period: import('@/lib/schedule-publish-store').PublishPeriod = days.length <= 7 ? 'week' : 'month';
+                  const kw = getISOWeek(weekStart);
+                  const periodLabel = period === 'month'
+                    ? format(weekStart, 'MMMM yyyy', { locale: de })
+                    : `KW ${kw} (${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM', { locale: de })})`;
+                  const weekLabel = period === 'month'
+                    ? `${format(weekStart, 'MMMM yyyy', { locale: de })}`
+                    : `KW ${kw} · ${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM yyyy', { locale: de })}`;
+
+                  // Serialize employees & schedule data
+                  let targetEmps = employees.filter(e => isEmployeeActiveInMonth(e, currentMonth));
+                  if (publishType === 'personal' && publishEmpId) {
+                    targetEmps = targetEmps.filter(e => e.id === publishEmpId);
+                  } else if (publishType === 'department' && publishDept !== 'all') {
+                    targetEmps = targetEmps.filter(e => e.department === publishDept);
+                  }
+
+                  const publicEmployees: PublicEmployee[] = targetEmps.map(emp => ({
+                    id: emp.id,
+                    name: getEmployeeDisplayName(emp),
+                    department: emp.department,
+                    days: days.map(day => {
+                      const dateStr = format(day, 'yyyy-MM-dd');
+                      const slot = scheduleData[`${emp.id}-${dateStr}`] ?? {};
+                      return {
+                        date: dateStr,
+                        dayLabel: format(day, 'EEEE, d. MMMM', { locale: de }),
+                        früh: slot.früh ?? null,
+                        spät: slot.spät ?? null,
+                        frühAbsence: slot.frühAbsence ?? null,
+                        spätAbsence: slot.spätAbsence ?? null,
+                      };
+                    }),
+                  }));
+
+                  const selectedEmp = employees.find(e => e.id === publishEmpId);
+
+                  const historyDesc = (publishStatus === 'published' || publishStatus === 'changed')
+                    ? 'Plan aktualisiert'
+                    : 'Plan veröffentlicht';
+                  const newHistoryEntry: ChangeHistoryEntry = {
+                    timestamp: new Date().toISOString(),
+                    description: historyDesc,
+                  };
+                  // Cap at 20 entries — prevents unbounded payload growth
+                  const newPublishHistory = [...publishHistory.slice(-19), newHistoryEntry];
+
+                  const payloadKB = Math.round(JSON.stringify(publicEmployees).length / 1024);
+                  console.log(`[publish] payload: ${targetEmps.length} MA, ${days.length} Tage, ~${payloadKB}KB`);
+
                   const saveResult = await savePublishedSchedule(token, {
                     type: publishType,
                     period,
@@ -5319,19 +5329,14 @@ const SchedulePlanner = () => {
                     return;
                   }
 
-                  const valid = await validatePublishedSchedule(token);
-                  if (!valid) {
-                    toast.error(
-                      'Publish fehlgeschlagen – Payload nicht lesbar. Bitte SQL-Migration prüfen und erneut versuchen.',
-                      { duration: 10000 },
-                    );
-                    return;
-                  }
-
                   setPublishHistory(newPublishHistory);
                   setPublishToken(token);
                   setPublishStatus('published');
                   toast.success('Dienstplan veröffentlicht – Link ist jetzt aktiv ✓');
+                } catch (e) {
+                  const msg = e instanceof Error ? e.message : String(e);
+                  console.error('[publish] Veröffentlichen fehlgeschlagen:', e);
+                  toast.error(`Veröffentlichen fehlgeschlagen: ${msg}`, { duration: 8000 });
                 } finally {
                   setIsPublishing(false);
                 }

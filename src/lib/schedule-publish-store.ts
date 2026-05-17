@@ -56,8 +56,21 @@ export interface PublishedSchedulePayload {
 const LS_PREFIX = 'schedule-publish:';
 const KV_KEY_PREFIX = 'published-schedule:';
 
+const WRITE_TIMEOUT_MS = 12_000;
+const READ_TIMEOUT_MS  = 10_000;
+
 function lsKey(token: string): string { return LS_PREFIX + token; }
 function kvKey(token: string): string { return KV_KEY_PREFIX + token; }
+
+/** Race a promise against a timeout. Throws if the timeout fires first. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`[publish] ${label} timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
 
 // ─── Direct Supabase helpers (bypass isAvailable() cache) ────────────────────
 //
@@ -75,11 +88,11 @@ function kvKey(token: string): string { return KV_KEY_PREFIX + token; }
 async function supabaseRead(key: string): Promise<unknown | null> {
   console.log(`[publish] supabaseRead key="${key}"`);
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
-      .select('value')
-      .eq('key', key)
-      .maybeSingle();
+    const { data, error } = await withTimeout(
+      (supabase as any).from('app_settings').select('value').eq('key', key).maybeSingle(),
+      READ_TIMEOUT_MS,
+      'supabaseRead',
+    );
 
     if (error) {
       console.error(`[publish] supabaseRead ERROR key="${key}":`, error.message, `(code=${error.code})`);
@@ -103,9 +116,11 @@ async function supabaseWrite(
 ): Promise<{ ok: boolean; error?: string }> {
   console.log(`[publish] supabaseWrite key="${key}"`);
   try {
-    const { error } = await (supabase as any)
-      .from('app_settings')
-      .upsert({ key, value }, { onConflict: 'key' });
+    const { error } = await withTimeout(
+      (supabase as any).from('app_settings').upsert({ key, value }, { onConflict: 'key' }),
+      WRITE_TIMEOUT_MS,
+      'supabaseWrite',
+    );
 
     if (error) {
       console.error(`[publish] supabaseWrite ERROR key="${key}":`, error.message, `(code=${error.code})`);
