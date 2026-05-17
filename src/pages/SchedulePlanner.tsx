@@ -5324,23 +5324,47 @@ const SchedulePlanner = () => {
                   const token = `${tenantId}-${format(currentMonth, 'yyyyMM')}-${publishType === 'personal' ? 'p' : 'd'}-${Math.random().toString(36).slice(2, 8)}`;
 
                   if (SAFE_PUBLISH_MODE) {
-                    // ── SAFE MODE: minimal localStorage-only publish ───────────
+                    // ── SAFE MODE: minimal payload → direct Supabase upsert ────
+                    const _kw = getISOWeek(weekStart);
                     const safePayload = {
                       token,
                       type: publishType,
                       period,
                       restaurant: tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv',
-                      employeeId: publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
+                      kw: _kw,
+                      weekLabel: period === 'month'
+                        ? format(weekStart, 'MMMM yyyy', { locale: de })
+                        : `KW ${_kw} · ${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM yyyy', { locale: de })}`,
                       weekStart: format(weekStart, 'yyyy-MM-dd'),
                       weekEnd:   format(weekEnd,   'yyyy-MM-dd'),
                       publishedAt: new Date().toISOString(),
                       status: 'published' as const,
+                      employeeId: publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
                     };
-                    console.log('[publish][safe] token:', token, '| payload bytes:', JSON.stringify(safePayload).length);
-                    localStorage.setItem(`schedule-publish:${token}`, JSON.stringify(safePayload));
+
+                    // 1. localStorage — instant same-device access
+                    try {
+                      localStorage.setItem(`schedule-publish:${token}`, JSON.stringify(safePayload));
+                    } catch (lsErr) {
+                      console.warn('[publish][safe] localStorage write failed (non-fatal):', lsErr);
+                    }
+
+                    // 2. Direct Supabase upsert — persistent, cross-device
+                    console.log('[publish][safe] upserting key=', `published-schedule:${token}`);
+                    const { error: writeError } = await (supabase as any)
+                      .from('app_settings')
+                      .upsert({ key: `published-schedule:${token}`, value: safePayload }, { onConflict: 'key' });
+
+                    if (writeError) {
+                      console.error('[publish][safe] Supabase write failed:', writeError.message, `(code=${writeError.code})`);
+                      toast.error(`Link speichern fehlgeschlagen: ${writeError.message}`, { duration: 8000 });
+                      return;
+                    }
+
+                    console.log('[publish][safe] Supabase write OK ✓  token=', token);
                     setPublishToken(token);
                     setPublishStatus('published');
-                    toast.success('Link erstellt ✓');
+                    toast.success('Link erstellt und gespeichert ✓');
                     return;
                   }
 

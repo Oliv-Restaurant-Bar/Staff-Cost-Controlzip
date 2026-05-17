@@ -15,12 +15,12 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
-  loadPublishedScheduleAsync,
   PublicEmployee,
   PublicDayEntry,
   PublishedSchedulePayload,
   ChangeHistoryEntry,
 } from '@/lib/schedule-publish-store';
+import { supabase } from '@/integrations/supabase/client';
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -1000,8 +1000,7 @@ const StaffSchedulePage = () => {
   const [payload, setPayload]   = useState<PublishedSchedulePayload | null>(null);
   const [loading, setLoading]   = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
-  const [loadAttempt, setLoadAttempt] = useState(0); // 0 = first try, 1/2 = retry
+  const [refetchKey, setRefetchKey] = useState(0);
 
   const [acknowledged, setAcknowledged] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -1013,52 +1012,46 @@ const StaffSchedulePage = () => {
     if (!token) { setLoading(false); setNotFound(true); return; }
     setLoading(true);
     setNotFound(false);
-    setLoadAttempt(0);
 
-    const MAX_ATTEMPTS = 3;
-    const DELAYS_MS = [0, 1500, 4000];
+    try {
+      console.log(`[staff-page] loading token="${token}"`);
+      const { data, error } = await (supabase as any)
+        .from('app_settings')
+        .select('value')
+        .eq('key', `published-schedule:${token}`)
+        .maybeSingle();
 
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      if (attempt > 0) {
-        console.log(`[staff-page] auto-retry ${attempt}/${MAX_ATTEMPTS - 1} for token="${token}", waiting ${DELAYS_MS[attempt]}ms`);
-        setLoadAttempt(attempt);
-        await new Promise<void>(r => setTimeout(r, DELAYS_MS[attempt]));
+      if (error) {
+        console.error('[staff-page] Supabase error:', error.message, `(code=${error.code})`);
+        setNotFound(true);
+        setLoading(false);
+        return;
       }
-      try {
-        console.log(`[staff-page] load attempt ${attempt + 1}/${MAX_ATTEMPTS}  token="${token}"`);
-        const result = await loadPublishedScheduleAsync(token);
-        if (result) {
-          console.log(`[staff-page] payload found on attempt ${attempt + 1}  token="${token}" ✓`);
-          setPayload(result);
-          setNotFound(false);
-          setLoading(false);
-          setLoadAttempt(0);
-          return;
-        }
-        console.warn(`[staff-page] attempt ${attempt + 1}: null result  token="${token}"`);
-      } catch (e) {
-        console.error(`[staff-page] attempt ${attempt + 1} threw:`, e);
+      if (!data?.value) {
+        console.warn('[staff-page] not found for token:', token);
+        setNotFound(true);
+        setLoading(false);
+        return;
       }
+      console.log('[staff-page] payload loaded ✓  token=', token);
+      setPayload(data.value as PublishedSchedulePayload);
+      setNotFound(false);
+      setLoading(false);
+    } catch (e) {
+      console.error('[staff-page] fetch threw:', e);
+      setNotFound(true);
+      setLoading(false);
     }
-
-    console.error(`[staff-page] all ${MAX_ATTEMPTS} attempts failed  token="${token}"`);
-    setNotFound(true);
-    setLoading(false);
-    setLoadAttempt(0);
   }, [token]);
 
-  useEffect(() => { void fetchPayload(); }, [fetchPayload, retryCount]);
+  useEffect(() => { void fetchPayload(); }, [fetchPayload, refetchKey]);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
         <div className="flex flex-col items-center gap-4 text-center">
           <Loader2 className="h-10 w-10 animate-spin text-primary/60" />
-          <p className="text-sm text-muted-foreground">
-            {loadAttempt === 0
-              ? 'Dienstplan wird geladen…'
-              : `Dienstplan wird geladen… (Versuch ${loadAttempt + 1} von 3)`}
-          </p>
+          <p className="text-sm text-muted-foreground">Dienstplan wird geladen…</p>
         </div>
       </div>
     );
@@ -1079,7 +1072,7 @@ const StaffSchedulePage = () => {
             </p>
           </div>
           <Button
-            onClick={() => setRetryCount(c => c + 1)}
+            onClick={() => setRefetchKey(k => k + 1)}
             className="w-full gap-2"
           >
             <RefreshCw className="h-4 w-4" />
