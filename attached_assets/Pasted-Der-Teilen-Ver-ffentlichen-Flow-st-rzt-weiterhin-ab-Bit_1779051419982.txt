@@ -1,0 +1,142 @@
+Der Teilen-/Veröffentlichen-Flow stürzt weiterhin ab.
+
+Bitte jetzt NICHT weiter Features hinzufügen, sondern den Flow radikal stabilisieren.
+
+Ziel:
+Beim Klick auf "Teilen" darf die Seite niemals abstürzen.
+
+====================================================
+1. SOFORTMASSNAHME: FEATURE FLAG
+====================================================
+
+Bitte den aktuellen komplexen Publish-Flow deaktivieren.
+
+Stattdessen:
+- Teilen-Dialog darf öffnen
+- aber Veröffentlichung/WhatsApp/QR nur über einen sicheren Minimalmodus
+
+Feature Flag:
+const SAFE_PUBLISH_MODE = true
+
+Wenn true:
+- keine Supabase Writes
+- keine QR-Code API
+- keine ChangeHistory
+- keine grosse Payload-Serialisierung
+- kein Validate Roundtrip
+- kein WhatsApp Auto-Open
+
+====================================================
+2. SAFE MODE MINIMAL
+====================================================
+
+Im Safe Mode soll passieren:
+
+Beim Klick auf Teilen:
+- Dialog öffnet stabil
+
+Beim Klick auf "Link erstellen":
+- kleiner Test-Payload erzeugen
+- nur notwendige Felder:
+  - token
+  - type
+  - period
+  - restaurant
+  - employeeId falls personal
+  - weekStart
+  - createdAt
+- in localStorage speichern
+- Link anzeigen
+
+Kein Supabase.
+Kein QR.
+Kein WhatsApp öffnen.
+Nur Link kopieren.
+
+====================================================
+3. ERROR BOUNDARY
+====================================================
+
+Bitte ErrorBoundary um den Teilen-Dialog und StaffSchedulePage legen.
+
+Wenn Fehler:
+- nicht ganze App crashen
+- stattdessen Fehlerkarte anzeigen:
+  "Teilen konnte nicht geladen werden"
+  Button "Erneut versuchen"
+  Button "Dialog schliessen"
+
+====================================================
+4. CRASH-LOGGING
+====================================================
+
+Bitte global temporär hinzufügen:
+
+window.addEventListener('error', ...)
+window.addEventListener('unhandledrejection', ...)
+
+Und im UI sichtbar machen:
+- letzte Fehlermeldung
+- Stack gekürzt
+
+Damit wir endlich sehen, was wirklich crasht.
+
+====================================================
+5. REMOVE RISKY PARTS TEMPORARILY
+====================================================
+
+Im Safe Mode deaktivieren:
+- QR-Code Rendering
+- WhatsApp URL Generierung
+- async validatePublishedSchedule
+- Supabase write
+- Supabase read
+- changeHistory serialization
+- managerNote payload
+- notificationChannels payload
+
+Nichts löschen, nur hinter SAFE_PUBLISH_MODE abschalten.
+
+====================================================
+6. TEST
+====================================================
+
+Bitte testen:
+- Seite laden
+- Teilen klicken
+- Dialog öffnet
+- Link erstellen
+- Link kopieren
+- Seite bleibt stabil
+- kein White Screen
+- keine Console Fatal Errors
+
+====================================================
+7. DANACH ROOT CAUSE
+====================================================
+
+Erst wenn Safe Mode stabil ist:
+- komplexe Features einzeln wieder aktivieren
+- immer nur eines pro Schritt:
+  1. WhatsApp Text
+  2. QR
+  3. managerNote
+  4. Supabase write
+  5. Supabase read
+  6. ChangeHistory
+
+Nicht alles zusammen.
+
+====================================================
+8. WICHTIG
+====================================================
+
+Keine PDF Änderungen.
+Keine Dienstplanlogik ändern.
+Keine Kostenlogik ändern.
+Nur Teilen-Flow crash-sicher machen.
+
+Bitte danach exakt sagen:
+- ob Safe Mode stabil ist
+- welche Features deaktiviert wurden
+- wo der nächste kontrollierte Re-Aktivierungsschritt ist

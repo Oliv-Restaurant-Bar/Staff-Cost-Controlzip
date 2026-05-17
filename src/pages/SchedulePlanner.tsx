@@ -48,6 +48,7 @@ import { ShiftConfigDialog } from '@/components/schedule-planner/ShiftConfigDial
 import { DaysOffConfigDialog } from '@/components/schedule-planner/DaysOffConfigDialog';
 import { Apply8HoursDialog, getPreferredWeekdaysFromDates } from '@/components/schedule-planner/Apply8HoursDialog';
 import { MonthlyCostSummary } from '@/components/schedule-planner/MonthlyCostSummary';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ExportOptionsDialog, ExportOptions } from '@/components/schedule-planner/ExportOptionsDialog';
 import { ImportMatchPreviewDialog, NameMatchOverride } from '@/components/schedule-planner/ImportMatchPreviewDialog';
 import { LaborCostComparison } from '@/components/schedule-planner/LaborCostComparison';
@@ -165,6 +166,9 @@ const defaultEmployees: Employee[] = [
 type ViewMode = Department | 'all';
 
 type CalendarView = 'month' | 'week' | 'day';
+
+// ── Feature flag — set true for localStorage-only publish (no Supabase/QR/WA) ─
+const SAFE_PUBLISH_MODE = true;
 
 const SchedulePlanner = () => {
   // ── Mandant (Tenant) ──────────────────────────────────────────────────────
@@ -309,6 +313,7 @@ const SchedulePlanner = () => {
   const [managerNote, setManagerNote]                         = useState('');
   const [publishHistory, setPublishHistory]                   = useState<ChangeHistoryEntry[]>([]);
   const [notifyChannels, setNotifyChannels]                   = useState({ whatsapp: false, sms: false, push: false, email: false });
+  const [lastGlobalError, setLastGlobalError]                 = useState<string | null>(null);
 
   // ── Sortierungsmodus & Zellfarben ────────────────────────────────────────
   const [sortModeActive, setSortModeActive]                   = useState(false);
@@ -927,6 +932,27 @@ const SchedulePlanner = () => {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadMonthData]);
+
+  // ── Global error capture — catches crashes & unhandled rejections ────────────
+  useEffect(() => {
+    const handleError = (e: ErrorEvent) => {
+      const msg = `[error] ${e.message} (${e.filename?.split('/').pop() ?? '?'}:${e.lineno})`;
+      console.error('[GlobalCrashCapture]', msg, e.error);
+      setLastGlobalError(msg);
+    };
+    const handleRejection = (e: PromiseRejectionEvent) => {
+      const reason = e.reason instanceof Error ? e.reason.message : String(e.reason ?? 'unknown');
+      const msg = `[unhandledrejection] ${reason}`;
+      console.error('[GlobalCrashCapture]', msg, e.reason);
+      setLastGlobalError(msg);
+    };
+    window.addEventListener('error', handleError);
+    window.addEventListener('unhandledrejection', handleRejection);
+    return () => {
+      window.removeEventListener('error', handleError);
+      window.removeEventListener('unhandledrejection', handleRejection);
+    };
+  }, []);
 
   // Re-read actual hours from localStorage when an external import fires `schedule-updated`
   useEffect(() => {
@@ -4941,6 +4967,24 @@ const SchedulePlanner = () => {
       />
 
       {/* ── Dienstplan Veröffentlichen Dialog ───────────────────────────── */}
+      <ErrorBoundary
+        label="Teilen-Dialog"
+        fallback={
+          <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
+            <DialogContent className="sm:max-w-[420px]">
+              <div className="p-6 space-y-4 text-center">
+                <div className="text-4xl">⚠️</div>
+                <p className="text-sm font-semibold text-destructive">Teilen konnte nicht geladen werden</p>
+                <p className="text-xs text-muted-foreground">Ein Fehler ist aufgetreten. Bitte schliessen oder neu laden.</p>
+                <div className="flex justify-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setPublishDialogOpen(false)}>Schliessen</Button>
+                  <Button size="sm" onClick={() => window.location.reload()}>Neu laden</Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        }
+      >
       <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
         <DialogContent className="sm:max-w-[520px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -4951,6 +4995,24 @@ const SchedulePlanner = () => {
           </DialogHeader>
 
           <div className="space-y-5 py-1">
+
+            {/* ── Safe Mode notice + global error banner ───────────────── */}
+            {SAFE_PUBLISH_MODE && (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span>Safe Mode aktiv – nur lokaler Link, kein Supabase.</span>
+              </div>
+            )}
+            {lastGlobalError && (
+              <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold mb-0.5">Letzter Fehler (Crash-Log):</p>
+                  <p className="font-mono break-all leading-snug">{lastGlobalError}</p>
+                </div>
+                <button className="shrink-0 text-destructive/60 hover:text-destructive text-base leading-none" onClick={() => setLastGlobalError(null)}>×</button>
+              </div>
+            )}
 
             {/* ── Status ──────────────────────────────────────────────── */}
             <div className="flex items-center gap-3 rounded-lg border p-3">
@@ -5164,6 +5226,7 @@ const SchedulePlanner = () => {
                     </Button>
                   </div>
                   <div className="flex items-center gap-2">
+                    {!SAFE_PUBLISH_MODE && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -5173,6 +5236,7 @@ const SchedulePlanner = () => {
                       <MessageCircle className="h-3 w-3" />
                       WhatsApp
                     </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="ghost"
@@ -5191,6 +5255,7 @@ const SchedulePlanner = () => {
                       <Smartphone className="h-3 w-3" />
                       Handy
                     </Button>
+                    {!SAFE_PUBLISH_MODE && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -5200,9 +5265,10 @@ const SchedulePlanner = () => {
                       <QrCode className="h-3 w-3" />
                       QR-Code
                     </Button>
+                    )}
                   </div>
-                  {/* QR Code preview */}
-                  {showQr && (
+                  {/* QR Code preview — disabled in SAFE_PUBLISH_MODE */}
+                  {!SAFE_PUBLISH_MODE && showQr && (
                     <div className="flex flex-col items-center gap-2 rounded-lg border border-border bg-muted/30 p-3">
                       <img
                         src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(url)}`}
@@ -5216,11 +5282,13 @@ const SchedulePlanner = () => {
                       </p>
                     </div>
                   )}
-                  {/* WhatsApp text preview */}
+                  {/* WhatsApp text preview — disabled in SAFE_PUBLISH_MODE */}
+                  {!SAFE_PUBLISH_MODE && (
                   <div className="rounded-md bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 px-3 py-2 text-xs text-green-800 dark:text-green-300">
                     <p className="font-semibold mb-0.5">WhatsApp-Text:</p>
                     <p className="leading-snug whitespace-pre-line">{waText}</p>
                   </div>
+                  )}
                 </div>
               );
               } catch (renderErr) {
@@ -5247,15 +5315,37 @@ const SchedulePlanner = () => {
               className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
               disabled={(publishType === 'personal' && !publishEmpId) || isPublishing}
               onClick={async () => {
-                // isPublishing set FIRST so any throw below is caught by finally
                 setIsPublishing(true);
                 try {
-                  const restaurantName = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
-                  const token = `${tenantId}-${format(currentMonth, 'yyyyMM')}-${publishType === 'personal' ? 'p' : 'd'}-${Math.random().toString(36).slice(2, 8)}`;
                   const days = displayDays.length > 0 ? displayDays : [currentMonth];
                   const weekStart = days[0];
                   const weekEnd = days[days.length - 1];
                   const period: import('@/lib/schedule-publish-store').PublishPeriod = days.length <= 7 ? 'week' : 'month';
+                  const token = `${tenantId}-${format(currentMonth, 'yyyyMM')}-${publishType === 'personal' ? 'p' : 'd'}-${Math.random().toString(36).slice(2, 8)}`;
+
+                  if (SAFE_PUBLISH_MODE) {
+                    // ── SAFE MODE: minimal localStorage-only publish ───────────
+                    const safePayload = {
+                      token,
+                      type: publishType,
+                      period,
+                      restaurant: tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv',
+                      employeeId: publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
+                      weekStart: format(weekStart, 'yyyy-MM-dd'),
+                      weekEnd:   format(weekEnd,   'yyyy-MM-dd'),
+                      publishedAt: new Date().toISOString(),
+                      status: 'published' as const,
+                    };
+                    console.log('[publish][safe] token:', token, '| payload bytes:', JSON.stringify(safePayload).length);
+                    localStorage.setItem(`schedule-publish:${token}`, JSON.stringify(safePayload));
+                    setPublishToken(token);
+                    setPublishStatus('published');
+                    toast.success('Link erstellt ✓');
+                    return;
+                  }
+
+                  // ── FULL MODE (SAFE_PUBLISH_MODE = false) ──────────────────
+                  const restaurantName = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
                   const kw = getISOWeek(weekStart);
                   const periodLabel = period === 'month'
                     ? format(weekStart, 'MMMM yyyy', { locale: de })
@@ -5264,7 +5354,6 @@ const SchedulePlanner = () => {
                     ? `${format(weekStart, 'MMMM yyyy', { locale: de })}`
                     : `KW ${kw} · ${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM yyyy', { locale: de })}`;
 
-                  // Serialize employees & schedule data
                   let targetEmps = employees.filter(e => isEmployeeActiveInMonth(e, currentMonth));
                   if (publishType === 'personal' && publishEmpId) {
                     targetEmps = targetEmps.filter(e => e.id === publishEmpId);
@@ -5291,19 +5380,16 @@ const SchedulePlanner = () => {
                   }));
 
                   const selectedEmp = employees.find(e => e.id === publishEmpId);
-
                   const historyDesc = (publishStatus === 'published' || publishStatus === 'changed')
-                    ? 'Plan aktualisiert'
-                    : 'Plan veröffentlicht';
+                    ? 'Plan aktualisiert' : 'Plan veröffentlicht';
                   const newHistoryEntry: ChangeHistoryEntry = {
                     timestamp: new Date().toISOString(),
                     description: historyDesc,
                   };
-                  // Cap at 20 entries — prevents unbounded payload growth
                   const newPublishHistory = [...publishHistory.slice(-19), newHistoryEntry];
-
                   const payloadKB = Math.round(JSON.stringify(publicEmployees).length / 1024);
-                  console.log(`[publish] payload: ${targetEmps.length} MA, ${days.length} Tage, ~${payloadKB}KB`);
+                  console.log(`[publish] full: ${targetEmps.length} MA, ${days.length} Tage, ~${payloadKB}KB`);
+                  void periodLabel;
 
                   const saveResult = await savePublishedSchedule(token, {
                     type: publishType,
@@ -5322,7 +5408,6 @@ const SchedulePlanner = () => {
                     managerNote: managerNote.trim() || undefined,
                     changeHistory: newPublishHistory,
                   });
-                  void periodLabel;
 
                   if (!saveResult.ok) {
                     toast.error(`Publish fehlgeschlagen: ${saveResult.error ?? 'Unbekannter Fehler'}`, { duration: 8000 });
@@ -5350,6 +5435,7 @@ const SchedulePlanner = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </ErrorBoundary>
 
       {/* ── Mobile preview Dialog ─────────────────────────────────────── */}
       {mobilePreviewUrl && (
