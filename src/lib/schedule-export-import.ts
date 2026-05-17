@@ -38,6 +38,10 @@ interface ExportOptionsV2 {
   restaurantName?: string;
   /** Exporttyp: Aushang (kein Lohn/Kosten) oder Leitungsplan (mit Stunden/Saldo) */
   exportType?: 'aushang' | 'leitungsplan';
+  /** Std-Spalte pro Mitarbeiter anzeigen (Standard: EIN für Leitungsplan, AUS für Aushang) */
+  showEmpHours?: boolean;
+  /** Tagesstunden-Zeile unten anzeigen (Standard: EIN für Leitungsplan, AUS für Aushang) */
+  showDayTotals?: boolean;
 }
 
 export interface NameMatchInfo {
@@ -1542,7 +1546,10 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     exportType = 'aushang', employeeFriendly = false,
   } = options;
   const isLeitungsplan = exportType === 'leitungsplan' && !employeeFriendly;
-  console.log(`[PDF] exportScheduleToPDF – dept=${department} type=${exportType} specificDays=${specificDays?.length ?? 'none'} employees=${employees.length}`);
+  // Hours display: Leitungsplan shows by default, Aushang hides by default
+  const showEmpHours  = options.showEmpHours  ?? isLeitungsplan;
+  const showDayTotals = options.showDayTotals ?? isLeitungsplan;
+  console.log(`[PDF] exportScheduleToPDF – dept=${department} type=${exportType} showEmpHours=${showEmpHours} showDayTotals=${showDayTotals} employees=${employees.length}`);
 
   // Date range
   const rangeStart = specificDays ? specificDays[0] : startOfMonth(currentMonth);
@@ -1569,16 +1576,19 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
   const HEADER_H = 22; // compact header
   let isFirstPage = true;
 
-  // ── Palette (calm, muted) ─────────────────────────────────────────────────
-  // Working shift: very light blue-grey
-  const COL_SHIFT:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [244,247,251], fg: [37,58,94]  };
-  // Absences: very pale tints — text carries the color, not the background
-  const COL_FREI:   { bg: [number,number,number]; fg: [number,number,number] } = { bg: [242,252,245], fg: [21,90,48]  };
-  const COL_FERIEN: { bg: [number,number,number]; fg: [number,number,number] } = { bg: [240,246,255], fg: [29,70,188] };
-  const COL_KRANK:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [255,242,242], fg: [180,28,28] };
-  const COL_OTHER:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [255,251,235], fg: [113,50,14] };
-  // Weekend: barely warm
-  const WE_BG: [number,number,number] = [250,249,247];
+  // ── Palette — matches webapp chip colors ──────────────────────────────────
+  // Shift: emerald-50 / emerald-800  (matches ShiftChip in StaffSchedulePage)
+  const COL_SHIFT:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [236,253,245], fg: [6,95,70]   };
+  // Frei: slate-100 / slate-600
+  const COL_FREI:   { bg: [number,number,number]; fg: [number,number,number] } = { bg: [241,245,249], fg: [71,85,105] };
+  // Ferien: blue-100 / blue-700
+  const COL_FERIEN: { bg: [number,number,number]; fg: [number,number,number] } = { bg: [219,234,254], fg: [29,78,216] };
+  // Krank: red-100 / red-700
+  const COL_KRANK:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [254,226,226], fg: [185,28,28] };
+  // Other: amber-100 / amber-800
+  const COL_OTHER:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [254,243,199], fg: [146,64,14] };
+  // Weekend: amber-50 (very subtle warm tint)
+  const WE_BG: [number,number,number] = [255,251,235];
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -1676,7 +1686,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     pdf.setTextColor(0, 0, 0);
   };
 
-  // ── Build one weekly table page ───────────────────────────────────────────
+  // ── Build one weekly table page (chip/card style) ─────────────────────────
 
   const createWeeklyPage = (allDeptEmps: Employee[], deptLabel: string, weekDays: Date[]) => {
     // Filter: Aushang hides truly inactive employees; Leitungsplan shows all
@@ -1684,103 +1694,117 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
       ? allDeptEmps
       : allDeptEmps.filter(e => empIsActive(e, weekDays));
 
-    if (deptEmployees.length === 0) return; // skip empty dept for this week
-
+    if (deptEmployees.length === 0) return;
     if (!isFirstPage) pdf.addPage();
     isFirstPage = false;
-
     drawHeader(deptLabel, weekDays);
 
-    // Dynamic sizing: tighter = more employees per page
-    const n = deptEmployees.length;
-    const fs = n > 34 ? 5   : n > 28 ? 5.5 : n > 22 ? 6   : n > 16 ? 6.5 : 7;
-    const cp = n > 28 ? 0.7 : n > 20 ? 1.0 : n > 14 ? 1.3 : 1.6;
-    const mh = n > 28 ? 7.5 : n > 20 ? 9   : n > 14 ? 10.5 : 12;
+    // Dynamic sizing — tighter for more employees
+    const n   = deptEmployees.length;
+    const fs  = n > 34 ? 5   : n > 28 ? 5.5 : n > 22 ? 6   : n > 16 ? 6.5 : 7;
+    const mh  = n > 28 ? 8   : n > 20 ? 9.5 : n > 14 ? 11  : 13;
+    const cp  = 0.4; // minimal table padding — chips provide inner spacing
 
-    const DOW = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+    const DOW      = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
     const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const nDays    = weekDays.length;
 
+    // ── Pre-compute chip info per body day cell ──────────────────────────────
+    // chipMap key: `${ri},${di}` (row index, day index 0-based)
+    type ChipStyle = { bg: [number,number,number]; fg: [number,number,number]; bold: boolean; hasContent: boolean };
+    const chipMap = new Map<string, { lines: string[]; style: ChipStyle }>();
+
+    deptEmployees.forEach((emp, ri) => {
+      weekDays.forEach((day, di) => {
+        const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
+        const { text, absenceType, hasShift } = buildCellInfo(ds);
+        const isWE = day.getDay() === 0 || day.getDay() === 6;
+        const lines = text ? text.split('\n').filter(Boolean) : [];
+        const hasContent = lines.length > 0;
+        let s: ChipStyle;
+        if      (absenceType === 'frei')   s = { bg: COL_FREI.bg,   fg: COL_FREI.fg,   bold: true,  hasContent };
+        else if (absenceType === 'ferien') s = { bg: COL_FERIEN.bg, fg: COL_FERIEN.fg, bold: true,  hasContent };
+        else if (absenceType === 'krank')  s = { bg: COL_KRANK.bg,  fg: COL_KRANK.fg,  bold: true,  hasContent };
+        else if (absenceType === 'other')  s = { bg: COL_OTHER.bg,  fg: COL_OTHER.fg,  bold: true,  hasContent };
+        else if (hasShift)                 s = { bg: COL_SHIFT.bg,  fg: COL_SHIFT.fg,  bold: false, hasContent };
+        else if (isWE)                     s = { bg: WE_BG,         fg: [175,180,190], bold: false, hasContent: false };
+        else                               s = { bg: [255,255,255], fg: [200,205,215], bold: false, hasContent: false };
+        chipMap.set(`${ri},${di}`, { lines, style: s });
+      });
+    });
+
+    // ── Headers ──────────────────────────────────────────────────────────────
     const headers: string[] = ['Mitarbeiter'];
     weekDays.forEach(d => headers.push(`${DOW[d.getDay()]}\n${format(d, 'd.M.')}`));
-    headers.push('Std');
-    if (isLeitungsplan) { headers.push('Soll'); headers.push('+/−'); }
+    if (showEmpHours) {
+      headers.push('Std');
+      if (isLeitungsplan) { headers.push('Soll'); headers.push('+/−'); }
+    }
 
+    // ── Body rows ────────────────────────────────────────────────────────────
     const body: (string | number)[][] = [];
-    deptEmployees.forEach(emp => {
-      const row: (string | number)[] = [truncateName(emp.name)];
+    deptEmployees.forEach((emp, ri) => {
+      const row: (string | number)[] = [truncateName(emp.name, 22)];
       const totalH = calcEmpWeekHours(emp, weekDays);
-      weekDays.forEach(day => {
-        const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
-        row.push(buildCellInfo(ds).text);
+      // Day cells: include actual text so autoTable sizes rows correctly;
+      // text is hidden (same colour as bg) and chips are drawn in didDrawCell.
+      weekDays.forEach((_, di) => {
+        const info = chipMap.get(`${ri},${di}`);
+        row.push(info?.lines.join('\n') ?? '');
       });
-      // Hours: show only when > 0, smaller decimals for cleanliness
-      row.push(totalH > 0 ? totalH.toFixed(1) : '');
-      if (isLeitungsplan) {
-        const soll = emp.weeklyHours ?? 42;
-        const diff = totalH - soll;
-        row.push(soll.toFixed(0));
-        row.push(totalH > 0 ? (diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)) : '');
+      if (showEmpHours) {
+        row.push(totalH > 0 ? totalH.toFixed(1) : '');
+        if (isLeitungsplan) {
+          const soll = emp.weeklyHours ?? 42;
+          const diff = totalH - soll;
+          row.push(soll.toFixed(0));
+          row.push(totalH > 0 ? (diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)) : '');
+        }
       }
       body.push(row);
     });
 
-    // Summary row (day totals)
-    const sumRow: (string | number)[] = ['Gesamt'];
-    let grandTotal = 0;
-    weekDays.forEach(day => {
-      let dayH = 0;
-      deptEmployees.forEach(emp => {
-        const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
-        dayH += calculateSlotHours(ds.früh) + calculateSlotHours(ds.spät);
+    // Sum row (optional)
+    if (showDayTotals) {
+      const sumRow: (string | number)[] = ['Gesamt'];
+      let grandTotal = 0;
+      weekDays.forEach(day => {
+        let dayH = 0;
+        deptEmployees.forEach(emp => {
+          const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
+          dayH += calculateSlotHours(ds.früh) + calculateSlotHours(ds.spät);
+        });
+        sumRow.push(dayH > 0 ? `${dayH.toFixed(0)}h` : '');
+        grandTotal += dayH;
       });
-      sumRow.push(dayH > 0 ? `${dayH.toFixed(0)}h` : '');
-      grandTotal += dayH;
-    });
-    sumRow.push(grandTotal > 0 ? `${grandTotal.toFixed(0)}` : '');
-    if (isLeitungsplan) { sumRow.push(''); sumRow.push(''); }
-    body.push(sumRow);
+      if (showEmpHours) {
+        sumRow.push(grandTotal > 0 ? `${grandTotal.toFixed(0)}` : '');
+        if (isLeitungsplan) { sumRow.push(''); sumRow.push(''); }
+      }
+      body.push(sumRow);
+    }
 
-    // Column widths — narrow margins, thin Std col
-    const endCols = isLeitungsplan ? 3 : 1;
-    const stdW = 9;
-    const extraW = isLeitungsplan ? 9 : 0;
-    const nameW = 30;
+    // ── Column widths ────────────────────────────────────────────────────────
     const ML = 8; const MR = 8;
-    const availW = pageW - ML - MR - nameW - stdW - extraW * (endCols - 1);
-    const dayW = availW / weekDays.length;
+    const nameW  = 30;
+    const stdW   = 9;
+    const extraW = 9;
+    const endColCount = showEmpHours ? (isLeitungsplan ? 3 : 1) : 0;
+    const endTotalW   = showEmpHours ? stdW + extraW * (endColCount - 1) : 0;
+    const availW = pageW - ML - MR - nameW - endTotalW;
+    const dayW   = availW / nDays;
 
     const colStyles: Record<number, { cellWidth: number; halign?: 'left' | 'center' | 'right' }> = {
       0: { cellWidth: nameW, halign: 'left' },
     };
-    weekDays.forEach((_, i) => { colStyles[i + 1] = { cellWidth: dayW, halign: 'center' }; });
-    colStyles[weekDays.length + 1] = { cellWidth: stdW, halign: 'center' };
-    if (isLeitungsplan) {
-      colStyles[weekDays.length + 2] = { cellWidth: extraW, halign: 'center' };
-      colStyles[weekDays.length + 3] = { cellWidth: extraW, halign: 'center' };
+    for (let i = 0; i < nDays; i++) colStyles[i + 1] = { cellWidth: dayW, halign: 'center' };
+    if (showEmpHours) {
+      colStyles[nDays + 1] = { cellWidth: stdW,   halign: 'center' };
+      if (isLeitungsplan) {
+        colStyles[nDays + 2] = { cellWidth: extraW, halign: 'center' };
+        colStyles[nDays + 3] = { cellWidth: extraW, halign: 'center' };
+      }
     }
-
-    // Pre-compute cell styling info
-    type CellStyle = { bg: [number,number,number]; fg: [number,number,number]; bold: boolean };
-    const cellStyles = new Map<string, CellStyle>();
-    deptEmployees.forEach((emp, ri) => {
-      weekDays.forEach((day, ci) => {
-        const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
-        const { absenceType, hasShift } = buildCellInfo(ds);
-        const isWE = day.getDay() === 0 || day.getDay() === 6;
-        const baseEven: [number,number,number] = [255,255,255];
-        const baseOdd:  [number,number,number] = [250,251,252];
-        const baseBg = ri % 2 === 0 ? baseEven : baseOdd;
-        let s: CellStyle;
-        if      (absenceType === 'frei')   s = { bg: COL_FREI.bg,   fg: COL_FREI.fg,   bold: true };
-        else if (absenceType === 'ferien') s = { bg: COL_FERIEN.bg, fg: COL_FERIEN.fg, bold: true };
-        else if (absenceType === 'krank')  s = { bg: COL_KRANK.bg,  fg: COL_KRANK.fg,  bold: true };
-        else if (absenceType === 'other')  s = { bg: COL_OTHER.bg,  fg: COL_OTHER.fg,  bold: true };
-        else if (hasShift)                 s = { bg: COL_SHIFT.bg,  fg: COL_SHIFT.fg,  bold: false };
-        else if (isWE)                     s = { bg: WE_BG, fg: [140,140,140], bold: false };
-        else                               s = { bg: baseBg, fg: [80,85,95], bold: false };
-        cellStyles.set(`${ri},${ci+1}`, s);
-      });
-    });
 
     autoTable(pdf, {
       head: [headers],
@@ -1794,12 +1818,11 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
         cellPadding: cp,
         minCellHeight: mh,
         overflow: 'linebreak',
-        lineWidth: 0.1,
-        lineColor: [215, 220, 228] as [number,number,number],
+        lineWidth: 0,   // no cell borders — chips provide visual separation
         valign: 'middle',
       },
       headStyles: {
-        fillColor: [branding.headerBg[0], branding.headerBg[1], branding.headerBg[2]] as [number,number,number],
+        fillColor: branding.headerBg as [number,number,number],
         textColor: [255, 255, 255] as [number,number,number],
         fontStyle: 'bold',
         fontSize: Math.max(fs - 0.5, 5),
@@ -1820,67 +1843,129 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
       didParseCell: (data) => {
         const ci = data.column.index;
         const ri = data.row.index;
-        const isSumRow = data.section === 'body' && ri === deptEmployees.length;
-        const nCols = weekDays.length;
-        const isHoursCol = ci > nCols;
+        const isDayCol  = ci >= 1 && ci <= nDays;
+        const isWECol   = isDayCol && (weekDays[ci - 1].getDay() === 0 || weekDays[ci - 1].getDay() === 6);
+        const isTodayCl = isDayCol && format(weekDays[ci - 1], 'yyyy-MM-dd') === todayStr;
+        const isSumRow  = data.section === 'body' && ri === deptEmployees.length;
+        const isHoursCol = data.section === 'body' && ci > nDays;
+        const rowBg: [number,number,number] = ri % 2 === 0 ? [255,255,255] : [249,250,251];
 
-        // Header day columns: today highlight + weekend muted tint
-        if (data.section === 'head' && ci >= 1 && ci <= nCols) {
-          const day = weekDays[ci - 1];
-          const isWE = day.getDay() === 0 || day.getDay() === 6;
-          const isToday = format(day, 'yyyy-MM-dd') === todayStr;
-          if (isToday) {
-            data.cell.styles.fillColor = [branding.accentColor[0], branding.accentColor[1], branding.accentColor[2]] as [number,number,number];
-          } else if (isWE) {
-            // 80% header bg + 20% accent
-            const bg = branding.headerBg; const ac = branding.accentColor;
-            data.cell.styles.fillColor = [
-              Math.round(bg[0]*0.75 + ac[0]*0.25),
-              Math.round(bg[1]*0.75 + ac[1]*0.25),
-              Math.round(bg[2]*0.75 + ac[2]*0.25),
-            ] as [number,number,number];
+        // ── Head row ──
+        if (data.section === 'head') {
+          if (isDayCol) {
+            if (isTodayCl) {
+              data.cell.styles.fillColor = branding.accentColor as [number,number,number];
+            } else if (isWECol) {
+              const bg = branding.headerBg; const ac = branding.accentColor;
+              data.cell.styles.fillColor = [
+                Math.round(bg[0]*0.7 + ac[0]*0.3),
+                Math.round(bg[1]*0.7 + ac[1]*0.3),
+                Math.round(bg[2]*0.7 + ac[2]*0.3),
+              ] as [number,number,number];
+            }
           }
-        }
-
-        // Summary row
-        if (isSumRow) {
-          data.cell.styles.fillColor  = [236, 239, 244] as [number,number,number];
-          data.cell.styles.textColor  = [60, 70, 90] as [number,number,number];
-          data.cell.styles.fontStyle  = 'bold';
-          data.cell.styles.fontSize   = Math.max(fs - 0.5, 5);
-          data.cell.styles.lineWidth  = 0.2;
-          data.cell.styles.lineColor  = [180, 188, 200] as [number,number,number];
           return;
         }
 
-        // Employee rows
-        if (data.section === 'body' && ri < deptEmployees.length) {
-          const baseEven: [number,number,number] = [255,255,255];
-          const baseOdd:  [number,number,number] = [250,251,252];
-          const baseBg = ri % 2 === 0 ? baseEven : baseOdd;
+        // ── Sum row ──
+        if (isSumRow) {
+          data.cell.styles.fillColor = [236,239,244] as [number,number,number];
+          data.cell.styles.textColor = [55,65,85]   as [number,number,number];
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fontSize  = Math.max(fs - 0.5, 5);
+          return;
+        }
 
-          if (ci === 0) {
-            // Name column: slightly larger, dark, bold
-            data.cell.styles.fillColor  = baseBg;
-            data.cell.styles.textColor  = [30, 38, 55] as [number,number,number];
-            data.cell.styles.fontStyle  = 'bold';
-            data.cell.styles.fontSize   = Math.min(fs + 0.3, 7.5);
-          } else if (isHoursCol) {
-            // Hours/Soll/+- columns: small, light grey
-            data.cell.styles.fillColor  = baseBg;
-            data.cell.styles.textColor  = [140, 148, 162] as [number,number,number];
-            data.cell.styles.fontStyle  = 'normal';
-            data.cell.styles.fontSize   = Math.max(fs - 0.5, 5);
-          } else if (ci >= 1 && ci <= nCols) {
-            const s = cellStyles.get(`${ri},${ci}`);
-            if (s) {
-              data.cell.styles.fillColor = s.bg;
-              data.cell.styles.textColor = s.fg;
-              data.cell.styles.fontStyle = s.bold ? 'bold' : 'normal';
-            } else {
-              data.cell.styles.fillColor = baseBg;
-            }
-          }
+        // ── Day cells: hide autoTable's text — chip drawn in didDrawCell ──
+        if (isDayCol) {
+          const cellBg: [number,number,number] = isWECol ? WE_BG : rowBg;
+          data.cell.styles.fillColor = cellBg;
+          data.cell.styles.textColor = cellBg; // invisible — chip takes over
+          return;
+        }
+
+        // ── Name column ──
+        if (ci === 0) {
+          data.cell.styles.fillColor = rowBg;
+          data.cell.styles.textColor = [30, 38, 55] as [number,number,number];
+          data.cell.styles.fontStyle = 'bold';
+          const nameLen = String(data.cell.raw ?? '').length;
+          data.cell.styles.fontSize  = nameLen > 20
+            ? Math.max(fs - 1.0, 4.5)
+            : nameLen > 16
+              ? Math.max(fs - 0.5, 5)
+              : fs;
+          return;
+        }
+
+        // ── Hours columns ──
+        if (isHoursCol) {
+          const hoursBg: [number,number,number] = ri % 2 === 0 ? [249,250,253] : [244,246,250];
+          data.cell.styles.fillColor = hoursBg;
+          data.cell.styles.fontSize  = Math.max(fs - 0.5, 5);
+          data.cell.styles.fontStyle = 'normal';
+          const val = String(data.cell.raw ?? '');
+          if      (val.startsWith('+')) data.cell.styles.textColor = [21,90,48]   as [number,number,number];
+          else if (val.startsWith('-')) data.cell.styles.textColor = [153,27,27]  as [number,number,number];
+          else                          data.cell.styles.textColor = [100,110,130] as [number,number,number];
+        }
+      },
+
+      didDrawCell: (data) => {
+        const { section, row, column, cell } = data;
+        if (section !== 'body') return;
+        const ci = column.index;
+        const ri = row.index;
+        if (ci < 1 || ci > nDays) return;      // only day columns
+        if (ri >= deptEmployees.length) return;  // skip sum row
+
+        const di   = ci - 1;
+        const info = chipMap.get(`${ri},${di}`);
+        const isWE = weekDays[di].getDay() === 0 || weekDays[di].getDay() === 6;
+        const rowBg: [number,number,number] = ri % 2 === 0 ? [255,255,255] : [249,250,251];
+        const cellBg: [number,number,number] = isWE ? WE_BG : rowBg;
+
+        // Erase autoTable's text by repainting the cell background
+        pdf.setFillColor(cellBg[0], cellBg[1], cellBg[2]);
+        pdf.rect(cell.x, cell.y, cell.width, cell.height, 'F');
+
+        if (!info || !info.style.hasContent || info.lines.length === 0) return;
+
+        const { lines, style } = info;
+        const chipPadX = 1.1;
+        const chipX    = cell.x + chipPadX;
+        const chipW    = cell.width - 2 * chipPadX;
+        const ptToMm   = 0.352;       // 1pt ≈ 0.352mm
+        const chipPadY = 0.9;
+
+        if (lines.length === 1) {
+          // Single chip centred in cell
+          const chipH  = Math.min(Math.max(fs * ptToMm + 2 * chipPadY, cell.height * 0.58), cell.height - 2.0);
+          const chipY  = cell.y + (cell.height - chipH) / 2;
+          const r      = Math.min(1.5, chipH / 2);
+          pdf.setFillColor(style.bg[0], style.bg[1], style.bg[2]);
+          (pdf as any).roundedRect(chipX, chipY, chipW, chipH, r, r, 'F');
+          pdf.setFont('helvetica', style.bold ? 'bold' : 'normal');
+          pdf.setFontSize(fs);
+          pdf.setTextColor(style.fg[0], style.fg[1], style.fg[2]);
+          pdf.text(lines[0], chipX + chipW / 2, chipY + chipH / 2 + fs * ptToMm * 0.35, { align: 'center' });
+        } else {
+          // Two chips stacked (for employees with früh + spät)
+          const singleH  = Math.min(Math.max(fs * ptToMm + 1.6, 4.5), (cell.height - 3.6) / 2);
+          const gap      = Math.max(0.8, (cell.height - 2 * singleH - 2.0) / 3);
+          const totalH   = 2 * singleH + gap;
+          const startY   = cell.y + (cell.height - totalH) / 2;
+          const r        = Math.min(1.2, singleH / 2);
+          const fsSub    = Math.max(fs - 0.5, 5);
+          lines.slice(0, 2).forEach((line, i) => {
+            const cy = startY + i * (singleH + gap);
+            pdf.setFillColor(style.bg[0], style.bg[1], style.bg[2]);
+            (pdf as any).roundedRect(chipX, cy, chipW, singleH, r, r, 'F');
+            pdf.setFont('helvetica', style.bold ? 'bold' : 'normal');
+            pdf.setFontSize(fsSub);
+            pdf.setTextColor(style.fg[0], style.fg[1], style.fg[2]);
+            pdf.text(line, chipX + chipW / 2, cy + singleH / 2 + fsSub * ptToMm * 0.35, { align: 'center' });
+          });
         }
       },
     });

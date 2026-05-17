@@ -27,6 +27,8 @@ export interface ExportOptions {
   format: ExportFormat;
   department: ExportDepartment;
   exportType: ExportType;
+  showEmpHours: boolean;
+  showDayTotals: boolean;
 }
 
 interface ExportOptionsDialogProps {
@@ -56,6 +58,19 @@ export const ExportOptionsDialog = ({
   const [exportFormat, setExportFormat] = useState<ExportFormat>(initialFormat);
   const [department, setDepartment] = useState<ExportDepartment>('all');
   const [exportType, setExportType] = useState<ExportType>('aushang');
+  const [showEmpHours,  setShowEmpHours]  = useState(false); // Aushang default: OFF
+  const [showDayTotals, setShowDayTotals] = useState(false); // Aushang default: OFF
+
+  const handleSetExportType = (t: ExportType) => {
+    setExportType(t);
+    if (t === 'leitungsplan') {
+      setShowEmpHours(true);
+      setShowDayTotals(true);
+    } else {
+      setShowEmpHours(false);
+      setShowDayTotals(false);
+    }
+  };
 
   const handleExport = () => {
     const options: ExportOptions = {
@@ -67,6 +82,8 @@ export const ExportOptionsDialog = ({
       format: exportFormat,
       department,
       exportType,
+      showEmpHours:  exportFormat === 'pdf' ? showEmpHours  : true,
+      showDayTotals: exportFormat === 'pdf' ? showDayTotals : true,
     };
     onExport(options);
     onOpenChange(false);
@@ -351,7 +368,7 @@ export const ExportOptionsDialog = ({
                     "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
                     exportType === 'aushang' ? "border-primary bg-primary/5" : "hover:bg-accent"
                   )}
-                  onClick={() => setExportType('aushang')}
+                  onClick={() => handleSetExportType('aushang')}
                 >
                   <Users className={cn("h-5 w-5 mb-1", exportType === 'aushang' ? "text-primary" : "text-muted-foreground")} />
                   <span className={cn("text-sm font-medium", exportType === 'aushang' ? "text-primary" : "")}>Aushang</span>
@@ -362,7 +379,7 @@ export const ExportOptionsDialog = ({
                     "flex flex-col items-center p-3 rounded-lg border cursor-pointer transition-colors",
                     exportType === 'leitungsplan' ? "border-primary bg-primary/5" : "hover:bg-accent"
                   )}
-                  onClick={() => setExportType('leitungsplan')}
+                  onClick={() => handleSetExportType('leitungsplan')}
                 >
                   <ClipboardList className={cn("h-5 w-5 mb-1", exportType === 'leitungsplan' ? "text-primary" : "text-muted-foreground")} />
                   <span className={cn("text-sm font-medium", exportType === 'leitungsplan' ? "text-primary" : "")}>Leitungsplan</span>
@@ -370,6 +387,37 @@ export const ExportOptionsDialog = ({
                 </div>
               </div>
             </div>
+
+            {/* PDF hours options */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium flex items-center gap-2">
+                <Clock className="h-4 w-4" />
+                Stunden im PDF
+              </Label>
+              <div className="space-y-2 pl-1">
+                <div className="flex items-center justify-between p-2.5 rounded-lg border">
+                  <div>
+                    <p className="text-sm font-medium">Std pro Mitarbeiter anzeigen</p>
+                    <p className="text-xs text-muted-foreground">Rechte Std-Spalte einblenden</p>
+                  </div>
+                  <Checkbox
+                    checked={showEmpHours}
+                    onCheckedChange={(v) => setShowEmpHours(v === true)}
+                  />
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-lg border">
+                  <div>
+                    <p className="text-sm font-medium">Tagesstunden unten anzeigen</p>
+                    <p className="text-xs text-muted-foreground">Gesamt-Zeile am Ende einblenden</p>
+                  </div>
+                  <Checkbox
+                    checked={showDayTotals}
+                    onCheckedChange={(v) => setShowDayTotals(v === true)}
+                  />
+                </div>
+              </div>
+            </div>
+
             <Separator />
           </>
         )}

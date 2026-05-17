@@ -1874,6 +1874,8 @@ const SchedulePlanner = () => {
           specificDays,
           exportType: options.exportType ?? 'aushang',
           restaurantName,
+          showEmpHours:  options.showEmpHours,
+          showDayTotals: options.showDayTotals,
         });
         toast.success(`PDF (${rangeLabel}) erfolgreich exportiert`);
       } else {

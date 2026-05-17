@@ -1,0 +1,170 @@
+Bitte den PDF-Export nochmals visuell überarbeiten.
+
+Ziel:
+Der PDF soll optisch möglichst nahe an der Webapp-Dienstplanansicht sein.
+
+Aktuelles Problem:
+Der Export ist noch zu tabellarisch. Die Zellen wirken wie Excel. Ich möchte weichere Kästchen wie in der Webapp.
+
+====================================================
+1. WEICHE KÄSTCHEN / CHIP-DESIGN
+====================================================
+
+Bitte Tageszellen im PDF nicht mehr als harte Tabellenzellen darstellen.
+
+Stattdessen:
+- pro Tageszelle ein weiches Kästchen
+- leicht abgerundete Optik simulieren
+- dezente Hintergrundfarbe
+- mehr Padding innerhalb der Schicht
+- weniger harte Linien
+
+Arbeitszeit:
+- hellblauer Chip / hellblaue Fläche
+- dunkelblaue Schrift
+
+Frei:
+- hellgrüner Chip
+- grüner Text
+
+Ferien:
+- hellblauer oder violetter Badge
+- Text FE
+
+Krank:
+- hellroter Badge
+- Text K
+
+Leer:
+- weiss / sehr hellgrau
+- kein dominanter Rahmen
+
+====================================================
+2. FARBSCHEMA WIE WEBAPP
+====================================================
+
+Farben bitte an Webapp anlehnen:
+
+- Arbeitszeiten: hellblau
+- Frei: hellgrün
+- Ferien: sanft blau/violett
+- Krank: sanft rot
+- Wochenende: sehr dezente gelbliche Spaltenfläche
+- Header: Oliv dunkelgrün, aber nicht zu schwer
+
+Wichtig:
+Nicht ganze Zellen zu grell einfärben.
+Lieber kleine Chips innerhalb der Zelle.
+
+====================================================
+3. OPTION: STUNDEN ANZEIGEN
+====================================================
+
+Im PDF Export Pop-up bitte Optionen ergänzen:
+
+Checkbox:
+- Stunden pro Mitarbeiter anzeigen
+- Tagesstunden unten anzeigen
+
+Standard Aushang:
+- Stunden pro Mitarbeiter: AUS
+- Tagesstunden unten: AUS
+
+Standard Leitungsplan:
+- Stunden pro Mitarbeiter: EIN
+- Tagesstunden unten: EIN
+
+Wenn ausgeschaltet:
+- rechte Std-Spalte entfernen
+- Gesamtzeile unten entfernen
+
+====================================================
+4. AUSHANG SOLL RUHIGER SEIN
+====================================================
+
+Aushang / Teamplan soll nur zeigen:
+- Mitarbeiter
+- Wochentage
+- Einsatzzeiten
+- Frei/Ferien/Krank
+
+Keine Stunden, ausser Option wird aktiviert.
+
+====================================================
+5. LEITUNGSPLAN DARF ZAHLEN ZEIGEN
+====================================================
+
+Leitungsplan darf zeigen:
+- Std pro Mitarbeiter
+- Tagesstunden unten
+- optional Soll / Differenz
+
+Aber trotzdem visuell ruhig.
+
+====================================================
+6. ZEILENABSTAND FEINER
+====================================================
+
+Zeilenhöhe weiter optimieren:
+
+- genug Platz für 2 Einsätze
+- aber kompakt
+- keine riesigen leeren Flächen
+- ein Wochenplan Service soll weiterhin auf 1 Seite passen
+
+====================================================
+7. NAMEN BESSER DARSTELLEN
+====================================================
+
+Mitarbeitername:
+- nicht hässlich abschneiden
+- bei langen Namen kontrolliert kürzen mit …
+- oder kleinere Schrift für lange Namen
+- trotzdem sauber links ausgerichtet
+
+====================================================
+8. HEADER KOMPAKTER UND ELEGANTER
+====================================================
+
+Header:
+- Oliv Restaurant & Bar · KW 20
+- Zeitraum · Abteilung
+- Logo kleiner und sauber ausgerichtet
+- Exportdatum kleiner
+- weniger Höhe als jetzt
+
+====================================================
+9. WICHTIG
+====================================================
+
+Nicht ändern:
+- Dienstplanlogik
+- Kostenlogik
+- Speicherlogik
+- Supabase
+- Mirus Import
+
+Nur:
+- PDF Layout
+- PDF Export Optionen
+- visuelle Darstellung
+
+====================================================
+10. TEST
+====================================================
+
+Bitte testen:
+- Aushang ohne Stunden
+- Aushang mit Stunden
+- Leitungsplan mit Stunden
+- Service KW 20
+- Küche KW 20
+- Mitarbeiter mit 2 Einsätzen
+- Frei / FE / K
+- langer Name
+
+Nachher bitte bestätigen:
+- PDF sieht mehr wie Webapp aus
+- Aushang zeigt standardmässig keine Stunden
+- Stunden sind optional aktivierbar
+- Service passt weiterhin auf 1 Seite

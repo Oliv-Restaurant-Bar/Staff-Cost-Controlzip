@@ -1,0 +1,145 @@
+Der Publish-/Share-Flow funktioniert weiterhin nicht.
+
+Aktuelles Verhalten:
+Der Link öffnet korrekt die StaffSchedulePage, aber der Payload wird nicht gefunden.
+Es erscheint weiterhin:
+"Link nicht verfügbar"
+
+Das bedeutet:
+Der Token wird zwar generiert, aber der veröffentlichte Dienstplan wird nicht korrekt geladen.
+
+Bitte jetzt den gesamten Publish-Flow technisch debuggen.
+
+====================================================
+1. TOKEN DEBUGGING LOGS
+====================================================
+
+Bitte überall console logs einbauen:
+
+Beim Publish:
+- generated token
+- payload object
+- save target
+- save success/failure
+
+Beim Öffnen:
+- received token
+- localStorage hit?
+- Supabase hit?
+- returned payload?
+- fetch error?
+
+Ich will genau sehen:
+WO der Payload verloren geht.
+
+====================================================
+2. VERIFY SAVE + LOAD USE SAME KEY
+====================================================
+
+Prüfen:
+save:
+published-schedule:${token}
+
+load:
+published-schedule:${token}
+
+Aktuell wahrscheinlich mismatch.
+
+====================================================
+3. SUPABASE KV DEBUG
+====================================================
+
+Prüfen ob:
+- write wirklich erfolgreich ist
+- read wirklich ausgeführt wird
+- row/key existiert
+
+Falls Fehler:
+vollständig loggen.
+
+====================================================
+4. FALLBACK TEST
+====================================================
+
+Temporär zusätzlich:
+Nach dem Publish sofort:
+console.log(localStorage keys)
+
+Und beim Öffnen:
+console.log(found local payload)
+
+====================================================
+5. LINK ORIGIN FIX
+====================================================
+
+Der Link darf NICHT auf eine temporäre Replit Session URL zeigen.
+
+Aktuell:
+d5651d95-....replit.dev
+
+Bitte sauber zentral erzeugen.
+
+Wenn möglich:
+immer gleiche base url verwenden.
+
+====================================================
+6. PUBLISH CONFIRMATION
+====================================================
+
+Nach erfolgreichem Publish:
+
+nicht sofort Link anzeigen.
+
+Zuerst prüfen:
+- payload gespeichert?
+- reload test erfolgreich?
+
+Erst danach:
+"Veröffentlicht"
+
+====================================================
+7. AUTO VALIDATION
+====================================================
+
+Nach Publish automatisch intern testen:
+
+loadPublishedSchedule(token)
+
+Wenn NULL:
+Fehler anzeigen:
+"Publish fehlgeschlagen"
+
+nicht erst später beim Öffnen.
+
+====================================================
+8. STAFF PAGE DEBUG
+====================================================
+
+In StaffSchedulePage:
+
+Wenn payload null:
+nicht sofort error state.
+
+Vorher:
+- retry 3x
+- exponential delay
+- console logs
+
+====================================================
+9. WICHTIG
+====================================================
+
+Keine UI Änderungen.
+Keine PDF Änderungen.
+Nur Publish-/Token-/Storage-System debuggen und stabilisieren.
+
+====================================================
+10. AM ENDE
+====================================================
+
+Bitte exakt erklären:
+- wo der Fehler lag
+- ob localStorage oder Supabase fehlschlug
+- ob token mismatch bestand
+- warum mobile Links nicht funktionierten
+- warum der neue Fix jetzt stabil funktioniert
