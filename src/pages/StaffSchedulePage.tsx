@@ -1001,6 +1001,7 @@ const StaffSchedulePage = () => {
   const [loading, setLoading]   = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [loadAttempt, setLoadAttempt] = useState(0); // 0 = first try, 1/2 = retry
 
   const [acknowledged, setAcknowledged] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -1012,19 +1013,38 @@ const StaffSchedulePage = () => {
     if (!token) { setLoading(false); setNotFound(true); return; }
     setLoading(true);
     setNotFound(false);
-    try {
-      const result = await loadPublishedScheduleAsync(token);
-      if (result) {
-        setPayload(result);
-        setNotFound(false);
-      } else {
-        setNotFound(true);
+    setLoadAttempt(0);
+
+    const MAX_ATTEMPTS = 3;
+    const DELAYS_MS = [0, 1500, 4000];
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      if (attempt > 0) {
+        console.log(`[staff-page] auto-retry ${attempt}/${MAX_ATTEMPTS - 1} for token="${token}", waiting ${DELAYS_MS[attempt]}ms`);
+        setLoadAttempt(attempt);
+        await new Promise<void>(r => setTimeout(r, DELAYS_MS[attempt]));
       }
-    } catch {
-      setNotFound(true);
-    } finally {
-      setLoading(false);
+      try {
+        console.log(`[staff-page] load attempt ${attempt + 1}/${MAX_ATTEMPTS}  token="${token}"`);
+        const result = await loadPublishedScheduleAsync(token);
+        if (result) {
+          console.log(`[staff-page] payload found on attempt ${attempt + 1}  token="${token}" ✓`);
+          setPayload(result);
+          setNotFound(false);
+          setLoading(false);
+          setLoadAttempt(0);
+          return;
+        }
+        console.warn(`[staff-page] attempt ${attempt + 1}: null result  token="${token}"`);
+      } catch (e) {
+        console.error(`[staff-page] attempt ${attempt + 1} threw:`, e);
+      }
     }
+
+    console.error(`[staff-page] all ${MAX_ATTEMPTS} attempts failed  token="${token}"`);
+    setNotFound(true);
+    setLoading(false);
+    setLoadAttempt(0);
   }, [token]);
 
   useEffect(() => { void fetchPayload(); }, [fetchPayload, retryCount]);
@@ -1034,7 +1054,11 @@ const StaffSchedulePage = () => {
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
         <div className="flex flex-col items-center gap-4 text-center">
           <Loader2 className="h-10 w-10 animate-spin text-primary/60" />
-          <p className="text-sm text-muted-foreground">Dienstplan wird geladen…</p>
+          <p className="text-sm text-muted-foreground">
+            {loadAttempt === 0
+              ? 'Dienstplan wird geladen…'
+              : `Dienstplan wird geladen… (Versuch ${loadAttempt + 1} von 3)`}
+          </p>
         </div>
       </div>
     );

@@ -30,7 +30,7 @@ import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
-import { savePublishedSchedule, PublishType, PublishDept, PublicEmployee, ChangeHistoryEntry } from '@/lib/schedule-publish-store';
+import { savePublishedSchedule, validatePublishedSchedule, PublishType, PublishDept, PublicEmployee, ChangeHistoryEntry } from '@/lib/schedule-publish-store';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ModernScheduleGrid, CopiedCell } from '@/components/schedule-planner/ModernScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
@@ -299,6 +299,7 @@ const SchedulePlanner = () => {
   const [publishDialogOpen, setPublishDialogOpen]             = useState(false);
   const [publishStatus, setPublishStatus]                     = useState<'draft' | 'published' | 'changed'>('draft');
   const [publishToken, setPublishToken]                       = useState<string | null>(null);
+  const [isPublishing, setIsPublishing]                       = useState(false);
   const [publishCopied, setPublishCopied]                     = useState(false);
   const [publishType, setPublishType]                         = useState<PublishType>('department');
   const [publishDept, setPublishDept]                         = useState<PublishDept>('all');
@@ -5239,8 +5240,8 @@ const SchedulePlanner = () => {
             </Button>
             <Button
               className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
-              disabled={publishType === 'personal' && !publishEmpId}
-              onClick={() => {
+              disabled={(publishType === 'personal' && !publishEmpId) || isPublishing}
+              onClick={async () => {
                 const restaurantName = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
                 const token = `${tenantId}-${format(currentMonth, 'yyyyMM')}-${publishType === 'personal' ? 'p' : 'd'}-${Math.random().toString(36).slice(2, 8)}`;
                 const days = displayDays.length > 0 ? displayDays : [currentMonth];
@@ -5292,33 +5293,54 @@ const SchedulePlanner = () => {
                 };
                 const newPublishHistory = [...publishHistory, newHistoryEntry];
 
-                void savePublishedSchedule(token, {
-                  type: publishType,
-                  period,
-                  restaurant: restaurantName,
-                  kw,
-                  weekLabel,
-                  weekStart: format(weekStart, 'yyyy-MM-dd'),
-                  weekEnd: format(weekEnd, 'yyyy-MM-dd'),
-                  publishedAt: new Date().toISOString(),
-                  status: 'published',
-                  department: publishType === 'department' ? publishDept : undefined,
-                  employees: publicEmployees,
-                  employeeId: publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
-                  employeeName: publishType === 'personal' && selectedEmp ? getEmployeeDisplayName(selectedEmp) : undefined,
-                  managerNote: managerNote.trim() || undefined,
-                  changeHistory: newPublishHistory,
-                });
-                void periodLabel;
+                setIsPublishing(true);
+                try {
+                  const saveResult = await savePublishedSchedule(token, {
+                    type: publishType,
+                    period,
+                    restaurant: restaurantName,
+                    kw,
+                    weekLabel,
+                    weekStart: format(weekStart, 'yyyy-MM-dd'),
+                    weekEnd: format(weekEnd, 'yyyy-MM-dd'),
+                    publishedAt: new Date().toISOString(),
+                    status: 'published',
+                    department: publishType === 'department' ? publishDept : undefined,
+                    employees: publicEmployees,
+                    employeeId: publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
+                    employeeName: publishType === 'personal' && selectedEmp ? getEmployeeDisplayName(selectedEmp) : undefined,
+                    managerNote: managerNote.trim() || undefined,
+                    changeHistory: newPublishHistory,
+                  });
+                  void periodLabel;
 
-                setPublishHistory(newPublishHistory);
-                setPublishToken(token);
-                setPublishStatus('published');
-                toast.success('Dienstplan veröffentlicht – Link ist jetzt aktiv');
+                  if (!saveResult.ok) {
+                    toast.error(`Publish fehlgeschlagen: ${saveResult.error ?? 'Unbekannter Fehler'}`, { duration: 8000 });
+                    return;
+                  }
+
+                  const valid = await validatePublishedSchedule(token);
+                  if (!valid) {
+                    toast.error(
+                      'Publish fehlgeschlagen – Payload nicht lesbar. Bitte SQL-Migration prüfen und erneut versuchen.',
+                      { duration: 10000 },
+                    );
+                    return;
+                  }
+
+                  setPublishHistory(newPublishHistory);
+                  setPublishToken(token);
+                  setPublishStatus('published');
+                  toast.success('Dienstplan veröffentlicht – Link ist jetzt aktiv ✓');
+                } finally {
+                  setIsPublishing(false);
+                }
               }}
             >
-              <Globe className="h-3.5 w-3.5" />
-              {publishStatus === 'published' ? 'Erneut veröffentlichen' : publishStatus === 'changed' ? 'Aktualisieren' : 'Veröffentlichen'}
+              {isPublishing
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Wird veröffentlicht…</>
+                : <><Globe className="h-3.5 w-3.5" /> {publishStatus === 'published' ? 'Erneut veröffentlichen' : publishStatus === 'changed' ? 'Aktualisieren' : 'Veröffentlichen'}</>
+              }
             </Button>
           </DialogFooter>
         </DialogContent>
