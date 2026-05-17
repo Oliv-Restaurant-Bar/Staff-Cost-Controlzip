@@ -1578,17 +1578,17 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
 
   // ── Palette — matches webapp chip colors ──────────────────────────────────
   // Shift: emerald-50 / emerald-800  (matches ShiftChip in StaffSchedulePage)
-  const COL_SHIFT:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [236,253,245], fg: [6,95,70]   };
+  const COL_SHIFT:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [209,250,229], fg: [5,80,58]   };
   // Frei: slate-100 / slate-600
   const COL_FREI:   { bg: [number,number,number]; fg: [number,number,number] } = { bg: [241,245,249], fg: [71,85,105] };
   // Ferien: blue-100 / blue-700
-  const COL_FERIEN: { bg: [number,number,number]; fg: [number,number,number] } = { bg: [219,234,254], fg: [29,78,216] };
+  const COL_FERIEN: { bg: [number,number,number]; fg: [number,number,number] } = { bg: [198,220,255], fg: [28,68,196] };
   // Krank: red-100 / red-700
   const COL_KRANK:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [254,226,226], fg: [185,28,28] };
   // Other: amber-100 / amber-800
   const COL_OTHER:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [254,243,199], fg: [146,64,14] };
   // Weekend: amber-50 (very subtle warm tint)
-  const WE_BG: [number,number,number] = [255,251,235];
+  const WE_BG: [number,number,number] = [255,253,244];
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -1702,8 +1702,8 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     // Dynamic sizing — tighter for more employees
     const n   = deptEmployees.length;
     const fs  = n > 34 ? 5   : n > 28 ? 5.5 : n > 22 ? 6   : n > 16 ? 6.5 : 7;
-    const mh  = n > 28 ? 8   : n > 20 ? 9.5 : n > 14 ? 11  : 13;
-    const cp  = 0.4; // minimal table padding — chips provide inner spacing
+    const mh  = n > 28 ? 7   : n > 20 ? 8   : n > 14 ? 9   : 10;
+    const cp  = 0.3; // minimal table padding — chips provide inner spacing
 
     const DOW      = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
     const todayStr = format(new Date(), 'yyyy-MM-dd');
@@ -1785,7 +1785,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     }
 
     // ── Column widths ────────────────────────────────────────────────────────
-    const ML = 8; const MR = 8;
+    const ML = 7; const MR = 7;
     const nameW  = 30;
     const stdW   = 9;
     const extraW = 9;
@@ -1827,9 +1827,9 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
         fontStyle: 'bold',
         fontSize: Math.max(fs - 0.5, 5),
         halign: 'center',
-        minCellHeight: 7,
+        minCellHeight: 6,
         lineWidth: 0,
-        cellPadding: 0.8,
+        cellPadding: 0.6,
       },
       columnStyles: colStyles,
       didDrawPage: () => {
@@ -1932,17 +1932,17 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
         if (!info || !info.style.hasContent || info.lines.length === 0) return;
 
         const { lines, style } = info;
-        const chipPadX = 1.1;
+        const chipPadX = 0.9;
         const chipX    = cell.x + chipPadX;
         const chipW    = cell.width - 2 * chipPadX;
         const ptToMm   = 0.352;       // 1pt ≈ 0.352mm
-        const chipPadY = 0.9;
+        const chipPadY = 0.65;
 
         if (lines.length === 1) {
           // Single chip centred in cell
-          const chipH  = Math.min(Math.max(fs * ptToMm + 2 * chipPadY, cell.height * 0.58), cell.height - 2.0);
+          const chipH  = Math.min(Math.max(fs * ptToMm + 2 * chipPadY, cell.height * 0.55), cell.height - 1.6);
           const chipY  = cell.y + (cell.height - chipH) / 2;
-          const r      = Math.min(1.5, chipH / 2);
+          const r      = Math.min(1.4, chipH / 2);
           pdf.setFillColor(style.bg[0], style.bg[1], style.bg[2]);
           (pdf as any).roundedRect(chipX, chipY, chipW, chipH, r, r, 'F');
           pdf.setFont('helvetica', style.bold ? 'bold' : 'normal');
@@ -1951,11 +1951,11 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
           pdf.text(lines[0], chipX + chipW / 2, chipY + chipH / 2 + fs * ptToMm * 0.35, { align: 'center' });
         } else {
           // Two chips stacked (for employees with früh + spät)
-          const singleH  = Math.min(Math.max(fs * ptToMm + 1.6, 4.5), (cell.height - 3.6) / 2);
-          const gap      = Math.max(0.8, (cell.height - 2 * singleH - 2.0) / 3);
+          const singleH  = Math.min(Math.max(fs * ptToMm + 1.2, 3.8), (cell.height - 2.4) / 2);
+          const gap      = Math.max(0.4, (cell.height - 2 * singleH - 1.4) / 3);
           const totalH   = 2 * singleH + gap;
           const startY   = cell.y + (cell.height - totalH) / 2;
-          const r        = Math.min(1.2, singleH / 2);
+          const r        = Math.min(1.1, singleH / 2);
           const fsSub    = Math.max(fs - 0.5, 5);
           lines.slice(0, 2).forEach((line, i) => {
             const cy = startY + i * (singleH + gap);
