@@ -30,7 +30,11 @@ import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
-import { savePublishedSchedule, PublishType, PublishDept, PublicEmployee, ChangeHistoryEntry } from '@/lib/schedule-publish-store';
+import {
+  stablePublishToken,
+  PublishType, PublishDept, PublicEmployee, ChangeHistoryEntry,
+  PublishedSchedulePayload,
+} from '@/lib/schedule-publish-store';
 import { getStaffPortalSettingsSync } from '@/lib/staff-portal-settings';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ModernScheduleGrid, CopiedCell } from '@/components/schedule-planner/ModernScheduleGrid';
@@ -313,6 +317,8 @@ const SchedulePlanner = () => {
   const [showQr, setShowQr]                                   = useState(false);
   const [managerNote, setManagerNote]                         = useState('');
   const [publishHistory, setPublishHistory]                   = useState<ChangeHistoryEntry[]>([]);
+  const [publishRevision, setPublishRevision]                 = useState<number>(0);
+  const [publishUpdatedAt, setPublishUpdatedAt]               = useState<string | null>(null);
   const [notifyChannels, setNotifyChannels]                   = useState({ whatsapp: false, sms: false, push: false, email: false });
   const [lastGlobalError, setLastGlobalError]                 = useState<string | null>(null);
 
@@ -2813,8 +2819,11 @@ const SchedulePlanner = () => {
     console.log('[publishSchedule] start — type:', publishType, 'dept:', publishDept);
     setIsPublishing(true);
     try {
-      const token = crypto.randomUUID();
-      const days = displayDays.length > 0 ? displayDays : [currentMonth];
+      // ── Stable token (deterministic, never changes per tenant+dept) ────────
+      const token  = stablePublishToken(tenantId, publishDept);
+      const kvKey  = `published-schedule:${token}`;
+
+      const days      = displayDays.length > 0 ? displayDays : [currentMonth];
       const weekStart = days[0];
       const weekEnd   = days[days.length - 1];
       const period: import('@/lib/schedule-publish-store').PublishPeriod = days.length <= 7 ? 'week' : 'month';
@@ -2823,7 +2832,27 @@ const SchedulePlanner = () => {
         ? format(weekStart, 'MMMM yyyy', { locale: de })
         : `KW ${kw} · ${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM yyyy', { locale: de })}`;
 
-      // Build employee list
+      console.log('[publishSchedule] stable token:', token, '| key:', kvKey);
+
+      // ── 0. Read existing payload for change detection + revision ───────────
+      let existingPayload: PublishedSchedulePayload | null = null;
+      try {
+        const { data: exData } = await supabase
+          .from('app_settings')
+          .select('value')
+          .eq('key', kvKey)
+          .maybeSingle();
+        if (exData?.value && typeof exData.value === 'object') {
+          existingPayload = exData.value as PublishedSchedulePayload;
+          console.log('[publishSchedule] existing payload found, revision:', existingPayload.revision ?? 0);
+        } else {
+          console.log('[publishSchedule] no existing payload — first publish');
+        }
+      } catch (e) {
+        console.warn('[publishSchedule] could not read existing payload (non-fatal):', e);
+      }
+
+      // ── 1. Build employee list ─────────────────────────────────────────────
       let targetEmps = employees.filter(e => isEmployeeActiveInMonth(e, weekStart));
       if (publishType === 'personal' && publishEmpId) {
         targetEmps = targetEmps.filter(e => e.id === publishEmpId);
@@ -2831,54 +2860,91 @@ const SchedulePlanner = () => {
         targetEmps = targetEmps.filter(e => e.department === publishDept);
       }
 
-      const publicEmployees: PublicEmployee[] = targetEmps.map(emp => ({
-        id:         emp.id,
-        name:       getEmployeeDisplayName(emp),
-        department: emp.department as 'service' | 'küche',
-        days: days.map(day => {
-          const dateStr = format(day, 'yyyy-MM-dd');
-          const slot    = scheduleData[`${emp.id}-${dateStr}`] ?? {};
-          return {
-            date:         dateStr,
-            dayLabel:     format(day, 'EEEE, d. MMMM', { locale: de }),
-            früh:         slot.früh         ?? null,
-            spät:         slot.spät         ?? null,
-            frühAbsence:  slot.frühAbsence  ?? null,
-            spätAbsence:  slot.spätAbsence  ?? null,
-          };
-        }),
-      }));
+      // ── 2. Build public employees with per-day change detection ────────────
+      const publicEmployees: PublicEmployee[] = targetEmps.map(emp => {
+        const existingEmp = existingPayload?.employees?.find(e => e.id === emp.id);
+        return {
+          id:         emp.id,
+          name:       getEmployeeDisplayName(emp),
+          department: emp.department as 'service' | 'küche',
+          days: days.map(day => {
+            const dateStr = format(day, 'yyyy-MM-dd');
+            const slot    = scheduleData[`${emp.id}-${dateStr}`] ?? {};
+            const newDay: import('@/lib/schedule-publish-store').PublicDayEntry = {
+              date:        dateStr,
+              dayLabel:    format(day, 'EEEE, d. MMMM', { locale: de }),
+              früh:        slot.früh        ?? null,
+              spät:        slot.spät        ?? null,
+              frühAbsence: slot.frühAbsence ?? null,
+              spätAbsence: slot.spätAbsence ?? null,
+            };
+
+            // Change detection against previous publish
+            if (existingEmp) {
+              const oldDay = existingEmp.days.find(d => d.date === dateStr);
+              if (oldDay) {
+                const changed =
+                  JSON.stringify(newDay.früh)  !== JSON.stringify(oldDay.früh)  ||
+                  JSON.stringify(newDay.spät)  !== JSON.stringify(oldDay.spät)  ||
+                  newDay.frühAbsence           !== oldDay.frühAbsence           ||
+                  newDay.spätAbsence           !== oldDay.spätAbsence;
+                if (changed) {
+                  newDay.changed       = true;
+                  newDay.changeType    = 'changed';
+                  newDay.previousFrüh  = oldDay.früh  ?? null;
+                  newDay.previousSpät  = oldDay.spät  ?? null;
+                }
+              }
+            }
+
+            return newDay;
+          }),
+        };
+      });
+
+      // ── 3. Compute revision + status ───────────────────────────────────────
+      const hasChanges = existingPayload !== null &&
+        publicEmployees.some(e => e.days.some(d => d.changed));
+      const revision   = (existingPayload?.revision ?? 0) + 1;
+      const now        = new Date().toISOString();
+
+      const changeHistory: ChangeHistoryEntry[] = [
+        ...(existingPayload?.changeHistory ?? []),
+        revision === 1
+          ? { timestamp: now, description: 'Erstveröffentlichung' }
+          : hasChanges
+            ? { timestamp: now, description: `Aktualisiert (Revision ${revision})` }
+            : { timestamp: now, description: `Erneut veröffentlicht – keine Änderungen (Revision ${revision})` },
+      ];
 
       const selectedEmp = employees.find(e => e.id === publishEmpId);
-      const payload: PublishedSchedulePayload & { token: string; version: number } = {
-        token,
-        version: 1,
-        type:        publishType,
+      const payload: PublishedSchedulePayload = {
+        version:      2,
+        revision,
+        type:         publishType,
         period,
-        restaurant:  tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv',
+        restaurant:   tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv',
         kw,
         weekLabel,
-        weekStart:   format(weekStart, 'yyyy-MM-dd'),
-        weekEnd:     format(weekEnd,   'yyyy-MM-dd'),
-        publishedAt: new Date().toISOString(),
-        status:      'published',
-        department:  publishDept,
-        employees:   publicEmployees,
+        weekStart:    format(weekStart, 'yyyy-MM-dd'),
+        weekEnd:      format(weekEnd,   'yyyy-MM-dd'),
+        publishedAt:  existingPayload?.publishedAt ?? now,   // first-publish date preserved
+        updatedAt:    now,
+        status:       hasChanges ? 'changed' : 'published',
+        department:   publishDept,
+        employees:    publicEmployees,
         employeeId:   publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
         employeeName: publishType === 'personal' && selectedEmp
           ? getEmployeeDisplayName(selectedEmp) : undefined,
-        settings:    getStaffPortalSettingsSync(),
+        managerNote:  managerNote || undefined,
+        changeHistory,
+        settings:     getStaffPortalSettingsSync(),
       };
 
-      const kvKey       = `published-schedule:${token}`;
-      const payloadJson = JSON.stringify(payload);
+      console.log('[publishSchedule] revision:', revision, '| hasChanges:', hasChanges,
+        '| employees:', publicEmployees.length, '| status:', payload.status);
 
-      console.log('[publishSchedule] token:', token);
-      console.log('[publishSchedule] key:', kvKey);
-      console.log('[publishSchedule] route URL: /staff-schedule/' + token);
-      console.log('[publishSchedule] employees:', publicEmployees.length, 'size:', payloadJson.length, 'bytes');
-
-      // ── 1. Write ──────────────────────────────────────────────────────────
+      // ── 4. Write ───────────────────────────────────────────────────────────
       const { error: writeError } = await supabase
         .from('app_settings')
         .upsert({ key: kvKey, value: payload }, { onConflict: 'key' });
@@ -2888,9 +2954,12 @@ const SchedulePlanner = () => {
         toast.error(`Speichern fehlgeschlagen: ${writeError.message}`, { duration: 8000 });
         return;
       }
+
+      // Also cache to localStorage for instant same-device load
+      try { localStorage.setItem(`schedule-publish:${token}`, JSON.stringify(payload)); } catch { /* ignore */ }
       console.log('[publishSchedule] write OK ✓');
 
-      // ── 2. Verify (read-back) ─────────────────────────────────────────────
+      // ── 5. Verify (read-back) ──────────────────────────────────────────────
       const { data: rbData, error: rbError } = await supabase
         .from('app_settings')
         .select('key, value')
@@ -2903,11 +2972,20 @@ const SchedulePlanner = () => {
         return;
       }
       const verifiedEmpCount = (rbData.value as any)?.employees?.length ?? 0;
-      console.log('[publishSchedule] verify OK ✓  employees in DB:', verifiedEmpCount);
+      console.log('[publishSchedule] verify OK ✓  employees in DB:', verifiedEmpCount, '| revision:', revision);
 
       setPublishToken(token);
       setPublishStatus('published');
-      toast.success(`Dienstplan veröffentlicht ✓ – ${publicEmployees.length} Mitarbeitende`);
+      setPublishRevision(revision);
+      setPublishUpdatedAt(now);
+
+      if (hasChanges) {
+        toast.success(`Dienstplan aktualisiert ✓ – Revision ${revision} · ${publicEmployees.length} Mitarbeitende`, { duration: 5000 });
+      } else if (revision === 1) {
+        toast.success(`Dienstplan veröffentlicht ✓ – ${publicEmployees.length} Mitarbeitende`);
+      } else {
+        toast.success(`Dienstplan erneut veröffentlicht ✓ – Revision ${revision}`);
+      }
     } catch (err) {
       console.error('[publishSchedule] failed:', err);
       const msg = err instanceof Error ? err.message : String(err);
@@ -5141,17 +5219,24 @@ const SchedulePlanner = () => {
                   <Share2 className="h-4 w-4 text-muted-foreground" />
                 )}
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">
                   {publishStatus === 'published' ? 'Veröffentlicht' :
                    publishStatus === 'changed'   ? 'Nicht aktuell – Änderungen vorhanden' :
                    'Noch nicht veröffentlicht'}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {publishStatus === 'published' ? `Link aktiv · ${pkqPeriodLabel}` :
-                   publishStatus === 'changed'   ? 'Bitte erneut veröffentlichen um den Link zu aktualisieren' :
-                   'Erstelle einen Link damit Mitarbeitende den Plan einsehen können'}
+                  {publishStatus === 'published'
+                    ? `Link aktiv · ${pkqPeriodLabel}${publishRevision > 0 ? ` · Revision ${publishRevision}` : ''}`
+                    : publishStatus === 'changed'
+                    ? 'Bitte erneut veröffentlichen um den Link zu aktualisieren'
+                    : 'Erstelle einen Link damit Mitarbeitende den Plan einsehen können'}
                 </p>
+                {publishUpdatedAt && (
+                  <p className="text-[11px] text-muted-foreground/70 mt-0.5">
+                    Zuletzt aktualisiert: {format(new Date(publishUpdatedAt), 'd. MMM yyyy · HH:mm', { locale: de })} Uhr
+                  </p>
+                )}
               </div>
             </div>
 
@@ -5291,138 +5376,145 @@ const SchedulePlanner = () => {
               )}
             </div>
 
-            {/* ── Aktiver Link ─────────────────────────────────────────── */}
-            {publishToken && (() => {
-              try {
-              const url = `${window.location.origin}/staff-schedule/${publishToken}`;
-              const selectedEmp = employees.find(e => e.id === publishEmpId);
-              const empName = selectedEmp ? getEmployeeDisplayName(selectedEmp) : null;
-              const _days = displayDays.length > 0 ? displayDays : [currentMonth];
-              const _period = _days.length <= 7 ? 'week' : 'month';
-              const _kw = getISOWeek(_days[0]);
+            {/* ── Stabiler Teamlink ────────────────────────────────────── */}
+            {(() => {
+              const previewToken = stablePublishToken(tenantId, publishDept);
+              const previewUrl   = `${window.location.origin}/staff-schedule/${previewToken}`;
+              const isLive       = publishStatus === 'published' || publishStatus === 'changed';
+
+              const _days        = displayDays.length > 0 ? displayDays : [currentMonth];
+              const _period      = _days.length <= 7 ? 'week' : 'month';
+              const _kw          = getISOWeek(_days[0]);
               const _periodLabel = _period === 'month'
                 ? format(_days[0], 'MMMM yyyy', { locale: de })
                 : `KW ${_kw}`;
-              const waText = publishType === 'personal' && empName
-                ? publishStatus === 'changed'
-                  ? `Hallo ${empName},\ndein Dienstplan wurde aktualisiert:\n${url}`
-                  : `Hallo ${empName},\nhier ist dein Dienstplan für ${_periodLabel}:\n${url}`
-                : publishStatus === 'changed'
-                  ? `Hallo zusammen,\nder Dienstplan für ${_periodLabel} wurde aktualisiert:\n${url}`
-                  : `Hallo zusammen,\nhier ist der Dienstplan für ${_periodLabel}:\n${url}`;
+
+              // WhatsApp: update message for re-publishes, intro message for first publish
+              const waUpdateText = `Der Dienstplan wurde aktualisiert. Bitte prüft die Änderungen nochmals 👌\n${previewUrl}`;
+              const waFirstText  = `Hallo zusammen,\nhier ist der Dienstplan für ${_periodLabel}:\n${previewUrl}`;
+              const waText       = publishRevision > 1 ? waUpdateText : waFirstText;
+
               return (
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Freigabe-Link</p>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0 rounded-md border bg-muted/40 px-3 py-2 text-xs font-mono truncate text-muted-foreground select-all">
-                      {url}
-                    </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Stabiler Teamlink</p>
+                    {isLive && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
+                        Live
+                      </span>
+                    )}
+                  </div>
+
+                  {/* URL row */}
+                  <div className={cn(
+                    "flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors",
+                    isLive
+                      ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
+                      : "border-border bg-muted/30 opacity-60"
+                  )}>
+                    <span className="flex-1 min-w-0 text-xs font-mono truncate text-foreground select-all">
+                      {previewUrl}
+                    </span>
                     <Button
                       size="sm"
-                      variant="outline"
-                      className="h-8 gap-1.5 shrink-0"
+                      variant="ghost"
+                      className="h-7 w-7 p-0 shrink-0"
+                      disabled={!isLive}
                       onClick={() => {
-                        navigator.clipboard.writeText(url);
+                        navigator.clipboard.writeText(previewUrl);
                         setPublishCopied(true);
                         setTimeout(() => setPublishCopied(false), 2000);
                       }}
                     >
-                      {publishCopied ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-                      {publishCopied ? 'Kopiert' : 'Link'}
+                      {publishCopied
+                        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                        : <Copy className="h-3.5 w-3.5 text-muted-foreground" />}
                     </Button>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 gap-1.5 text-xs border-green-400 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400"
-                      onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(waText)}`, '_blank')}
-                    >
-                      <MessageCircle className="h-3 w-3" />
-                      WhatsApp
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 gap-1.5 text-xs text-muted-foreground"
-                      onClick={() => window.open(url, '_blank')}
-                    >
-                      <Eye className="h-3 w-3" />
-                      Vorschau
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 gap-1.5 text-xs border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400"
-                      onClick={() => setMobilePreviewUrl(url)}
-                    >
-                      <Smartphone className="h-3 w-3" />
-                      Handy
-                    </Button>
-                    {!SAFE_PUBLISH_MODE && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 gap-1.5 text-xs"
-                      onClick={() => setShowQr(v => !v)}
-                    >
-                      <QrCode className="h-3 w-3" />
-                      QR-Code
-                    </Button>
-                    )}
-                  </div>
-                  {/* QR Code preview — disabled in SAFE_PUBLISH_MODE */}
-                  {!SAFE_PUBLISH_MODE && showQr && (
+
+                  {/* Hint: save to home screen */}
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    Dieser Link bleibt immer gleich. Mitarbeitende speichern ihn einmal auf dem Homebildschirm — er zeigt stets den aktuell veröffentlichten Plan.
+                  </p>
+
+                  {/* Action buttons — only when live */}
+                  {isLive && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* WhatsApp — primary CTA for re-publishes */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={cn(
+                          "h-7 gap-1.5 text-xs",
+                          publishRevision > 1
+                            ? "border-green-500 text-green-700 bg-green-50 hover:bg-green-100 dark:border-green-600 dark:text-green-400 dark:bg-green-950/30 font-semibold"
+                            : "border-green-400 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400"
+                        )}
+                        onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(waText)}`, '_blank')}
+                      >
+                        <MessageCircle className="h-3 w-3" />
+                        {publishRevision > 1 ? 'Änderungsmitteilung teilen' : 'WhatsApp'}
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1.5 text-xs text-muted-foreground"
+                        onClick={() => window.open(previewUrl, '_blank')}
+                      >
+                        <Eye className="h-3 w-3" />
+                        Vorschau
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 gap-1.5 text-xs border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400"
+                        onClick={() => setMobilePreviewUrl(previewUrl)}
+                      >
+                        <Smartphone className="h-3 w-3" />
+                        Handy
+                      </Button>
+
+                      {!SAFE_PUBLISH_MODE && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 gap-1.5 text-xs"
+                          onClick={() => setShowQr(v => !v)}
+                        >
+                          <QrCode className="h-3 w-3" />
+                          QR
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* QR Code */}
+                  {isLive && !SAFE_PUBLISH_MODE && showQr && (
                     <div className="flex flex-col items-center gap-2 rounded-lg border border-border bg-muted/30 p-3">
                       <img
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(url)}`}
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(previewUrl)}`}
                         alt="QR-Code"
                         width={160}
                         height={160}
                         className="rounded border border-border/50 shadow-sm bg-white"
                       />
                       <p className="text-[11px] text-muted-foreground text-center">
-                        {publishType === 'personal' && empName ? empName : 'Abteilungsplan'} · {_periodLabel}
+                        {publishDept === 'all' ? 'Team' : publishDept === 'service' ? 'Service' : 'Küche'} · {_periodLabel}
                       </p>
                     </div>
                   )}
-                  {/* WhatsApp text preview — disabled in SAFE_PUBLISH_MODE */}
-                  {!SAFE_PUBLISH_MODE && (
-                  <div className="rounded-md bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 px-3 py-2 text-xs text-green-800 dark:text-green-300">
-                    <p className="font-semibold mb-0.5">WhatsApp-Text:</p>
-                    <p className="leading-snug whitespace-pre-line">{waText}</p>
-                  </div>
-                  )}
-                </div>
-              );
-              } catch (renderErr) {
-                console.error('[publish] Link-Render-Fehler:', renderErr);
-                return null;
-              }
-            })()}
 
-            {/* ── Debug Panel (temporär) ───────────────────────────────── */}
-            {publishToken && (() => {
-              const dbgUrl = `${window.location.origin}/staff-schedule/${publishToken}`;
-              const dbgKey = `published-schedule:${publishToken}`;
-              const dbgEmps = (() => {
-                try {
-                  const days = displayDays.length > 0 ? displayDays : [currentMonth];
-                  let t = employees.filter(e => isEmployeeActiveInMonth(e, days[0]));
-                  if (publishType === 'personal' && publishEmpId) t = t.filter(e => e.id === publishEmpId);
-                  else if (publishType === 'department' && publishDept !== 'all') t = t.filter(e => e.department === publishDept);
-                  return t.length;
-                } catch { return '?'; }
-              })();
-              return (
-                <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40 px-3 py-2 text-[11px] font-mono text-slate-600 dark:text-slate-400 space-y-0.5">
-                  <p className="font-semibold text-slate-800 dark:text-slate-300 mb-1">Debug</p>
-                  <p>Token: <span className="break-all">{publishToken}</span></p>
-                  <p>Key: {dbgKey}</p>
-                  <p>Mitarbeitende im Payload: {dbgEmps}</p>
-                  <p>Route: /staff-schedule/:token</p>
-                  <p className="break-all">URL: {dbgUrl}</p>
-                  <p>Status: {publishStatus}</p>
+                  {/* WhatsApp text preview */}
+                  {isLive && !SAFE_PUBLISH_MODE && (
+                    <div className="rounded-md bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 px-3 py-2 text-xs text-green-800 dark:text-green-300">
+                      <p className="font-semibold mb-0.5">
+                        {publishRevision > 1 ? 'Änderungsmitteilung:' : 'WhatsApp-Text:'}
+                      </p>
+                      <p className="leading-snug whitespace-pre-line">{waText}</p>
+                    </div>
+                  )}
                 </div>
               );
             })()}

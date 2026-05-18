@@ -51,6 +51,8 @@ export type PublishPeriod = 'week' | 'month';
 export interface PublishedSchedulePayload {
   /** Payload schema version — increment when making breaking changes */
   version?: number;
+  /** Publish revision — increments with every re-publish of the same stable key */
+  revision?: number;
   type: PublishType;
   period: PublishPeriod;
   restaurant: string;
@@ -58,7 +60,10 @@ export interface PublishedSchedulePayload {
   weekLabel: string;
   weekStart: string;
   weekEnd: string;
+  /** ISO timestamp of first publish — never changes for a stable key */
   publishedAt: string;
+  /** ISO timestamp of last update — changes on every re-publish */
+  updatedAt?: string;
   status: 'draft' | 'published' | 'changed';
   department?: PublishDept;
   employees?: PublicEmployee[];
@@ -68,6 +73,25 @@ export interface PublishedSchedulePayload {
   changeHistory?: ChangeHistoryEntry[];
   /** Staff portal feature flags — snapshot of admin settings at publish time */
   settings?: import('@/lib/staff-portal-settings').StaffPortalSettings;
+}
+
+/**
+ * Compute the stable, human-readable token for a tenant + department combination.
+ * This token never changes, so admins can save the link to their home screen once
+ * and it will always show the latest published schedule.
+ *
+ * Examples:
+ *   oliv     + all     → "oliv-team"
+ *   oliv     + service → "oliv-service"
+ *   oliv     + küche   → "oliv-kueche"
+ *   beaulieu + all     → "beaulieu-team"
+ */
+export function stablePublishToken(tenantId: string, dept: PublishDept): string {
+  const deptSlug =
+    dept === 'all'    ? 'team'    :
+    dept === 'küche'  ? 'kueche'  :
+    dept; // 'service'
+  return `${tenantId}-${deptSlug}`;
 }
 
 const LS_PREFIX = 'schedule-publish:';
@@ -222,45 +246,45 @@ export function loadPublishedSchedule(token: string): PublishedSchedulePayload |
 }
 
 /**
- * Load with full cross-device support:
+ * Load with full cross-device support.
  *
- * 1. localStorage (fast, same device)
- * 2. Supabase direct query — bypasses isAvailable() cache, works for anon users
- *    provided the anon RLS policy (20260517_published_schedule_public_read.sql)
- *    has been applied in the Supabase SQL editor.
+ * With stable tokens, Supabase is always queried first so employees always see
+ * the latest published version — not a stale localStorage cache from a previous
+ * visit. localStorage is used only as an offline fallback.
  *
- * Caches a successful Supabase result to localStorage for instant subsequent loads.
+ * 1. Supabase direct query — always fresh, bypasses isAvailable() cache,
+ *    works for anon users provided the anon RLS policy is active.
+ * 2. localStorage fallback — only if Supabase returns nothing (offline / error).
  */
 export async function loadPublishedScheduleAsync(
   token: string,
 ): Promise<PublishedSchedulePayload | null> {
   console.log(`[publish] loadPublishedScheduleAsync START  token="${token}"`);
 
-  // Fast path: localStorage
-  const local = loadPublishedSchedule(token);
-  if (local) {
-    console.log(`[publish] loadPublishedScheduleAsync: returning localStorage hit`);
-    return local;
-  }
-
-  // Slow path: direct Supabase query (bypasses isAvailable() module cache)
-  const key = kvKey(token);
-  console.log(`[publish] loadPublishedScheduleAsync: localStorage miss, querying Supabase key="${key}"`);
-
+  // Primary: Supabase — always fetch fresh so stable-token re-publishes are
+  // immediately visible to employees (no stale localStorage cache problem).
+  const key    = kvKey(token);
   const remote = await supabaseRead(key);
 
   if (remote && typeof remote === 'object' && !Array.isArray(remote)) {
     const p = remote as PublishedSchedulePayload;
     try {
       localStorage.setItem(lsKey(token), JSON.stringify(p));
-      console.log(`[publish] loadPublishedScheduleAsync: Supabase HIT, cached to localStorage`);
+      console.log(`[publish] loadPublishedScheduleAsync: Supabase HIT (revision=${p.revision ?? '?'}), cached to localStorage`);
     } catch { /* ignore */ }
     return p;
   }
 
+  // Fallback: localStorage (offline / Supabase unavailable)
+  const local = loadPublishedSchedule(token);
+  if (local) {
+    console.log(`[publish] loadPublishedScheduleAsync: Supabase miss, returning localStorage fallback (revision=${local.revision ?? '?'})`);
+    return local;
+  }
+
   console.warn(
     `[publish] loadPublishedScheduleAsync: MISS  token="${token}"`,
-    '(localStorage=null, Supabase=null)',
+    '(Supabase=null, localStorage=null)',
     '→ check anon RLS policy and that the token was saved',
   );
   return null;

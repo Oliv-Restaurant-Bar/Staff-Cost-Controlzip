@@ -1,0 +1,200 @@
+Bitte jetzt Phase 3C umsetzen.
+
+Ziel:
+Das Mitarbeiterportal soll sich wie eine moderne native Mitarbeiter-App anfühlen.
+
+Keine neuen komplexen Features.
+Fokus:
+UX
+Spacing
+Visuals
+Lesbarkeit
+Mobile Feeling
+Performance
+
+====================================================
+1. MOBILE SPACING VERBESSERN
+====================================================
+
+Aktuell wirkt vieles noch zu eng oder uneinheitlich.
+
+Bitte verbessern:
+
+- mehr vertikale Abstände
+- konsistente card paddings
+- klarere section separations
+- weniger harte Linien
+- mehr whitespace
+- größere touch areas
+
+Besonders:
+- Mitarbeiterkarten
+- Tageskarten
+- Wochenansicht
+- Dropdown
+- Tabs
+
+====================================================
+2. HEADER MODERNISIEREN
+====================================================
+
+Header kompakter und hochwertiger.
+
+Bitte:
+
+- Logo/Restaurant ruhiger darstellen
+- KW kleiner
+- Zeitraum eleganter
+- "Nur Ansicht" Badge kleiner
+- Sticky Header auf Mobile
+- Blur Background beim Scrollen
+
+Updated Text:
+"Aktualisiert vor 12 Minuten"
+
+====================================================
+3. TABS VERBESSERN
+====================================================
+
+Tabs sollen wie native iOS segmented controls wirken.
+
+- weichere Ecken
+- besseres active state
+- smooth transitions
+- sticky unter Header
+
+====================================================
+4. WOCHENANSICHT OPTISCH VERBESSERN
+====================================================
+
+Aktuell funktional aber noch technisch.
+
+Bitte:
+
+- weichere Gridlinien
+- subtilere Borders
+- bessere Spaltentrennung
+- mehr cell breathing space
+- kompaktere Schrift
+- sticky employee column mit shadow rechts
+- sticky top row mit blur background
+
+Chips:
+- schöner zentriert
+- bessere vertikale alignment
+- nicht so gedrängt
+
+====================================================
+5. SCHICHT-CHIPS VERBESSERN
+====================================================
+
+Arbeitszeiten sollen schöner aussehen.
+
+Bitte:
+
+Arbeit:
+soft emerald
+
+Frei:
+soft gray
+
+Ferien:
+soft blue
+
+Krank:
+soft red
+
+Mehr:
+- kleine Schatten
+- bessere Radius
+- gleichmässige Höhen
+- bessere Icon-Abstände
+
+====================================================
+6. MITARBEITERKARTEN
+====================================================
+
+Accordion Cards verbessern:
+
+- weichere Übergänge
+- subtile shadows
+- aktive Karte hervorheben
+- bessere collapsed states
+- Tage-Zähler ruhiger
+
+====================================================
+7. FEEDBACK/WUNSCH BEREICH
+====================================================
+
+Der Wunschbereich soll moderner wirken.
+
+Bitte:
+
+- textarea schöner
+- send button sticky/mobile-friendly
+- success state schöner
+- weniger Formular-Look
+- eher Chat/App Feeling
+
+====================================================
+8. PERFORMANCE MOBILE
+====================================================
+
+Bitte optimieren:
+
+- weniger re-renders
+- memoized week rows
+- smoother scrolling
+- passive touch scrolling
+- sticky columns performant
+
+====================================================
+9. HOME SCREEN APP FEEL
+====================================================
+
+Wenn auf Homebildschirm geöffnet:
+
+- weniger Browser Feeling
+- mehr App Feeling
+- content max-width mobile optimized
+- safe area paddings für iPhone
+
+====================================================
+10. LEERE ZUSTÄNDE
+====================================================
+
+Schöne Empty States:
+
+Wenn kein Mitarbeiter gefunden:
+Icon + ruhiger Text
+
+Wenn keine Schicht:
+"Kein Einsatz"
+
+Wenn keine Woche:
+"Für diese Woche ist noch kein Plan veröffentlicht."
+
+====================================================
+11. MICRO ANIMATIONS
+====================================================
+
+Sehr subtile Animationen:
+
+- Tab Wechsel
+- Accordion open/close
+- Chips hover/tap
+- Feedback success
+- Dropdown open
+
+Keine schweren Animationen.
+Nur Premium Feeling.
+
+====================================================
+12. WICHTIG
+====================================================
+
+Keine neue Business-Logik.
+Keine Publish-Logik ändern.
+Keine Supabase-Struktur ändern.
+
+Nur UX / Visual / Mobile polish.

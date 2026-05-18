@@ -1,0 +1,148 @@
+Bitte jetzt den Teamlink-/Homebildschirm-Flow professionell umbauen.
+
+Ziel:
+Mitarbeiter speichern EINEN konstanten Teamlink auf dem Homebildschirm.
+Dieser Link zeigt immer die aktuell veröffentlichte Woche.
+
+Keine neuen Tokens pro Veröffentlichung mehr.
+
+====================================================
+1. STABILER TEAMLINK
+====================================================
+
+Statt:
+random token pro publish
+
+Bitte:
+stabile Links pro Bereich.
+
+Beispiele:
+
+/staff-schedule/oliv-service
+/staff-schedule/oliv-kueche
+/staff-schedule/oliv-team
+
+Optional:
+restaurant + department.
+
+Der Publish überschreibt einfach den bestehenden veröffentlichten Plan.
+
+====================================================
+2. PUBLISH FLOW ÄNDERN
+====================================================
+
+Beim Veröffentlichen:
+
+Nicht:
+neuen Token generieren.
+
+Sondern:
+denselben festen Key überschreiben.
+
+Beispiel:
+
+published-schedule:oliv-service
+
+Dadurch:
+Homebildschirm bleibt immer aktuell.
+
+====================================================
+3. VERSIONIERUNG
+====================================================
+
+Payload erweitern:
+
+version
+publishedAt
+updatedAt
+revision
+
+revision +1 bei jeder Änderung nach Veröffentlichung.
+
+====================================================
+4. ÄNDERUNGEN ERKENNEN
+====================================================
+
+Beim erneuten Publish:
+
+Vergleich zur vorherigen veröffentlichten Version.
+
+Wenn Tag geändert:
+markChanged = true
+
+Speichern:
+previousShifts
+newShifts
+
+====================================================
+5. VISUELLE ÄNDERUNGSMARKIERUNG
+====================================================
+
+Im Mitarbeiterportal:
+
+Geänderte Tage:
+- orange Border
+- Badge "Neu"
+- alte Zeit durchgestrichen
+- neue Zeit hervorgehoben
+
+Zusätzlich oben:
+"Dienstplan wurde aktualisiert"
+
+====================================================
+6. HOME SCREEN OPTIMIEREN
+====================================================
+
+Wenn auf Homebildschirm gespeichert:
+
+- immer aktuelle Version laden
+- kein neuer Link nötig
+- updatedAt sichtbar
+- revision sichtbar optional
+
+====================================================
+7. WHATSAPP UPDATE FLOW
+====================================================
+
+Nach Änderung:
+
+Button:
+"Änderungsmitteilung teilen"
+
+Vorbefüllter WhatsApp Text:
+
+"Der Dienstplan wurde aktualisiert. Bitte prüft die Änderungen nochmals 👌"
+
++ stabiler Teamlink.
+
+Kein Auto-Senden.
+Nur vorbereitet.
+
+====================================================
+8. WOCHENNAVIGATION
+====================================================
+
+Später vorbereiten:
+
+/staff-schedule/oliv-service?week=2026-21
+
+Aber aktuell:
+immer aktuelle Woche öffnen.
+
+====================================================
+9. DATENSCHUTZ
+====================================================
+
+Keine Löhne.
+Keine Kosten.
+Keine internen Notizen.
+
+====================================================
+10. WICHTIG
+====================================================
+
+Keine bestehende Dienstplanlogik zerstören.
+Keine PDF-Logik ändern.
+
+Nur:
+Publish-Architektur auf stabile Teamlinks umstellen.
