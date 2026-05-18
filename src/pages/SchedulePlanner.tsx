@@ -2809,7 +2809,8 @@ const SchedulePlanner = () => {
 
   // ── MINIMAL PUBLISH (bypasses all old logic) ──────────────────────────────
   const handleSafePublishMinimal = async () => {
-    console.log('[safe-publish-minimal] clicked');
+    console.log('[TEST PUBLISH BUTTON CLICKED]');
+    alert('TEST PUBLISH BUTTON CLICKED');
     setIsPublishing(true);
     try {
       const token = crypto.randomUUID();
@@ -2855,6 +2856,18 @@ const SchedulePlanner = () => {
   return (
     <div className="bg-background h-full flex flex-col">
       {/* Header */}
+      {/* ══ SAFE PUBLISH TEST AKTIV BANNER ══════════════════════════════════ */}
+      <div style={{ background: '#dc2626', color: '#fff', padding: '6px 16px', fontWeight: 700, fontSize: 13, letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 12, zIndex: 9999 }}>
+        <span>🔴 SAFE PUBLISH TEST AKTIV</span>
+        <button
+          onClick={() => { console.log('[TEST PUBLISH BUTTON CLICKED]'); alert('TEST PUBLISH BUTTON CLICKED – neuer Code ist aktiv!'); }}
+          style={{ background: '#fff', color: '#dc2626', border: 'none', borderRadius: 6, padding: '2px 14px', fontWeight: 800, cursor: 'pointer', fontSize: 13 }}
+        >
+          TEST PUBLISH
+        </button>
+      </div>
+      {/* ════════════════════════════════════════════════════════════════════ */}
+
       <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
         <div className="max-w-[1800px] mx-auto px-4">
 

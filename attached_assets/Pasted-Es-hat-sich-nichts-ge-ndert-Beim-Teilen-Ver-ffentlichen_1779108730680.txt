@@ -1,0 +1,84 @@
+Es hat sich nichts geändert. Beim Teilen/Veröffentlichen crasht es weiterhin genau gleich.
+
+Das bedeutet wahrscheinlich:
+- der neue handleSafePublishMinimal wird gar nicht verwendet
+- es gibt mehrere Veröffentlichen-Buttons
+- der alte Dialog/Handler wird weiterhin gerendert
+- oder die App lädt alten HMR/Build-State
+
+Bitte jetzt radikal debuggen und sichtbar machen.
+
+1. ALLE Veröffentlichen-Buttons suchen
+Suche in src/pages/SchedulePlanner.tsx und allen Komponenten nach:
+- "Veröffentlichen"
+- "publish"
+- "handlePublish"
+- "savePublishedSchedule"
+- "onClick"
+
+Bitte jeden Button auflisten, der Publish auslösen kann.
+
+2. ALTEN PUBLISH KOMPLETT ABKLEMMEN
+Alle alten Handler dürfen NICHT mehr erreichbar sein.
+
+Jeder alte Publish-Button soll temporär disabled sein mit Text:
+"Alter Publish deaktiviert"
+
+3. NEUEN TESTBUTTON SICHTBAR MACHEN
+Füge ganz oben im Dienstplan Header neben "Teilen" einen neuen Button ein:
+
+"TEST PUBLISH"
+
+Dieser Button soll DIREKT handleSafePublishMinimal aufrufen.
+
+Nicht im Dialog.
+Nicht im Teilen-Popup.
+Keine QR.
+Kein WhatsApp.
+Kein Dialog-State.
+
+Nur:
+Button klicken → Test Payload speichern → Link anzeigen oder toast.
+
+4. BEWEIS IM UI
+Wenn der neue Code geladen ist, muss im Header sichtbar stehen:
+
+SAFE PUBLISH TEST AKTIV
+
+Wenn ich das nicht sehe, ist der neue Code nicht aktiv.
+
+5. HANDLESAFEPUBLISHMINIMAL NOCH SIMPLER
+Der Testbutton soll zuerst OHNE Supabase laufen:
+
+console.log("[TEST PUBLISH BUTTON CLICKED]")
+alert("TEST PUBLISH BUTTON CLICKED")
+
+Erst wenn dieser Alert kommt, Supabase wieder hinzufügen.
+
+6. WENN ALERT NICHT KOMMT
+Dann ist klar:
+- falsche Datei
+- falscher Button
+- alte Route
+- HMR stale
+- anderer SchedulePlanner wird gerendert
+
+Dann bitte die tatsächlich gerenderte Komponente finden.
+
+7. APP NEU STARTEN
+Bitte Vite komplett stoppen und neu starten.
+Nicht nur HMR.
+
+8. TEST
+Nach Umsetzung:
+- Seite laden
+- ich muss "SAFE PUBLISH TEST AKTIV" sehen
+- ich muss Button "TEST PUBLISH" sehen
+- Klick muss alert zeigen
+- keine App darf crashen
+
+Erst danach wieder Supabase / Link / Dialog aktivieren.
+
+Wichtig:
+Keine weiteren Features.
+Nur beweisen, welcher Button wirklich läuft.
