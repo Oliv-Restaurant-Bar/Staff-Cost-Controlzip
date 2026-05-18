@@ -66,6 +66,8 @@ export interface PublishedSchedulePayload {
   employeeName?: string;
   managerNote?: string;
   changeHistory?: ChangeHistoryEntry[];
+  /** Staff portal feature flags — snapshot of admin settings at publish time */
+  settings?: import('@/lib/staff-portal-settings').StaffPortalSettings;
 }
 
 const LS_PREFIX = 'schedule-publish:';

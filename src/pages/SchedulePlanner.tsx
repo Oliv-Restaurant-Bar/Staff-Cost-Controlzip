@@ -31,6 +31,7 @@ import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
 import { savePublishedSchedule, PublishType, PublishDept, PublicEmployee, ChangeHistoryEntry } from '@/lib/schedule-publish-store';
+import { getStaffPortalSettingsSync } from '@/lib/staff-portal-settings';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ModernScheduleGrid, CopiedCell } from '@/components/schedule-planner/ModernScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
@@ -2866,6 +2867,7 @@ const SchedulePlanner = () => {
         employeeId:   publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
         employeeName: publishType === 'personal' && selectedEmp
           ? getEmployeeDisplayName(selectedEmp) : undefined,
+        settings:    getStaffPortalSettingsSync(),
       };
 
       const kvKey       = `published-schedule:${token}`;

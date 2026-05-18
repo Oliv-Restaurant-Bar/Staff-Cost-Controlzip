@@ -20,6 +20,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { DepartmentTokenManager } from '@/components/DepartmentTokenManager';
+import { StaffPortalSettingsPanel } from '@/components/StaffPortalSettingsPanel';
 import { CronJobOverview } from '@/components/CronJobOverview';
 import { migrateLocalStorageToSupabase } from '@/hooks/useSupabaseSchedule';
 import { saveSetting } from '@/lib/supabase-db';
@@ -1961,6 +1962,23 @@ const Settings = () => {
 
           {/* Benutzer-Verwaltung */}
           <UserManagementCard />
+
+          {/* Mitarbeiterportal */}
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <span>Mitarbeiterportal</span>
+                <span className="text-xs font-normal text-muted-foreground bg-muted px-2 py-0.5 rounded-full">Zentraleinstellungen</span>
+              </CardTitle>
+              <CardDescription>
+                Alle Funktionen des öffentlichen Dienstplan-Portals zentral aktivieren oder deaktivieren.
+                Einstellungen werden beim nächsten Veröffentlichen in den Link eingebettet.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <StaffPortalSettingsPanel />
+            </CardContent>
+          </Card>
 
           {/* Department Access Tokens */}
           <DepartmentTokenManager />

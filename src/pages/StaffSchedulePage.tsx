@@ -23,6 +23,10 @@ import {
   PublishedSchedulePayload,
   ChangeHistoryEntry,
 } from '@/lib/schedule-publish-store';
+import {
+  StaffPortalSettings,
+  DEFAULT_STAFF_PORTAL_SETTINGS,
+} from '@/lib/staff-portal-settings';
 import { supabase } from '@/integrations/supabase/client';
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -111,7 +115,11 @@ function AbsenceChip({ code, large = false }: { code: string; large?: boolean })
 }
 
 /** Compact content for list/accordion rows */
-function DayContent({ day, compact = false }: { day: PublicDayEntry; compact?: boolean }) {
+function DayContent({
+  day, compact = false, showHours = true,
+}: {
+  day: PublicDayEntry; compact?: boolean; showHours?: boolean;
+}) {
   if (isEmptyDay(day)) {
     return (
       <span className={cn('text-muted-foreground/35 italic', compact ? 'text-xs' : 'text-sm')}>
@@ -122,12 +130,12 @@ function DayContent({ day, compact = false }: { day: PublicDayEntry; compact?: b
   const items: React.ReactNode[] = [];
   if (day.frühAbsence) {
     items.push(<AbsenceChip key="fa" code={day.frühAbsence} />);
-  } else if (day.früh) {
+  } else if (day.früh && showHours) {
     items.push(<ShiftChip key="f" start={day.früh.start} end={day.früh.end} />);
   }
   if (day.spätAbsence && day.spätAbsence !== day.frühAbsence) {
     items.push(<AbsenceChip key="sa" code={day.spätAbsence} />);
-  } else if (day.spät) {
+  } else if (day.spät && showHours) {
     items.push(<ShiftChip key="s" start={day.spät.start} end={day.spät.end} />);
   }
   return <div className={cn('flex flex-col gap-1.5', compact && 'gap-1')}>{items}</div>;
@@ -583,7 +591,12 @@ function NextShiftCard({ employee }: { employee: PublicEmployee }) {
 type PersonalViewMode = 'list' | 'calendar';
 type FeedbackState    = 'none' | 'seen' | 'confirmed' | 'cannot' | 'question';
 
-function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
+function PersonalView({
+  payload, settings,
+}: {
+  payload: PublishedSchedulePayload;
+  settings: StaffPortalSettings;
+}) {
   const employee = payload.employees?.[0];
   const [viewMode, setViewMode]         = useState<PersonalViewMode>('list');
   const [showHistory, setShowHistory]   = useState(false);
@@ -598,6 +611,8 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
     return <div className="text-center py-12 text-muted-foreground">Keine Daten für diesen Mitarbeiter.</div>;
   }
 
+  const com = settings.communication;
+  const vis = settings.visibility;
   const historyEntries: ChangeHistoryEntry[] = payload.changeHistory ?? [];
   const changedDayCount = employee.days.filter(d => d.changed).length;
 
@@ -654,13 +669,14 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
       {/* List view */}
       {viewMode === 'list' && (
         <div className="space-y-2.5">
-          {employee.days.map((day) => {
-            const wknd      = isWeekendDate(day.date);
-            const isToday   = isSameDay(parseISO(day.date), today);
-            const empty     = isEmptyDay(day);
-            const date      = parseISO(day.date);
-            const hasChange = !!day.changed;
-            const hasPrev   = !!(day.previousFrüh || day.previousSpät);
+          {employee.days.filter(d => vis.showFreeDays || !isEmptyDay(d)).map((day) => {
+            const wknd       = isWeekendDate(day.date);
+            const isToday    = isSameDay(parseISO(day.date), today);
+            const empty      = isEmptyDay(day);
+            const date       = parseISO(day.date);
+            const rawChange  = !!day.changed;
+            const hasChange  = rawChange && com.showChangeHighlights;
+            const hasPrev    = !!(day.previousFrüh || day.previousSpät);
             return (
               <div key={day.date} className={cn(
                 'rounded-2xl border px-4 py-4 shadow-sm transition-colors',
@@ -706,8 +722,8 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
                   </div>
                 </div>
 
-                {/* Previous times (strikethrough) */}
-                {hasChange && hasPrev && (
+                {/* Previous times (strikethrough) — only if change highlights enabled */}
+                {hasChange && hasPrev && com.showChangeHighlights && (
                   <div className="mb-2 flex flex-col gap-0.5">
                     {day.previousFrüh && (
                       <span className="text-xs text-muted-foreground/40 tabular-nums line-through">
@@ -722,7 +738,7 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
                   </div>
                 )}
 
-                <DayContent day={day} />
+                <DayContent day={day} showHours={vis.showHours} />
 
                 {!empty && (
                   <div className="mt-3 pt-2.5 border-t border-border/20">
@@ -746,102 +762,110 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
         <CalendarView employee={employee} payload={payload} />
       )}
 
-      {/* Rückmeldung — 4 buttons */}
-      <div className="rounded-2xl border border-border bg-card px-4 py-4 space-y-3 shadow-sm">
-        <p className="text-xs font-bold text-muted-foreground/60 uppercase tracking-wide">Rückmeldung</p>
-        {feedbackSent ? (
-          <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 py-1">
-            <Check className="h-4 w-4" />
-            <span className="text-sm font-medium">Danke für deine Rückmeldung!</span>
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => setFeedback(f => (f === 'seen' || f === 'confirmed') ? 'none' : 'seen')}
-                className={cn(
-                  'h-10 rounded-xl text-sm font-semibold border transition-all flex items-center justify-center gap-1.5',
-                  (feedback === 'seen' || feedback === 'confirmed')
-                    ? 'bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950/40 dark:border-blue-700 dark:text-blue-300'
-                    : 'border-border bg-background hover:bg-muted/50 text-foreground',
-                )}
-              >
-                {(feedback === 'seen' || feedback === 'confirmed') && <Check className="h-3.5 w-3.5" />}
-                Gesehen
-              </button>
-              <button
-                onClick={() => { setFeedback('confirmed'); handleFeedbackSend(); }}
-                className={cn(
-                  'h-10 rounded-xl text-sm font-semibold border transition-all flex items-center justify-center gap-1.5',
-                  feedback === 'confirmed'
-                    ? 'bg-emerald-600 border-emerald-600 text-white'
-                    : 'border-border bg-background hover:bg-muted/50 text-foreground',
-                )}
-              >
-                {feedback === 'confirmed' && <Check className="h-3.5 w-3.5" />}
-                Bestätigt
-              </button>
-              <button
-                onClick={() => setFeedback(f => f === 'cannot' ? 'none' : 'cannot')}
-                className={cn(
-                  'h-10 rounded-xl text-sm font-semibold border transition-all',
-                  feedback === 'cannot'
-                    ? 'bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-400'
-                    : 'border-border bg-background hover:bg-muted/50 text-foreground',
-                )}
-              >
-                Kann nicht
-              </button>
-              <button
-                onClick={() => setFeedback(f => f === 'question' ? 'none' : 'question')}
-                className={cn(
-                  'h-10 rounded-xl text-sm font-semibold border transition-all',
-                  feedback === 'question'
-                    ? 'bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950/30 dark:border-blue-700 dark:text-blue-400'
-                    : 'border-border bg-background hover:bg-muted/50 text-foreground',
-                )}
-              >
-                Rückfrage
-              </button>
+      {/* Rückmeldung — shown only when any feedback option is enabled */}
+      {(com.enableSeenStatus || com.requireConfirmation || com.allowQuestions) && (
+        <div className="rounded-2xl border border-border bg-card px-4 py-4 space-y-3 shadow-sm">
+          <p className="text-xs font-bold text-muted-foreground/60 uppercase tracking-wide">Rückmeldung</p>
+          {feedbackSent ? (
+            <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 py-1">
+              <Check className="h-4 w-4" />
+              <span className="text-sm font-medium">Danke für deine Rückmeldung!</span>
             </div>
-            {feedback === 'cannot' && (
-              <div className="space-y-2">
-                <textarea
-                  value={cannotReason}
-                  onChange={e => setCannotReason(e.target.value)}
-                  placeholder="Grund (optional) …"
-                  rows={3}
-                  className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
-                />
-                <button onClick={handleFeedbackSend} className="w-full h-9 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5">
-                  <Send className="h-3.5 w-3.5" />Senden
-                </button>
-              </div>
-            )}
-            {feedback === 'question' && (
-              <div className="space-y-2">
-                <textarea
-                  value={questionText}
-                  onChange={e => setQuestionText(e.target.value)}
-                  placeholder="Deine Frage an die Leitung …"
-                  rows={3}
-                  className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
-                />
+          ) : (
+            <>
+              <div className={cn('grid gap-2', (com.enableSeenStatus && com.requireConfirmation) || com.allowQuestions ? 'grid-cols-2' : 'grid-cols-1')}>
+                {com.enableSeenStatus && (
+                  <button
+                    onClick={() => setFeedback(f => (f === 'seen' || f === 'confirmed') ? 'none' : 'seen')}
+                    className={cn(
+                      'h-10 rounded-xl text-sm font-semibold border transition-all flex items-center justify-center gap-1.5',
+                      (feedback === 'seen' || feedback === 'confirmed')
+                        ? 'bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950/40 dark:border-blue-700 dark:text-blue-300'
+                        : 'border-border bg-background hover:bg-muted/50 text-foreground',
+                    )}
+                  >
+                    {(feedback === 'seen' || feedback === 'confirmed') && <Check className="h-3.5 w-3.5" />}
+                    Gesehen
+                  </button>
+                )}
+                {com.requireConfirmation && (
+                  <button
+                    onClick={() => { setFeedback('confirmed'); handleFeedbackSend(); }}
+                    className={cn(
+                      'h-10 rounded-xl text-sm font-semibold border transition-all flex items-center justify-center gap-1.5',
+                      feedback === 'confirmed'
+                        ? 'bg-emerald-600 border-emerald-600 text-white'
+                        : 'border-border bg-background hover:bg-muted/50 text-foreground',
+                    )}
+                  >
+                    {feedback === 'confirmed' && <Check className="h-3.5 w-3.5" />}
+                    Bestätigt
+                  </button>
+                )}
                 <button
-                  onClick={handleFeedbackSend}
-                  disabled={!questionText.trim()}
-                  className="w-full h-9 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40"
+                  onClick={() => setFeedback(f => f === 'cannot' ? 'none' : 'cannot')}
+                  className={cn(
+                    'h-10 rounded-xl text-sm font-semibold border transition-all',
+                    feedback === 'cannot'
+                      ? 'bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-400'
+                      : 'border-border bg-background hover:bg-muted/50 text-foreground',
+                  )}
                 >
-                  <Send className="h-3.5 w-3.5" />Senden
+                  Kann nicht
                 </button>
+                {com.allowQuestions && (
+                  <button
+                    onClick={() => setFeedback(f => f === 'question' ? 'none' : 'question')}
+                    className={cn(
+                      'h-10 rounded-xl text-sm font-semibold border transition-all',
+                      feedback === 'question'
+                        ? 'bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950/30 dark:border-blue-700 dark:text-blue-400'
+                        : 'border-border bg-background hover:bg-muted/50 text-foreground',
+                    )}
+                  >
+                    Rückfrage
+                  </button>
+                )}
               </div>
-            )}
-          </>
-        )}
-      </div>
+              {feedback === 'cannot' && (
+                <div className="space-y-2">
+                  <textarea
+                    value={cannotReason}
+                    onChange={e => setCannotReason(e.target.value)}
+                    placeholder="Grund (optional) …"
+                    rows={3}
+                    className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                  <button onClick={handleFeedbackSend} className="w-full h-9 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5">
+                    <Send className="h-3.5 w-3.5" />Senden
+                  </button>
+                </div>
+              )}
+              {com.allowQuestions && feedback === 'question' && (
+                <div className="space-y-2">
+                  <textarea
+                    value={questionText}
+                    onChange={e => setQuestionText(e.target.value)}
+                    placeholder="Deine Frage an die Leitung …"
+                    rows={3}
+                    className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                  <button
+                    onClick={handleFeedbackSend}
+                    disabled={!questionText.trim()}
+                    className="w-full h-9 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40"
+                  >
+                    <Send className="h-3.5 w-3.5" />Senden
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Wunsch & Hinweis */}
-      <WunschHinweisSection />
+      {com.allowRequests && <WunschHinweisSection />}
 
       {/* Modals */}
       {showHistory && <ChangeHistoryModal entries={historyEntries} onClose={() => setShowHistory(false)} />}
@@ -925,12 +949,14 @@ function EmployeeAccordion({ emp }: { emp: PublicEmployee }) {
 type DeptViewMode = 'byEmployee' | 'byDay' | 'week';
 
 function DepartmentView({
-  payload, activeTab, onTabChange,
+  payload, activeTab, onTabChange, settings,
 }: {
   payload: PublishedSchedulePayload;
   activeTab: DeptViewMode;
   onTabChange: (t: DeptViewMode) => void;
+  settings: StaffPortalSettings;
 }) {
+  const vis = settings.visibility;
   const [rawSearch, setRawSearch] = useState('');
   const [empSearch, setEmpSearch] = useState('');
 
@@ -1033,8 +1059,8 @@ function DepartmentView({
 
   return (
     <div>
-      {/* Search bar (not in byDay) */}
-      {activeTab !== 'byDay' && (
+      {/* Search bar (not in byDay, and only if enabled in settings) */}
+      {activeTab !== 'byDay' && vis.enableEmployeeSearch && (
         <EmpSearchBar value={rawSearch} onChange={(v) => { setRawSearch(v); setEmpSearch(v); }} />
       )}
 
@@ -1047,8 +1073,32 @@ function DepartmentView({
       {/* Mitarbeiter view */}
       {activeTab === 'byEmployee' && !noResults && (
         <>
-          {showService && <ByEmpSection emps={filteredService} label="Service" dotColor="bg-blue-500" />}
-          {showKüche   && <ByEmpSection emps={filteredKüche}   label="Küche"   dotColor="bg-orange-500" />}
+          {showService && (
+            <div className="mb-5">
+              {vis.showDepartments && (
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Service</span>
+                </div>
+              )}
+              <div className="space-y-3">
+                {filteredService.map(emp => <EmployeeAccordion key={emp.id} emp={emp} />)}
+              </div>
+            </div>
+          )}
+          {showKüche && (
+            <div className="mb-5">
+              {vis.showDepartments && (
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Küche</span>
+                </div>
+              )}
+              <div className="space-y-3">
+                {filteredKüche.map(emp => <EmployeeAccordion key={emp.id} emp={emp} />)}
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -1060,19 +1110,23 @@ function DepartmentView({
         <>
           {showService && filteredService.length > 0 && (
             <div className="mb-5">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
-                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Service</span>
-              </div>
+              {vis.showDepartments && (
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Service</span>
+                </div>
+              )}
               <WeekGridView emps={filteredService} refDays={refDays} />
             </div>
           )}
           {showKüche && filteredKüche.length > 0 && (
             <div className="mb-5">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
-                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Küche</span>
-              </div>
+              {vis.showDepartments && (
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Küche</span>
+                </div>
+              )}
               <WeekGridView emps={filteredKüche} refDays={refDays} />
             </div>
           )}
@@ -1210,6 +1264,19 @@ const StaffSchedulePage = () => {
 
   const relativeTime = formatRelativeTime(payload.publishedAt);
 
+  // Resolved settings — use embedded snapshot, fall back to all-features-on defaults
+  const settings = payload.settings ?? DEFAULT_STAFF_PORTAL_SETTINGS;
+  const com = settings.communication;
+  const vis = settings.visibility;
+  const ntf = settings.notifications;
+
+  // Determine which dept tabs are available based on settings
+  const availableDeptTabs = ([
+    { id: 'byEmployee' as DeptViewMode, always: true },
+    { id: 'byDay'      as DeptViewMode, enabled: vis.enableDayView },
+    { id: 'week'       as DeptViewMode, enabled: vis.enableWeekView },
+  ] as const).filter(t => ('always' in t) || t.enabled);
+
   const dismissHomescreen = () => {
     setHomescreenDismissed(true);
     try { localStorage.setItem(`hs-hint-${token ?? ''}`, '1'); } catch {}
@@ -1244,7 +1311,7 @@ const StaffSchedulePage = () => {
               </div>
             </div>
             <div className="flex flex-col items-end gap-1 shrink-0">
-              {isChanged ? (
+              {isChanged && ntf.showUpdateBadges ? (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-700 whitespace-nowrap">
                   Aktualisiert
                 </span>
@@ -1290,35 +1357,37 @@ const StaffSchedulePage = () => {
             </button>
           </div>
 
-          {/* Row 3: dept tabs (dept view only) */}
-          {!isPersonal && (
+          {/* Row 3: dept tabs (dept view only, filtered by settings) */}
+          {!isPersonal && availableDeptTabs.length > 1 && (
             <div className="flex items-center gap-1 px-4 pb-2.5 pt-1">
               {([
-                { id: 'byEmployee' as DeptViewMode, icon: <User className="h-3.5 w-3.5" />, label: 'Mitarbeiter' },
-                { id: 'byDay'      as DeptViewMode, icon: <Calendar className="h-3.5 w-3.5" />, label: 'Nach Tag' },
-                { id: 'week'       as DeptViewMode, icon: <Grid3x3 className="h-3.5 w-3.5" />, label: 'Woche' },
-              ] as const).map(tab => (
-                <button
-                  key={tab.id}
-                  onClick={() => setDeptTab(tab.id)}
-                  className={cn(
-                    'flex-1 flex items-center justify-center gap-1.5 h-8 rounded-lg text-xs font-semibold transition-all',
-                    deptTab === tab.id
-                      ? 'bg-primary text-primary-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
-                  )}
-                >
-                  {tab.icon}
-                  <span>{tab.label}</span>
-                </button>
-              ))}
+                { id: 'byEmployee' as DeptViewMode, icon: <User className="h-3.5 w-3.5" />, label: 'Mitarbeiter', always: true },
+                { id: 'byDay'      as DeptViewMode, icon: <Calendar className="h-3.5 w-3.5" />, label: 'Nach Tag', enabled: vis.enableDayView },
+                { id: 'week'       as DeptViewMode, icon: <Grid3x3 className="h-3.5 w-3.5" />, label: 'Woche', enabled: vis.enableWeekView },
+              ] as const)
+                .filter(t => ('always' in t) || t.enabled)
+                .map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setDeptTab(tab.id)}
+                    className={cn(
+                      'flex-1 flex items-center justify-center gap-1.5 h-8 rounded-lg text-xs font-semibold transition-all',
+                      deptTab === tab.id
+                        ? 'bg-primary text-primary-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                    )}
+                  >
+                    {tab.icon}
+                    <span>{tab.label}</span>
+                  </button>
+                ))}
             </div>
           )}
         </div>
       </header>
 
-      {/* Homescreen hint */}
-      {!homescreenDismissed && (
+      {/* Homescreen hint — only when admin enabled it */}
+      {com.showHomeScreenHint && !homescreenDismissed && (
         <div className="bg-amber-50/90 dark:bg-amber-950/40 border-b border-amber-200/80 dark:border-amber-800 px-4 py-2.5 flex items-center gap-2.5">
           <Home className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
           <span className="text-xs text-amber-700 dark:text-amber-300 flex-1 leading-snug">
@@ -1336,8 +1405,8 @@ const StaffSchedulePage = () => {
       {/* Content */}
       <main className="max-w-3xl mx-auto px-4 py-5 space-y-4">
         {isPersonal
-          ? <PersonalView payload={payload} />
-          : <DepartmentView payload={payload} activeTab={deptTab} onTabChange={setDeptTab} />
+          ? <PersonalView payload={payload} settings={settings} />
+          : <DepartmentView payload={payload} activeTab={deptTab} onTabChange={setDeptTab} settings={settings} />
         }
         <Legend />
         <p className="text-center text-[10px] text-muted-foreground/30 pb-2">
