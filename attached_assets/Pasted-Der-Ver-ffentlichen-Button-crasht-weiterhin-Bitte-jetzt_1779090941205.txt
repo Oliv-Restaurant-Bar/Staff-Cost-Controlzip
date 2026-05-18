@@ -1,0 +1,145 @@
+Der Veröffentlichen-Button crasht weiterhin.
+
+Bitte jetzt den bestehenden Publish-Flow komplett umgehen und einen neuen isolierten Minimal-Publish bauen.
+
+Wichtig:
+Nicht weiter am alten Veröffentlichen-Code herumflicken.
+Der alte Code soll vorerst deaktiviert bleiben.
+
+====================================================
+1. ALTEN PUBLISH HANDLER DEAKTIVIEREN
+====================================================
+
+Bitte den aktuellen handlePublish / Veröffentlichen onClick komplett deaktivieren.
+
+Nicht löschen, aber nicht mehr aufrufen.
+
+Stattdessen:
+neue Funktion bauen:
+
+handleSafePublishMinimal()
+
+====================================================
+2. MINIMALER BUTTON
+====================================================
+
+Der Button "Veröffentlichen" soll nur noch diese neue Funktion aufrufen.
+
+Keine QR-Logik.
+Keine WhatsApp-Logik.
+Keine History.
+Keine ManagerNote.
+Keine NotificationChannels.
+Keine Validation.
+Kein Retry.
+Kein grosser Payload.
+
+====================================================
+3. HARDCODED TEST PAYLOAD
+====================================================
+
+Zum Test bitte zuerst sogar OHNE echten Dienstplan-Payload speichern.
+
+Nur:
+
+const token = crypto.randomUUID()
+
+const payload = {
+  token,
+  type: "test",
+  restaurant: "oliv",
+  title: "Test Dienstplan",
+  createdAt: new Date().toISOString()
+}
+
+Dann:
+
+await supabase.from("app_settings").upsert({
+  key: `published-schedule:${token}`,
+  value: payload
+})
+
+Wenn erfolgreich:
+- Link anzeigen
+- toast "Test-Link erstellt"
+- console.log payload
+
+====================================================
+4. STAFF PAGE TEST
+====================================================
+
+StaffSchedulePage muss diesen Test-Payload anzeigen können.
+
+Wenn payload.type === "test":
+zeige einfache Testseite:
+
+"Test Dienstplan geladen"
+Restaurant
+createdAt
+token
+
+Damit prüfen wir zuerst nur:
+Button → Supabase Write → Link → Public Read
+
+====================================================
+5. KEIN ECHTER DIENSTPLAN
+====================================================
+
+Noch KEINE echten Mitarbeiter.
+Noch KEINE Schichten.
+Noch KEINE Wochenlogik.
+
+Erst muss der minimale Publish technisch stabil sein.
+
+====================================================
+6. ERROR HANDLING
+====================================================
+
+handleSafePublishMinimal komplett mit try/catch:
+
+try {
+  ...
+} catch (err) {
+  console.error("[safe-publish-minimal] failed", err)
+  toast.error(...)
+}
+
+Der Button darf niemals die Seite crashen.
+
+====================================================
+7. DEBUG
+====================================================
+
+Bitte beim Klick loggen:
+
+console.log("[safe-publish-minimal] clicked")
+console.log("[safe-publish-minimal] token", token)
+console.log("[safe-publish-minimal] write result", data, error)
+
+====================================================
+8. TEST
+====================================================
+
+Nach Umsetzung testen:
+
+- App laden
+- Teilen öffnen
+- Veröffentlichen klicken
+- Seite darf NICHT crashen
+- Link muss erscheinen
+- Link in Inkognito öffnen
+- Test Dienstplan muss angezeigt werden
+
+====================================================
+9. WICHTIG
+====================================================
+
+Wenn selbst dieser minimale Test crasht:
+Dann liegt der Crash nicht am Payload, sondern am Dialog/Button/React Event/Toast/Supabase Client.
+
+Bitte dann exakt sagen:
+- welche Zeile crasht
+- welche Fehlermeldung
+- Stacktrace
+
+Keine weiteren Features aktivieren, bis dieser Minimaltest stabil läuft.

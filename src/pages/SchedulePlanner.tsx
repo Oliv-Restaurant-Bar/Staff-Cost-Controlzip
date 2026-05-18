@@ -2807,6 +2807,51 @@ const SchedulePlanner = () => {
     );
   }
 
+  // ── MINIMAL PUBLISH (bypasses all old logic) ──────────────────────────────
+  const handleSafePublishMinimal = async () => {
+    console.log('[safe-publish-minimal] clicked');
+    setIsPublishing(true);
+    try {
+      const token = crypto.randomUUID();
+      console.log('[safe-publish-minimal] token', token);
+
+      const payload = {
+        token,
+        type: 'test' as const,
+        restaurant: tenantId === 'beaulieu' ? 'beaulieu' : 'oliv',
+        title: 'Test Dienstplan',
+        createdAt: new Date().toISOString(),
+      };
+
+      const { data, error } = await supabase
+        .from('app_settings')
+        .upsert({ key: `published-schedule:${token}`, value: payload }, { onConflict: 'key' })
+        .select();
+
+      console.log('[safe-publish-minimal] write result', data, error);
+
+      if (error) {
+        console.error('[safe-publish-minimal] write error', error.message, error.code);
+        toast.error(`Speichern fehlgeschlagen: ${error.message}`, { duration: 8000 });
+        return;
+      }
+
+      const finalUrl = `${window.location.origin}/dienstplan/${token}`;
+      console.log('[safe-publish-minimal] final URL', finalUrl);
+
+      setPublishToken(token);
+      setPublishStatus('published');
+      toast.success('Test-Link erstellt ✓');
+    } catch (err) {
+      console.error('[safe-publish-minimal] failed', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`Veröffentlichen fehlgeschlagen: ${msg}`, { duration: 8000 });
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+  // ─────────────────────────────────────────────────────────────────────────
+
   return (
     <div className="bg-background h-full flex flex-col">
       {/* Header */}
@@ -5313,178 +5358,8 @@ const SchedulePlanner = () => {
             </Button>
             <Button
               className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
-              disabled={(publishType === 'personal' && !publishEmpId) || isPublishing}
-              onClick={async () => {
-                setIsPublishing(true);
-                try {
-                  const days = displayDays.length > 0 ? displayDays : [currentMonth];
-                  const weekStart = days[0];
-                  const weekEnd = days[days.length - 1];
-                  const period: import('@/lib/schedule-publish-store').PublishPeriod = days.length <= 7 ? 'week' : 'month';
-                  const token = `${tenantId}-${format(currentMonth, 'yyyyMM')}-${publishType === 'personal' ? 'p' : 'd'}-${Math.random().toString(36).slice(2, 8)}`;
-
-                  if (SAFE_PUBLISH_MODE) {
-                    // ── SAFE MODE: minimal payload → direct Supabase upsert ────
-                    const _kw = getISOWeek(weekStart);
-                    const safePayload = {
-                      token,
-                      type: publishType,
-                      period,
-                      restaurant: tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv',
-                      kw: _kw,
-                      weekLabel: period === 'month'
-                        ? format(weekStart, 'MMMM yyyy', { locale: de })
-                        : `KW ${_kw} · ${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM yyyy', { locale: de })}`,
-                      weekStart: format(weekStart, 'yyyy-MM-dd'),
-                      weekEnd:   format(weekEnd,   'yyyy-MM-dd'),
-                      publishedAt: new Date().toISOString(),
-                      status: 'published' as const,
-                      employeeId: publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
-                    };
-
-                    const kvKey = `published-schedule:${token}`;
-                    const payloadJson = JSON.stringify(safePayload);
-                    console.log('[publish][safe] ── WRITE START ─────────────────');
-                    console.log('[publish][safe] token        =', token);
-                    console.log('[publish][safe] kvKey        =', kvKey);
-                    console.log('[publish][safe] payload size =', payloadJson.length, 'bytes');
-                    console.log('[publish][safe] payload      =', safePayload);
-
-                    // 1. localStorage — instant same-device access
-                    try {
-                      localStorage.setItem(`schedule-publish:${token}`, payloadJson);
-                      console.log('[publish][safe] localStorage ✓');
-                    } catch (lsErr) {
-                      console.warn('[publish][safe] localStorage write failed (non-fatal):', lsErr);
-                    }
-
-                    // 2. Direct Supabase upsert — persistent, cross-device
-                    const { data: writeData, error: writeError, status: writeStatus, statusText: writeStatusText } = await (supabase as any)
-                      .from('app_settings')
-                      .upsert({ key: kvKey, value: safePayload }, { onConflict: 'key' })
-                      .select();
-
-                    console.log('[publish][safe] upsert response → status=', writeStatus, writeStatusText);
-                    console.log('[publish][safe] upsert data   =', writeData);
-                    console.log('[publish][safe] upsert error  =', writeError);
-
-                    if (writeError) {
-                      console.error('[publish][safe] Supabase write FAILED:', writeError.message, `(code=${writeError.code})`);
-                      toast.error(`Link speichern fehlgeschlagen: ${writeError.message}`, { duration: 8000 });
-                      return;
-                    }
-
-                    // 3. Read-back verification — confirm the row is actually there
-                    console.log('[publish][safe] ── READ-BACK VERIFY ─────────────');
-                    const { data: rbData, error: rbError } = await (supabase as any)
-                      .from('app_settings')
-                      .select('key, value')
-                      .eq('key', kvKey)
-                      .maybeSingle();
-
-                    console.log('[publish][safe] readback data  =', rbData);
-                    console.log('[publish][safe] readback error =', rbError);
-                    if (!rbData) {
-                      console.error('[publish][safe] READ-BACK FAILED — row not found after write! key=', kvKey);
-                    } else {
-                      console.log('[publish][safe] READ-BACK OK ✓  token in row=', (rbData.value as any)?.token);
-                    }
-
-                    // 4. Final URL
-                    const finalUrl = `${window.location.origin}/dienstplan/${token}`;
-                    console.log('[publish][safe] ── FINAL URL ────────────────────');
-                    console.log('[publish][safe] URL =', finalUrl);
-                    console.log('[publish][safe] token in URL =', finalUrl.split('/').pop());
-
-                    console.log('[publish][safe] ── WRITE COMPLETE ✓ ────────────');
-                    setPublishToken(token);
-                    setPublishStatus('published');
-                    toast.success('Link erstellt und gespeichert ✓');
-                    return;
-                  }
-
-                  // ── FULL MODE (SAFE_PUBLISH_MODE = false) ──────────────────
-                  const restaurantName = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
-                  const kw = getISOWeek(weekStart);
-                  const periodLabel = period === 'month'
-                    ? format(weekStart, 'MMMM yyyy', { locale: de })
-                    : `KW ${kw} (${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM', { locale: de })})`;
-                  const weekLabel = period === 'month'
-                    ? `${format(weekStart, 'MMMM yyyy', { locale: de })}`
-                    : `KW ${kw} · ${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM yyyy', { locale: de })}`;
-
-                  let targetEmps = employees.filter(e => isEmployeeActiveInMonth(e, currentMonth));
-                  if (publishType === 'personal' && publishEmpId) {
-                    targetEmps = targetEmps.filter(e => e.id === publishEmpId);
-                  } else if (publishType === 'department' && publishDept !== 'all') {
-                    targetEmps = targetEmps.filter(e => e.department === publishDept);
-                  }
-
-                  const publicEmployees: PublicEmployee[] = targetEmps.map(emp => ({
-                    id: emp.id,
-                    name: getEmployeeDisplayName(emp),
-                    department: emp.department,
-                    days: days.map(day => {
-                      const dateStr = format(day, 'yyyy-MM-dd');
-                      const slot = scheduleData[`${emp.id}-${dateStr}`] ?? {};
-                      return {
-                        date: dateStr,
-                        dayLabel: format(day, 'EEEE, d. MMMM', { locale: de }),
-                        früh: slot.früh ?? null,
-                        spät: slot.spät ?? null,
-                        frühAbsence: slot.frühAbsence ?? null,
-                        spätAbsence: slot.spätAbsence ?? null,
-                      };
-                    }),
-                  }));
-
-                  const selectedEmp = employees.find(e => e.id === publishEmpId);
-                  const historyDesc = (publishStatus === 'published' || publishStatus === 'changed')
-                    ? 'Plan aktualisiert' : 'Plan veröffentlicht';
-                  const newHistoryEntry: ChangeHistoryEntry = {
-                    timestamp: new Date().toISOString(),
-                    description: historyDesc,
-                  };
-                  const newPublishHistory = [...publishHistory.slice(-19), newHistoryEntry];
-                  const payloadKB = Math.round(JSON.stringify(publicEmployees).length / 1024);
-                  console.log(`[publish] full: ${targetEmps.length} MA, ${days.length} Tage, ~${payloadKB}KB`);
-                  void periodLabel;
-
-                  const saveResult = await savePublishedSchedule(token, {
-                    type: publishType,
-                    period,
-                    restaurant: restaurantName,
-                    kw,
-                    weekLabel,
-                    weekStart: format(weekStart, 'yyyy-MM-dd'),
-                    weekEnd: format(weekEnd, 'yyyy-MM-dd'),
-                    publishedAt: new Date().toISOString(),
-                    status: 'published',
-                    department: publishType === 'department' ? publishDept : undefined,
-                    employees: publicEmployees,
-                    employeeId: publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
-                    employeeName: publishType === 'personal' && selectedEmp ? getEmployeeDisplayName(selectedEmp) : undefined,
-                    managerNote: managerNote.trim() || undefined,
-                    changeHistory: newPublishHistory,
-                  });
-
-                  if (!saveResult.ok) {
-                    toast.error(`Publish fehlgeschlagen: ${saveResult.error ?? 'Unbekannter Fehler'}`, { duration: 8000 });
-                    return;
-                  }
-
-                  setPublishHistory(newPublishHistory);
-                  setPublishToken(token);
-                  setPublishStatus('published');
-                  toast.success('Dienstplan veröffentlicht – Link ist jetzt aktiv ✓');
-                } catch (e) {
-                  const msg = e instanceof Error ? e.message : String(e);
-                  console.error('[publish] Veröffentlichen fehlgeschlagen:', e);
-                  toast.error(`Veröffentlichen fehlgeschlagen: ${msg}`, { duration: 8000 });
-                } finally {
-                  setIsPublishing(false);
-                }
-              }}
+              disabled={isPublishing}
+              onClick={handleSafePublishMinimal}
             >
               {isPublishing
                 ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Wird veröffentlicht…</>
