@@ -2807,44 +2807,107 @@ const SchedulePlanner = () => {
     );
   }
 
-  // ── MINIMAL PUBLISH (bypasses all old logic) ──────────────────────────────
-  const handleSafePublishMinimal = async () => {
-    console.log('[TEST PUBLISH BUTTON CLICKED]');
-    alert('TEST PUBLISH BUTTON CLICKED');
+  // ── PUBLISH SCHEDULE ──────────────────────────────────────────────────────
+  const publishSchedule = async () => {
+    console.log('[publishSchedule] start — type:', publishType, 'dept:', publishDept);
     setIsPublishing(true);
     try {
       const token = crypto.randomUUID();
-      console.log('[safe-publish-minimal] token', token);
+      const days = displayDays.length > 0 ? displayDays : [currentMonth];
+      const weekStart = days[0];
+      const weekEnd   = days[days.length - 1];
+      const period: import('@/lib/schedule-publish-store').PublishPeriod = days.length <= 7 ? 'week' : 'month';
+      const kw        = getISOWeek(weekStart);
+      const weekLabel = period === 'month'
+        ? format(weekStart, 'MMMM yyyy', { locale: de })
+        : `KW ${kw} · ${format(weekStart, 'd. MMM', { locale: de })} – ${format(weekEnd, 'd. MMM yyyy', { locale: de })}`;
 
-      const payload = {
-        token,
-        type: 'test' as const,
-        restaurant: tenantId === 'beaulieu' ? 'beaulieu' : 'oliv',
-        title: 'Test Dienstplan',
-        createdAt: new Date().toISOString(),
-      };
-
-      const { data, error } = await supabase
-        .from('app_settings')
-        .upsert({ key: `published-schedule:${token}`, value: payload }, { onConflict: 'key' })
-        .select();
-
-      console.log('[safe-publish-minimal] write result', data, error);
-
-      if (error) {
-        console.error('[safe-publish-minimal] write error', error.message, error.code);
-        toast.error(`Speichern fehlgeschlagen: ${error.message}`, { duration: 8000 });
-        return;
+      // Build employee list
+      let targetEmps = employees.filter(e => isEmployeeActiveInMonth(e, weekStart));
+      if (publishType === 'personal' && publishEmpId) {
+        targetEmps = targetEmps.filter(e => e.id === publishEmpId);
+      } else if (publishType === 'department' && publishDept !== 'all') {
+        targetEmps = targetEmps.filter(e => e.department === publishDept);
       }
 
-      const finalUrl = `${window.location.origin}/dienstplan/${token}`;
-      console.log('[safe-publish-minimal] final URL', finalUrl);
+      const publicEmployees: PublicEmployee[] = targetEmps.map(emp => ({
+        id:         emp.id,
+        name:       getEmployeeDisplayName(emp),
+        department: emp.department as 'service' | 'küche',
+        days: days.map(day => {
+          const dateStr = format(day, 'yyyy-MM-dd');
+          const slot    = scheduleData[`${emp.id}-${dateStr}`] ?? {};
+          return {
+            date:         dateStr,
+            dayLabel:     format(day, 'EEEE, d. MMMM', { locale: de }),
+            früh:         slot.früh         ?? null,
+            spät:         slot.spät         ?? null,
+            frühAbsence:  slot.frühAbsence  ?? null,
+            spätAbsence:  slot.spätAbsence  ?? null,
+          };
+        }),
+      }));
+
+      const selectedEmp = employees.find(e => e.id === publishEmpId);
+      const payload: PublishedSchedulePayload & { token: string; version: number } = {
+        token,
+        version: 1,
+        type:        publishType,
+        period,
+        restaurant:  tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv',
+        kw,
+        weekLabel,
+        weekStart:   format(weekStart, 'yyyy-MM-dd'),
+        weekEnd:     format(weekEnd,   'yyyy-MM-dd'),
+        publishedAt: new Date().toISOString(),
+        status:      'published',
+        department:  publishDept,
+        employees:   publicEmployees,
+        employeeId:   publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
+        employeeName: publishType === 'personal' && selectedEmp
+          ? getEmployeeDisplayName(selectedEmp) : undefined,
+      };
+
+      const kvKey       = `published-schedule:${token}`;
+      const payloadJson = JSON.stringify(payload);
+
+      console.log('[publishSchedule] token:', token);
+      console.log('[publishSchedule] key:', kvKey);
+      console.log('[publishSchedule] route URL: /staff-schedule/' + token);
+      console.log('[publishSchedule] employees:', publicEmployees.length, 'size:', payloadJson.length, 'bytes');
+
+      // ── 1. Write ──────────────────────────────────────────────────────────
+      const { error: writeError } = await supabase
+        .from('app_settings')
+        .upsert({ key: kvKey, value: payload }, { onConflict: 'key' });
+
+      if (writeError) {
+        console.error('[publishSchedule] write FAILED:', writeError.message, writeError.code);
+        toast.error(`Speichern fehlgeschlagen: ${writeError.message}`, { duration: 8000 });
+        return;
+      }
+      console.log('[publishSchedule] write OK ✓');
+
+      // ── 2. Verify (read-back) ─────────────────────────────────────────────
+      const { data: rbData, error: rbError } = await supabase
+        .from('app_settings')
+        .select('key, value')
+        .eq('key', kvKey)
+        .maybeSingle();
+
+      if (rbError || !rbData?.value) {
+        console.error('[publishSchedule] verify FAILED:', rbError?.message ?? 'row missing');
+        toast.error('Veröffentlichung konnte nicht geprüft werden', { duration: 8000 });
+        return;
+      }
+      const verifiedEmpCount = (rbData.value as any)?.employees?.length ?? 0;
+      console.log('[publishSchedule] verify OK ✓  employees in DB:', verifiedEmpCount);
 
       setPublishToken(token);
       setPublishStatus('published');
-      toast.success('Test-Link erstellt ✓');
+      toast.success(`Dienstplan veröffentlicht ✓ – ${publicEmployees.length} Mitarbeitende`);
     } catch (err) {
-      console.error('[safe-publish-minimal] failed', err);
+      console.error('[publishSchedule] failed:', err);
       const msg = err instanceof Error ? err.message : String(err);
       toast.error(`Veröffentlichen fehlgeschlagen: ${msg}`, { duration: 8000 });
     } finally {
@@ -2856,18 +2919,6 @@ const SchedulePlanner = () => {
   return (
     <div className="bg-background h-full flex flex-col">
       {/* Header */}
-      {/* ══ SAFE PUBLISH TEST AKTIV BANNER ══════════════════════════════════ */}
-      <div style={{ background: '#dc2626', color: '#fff', padding: '6px 16px', fontWeight: 700, fontSize: 13, letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 12, zIndex: 9999 }}>
-        <span>🔴 SAFE PUBLISH TEST AKTIV</span>
-        <button
-          onClick={() => { console.log('[TEST PUBLISH BUTTON CLICKED]'); alert('TEST PUBLISH BUTTON CLICKED – neuer Code ist aktiv!'); }}
-          style={{ background: '#fff', color: '#dc2626', border: 'none', borderRadius: 6, padding: '2px 14px', fontWeight: 800, cursor: 'pointer', fontSize: 13 }}
-        >
-          TEST PUBLISH
-        </button>
-      </div>
-      {/* ════════════════════════════════════════════════════════════════════ */}
-
       <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
         <div className="max-w-[1800px] mx-auto px-4">
 
@@ -5246,7 +5297,7 @@ const SchedulePlanner = () => {
             {/* ── Aktiver Link ─────────────────────────────────────────── */}
             {publishToken && (() => {
               try {
-              const url = `${window.location.origin}/dienstplan/${publishToken}`;
+              const url = `${window.location.origin}/staff-schedule/${publishToken}`;
               const selectedEmp = employees.find(e => e.id === publishEmpId);
               const empName = selectedEmp ? getEmployeeDisplayName(selectedEmp) : null;
               const _days = displayDays.length > 0 ? displayDays : [currentMonth];
@@ -5353,6 +5404,32 @@ const SchedulePlanner = () => {
               }
             })()}
 
+            {/* ── Debug Panel (temporär) ───────────────────────────────── */}
+            {publishToken && (() => {
+              const dbgUrl = `${window.location.origin}/staff-schedule/${publishToken}`;
+              const dbgKey = `published-schedule:${publishToken}`;
+              const dbgEmps = (() => {
+                try {
+                  const days = displayDays.length > 0 ? displayDays : [currentMonth];
+                  let t = employees.filter(e => isEmployeeActiveInMonth(e, days[0]));
+                  if (publishType === 'personal' && publishEmpId) t = t.filter(e => e.id === publishEmpId);
+                  else if (publishType === 'department' && publishDept !== 'all') t = t.filter(e => e.department === publishDept);
+                  return t.length;
+                } catch { return '?'; }
+              })();
+              return (
+                <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40 px-3 py-2 text-[11px] font-mono text-slate-600 dark:text-slate-400 space-y-0.5">
+                  <p className="font-semibold text-slate-800 dark:text-slate-300 mb-1">Debug</p>
+                  <p>Token: <span className="break-all">{publishToken}</span></p>
+                  <p>Key: {dbgKey}</p>
+                  <p>Mitarbeitende im Payload: {dbgEmps}</p>
+                  <p>Route: /staff-schedule/:token</p>
+                  <p className="break-all">URL: {dbgUrl}</p>
+                  <p>Status: {publishStatus}</p>
+                </div>
+              );
+            })()}
+
             {/* ── Info note ────────────────────────────────────────────── */}
             <div className="rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2.5 text-xs text-blue-700 dark:text-blue-400 flex items-start gap-2">
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -5370,7 +5447,7 @@ const SchedulePlanner = () => {
             <Button
               className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
               disabled={isPublishing}
-              onClick={handleSafePublishMinimal}
+              onClick={publishSchedule}
             >
               {isPublishing
                 ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Wird veröffentlicht…</>

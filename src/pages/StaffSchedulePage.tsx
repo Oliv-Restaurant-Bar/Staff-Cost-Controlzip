@@ -1084,28 +1084,6 @@ const StaffSchedulePage = () => {
     );
   }
 
-  // ── TEST PAYLOAD RENDER (type === 'test') ───────────────────────────────
-  if (payload && (payload as any).type === 'test') {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-4">
-        <div className="max-w-sm w-full rounded-xl border border-border bg-card p-8 space-y-4 text-center shadow-sm">
-          <div className="text-4xl">✅</div>
-          <h1 className="text-xl font-bold text-foreground">Test Dienstplan geladen</h1>
-          <div className="text-left text-sm text-muted-foreground space-y-2 bg-muted rounded-lg p-4">
-            <p><span className="font-semibold text-foreground">Restaurant:</span> {(payload as any).restaurant}</p>
-            <p><span className="font-semibold text-foreground">Titel:</span> {(payload as any).title}</p>
-            <p><span className="font-semibold text-foreground">Erstellt:</span> {(payload as any).createdAt}</p>
-            <p className="break-all"><span className="font-semibold text-foreground">Token:</span> {(payload as any).token}</p>
-          </div>
-          <p className="text-xs text-emerald-600 font-semibold">
-            Supabase Write → Public Read ✓
-          </p>
-        </div>
-      </div>
-    );
-  }
-  // ────────────────────────────────────────────────────────────────────────
-
   if (notFound || !payload) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-4">

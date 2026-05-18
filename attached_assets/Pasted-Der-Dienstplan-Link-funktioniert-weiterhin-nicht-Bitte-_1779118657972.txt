@@ -1,0 +1,293 @@
+Der Dienstplan-Link funktioniert weiterhin nicht. Bitte den gesamten Publish-Link-Flow jetzt sauber und stabil neu aufbauen.
+
+Wichtig:
+Nicht weiter am alten Mischzustand herumflicken.
+Ziel ist ein stabiler, nachvollziehbarer End-to-End Flow:
+
+Dienstplan → veröffentlichen → Supabase speichern → Link öffnen → Dienstplan anzeigen
+
+====================================================
+1. SAFE TEST BANNER ENTFERNEN
+====================================================
+
+Der rote SAFE PUBLISH TEST AKTIV Banner und der TEST PUBLISH Button sollen entfernt werden.
+
+Der Test hat bewiesen, dass die richtige Komponente geladen wird.
+
+Jetzt bitte echten stabilen Publish-Flow bauen.
+
+====================================================
+2. EINE EINZIGE PUBLISH-FUNKTION
+====================================================
+
+Bitte alle alten Publish-Handler deaktivieren oder entfernen.
+
+Es darf nur noch eine Funktion geben:
+
+publishSchedule()
+
+Diese Funktion macht genau:
+
+1. Payload bauen
+2. Supabase speichern
+3. Link setzen
+4. Erfolg anzeigen
+
+Keine parallelen Handler.
+Keine alten Branches.
+Kein doppelter Code.
+
+====================================================
+3. STABILES PAYLOAD-FORMAT
+====================================================
+
+Bitte ein klares PublishedSchedulePayload definieren:
+
+{
+  version: 1,
+  token: string,
+  type: "department" | "personal",
+  period: "week" | "month",
+  restaurant: string,
+  department: "all" | "service" | "kitchen",
+  employeeId?: string,
+  weekStart: string,
+  weekEnd: string,
+  title: string,
+  createdAt: string,
+  updatedAt: string,
+  employees: [
+    {
+      id: string,
+      name: string,
+      department: string,
+      days: [
+        {
+          date: string,
+          label: string,
+          shifts: [
+            { from: string, to: string }
+          ],
+          absenceCode?: string,
+          note?: string
+        }
+      ]
+    }
+  ]
+}
+
+Wichtig:
+Nur serialisierbare Daten.
+Keine React States.
+Keine Funktionen.
+Keine Date-Objekte.
+Keine UI-Objekte.
+Keine zirkulären Referenzen.
+
+====================================================
+4. PAYLOAD AUS AKTUELLEM PLAN BAUEN
+====================================================
+
+Beim Veröffentlichen muss der aktuelle sichtbare Dienstplan gespeichert werden:
+
+Für Abteilungsplan:
+- alle sichtbaren/gewählten Mitarbeiter der Abteilung
+- alle 7 Tage der aktuellen Woche
+- alle Schichten pro Tag
+- Frei/Ferien/Krank
+
+Für persönlichen Plan:
+- nur gewählter Mitarbeiter
+- alle 7 Tage der aktuellen Woche
+
+Keine Kosten.
+Keine Löhne.
+Keine internen Warnungen.
+
+====================================================
+5. SUPABASE SPEICHERN
+====================================================
+
+Speichern in public.app_settings:
+
+key = published-schedule:${token}
+value = payload
+
+Bitte:
+- .upsert({ key, value })
+- Fehler sauber loggen
+- bei Fehler toast anzeigen
+- Button darf nicht crashen
+- publishing loading state
+
+====================================================
+6. SOFORTIGE VERIFIKATION
+====================================================
+
+Nach dem Speichern direkt denselben Key wieder lesen:
+
+select value from app_settings where key = ...
+
+Wenn gelesen:
+- Link anzeigen
+- "Veröffentlicht ✓"
+
+Wenn nicht gelesen:
+- Fehler anzeigen:
+"Veröffentlichung konnte nicht geprüft werden"
+
+====================================================
+7. LINK MUSS KORREKT SEIN
+====================================================
+
+Der Link muss exakt zur Route passen, die StaffSchedulePage nutzt.
+
+Bitte prüfen:
+Ist die Route:
+- /staff-schedule/:token
+oder
+- /dienstplan/:token
+
+Es darf nicht gemischt werden.
+
+Dann zentral definieren:
+
+const publicPath = `/staff-schedule/${token}`
+const publicUrl = `${window.location.origin}${publicPath}`
+
+Alle Buttons und WhatsApp benutzen exakt diesen Link.
+
+====================================================
+8. STAFFSCHEDULEPAGE LADEN
+====================================================
+
+StaffSchedulePage muss beim Öffnen:
+
+1. token aus URL lesen
+2. key = published-schedule:${token}
+3. Supabase lesen
+4. payload validieren
+5. anzeigen
+
+Wenn payload fehlt:
+- Fehler anzeigen
+- Retry Button
+
+Wenn payload.version !== 1:
+- Fehler "Ungültige Version"
+
+Wenn payload.employees leer:
+- "Keine Schichten veröffentlicht" anzeigen, aber nicht crashen
+
+====================================================
+9. PERSÖNLICHE ANSICHT
+====================================================
+
+Wenn payload.type === "personal":
+- nur payload.employees[0] anzeigen
+- Mobile zuerst Listenansicht
+- Tage untereinander
+- Schichten als Chips
+- Frei/Ferien/Krank als Badges
+
+Keine anderen Mitarbeiter.
+
+====================================================
+10. ABTEILUNGSANSICHT
+====================================================
+
+Wenn payload.type === "department":
+- auf Desktop Tabelle erlaubt
+- auf Mobile Kartenansicht nach Tag
+- keine Kosten
+- keine Löhne
+
+====================================================
+11. WHATSAPP ERST NACH STABILEM LINK
+====================================================
+
+WhatsApp Button erst anzeigen, wenn:
+- publicUrl existiert
+- Verification erfolgreich war
+
+WhatsApp Text:
+
+Personal:
+Hallo {Name}, hier ist dein Dienstplan für {title}: {publicUrl}
+
+Abteilung:
+Hallo zusammen, hier ist der Dienstplan für {title}: {publicUrl}
+
+====================================================
+12. DEBUG PANEL TEMPORÄR
+====================================================
+
+Im Teilen-Dialog temporär klein anzeigen:
+
+- Token
+- Key
+- Payload Mitarbeiteranzahl
+- Payload Größe in KB
+- Save Status
+- Verify Status
+- Public URL
+
+Damit wir sofort sehen, wo es hängt.
+
+====================================================
+13. KEIN CRASH MEHR
+====================================================
+
+Alle Schritte mit try/catch.
+
+Bei Fehler:
+- toast.error
+- console.error
+- UI-Fehlerbox
+- kein White Screen
+- kein App-Absturz
+
+====================================================
+14. TEST
+====================================================
+
+Bitte nach Umsetzung testen:
+
+A) Abteilungsplan
+- Teilen öffnen
+- Abteilung Service wählen
+- Veröffentlichen
+- Link öffnen
+- Service Mitarbeiter sichtbar
+
+B) Persönlicher Plan
+- Mitarbeiter auswählen
+- Veröffentlichen
+- Link öffnen
+- nur dieser Mitarbeiter sichtbar
+
+C) Inkognito
+- Link öffnen
+- Daten laden
+
+D) Handy
+- Link öffnen
+- mobile Ansicht
+
+E) Fehlerfall
+- falscher Token
+- saubere Fehlermeldung
+
+====================================================
+15. AM ENDE BERICHTEN
+====================================================
+
+Bitte exakt berichten:
+
+- Welche Route verwendet wird
+- Welcher Key gespeichert wird
+- Ob Verify erfolgreich war
+- Wie viele Mitarbeiter im Payload sind
+- Ob Inkognito funktioniert
+- Ob Personal-Link funktioniert
+- Ob Department-Link funktioniert
