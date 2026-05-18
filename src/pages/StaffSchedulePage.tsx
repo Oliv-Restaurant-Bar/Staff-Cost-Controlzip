@@ -1009,17 +1009,31 @@ const StaffSchedulePage = () => {
   });
 
   const fetchPayload = useCallback(async () => {
-    if (!token) { setLoading(false); setNotFound(true); return; }
+    if (!token) {
+      console.warn('[staff-page] no token in URL — aborting');
+      setLoading(false);
+      setNotFound(true);
+      return;
+    }
+
     setLoading(true);
     setNotFound(false);
 
+    const kvKey = `published-schedule:${token}`;
+    console.log('[staff-page] ── FETCH START ──────────────────────');
+    console.log('[staff-page] token from URL =', token);
+    console.log('[staff-page] kvKey          =', kvKey);
+
     try {
-      console.log(`[staff-page] loading token="${token}"`);
-      const { data, error } = await (supabase as any)
+      const { data, error, status, statusText } = await (supabase as any)
         .from('app_settings')
-        .select('value')
-        .eq('key', `published-schedule:${token}`)
+        .select('key, value')
+        .eq('key', kvKey)
         .maybeSingle();
+
+      console.log('[staff-page] maybeSingle response → status=', status, statusText);
+      console.log('[staff-page] data  =', data);
+      console.log('[staff-page] error =', error);
 
       if (error) {
         console.error('[staff-page] Supabase error:', error.message, `(code=${error.code})`);
@@ -1027,13 +1041,26 @@ const StaffSchedulePage = () => {
         setLoading(false);
         return;
       }
-      if (!data?.value) {
-        console.warn('[staff-page] not found for token:', token);
+
+      if (!data) {
+        console.warn('[staff-page] data is null — row not found in app_settings for key=', kvKey);
+        console.warn('[staff-page] token from URL was:', JSON.stringify(token));
         setNotFound(true);
         setLoading(false);
         return;
       }
-      console.log('[staff-page] payload loaded ✓  token=', token);
+
+      if (!data.value) {
+        console.warn('[staff-page] row found but value is empty — key=', data.key);
+        setNotFound(true);
+        setLoading(false);
+        return;
+      }
+
+      console.log('[staff-page] value.token =', (data.value as any)?.token);
+      console.log('[staff-page] key in DB   =', data.key);
+      console.log('[staff-page] key match   =', data.key === kvKey);
+      console.log('[staff-page] ── FETCH OK ✓ ───────────────────────');
       setPayload(data.value as PublishedSchedulePayload);
       setNotFound(false);
       setLoading(false);

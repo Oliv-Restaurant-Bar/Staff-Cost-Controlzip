@@ -5342,26 +5342,61 @@ const SchedulePlanner = () => {
                       employeeId: publishType === 'personal' ? (publishEmpId ?? undefined) : undefined,
                     };
 
+                    const kvKey = `published-schedule:${token}`;
+                    const payloadJson = JSON.stringify(safePayload);
+                    console.log('[publish][safe] ── WRITE START ─────────────────');
+                    console.log('[publish][safe] token        =', token);
+                    console.log('[publish][safe] kvKey        =', kvKey);
+                    console.log('[publish][safe] payload size =', payloadJson.length, 'bytes');
+                    console.log('[publish][safe] payload      =', safePayload);
+
                     // 1. localStorage — instant same-device access
                     try {
-                      localStorage.setItem(`schedule-publish:${token}`, JSON.stringify(safePayload));
+                      localStorage.setItem(`schedule-publish:${token}`, payloadJson);
+                      console.log('[publish][safe] localStorage ✓');
                     } catch (lsErr) {
                       console.warn('[publish][safe] localStorage write failed (non-fatal):', lsErr);
                     }
 
                     // 2. Direct Supabase upsert — persistent, cross-device
-                    console.log('[publish][safe] upserting key=', `published-schedule:${token}`);
-                    const { error: writeError } = await (supabase as any)
+                    const { data: writeData, error: writeError, status: writeStatus, statusText: writeStatusText } = await (supabase as any)
                       .from('app_settings')
-                      .upsert({ key: `published-schedule:${token}`, value: safePayload }, { onConflict: 'key' });
+                      .upsert({ key: kvKey, value: safePayload }, { onConflict: 'key' })
+                      .select();
+
+                    console.log('[publish][safe] upsert response → status=', writeStatus, writeStatusText);
+                    console.log('[publish][safe] upsert data   =', writeData);
+                    console.log('[publish][safe] upsert error  =', writeError);
 
                     if (writeError) {
-                      console.error('[publish][safe] Supabase write failed:', writeError.message, `(code=${writeError.code})`);
+                      console.error('[publish][safe] Supabase write FAILED:', writeError.message, `(code=${writeError.code})`);
                       toast.error(`Link speichern fehlgeschlagen: ${writeError.message}`, { duration: 8000 });
                       return;
                     }
 
-                    console.log('[publish][safe] Supabase write OK ✓  token=', token);
+                    // 3. Read-back verification — confirm the row is actually there
+                    console.log('[publish][safe] ── READ-BACK VERIFY ─────────────');
+                    const { data: rbData, error: rbError } = await (supabase as any)
+                      .from('app_settings')
+                      .select('key, value')
+                      .eq('key', kvKey)
+                      .maybeSingle();
+
+                    console.log('[publish][safe] readback data  =', rbData);
+                    console.log('[publish][safe] readback error =', rbError);
+                    if (!rbData) {
+                      console.error('[publish][safe] READ-BACK FAILED — row not found after write! key=', kvKey);
+                    } else {
+                      console.log('[publish][safe] READ-BACK OK ✓  token in row=', (rbData.value as any)?.token);
+                    }
+
+                    // 4. Final URL
+                    const finalUrl = `${window.location.origin}/dienstplan/${token}`;
+                    console.log('[publish][safe] ── FINAL URL ────────────────────');
+                    console.log('[publish][safe] URL =', finalUrl);
+                    console.log('[publish][safe] token in URL =', finalUrl.split('/').pop());
+
+                    console.log('[publish][safe] ── WRITE COMPLETE ✓ ────────────');
                     setPublishToken(token);
                     setPublishStatus('published');
                     toast.success('Link erstellt und gespeichert ✓');
