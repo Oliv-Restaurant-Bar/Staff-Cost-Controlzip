@@ -5177,24 +5177,19 @@ const SchedulePlanner = () => {
                     Alle Mitarbeitenden einer Abteilung
                   </span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setPublishType('personal')}
-                  className={cn(
-                    "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
-                    publishType === 'personal'
-                      ? "border-primary bg-primary/5 text-primary"
-                      : "border-border bg-background hover:bg-muted/40 text-foreground"
-                  )}
+                <div
+                  className="flex flex-col items-start gap-1 rounded-lg border p-3 text-left opacity-45 cursor-not-allowed border-border bg-background text-muted-foreground select-none"
+                  title="Persönliche Links sind in Vorbereitung"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <User className="h-4 w-4" />
                     <span className="text-sm font-semibold">Persönlicher Plan</span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted border border-border/60 text-muted-foreground leading-none">Kommt später</span>
                   </div>
                   <span className="text-xs text-muted-foreground leading-snug">
                     Nur ein Mitarbeiter sieht seinen Plan
                   </span>
-                </button>
+                </div>
               </div>
             </div>
 

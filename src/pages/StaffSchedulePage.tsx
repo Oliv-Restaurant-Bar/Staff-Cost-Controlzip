@@ -13,7 +13,7 @@ import {
   Calendar, Clock, LayoutList, User, Building2, AlertCircle,
   ChevronDown, ChevronUp, Check, Home, X, RefreshCw,
   History, ArrowRightLeft, Send, MessageCircle, Loader2,
-  Search, ChevronLeft, ChevronRight, Grid3x3, Zap,
+  ChevronLeft, ChevronRight, Grid3x3, Zap,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -277,16 +277,22 @@ const WeekGridView = memo(function WeekGridView({
   if (refDays.length === 0) return (
     <p className="text-sm text-muted-foreground italic text-center py-8">Keine Tage vorhanden.</p>
   );
+  const COL_W = 88; // px per day column
+  const NAME_W = 140; // px for name column
   return (
-    <div className="overflow-x-auto rounded-2xl border border-border/40 shadow-sm">
+    <div className="overflow-x-auto rounded-2xl border border-border/50 shadow-sm bg-card">
       <table
         className="border-collapse text-sm"
-        style={{ minWidth: `${Math.max(380, refDays.length * 76 + 144)}px` }}
+        style={{ minWidth: `${NAME_W + refDays.length * COL_W}px`, tableLayout: 'fixed', width: `${NAME_W + refDays.length * COL_W}px` }}
       >
+        <colgroup>
+          <col style={{ width: NAME_W }} />
+          {refDays.map(d => <col key={d.date} style={{ width: COL_W }} />)}
+        </colgroup>
         <thead>
-          <tr>
+          <tr className="border-b border-border/40">
             {/* Sticky name header */}
-            <th className="sticky left-0 z-10 bg-muted/60 backdrop-blur text-left py-2.5 px-3 w-36 text-[11px] font-bold text-muted-foreground border-b border-r border-border/40 whitespace-nowrap">
+            <th className="sticky left-0 z-20 bg-muted text-left py-3 px-3 text-[11px] font-bold text-muted-foreground border-r-2 border-border/50 whitespace-nowrap">
               Mitarbeiter
             </th>
             {refDays.map((refDay) => {
@@ -295,13 +301,13 @@ const WeekGridView = memo(function WeekGridView({
               const isToday = isTodayDate(refDay.date);
               return (
                 <th key={refDay.date} className={cn(
-                  'text-center py-2 px-1 border-b border-border/30 min-w-[76px]',
-                  isToday ? 'bg-blue-50/80 dark:bg-blue-950/30'
-                  : wknd  ? 'bg-amber-50/50 dark:bg-amber-950/10'
-                  : 'bg-muted/20',
+                  'text-center py-2 px-1 border-l border-border/20',
+                  isToday ? 'bg-blue-50/90 dark:bg-blue-950/40'
+                  : wknd  ? 'bg-amber-50/60 dark:bg-amber-950/20'
+                  : 'bg-muted/30',
                 )}>
                   <div className={cn(
-                    'text-[9px] font-bold uppercase tracking-wider',
+                    'text-[10px] font-bold uppercase tracking-wider',
                     isToday ? 'text-blue-600 dark:text-blue-400'
                     : wknd  ? 'text-amber-600 dark:text-amber-400'
                     : 'text-muted-foreground/60',
@@ -331,71 +337,61 @@ const WeekGridView = memo(function WeekGridView({
                 Keine Mitarbeitenden gefunden.
               </td>
             </tr>
-          ) : emps.map((emp, ei) => (
-            <tr key={emp.id} className={cn(
-              'border-t border-border/20',
-              ei % 2 === 0 ? 'bg-background' : 'bg-muted/10',
-            )}>
-              <td className="sticky left-0 z-10 bg-inherit py-2.5 px-3 font-semibold text-sm whitespace-nowrap border-r border-border/30 text-foreground">
-                {emp.name}
-              </td>
-              {refDays.map((refDay) => {
-                const day     = emp.days.find(d => d.date === refDay.date);
-                const wknd    = isWeekendDate(refDay.date);
-                const isToday = isTodayDate(refDay.date);
-                return (
-                  <td key={refDay.date} className={cn(
-                    'py-2 px-1 text-center align-middle',
-                    isToday && 'bg-blue-50/20 dark:bg-blue-950/10',
-                    !isToday && wknd && 'bg-amber-50/10 dark:bg-amber-950/5',
-                  )}>
-                    {!day || isEmptyDay(day)
-                      ? <span className="text-muted-foreground/20 text-xs">–</span>
-                      : <GridCell day={day} />
-                    }
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
+          ) : emps.map((emp, ei) => {
+            const rowBg = ei % 2 === 0 ? 'bg-background' : 'bg-muted/20';
+            return (
+              <tr key={emp.id} className={cn('border-t border-border/20', rowBg)}>
+                <td className={cn(
+                  'sticky left-0 z-10 py-2.5 px-3 font-semibold text-sm whitespace-nowrap border-r-2 border-border/40 text-foreground',
+                  rowBg,
+                )}>
+                  {emp.name}
+                </td>
+                {refDays.map((refDay) => {
+                  const day     = emp.days.find(d => d.date === refDay.date);
+                  const wknd    = isWeekendDate(refDay.date);
+                  const isToday = isTodayDate(refDay.date);
+                  return (
+                    <td key={refDay.date} className={cn(
+                      'py-2 px-1.5 text-center align-middle border-l border-border/10',
+                      isToday && 'bg-blue-50/30 dark:bg-blue-950/15',
+                      !isToday && wknd && 'bg-amber-50/20 dark:bg-amber-950/10',
+                    )}>
+                      {!day || isEmptyDay(day)
+                        ? <span className="text-muted-foreground/20 text-xs font-bold">–</span>
+                        : <GridCell day={day} />
+                      }
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 });
 
-// ── Employee search bar with 150ms debounce ────────────────────────────────────
+// ── Employee dropdown ──────────────────────────────────────────────────────────
 
-function EmpSearchBar({
-  value, onChange,
-}: { value: string; onChange: (v: string) => void }) {
-  const [input, setInput] = useState(value);
-
-  useEffect(() => { setInput(value); }, [value]);
-
-  useEffect(() => {
-    const t = setTimeout(() => onChange(input), 150);
-    return () => clearTimeout(t);
-  }, [input, onChange]);
-
+function EmpDropdown({
+  employees, value, onChange,
+}: { employees: PublicEmployee[]; value: string | null; onChange: (id: string | null) => void }) {
   return (
     <div className="relative mb-4">
-      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40" />
-      <input
-        type="text"
-        value={input}
-        onChange={e => setInput(e.target.value)}
-        placeholder="Mitarbeiter suchen…"
-        className="w-full h-10 pl-9 pr-9 rounded-xl border border-border bg-background text-sm placeholder:text-muted-foreground/35 focus:outline-none focus:ring-2 focus:ring-primary/30 shadow-sm"
-      />
-      {input && (
-        <button
-          onClick={() => { setInput(''); onChange(''); }}
-          className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-full bg-muted/60 text-muted-foreground/60 hover:text-muted-foreground"
-        >
-          <X className="h-3 w-3" />
-        </button>
-      )}
+      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40 pointer-events-none z-10" />
+      <select
+        value={value ?? ''}
+        onChange={e => onChange(e.target.value || null)}
+        className="w-full h-12 pl-9 pr-9 rounded-xl border border-border bg-background text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 shadow-sm appearance-none cursor-pointer"
+      >
+        <option value="">Alle Mitarbeiter</option>
+        {employees.map(e => (
+          <option key={e.id} value={e.id}>{e.name}</option>
+        ))}
+      </select>
+      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/40 pointer-events-none" />
     </div>
   );
 }
@@ -472,10 +468,14 @@ function SwapRequestDialog({ dayLabel, onClose }: { dayLabel: string; onClose: (
 
 // ── Wunsch & Hinweis ──────────────────────────────────────────────────────────
 
-function WunschHinweisSection() {
-  const [open, setOpen] = useState(false);
-  const [text, setText] = useState('');
-  const [sent, setSent] = useState(false);
+function WunschHinweisSection({ employees = [] }: { employees?: PublicEmployee[] }) {
+  const [open, setOpen]               = useState(false);
+  const [selectedName, setSelectedName] = useState('');
+  const [text, setText]               = useState('');
+  const [sent, setSent]               = useState(false);
+
+  const needsName = employees.length > 0;
+  const canSend   = text.trim().length > 0 && (!needsName || selectedName !== '');
 
   if (sent) {
     return (
@@ -496,6 +496,24 @@ function WunschHinweisSection() {
       </button>
       {open && (
         <div className="border-t border-border/40 px-4 pb-4 pt-3 space-y-3">
+          {needsName && (
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground/70 uppercase tracking-wide mb-1.5 block">Dein Name</label>
+              <div className="relative">
+                <select
+                  value={selectedName}
+                  onChange={e => setSelectedName(e.target.value)}
+                  className="w-full h-11 pl-3 pr-9 rounded-xl border border-border bg-background text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none cursor-pointer"
+                >
+                  <option value="">Bitte auswählen…</option>
+                  {employees.map(e => (
+                    <option key={e.id} value={e.name}>{e.name}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/40 pointer-events-none" />
+              </div>
+            </div>
+          )}
           <textarea
             value={text}
             onChange={e => setText(e.target.value)}
@@ -504,8 +522,8 @@ function WunschHinweisSection() {
             className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/35"
           />
           <button
-            onClick={() => { if (text.trim()) setSent(true); }}
-            disabled={!text.trim()}
+            onClick={() => { if (canSend) { console.log('[feedback] from:', selectedName || 'anonym', text); setSent(true); } }}
+            disabled={!canSend}
             className="w-full h-9 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40"
           >
             <Send className="h-3.5 w-3.5" />Absenden
@@ -957,33 +975,29 @@ function DepartmentView({
   settings: StaffPortalSettings;
 }) {
   const vis = settings.visibility;
-  const [rawSearch, setRawSearch] = useState('');
-  const [empSearch, setEmpSearch] = useState('');
+  const [selectedEmpId, setSelectedEmpId] = useState<string | null>(null);
 
   const allEmployees = payload.employees ?? [];
   const showService  = payload.department === 'all' || payload.department === 'service';
   const showKüche    = payload.department === 'all' || payload.department === 'küche';
   const refDays      = allEmployees[0]?.days ?? [];
 
-  const q = empSearch.trim().toLowerCase();
-  const filteredAll     = useMemo(() =>
-    q ? allEmployees.filter(e => e.name.toLowerCase().includes(q)) : allEmployees,
-  [allEmployees, q]);
-  const filteredService = useMemo(() =>
-    filteredAll.filter(e => e.department === 'service'), [filteredAll]);
-  const filteredKüche   = useMemo(() =>
-    filteredAll.filter(e => e.department === 'küche'),   [filteredAll]);
+  // When a specific employee is selected, restrict all views to that person only
+  const displayEmps = useMemo(() =>
+    selectedEmpId ? allEmployees.filter(e => e.id === selectedEmpId) : allEmployees,
+  [allEmployees, selectedEmpId]);
 
-  const noResults = filteredAll.length === 0 && q.length > 0;
+  const displayService = useMemo(() => displayEmps.filter(e => e.department === 'service'), [displayEmps]);
+  const displayKüche   = useMemo(() => displayEmps.filter(e => e.department === 'küche'),   [displayEmps]);
 
-  // By-day view
+  // By-day view — shows entries for the currently selected employee(s)
   const ByDayView = useCallback(() => (
     <div className="space-y-3">
       {refDays.map((refDay, idx) => {
         const date       = parseISO(refDay.date);
         const wknd       = isWeekendDate(refDay.date);
         const isToday    = isTodayDate(refDay.date);
-        const activeEmps = allEmployees.filter(emp => {
+        const activeEmps = displayEmps.filter(emp => {
           const d = emp.days[idx];
           return d && !isEmptyDay(d);
         });
@@ -1027,7 +1041,9 @@ function DepartmentView({
                   const d = emp.days[idx];
                   return (
                     <div key={emp.id} className="flex items-start justify-between gap-3">
-                      <span className="text-sm font-medium truncate pt-0.5">{emp.name}</span>
+                      {!selectedEmpId && (
+                        <span className="text-sm font-medium truncate pt-0.5">{emp.name}</span>
+                      )}
                       <div className="shrink-0"><DayContent day={d} compact /></div>
                     </div>
                   );
@@ -1038,65 +1054,38 @@ function DepartmentView({
         );
       })}
     </div>
-  ), [refDays, allEmployees]);
+  ), [refDays, displayEmps, selectedEmpId]);
 
-  const ByEmpSection = useCallback(({
-    emps, label, dotColor,
-  }: { emps: PublicEmployee[]; label: string; dotColor: string }) => {
+  function DeptSection({ emps, label, dotColor }: { emps: PublicEmployee[]; label: string; dotColor: string }) {
     if (emps.length === 0) return null;
     return (
       <div className="mb-5">
-        <div className="flex items-center gap-2 mb-3">
-          <span className={cn('w-2 h-2 rounded-full shrink-0', dotColor)} />
-          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">{label}</span>
-        </div>
+        {vis.showDepartments && !selectedEmpId && (
+          <div className="flex items-center gap-2 mb-3">
+            <span className={cn('w-2 h-2 rounded-full shrink-0', dotColor)} />
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">{label}</span>
+          </div>
+        )}
         <div className="space-y-3">
           {emps.map(emp => <EmployeeAccordion key={emp.id} emp={emp} />)}
         </div>
       </div>
     );
-  }, []);
+  }
 
   return (
     <div>
-      {/* Search bar (not in byDay, and only if enabled in settings) */}
-      {activeTab !== 'byDay' && vis.enableEmployeeSearch && (
-        <EmpSearchBar value={rawSearch} onChange={(v) => { setRawSearch(v); setEmpSearch(v); }} />
-      )}
-
-      {noResults && (
-        <p className="text-sm text-muted-foreground italic text-center py-8">
-          Niemand mit „{rawSearch}" gefunden.
-        </p>
-      )}
+      {/* Employee dropdown — always visible so staff can filter to themselves */}
+      <EmpDropdown employees={allEmployees} value={selectedEmpId} onChange={setSelectedEmpId} />
 
       {/* Mitarbeiter view */}
-      {activeTab === 'byEmployee' && !noResults && (
+      {activeTab === 'byEmployee' && (
         <>
-          {showService && (
-            <div className="mb-5">
-              {vis.showDepartments && (
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
-                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Service</span>
-                </div>
-              )}
-              <div className="space-y-3">
-                {filteredService.map(emp => <EmployeeAccordion key={emp.id} emp={emp} />)}
-              </div>
-            </div>
-          )}
-          {showKüche && (
-            <div className="mb-5">
-              {vis.showDepartments && (
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
-                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Küche</span>
-                </div>
-              )}
-              <div className="space-y-3">
-                {filteredKüche.map(emp => <EmployeeAccordion key={emp.id} emp={emp} />)}
-              </div>
+          {showService && <DeptSection emps={displayService} label="Service" dotColor="bg-blue-500" />}
+          {showKüche   && <DeptSection emps={displayKüche}   label="Küche"   dotColor="bg-orange-500" />}
+          {!showService && !showKüche && (
+            <div className="space-y-3">
+              {displayEmps.map(emp => <EmployeeAccordion key={emp.id} emp={emp} />)}
             </div>
           )}
         </>
@@ -1106,33 +1095,38 @@ function DepartmentView({
       {activeTab === 'byDay' && <ByDayView />}
 
       {/* Woche view */}
-      {activeTab === 'week' && !noResults && (
+      {activeTab === 'week' && (
         <>
-          {showService && filteredService.length > 0 && (
+          {showService && displayService.length > 0 && (
             <div className="mb-5">
-              {vis.showDepartments && (
+              {vis.showDepartments && !selectedEmpId && (
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
                   <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Service</span>
                 </div>
               )}
-              <WeekGridView emps={filteredService} refDays={refDays} />
+              <WeekGridView emps={displayService} refDays={refDays} />
             </div>
           )}
-          {showKüche && filteredKüche.length > 0 && (
+          {showKüche && displayKüche.length > 0 && (
             <div className="mb-5">
-              {vis.showDepartments && (
+              {vis.showDepartments && !selectedEmpId && (
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
                   <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Küche</span>
                 </div>
               )}
-              <WeekGridView emps={filteredKüche} refDays={refDays} />
+              <WeekGridView emps={displayKüche} refDays={refDays} />
             </div>
           )}
-          {!showService && !showKüche && <WeekGridView emps={filteredAll} refDays={refDays} />}
+          {!showService && !showKüche && <WeekGridView emps={displayEmps} refDays={refDays} />}
         </>
       )}
+
+      {/* Feedback / Wunsch-Hinweis — always at bottom of dept view */}
+      <div className="mt-4">
+        <WunschHinweisSection employees={allEmployees} />
+      </div>
     </div>
   );
 }
@@ -1391,7 +1385,7 @@ const StaffSchedulePage = () => {
         <div className="bg-amber-50/90 dark:bg-amber-950/40 border-b border-amber-200/80 dark:border-amber-800 px-4 py-2.5 flex items-center gap-2.5">
           <Home className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
           <span className="text-xs text-amber-700 dark:text-amber-300 flex-1 leading-snug">
-            Zum Startbildschirm hinzufügen — der Link bleibt immer aktuell.
+            Zum Startbildschirm hinzufügen · bei Änderungen erneut über diesen Link öffnen.
           </span>
           <button
             onClick={dismissHomescreen}

@@ -1,0 +1,157 @@
+Bitte das geteilte Mitarbeiterportal vereinfachen und stabilisieren.
+
+Ziel:
+Vorerst kein personalisierter Einzel-Link pro Mitarbeiter.
+Stattdessen:
+Ein geteilter Link für Service / Küche / Alle.
+
+Mitarbeiter können sich in der Ansicht selbst über ein Dropdown auswählen.
+
+====================================================
+1. PERSONENFILTER ALS DROPDOWN
+====================================================
+
+Im geteilten Dienstplan bitte das Suchfeld ersetzen durch ein Dropdown:
+
+"Mitarbeiter auswählen"
+
+Optionen:
+- Alle Mitarbeiter
+- Arber
+- Artin
+- Carlos
+- usw.
+
+Wenn ein Mitarbeiter gewählt wird:
+- nur dieser Mitarbeiter wird angezeigt
+- in Mitarbeiteransicht
+- in Wochenansicht
+- in Nach-Tag-Ansicht nur Einträge dieses Mitarbeiters
+
+Auf Mobile:
+Dropdown gross und gut bedienbar.
+
+====================================================
+2. WOCHENANSICHT VERBESSERN
+====================================================
+
+Die Wochenansicht läuft aktuell optisch ineinander.
+
+Bitte verbessern:
+
+- horizontales Scrollen sauber
+- sticky Mitarbeiter-Spalte
+- sticky Tageskopf
+- klare Spaltentrennung
+- keine Überlappungen
+- jede Zelle feste Mindestbreite
+- Tageszellen mit sauberem Padding
+- Chips dürfen nicht in andere Zellen laufen
+- Wochenende dezent markieren
+- leere Zellen ruhig darstellen
+
+Auf Mobile:
+- Wochenansicht darf horizontal scrollen
+- aber nichts darf überlappen
+- Mitarbeitername muss links sticky bleiben
+
+====================================================
+3. ANSICHTENLOGIK
+====================================================
+
+Tabs behalten:
+
+- Mitarbeiter
+- Nach Tag
+- Woche
+
+Wenn Dropdown auf konkreten Mitarbeiter steht:
+- Mitarbeiteransicht zeigt nur seine Karten
+- Nach Tag zeigt nur seine Einsätze je Tag
+- Woche zeigt nur seine Zeile
+
+Wenn Dropdown auf "Alle Mitarbeiter":
+- alles wie bisher
+
+====================================================
+4. RÜCKFRAGEN / WÜNSCHE OHNE PERSONALISIERTEN LINK
+====================================================
+
+Im geteilten Portal soll bei Rückfragen/Wünschen ein Dropdown erscheinen:
+
+"Dein Name"
+
+Mitarbeiter muss seinen Namen auswählen.
+
+Dann:
+- Wunsch / Hinweis senden
+- Rückfrage senden
+- Kann nicht senden
+
+Vorerst lokal/mock oder vorbereiten.
+Später Supabase.
+
+====================================================
+5. KENNTNISNAHME VORERST ENTFERNEN
+====================================================
+
+Bitte Gesehen / Bestätigt vorerst aus dem geteilten Abteilungsportal entfernen.
+
+Grund:
+Bei geteiltem Link ohne personalisierten Token kann keine sichere individuelle Kenntnisnahme gespeichert werden.
+
+Bestätigung später nur wieder aktivieren, wenn personalisierte Links oder Login vorhanden sind.
+
+====================================================
+6. PERSÖNLICHER LINK VORERST DEAKTIVIEREN
+====================================================
+
+Im Teilen-Dialog:
+
+Persönlicher Plan darf vorerst deaktiviert oder mit Hinweis versehen werden:
+
+"Kommt später"
+
+Standard:
+Abteilungsplan / Teamlink.
+
+====================================================
+7. HOMEBILDSCHIRM
+====================================================
+
+Wenn Mitarbeiter den Teamlink auf Homebildschirm speichern:
+- sie öffnen immer denselben Teamlink
+- wenn du den gleichen Token aktualisierst, sehen sie neue Version
+- wenn du jedes Mal neuen Token erzeugst, brauchen sie neuen Link
+
+Bitte vorbereiten:
+"Bestehenden Teamlink aktualisieren" als Option später.
+
+Vorerst Hinweis anzeigen:
+"Bei Änderungen bitte erneut über den aktuellen Link öffnen."
+
+====================================================
+8. DATENSCHUTZ
+====================================================
+
+Im Teamlink:
+- keine Kosten
+- keine Löhne
+- keine internen Warnungen
+- nur Dienstplaninformationen
+
+====================================================
+9. TEST
+====================================================
+
+Bitte testen:
+
+- Service-Link
+- Dropdown Alle Mitarbeiter
+- Dropdown einzelner Mitarbeiter
+- Mitarbeiteransicht
+- Nach-Tag-Ansicht
+- Wochenansicht
+- Mobile 390px
+- keine Überlappung in Wochenansicht
+- Rückfrage mit Name-Auswahl
