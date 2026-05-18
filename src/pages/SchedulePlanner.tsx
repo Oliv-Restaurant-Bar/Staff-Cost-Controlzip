@@ -319,6 +319,9 @@ const SchedulePlanner = () => {
   const [publishHistory, setPublishHistory]                   = useState<ChangeHistoryEntry[]>([]);
   const [publishRevision, setPublishRevision]                 = useState<number>(0);
   const [publishUpdatedAt, setPublishUpdatedAt]               = useState<string | null>(null);
+  const [existingPublishedPayload, setExistingPublishedPayload] = useState<PublishedSchedulePayload | null>(null);
+  const [diffLoading, setDiffLoading]                         = useState(false);
+  const [diffFilter, setDiffFilter]                           = useState<'all' | 'service' | 'küche'>('all');
   const [notifyChannels, setNotifyChannels]                   = useState({ whatsapp: false, sms: false, push: false, email: false });
   const [lastGlobalError, setLastGlobalError]                 = useState<string | null>(null);
 
@@ -2611,6 +2614,92 @@ const SchedulePlanner = () => {
   const pkqPeriodName =
     calendarView === 'month' ? 'Monat' :
     calendarView === 'week'  ? 'Woche' : 'Tag';
+
+  // ── PUBLISH DIFF ─────────────────────────────────────────────────────────
+  // Load the existing published payload when the dialog opens so we can show
+  // a change preview before the admin clicks "Veröffentlichen".
+  useEffect(() => {
+    if (!publishDialogOpen) {
+      setExistingPublishedPayload(null);
+      setDiffFilter('all');
+      return;
+    }
+    const token = stablePublishToken(tenantId, publishDept);
+    const key   = `published-schedule:${token}`;
+    setDiffLoading(true);
+    supabase.from('app_settings').select('value').eq('key', key).maybeSingle()
+      .then(({ data }) => {
+        setExistingPublishedPayload(
+          data?.value && typeof data.value === 'object'
+            ? data.value as PublishedSchedulePayload
+            : null,
+        );
+      })
+      .catch(() => setExistingPublishedPayload(null))
+      .finally(() => setDiffLoading(false));
+  }, [publishDialogOpen, publishDept, tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  type PublishDiffEntry = {
+    empId: string; empName: string; department: 'service' | 'küche';
+    date: string; dayLabel: string;
+    prevFrüh: { start: string; end: string } | null;
+    prevSpät: { start: string; end: string } | null;
+    prevFrühAbsence: string | null; prevSpätAbsence: string | null;
+    newFrüh:  { start: string; end: string } | null;
+    newSpät:  { start: string; end: string } | null;
+    newFrühAbsence:  string | null; newSpätAbsence:  string | null;
+  };
+
+  // Compute day-by-day diff between current scheduleData and existing payload.
+  // Only runs when existing payload covers the same week as the current view.
+  const publishDiffAll = useMemo((): PublishDiffEntry[] => {
+    if (!existingPublishedPayload?.employees) return [];
+    const days = displayDays.length > 0 ? displayDays : [currentMonth];
+    // Different week → nothing to compare (all days would appear "new")
+    if (existingPublishedPayload.weekStart !== format(days[0], 'yyyy-MM-dd')) return [];
+
+    let targetEmps = employees.filter(e => isEmployeeActiveInMonth(e, days[0]));
+    if (publishDept !== 'all') targetEmps = targetEmps.filter(e => e.department === publishDept);
+
+    const entries: PublishDiffEntry[] = [];
+    for (const emp of targetEmps) {
+      const existingEmp = existingPublishedPayload.employees!.find(e => e.id === emp.id);
+      for (const day of days) {
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const slot    = scheduleData[`${emp.id}-${dateStr}`] ?? {};
+        const nFrüh   = slot.früh        ?? null;
+        const nSpät   = slot.spät        ?? null;
+        const nFrühA  = slot.frühAbsence ?? null;
+        const nSpätA  = slot.spätAbsence ?? null;
+        const prev    = existingEmp?.days.find(d => d.date === dateStr);
+        const pFrüh   = prev?.früh         ?? null;
+        const pSpät   = prev?.spät         ?? null;
+        const pFrühA  = prev?.frühAbsence  ?? null;
+        const pSpätA  = prev?.spätAbsence  ?? null;
+        const changed =
+          JSON.stringify(nFrüh) !== JSON.stringify(pFrüh) ||
+          JSON.stringify(nSpät) !== JSON.stringify(pSpät) ||
+          nFrühA !== pFrühA || nSpätA !== pSpätA;
+        if (changed) {
+          entries.push({
+            empId: emp.id, empName: getEmployeeDisplayName(emp),
+            department: emp.department as 'service' | 'küche',
+            date: dateStr, dayLabel: format(day, 'EEE d.MMM', { locale: de }),
+            prevFrüh: pFrüh, prevSpät: pSpät, prevFrühAbsence: pFrühA, prevSpätAbsence: pSpätA,
+            newFrüh:  nFrüh, newSpät:  nSpät, newFrühAbsence:  nFrühA, newSpätAbsence:  nSpätA,
+          });
+        }
+      }
+    }
+    return entries;
+  }, [existingPublishedPayload, employees, displayDays, scheduleData, publishDept, currentMonth]);
+
+  const publishDiffFiltered = useMemo(() =>
+    diffFilter === 'all' ? publishDiffAll : publishDiffAll.filter(e => e.department === diffFilter),
+  [publishDiffAll, diffFilter]);
+
+  const publishDiffAffectedEmps = useMemo(() =>
+    new Set(publishDiffAll.map(e => e.empId)).size, [publishDiffAll]);
 
   // Kurz-Label für den Card-Header
   const periodShortLabel = useMemo(() => {
@@ -5331,6 +5420,132 @@ const SchedulePlanner = () => {
               </div>
             )}
 
+            {/* ── Änderungsübersicht ───────────────────────────────────── */}
+            {publishType === 'department' && (() => {
+              const days = displayDays.length > 0 ? displayDays : [currentMonth];
+              const isSameWeek = existingPublishedPayload?.weekStart === format(days[0], 'yyyy-MM-dd');
+
+              const fmtSlot = (s: { start: string; end: string } | null) =>
+                s ? `${s.start}–${s.end}` : null;
+              const fmtSide = (
+                früh: { start: string; end: string } | null,
+                spät: { start: string; end: string } | null,
+                frühA: string | null,
+                spätA: string | null,
+              ) => {
+                const parts: string[] = [];
+                if (frühA) parts.push(frühA); else if (früh) parts.push(fmtSlot(früh)!);
+                if (spätA) parts.push(spätA); else if (spät) parts.push(fmtSlot(spät)!);
+                return parts.length > 0 ? parts.join(' / ') : 'Kein Dienst';
+              };
+
+              // Group filtered entries by employee for display
+              const byEmp = publishDiffFiltered.reduce<
+                Record<string, { name: string; dept: string; rows: typeof publishDiffFiltered }>
+              >((acc, e) => {
+                if (!acc[e.empId]) acc[e.empId] = { name: e.empName, dept: e.department, rows: [] };
+                acc[e.empId].rows.push(e);
+                return acc;
+              }, {});
+
+              return (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex-1">
+                      Änderungen seit letzter Veröffentlichung
+                    </p>
+                    {diffLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />}
+                  </div>
+
+                  {/* No existing publish yet */}
+                  {!existingPublishedPayload && !diffLoading && (
+                    <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+                      Noch kein veröffentlichter Plan für diesen Teamlink.
+                    </div>
+                  )}
+
+                  {/* Different week — just note it, no line-by-line diff */}
+                  {existingPublishedPayload && !isSameWeek && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/20 px-3 py-2.5 text-xs text-blue-700 dark:text-blue-400 flex items-center gap-2">
+                      <Info className="h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        Letzte Veröffentlichung: <strong>{existingPublishedPayload.weekLabel}</strong>.
+                        Veröffentlichen ersetzt diesen Plan.
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Same week — show full diff */}
+                  {existingPublishedPayload && isSameWeek && (
+                    <>
+                      {publishDiffAll.length === 0 ? (
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/20 px-3 py-2.5 text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
+                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                          Keine Änderungen seit letzter Veröffentlichung.
+                        </div>
+                      ) : (
+                        <>
+                          {/* Summary row + dept filter */}
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/40 px-2 py-0.5 rounded-full shrink-0">
+                              {publishDiffAffectedEmps} {publishDiffAffectedEmps === 1 ? 'Person' : 'Personen'}
+                              {' · '}
+                              {publishDiffAll.length} {publishDiffAll.length === 1 ? 'Tag' : 'Tage'}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {(['all', 'service', 'küche'] as const).map(f => (
+                                <button
+                                  key={f}
+                                  onClick={() => setDiffFilter(f)}
+                                  className={cn(
+                                    'px-2 py-0.5 rounded text-[10px] font-semibold transition-colors',
+                                    diffFilter === f
+                                      ? 'bg-primary text-primary-foreground'
+                                      : 'bg-muted text-muted-foreground hover:bg-muted/70',
+                                  )}
+                                >
+                                  {f === 'all' ? 'Alle' : f === 'service' ? 'Service' : 'Küche'}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Grouped change list */}
+                          <div className="rounded-lg border border-amber-200 dark:border-amber-800 divide-y divide-amber-100 dark:divide-amber-900/40 max-h-52 overflow-y-auto bg-amber-50/30 dark:bg-amber-950/10">
+                            {Object.entries(byEmp).map(([empId, { name, dept, rows }]) => (
+                              <div key={empId} className="px-3 py-2">
+                                <div className="flex items-center gap-1.5 mb-1">
+                                  <span className={cn(
+                                    'w-1.5 h-1.5 rounded-full shrink-0',
+                                    dept === 'service' ? 'bg-blue-500' : 'bg-orange-500',
+                                  )} />
+                                  <p className="text-[11px] font-semibold text-foreground">{name}</p>
+                                </div>
+                                <div className="space-y-0.5 pl-3">
+                                  {rows.map((row, i) => (
+                                    <p key={i} className="text-[10px] leading-snug">
+                                      <span className="font-medium text-muted-foreground">{row.dayLabel}: </span>
+                                      <span className="line-through text-muted-foreground/55">
+                                        {fmtSide(row.prevFrüh, row.prevSpät, row.prevFrühAbsence, row.prevSpätAbsence)}
+                                      </span>
+                                      <span className="mx-1 text-amber-600 font-bold">→</span>
+                                      <span className="font-semibold text-foreground">
+                                        {fmtSide(row.newFrüh, row.newSpät, row.newFrühAbsence, row.newSpätAbsence)}
+                                      </span>
+                                    </p>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* ── Hinweis an Mitarbeiter ───────────────────────────────── */}
             <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -5540,7 +5755,11 @@ const SchedulePlanner = () => {
             >
               {isPublishing
                 ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Wird veröffentlicht…</>
-                : <><Globe className="h-3.5 w-3.5" /> {publishStatus === 'published' ? 'Erneut veröffentlichen' : publishStatus === 'changed' ? 'Aktualisieren' : 'Veröffentlichen'}</>
+                : publishDiffAll.length > 0
+                  ? <><Globe className="h-3.5 w-3.5" /> Änderungen veröffentlichen ({publishDiffAll.length})</>
+                  : publishStatus === 'published' || publishStatus === 'changed'
+                    ? <><Globe className="h-3.5 w-3.5" /> Erneut veröffentlichen</>
+                    : <><Globe className="h-3.5 w-3.5" /> Veröffentlichen</>
               }
             </Button>
           </DialogFooter>

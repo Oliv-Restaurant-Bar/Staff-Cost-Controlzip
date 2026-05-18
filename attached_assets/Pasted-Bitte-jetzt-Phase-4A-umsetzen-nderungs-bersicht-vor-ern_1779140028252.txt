@@ -1,0 +1,130 @@
+Bitte jetzt Phase 4A umsetzen: Änderungsübersicht vor erneuter Veröffentlichung.
+
+Ziel:
+Wenn ein bereits veröffentlichter Dienstplan geändert wurde und ich erneut veröffentlichen möchte, soll ich vor dem Publish sehen:
+
+- welche Mitarbeiter betroffen sind
+- welche Tage geändert wurden
+- alte Zeiten
+- neue Zeiten
+- Abwesenheiten geändert
+- wie viele Änderungen total
+
+Wichtig:
+Keine Kostenlogik ändern.
+Keine Speicherlogik des Dienstplans ändern.
+Nur Publish-Review und Änderungsübersicht.
+
+====================================================
+1. ÄNDERUNGEN VOR PUBLISH BERECHNEN
+====================================================
+
+Beim Öffnen des Teilen-Dialogs oder vor dem Klick auf "Veröffentlichen":
+
+Wenn bereits ein veröffentlichter Plan für den Teamlink existiert:
+- aktuellen Plan mit veröffentlichtem Payload vergleichen
+- Änderungen berechnen
+
+Vergleich pro Mitarbeiter + Datum:
+- vorherige Schichten
+- neue Schichten
+- vorherige Abwesenheit
+- neue Abwesenheit
+
+====================================================
+2. ÄNDERUNGSÜBERSICHT IM DIALOG
+====================================================
+
+Im Teilen-Dialog neue Sektion:
+
+"Änderungen seit letzter Veröffentlichung"
+
+Anzeigen:
+- Anzahl betroffene Mitarbeiter
+- Anzahl geänderte Tage
+- Liste kompakt:
+
+Artin
+- Fr 22.05: vorher 14:00–23:30 → neu 11:00–14:00 / 17:00–23:30
+
+Nora
+- Sa 23.05: Frei → 15:00–23:30
+
+Wenn keine Änderungen:
+"Keine Änderungen seit letzter Veröffentlichung."
+
+====================================================
+3. FILTER
+====================================================
+
+In der Änderungsübersicht:
+- Alle Änderungen
+- Nur Service
+- Nur Küche
+- Nur ausgewählter Mitarbeiter, falls Filter aktiv
+
+====================================================
+4. WARNUNG BEI REPUBLISH
+====================================================
+
+Wenn Änderungen vorhanden:
+Buttontext:
+"Änderungen veröffentlichen"
+
+Wenn keine Änderungen:
+Buttontext:
+"Erneut veröffentlichen"
+
+Nach erfolgreichem Publish:
+- Revision erhöhen
+- updatedAt setzen
+- changeHistory ergänzen
+
+====================================================
+5. WHATSAPP TEXT AUTOMATISCH ANPASSEN
+====================================================
+
+Wenn Änderungen vorhanden:
+
+WhatsApp Text:
+"Der Dienstplan wurde aktualisiert. Bitte prüft die Änderungen nochmals 👌
+{link}"
+
+Wenn keine Änderungen:
+"Hier ist der aktuelle Dienstplan:
+{link}"
+
+====================================================
+6. MITARBEITERPORTAL
+====================================================
+
+Die bestehenden geänderten Tage bleiben orange markiert.
+
+Zusätzlich:
+Oben im Portal kurze Zusammenfassung:
+"3 Mitarbeitende betroffen · 5 Tage geändert"
+
+Falls keine Änderungen:
+kein orange Banner.
+
+====================================================
+7. KEINE PFLICHT ZUR BESTÄTIGUNG
+====================================================
+
+Keine individuelle Bestätigung einbauen.
+Nur Änderungsübersicht.
+
+====================================================
+8. TEST
+====================================================
+
+Bitte testen:
+
+- erstmalig veröffentlichen
+- eine Schicht ändern
+- Teilen öffnen
+- Änderungsübersicht zeigt richtige Änderung
+- Änderungen veröffentlichen
+- Portal zeigt geänderten Tag orange
+- WhatsApp Text sagt aktualisiert
+- wenn keine Änderung: "Keine Änderungen"

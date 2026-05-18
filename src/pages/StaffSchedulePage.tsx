@@ -645,15 +645,30 @@ function PersonalView({
       <NextShiftCard employee={employee} />
 
       {/* Changed notice */}
-      {payload.status === 'changed' && (
-        <div className="flex items-start gap-2.5 rounded-2xl border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 px-4 py-3 shadow-sm">
-          <RefreshCw className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Plan wurde aktualisiert</p>
-            <p className="text-xs text-amber-700/80 dark:text-amber-400/80 mt-0.5">Bitte prüfe deine aktualisierten Schichten.</p>
+      {payload.status === 'changed' && (() => {
+        const allEmps       = payload.employees ?? [];
+        const affectedEmps  = allEmps.filter(e => e.days.some(d => d.changed));
+        const totalDays     = allEmps.reduce((n, e) => n + e.days.filter(d => d.changed).length, 0);
+        const myChangedDays = employee.days.filter(d => d.changed).length;
+        return (
+          <div className="flex items-start gap-2.5 rounded-2xl border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 px-4 py-3 shadow-sm">
+            <RefreshCw className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Plan wurde aktualisiert</p>
+              {affectedEmps.length > 0 && totalDays > 0 ? (
+                <p className="text-xs text-amber-700/80 dark:text-amber-400/80 mt-0.5">
+                  {affectedEmps.length} {affectedEmps.length === 1 ? 'Mitarbeiter' : 'Mitarbeitende'} betroffen
+                  {' · '}
+                  {totalDays} {totalDays === 1 ? 'Tag' : 'Tage'} geändert
+                  {myChangedDays > 0 && ` · ${myChangedDays} davon dein${myChangedDays === 1 ? 'er' : 'e'}`}
+                </p>
+              ) : (
+                <p className="text-xs text-amber-700/80 dark:text-amber-400/80 mt-0.5">Bitte prüfe deine aktualisierten Schichten.</p>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Manager note */}
       {payload.managerNote && <ManagerNoteCard note={payload.managerNote} />}
