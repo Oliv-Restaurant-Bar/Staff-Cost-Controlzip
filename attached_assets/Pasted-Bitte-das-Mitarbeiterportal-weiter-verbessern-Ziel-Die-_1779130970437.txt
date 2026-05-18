@@ -1,0 +1,132 @@
+Bitte das Mitarbeiterportal weiter verbessern.
+
+Ziel:
+Die öffentliche Dienstplanansicht soll für Mitarbeiter und Teams besser nutzbar werden.
+
+Wichtig:
+Keine Kosten anzeigen.
+Keine Löhne anzeigen.
+Keine internen Warnungen anzeigen.
+Keine Admin Daten anzeigen.
+
+1. Mitarbeiterfilter ergänzen
+
+In der Mitarbeiteransicht und in der Tagesansicht bitte oben einen Suchfilter ergänzen:
+
+"Mitarbeiter suchen"
+
+Wenn Text eingegeben wird:
+nur passende Mitarbeiter anzeigen.
+
+Bei persönlichem Link:
+Filter nicht anzeigen, da nur ein Mitarbeiter sichtbar ist.
+
+2. Dritte Ansicht ergänzen: Wochenansicht
+
+Neben:
+Mitarbeiter
+Nach Tag
+
+bitte dritte Ansicht:
+Woche
+
+Wochenansicht:
+eine kompakte Wochenübersicht mit allen Mitarbeitern.
+
+Layout:
+links Mitarbeiter
+oben Mo bis So
+in den Zellen Schichten oder Frei Ferien Krank
+
+Auch dort:
+Mitarbeiterfilter anwenden.
+
+Auf Mobile:
+horizontal scroll erlaubt, aber sticky Mitarbeitername links.
+
+3. Wochenwechsel einbauen
+
+Oben im Header:
+Pfeil links
+KW 21
+Pfeil rechts
+
+Mitarbeiter sollen vergangene oder zukünftige veröffentlichte Pläne sehen können.
+
+Wenn für eine Woche kein veröffentlichter Plan existiert:
+"Für diese Woche wurde noch kein Dienstplan veröffentlicht."
+
+Wichtig:
+Das braucht später gleiche Token Logik oder week selector im Payload.
+
+Vorerst:
+Wenn Payload nur eine Woche enthält, Navigation anzeigen aber deaktiviert oder mit sauberem Hinweis.
+
+4. Rückmeldung der Mitarbeiter
+
+Im persönlichen Plan unten einbauen:
+
+Buttons:
+Gesehen
+Bestätigt
+Kann nicht
+Rückfrage
+
+Bei Kann nicht:
+Textfeld für Grund.
+
+Bei Rückfrage:
+Textfeld für Nachricht.
+
+Vorerst local state speichern.
+Später Supabase.
+
+5. Wünsche der Mitarbeiter vorbereiten
+
+Optionaler Bereich:
+"Wunsch oder Hinweis senden"
+
+Textfeld:
+"Ich hätte gerne frei am..."
+"Ich kann am Freitag erst ab..."
+
+Button:
+Absenden
+
+Vorerst lokal/mock speichern und Bestätigung anzeigen:
+"Danke, dein Hinweis wurde erfasst."
+
+6. Homebildschirm Verhalten erklären und vorbereiten
+
+Wenn der Link auf dem Homebildschirm gespeichert wird:
+Der Link soll immer denselben Token öffnen.
+
+Wenn der Plan später geändert wird:
+Der gespeicherte Link soll die aktualisierte Version anzeigen.
+
+Dafür bitte vorbereiten:
+published-schedule token darf bei Änderungen überschrieben werden.
+updatedAt im Payload anzeigen.
+Wenn updatedAt neuer ist, im Portal anzeigen:
+"Aktualisiert heute 14:32"
+
+7. Mobile UX
+
+Auf iPhone Breite prüfen:
+Mitarbeiterfilter gut bedienbar
+Tabs gut klickbar
+Wochenansicht horizontal sauber scrollbar
+Listenansicht bleibt Standard auf Mobile
+
+8. Test
+
+Bitte testen:
+Abteilungslink Service
+Mitarbeiterfilter
+Nach Tag Ansicht
+Neue Wochenansicht
+Persönlicher Link
+Gesehen und Bestätigt
+Kann nicht mit Grund
+Rückfrage
+Homebildschirm Hinweis

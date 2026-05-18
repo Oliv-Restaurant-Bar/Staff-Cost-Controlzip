@@ -11,6 +11,7 @@ import {
   Calendar, Clock, LayoutList, User, Building2, AlertCircle,
   ChevronDown, ChevronUp, Check, Home, X, RefreshCw,
   History, ArrowRightLeft, Send, MessageCircle, Loader2,
+  Search, ChevronLeft, ChevronRight, Grid3x3,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,7 +25,6 @@ import { supabase } from '@/integrations/supabase/client';
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
-/** Saturday (6) or Sunday (0). */
 function isWeekendDate(dateStr: string): boolean {
   const d = getDay(parseISO(dateStr));
   return d === 0 || d === 6;
@@ -38,13 +38,11 @@ function isEmptyDay(day: PublicDayEntry): boolean {
   return !day.früh && !day.spät && !day.frühAbsence && !day.spätAbsence;
 }
 
-/** Format "10:00" → "10", "10:30" → "10:30". */
 function fmtHour(t: string): string {
   const [h, m] = t.split(':');
   return m === '00' ? h : `${h}:${m}`;
 }
 
-/** "10:00"–"14:00" → "10–14". */
 function fmtRange(start: string, end: string): string {
   return `${fmtHour(start)}–${fmtHour(end)}`;
 }
@@ -87,7 +85,6 @@ function AbsenceChip({ code }: { code: string }) {
   );
 }
 
-/** Full-size shift/absence content for list cards. */
 function DayContent({ day, compact = false }: { day: PublicDayEntry; compact?: boolean }) {
   if (isEmptyDay(day)) {
     return (
@@ -110,19 +107,49 @@ function DayContent({ day, compact = false }: { day: PublicDayEntry; compact?: b
   return <div className={cn('flex flex-col gap-1.5', compact && 'gap-1')}>{items}</div>;
 }
 
-// ── Calendar cell — very compact ──────────────────────────────────────────────
+// ── Compact grid cell (week view) ─────────────────────────────────────────────
 
-function CalendarCell({ day }: { day: PublicDayEntry | null; date?: Date }) {
+function CompactGridCell({ day }: { day: PublicDayEntry }) {
+  const lines: string[] = [];
+  if (day.frühAbsence) {
+    lines.push(absenceMeta(day.frühAbsence).short);
+  } else if (day.früh) {
+    lines.push(fmtRange(day.früh.start, day.früh.end));
+  }
+  if (day.spätAbsence && day.spätAbsence !== day.frühAbsence) {
+    lines.push(absenceMeta(day.spätAbsence).short);
+  } else if (day.spät) {
+    lines.push(fmtRange(day.spät.start, day.spät.end));
+  }
+  return (
+    <div className="flex flex-col items-center gap-0.5 py-0.5">
+      {lines.map((line, i) => {
+        const isAbs = !!ABSENCE_MAP[line.toUpperCase()];
+        return (
+          <span key={i} className={cn(
+            'text-[10px] font-semibold leading-tight tabular-nums',
+            isAbs ? 'text-blue-700 dark:text-blue-300' : 'text-emerald-700 dark:text-emerald-400',
+          )}>
+            {line}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Calendar cell ─────────────────────────────────────────────────────────────
+
+function CalendarCell({ day }: { day: PublicDayEntry | null }) {
   if (!day) {
     return <div className="rounded-md bg-muted/10 min-h-[58px]" />;
   }
-  const date    = parseISO(day.date);
-  const wknd    = isWeekendDate(day.date);
-  const isToday = isTodayDate(day.date);
+  const date      = parseISO(day.date);
+  const wknd      = isWeekendDate(day.date);
+  const isToday   = isTodayDate(day.date);
   const empty     = isEmptyDay(day);
   const hasChange = !!day.changed;
 
-  // Collect compact lines
   const lines: string[] = [];
   if (day.frühAbsence) {
     lines.push(absenceMeta(day.frühAbsence).short);
@@ -138,19 +165,15 @@ function CalendarCell({ day }: { day: PublicDayEntry | null; date?: Date }) {
   return (
     <div className={cn(
       'rounded-md border px-1 py-1 min-h-[58px] flex flex-col relative',
-      isToday
-        ? 'bg-blue-50/90 border-blue-300 dark:bg-blue-950/40 dark:border-blue-700'
-        : hasChange
-          ? 'bg-amber-50/60 border-amber-400 dark:bg-amber-950/20 dark:border-amber-600'
-          : wknd
-            ? 'bg-amber-50/50 border-amber-200/60 dark:bg-amber-950/10 dark:border-amber-800/40'
-            : 'bg-card border-border/40',
+      isToday   ? 'bg-blue-50/90 border-blue-300 dark:bg-blue-950/40 dark:border-blue-700'
+      : hasChange ? 'bg-amber-50/60 border-amber-400 dark:bg-amber-950/20 dark:border-amber-600'
+      : wknd    ? 'bg-amber-50/50 border-amber-200/60 dark:bg-amber-950/10 dark:border-amber-800/40'
+      : 'bg-card border-border/40',
       empty && !isToday && !hasChange && 'opacity-35',
     )}>
       {hasChange && (
         <div className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-amber-500" />
       )}
-      {/* Day number */}
       <div className={cn(
         'text-[11px] font-bold text-center leading-none mb-1',
         isToday   ? 'text-blue-600 dark:text-blue-400'
@@ -160,21 +183,14 @@ function CalendarCell({ day }: { day: PublicDayEntry | null; date?: Date }) {
       )}>
         {format(date, 'd')}
       </div>
-
-      {/* Shift / absence lines */}
       <div className="flex flex-col items-center gap-0.5 flex-1">
         {lines.map((line, i) => {
           const isAbsCode = !!ABSENCE_MAP[line.toUpperCase()];
           return (
-            <span
-              key={i}
-              className={cn(
-                'text-[9px] font-semibold leading-tight text-center w-full truncate px-0.5 rounded',
-                isAbsCode
-                  ? 'text-blue-700 dark:text-blue-300'
-                  : 'text-emerald-700 dark:text-emerald-400',
-              )}
-            >
+            <span key={i} className={cn(
+              'text-[9px] font-semibold leading-tight text-center w-full truncate px-0.5 rounded',
+              isAbsCode ? 'text-blue-700 dark:text-blue-300' : 'text-emerald-700 dark:text-emerald-400',
+            )}>
               {line}
             </span>
           );
@@ -193,20 +209,15 @@ function CalendarView({ employee, payload }: { employee: PublicEmployee; payload
   if (days.length === 0) return null;
 
   const isMonth = payload.period === 'month';
+  const dayMap  = new Map<string, PublicDayEntry>(days.map(d => [d.date, d]));
 
-  // Build a lookup: dateStr → PublicDayEntry
-  const dayMap = new Map<string, PublicDayEntry>(days.map(d => [d.date, d]));
-
-  // Determine the full date range to render
   const firstPayloadDate = parseISO(days[0].date);
   const lastPayloadDate  = parseISO(days[days.length - 1].date);
 
-  // Expand to full calendar weeks so the grid aligns Mon–Sun
   const calStart = startOfWeek(isMonth ? startOfMonth(firstPayloadDate) : firstPayloadDate, { weekStartsOn: 1 });
   const calEnd   = endOfWeek(isMonth ? endOfMonth(lastPayloadDate) : lastPayloadDate, { weekStartsOn: 1 });
   const calDays  = eachDayOfInterval({ start: calStart, end: calEnd });
 
-  // Group into weeks
   const weeks: Date[][] = [];
   for (let i = 0; i < calDays.length; i += 7) {
     weeks.push(calDays.slice(i, i + 7));
@@ -214,7 +225,6 @@ function CalendarView({ employee, payload }: { employee: PublicEmployee; payload
 
   return (
     <div>
-      {/* Header row */}
       <div className="grid grid-cols-7 gap-1 mb-1.5">
         {CAL_HEADERS.map(h => (
           <div key={h} className={cn(
@@ -225,15 +235,12 @@ function CalendarView({ employee, payload }: { employee: PublicEmployee; payload
           </div>
         ))}
       </div>
-
-      {/* Week rows */}
       <div className="space-y-1">
         {weeks.map((week, wi) => (
           <div key={wi} className="grid grid-cols-7 gap-1">
             {week.map((date, di) => {
-              const dateStr = format(date, 'yyyy-MM-dd');
-              const entry = dayMap.get(dateStr) ?? null;
-              // If outside the payload range, render a blank filler
+              const dateStr   = format(date, 'yyyy-MM-dd');
+              const entry     = dayMap.get(dateStr) ?? null;
               const outOfRange = date < firstPayloadDate || date > lastPayloadDate;
               return (
                 <CalendarCell key={di} day={outOfRange ? null : (entry ?? {
@@ -250,11 +257,133 @@ function CalendarView({ employee, payload }: { employee: PublicEmployee; payload
   );
 }
 
+// ── Week grid view (department) ────────────────────────────────────────────────
+
+function WeekGridView({ emps, refDays }: { emps: PublicEmployee[]; refDays: PublicDayEntry[] }) {
+  if (refDays.length === 0) {
+    return <p className="text-sm text-muted-foreground italic text-center py-8">Keine Tage vorhanden.</p>;
+  }
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border">
+      <table
+        className="border-collapse text-sm"
+        style={{ minWidth: `${Math.max(420, refDays.length * 78 + 148)}px` }}
+      >
+        <thead>
+          <tr className="bg-muted/40">
+            <th className="sticky left-0 z-10 bg-muted/40 text-left py-2 px-3 w-36 text-xs font-semibold text-muted-foreground border-b border-r border-border whitespace-nowrap">
+              Mitarbeiter
+            </th>
+            {refDays.map((refDay) => {
+              const date    = parseISO(refDay.date);
+              const wknd    = isWeekendDate(refDay.date);
+              const isToday = isTodayDate(refDay.date);
+              return (
+                <th key={refDay.date} className={cn(
+                  'text-center py-2 px-1 border-b border-border min-w-[78px]',
+                  isToday ? 'bg-blue-50/60 dark:bg-blue-950/20'
+                  : wknd  && 'bg-amber-50/60 dark:bg-amber-950/20',
+                )}>
+                  <div className={cn(
+                    'text-[10px] font-bold uppercase tracking-wide',
+                    isToday ? 'text-blue-600 dark:text-blue-400'
+                    : wknd  ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-muted-foreground',
+                  )}>
+                    {format(date, 'EE', { locale: de })}
+                  </div>
+                  <div className={cn(
+                    'text-sm font-bold',
+                    isToday ? 'text-blue-800 dark:text-blue-200'
+                    : wknd  ? 'text-amber-700 dark:text-amber-300'
+                    : 'text-foreground',
+                  )}>
+                    {format(date, 'd')}
+                  </div>
+                  <div className="text-[9px] text-muted-foreground/60">
+                    {format(date, 'MMM', { locale: de })}
+                  </div>
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {emps.length === 0 ? (
+            <tr>
+              <td colSpan={refDays.length + 1} className="py-8 text-center text-sm text-muted-foreground italic">
+                Keine Mitarbeitenden gefunden.
+              </td>
+            </tr>
+          ) : (
+            emps.map((emp, ei) => (
+              <tr key={emp.id} className={cn(
+                'border-t border-border/40',
+                ei % 2 === 0 ? 'bg-background' : 'bg-muted/20',
+              )}>
+                <td className="sticky left-0 z-10 bg-inherit py-2 px-3 font-medium text-sm whitespace-nowrap border-r border-border/40">
+                  {emp.name}
+                </td>
+                {refDays.map((refDay) => {
+                  const day     = emp.days.find(d => d.date === refDay.date);
+                  const wknd    = isWeekendDate(refDay.date);
+                  const isToday = isTodayDate(refDay.date);
+                  const empty   = !day || isEmptyDay(day);
+                  return (
+                    <td key={refDay.date} className={cn(
+                      'py-2 px-1 text-center align-middle',
+                      isToday ? 'bg-blue-50/30 dark:bg-blue-950/10'
+                      : wknd  && 'bg-amber-50/20 dark:bg-amber-950/10',
+                    )}>
+                      {empty ? (
+                        <span className="text-muted-foreground/25 text-xs">–</span>
+                      ) : (
+                        <CompactGridCell day={day!} />
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Employee search bar ───────────────────────────────────────────────────────
+
+function EmpSearchBar({
+  value, onChange,
+}: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="relative mb-4">
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
+      <input
+        type="text"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="Mitarbeiter suchen…"
+        className="w-full h-9 pl-8 pr-9 rounded-xl border border-border bg-background text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/30"
+      />
+      {value && (
+        <button
+          onClick={() => onChange('')}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded text-muted-foreground/40 hover:text-muted-foreground"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatRelativeTime(iso: string): string {
   try {
-    const d = new Date(iso);
+    const d       = new Date(iso);
     const diffMs  = Date.now() - d.getTime();
     const diffMin = Math.floor(diffMs / 60000);
     const diffH   = Math.floor(diffMin / 60);
@@ -284,9 +413,7 @@ function ManagerNoteCard({ note }: { note: string }) {
 
 // ── Change history modal ───────────────────────────────────────────────────────
 
-function ChangeHistoryModal({
-  entries, onClose,
-}: { entries: ChangeHistoryEntry[]; onClose: () => void }) {
+function ChangeHistoryModal({ entries, onClose }: { entries: ChangeHistoryEntry[]; onClose: () => void }) {
   return (
     <div
       className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
@@ -362,22 +489,81 @@ function SwapRequestDialog({ dayLabel, onClose }: { dayLabel: string; onClose: (
   );
 }
 
+// ── Wunsch & Hinweis section ──────────────────────────────────────────────────
+
+function WunschHinweisSection() {
+  const [open, setOpen]     = useState(false);
+  const [text, setText]     = useState('');
+  const [sent, setSent]     = useState(false);
+
+  const handleSend = () => {
+    if (!text.trim()) return;
+    console.log('[Wunsch/Hinweis] lokal gespeichert:', text);
+    setSent(true);
+  };
+
+  if (sent) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/20 px-4 py-3 flex items-center gap-2.5">
+        <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+        <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">Danke, dein Hinweis wurde erfasst.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <MessageCircle className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-sm font-semibold text-foreground">Wunsch oder Hinweis senden</span>
+        </div>
+        {open
+          ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+          : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+      </button>
+      {open && (
+        <div className="border-t border-border/40 px-4 pb-4 pt-3 space-y-3">
+          <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            placeholder={'Ich hätte gerne frei am…\nIch kann am Freitag erst ab…'}
+            rows={3}
+            className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/40"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!text.trim()}
+            className="w-full h-9 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+          >
+            <Send className="h-3.5 w-3.5" />
+            Absenden
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
-// Personal View — list + calendar toggle
+// Personal View
 // ══════════════════════════════════════════════════════════════════════════════
 
 type PersonalViewMode = 'list' | 'calendar';
-type FeedbackType = 'ok' | 'cannot' | 'question' | null;
+type FeedbackState = 'none' | 'seen' | 'confirmed' | 'cannot' | 'question';
 
 function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
   const employee = payload.employees?.[0];
-  const [viewMode, setViewMode]       = useState<PersonalViewMode>('list');
-  const [showHistory, setShowHistory] = useState(false);
-  const [swapDay, setSwapDay]         = useState<string | null>(null);
-  const [feedbackType, setFeedbackType]   = useState<FeedbackType>(null);
-  const [feedbackReason, setFeedbackReason] = useState('');
-  const [feedbackNote, setFeedbackNote]     = useState('');
-  const [feedbackSent, setFeedbackSent]     = useState(false);
+  const [viewMode, setViewMode]         = useState<PersonalViewMode>('list');
+  const [showHistory, setShowHistory]   = useState(false);
+  const [swapDay, setSwapDay]           = useState<string | null>(null);
+  const [feedback, setFeedback]         = useState<FeedbackState>('none');
+  const [cannotReason, setCannotReason] = useState('');
+  const [questionText, setQuestionText] = useState('');
+  const [feedbackSent, setFeedbackSent] = useState(false);
   const today = useMemo(() => new Date(), []);
 
   if (!employee) {
@@ -391,9 +577,14 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
   const historyEntries: ChangeHistoryEntry[] = payload.changeHistory ?? [];
   const changedDayCount = employee.days.filter(d => d.changed).length;
 
+  const handleFeedbackSend = () => {
+    console.log('[PersonalView] Rückmeldung:', feedback, cannotReason || questionText);
+    setFeedbackSent(true);
+  };
+
   return (
     <div className="space-y-3">
-      {/* ── Changed notice ── */}
+      {/* Changed notice */}
       {payload.status === 'changed' && (
         <div className="flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 px-4 py-3">
           <RefreshCw className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
@@ -404,29 +595,17 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
         </div>
       )}
 
-      {/* ── Manager note ── */}
+      {/* Manager note */}
       {payload.managerNote && <ManagerNoteCard note={payload.managerNote} />}
 
-      {/* ── View toggle + history button ── */}
+      {/* View toggle + history button */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-0.5 bg-muted/40 rounded-lg p-0.5">
-          <Button
-            size="sm"
-            variant={viewMode === 'list' ? 'default' : 'ghost'}
-            className="h-7 gap-1.5 text-xs px-3"
-            onClick={() => setViewMode('list')}
-          >
-            <LayoutList className="h-3.5 w-3.5" />
-            Liste
+          <Button size="sm" variant={viewMode === 'list' ? 'default' : 'ghost'} className="h-7 gap-1.5 text-xs px-3" onClick={() => setViewMode('list')}>
+            <LayoutList className="h-3.5 w-3.5" />Liste
           </Button>
-          <Button
-            size="sm"
-            variant={viewMode === 'calendar' ? 'default' : 'ghost'}
-            className="h-7 gap-1.5 text-xs px-3"
-            onClick={() => setViewMode('calendar')}
-          >
-            <Calendar className="h-3.5 w-3.5" />
-            Kalender
+          <Button size="sm" variant={viewMode === 'calendar' ? 'default' : 'ghost'} className="h-7 gap-1.5 text-xs px-3" onClick={() => setViewMode('calendar')}>
+            <Calendar className="h-3.5 w-3.5" />Kalender
           </Button>
         </div>
         {historyEntries.length > 0 && (
@@ -445,7 +624,7 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
         )}
       </div>
 
-      {/* ── List view ── */}
+      {/* List view */}
       {viewMode === 'list' && (
         <div className="space-y-2">
           {employee.days.map((day) => {
@@ -460,17 +639,13 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
                 key={day.date}
                 className={cn(
                   'rounded-xl border px-4 py-3.5',
-                  isToday
-                    ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700'
-                    : hasChange
-                      ? 'bg-amber-50/40 border-amber-300 dark:bg-amber-950/20 dark:border-amber-700'
-                      : wknd
-                        ? 'bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
-                        : 'bg-card border-border',
+                  isToday   ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700'
+                  : hasChange ? 'bg-amber-50/40 border-amber-300 dark:bg-amber-950/20 dark:border-amber-700'
+                  : wknd    ? 'bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
+                  : 'bg-card border-border',
                   empty && !isToday && !hasChange && 'opacity-45',
                 )}
               >
-                {/* Day header */}
                 <div className="flex items-center justify-between gap-2 mb-2.5">
                   <div className="flex items-baseline gap-2">
                     <span className={cn(
@@ -506,7 +681,6 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
                   </div>
                 </div>
 
-                {/* Previous time (strikethrough) */}
                 {hasChange && hasPrev && (
                   <div className="mb-1.5 flex flex-col gap-0.5">
                     {day.previousFrüh && (
@@ -522,10 +696,8 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
                   </div>
                 )}
 
-                {/* Current content */}
                 <DayContent day={day} />
 
-                {/* Swap button */}
                 {!empty && (
                   <div className="mt-2.5 pt-2 border-t border-border/30">
                     <button
@@ -543,12 +715,12 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
         </div>
       )}
 
-      {/* ── Calendar view ── */}
+      {/* Calendar view */}
       {viewMode === 'calendar' && (
         <CalendarView employee={employee} payload={payload} />
       )}
 
-      {/* ── Feedback ── */}
+      {/* Rückmeldung — all 4 buttons */}
       <div className="rounded-xl border border-border bg-card px-4 py-4 space-y-3">
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Rückmeldung</p>
         {feedbackSent ? (
@@ -558,75 +730,100 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
           </div>
         ) : (
           <>
+            {/* Row 1: Gesehen + Bestätigt */}
             <div className="flex gap-2">
               <button
-                onClick={() => { setFeedbackType('ok'); setFeedbackSent(true); }}
+                onClick={() => {
+                  setFeedback(f => f === 'seen' ? 'none' : 'seen');
+                }}
                 className={cn(
-                  'flex-1 h-10 rounded-xl text-sm font-semibold border transition-all',
-                  feedbackType === 'ok'
-                    ? 'bg-emerald-600 border-emerald-600 text-white'
+                  'flex-1 h-10 rounded-xl text-sm font-semibold border transition-all flex items-center justify-center gap-1.5',
+                  feedback === 'seen' || feedback === 'confirmed'
+                    ? 'bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950/40 dark:border-blue-700 dark:text-blue-300'
                     : 'border-border bg-background hover:bg-muted/60 text-foreground',
                 )}
               >
-                ✓ OK
+                {(feedback === 'seen' || feedback === 'confirmed') && <Check className="h-3.5 w-3.5" />}
+                Gesehen
               </button>
               <button
-                onClick={() => setFeedbackType(f => f === 'cannot' ? null : 'cannot')}
+                onClick={() => {
+                  setFeedback(f => f === 'confirmed' ? 'seen' : 'confirmed');
+                  handleFeedbackSend();
+                }}
                 className={cn(
-                  'flex-1 h-10 rounded-xl text-sm font-semibold border transition-all',
-                  feedbackType === 'cannot'
-                    ? 'bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-400'
+                  'flex-1 h-10 rounded-xl text-sm font-semibold border transition-all flex items-center justify-center gap-1.5',
+                  feedback === 'confirmed'
+                    ? 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700'
                     : 'border-border bg-background hover:bg-muted/60 text-foreground',
                 )}
               >
-                Kann nicht
-              </button>
-              <button
-                onClick={() => setFeedbackType(f => f === 'question' ? null : 'question')}
-                className={cn(
-                  'flex-1 h-10 rounded-xl text-sm font-semibold border transition-all',
-                  feedbackType === 'question'
-                    ? 'bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950/30 dark:border-blue-700 dark:text-blue-400'
-                    : 'border-border bg-background hover:bg-muted/60 text-foreground',
-                )}
-              >
-                Rückfrage
+                {feedback === 'confirmed' && <Check className="h-3.5 w-3.5" />}
+                Bestätigt
               </button>
             </div>
-            {feedbackType === 'cannot' && (
+
+            {/* Row 2: Kann nicht + Rückfrage */}
+            {!feedbackSent && (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setFeedback(f => f === 'cannot' ? 'none' : 'cannot')}
+                  className={cn(
+                    'flex-1 h-10 rounded-xl text-sm font-semibold border transition-all',
+                    feedback === 'cannot'
+                      ? 'bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-400'
+                      : 'border-border bg-background hover:bg-muted/60 text-foreground',
+                  )}
+                >
+                  Kann nicht
+                </button>
+                <button
+                  onClick={() => setFeedback(f => f === 'question' ? 'none' : 'question')}
+                  className={cn(
+                    'flex-1 h-10 rounded-xl text-sm font-semibold border transition-all',
+                    feedback === 'question'
+                      ? 'bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950/30 dark:border-blue-700 dark:text-blue-400'
+                      : 'border-border bg-background hover:bg-muted/60 text-foreground',
+                  )}
+                >
+                  Rückfrage
+                </button>
+              </div>
+            )}
+
+            {feedback === 'cannot' && (
               <div className="space-y-2">
                 <textarea
-                  value={feedbackReason}
-                  onChange={e => setFeedbackReason(e.target.value)}
+                  value={cannotReason}
+                  onChange={e => setCannotReason(e.target.value)}
                   placeholder="Grund (optional) …"
                   rows={3}
                   className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
                 <button
-                  onClick={() => setFeedbackSent(true)}
+                  onClick={handleFeedbackSend}
                   className="w-full h-9 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5"
                 >
-                  <Send className="h-3.5 w-3.5" />
-                  Senden
+                  <Send className="h-3.5 w-3.5" />Senden
                 </button>
               </div>
             )}
-            {feedbackType === 'question' && (
+
+            {feedback === 'question' && (
               <div className="space-y-2">
                 <textarea
-                  value={feedbackNote}
-                  onChange={e => setFeedbackNote(e.target.value)}
+                  value={questionText}
+                  onChange={e => setQuestionText(e.target.value)}
                   placeholder="Deine Frage an die Leitung …"
                   rows={3}
                   className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
                 <button
-                  onClick={() => setFeedbackSent(true)}
-                  disabled={!feedbackNote.trim()}
+                  onClick={handleFeedbackSend}
+                  disabled={!questionText.trim()}
                   className="w-full h-9 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
-                  <Send className="h-3.5 w-3.5" />
-                  Senden
+                  <Send className="h-3.5 w-3.5" />Senden
                 </button>
               </div>
             )}
@@ -634,7 +831,10 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
         )}
       </div>
 
-      {/* ── Modals ── */}
+      {/* Wunsch & Hinweis */}
+      <WunschHinweisSection />
+
+      {/* Modals */}
       {showHistory && (
         <ChangeHistoryModal entries={historyEntries} onClose={() => setShowHistory(false)} />
       )}
@@ -649,7 +849,7 @@ function PersonalView({ payload }: { payload: PublishedSchedulePayload }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Employee accordion (mobile by-employee in dept view)
+// Employee accordion
 // ══════════════════════════════════════════════════════════════════════════════
 
 function EmployeeAccordion({ emp }: { emp: PublicEmployee }) {
@@ -675,7 +875,6 @@ function EmployeeAccordion({ emp }: { emp: PublicEmployee }) {
             : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
         </div>
       </button>
-
       {open && (
         <div className="border-t border-border/50 divide-y divide-border/30">
           {emp.days.map((day) => {
@@ -697,7 +896,7 @@ function EmployeeAccordion({ emp }: { emp: PublicEmployee }) {
                   <span className={cn(
                     'text-[10px] font-bold uppercase tracking-widest',
                     isToday ? 'text-blue-600 dark:text-blue-400'
-                    : wknd ? 'text-amber-600 dark:text-amber-400'
+                    : wknd  ? 'text-amber-600 dark:text-amber-400'
                     : 'text-muted-foreground/60',
                   )}>
                     {format(date, 'EE', { locale: de })}
@@ -719,155 +918,50 @@ function EmployeeAccordion({ emp }: { emp: PublicEmployee }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Department View
+// Department View — 3 tabs: Mitarbeiter | Nach Tag | Woche
 // ══════════════════════════════════════════════════════════════════════════════
 
-type DeptViewMode = 'byEmployee' | 'byDay';
+type DeptViewMode = 'byEmployee' | 'byDay' | 'week';
 
 function DepartmentView({ payload }: { payload: PublishedSchedulePayload }) {
-  const [mobileMode, setMobileMode] = useState<DeptViewMode>('byEmployee');
-  const employees = payload.employees ?? [];
+  const [viewMode, setViewMode] = useState<DeptViewMode>('byEmployee');
+  const [empSearch, setEmpSearch] = useState('');
 
-  const showService = payload.department === 'all' || payload.department === 'service';
-  const showKüche   = payload.department === 'all' || payload.department === 'küche';
+  const allEmployees = payload.employees ?? [];
+  const showService  = payload.department === 'all' || payload.department === 'service';
+  const showKüche    = payload.department === 'all' || payload.department === 'küche';
 
-  const serviceEmps = employees.filter(e => e.department === 'service');
-  const kücheEmps   = employees.filter(e => e.department === 'küche');
+  const q = empSearch.trim().toLowerCase();
+  const filteredAll      = q ? allEmployees.filter(e => e.name.toLowerCase().includes(q)) : allEmployees;
+  const filteredService  = filteredAll.filter(e => e.department === 'service');
+  const filteredKüche    = filteredAll.filter(e => e.department === 'küche');
 
-  const allDays = employees[0]?.days ?? [];
+  const refDays = allEmployees[0]?.days ?? [];
 
-  // ── Desktop table ──────────────────────────────────────────────────────────
-  const DesktopTable = ({
-    emps, label, dotColor,
-  }: { emps: PublicEmployee[]; label: string; dotColor: string }) => {
-    if (emps.length === 0) return null;
-    const dates = allDays.map(d => parseISO(d.date));
-    return (
-      <div className="mb-6">
-        <div className="flex items-center gap-2 mb-2 px-1">
-          <span className={cn('w-2 h-2 rounded-full shrink-0', dotColor)} />
-          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{label}</span>
-        </div>
-        <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="bg-muted/40">
-                <th className="text-left py-2 px-3 w-36 text-xs font-semibold text-muted-foreground border-b border-border">
-                  Mitarbeiter
-                </th>
-                {dates.map((date, i) => {
-                  const wknd    = isWeekendDate(allDays[i].date);
-                  const isToday = isTodayDate(allDays[i].date);
-                  return (
-                    <th key={i} className={cn(
-                      'text-center py-2 px-1 border-b border-border min-w-[90px]',
-                      isToday ? 'bg-blue-50/60 dark:bg-blue-950/20'
-                      : wknd && 'bg-amber-50/60 dark:bg-amber-950/20',
-                    )}>
-                      <div className={cn(
-                        'text-[10px] font-bold uppercase tracking-wide',
-                        isToday ? 'text-blue-600 dark:text-blue-400'
-                        : wknd ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-muted-foreground',
-                      )}>
-                        {format(date, 'EE', { locale: de })}
-                      </div>
-                      <div className={cn(
-                        'text-sm font-bold',
-                        isToday ? 'text-blue-800 dark:text-blue-200'
-                        : wknd ? 'text-amber-700 dark:text-amber-300'
-                        : 'text-foreground',
-                      )}>
-                        {format(date, 'd')}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground/60">
-                        {format(date, 'MMM', { locale: de })}
-                      </div>
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {emps.map((emp, ei) => (
-                <tr key={emp.id} className={cn(
-                  'border-t border-border/40',
-                  ei % 2 === 0 ? 'bg-background' : 'bg-muted/20',
-                )}>
-                  <td className="py-2.5 px-3 font-medium text-sm whitespace-nowrap">{emp.name}</td>
-                  {emp.days.map((day, di) => {
-                    const wknd    = isWeekendDate(day.date);
-                    const isToday = isTodayDate(day.date);
-                    const empty   = isEmptyDay(day);
-                    return (
-                      <td key={di} className={cn(
-                        'py-2 px-1 text-center align-middle',
-                        isToday ? 'bg-blue-50/30 dark:bg-blue-950/10'
-                        : wknd && 'bg-amber-50/20 dark:bg-amber-950/10',
-                      )}>
-                        {empty ? (
-                          <span className="text-muted-foreground/25 text-xs">–</span>
-                        ) : (
-                          <div className="flex flex-col items-center gap-0.5">
-                            <DayContent day={day} compact />
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
-  // ── Mobile by-employee ─────────────────────────────────────────────────────
-  const MobileByEmployee = ({
-    emps, label, dotColor,
-  }: { emps: PublicEmployee[]; label: string; dotColor: string }) => {
-    if (emps.length === 0) return null;
-    return (
-      <div className="mb-5">
-        <div className="flex items-center gap-2 mb-3">
-          <span className={cn('w-2 h-2 rounded-full', dotColor)} />
-          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{label}</span>
-        </div>
-        <div className="space-y-3">
-          {emps.map(emp => <EmployeeAccordion key={emp.id} emp={emp} />)}
-        </div>
-      </div>
-    );
-  };
-
-  // ── Mobile by-day ──────────────────────────────────────────────────────────
-  const MobileByDay = () => (
+  // ── By-day view ─────────────────────────────────────────────────────────────
+  const ByDayView = () => (
     <div className="space-y-3">
-      {allDays.map((refDay, idx) => {
-        const date    = parseISO(refDay.date);
-        const wknd    = isWeekendDate(refDay.date);
-        const isToday = isTodayDate(refDay.date);
-        const activeEmps = employees.filter(emp => {
+      {refDays.map((refDay, idx) => {
+        const date       = parseISO(refDay.date);
+        const wknd       = isWeekendDate(refDay.date);
+        const isToday    = isTodayDate(refDay.date);
+        const activeEmps = filteredAll.filter(emp => {
           const d = emp.days[idx];
           return d && !isEmptyDay(d);
         });
         return (
           <div key={refDay.date} className={cn(
             'rounded-xl border px-4 py-3.5',
-            isToday
-              ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700'
-              : wknd
-                ? 'bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
-                : 'bg-card border-border',
+            isToday ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700'
+            : wknd  ? 'bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
+            : 'bg-card border-border',
           )}>
             <div className="flex items-center justify-between gap-2 mb-3">
               <div className="flex items-baseline gap-2">
                 <span className={cn(
                   'text-[11px] font-bold uppercase tracking-widest',
                   isToday ? 'text-blue-600 dark:text-blue-400'
-                  : wknd ? 'text-amber-600 dark:text-amber-400'
+                  : wknd  ? 'text-amber-600 dark:text-amber-400'
                   : 'text-muted-foreground/60',
                 )}>
                   {format(date, 'EE', { locale: de })}
@@ -875,7 +969,7 @@ function DepartmentView({ payload }: { payload: PublishedSchedulePayload }) {
                 <span className={cn(
                   'text-[15px] font-semibold',
                   isToday ? 'text-blue-800 dark:text-blue-200'
-                  : wknd ? 'text-amber-800 dark:text-amber-200'
+                  : wknd  ? 'text-amber-800 dark:text-amber-200'
                   : 'text-foreground',
                 )}>
                   {format(date, 'd. MMMM', { locale: de })}
@@ -910,46 +1004,119 @@ function DepartmentView({ payload }: { payload: PublishedSchedulePayload }) {
     </div>
   );
 
+  // ── By-employee section ──────────────────────────────────────────────────────
+  const ByEmployeeSection = ({
+    emps, label, dotColor,
+  }: { emps: PublicEmployee[]; label: string; dotColor: string }) => {
+    if (emps.length === 0) return null;
+    return (
+      <div className="mb-5">
+        <div className="flex items-center gap-2 mb-3">
+          <span className={cn('w-2 h-2 rounded-full', dotColor)} />
+          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{label}</span>
+        </div>
+        <div className="space-y-3">
+          {emps.map(emp => <EmployeeAccordion key={emp.id} emp={emp} />)}
+        </div>
+      </div>
+    );
+  };
+
+  const noResults = filteredAll.length === 0 && q.length > 0;
+
   return (
     <div>
-      {/* Mobile toggle */}
-      <div className="flex sm:hidden items-center gap-2 mb-5">
-        <Button
-          size="sm"
-          variant={mobileMode === 'byEmployee' ? 'default' : 'outline'}
-          className="flex-1 h-9 text-sm"
-          onClick={() => setMobileMode('byEmployee')}
+      {/* ── Tab bar (all screen sizes) ──────────────────────────────────────── */}
+      <div className="flex items-center gap-1.5 mb-4 bg-muted/30 rounded-xl p-1">
+        <button
+          onClick={() => setViewMode('byEmployee')}
+          className={cn(
+            'flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg text-sm font-semibold transition-all',
+            viewMode === 'byEmployee'
+              ? 'bg-background text-foreground shadow-sm border border-border/50'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
         >
-          <User className="h-3.5 w-3.5 mr-1.5" />
-          Mitarbeiter
-        </Button>
-        <Button
-          size="sm"
-          variant={mobileMode === 'byDay' ? 'default' : 'outline'}
-          className="flex-1 h-9 text-sm"
-          onClick={() => setMobileMode('byDay')}
+          <User className="h-3.5 w-3.5" />
+          <span className="hidden xs:inline">Mitarbeiter</span>
+          <span className="xs:hidden">MA</span>
+        </button>
+        <button
+          onClick={() => setViewMode('byDay')}
+          className={cn(
+            'flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg text-sm font-semibold transition-all',
+            viewMode === 'byDay'
+              ? 'bg-background text-foreground shadow-sm border border-border/50'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
         >
-          <Calendar className="h-3.5 w-3.5 mr-1.5" />
-          Nach Tag
-        </Button>
+          <Calendar className="h-3.5 w-3.5" />
+          <span className="hidden xs:inline">Nach Tag</span>
+          <span className="xs:hidden">Tag</span>
+        </button>
+        <button
+          onClick={() => setViewMode('week')}
+          className={cn(
+            'flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg text-sm font-semibold transition-all',
+            viewMode === 'week'
+              ? 'bg-background text-foreground shadow-sm border border-border/50'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          <Grid3x3 className="h-3.5 w-3.5" />
+          <span>Woche</span>
+        </button>
       </div>
 
-      {/* Desktop */}
-      <div className="hidden sm:block">
-        {showService && <DesktopTable emps={serviceEmps} label="Service" dotColor="bg-blue-500" />}
-        {showKüche   && <DesktopTable emps={kücheEmps}   label="Küche"   dotColor="bg-orange-500" />}
-      </div>
+      {/* ── Search (not in byDay) ─────────────────────────────────────────── */}
+      {viewMode !== 'byDay' && (
+        <EmpSearchBar value={empSearch} onChange={setEmpSearch} />
+      )}
 
-      {/* Mobile — by employee */}
-      <div className={cn('sm:hidden', mobileMode !== 'byEmployee' && 'hidden')}>
-        {showService && <MobileByEmployee emps={serviceEmps} label="Service" dotColor="bg-blue-500" />}
-        {showKüche   && <MobileByEmployee emps={kücheEmps}   label="Küche"   dotColor="bg-orange-500" />}
-      </div>
+      {/* ── No results ───────────────────────────────────────────────────── */}
+      {noResults && (
+        <p className="text-sm text-muted-foreground italic text-center py-6">
+          Kein Mitarbeitender mit „{empSearch}" gefunden.
+        </p>
+      )}
 
-      {/* Mobile — by day */}
-      <div className={cn('sm:hidden', mobileMode !== 'byDay' && 'hidden')}>
-        <MobileByDay />
-      </div>
+      {/* ── Mitarbeiter view ─────────────────────────────────────────────── */}
+      {viewMode === 'byEmployee' && !noResults && (
+        <>
+          {showService && <ByEmployeeSection emps={filteredService} label="Service" dotColor="bg-blue-500" />}
+          {showKüche   && <ByEmployeeSection emps={filteredKüche}   label="Küche"   dotColor="bg-orange-500" />}
+        </>
+      )}
+
+      {/* ── Nach Tag view ─────────────────────────────────────────────────── */}
+      {viewMode === 'byDay' && <ByDayView />}
+
+      {/* ── Woche (grid) view ─────────────────────────────────────────────── */}
+      {viewMode === 'week' && !noResults && (
+        <>
+          {showService && filteredService.length > 0 && (
+            <div className="mb-5">
+              <div className="flex items-center gap-2 mb-2 px-1">
+                <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Service</span>
+              </div>
+              <WeekGridView emps={filteredService} refDays={refDays} />
+            </div>
+          )}
+          {showKüche && filteredKüche.length > 0 && (
+            <div className="mb-5">
+              <div className="flex items-center gap-2 mb-2 px-1">
+                <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Küche</span>
+              </div>
+              <WeekGridView emps={filteredKüche} refDays={refDays} />
+            </div>
+          )}
+          {!showService && !showKüche && (
+            <WeekGridView emps={filteredAll} refDays={refDays} />
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -1003,64 +1170,44 @@ const StaffSchedulePage = () => {
   const [refetchKey, setRefetchKey] = useState(0);
 
   const [acknowledged, setAcknowledged] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
+  const [confirmed, setConfirmed]       = useState(false);
   const [homescreenDismissed, setHomescreenDismissed] = useState(() => {
     try { return !!localStorage.getItem(`hs-hint-${token ?? ''}`); } catch { return false; }
   });
 
   const fetchPayload = useCallback(async () => {
     if (!token) {
-      console.warn('[staff-page] no token in URL — aborting');
       setLoading(false);
       setNotFound(true);
       return;
     }
-
     setLoading(true);
     setNotFound(false);
 
     const kvKey = `published-schedule:${token}`;
-    console.log('[staff-page] ── FETCH START ──────────────────────');
-    console.log('[staff-page] token from URL =', token);
-    console.log('[staff-page] kvKey          =', kvKey);
+    console.log('[staff-page] fetch token=', token, 'key=', kvKey);
 
     try {
-      const { data, error, status, statusText } = await (supabase as any)
+      const { data, error } = await (supabase as any)
         .from('app_settings')
         .select('key, value')
         .eq('key', kvKey)
         .maybeSingle();
 
-      console.log('[staff-page] maybeSingle response → status=', status, statusText);
-      console.log('[staff-page] data  =', data);
-      console.log('[staff-page] error =', error);
-
       if (error) {
-        console.error('[staff-page] Supabase error:', error.message, `(code=${error.code})`);
+        console.error('[staff-page] supabase error:', error.message);
+        setNotFound(true);
+        setLoading(false);
+        return;
+      }
+      if (!data?.value) {
+        console.warn('[staff-page] not found for key=', kvKey);
         setNotFound(true);
         setLoading(false);
         return;
       }
 
-      if (!data) {
-        console.warn('[staff-page] data is null — row not found in app_settings for key=', kvKey);
-        console.warn('[staff-page] token from URL was:', JSON.stringify(token));
-        setNotFound(true);
-        setLoading(false);
-        return;
-      }
-
-      if (!data.value) {
-        console.warn('[staff-page] row found but value is empty — key=', data.key);
-        setNotFound(true);
-        setLoading(false);
-        return;
-      }
-
-      console.log('[staff-page] value.token =', (data.value as any)?.token);
-      console.log('[staff-page] key in DB   =', data.key);
-      console.log('[staff-page] key match   =', data.key === kvKey);
-      console.log('[staff-page] ── FETCH OK ✓ ───────────────────────');
+      console.log('[staff-page] loaded ✓ employees:', (data.value as any)?.employees?.length);
       setPayload(data.value as PublishedSchedulePayload);
       setNotFound(false);
       setLoading(false);
@@ -1098,10 +1245,7 @@ const StaffSchedulePage = () => {
               Der Plan wird möglicherweise gerade veröffentlicht.
             </p>
           </div>
-          <Button
-            onClick={() => setRefetchKey(k => k + 1)}
-            className="w-full gap-2"
-          >
+          <Button onClick={() => setRefetchKey(k => k + 1)} className="w-full gap-2">
             <RefreshCw className="h-4 w-4" />
             Erneut versuchen
           </Button>
@@ -1137,6 +1281,7 @@ const StaffSchedulePage = () => {
       {/* ── Sticky header ─────────────────────────────────────────────────── */}
       <header className="bg-card border-b border-border sticky top-0 z-20">
         <div className="max-w-3xl mx-auto px-4 py-3">
+          {/* Row 1: restaurant + title + badges */}
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 mb-0.5">
@@ -1150,15 +1295,9 @@ const StaffSchedulePage = () => {
                   ? (payload.employeeName ?? 'Dienstplan')
                   : `Dienstplan ${deptLabel}`}
               </h1>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1">
-                <div className="flex items-center gap-1.5">
-                  <Calendar className="h-3 w-3 text-muted-foreground shrink-0" />
-                  <span className="text-xs text-muted-foreground">{payload.weekLabel}</span>
-                </div>
-                <div className="flex items-center gap-1 text-muted-foreground/50">
-                  <RefreshCw className="h-2.5 w-2.5" />
-                  <span className="text-[10px]">Aktualisiert {lastUpdatedLabel}</span>
-                </div>
+              <div className="flex items-center gap-1 text-muted-foreground/50 mt-0.5">
+                <RefreshCw className="h-2.5 w-2.5 shrink-0" />
+                <span className="text-[10px]">Aktualisiert {lastUpdatedLabel}</span>
               </div>
             </div>
             <div className="flex flex-col items-end gap-1.5 shrink-0">
@@ -1183,6 +1322,33 @@ const StaffSchedulePage = () => {
               )}
             </div>
           </div>
+
+          {/* Row 2: Week navigation */}
+          <div className="flex items-center justify-center gap-3 mt-2.5 pt-2 border-t border-border/30">
+            <button
+              disabled
+              title="Kein älterer Dienstplan verfügbar"
+              className="h-7 w-7 flex items-center justify-center rounded-lg border border-border/40 text-muted-foreground/30 cursor-not-allowed"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <div className="flex items-center gap-2">
+              <Calendar className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="text-sm font-semibold text-foreground">{payload.weekLabel}</span>
+              {payload.kw && payload.period === 'week' && (
+                <span className="text-[10px] text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded-md">
+                  KW {payload.kw}
+                </span>
+              )}
+            </div>
+            <button
+              disabled
+              title="Kein neuerer Dienstplan verfügbar"
+              className="h-7 w-7 flex items-center justify-center rounded-lg border border-border/40 text-muted-foreground/30 cursor-not-allowed"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1191,7 +1357,7 @@ const StaffSchedulePage = () => {
         <div className="bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800 px-4 py-2 flex items-center gap-2.5">
           <Home className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
           <span className="text-xs text-amber-700 dark:text-amber-300 flex-1">
-            Tipp: Seite als Lesezeichen oder zum Home-Bildschirm hinzufügen für schnellen Zugriff.
+            Tipp: Seite zum Home-Bildschirm hinzufügen für schnellen Zugriff — der Link bleibt immer aktuell.
           </span>
           <button
             onClick={dismissHomescreen}
