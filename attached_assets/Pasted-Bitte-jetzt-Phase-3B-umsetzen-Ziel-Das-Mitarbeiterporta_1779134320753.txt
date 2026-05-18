@@ -1,0 +1,186 @@
+Bitte jetzt Phase 3B umsetzen.
+
+Ziel:
+Das Mitarbeiterportal soll sich wie eine echte moderne Mitarbeiter-App anfühlen.
+
+Wichtig:
+Mobile First.
+iPhone Safari priorisieren.
+Keine Admin-/Kostenlogik anfassen.
+Keine bestehenden Publish- oder PDF-Funktionen zerstören.
+
+========================
+1. Header modernisieren
+========================
+
+Der aktuelle Header ist funktional, aber noch zu technisch.
+
+Bitte modernisieren:
+
+- Restaurantlogo grösser
+- KW und Zeitraum kompakter
+- Badge "Nur Ansicht" kleiner und moderner
+- UpdatedAt eleganter darstellen:
+  "Aktualisiert vor 12 Min."
+  statt statischem Timestamp
+
+Sticky Header auf Mobile:
+Header bleibt beim Scrollen sichtbar.
+
+Tabs ebenfalls sticky:
+Mitarbeiter | Nach Tag | Woche
+
+========================
+2. Mitarbeiterkarten verbessern
+========================
+
+Mitarbeiteransicht optisch ruhiger machen.
+
+Verbesserungen:
+
+- mehr Abstand zwischen Mitarbeitenden
+- weichere Karten
+- leichte Schatten
+- bessere Typografie
+- Tagesnamen kleiner
+- Uhrzeiten stärker hervorgehoben
+
+Frei:
+helle graue Badge
+
+Ferien:
+blau
+
+Krank:
+rot
+
+Arbeit:
+grün/emerald
+
+Geteilte Dienste:
+optisch zusammengehörend darstellen
+
+========================
+3. Wochenansicht professionell machen
+========================
+
+Aktuelle Wochenansicht ist funktional,
+aber noch zu tabellarisch.
+
+Bitte verbessern:
+
+- weichere Gridlinien
+- sticky Kopfzeile
+- sticky Mitarbeiterspalte
+- Tagesheader schöner
+- Heute hervorheben
+- Wochenende leicht einfärben
+
+Zellen:
+abgerundete Chips wie Web-App.
+
+Nicht mehr reine Tabellenoptik.
+
+========================
+4. Persönlicher Plan = Fokusmodus
+========================
+
+Wenn persönlicher Link:
+
+oben grosse Karte:
+
+"Deine nächste Schicht"
+
+mit:
+Datum
+Startzeit
+Endzeit
+Abteilung
+
+Wenn heute frei:
+"Nächste Schicht am Freitag"
+
+Optional:
+Countdown:
+"In 3 Stunden"
+
+========================
+5. Änderungen besser hervorheben
+========================
+
+Wenn Plan geändert wurde:
+
+- orange Border
+- kleines Badge "Neu"
+- alte Zeit durchgestrichen
+- neue Zeit hervorgehoben
+
+Zusätzlich:
+"Zuletzt geändert vor X Stunden"
+
+========================
+6. Push-/App-Feeling vorbereiten
+========================
+
+Bitte Infrastruktur vorbereiten für spätere PWA.
+
+- manifest.json vorbereiten
+- apple mobile meta tags
+- theme-color
+- standalone mode
+- splash background
+
+Noch keine echte PWA nötig.
+Nur vorbereiten.
+
+========================
+7. Homebildschirm Verhalten
+========================
+
+Wenn via Homescreen geöffnet:
+
+- keine Browser-artige Darstellung
+- App-artiger Look
+- weniger weisse Ränder oben/unten
+
+========================
+8. Performance
+========================
+
+Wichtig bei vielen Mitarbeitenden:
+
+- unnötige Re-renders vermeiden
+- Wochenansicht memoizen
+- Mitarbeiterfilter debounce 150ms
+- mobile scrolling smooth halten
+
+========================
+9. Publish Architektur vorbereiten
+========================
+
+Bitte jetzt bereits sauber strukturieren:
+
+published schedule payload versionieren:
+
+version: 1
+
+später:
+version 2
+version 3
+
+ohne Breaking Changes.
+
+========================
+10. Vorbereitung Schichttausch
+========================
+
+Noch NICHT aktiv.
+
+Aber Datenmodell vorbereiten:
+
+swapRequests: []
+
+pro Mitarbeiter / Tag / Schicht.
+
+Noch keine UI aktivieren.
+Nur Architektur vorbereiten.

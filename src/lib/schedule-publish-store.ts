@@ -24,11 +24,24 @@ export interface ChangeHistoryEntry {
   description: string;
 }
 
+/** Prepared for future swap-request feature — not yet active in UI */
+export interface SwapRequest {
+  id: string;
+  employeeId: string;
+  date: string;
+  shift: 'früh' | 'spät';
+  requestedAt: string;
+  status: 'pending' | 'accepted' | 'declined';
+  note?: string;
+}
+
 export interface PublicEmployee {
   id: string;
   name: string;
   department: 'service' | 'küche';
   days: PublicDayEntry[];
+  /** Reserved for future swap-request feature */
+  swapRequests?: SwapRequest[];
 }
 
 export type PublishType = 'department' | 'personal';
@@ -36,6 +49,8 @@ export type PublishDept = 'service' | 'küche' | 'all';
 export type PublishPeriod = 'week' | 'month';
 
 export interface PublishedSchedulePayload {
+  /** Payload schema version — increment when making breaking changes */
+  version?: number;
   type: PublishType;
   period: PublishPeriod;
   restaurant: string;
