@@ -5233,7 +5233,7 @@ const SchedulePlanner = () => {
             {/* ── Aktiver Link ─────────────────────────────────────────── */}
             {publishToken && (() => {
               try {
-              const url = `${window.location.origin}/staff-schedule/${publishToken}`;
+              const url = `${window.location.origin}/dienstplan/${publishToken}`;
               const selectedEmp = employees.find(e => e.id === publishEmpId);
               const empName = selectedEmp ? getEmployeeDisplayName(selectedEmp) : null;
               const _days = displayDays.length > 0 ? displayDays : [currentMonth];
@@ -5271,7 +5271,6 @@ const SchedulePlanner = () => {
                     </Button>
                   </div>
                   <div className="flex items-center gap-2">
-                    {!SAFE_PUBLISH_MODE && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -5281,7 +5280,6 @@ const SchedulePlanner = () => {
                       <MessageCircle className="h-3 w-3" />
                       WhatsApp
                     </Button>
-                    )}
                     <Button
                       size="sm"
                       variant="ghost"
