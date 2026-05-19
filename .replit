@@ -67,6 +67,7 @@ VITE_SUPABASE_PROJECT_ID = "ajflrvuzmkfspsxkdyfe"
 VITE_PUBLIC_URL = "https://staff-cost-controlzip.replit.app"
 
 [deployment]
-deploymentTarget = "static"
+deploymentTarget = "autoscale"
 build = ["npm", "run", "build"]
 publicDir = "dist"
+run = ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "8080"]
