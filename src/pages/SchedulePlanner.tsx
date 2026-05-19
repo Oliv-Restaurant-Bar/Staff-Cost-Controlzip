@@ -25,7 +25,8 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle, ClipboardPaste, Wand2, QrCode, Smartphone, Loader2 } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle, ClipboardPaste, Wand2, QrCode, Smartphone, Loader2, Bell, RefreshCw } from 'lucide-react';
+import { StaffFeedbackEntry, loadStaffFeedback, updateFeedbackStatus } from '@/lib/staff-feedback-store';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -323,6 +324,13 @@ const SchedulePlanner = () => {
   const [diffLoading, setDiffLoading]                         = useState(false);
   const [diffFilter, setDiffFilter]                           = useState<'all' | 'service' | 'küche'>('all');
   const [notifyChannels, setNotifyChannels]                   = useState({ whatsapp: false, sms: false, push: false, email: false });
+  // ── Feedback Inbox ────────────────────────────────────────────────────────
+  const [feedbackInboxOpen, setFeedbackInboxOpen]             = useState(false);
+  const [feedbackItems, setFeedbackItems]                     = useState<StaffFeedbackEntry[]>([]);
+  const [feedbackKeys, setFeedbackKeys]                       = useState<Record<string, string>>({});
+  const [feedbackLoading, setFeedbackLoading]                 = useState(false);
+  const [feedbackError, setFeedbackError]                     = useState<string | null>(null);
+  const [feedbackStatusFilter, setFeedbackStatusFilter]       = useState<'all' | 'new' | 'in_progress' | 'done'>('all');
   const [lastGlobalError, setLastGlobalError]                 = useState<string | null>(null);
 
   // ── Sortierungsmodus & Zellfarben ────────────────────────────────────────
@@ -2701,6 +2709,66 @@ const SchedulePlanner = () => {
   const publishDiffAffectedEmps = useMemo(() =>
     new Set(publishDiffAll.map(e => e.empId)).size, [publishDiffAll]);
 
+  // ── Feedback Inbox — load + computed ────────────────────────────────────
+  const loadFeedbackItems = useCallback(async () => {
+    if (!tenantId) return;
+    setFeedbackLoading(true);
+    setFeedbackError(null);
+    try {
+      const { entries, keys } = await loadStaffFeedback(tenantId);
+      setFeedbackItems(entries);
+      setFeedbackKeys(keys);
+    } catch {
+      setFeedbackError('Rückmeldungen konnten nicht geladen werden.');
+    } finally {
+      setFeedbackLoading(false);
+    }
+  }, [tenantId]);
+
+  // Initial load on mount
+  useEffect(() => { void loadFeedbackItems(); }, [loadFeedbackItems]);
+
+  // Refresh every time the inbox opens
+  useEffect(() => {
+    if (feedbackInboxOpen) void loadFeedbackItems();
+  }, [feedbackInboxOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const feedbackNewCount = useMemo(
+    () => feedbackItems.filter(f => f.status === 'new').length,
+    [feedbackItems],
+  );
+
+  const feedbackFiltered = useMemo(() => {
+    if (feedbackStatusFilter === 'all') return feedbackItems;
+    return feedbackItems.filter(f => f.status === feedbackStatusFilter);
+  }, [feedbackItems, feedbackStatusFilter]);
+
+  /** Map from employeeName → StaffFeedbackEntry[] for cell indicators */
+  const feedbackByEmpName = useMemo(() => {
+    const map = new Map<string, StaffFeedbackEntry[]>();
+    for (const f of feedbackItems) {
+      if (f.date === 'Allgemein') continue;
+      const list = map.get(f.employeeName) ?? [];
+      list.push(f);
+      map.set(f.employeeName, list);
+    }
+    return map;
+  }, [feedbackItems]);
+
+  const handleFeedbackStatusChange = async (
+    entry: StaffFeedbackEntry,
+    newStatus: StaffFeedbackEntry['status'],
+  ) => {
+    const key = feedbackKeys[entry.id];
+    if (!key) return;
+    try {
+      await updateFeedbackStatus(key, entry, newStatus);
+      setFeedbackItems(prev =>
+        prev.map(f => f.id === entry.id ? { ...f, status: newStatus } : f),
+      );
+    } catch { /* silently ignore — user sees no change */ }
+  };
+
   // Kurz-Label für den Card-Header
   const periodShortLabel = useMemo(() => {
     if (calendarView === 'month') return format(currentMonth, 'MMM yyyy', { locale: de });
@@ -3154,6 +3222,25 @@ const SchedulePlanner = () => {
                 <span className="hidden sm:inline">
                   {publishStatus === 'published' ? 'Veröffentlicht' : publishStatus === 'changed' ? 'Geändert' : 'Teilen'}
                 </span>
+              </Button>
+              {/* ── Feedback Inbox Button ───────────────────────── */}
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "gap-1.5 h-8 relative",
+                  feedbackNewCount > 0 && "border-blue-400 text-blue-700 hover:bg-blue-50 dark:border-blue-600 dark:text-blue-400 dark:hover:bg-blue-950/20",
+                )}
+                onClick={() => setFeedbackInboxOpen(true)}
+                title="Mitarbeiter-Rückmeldungen"
+              >
+                <Bell className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Rückmeldungen</span>
+                {feedbackNewCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 h-4 min-w-[16px] px-0.5 rounded-full bg-blue-500 text-white text-[9px] font-bold flex items-center justify-center">
+                    {feedbackNewCount > 9 ? '9+' : feedbackNewCount}
+                  </span>
+                )}
               </Button>
               <Link to="/settings">
                 <Button variant="ghost" size="icon" className="h-8 w-8" title="Einstellungen">
@@ -5766,6 +5853,183 @@ const SchedulePlanner = () => {
         </DialogContent>
       </Dialog>
       </ErrorBoundary>
+
+      {/* ── Feedback Inbox Dialog ────────────────────────────────────── */}
+      <Dialog open={feedbackInboxOpen} onOpenChange={setFeedbackInboxOpen}>
+        <DialogContent className="sm:max-w-[560px] max-h-[85vh] flex flex-col p-0 gap-0">
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-border/60 shrink-0">
+            <div className="flex items-center gap-2.5">
+              <Bell className="h-4 w-4 text-primary" />
+              <div>
+                <h2 className="text-base font-bold text-foreground leading-tight">
+                  Rückmeldungen
+                  {feedbackNewCount > 0 && (
+                    <span className="ml-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300">
+                      {feedbackNewCount} neu
+                    </span>
+                  )}
+                </h2>
+                <p className="text-[11px] text-muted-foreground">Wünsche und Hinweise vom Mitarbeiterportal</p>
+              </div>
+            </div>
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => void loadFeedbackItems()}
+              disabled={feedbackLoading}
+              className="h-7 gap-1.5 text-xs"
+            >
+              {feedbackLoading
+                ? <Loader2 className="h-3 w-3 animate-spin" />
+                : <RefreshCw className="h-3 w-3" />}
+              Aktualisieren
+            </Button>
+          </div>
+
+          {/* Filter pills */}
+          <div className="px-5 py-2.5 border-b border-border/40 flex items-center gap-1.5 shrink-0 flex-wrap">
+            {([
+              { id: 'all',         label: `Alle (${feedbackItems.length})` },
+              { id: 'new',         label: `Neu (${feedbackItems.filter(f => f.status === 'new').length})` },
+              { id: 'in_progress', label: 'In Bearbeitung' },
+              { id: 'done',        label: 'Erledigt' },
+            ] as const).map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setFeedbackStatusFilter(id)}
+                className={cn(
+                  'px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors',
+                  feedbackStatusFilter === id
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/70',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Body */}
+          <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2.5 min-h-0">
+            {feedbackError && (
+              <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive flex items-center justify-between gap-3">
+                <span>{feedbackError}</span>
+                <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => void loadFeedbackItems()}>
+                  Erneut versuchen
+                </Button>
+              </div>
+            )}
+            {!feedbackLoading && !feedbackError && feedbackFiltered.length === 0 && (
+              <div className="text-center py-10 space-y-2">
+                <MessageCircle className="h-8 w-8 text-muted-foreground/25 mx-auto" />
+                <p className="text-sm text-muted-foreground/60">
+                  {feedbackStatusFilter === 'all'
+                    ? 'Noch keine Rückmeldungen.'
+                    : 'Keine Einträge in dieser Kategorie.'}
+                </p>
+              </div>
+            )}
+            {feedbackFiltered.map(entry => {
+              const statusLabel =
+                entry.status === 'new'           ? 'Neu'
+                : entry.status === 'in_progress' ? 'In Bearbeitung'
+                : 'Erledigt';
+              const statusCls =
+                entry.status === 'new'           ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300'
+                : entry.status === 'in_progress' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400'
+                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400';
+              return (
+                <div
+                  key={entry.id}
+                  className={cn(
+                    'rounded-xl border p-3.5 space-y-2 transition-colors',
+                    entry.status === 'new'
+                      ? 'border-blue-200 bg-blue-50/40 dark:border-blue-800 dark:bg-blue-950/10'
+                      : entry.status === 'in_progress'
+                        ? 'border-amber-200 bg-amber-50/30 dark:border-amber-800 dark:bg-amber-950/10'
+                        : 'border-border/40 bg-muted/20 opacity-70',
+                  )}
+                >
+                  {/* Top: name + status badge */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="h-7 w-7 rounded-full bg-muted/80 flex items-center justify-center shrink-0">
+                        <User className="h-3.5 w-3.5 text-muted-foreground/60" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-foreground leading-tight truncate">{entry.employeeName}</p>
+                        <p className="text-[10px] text-muted-foreground/60 leading-tight">
+                          {entry.date === 'Allgemein' ? 'Ganze Woche' : entry.date}
+                        </p>
+                      </div>
+                    </div>
+                    <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0', statusCls)}>
+                      {statusLabel}
+                    </span>
+                  </div>
+
+                  {/* Reason + message */}
+                  <div className="pl-9 space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <MessageCircle className="h-3 w-3 text-muted-foreground/40 shrink-0" />
+                      <p className="text-xs font-semibold text-foreground">{entry.reason}</p>
+                    </div>
+                    {entry.message && (
+                      <p className="text-xs text-muted-foreground leading-relaxed pl-[18px]">{entry.message}</p>
+                    )}
+                    <p className="text-[10px] text-muted-foreground/50 pl-[18px]">
+                      {new Date(entry.createdAt).toLocaleString('de-CH', {
+                        day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit',
+                      })}
+                    </p>
+                  </div>
+
+                  {/* Status action buttons */}
+                  {entry.status !== 'done' ? (
+                    <div className="pl-9 flex items-center gap-1.5 pt-1">
+                      {entry.status === 'new' && (
+                        <button
+                          onClick={() => void handleFeedbackStatusChange(entry, 'in_progress')}
+                          className="h-7 px-2.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-400 text-[11px] font-semibold hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+                        >
+                          In Bearbeitung
+                        </button>
+                      )}
+                      <button
+                        onClick={() => void handleFeedbackStatusChange(entry, 'done')}
+                        className="h-7 px-2.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400 text-[11px] font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-950/50 transition-colors flex items-center gap-1"
+                      >
+                        <CheckCircle2 className="h-3 w-3" />Erledigt
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="pl-9 pt-0.5">
+                      <button
+                        onClick={() => void handleFeedbackStatusChange(entry, 'new')}
+                        className="h-6 px-2 rounded text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                      >
+                        Zurücksetzen
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Footer */}
+          <div className="px-5 py-3 border-t border-border/40 shrink-0 flex items-center justify-between gap-3">
+            <p className="text-[11px] text-muted-foreground/50">
+              {feedbackItems.length} {feedbackItems.length === 1 ? 'Eintrag' : 'Einträge'} total
+              {feedbackByEmpName.size > 0 && ` · ${feedbackByEmpName.size} Mitarbeitende mit Terminwunsch`}
+            </p>
+            <Button variant="outline" size="sm" onClick={() => setFeedbackInboxOpen(false)}>
+              Schliessen
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Mobile preview Dialog ─────────────────────────────────────── */}
       {mobilePreviewUrl && (

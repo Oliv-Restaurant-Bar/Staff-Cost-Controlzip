@@ -1,0 +1,165 @@
+Bitte jetzt die Admin-Inbox für Mitarbeiter-Rückmeldungen bauen.
+
+Ziel:
+Rückmeldungen/Wünsche aus dem geteilten Dienstplan sollen im internen Dienstplan sichtbar sein.
+
+Wichtig:
+Keine Dienstplanlogik ändern.
+Keine Kostenlogik ändern.
+Keine Mirus-Logik ändern.
+Keine PDF-Logik ändern.
+
+====================================================
+1. RÜCKMELDUNGEN LADEN
+====================================================
+
+Die öffentliche Seite speichert Rückmeldungen aktuell in app_settings mit Keys:
+
+staff-feedback:{token}:{timestamp}
+
+Bitte im internen Dienstplan diese Rückmeldungen laden.
+
+Lade alle app_settings Einträge mit:
+key LIKE 'staff-feedback:%'
+
+Dann nach aktuellem Teamlink / Token / Restaurant / Woche filtern.
+
+====================================================
+2. ADMIN-INBOX IM DIENSTPLAN
+====================================================
+
+Im internen Dienstplan oben oder seitlich neue Sektion:
+
+"Rückmeldungen"
+
+Mit Badge:
+- Anzahl neue Rückmeldungen
+
+Beispiel:
+Rückmeldungen (3)
+
+====================================================
+3. INBOX LISTE
+====================================================
+
+Jede Rückmeldung anzeigen mit:
+
+- Mitarbeitername
+- Betroffener Tag
+- Grund
+- Nachricht
+- Zeitpunkt
+- Status
+
+Status:
+- Neu
+- In Bearbeitung
+- Erledigt
+
+====================================================
+4. STATUS ÄNDERN
+====================================================
+
+Admin kann Status ändern:
+
+Buttons:
+- In Bearbeitung
+- Erledigt
+
+Beim Klick:
+Den app_settings Eintrag aktualisieren.
+
+status = "in_progress"
+status = "done"
+
+====================================================
+5. FILTER
+====================================================
+
+Inbox Filter:
+
+- Alle
+- Neu
+- In Bearbeitung
+- Erledigt
+
+Optional zusätzlich:
+- Service
+- Küche
+- Mitarbeitername
+
+====================================================
+6. VISUELLE HINWEISE IM DIENSTPLAN
+====================================================
+
+Wenn für einen Mitarbeiter/Tag eine Rückmeldung existiert:
+
+In der Dienstplan-Zelle kleines Icon anzeigen:
+- 💬 oder MessageCircle Icon
+
+Beim Hover/Klick:
+Kurzinfo:
+- Grund
+- Nachricht
+
+====================================================
+7. VERKNÜPFUNG MIT DIENSTPLAN
+====================================================
+
+Wenn Rückmeldung einen bestimmten Tag betrifft:
+
+Klick auf Rückmeldung:
+- springe oder markiere den Mitarbeiter/Tag im Dienstplan
+- zumindest visuell hervorheben
+
+Wenn keine exakte Verknüpfung möglich:
+- nur Mitarbeitername und Datum anzeigen
+
+====================================================
+8. DATENSTRUKTUR BEIBEHALTEN
+====================================================
+
+Aktuelle gespeicherte Struktur:
+
+{
+  id,
+  scheduleToken,
+  employeeName,
+  date,
+  reason,
+  message,
+  createdAt,
+  status: "new"
+}
+
+Bitte damit arbeiten.
+
+Keine neue Tabelle nötig.
+Noch kein Supabase Migration nötig.
+
+====================================================
+9. FEHLERHANDLING
+====================================================
+
+Wenn Laden fehlschlägt:
+- keine App crashen
+- kleine Warnung anzeigen
+- Retry Button
+
+====================================================
+10. TEST
+====================================================
+
+Bitte testen:
+
+1. Im geteilten Link Rückmeldung senden
+2. Interne Dienstplanung öffnen
+3. Badge zeigt neue Rückmeldung
+4. Inbox öffnen
+5. Status auf In Bearbeitung setzen
+6. Status auf Erledigt setzen
+7. Rückmeldung mit Tag zeigt Icon im passenden Dienstplanfeld
+
+Danach:
+- TypeScript prüfen
+- bestätigen, dass keine Dienstplan-/Kostenlogik geändert wurde
