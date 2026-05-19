@@ -64,7 +64,7 @@ externalPort = 4200
 VITE_SUPABASE_URL = "https://ajflrvuzmkfspsxkdyfe.supabase.co"
 VITE_SUPABASE_ANON_KEY = "sb_publishable_QXf-21IX_EQ_cwLGqNc24w_-fFS23ht"
 VITE_SUPABASE_PROJECT_ID = "ajflrvuzmkfspsxkdyfe"
-VITE_PUBLIC_URL = "https://workspace.happyolivbern.replit.app"
+VITE_PUBLIC_URL = "https://staff-cost-controlzip.replit.app"
 
 [deployment]
 deploymentTarget = "static"
