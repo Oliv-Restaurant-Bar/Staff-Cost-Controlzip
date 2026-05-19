@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { getPublicBaseUrl } from '@/lib/public-url';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -159,12 +160,12 @@ export const DepartmentTokenManager = () => {
   };
 
   const getQuickLink = (token: DepartmentToken) => {
-    const baseUrl = window.location.origin;
+    const baseUrl = getPublicBaseUrl();
     return `${baseUrl}/dienstplan/${token.department}?token=${token.token}`;
   };
 
   const getPlannerLink = (token: DepartmentToken) => {
-    const baseUrl = window.location.origin;
+    const baseUrl = getPublicBaseUrl();
     return `${baseUrl}/plan/${token.department}?token=${token.token}`;
   };
 

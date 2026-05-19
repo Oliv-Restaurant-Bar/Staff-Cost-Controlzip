@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle, ClipboardPaste, Wand2, QrCode, Smartphone, Loader2, Bell, RefreshCw } from 'lucide-react';
 import { StaffFeedbackEntry, loadStaffFeedback, updateFeedbackStatus } from '@/lib/staff-feedback-store';
+import { getPublicBaseUrl } from '@/lib/public-url';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -5681,7 +5682,7 @@ const SchedulePlanner = () => {
             {/* ── Stabiler Teamlink ────────────────────────────────────── */}
             {(() => {
               const previewToken = stablePublishToken(tenantId, publishDept);
-              const previewUrl   = `${window.location.origin}/staff-schedule/${previewToken}`;
+              const previewUrl   = `${getPublicBaseUrl()}/staff-schedule/${previewToken}`;
               const isLive       = publishStatus === 'published' || publishStatus === 'changed';
 
               const _days        = displayDays.length > 0 ? displayDays : [currentMonth];

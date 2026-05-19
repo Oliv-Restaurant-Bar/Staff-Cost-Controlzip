@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { getPublicBaseUrl } from '@/lib/public-url';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -37,7 +38,7 @@ export function GuestLinkGenerator() {
       const exp = Date.now() + durationMs;
       const hash = await sha256Hex(password.trim());
       const token = encodeGuestToken({ exp, hash });
-      const base = window.location.origin;
+      const base = getPublicBaseUrl();
       const link = `${base}/gast?t=${token}`;
       setGeneratedLink(link);
     } finally {
