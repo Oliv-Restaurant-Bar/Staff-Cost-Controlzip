@@ -13,7 +13,7 @@ import {
   Calendar, Clock, LayoutList, User, Building2, AlertCircle,
   ChevronDown, ChevronUp, Check, Home, X, RefreshCw,
   History, ArrowRightLeft, Send, MessageCircle, Loader2,
-  ChevronLeft, ChevronRight, Grid3x3, Zap,
+  ChevronLeft, ChevronRight, Grid3x3, Zap, Printer, Share2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -468,23 +468,108 @@ function SwapRequestDialog({ dayLabel, onClose }: { dayLabel: string; onClose: (
 
 // ── Wunsch & Hinweis ──────────────────────────────────────────────────────────
 
-function WunschHinweisSection({ employees = [] }: { employees?: PublicEmployee[] }) {
-  const [open, setOpen]               = useState(false);
-  const [selectedName, setSelectedName] = useState('');
-  const [text, setText]               = useState('');
-  const [sent, setSent]               = useState(false);
+const FEEDBACK_REASONS = [
+  'Möchte frei haben',
+  'Kann nicht arbeiten',
+  'Will Schicht tauschen',
+  'Komme später',
+  'Muss früher gehen',
+  'Frage zur Schicht',
+  'Sonstiges',
+] as const;
 
-  const needsName = employees.length > 0;
-  const canSend   = text.trim().length > 0 && (!needsName || selectedName !== '');
+type FeedbackReason = typeof FEEDBACK_REASONS[number];
+
+function SelectField({
+  label, value, onChange, children,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="text-xs font-semibold text-muted-foreground/70 uppercase tracking-wide mb-1.5 block">{label}</label>
+      <div className="relative">
+        <select
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          className="w-full h-11 pl-3 pr-9 rounded-xl border border-border bg-background text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none cursor-pointer"
+        >
+          {children}
+        </select>
+        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/40 pointer-events-none" />
+      </div>
+    </div>
+  );
+}
+
+function WunschHinweisSection({
+  employees = [],
+  scheduleToken = '',
+}: {
+  employees?: PublicEmployee[];
+  scheduleToken?: string;
+}) {
+  const [open, setOpen]           = useState(false);
+  const [selectedName, setSelectedName] = useState('');
+  const [selectedDay, setSelectedDay]   = useState('');
+  const [selectedReason, setSelectedReason] = useState<FeedbackReason | ''>('');
+  const [message, setMessage]     = useState('');
+  const [sending, setSending]     = useState(false);
+  const [sent, setSent]           = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  // Derive the list of days from the first employee's schedule (all emps share the same dates)
+  const days = employees[0]?.days ?? [];
+
+  const needsName    = employees.length > 0;
+  const isSonstiges  = selectedReason === 'Sonstiges';
+  const canSend      =
+    (!needsName || selectedName !== '') &&
+    selectedReason !== '' &&
+    (!isSonstiges || message.trim().length > 0);
+
+  const handleSend = async () => {
+    if (!canSend) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      const now = Date.now();
+      const key = `staff-feedback:${scheduleToken}:${now}`;
+      const value = {
+        id:            key,
+        scheduleToken,
+        employeeName:  selectedName || 'Anonym',
+        date:          selectedDay || 'Allgemein',
+        reason:        selectedReason,
+        message:       message.trim(),
+        createdAt:     new Date(now).toISOString(),
+        status:        'new',
+      };
+      const { error } = await supabase.from('app_settings').upsert(
+        { key, value },
+        { onConflict: 'key' },
+      );
+      if (error) throw error;
+      setSent(true);
+    } catch {
+      setSendError('Rückmeldung konnte nicht gesendet werden. Bitte nochmals versuchen.');
+    } finally {
+      setSending(false);
+    }
+  };
 
   if (sent) {
     return (
       <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/20 px-4 py-3 flex items-center gap-2.5 shadow-sm">
         <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-        <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">Danke, dein Hinweis wurde erfasst.</p>
+        <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">Danke, deine Rückmeldung wurde gesendet.</p>
       </div>
     );
   }
+
   return (
     <div className="rounded-2xl border border-border bg-card overflow-hidden shadow-sm">
       <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3.5 text-left">
@@ -494,39 +579,68 @@ function WunschHinweisSection({ employees = [] }: { employees?: PublicEmployee[]
         </div>
         {open ? <ChevronUp className="h-4 w-4 text-muted-foreground/60" /> : <ChevronDown className="h-4 w-4 text-muted-foreground/60" />}
       </button>
+
       {open && (
         <div className="border-t border-border/40 px-4 pb-4 pt-3 space-y-3">
+
+          {/* 1. Name */}
           {needsName && (
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground/70 uppercase tracking-wide mb-1.5 block">Dein Name</label>
-              <div className="relative">
-                <select
-                  value={selectedName}
-                  onChange={e => setSelectedName(e.target.value)}
-                  className="w-full h-11 pl-3 pr-9 rounded-xl border border-border bg-background text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none cursor-pointer"
-                >
-                  <option value="">Bitte auswählen…</option>
-                  {employees.map(e => (
-                    <option key={e.id} value={e.name}>{e.name}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/40 pointer-events-none" />
-              </div>
-            </div>
+            <SelectField label="Dein Name" value={selectedName} onChange={setSelectedName}>
+              <option value="">Bitte auswählen…</option>
+              {employees.map(e => (
+                <option key={e.id} value={e.name}>{e.name}</option>
+              ))}
+            </SelectField>
           )}
-          <textarea
-            value={text}
-            onChange={e => setText(e.target.value)}
-            placeholder={'Ich hätte gerne frei am…\nIch kann am Freitag erst ab…'}
-            rows={3}
-            className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/35"
-          />
+
+          {/* 2. Betroffener Tag */}
+          <SelectField label="Betroffener Tag" value={selectedDay} onChange={setSelectedDay}>
+            <option value="">Allgemein / ganze Woche</option>
+            {days.map(d => (
+              <option key={d.date} value={d.date}>{d.dayLabel}</option>
+            ))}
+          </SelectField>
+
+          {/* 3. Grund */}
+          <SelectField label="Grund" value={selectedReason} onChange={v => setSelectedReason(v as FeedbackReason | '')}>
+            <option value="">Bitte auswählen…</option>
+            {FEEDBACK_REASONS.map(r => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </SelectField>
+
+          {/* 4. Nachricht */}
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground/70 uppercase tracking-wide mb-1.5 block">
+              Nachricht
+              {!isSonstiges && <span className="normal-case font-normal ml-1">(optional)</span>}
+            </label>
+            <textarea
+              value={message}
+              onChange={e => setMessage(e.target.value)}
+              placeholder={
+                isSonstiges
+                  ? 'Bitte beschreibe dein Anliegen…'
+                  : 'Zusätzliche Infos (optional)…'
+              }
+              rows={3}
+              className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/35"
+            />
+          </div>
+
+          {sendError && (
+            <p className="text-xs text-red-600 dark:text-red-400">{sendError}</p>
+          )}
+
           <button
-            onClick={() => { if (canSend) { console.log('[feedback] from:', selectedName || 'anonym', text); setSent(true); } }}
-            disabled={!canSend}
-            className="w-full h-9 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40"
+            onClick={handleSend}
+            disabled={!canSend || sending}
+            className="w-full h-10 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40"
           >
-            <Send className="h-3.5 w-3.5" />Absenden
+            {sending
+              ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Wird gesendet…</>
+              : <><Send className="h-3.5 w-3.5" />Absenden</>
+            }
           </button>
         </div>
       )}
@@ -610,10 +724,11 @@ type PersonalViewMode = 'list' | 'calendar';
 type FeedbackState    = 'none' | 'seen' | 'confirmed' | 'cannot' | 'question';
 
 function PersonalView({
-  payload, settings,
+  payload, settings, scheduleToken,
 }: {
   payload: PublishedSchedulePayload;
   settings: StaffPortalSettings;
+  scheduleToken: string;
 }) {
   const employee = payload.employees?.[0];
   const [viewMode, setViewMode]         = useState<PersonalViewMode>('list');
@@ -635,7 +750,6 @@ function PersonalView({
   const changedDayCount = employee.days.filter(d => d.changed).length;
 
   const handleFeedbackSend = () => {
-    console.log('[feedback]', feedback, cannotReason || questionText);
     setFeedbackSent(true);
   };
 
@@ -898,7 +1012,12 @@ function PersonalView({
       )}
 
       {/* Wunsch & Hinweis */}
-      {com.allowRequests && <WunschHinweisSection />}
+      {com.allowRequests && (
+        <WunschHinweisSection
+          employees={employee ? [employee] : []}
+          scheduleToken={scheduleToken}
+        />
+      )}
 
       {/* Modals */}
       {showHistory && <ChangeHistoryModal entries={historyEntries} onClose={() => setShowHistory(false)} />}
@@ -982,12 +1101,13 @@ function EmployeeAccordion({ emp }: { emp: PublicEmployee }) {
 type DeptViewMode = 'byEmployee' | 'byDay' | 'week';
 
 function DepartmentView({
-  payload, activeTab, onTabChange, settings,
+  payload, activeTab, onTabChange, settings, scheduleToken,
 }: {
   payload: PublishedSchedulePayload;
   activeTab: DeptViewMode;
   onTabChange: (t: DeptViewMode) => void;
   settings: StaffPortalSettings;
+  scheduleToken: string;
 }) {
   const vis = settings.visibility;
   const [selectedEmpId, setSelectedEmpId] = useState<string | null>(null);
@@ -1140,7 +1260,7 @@ function DepartmentView({
 
       {/* Feedback / Wunsch-Hinweis — always at bottom of dept view */}
       <div className="mt-4">
-        <WunschHinweisSection employees={allEmployees} />
+        <WunschHinweisSection employees={allEmployees} scheduleToken={scheduleToken} />
       </div>
     </div>
   );
@@ -1206,7 +1326,6 @@ const StaffSchedulePage = () => {
     setLoading(true);
     setNotFound(false);
     const kvKey = `published-schedule:${token}`;
-    console.log('[staff-page] fetch token=', token);
     try {
       const { data, error } = await (supabase as any)
         .from('app_settings')
@@ -1214,12 +1333,10 @@ const StaffSchedulePage = () => {
         .eq('key', kvKey)
         .maybeSingle();
       if (error || !data?.value) {
-        console.warn('[staff-page] not found:', error?.message ?? 'no data');
         setNotFound(true);
         setLoading(false);
         return;
       }
-      console.log('[staff-page] loaded ✓ employees:', (data.value as any)?.employees?.length);
       setPayload(data.value as PublishedSchedulePayload);
       setLoading(false);
     } catch (e) {
@@ -1414,10 +1531,35 @@ const StaffSchedulePage = () => {
       {/* Content */}
       <main className="max-w-3xl mx-auto px-4 py-5 space-y-4">
         {isPersonal
-          ? <PersonalView payload={payload} settings={settings} />
-          : <DepartmentView payload={payload} activeTab={deptTab} onTabChange={setDeptTab} settings={settings} />
+          ? <PersonalView payload={payload} settings={settings} scheduleToken={token ?? ''} />
+          : <DepartmentView payload={payload} activeTab={deptTab} onTabChange={setDeptTab} settings={settings} scheduleToken={token ?? ''} />
         }
         <Legend />
+
+        {/* ── Export / Teilen ─────────────────────────────────────────── */}
+        <div className="flex items-center gap-2 justify-center pb-2">
+          {typeof navigator !== 'undefined' && 'share' in navigator && (
+            <button
+              onClick={() => {
+                navigator.share({
+                  title: `Dienstplan · ${payload.weekLabel}`,
+                  text: `${payload.restaurant} – Dienstplan ${payload.weekLabel}`,
+                  url: window.location.href,
+                }).catch(() => {});
+              }}
+              className="flex items-center gap-1.5 h-8 px-3.5 rounded-xl border border-border text-xs font-semibold text-muted-foreground hover:bg-muted/50 transition-colors"
+            >
+              <Share2 className="h-3.5 w-3.5" />Teilen
+            </button>
+          )}
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 h-8 px-3.5 rounded-xl border border-border text-xs font-semibold text-muted-foreground hover:bg-muted/50 transition-colors"
+          >
+            <Printer className="h-3.5 w-3.5" />Drucken / PDF
+          </button>
+        </div>
+
         <p className="text-center text-[10px] text-muted-foreground/30 pb-2">
           {payload.restaurant} · {payload.weekLabel} · Nur Ansicht
         </p>

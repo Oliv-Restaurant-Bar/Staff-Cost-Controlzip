@@ -1,0 +1,194 @@
+Bitte jetzt den geteilten Dienstplan-Link stabilisieren und die Mitarbeiter-Rückmeldung verbessern.
+
+Problem:
+Die öffentliche Dienstplanseite lädt instabil, aktualisiert sich ständig und zeigt auf dem Handy:
+"Run this app to see the results here."
+
+Das darf nicht passieren. Die Seite muss stabil bleiben.
+
+====================================================
+1. AUTO-REFRESH / RELOAD LOOP BEHEBEN
+====================================================
+
+Bitte StaffSchedulePage prüfen:
+
+- keine setInterval Reloads
+- keine useEffect-Endlosschleifen
+- keine window.location.reload()
+- keine wiederholten Supabase Reads alle paar Sekunden
+- keine dependency loops in useEffect
+- kein ständiges setState beim Laden
+
+Die öffentliche Seite soll:
+- einmal laden
+- Payload anzeigen
+- stabil bleiben
+
+Optional:
+Button "Aktualisieren" manuell anzeigen.
+
+====================================================
+2. ROBUSTES LOADING
+====================================================
+
+Beim Öffnen:
+
+1. Loading anzeigen
+2. Supabase einmal lesen
+3. Erfolgreich → Plan anzeigen
+4. Fehler → stabile Fehlerkarte mit "Erneut versuchen"
+
+Kein automatisches Endlos-Neuladen.
+
+====================================================
+3. MOBILE EXPORT FÜR MITARBEITER
+====================================================
+
+Im geteilten Dienstplan-Link bitte Button ergänzen:
+
+"Plan exportieren"
+
+Auf Mobile gut sichtbar, aber nicht störend.
+
+Export-Optionen:
+- PDF herunterladen
+- Als Bild / Screenshot vorbereiten optional
+- Drucken / Teilen über Browser Share API wenn möglich
+
+Für Teamlink:
+Exportiert aktuelle Ansicht:
+- alle Mitarbeiter oder gefilterter Mitarbeiter
+- aktuelle Woche
+- keine Kosten
+- keine Löhne
+- keine internen Warnungen
+
+Für ausgewählten Mitarbeiter:
+Wenn Dropdown auf einem Mitarbeiter steht:
+Export nur diesen Mitarbeiter.
+
+====================================================
+4. RÜCKMELDUNG / ANFRAGE VERBESSERN
+====================================================
+
+Im Bereich Wunsch / Hinweis senden:
+
+Pflichtfelder:
+
+1. Dein Name
+Dropdown mit allen Mitarbeitern
+
+2. Betroffener Tag
+Dropdown:
+- Allgemein / ganze Woche
+- Mo 18. Mai
+- Di 19. Mai
+- Mi 20. Mai
+- Do 21. Mai
+- Fr 22. Mai
+- Sa 23. Mai
+- So 24. Mai
+
+3. Grund
+Dropdown mit Schnellauswahl:
+- Möchte frei haben
+- Kann nicht arbeiten
+- Will Schicht tauschen
+- Komme später
+- Muss früher gehen
+- Frage zur Schicht
+- Sonstiges
+
+4. Nachricht
+Textarea optional, aber bei "Sonstiges" Pflicht.
+
+====================================================
+5. RÜCKMELDUNG SPEICHERN
+====================================================
+
+Vorerst wenn möglich in Supabase speichern.
+
+Neue Struktur:
+
+staff_schedule_feedback oder app_settings fallback:
+
+{
+  id,
+  scheduleToken,
+  employeeName,
+  date,
+  reason,
+  message,
+  createdAt,
+  status: "new"
+}
+
+Wenn Supabase-Tabelle noch nicht existiert:
+vorerst app_settings key:
+staff-feedback:${token}:${timestamp}
+
+Aber sauber vorbereiten für spätere Inbox.
+
+====================================================
+6. UI BESTÄTIGUNG
+====================================================
+
+Nach Absenden:
+"Danke, deine Rückmeldung wurde gesendet."
+
+Kein Absturz.
+Kein Reload.
+
+Wenn Fehler:
+"Rückmeldung konnte nicht gesendet werden. Bitte nochmals versuchen."
+
+====================================================
+7. ADMIN-INBOX VORBEREITEN
+====================================================
+
+Im Dienstplan intern später nutzbar vorbereiten:
+
+FeedbackCount / neue Rückmeldungen für aktuellen Teamlink.
+
+Noch keine grosse Inbox bauen, aber Datenstruktur so speichern, dass Admin später alles abrufen kann.
+
+====================================================
+8. DATENSCHUTZ
+====================================================
+
+Öffentliche Seite zeigt weiterhin niemals:
+- Kosten
+- Löhne
+- interne Warnungen
+- Admin-Daten
+
+====================================================
+9. TEST
+====================================================
+
+Bitte testen:
+
+- Link auf iPhone Safari öffnen
+- Seite bleibt stabil länger als 1 Minute
+- kein automatisches Reload
+- kein "Run this app" Screen
+- Mitarbeiter Dropdown funktioniert
+- Tag Dropdown funktioniert
+- Grund Dropdown funktioniert
+- Rückmeldung senden
+- PDF Export auf Handy
+- gefilterter Mitarbeiter exportiert nur sich
+- Teamansicht exportiert Team
+
+====================================================
+10. WICHTIG
+====================================================
+
+Keine neuen Features ausser:
+- Stabilitätsfix
+- Mobile Export
+- bessere Rückmeldung
+
+Keine Dienstplanlogik ändern.
+Keine Kostenlogik ändern.
+Keine PDF Admin-Export Logik zerstören.
