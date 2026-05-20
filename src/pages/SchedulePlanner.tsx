@@ -3224,6 +3224,41 @@ const SchedulePlanner = () => {
                   {publishStatus === 'published' ? 'Veröffentlicht' : publishStatus === 'changed' ? 'Geändert' : 'Teilen'}
                 </span>
               </Button>
+              {/* ── WhatsApp Toolbar Button ─────────────────────── */}
+              {(() => {
+                const isLive = publishStatus === 'published' || publishStatus === 'changed';
+                const _days  = displayDays.length > 0 ? displayDays : [currentMonth];
+                const _kw    = getISOWeek(_days[0]);
+                const _period = _days.length <= 7 ? 'week' : 'month';
+                const _kwLabel = _period === 'week'
+                  ? `KW ${_kw}`
+                  : format(_days[0], 'MMMM yyyy', { locale: de });
+                const _url   = `${getPublicBaseUrl()}/staff-schedule/${stablePublishToken(tenantId, publishDept)}`;
+                const _waText = publishRevision > 1
+                  ? `Hallo zusammen,\nder Dienstplan wurde aktualisiert. Bitte prüft die Änderungen nochmals:\n${_url}`
+                  : `Hallo zusammen,\nhier ist der Dienstplan für ${_kwLabel}:\n${_url}`;
+                return (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!isLive}
+                    title={isLive ? 'Per WhatsApp teilen' : 'Zuerst Dienstplan veröffentlichen'}
+                    className={cn(
+                      "gap-1.5 h-8",
+                      isLive
+                        ? "border-green-400 text-green-700 hover:bg-green-50 dark:border-green-600 dark:text-green-400 dark:hover:bg-green-950/20"
+                        : "opacity-50 cursor-not-allowed"
+                    )}
+                    onClick={() => {
+                      if (!isLive) return;
+                      window.open(`https://wa.me/?text=${encodeURIComponent(_waText)}`, '_blank', 'noopener,noreferrer');
+                    }}
+                  >
+                    <MessageCircle className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">WhatsApp</span>
+                  </Button>
+                );
+              })()}
               {/* ── Feedback Inbox Button ───────────────────────── */}
               <Button
                 variant="outline"
@@ -5693,8 +5728,9 @@ const SchedulePlanner = () => {
                 : `KW ${_kw}`;
 
               // WhatsApp: update message for re-publishes, intro message for first publish
-              const waUpdateText = `Der Dienstplan wurde aktualisiert. Bitte prüft die Änderungen nochmals 👌\n${previewUrl}`;
-              const waFirstText  = `Hallo zusammen,\nhier ist der Dienstplan für ${_periodLabel}:\n${previewUrl}`;
+              const _kwLabel     = _period === 'week' ? `KW ${_kw}` : _periodLabel;
+              const waUpdateText = `Hallo zusammen,\nder Dienstplan wurde aktualisiert. Bitte prüft die Änderungen nochmals:\n${previewUrl}`;
+              const waFirstText  = `Hallo zusammen,\nhier ist der Dienstplan für ${_kwLabel}:\n${previewUrl}`;
               const waText       = publishRevision > 1 ? waUpdateText : waFirstText;
 
               return (
@@ -5809,8 +5845,8 @@ const SchedulePlanner = () => {
                     </div>
                   )}
 
-                  {/* WhatsApp text preview */}
-                  {isLive && !SAFE_PUBLISH_MODE && (
+                  {/* WhatsApp text preview — always shown when live */}
+                  {isLive && (
                     <div className="rounded-md bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 px-3 py-2 text-xs text-green-800 dark:text-green-300">
                       <p className="font-semibold mb-0.5">
                         {publishRevision > 1 ? 'Änderungsmitteilung:' : 'WhatsApp-Text:'}
