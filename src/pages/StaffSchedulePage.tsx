@@ -65,6 +65,15 @@ function formatRelativeTime(iso: string): string {
   } catch { return ''; }
 }
 
+function formatAbsoluteTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('de-CH', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    }) + ' Uhr';
+  } catch { return ''; }
+}
+
 // ── Absence styling ───────────────────────────────────────────────────────────
 
 const ABSENCE_MAP: Record<string, { label: string; short: string; cls: string; chipCls: string }> = {
@@ -548,14 +557,24 @@ function WunschHinweisSection({
         createdAt:     new Date(now).toISOString(),
         status:        'new',
       };
-      const { error } = await supabase.from('app_settings').upsert(
+      console.log('[FEEDBACK] key:', key);
+      console.log('[FEEDBACK] payload:', JSON.stringify(value));
+      const { data, error } = await supabase.from('app_settings').upsert(
         { key, value },
         { onConflict: 'key' },
       );
-      if (error) throw error;
+      console.log('[FEEDBACK] response data:', data);
+      console.log('[FEEDBACK] response error:', JSON.stringify(error));
+      if (error) {
+        console.error('[FEEDBACK] code:', error.code, '| message:', error.message, '| details:', error.details);
+        throw error;
+      }
       setSent(true);
-    } catch {
-      setSendError('Rückmeldung konnte nicht gesendet werden. Bitte nochmals versuchen.');
+    } catch (err: unknown) {
+      const e = err as { message?: string; code?: string; details?: string };
+      const msg = [e.code, e.message, e.details].filter(Boolean).join(' · ');
+      console.error('[FEEDBACK] caught:', msg);
+      setSendError(`Fehler: ${msg || 'Unbekannter Fehler — Supabase RLS prüfen'}`);
     } finally {
       setSending(false);
     }
@@ -1429,10 +1448,12 @@ const StaffSchedulePage = () => {
                   ? (payload.employeeName ?? 'Dienstplan')
                   : `Dienstplan · ${deptLabel}`}
               </h1>
-              <div className="flex items-center gap-1 mt-0.5">
+              <div className="flex items-center gap-1 mt-0.5 flex-wrap">
                 <RefreshCw className="h-2.5 w-2.5 text-muted-foreground/40 shrink-0" />
                 <span className="text-[10px] text-muted-foreground/50">
                   Aktualisiert {relativeTime}
+                  <span className="text-muted-foreground/30"> · </span>
+                  {formatAbsoluteTime(payload.publishedAt)}
                 </span>
               </div>
             </div>
@@ -1537,21 +1558,40 @@ const StaffSchedulePage = () => {
         <Legend />
 
         {/* ── Export / Teilen ─────────────────────────────────────────── */}
-        <div className="flex items-center gap-2 justify-center pb-2">
-          {typeof navigator !== 'undefined' && 'share' in navigator && (
-            <button
-              onClick={() => {
-                navigator.share({
-                  title: `Dienstplan · ${payload.weekLabel}`,
-                  text: `${payload.restaurant} – Dienstplan ${payload.weekLabel}`,
-                  url: window.location.href,
-                }).catch(() => {});
-              }}
-              className="flex items-center gap-1.5 h-8 px-3.5 rounded-xl border border-border text-xs font-semibold text-muted-foreground hover:bg-muted/50 transition-colors"
-            >
-              <Share2 className="h-3.5 w-3.5" />Teilen
-            </button>
-          )}
+        <div className="flex items-center gap-2 justify-center pb-2 flex-wrap">
+          {/* Native share (iOS/Android) — always shown, falls back to clipboard */}
+          <button
+            onClick={() => {
+              const shareData = {
+                title: `Dienstplan · ${payload.weekLabel}`,
+                text: `${payload.restaurant} – Dienstplan ${payload.weekLabel}`,
+                url: window.location.href,
+              };
+              if (typeof navigator !== 'undefined' && 'share' in navigator) {
+                navigator.share(shareData).catch(() => {});
+              } else {
+                navigator.clipboard?.writeText(window.location.href).catch(() => {});
+              }
+            }}
+            className="flex items-center gap-1.5 h-8 px-3.5 rounded-xl border border-border text-xs font-semibold text-muted-foreground hover:bg-muted/50 transition-colors"
+          >
+            <Share2 className="h-3.5 w-3.5" />Teilen
+          </button>
+
+          {/* WhatsApp — always visible */}
+          <button
+            onClick={() => {
+              const url  = window.location.href;
+              const text = payload.status === 'changed'
+                ? `Der Dienstplan wurde aktualisiert. Bitte prüft den aktuellen Plan hier:\n${url}`
+                : `Hier ist der aktuelle Dienstplan:\n${url}`;
+              window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+            }}
+            className="flex items-center gap-1.5 h-8 px-3.5 rounded-xl border border-green-300 bg-green-50 dark:border-green-700 dark:bg-green-950/20 text-xs font-semibold text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-950/40 transition-colors"
+          >
+            <MessageCircle className="h-3.5 w-3.5" />WhatsApp
+          </button>
+
           <button
             onClick={() => window.print()}
             className="flex items-center gap-1.5 h-8 px-3.5 rounded-xl border border-border text-xs font-semibold text-muted-foreground hover:bg-muted/50 transition-colors"
