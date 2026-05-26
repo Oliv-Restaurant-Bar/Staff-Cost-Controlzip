@@ -20,7 +20,8 @@
  *   /absenzen
  */
 
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Calendar, PieChart,
   DollarSign, TrendingDown,
@@ -29,7 +30,9 @@ import {
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
   Wallet, BarChart3, ShoppingCart, LineChart, TrendingUp,
+  Menu,
 } from 'lucide-react';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -532,45 +535,227 @@ export const AppSidebar = () => {
 
 // ─── Mobile Bottom-Navigation ─────────────────────────────────────────────────
 
+// Die 4 fixen Schnellzugriffe in der Bottom-Bar
+const PINNED_PATHS = ['/', '/tages-controlling', '/personal', '/personal-fix'];
+
 export const AppBottomNav = () => {
   const location = useLocation();
-  const { isAdmin, canAccessModule } = usePermissions();
+  const navigate = useNavigate();
+  const { isAdmin, isBeaulieuManager, canAccessModule } = usePermissions();
   const { isGuest } = useGuestSession();
+  const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
+  const { tenant } = useTenant();
+  const { user, signOut } = useAuth();
+  const { isActive: stichtagActive, stichtagYear, stichtagMonth, stichtagDay, stichtag, formatted: stichtagFormatted, setStichtag, clearStichtag } = useStichtag();
 
-  const allItems = [DASHBOARD_ITEM, ...ALL_NAV_ITEMS];
+  const [open, setOpen] = useState(false);
 
-  // Mobile: max. 5 Punkte — Einstellungen und Upload weglassen
-  const mobileItems = allItems.filter(item => {
-    if (item.adminOnly && !isAdmin && !isGuest) return false;
+  // Sheet schließen bei Routenwechsel
+  useEffect(() => { setOpen(false); }, [location.pathname]);
+
+  function isItemVisible(item: NavItem): boolean {
+    if (item.adminOnly && !isAdmin && !isGuest) {
+      if (!(isBeaulieuManager && item.beaulieuAllowed)) return false;
+    }
     if (item.module && !canAccessModule(item.module) && !isGuest) return false;
-    if (item.path === '/settings') return false;
-    if (item.path === '/sales-upload') return false;
     return true;
-  }).slice(0, 5);
+  }
+
+  // Pinned-Items filtern (nur sichtbare)
+  const pinnedItems = [DASHBOARD_ITEM, ...ALL_NAV_ITEMS]
+    .filter(item => PINNED_PATHS.includes(item.path) && isItemVisible(item));
+
+  const anySubpageActive = location.pathname !== '/' &&
+    NAV_GROUPS.some(g => g.items.some(i => !PINNED_PATHS.includes(i.path) && location.pathname.startsWith(i.path)));
+
+  const stichtagInputValue = stichtag ? stichtag.toISOString().split('T')[0] : '';
 
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border flex">
-      {mobileItems.map(item => {
-        const Icon = item.icon;
-        const isActive = item.path === '/'
-          ? location.pathname === '/'
-          : location.pathname.startsWith(item.path);
-        return (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            end={item.path === '/'}
-            className={cn(
-              'flex-1 flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] font-medium transition-colors',
-              isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            <Icon className={cn('h-5 w-5', isActive && 'stroke-[2.5]')} />
-            {item.shortLabel}
-          </NavLink>
-        );
-      })}
-    </nav>
+    <>
+      {/* Bottom Bar */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border flex safe-area-bottom">
+        {pinnedItems.map(item => {
+          const Icon = item.icon;
+          const isActive = item.path === '/'
+            ? location.pathname === '/'
+            : location.pathname.startsWith(item.path);
+          return (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              end={item.path === '/'}
+              className={cn(
+                'flex-1 flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] font-medium transition-colors',
+                isActive ? 'text-primary' : 'text-muted-foreground',
+              )}
+            >
+              <Icon className={cn('h-5 w-5', isActive && 'stroke-[2.5]')} />
+              {item.shortLabel}
+            </NavLink>
+          );
+        })}
+
+        {/* Mehr-Button */}
+        <button
+          onClick={() => setOpen(true)}
+          className={cn(
+            'flex-1 flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] font-medium transition-colors',
+            (open || anySubpageActive) ? 'text-primary' : 'text-muted-foreground',
+          )}
+        >
+          <Menu className={cn('h-5 w-5', (open || anySubpageActive) && 'stroke-[2.5]')} />
+          Mehr
+        </button>
+      </nav>
+
+      {/* Vollständiges Nav-Sheet */}
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent side="bottom" className="h-[85vh] flex flex-col p-0 rounded-t-2xl">
+          <SheetHeader className="px-4 pt-4 pb-2 border-b border-border shrink-0">
+            <SheetTitle className="text-sm font-bold text-left">Navigation</SheetTitle>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1">
+            {/* Dashboard standalone */}
+            {isItemVisible(DASHBOARD_ITEM) && (() => {
+              const Icon = DASHBOARD_ITEM.icon;
+              const active = location.pathname === '/';
+              return (
+                <button
+                  key={DASHBOARD_ITEM.path}
+                  onClick={() => navigate(DASHBOARD_ITEM.path)}
+                  className={cn(
+                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left',
+                    active ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted',
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  {DASHBOARD_ITEM.label}
+                </button>
+              );
+            })()}
+
+            {/* Gruppen */}
+            {NAV_GROUPS.map((group, gi) => {
+              const visibleItems = group.items.filter(isItemVisible);
+              if (visibleItems.length === 0) return null;
+              return (
+                <div key={gi} className="pt-3">
+                  <div className="mx-1 mb-1.5 border-t border-border/50" />
+                  <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                    {group.groupLabel}
+                  </p>
+                  <div className="space-y-0.5">
+                    {visibleItems.map(item => {
+                      const Icon = item.icon;
+                      const active = item.path === '/'
+                        ? location.pathname === '/'
+                        : location.pathname.startsWith(item.path);
+                      return (
+                        <button
+                          key={item.path}
+                          onClick={() => navigate(item.path)}
+                          className={cn(
+                            'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left',
+                            active ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted',
+                          )}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Stichtag + Umsatzbasis im Sheet-Footer */}
+          <div className="shrink-0 border-t border-border px-4 py-3 space-y-3">
+            {/* Umsatzbasis */}
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
+                Umsatzbasis
+              </p>
+              <div className="flex rounded-md overflow-hidden border border-border text-xs h-8">
+                <button
+                  onClick={() => setShowNetRevenue(true)}
+                  className={cn(
+                    'flex-1 transition-colors font-medium',
+                    showNetRevenue ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
+                  )}
+                >
+                  Netto
+                </button>
+                <button
+                  onClick={() => setShowNetRevenue(false)}
+                  className={cn(
+                    'flex-1 transition-colors font-medium',
+                    !showNetRevenue ? 'bg-amber-500 text-white' : 'text-muted-foreground hover:bg-muted',
+                  )}
+                >
+                  Brutto
+                </button>
+              </div>
+            </div>
+
+            {/* Stichtag */}
+            <div className={cn(
+              'rounded-lg border p-2.5 space-y-1.5',
+              stichtagActive
+                ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30'
+                : 'border-border bg-muted/30',
+            )}>
+              <div className="flex items-center gap-1.5">
+                <CalendarClock className={cn('h-3.5 w-3.5', stichtagActive ? 'text-amber-600' : 'text-muted-foreground')} />
+                <span className={cn('text-[10px] font-semibold uppercase tracking-wider', stichtagActive ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground')}>
+                  Stichtag
+                </span>
+                {stichtagActive && (
+                  <button
+                    onClick={clearStichtag}
+                    className="ml-auto h-4 w-4 flex items-center justify-center rounded-full bg-amber-200 dark:bg-amber-800 text-amber-700 dark:text-amber-300"
+                    title="Stichtag aufheben"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                )}
+              </div>
+              {stichtagActive
+                ? <p className="text-xs font-bold text-amber-800 dark:text-amber-300">per {stichtagFormatted}</p>
+                : <p className="text-[10px] text-muted-foreground">Auswertungen auf Datum begrenzen</p>
+              }
+              <input
+                type="date"
+                value={stichtagInputValue}
+                onChange={e => {
+                  const val = e.target.value;
+                  if (!val) clearStichtag();
+                  else setStichtag(new Date(val + 'T12:00:00'));
+                }}
+                max={new Date().toISOString().split('T')[0]}
+                className={cn(
+                  'w-full text-[11px] rounded px-1.5 py-1 border bg-background',
+                  stichtagActive ? 'border-amber-300 dark:border-amber-700' : 'border-border',
+                )}
+              />
+            </div>
+
+            {/* Abmelden */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setOpen(false); signOut(); }}
+              className="w-full h-8 text-xs text-destructive border-destructive/30 hover:bg-destructive/10 justify-start gap-2"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Abmelden
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
   );
 };
 
