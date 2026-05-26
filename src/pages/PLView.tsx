@@ -53,6 +53,11 @@ import { toast } from 'sonner';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
 import { computeMonthlyIstNet, computeMonthlyVjNet } from '@/lib/revenue-sync';
+import {
+  getMaisonEnabledSync, getMaisonMonthlySync,
+  loadMaisonEnabled, loadMaisonMonthly,
+  saveMaisonEnabled, saveMaisonMonth,
+} from '@/lib/maison-store';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -2113,6 +2118,49 @@ const PLViewPage = () => {
   const [refreshKey,       setRefreshKey]       = useState(0);
   const [addKontoOpen,    setAddKontoOpen]    = useState(false);
 
+  // ── Maison Umsatzkanal ────────────────────────────────────────────────────
+  const [maisonEnabled, setMaisonEnabled] = useState(() => getMaisonEnabledSync(tenantKey));
+  const [maisonMonthly, setMaisonMonthly] = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
+  const [maisonInput,   setMaisonInput]   = useState('');
+  const [maisonSaving,  setMaisonSaving]  = useState(false);
+
+  useEffect(() => {
+    loadMaisonEnabled(tenantKey).then(setMaisonEnabled);
+    loadMaisonMonthly(tenantKey).then(setMaisonMonthly);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
+  useEffect(() => {
+    const ym = `${year}-${String(month).padStart(2, '0')}`;
+    setMaisonInput(maisonMonthly[ym] ? String(Math.round(maisonMonthly[ym])) : '');
+  }, [year, month, maisonMonthly]);
+
+  const handleMaisonToggle = async () => {
+    const newVal = !maisonEnabled;
+    setMaisonEnabled(newVal);
+    await saveMaisonEnabled(tenantKey, newVal);
+  };
+
+  const handleMaisonSave = async () => {
+    const raw    = maisonInput.replace(/['''\s]/g, '').replace(',', '.');
+    const amount = parseFloat(raw);
+    if (isNaN(amount) || amount < 0) return;
+    const ym = `${year}-${String(month).padStart(2, '0')}`;
+    setMaisonSaving(true);
+    try {
+      await saveMaisonMonth(tenantKey, ym, amount);
+      setMaisonMonthly(prev => amount > 0
+        ? { ...prev, [ym]: amount }
+        : Object.fromEntries(Object.entries(prev).filter(([k]) => k !== ym)),
+      );
+      toast.success(`Maison ${MONTH_NAMES_DE[month]} ${year}: ${Math.round(amount).toLocaleString('de-CH')} CHF gespeichert`);
+    } catch {
+      toast.error('Maison konnte nicht gespeichert werden');
+    } finally {
+      setMaisonSaving(false);
+    }
+  };
+
   // Stichtag — wenn aktiv, springt die Ansicht automatisch zu Jahr/Monat des Stichtags
   const { isActive: stichtagActive, stichtagYear, stichtagMonth } = useStichtag();
   useEffect(() => {
@@ -2180,7 +2228,7 @@ const PLViewPage = () => {
         return !isNaN(n) && n >= 3000 && n <= 3999;
       });
       if (!hasIndivRev) {
-        const tagesansichtRev = computeMonthlyIstNet(year, m, dailyBudgetsData);
+        const tagesansichtRev = computeMonthlyIstNet(year, m, dailyBudgetsData, maisonEnabled ? maisonMonthly : undefined);
         if (tagesansichtRev > 0) {
           if (r.revenueActual && Math.abs(r.revenueActual - tagesansichtRev) > 1) {
             console.warn(
@@ -2210,7 +2258,7 @@ const PLViewPage = () => {
 
       return r;
     });
-  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData]);
+  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonMonthly]);
 
   // Effektiver Datensatz für den ausgewählten Monat
   const effectiveMonthRecord = useMemo(
@@ -2680,6 +2728,87 @@ const PLViewPage = () => {
             month={month}
             onSaved={() => setRefreshKey(k => k + 1)}
           />
+        )}
+
+        {/* ── Maison Umsatzkanal ──────────────────────────────────────────── */}
+        {(mode === 'monthly' || mode === 'budget_pl') && (
+          <div className={cn(
+            'rounded-lg border px-4 py-3 flex items-center gap-3 flex-wrap',
+            maisonEnabled
+              ? 'border-violet-200 bg-violet-50 dark:border-violet-800 dark:bg-violet-950/20'
+              : 'border-border bg-muted/20',
+          )}>
+            {/* Toggle */}
+            <button
+              onClick={handleMaisonToggle}
+              className="flex items-center gap-2 shrink-0 group"
+              title={maisonEnabled ? 'Maison deaktivieren' : 'Maison aktivieren'}
+            >
+              <span className={cn(
+                'h-5 w-9 rounded-full border-2 transition-all duration-200 relative block',
+                maisonEnabled
+                  ? 'border-violet-500 bg-violet-500'
+                  : 'border-muted-foreground/30 bg-muted/50',
+              )}>
+                <span className={cn(
+                  'absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200',
+                  maisonEnabled ? 'translate-x-[14px] left-0.5' : 'translate-x-0 left-0.5',
+                )} />
+              </span>
+              <span className={cn(
+                'text-xs font-semibold',
+                maisonEnabled ? 'text-violet-700 dark:text-violet-400' : 'text-muted-foreground',
+              )}>Maison</span>
+            </button>
+
+            {maisonEnabled ? (
+              <>
+                {/* Eingabe: aktueller Monat */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-muted-foreground">{MONTH_NAMES_DE[month]} {year}:</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="Brutto CHF"
+                    value={maisonInput}
+                    onChange={e => setMaisonInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleMaisonSave(); }}
+                    className="w-28 h-7 text-right font-mono text-xs border border-violet-300 dark:border-violet-700 rounded px-2 bg-white dark:bg-violet-950/30 focus:outline-none focus:ring-1 focus:ring-violet-400"
+                  />
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs bg-violet-600 hover:bg-violet-700 text-white gap-1"
+                    onClick={handleMaisonSave}
+                    disabled={maisonSaving || !maisonInput.trim()}
+                  >
+                    {maisonSaving ? '…' : 'Speichern'}
+                  </Button>
+                </div>
+
+                {/* Übersicht: Monate mit Maison */}
+                {Object.keys(maisonMonthly).filter(k => (maisonMonthly[k] ?? 0) > 0).length > 0 && (
+                  <div className="ml-auto flex flex-wrap gap-1.5">
+                    {Object.entries(maisonMonthly)
+                      .filter(([, v]) => v > 0)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([ym, v]) => {
+                        const [, mStr] = ym.split('-');
+                        const m        = parseInt(mStr, 10);
+                        return (
+                          <span key={ym} className="text-[11px] text-violet-700 dark:text-violet-300 bg-violet-100 dark:bg-violet-900/40 border border-violet-200 dark:border-violet-800 px-2 py-0.5 rounded-full font-medium">
+                            {MONTH_NAMES_SHORT_DE[m]}: {Math.round(v).toLocaleString('de-CH')}
+                          </span>
+                        );
+                      })}
+                  </div>
+                )}
+              </>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Aktivieren um Maison-Umsatz zum IST-Umsatz zu addieren — wird in der Erfolgsrechnung und Tagesansicht berücksichtigt
+              </span>
+            )}
+          </div>
         )}
 
         {/* P&L-Tabelle */}

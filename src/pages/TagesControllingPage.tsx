@@ -46,6 +46,10 @@ import {
   type ActualHourEntry,
 } from '@/lib/supabase-db';
 import { getEffectiveWageBatch } from '@/lib/wage-history';
+import {
+  getMaisonEnabledSync, getMaisonMonthlySync,
+  loadMaisonEnabled, loadMaisonMonthly,
+} from '@/lib/maison-store';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -433,6 +437,15 @@ export default function TagesControllingPage() {
 
   // Spaltenbreiten (resizable)
   const [colWidths, setColWidths] = useState(DEFAULT_COL_WIDTHS);
+
+  // Maison Umsatzkanal
+  const [maisonEnabled, setMaisonEnabledState] = useState(() => getMaisonEnabledSync(tenantKey));
+  const [maisonMonthly, setMaisonMonthly]       = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
+  useEffect(() => {
+    loadMaisonEnabled(tenantKey).then(setMaisonEnabledState);
+    loadMaisonMonthly(tenantKey).then(setMaisonMonthly);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
   const resizingRef = useRef<{ col: string; startX: number; startW: number } | null>(null);
 
   function startResize(col: string, e: React.MouseEvent) {
@@ -1459,6 +1472,19 @@ export default function TagesControllingPage() {
                   )}>
                     <td className="px-3 py-2 text-left" colSpan={period === 'jahr' ? 1 : 2} style={period === 'jahr' ? colStyle('datum') : { width: (colWidths.datum ?? 110) + (colWidths.wt ?? 40) }}>
                       <span className="text-[11px] text-muted-foreground uppercase tracking-wide">Total</span>
+                      {maisonEnabled && (() => {
+                        const maisonAmt = period === 'monat'
+                          ? (maisonMonthly[format(anchor, 'yyyy-MM')] ?? 0)
+                          : period === 'jahr'
+                          ? Object.entries(maisonMonthly).filter(([k]) => k.startsWith(format(anchor, 'yyyy'))).reduce((s, [, v]) => s + v, 0)
+                          : 0;
+                        if (maisonAmt === 0) return null;
+                        return (
+                          <span className="ml-2 text-[10px] font-semibold text-violet-700 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/40 border border-violet-200 dark:border-violet-800 px-1.5 py-0.5 rounded-full">
+                            +Maison {Math.round(maisonAmt).toLocaleString('de-CH')}
+                          </span>
+                        );
+                      })()}
                       {effectiveCutoffDay !== null && (
                         <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
                           bis {effectiveCutoffDay}.

@@ -35,6 +35,10 @@ import { useVj2025Import } from '@/hooks/useVj2025Import';
 import { useVj2025BeaulieuImport } from '@/hooks/useVj2025BeaulieuImport';
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
 import { getDailyBudgetMap } from '@/lib/budget-day';
+import {
+  getMaisonEnabledSync, getMaisonMonthlySync,
+  loadMaisonEnabled, loadMaisonMonthly,
+} from '@/lib/maison-store';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -100,6 +104,15 @@ export default function TagesansichtPage() {
 
   // reportingTick: hochzählen bei Sync, damit rows-useMemo loadMonth() neu liest
   const [reportingTick, setReportingTick] = useState(0);
+
+  // Maison Umsatzkanal
+  const [maisonEnabled, setMaisonEnabledState] = useState(() => getMaisonEnabledSync(tenantKey));
+  const [maisonMonthly, setMaisonMonthly]       = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
+  useEffect(() => {
+    loadMaisonEnabled(tenantKey).then(setMaisonEnabledState);
+    loadMaisonMonthly(tenantKey).then(setMaisonMonthly);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   // Manuelle Ist-Eingabe
   const [editingDate, setEditingDate] = useState<string | null>(null);
@@ -765,6 +778,33 @@ export default function TagesansichtPage() {
                       {showKumDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBud, hasBud))}>{hasBud ? fmtDev(lastRow.cumDevBud) : '–'}</td>}
                       {showKumDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBudPct, hasBud && lastRow.cumBud > 0))}>{hasBud && lastRow.cumBud > 0 ? fmtPct(lastRow.cumDevBudPct) : '–'}</td>}
                     </tr>
+                    {/* ── Maison Zeile ──────────────────────────────────── */}
+                    {maisonEnabled && (() => {
+                      const mm          = String(month).padStart(2, '0');
+                      const maisonGross = maisonMonthly[`${year}-${mm}`] ?? 0;
+                      if (maisonGross === 0) return null;
+                      const maisonDisp  = showNetRevenue ? grossToNet(maisonGross, 0) : maisonGross;
+                      const totalWithMaison = lastRow.cumIst + maisonDisp;
+                      return (
+                        <tr className="bg-violet-50/60 dark:bg-violet-950/20 text-xs">
+                          <td className={cn(tdL, 'text-violet-700 dark:text-violet-400 text-[11px]')} colSpan={2}>+ Maison</td>
+                          <td className={cn(tdR, 'text-violet-700 dark:text-violet-400 font-semibold')}>{fmtN(maisonDisp)}</td>
+                          {showVjCols && <td colSpan={showDevVj ? 3 : 2} />}
+                          {!showVjCols && showDevVj && <td />}
+                          {showBudCol && <td />}
+                          {showDevBud && <td />}
+                          {showKum && (
+                            <td className={cn(tdRK, 'text-violet-700 dark:text-violet-400 font-semibold border-l border-violet-200 dark:border-violet-800')}>
+                              {fmtN(totalWithMaison)}
+                            </td>
+                          )}
+                          {showKumVj && <td />}
+                          {showKumDevVj && <td colSpan={2} />}
+                          {showKumBud && <td />}
+                          {showKumDevBud && <td colSpan={2} />}
+                        </tr>
+                      );
+                    })()}
                   </tfoot>
                 )}
               </table>

@@ -22,6 +22,7 @@ interface DailyEntry {
   actualRevenue?:       number;
   takeawayRevenue?:     number;
   previousYearRevenue?: number;
+  maisonRevenue?:       number;
 }
 
 /**
@@ -29,11 +30,15 @@ interface DailyEntry {
  * Identisch mit der Summierungslogik in TagesansichtPage (useMemo Rows).
  *
  * Gibt 0 zurück wenn keine Tagesdaten vorhanden.
+ *
+ * @param maisonMonthly Optional: Record<"YYYY-MM", grossCHF> — Maison-Umsatz pro Monat.
+ *   Wenn übergeben, wird der Maison-Betrag (Brutto) zum IST-Umsatz addiert (8.1% MwSt).
  */
 export function computeMonthlyIstNet(
-  year:         number,
-  month:        number,
-  dailyBudgets: Record<string, DailyEntry>,
+  year:          number,
+  month:         number,
+  dailyBudgets:  Record<string, DailyEntry>,
+  maisonMonthly?: Record<string, number>,
 ): number {
   const days = new Date(year, month, 0).getDate();
   const mm   = String(month).padStart(2, '0');
@@ -46,6 +51,11 @@ export function computeMonthlyIstNet(
     const takeaway = e.takeawayRevenue ?? 0;
     if (gross === 0 && takeaway === 0) continue;
     total += grossToNet(gross, takeaway);
+  }
+  // Maison-Umsatz (Brutto, 8.1% MwSt, kein Takeaway-Anteil)
+  if (maisonMonthly) {
+    const maison = maisonMonthly[`${year}-${mm}`] ?? 0;
+    if (maison > 0) total += grossToNet(maison, 0);
   }
   return total;
 }
