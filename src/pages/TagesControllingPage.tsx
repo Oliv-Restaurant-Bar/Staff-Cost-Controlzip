@@ -49,7 +49,10 @@ import { getEffectiveWageBatch } from '@/lib/wage-history';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
   loadMaisonEnabled, loadMaisonMonthly,
+  getMaisonDailySync, loadMaisonDaily, saveMaisonDaily,
+  saveMaisonEnabled,
 } from '@/lib/maison-store';
+import { parseMaisonXlsx } from '@/lib/maison-import';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -82,6 +85,7 @@ interface ControllingRow {
   wesTotal:   number;    // Total WES (Netto oder Brutto je nach showNetRevenue)
   wesFood:    number;    // Food WES
   wesBev:     number;    // Beverage WES
+  maisonNet:  number;    // Maison CHF im IST-Umsatz (Infospalte)
 }
 
 interface MonthRow {
@@ -128,6 +132,7 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
   wkFoodPct:   90,
   wkBevChf:    110,
   wkBevPct:    90,
+  maison:       80,
 };
 
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────────
@@ -441,11 +446,40 @@ export default function TagesControllingPage() {
   // Maison Umsatzkanal
   const [maisonEnabled, setMaisonEnabledState] = useState(() => getMaisonEnabledSync(tenantKey));
   const [maisonMonthly, setMaisonMonthly]       = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
+  const [maisonDaily,   setMaisonDaily]         = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
+  const [maisonImporting, setMaisonImporting]   = useState(false);
+  const maisonFileRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     loadMaisonEnabled(tenantKey).then(setMaisonEnabledState);
     loadMaisonMonthly(tenantKey).then(setMaisonMonthly);
+    loadMaisonDaily(tenantKey).then(setMaisonDaily);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
+
+  const handleMaisonImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setMaisonImporting(true);
+    try {
+      const result = await parseMaisonXlsx(file, anchor.getFullYear());
+      if (result.daysWithData === 0) {
+        toast('Keine Maison-/Marketing-Daten im Excel gefunden', { icon: '⚠️' });
+        return;
+      }
+      await saveMaisonDaily(tenantKey, result.daily);
+      setMaisonDaily(prev => ({ ...prev, ...result.daily }));
+      toast.success(
+        `Maison Import: ${result.daysWithData} Tage, ` +
+        `${Math.round(result.totalGross).toLocaleString('de-CH')} CHF brutto` +
+        (result.rowsFound.length ? ` (${[...new Set(result.rowsFound)].join(', ')})` : ''),
+      );
+    } catch (err) {
+      toast.error(`Import fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setMaisonImporting(false);
+    }
+  };
   const resizingRef = useRef<{ col: string; startX: number; startW: number } | null>(null);
 
   function startResize(col: string, e: React.MouseEvent) {
@@ -628,10 +662,20 @@ export default function TagesControllingPage() {
       const foodGross = dailyBudgets[d]?.foodRevenue     ?? 0;
       const bevGross  = dailyBudgets[d]?.beverageRevenue ?? 0;
 
-      // Umsätze (netto oder brutto)
-      const umsatzTotal = showNetRevenue ? grossToNet(grossRev, takeaway) : grossRev;
-      const umsatzFood  = showNetRevenue ? foodGross / (1 + 0.081) : foodGross;
-      const umsatzBev   = showNetRevenue ? bevGross  / (1 + 0.081) : bevGross;
+      // Maison: Brutto ÷ 1.081 = Netto, 50 % Food / 50 % Beverage
+      const maisonGross = maisonEnabled ? (maisonDaily[d] ?? 0) : 0;
+      const maisonNet   = maisonGross / 1.081;
+      const maisonDisp  = maisonGross > 0 ? (showNetRevenue ? maisonNet : maisonGross) : 0;
+
+      // Umsätze (netto oder brutto) + Maison
+      let umsatzTotal = showNetRevenue ? grossToNet(grossRev, takeaway) : grossRev;
+      let umsatzFood  = showNetRevenue ? foodGross / (1 + 0.081) : foodGross;
+      let umsatzBev   = showNetRevenue ? bevGross  / (1 + 0.081) : bevGross;
+      if (maisonDisp > 0) {
+        umsatzTotal += maisonDisp;
+        umsatzFood  += maisonDisp * 0.5;
+        umsatzBev   += maisonDisp * 0.5;
+      }
 
       // Warenkosten
       const wk        = warenkostenMap[d] ?? { totalNet: 0, totalGross: 0, foodNet: 0, foodGross: 0, bevNet: 0, bevGross: 0 };
@@ -649,9 +693,9 @@ export default function TagesControllingPage() {
 
       const pkPlanChf = planMap[d]   ?? 0;
       const pkIstChf  = actualMap[d] ?? 0;
-      return { date: d, day, umsatz, umsatzFood, umsatzBev, umsatzTotal, pkPlanChf, pkIstChf, wesChf, wesTotal, wesFood, wesBev };
+      return { date: d, day, umsatz, umsatzFood, umsatzBev, umsatzTotal, maisonNet: maisonDisp, pkPlanChf, pkIstChf, wesChf, wesTotal, wesFood, wesBev };
     });
-  }, [dates, dailyBudgets, planMap, actualMap, warenkostenMap, showNetRevenue, viewMode, categoryFilter]);
+  }, [dates, dailyBudgets, planMap, actualMap, warenkostenMap, showNetRevenue, viewMode, categoryFilter, maisonEnabled, maisonDaily]);
 
   // Total-Zeile (gewichtete Prozente; bei aktivem Pro-Rata nur bis Stichtag)
   // Wichtig: %-Werte nur auf Basis von Tagen mit vorhandenem Umsatz berechnen,
@@ -669,6 +713,7 @@ export default function TagesControllingPage() {
     const sumWes        = baseRows.reduce((s, r) => s + r.wesChf, 0);
     const sumWesFood    = baseRows.reduce((s, r) => s + r.wesFood, 0);
     const sumWesBev     = baseRows.reduce((s, r) => s + r.wesBev, 0);
+    const sumMaison     = baseRows.reduce((s, r) => s + r.maisonNet, 0);
     // Nur Tage mit Umsatz für %-Berechnung
     const revRows       = baseRows.filter(r => r.umsatz > 0);
     const revUmsatz     = revRows.reduce((s, r) => s + r.umsatz, 0);
@@ -688,7 +733,7 @@ export default function TagesControllingPage() {
     const wesBevPct     = revUmsatzBev  > 0 ? (revWesBev  / revUmsatzBev)  * 100 : 0;
     return {
       sumUmsatz, sumUmsatzTotal, sumUmsatzFood, sumUmsatzBev,
-      sumPkPlan, sumPkIst, sumWes, sumWesFood, sumWesBev,
+      sumPkPlan, sumPkIst, sumWes, sumWesFood, sumWesBev, sumMaison,
       pkPlanPct, pkIstPct, wesPct, wesFoodPct, wesBevPct,
     };
   }, [rows, effectiveCutoffDay]);
@@ -1294,6 +1339,43 @@ export default function TagesControllingPage() {
             ))}
           </div>
 
+          {/* Maison Toggle + Import */}
+          <div className="flex items-center gap-1.5 border-r border-border pr-3">
+            <button
+              onClick={async () => {
+                const newVal = !maisonEnabled;
+                setMaisonEnabledState(newVal);
+                await saveMaisonEnabled(tenantKey, newVal);
+              }}
+              title={maisonEnabled ? 'Maison deaktivieren' : 'Maison-Umsatz anzeigen'}
+              className={cn(
+                'h-8 px-2.5 text-xs rounded border transition-colors font-medium',
+                maisonEnabled
+                  ? 'bg-violet-600 text-white border-violet-600 hover:bg-violet-700'
+                  : 'border-border text-muted-foreground hover:bg-muted',
+              )}
+            >
+              Maison
+            </button>
+            {maisonEnabled && (
+              <button
+                onClick={() => maisonFileRef.current?.click()}
+                disabled={maisonImporting}
+                title="Marketing/Maison-Daten aus GastronoVi XLSX importieren"
+                className="h-8 px-2 text-xs rounded border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors"
+              >
+                {maisonImporting ? '…' : '↑ XLSX'}
+              </button>
+            )}
+            <input
+              ref={maisonFileRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={handleMaisonImport}
+            />
+          </div>
+
           {/* Export-Buttons */}
           <div className="flex items-center gap-1.5">
             <button
@@ -1409,6 +1491,11 @@ export default function TagesControllingPage() {
                         </span>
                         <ResizeHandle col="umsatz" />
                       </th>
+                      {maisonEnabled && (
+                        <th className="px-2 py-2 text-right font-medium text-[10px] text-violet-600 dark:text-violet-400 border-l border-violet-200/50 dark:border-violet-800/50 whitespace-nowrap" style={colStyle('maison')}>
+                          Maison
+                        </th>
+                      )}
                       <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('pkPlan')}>
                         <span>PK Plan CHF</span><ResizeHandle col="pkPlan" />
                       </th>
@@ -1472,19 +1559,6 @@ export default function TagesControllingPage() {
                   )}>
                     <td className="px-3 py-2 text-left" colSpan={period === 'jahr' ? 1 : 2} style={period === 'jahr' ? colStyle('datum') : { width: (colWidths.datum ?? 110) + (colWidths.wt ?? 40) }}>
                       <span className="text-[11px] text-muted-foreground uppercase tracking-wide">Total</span>
-                      {maisonEnabled && (() => {
-                        const maisonAmt = period === 'monat'
-                          ? (maisonMonthly[format(anchor, 'yyyy-MM')] ?? 0)
-                          : period === 'jahr'
-                          ? Object.entries(maisonMonthly).filter(([k]) => k.startsWith(format(anchor, 'yyyy'))).reduce((s, [, v]) => s + v, 0)
-                          : 0;
-                        if (maisonAmt === 0) return null;
-                        return (
-                          <span className="ml-2 text-[10px] font-semibold text-violet-700 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/40 border border-violet-200 dark:border-violet-800 px-1.5 py-0.5 rounded-full">
-                            +Maison {Math.round(maisonAmt).toLocaleString('de-CH')}
-                          </span>
-                        );
-                      })()}
                       {effectiveCutoffDay !== null && (
                         <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
                           bis {effectiveCutoffDay}.
@@ -1495,6 +1569,11 @@ export default function TagesControllingPage() {
                       <td className="px-3 py-2 text-right tabular-nums" style={colStyle('umsatz')}>
                         {fmtN(total.sumUmsatz)}
                       </td>
+                      {maisonEnabled && (
+                        <td className="px-2 py-2 text-right tabular-nums text-[11px] border-l border-violet-200/40 dark:border-violet-800/40 font-semibold text-violet-700 dark:text-violet-400" style={colStyle('maison')}>
+                          {total.sumMaison > 0 ? fmtN(total.sumMaison) : ''}
+                        </td>
+                      )}
                       <td className="px-3 py-2 text-right tabular-nums border-l border-border/50" style={colStyle('pkPlan')}>
                         {fmtN(total.sumPkPlan)}
                       </td>
@@ -1690,6 +1769,11 @@ export default function TagesControllingPage() {
                               )}
                             </td>
                             {viewMode === 'personal' ? (<>
+                              {maisonEnabled && (
+                                <td className="px-2 py-1.5 text-right tabular-nums text-[11px] border-l border-violet-200/40 dark:border-violet-800/40 text-violet-600 dark:text-violet-400" style={colStyle('maison')}>
+                                  {row.maisonNet > 0 ? fmtN(row.maisonNet) : ''}
+                                </td>
+                              )}
                               <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-muted-foreground" style={colStyle('pkPlan')}>
                                 {row.pkPlanChf > 0 ? fmtN(row.pkPlanChf) : '–'}
                               </td>

@@ -1,9 +1,10 @@
 /**
  * maison-store.ts — Maison Umsatzkanal
  * =====================================
- * Speichert zwei Werte pro Mandant:
+ * Speichert drei Werte pro Mandant:
  *   maison-enabled  → boolean  (aktiviert/deaktiviert)
- *   maison-monthly  → Record<"YYYY-MM", number>  (Brutto-CHF pro Monat)
+ *   maison-monthly  → Record<"YYYY-MM", number>  (Brutto-CHF pro Monat, manuell in PLView)
+ *   maison-daily    → Record<"YYYY-MM-DD", number> (Brutto-CHF pro Tag, aus XLSX-Import)
  *
  * Persistence: localStorage (sofort) + Supabase app_settings (dauerhaft).
  */
@@ -61,6 +62,41 @@ export async function loadMaisonMonthly(tk: (k: string) => string): Promise<Reco
     }
   } catch { /* fall through */ }
   return getMaisonMonthlySync(tk);
+}
+
+// ── Daily: Lesen ──────────────────────────────────────────────────────────────
+
+const dailyKey = (tk: (k: string) => string) => tk('maison-daily');
+
+export function getMaisonDailySync(tk: (k: string) => string): Record<string, number> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(dailyKey(tk)) || '{}');
+    return (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+  } catch { return {}; }
+}
+
+export async function loadMaisonDaily(tk: (k: string) => string): Promise<Record<string, number>> {
+  try {
+    const remote = await kvGet(dailyKey(tk));
+    if (remote && typeof remote === 'object' && !Array.isArray(remote)) {
+      const val = remote as Record<string, number>;
+      localStorage.setItem(dailyKey(tk), JSON.stringify(val));
+      return val;
+    }
+  } catch { /* fall through */ }
+  return getMaisonDailySync(tk);
+}
+
+// ── Daily: Schreiben (merge — bestehende andere Monate bleiben erhalten) ──────
+
+export async function saveMaisonDaily(
+  tk: (k: string) => string,
+  incoming: Record<string, number>,
+): Promise<void> {
+  const current = getMaisonDailySync(tk);
+  const merged  = { ...current, ...incoming };
+  localStorage.setItem(dailyKey(tk), JSON.stringify(merged));
+  await kvSet(dailyKey(tk), merged);
 }
 
 // ── Monthly: Schreiben ────────────────────────────────────────────────────────

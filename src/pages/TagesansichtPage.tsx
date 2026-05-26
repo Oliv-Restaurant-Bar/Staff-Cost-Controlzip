@@ -38,6 +38,7 @@ import { getDailyBudgetMap } from '@/lib/budget-day';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
   loadMaisonEnabled, loadMaisonMonthly,
+  getMaisonDailySync, loadMaisonDaily,
 } from '@/lib/maison-store';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
@@ -108,9 +109,11 @@ export default function TagesansichtPage() {
   // Maison Umsatzkanal
   const [maisonEnabled, setMaisonEnabledState] = useState(() => getMaisonEnabledSync(tenantKey));
   const [maisonMonthly, setMaisonMonthly]       = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
+  const [maisonDaily,   setMaisonDaily]         = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
   useEffect(() => {
     loadMaisonEnabled(tenantKey).then(setMaisonEnabledState);
     loadMaisonMonthly(tenantKey).then(setMaisonMonthly);
+    loadMaisonDaily(tenantKey).then(setMaisonDaily);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
@@ -210,10 +213,12 @@ export default function TagesansichtPage() {
     return monthDays.map(day => {
       const d = format(day, 'yyyy-MM-dd');
 
-      // Ist
-      const gross    = dailyBudgets[d]?.actualRevenue   ?? 0;
-      const takeaway = dailyBudgets[d]?.takeawayRevenue ?? 0;
-      const ist      = showNetRevenue ? grossToNet(gross, takeaway) : gross;
+      // Ist (inkl. Maison-Anteil wenn aktiviert)
+      const gross       = dailyBudgets[d]?.actualRevenue   ?? 0;
+      const takeaway    = dailyBudgets[d]?.takeawayRevenue ?? 0;
+      const maisonGross = maisonEnabled ? (maisonDaily[d] ?? 0) : 0;
+      const maisonDisp  = maisonGross > 0 ? (showNetRevenue ? maisonGross / 1.081 : maisonGross) : 0;
+      const ist         = (showNetRevenue ? grossToNet(gross, takeaway) : gross) + maisonDisp;
 
       // VJ: 1. Supabase (vj_daily:YYYY-MM-DD) → 2. dailyBudgets-Blob → 3. Pro-rata aus reporting_v1
       const vjKey      = `${year - 1}-${d.slice(5)}`;
@@ -273,6 +278,7 @@ export default function TagesansichtPage() {
       return {
         day, vjDate,
         ist,
+        maisonNet: maisonDisp,
         vj:         vjBase,
         vjIsExact,              // true = Tages-Exaktwert, false = pro-rata aus reporting_v1
         bud:        budBase,
@@ -288,7 +294,7 @@ export default function TagesansichtPage() {
       };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthDays, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetMap, year, month, reportingTick]);
+  }, [monthDays, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetMap, year, month, reportingTick, maisonEnabled, maisonDaily]);
 
   const lastRow = rows[rows.length - 1];
 
@@ -604,6 +610,7 @@ export default function TagesansichtPage() {
                     <th className={thL}>Datum</th>
                     <th className={thL}>WT</th>
                     <th className={thR}>Ist</th>
+                    {maisonEnabled && <th className="px-2 py-[3px] text-right text-[10px] font-medium text-violet-600 dark:text-violet-400 border-l border-violet-200/40 dark:border-violet-800/40 whitespace-nowrap">Maison</th>}
                     {showVjCols && <th className={thR}>Umsatz VJ</th>}
                     {showVjCols && <th className={thL}>WT VJ</th>}
                     {showDevVj  && <th className={thR}>Abw. VJ</th>}
@@ -682,6 +689,12 @@ export default function TagesansichtPage() {
                             </div>
                           )}
                         </td>
+                        {/* Maison Infospalte */}
+                        {maisonEnabled && (
+                          <td className="px-2 py-[3px] text-right tabular-nums text-[10px] border-l border-violet-200/40 dark:border-violet-800/40 text-violet-600 dark:text-violet-400">
+                            {row.maisonNet > 0 ? fmtN(row.maisonNet) : ''}
+                          </td>
+                        )}
                         {/* Umsatz VJ — exakt oder pro-rata (~) */}
                         {showVjCols && (
                           <td className={cn(tdR, row.vjIsExact ? 'text-muted-foreground' : 'text-muted-foreground/60 italic')}>
@@ -778,33 +791,6 @@ export default function TagesansichtPage() {
                       {showKumDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBud, hasBud))}>{hasBud ? fmtDev(lastRow.cumDevBud) : '–'}</td>}
                       {showKumDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBudPct, hasBud && lastRow.cumBud > 0))}>{hasBud && lastRow.cumBud > 0 ? fmtPct(lastRow.cumDevBudPct) : '–'}</td>}
                     </tr>
-                    {/* ── Maison Zeile ──────────────────────────────────── */}
-                    {maisonEnabled && (() => {
-                      const mm          = String(month).padStart(2, '0');
-                      const maisonGross = maisonMonthly[`${year}-${mm}`] ?? 0;
-                      if (maisonGross === 0) return null;
-                      const maisonDisp  = showNetRevenue ? grossToNet(maisonGross, 0) : maisonGross;
-                      const totalWithMaison = lastRow.cumIst + maisonDisp;
-                      return (
-                        <tr className="bg-violet-50/60 dark:bg-violet-950/20 text-xs">
-                          <td className={cn(tdL, 'text-violet-700 dark:text-violet-400 text-[11px]')} colSpan={2}>+ Maison</td>
-                          <td className={cn(tdR, 'text-violet-700 dark:text-violet-400 font-semibold')}>{fmtN(maisonDisp)}</td>
-                          {showVjCols && <td colSpan={showDevVj ? 3 : 2} />}
-                          {!showVjCols && showDevVj && <td />}
-                          {showBudCol && <td />}
-                          {showDevBud && <td />}
-                          {showKum && (
-                            <td className={cn(tdRK, 'text-violet-700 dark:text-violet-400 font-semibold border-l border-violet-200 dark:border-violet-800')}>
-                              {fmtN(totalWithMaison)}
-                            </td>
-                          )}
-                          {showKumVj && <td />}
-                          {showKumDevVj && <td colSpan={2} />}
-                          {showKumBud && <td />}
-                          {showKumDevBud && <td colSpan={2} />}
-                        </tr>
-                      );
-                    })()}
                   </tfoot>
                 )}
               </table>
