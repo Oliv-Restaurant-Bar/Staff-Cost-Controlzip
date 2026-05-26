@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useShiftConfig } from '@/hooks/useShiftConfig';
+import type { ShiftConfigItem } from '@/hooks/useShiftConfig';
 import { cn } from '@/lib/utils';
-import { Settings, Info, ChevronDown, ChevronRight, X, Paintbrush, Trash2, ChevronUp, ChevronDown as ChevronDownIcon } from 'lucide-react';
+import { Settings, Info, ChevronDown, ChevronRight, X, Paintbrush, Trash2, ChevronUp, ChevronDown as ChevronDownIcon, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Tooltip,
@@ -14,6 +15,34 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+
+const SIDEBAR_COLORS = [
+  { name: 'Gelb',    value: 'bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-700',   dot: 'bg-amber-400' },
+  { name: 'Blau',    value: 'bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 border-blue-300 dark:border-blue-700',         dot: 'bg-blue-400' },
+  { name: 'Lila',    value: 'bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 border-purple-300 dark:border-purple-700', dot: 'bg-purple-400' },
+  { name: 'Indigo',  value: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-200 border-indigo-300 dark:border-indigo-700', dot: 'bg-indigo-400' },
+  { name: 'Grün',    value: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-200 border-green-300 dark:border-green-600',   dot: 'bg-green-400' },
+  { name: 'Türkis',  value: 'bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-700',         dot: 'bg-teal-400' },
+  { name: 'Pink',    value: 'bg-pink-100 dark:bg-pink-900/40 text-pink-800 dark:text-pink-200 border-pink-300 dark:border-pink-700',         dot: 'bg-pink-400' },
+  { name: 'Cyan',    value: 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-800 dark:text-cyan-200 border-cyan-300 dark:border-cyan-700',         dot: 'bg-cyan-400' },
+  { name: 'Orange',  value: 'bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-200 border-orange-300 dark:border-orange-700', dot: 'bg-orange-400' },
+  { name: 'Limette', value: 'bg-lime-100 dark:bg-lime-900/40 text-lime-800 dark:text-lime-200 border-lime-300 dark:border-lime-700',         dot: 'bg-lime-400' },
+  { name: 'Rot',     value: 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-200 border-red-300 dark:border-red-700',               dot: 'bg-red-400' },
+  { name: 'Grau',    value: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-400 dark:border-gray-500',            dot: 'bg-gray-400' },
+];
+
+function calcHours(start: string, end: string): number {
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  if (isNaN(sh) || isNaN(eh)) return 0;
+  let s = sh + (sm || 0) / 60;
+  let e = eh + (em || 0) / 60;
+  if (e < s) e += 24;
+  const gross = e - s;
+  return Math.round((gross > 9 ? gross - 0.5 : gross) * 100) / 100;
+}
+
+const EMPTY_FORM = { name: '', abbrev: '', start: '', end: '', department: 'all' as 'all' | 'service' | 'küche', color: SIDEBAR_COLORS[0].value };
 
 interface ShiftLegendProps {
   onEditClick?: () => void;
@@ -44,6 +73,37 @@ export const ShiftLegend = ({
     const next = [...shifts];
     [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
     updateShifts(next);
+  };
+
+  const [addForm, setAddForm] = useState<typeof EMPTY_FORM | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  const openAddForm = () => {
+    const nextColor = SIDEBAR_COLORS[workShifts.length % SIDEBAR_COLORS.length].value;
+    setAddForm({ ...EMPTY_FORM, color: nextColor });
+    setTimeout(() => nameInputRef.current?.focus(), 50);
+  };
+
+  const handleAddShift = () => {
+    if (!addForm || !addForm.name.trim()) return;
+    const name = addForm.name.trim();
+    if (shifts.some(s => s.name === name)) return;
+    const hours = addForm.start && addForm.end ? calcHours(addForm.start, addForm.end) : 0;
+    const abbrev = addForm.abbrev.trim() || name.slice(0, 3).toUpperCase();
+    const newShift: ShiftConfigItem = {
+      name,
+      abbrev,
+      start: addForm.start || '',
+      end: addForm.end || '',
+      hours,
+      color: addForm.color,
+      isPaid: true,
+      countsToTarget: true,
+      department: addForm.department,
+      showInQuickSelect: true,
+    };
+    updateShifts([...shifts, newShift]);
+    setAddForm(null);
   };
 
   const filteredWorkShifts = workShifts.filter(shiftName => {
@@ -263,6 +323,105 @@ export const ShiftLegend = ({
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Add shift inline form */}
+          {addForm ? (
+            <div className="px-2 pb-2 border-t border-border/50 pt-2 space-y-1.5">
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Neue Schicht</div>
+
+              {/* Name */}
+              <input
+                ref={nameInputRef}
+                type="text"
+                placeholder="Name (z.B. Früh)"
+                value={addForm.name}
+                onChange={e => setAddForm(f => f && { ...f, name: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter') handleAddShift(); if (e.key === 'Escape') setAddForm(null); }}
+                className="w-full text-[11px] px-1.5 py-0.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary/50"
+              />
+
+              {/* Abbrev */}
+              <input
+                type="text"
+                placeholder="Kürzel (z.B. FRÜ)"
+                value={addForm.abbrev}
+                maxLength={6}
+                onChange={e => setAddForm(f => f && { ...f, abbrev: e.target.value })}
+                className="w-full text-[11px] px-1.5 py-0.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary/50"
+              />
+
+              {/* Times */}
+              <div className="flex gap-1 items-center">
+                <input
+                  type="time"
+                  value={addForm.start}
+                  onChange={e => setAddForm(f => f && { ...f, start: e.target.value })}
+                  className="flex-1 text-[11px] px-1 py-0.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+                <span className="text-[10px] text-muted-foreground">–</span>
+                <input
+                  type="time"
+                  value={addForm.end}
+                  onChange={e => setAddForm(f => f && { ...f, end: e.target.value })}
+                  className="flex-1 text-[11px] px-1 py-0.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+              </div>
+
+              {/* Department */}
+              <select
+                value={addForm.department}
+                onChange={e => setAddForm(f => f && { ...f, department: e.target.value as 'all' | 'service' | 'küche' })}
+                className="w-full text-[11px] px-1.5 py-0.5 rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary/50"
+              >
+                <option value="all">Alle Abteilungen</option>
+                <option value="service">Service</option>
+                <option value="küche">Küche</option>
+              </select>
+
+              {/* Color swatches */}
+              <div className="flex flex-wrap gap-1 pt-0.5">
+                {SIDEBAR_COLORS.map(c => (
+                  <button
+                    key={c.name}
+                    title={c.name}
+                    onClick={() => setAddForm(f => f && { ...f, color: c.value })}
+                    className={cn(
+                      'w-4 h-4 rounded-full border-2 transition-transform',
+                      c.dot,
+                      addForm.color === c.value ? 'border-foreground scale-125' : 'border-transparent'
+                    )}
+                  />
+                ))}
+              </div>
+
+              {/* Buttons */}
+              <div className="flex gap-1 pt-0.5">
+                <button
+                  onClick={handleAddShift}
+                  disabled={!addForm.name.trim()}
+                  className="flex-1 text-[11px] px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Hinzufügen
+                </button>
+                <button
+                  onClick={() => setAddForm(null)}
+                  className="px-2 py-0.5 rounded text-[11px] border border-border hover:bg-muted transition-colors"
+                >
+                  Abbrechen
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="px-2 pb-1">
+              <button
+                onClick={openAddForm}
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground w-full px-1.5 py-1 rounded hover:bg-muted transition-colors"
+              >
+                <Plus className="h-3 w-3" />
+                Neue Schicht
+              </button>
             </div>
           )}
 
