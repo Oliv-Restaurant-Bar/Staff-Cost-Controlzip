@@ -52,7 +52,6 @@ import {
   getMaisonDailySync, loadMaisonDaily, saveMaisonDaily,
   saveMaisonEnabled,
 } from '@/lib/maison-store';
-import { parseMaisonXlsx } from '@/lib/maison-import';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -447,8 +446,8 @@ export default function TagesControllingPage() {
   const [maisonEnabled, setMaisonEnabledState] = useState(() => getMaisonEnabledSync(tenantKey));
   const [maisonMonthly, setMaisonMonthly]       = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
   const [maisonDaily,   setMaisonDaily]         = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
-  const [maisonImporting, setMaisonImporting]   = useState(false);
-  const maisonFileRef = useRef<HTMLInputElement>(null);
+  const [editingMaisonDate,  setEditingMaisonDate]  = useState<string | null>(null);
+  const [editingMaisonValue, setEditingMaisonValue] = useState('');
   useEffect(() => {
     loadMaisonEnabled(tenantKey).then(setMaisonEnabledState);
     loadMaisonMonthly(tenantKey).then(setMaisonMonthly);
@@ -456,28 +455,15 @@ export default function TagesControllingPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
-  const handleMaisonImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = '';
-    setMaisonImporting(true);
+  const commitMaisonEdit = async (date: string, raw: string) => {
+    setEditingMaisonDate(null);
+    const parsed = parseFloat(raw.replace(/['\s]/g, '').replace(',', '.'));
+    const gross  = isNaN(parsed) || parsed < 0 ? 0 : Math.round(parsed * 100) / 100;
+    setMaisonDaily(prev => ({ ...prev, [date]: gross }));
     try {
-      const result = await parseMaisonXlsx(file, anchor.getFullYear());
-      if (result.daysWithData === 0) {
-        toast('Keine Maison-/Marketing-Daten im Excel gefunden', { icon: '⚠️' });
-        return;
-      }
-      await saveMaisonDaily(tenantKey, result.daily);
-      setMaisonDaily(prev => ({ ...prev, ...result.daily }));
-      toast.success(
-        `Maison Import: ${result.daysWithData} Tage, ` +
-        `${Math.round(result.totalGross).toLocaleString('de-CH')} CHF brutto` +
-        (result.rowsFound.length ? ` (${[...new Set(result.rowsFound)].join(', ')})` : ''),
-      );
-    } catch (err) {
-      toast.error(`Import fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setMaisonImporting(false);
+      await saveMaisonDaily(tenantKey, { [date]: gross });
+    } catch {
+      toast.error('Maison-Wert konnte nicht gespeichert werden');
     }
   };
   const resizingRef = useRef<{ col: string; startX: number; startW: number } | null>(null);
@@ -1339,7 +1325,7 @@ export default function TagesControllingPage() {
             ))}
           </div>
 
-          {/* Maison Toggle + Import */}
+          {/* Maison Toggle */}
           <div className="flex items-center gap-1.5 border-r border-border pr-3">
             <button
               onClick={async () => {
@@ -1347,7 +1333,7 @@ export default function TagesControllingPage() {
                 setMaisonEnabledState(newVal);
                 await saveMaisonEnabled(tenantKey, newVal);
               }}
-              title={maisonEnabled ? 'Maison deaktivieren' : 'Maison-Umsatz anzeigen'}
+              title={maisonEnabled ? 'Marketing/Maison ausblenden' : 'Marketing/Maison anzeigen'}
               className={cn(
                 'h-8 px-2.5 text-xs rounded border transition-colors font-medium',
                 maisonEnabled
@@ -1355,25 +1341,8 @@ export default function TagesControllingPage() {
                   : 'border-border text-muted-foreground hover:bg-muted',
               )}
             >
-              Maison
+              Marketing
             </button>
-            {maisonEnabled && (
-              <button
-                onClick={() => maisonFileRef.current?.click()}
-                disabled={maisonImporting}
-                title="Marketing/Maison-Daten aus GastronoVi XLSX importieren"
-                className="h-8 px-2 text-xs rounded border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors"
-              >
-                {maisonImporting ? '…' : '↑ XLSX'}
-              </button>
-            )}
-            <input
-              ref={maisonFileRef}
-              type="file"
-              accept=".xlsx,.xls"
-              className="hidden"
-              onChange={handleMaisonImport}
-            />
           </div>
 
           {/* Export-Buttons */}
@@ -1492,8 +1461,8 @@ export default function TagesControllingPage() {
                         <ResizeHandle col="umsatz" />
                       </th>
                       {maisonEnabled && (
-                        <th className="px-2 py-2 text-right font-medium text-[10px] text-violet-600 dark:text-violet-400 border-l border-violet-200/50 dark:border-violet-800/50 whitespace-nowrap" style={colStyle('maison')}>
-                          Maison
+                        <th className="px-2 py-2 text-right font-medium text-[10px] text-violet-600 dark:text-violet-400 border-l border-violet-200/50 dark:border-violet-800/50 whitespace-nowrap" style={colStyle('maison')} title="Marketing-Umsatz — klicken zum manuellen Bearbeiten">
+                          Marketing
                         </th>
                       )}
                       <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground border-l border-border/50" style={colStyle('pkPlan')}>
@@ -1770,8 +1739,32 @@ export default function TagesControllingPage() {
                             </td>
                             {viewMode === 'personal' ? (<>
                               {maisonEnabled && (
-                                <td className="px-2 py-1.5 text-right tabular-nums text-[11px] border-l border-violet-200/40 dark:border-violet-800/40 text-violet-600 dark:text-violet-400" style={colStyle('maison')}>
-                                  {row.maisonNet > 0 ? fmtN(row.maisonNet) : ''}
+                                <td className="px-1 py-0.5 text-right tabular-nums text-[11px] border-l border-violet-200/40 dark:border-violet-800/40 text-violet-600 dark:text-violet-400" style={colStyle('maison')}>
+                                  {editingMaisonDate === row.date ? (
+                                    <input
+                                      className="w-full bg-transparent text-right text-[11px] outline-none border-b border-violet-400 focus:border-violet-600 text-violet-700 dark:text-violet-300 tabular-nums"
+                                      value={editingMaisonValue}
+                                      autoFocus
+                                      onChange={e => setEditingMaisonValue(e.target.value)}
+                                      onBlur={() => commitMaisonEdit(row.date, editingMaisonValue)}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') commitMaisonEdit(row.date, editingMaisonValue);
+                                        if (e.key === 'Escape') setEditingMaisonDate(null);
+                                      }}
+                                    />
+                                  ) : (
+                                    <button
+                                      className="w-full text-right hover:text-violet-800 dark:hover:text-violet-200 transition-colors"
+                                      title="Klicken zum Bearbeiten (Brutto CHF)"
+                                      onClick={() => {
+                                        setEditingMaisonDate(row.date);
+                                        const cur = maisonDaily[row.date];
+                                        setEditingMaisonValue(cur && cur > 0 ? String(cur) : '');
+                                      }}
+                                    >
+                                      {row.maisonNet > 0 ? fmtN(row.maisonNet) : ''}
+                                    </button>
+                                  )}
                                 </td>
                               )}
                               <td className="px-3 py-1.5 text-right tabular-nums border-l border-border/30 text-muted-foreground" style={colStyle('pkPlan')}>

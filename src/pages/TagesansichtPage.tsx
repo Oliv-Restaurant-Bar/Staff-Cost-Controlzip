@@ -610,7 +610,7 @@ export default function TagesansichtPage() {
                     <th className={thL}>Datum</th>
                     <th className={thL}>WT</th>
                     <th className={thR}>Ist</th>
-                    {maisonEnabled && <th className="px-2 py-[3px] text-right text-[10px] font-medium text-violet-600 dark:text-violet-400 border-l border-violet-200/40 dark:border-violet-800/40 whitespace-nowrap">Maison</th>}
+                    {maisonEnabled && <th className="px-2 py-[3px] text-right text-[10px] font-medium text-violet-600 dark:text-violet-400 border-l border-violet-200/40 dark:border-violet-800/40 whitespace-nowrap">Marketing</th>}
                     {showVjCols && <th className={thR}>Umsatz VJ</th>}
                     {showVjCols && <th className={thL}>WT VJ</th>}
                     {showDevVj  && <th className={thR}>Abw. VJ</th>}
