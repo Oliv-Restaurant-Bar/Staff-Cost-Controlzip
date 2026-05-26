@@ -59,6 +59,7 @@ import {
   saveMaisonEnabled,
   getMaisonDailySync, loadMaisonDaily,
 } from '@/lib/maison-store';
+import { useMaisonExclude } from '@/hooks/useMaisonExclude';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -2153,6 +2154,7 @@ const PLViewPage = () => {
   const [maisonEnabled, setMaisonEnabled] = useState(() => getMaisonEnabledSync(tenantKey));
   const [maisonMonthly]                   = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
   const [maisonDaily,   setMaisonDaily]   = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
+  const [maisonExclude, setMaisonExclude] = useMaisonExclude();
 
   useEffect(() => {
     loadMaisonEnabled(tenantKey).then(setMaisonEnabled);
@@ -2247,7 +2249,7 @@ const PLViewPage = () => {
         return !isNaN(n) && n >= 3000 && n <= 3999;
       });
       if (!hasIndivRev) {
-        const tagesansichtRev = computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonEnabled ? maisonDaily : undefined);
+        const tagesansichtRev = computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonEnabled && !maisonExclude ? maisonDaily : undefined);
         if (tagesansichtRev > 0) {
           if (r.revenueActual && Math.abs(r.revenueActual - tagesansichtRev) > 1) {
             console.warn(
@@ -2780,10 +2782,24 @@ const PLViewPage = () => {
               )}>Maison</span>
             </button>
 
+            {maisonEnabled && (
+              <button
+                onClick={() => setMaisonExclude(!maisonExclude)}
+                title={maisonExclude ? 'Marketing zum Umsatz hinzuzählen' : 'Marketing vom Umsatz wegzählen'}
+                className={cn(
+                  'h-7 px-2.5 text-xs rounded border transition-colors font-medium shrink-0',
+                  maisonExclude
+                    ? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-700'
+                    : 'border-violet-200 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-950/40',
+                )}
+              >
+                {maisonExclude ? 'exkl. Umsatz' : 'inkl. Umsatz'}
+              </button>
+            )}
             {maisonEnabled ? (
               <span className="text-xs text-violet-700 dark:text-violet-400">
                 {maisonMonthNet > 0
-                  ? `${MONTH_NAMES_DE[month]} ${year}: ${Math.round(maisonMonthNet).toLocaleString('de-CH')} CHF netto — in Betriebsertrag eingerechnet`
+                  ? `${MONTH_NAMES_DE[month]} ${year}: ${Math.round(maisonMonthNet).toLocaleString('de-CH')} CHF netto${maisonExclude ? ' — nicht im Betriebsertrag' : ' — in Betriebsertrag eingerechnet'}`
                   : `Keine Marketing-Tagesdaten für ${MONTH_NAMES_DE[month]} ${year} — Werte im Tages-Controlling erfassen`}
               </span>
             ) : (

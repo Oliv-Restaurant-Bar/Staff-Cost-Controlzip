@@ -38,8 +38,9 @@ import { getDailyBudgetMap } from '@/lib/budget-day';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
   loadMaisonEnabled, loadMaisonMonthly,
-  getMaisonDailySync, loadMaisonDaily,
+  getMaisonDailySync, loadMaisonDaily, saveMaisonDaily,
 } from '@/lib/maison-store';
+import { useMaisonExclude } from '@/hooks/useMaisonExclude';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -110,12 +111,29 @@ export default function TagesansichtPage() {
   const [maisonEnabled, setMaisonEnabledState] = useState(() => getMaisonEnabledSync(tenantKey));
   const [maisonMonthly, setMaisonMonthly]       = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
   const [maisonDaily,   setMaisonDaily]         = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
+  const [maisonExclude, setMaisonExclude]       = useMaisonExclude();
   useEffect(() => {
     loadMaisonEnabled(tenantKey).then(setMaisonEnabledState);
     loadMaisonMonthly(tenantKey).then(setMaisonMonthly);
     loadMaisonDaily(tenantKey).then(setMaisonDaily);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
+
+  // Maison Inline-Bearbeitung
+  const [editingMaisonDate,  setEditingMaisonDate]  = useState<string | null>(null);
+  const [editingMaisonValue, setEditingMaisonValue] = useState('');
+
+  const commitMaisonEdit = async (date: string, raw: string) => {
+    setEditingMaisonDate(null);
+    const parsed = parseFloat(raw.replace(/['\s]/g, '').replace(',', '.'));
+    const gross  = isNaN(parsed) || parsed < 0 ? 0 : Math.round(parsed * 100) / 100;
+    setMaisonDaily(prev => ({ ...prev, [date]: gross }));
+    try {
+      await saveMaisonDaily(tenantKey, { [date]: gross });
+    } catch {
+      console.error('Marketing-Wert konnte nicht gespeichert werden');
+    }
+  };
 
   // Manuelle Ist-Eingabe
   const [editingDate, setEditingDate] = useState<string | null>(null);
@@ -213,12 +231,12 @@ export default function TagesansichtPage() {
     return monthDays.map(day => {
       const d = format(day, 'yyyy-MM-dd');
 
-      // Ist (inkl. Maison-Anteil wenn aktiviert)
+      // Ist (inkl. Maison-Anteil wenn aktiviert und nicht ausgeschlossen)
       const gross       = dailyBudgets[d]?.actualRevenue   ?? 0;
       const takeaway    = dailyBudgets[d]?.takeawayRevenue ?? 0;
       const maisonGross = maisonEnabled ? (maisonDaily[d] ?? 0) : 0;
       const maisonDisp  = maisonGross > 0 ? (showNetRevenue ? maisonGross / 1.081 : maisonGross) : 0;
-      const ist         = (showNetRevenue ? grossToNet(gross, takeaway) : gross) + maisonDisp;
+      const ist         = (showNetRevenue ? grossToNet(gross, takeaway) : gross) + (maisonExclude ? 0 : maisonDisp);
 
       // VJ: 1. Supabase (vj_daily:YYYY-MM-DD) → 2. dailyBudgets-Blob → 3. Pro-rata aus reporting_v1
       const vjKey      = `${year - 1}-${d.slice(5)}`;
@@ -294,7 +312,7 @@ export default function TagesansichtPage() {
       };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthDays, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetMap, year, month, reportingTick, maisonEnabled, maisonDaily]);
+  }, [monthDays, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetMap, year, month, reportingTick, maisonEnabled, maisonDaily, maisonExclude]);
 
   const lastRow = rows[rows.length - 1];
 
@@ -610,7 +628,22 @@ export default function TagesansichtPage() {
                     <th className={thL}>Datum</th>
                     <th className={thL}>WT</th>
                     <th className={thR}>Ist</th>
-                    {maisonEnabled && <th className="px-2 py-[3px] text-right text-[10px] font-medium text-violet-600 dark:text-violet-400 border-l border-violet-200/40 dark:border-violet-800/40 whitespace-nowrap">Marketing</th>}
+                    {maisonEnabled && (
+                      <th className="px-2 py-[3px] text-right text-[10px] font-medium border-l border-violet-200/40 dark:border-violet-800/40 whitespace-nowrap">
+                        <button
+                          onClick={() => setMaisonExclude(!maisonExclude)}
+                          title={maisonExclude ? 'Marketing zum Umsatz hinzuzählen' : 'Marketing vom Umsatz wegzählen'}
+                          className={cn(
+                            'rounded px-1 py-0.5 transition-colors',
+                            maisonExclude
+                              ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 line-through opacity-70'
+                              : 'text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30',
+                          )}
+                        >
+                          Marketing
+                        </button>
+                      </th>
+                    )}
                     {showVjCols && <th className={thR}>Umsatz VJ</th>}
                     {showVjCols && <th className={thL}>WT VJ</th>}
                     {showDevVj  && <th className={thR}>Abw. VJ</th>}
@@ -689,12 +722,49 @@ export default function TagesansichtPage() {
                             </div>
                           )}
                         </td>
-                        {/* Maison Infospalte */}
-                        {maisonEnabled && (
-                          <td className="px-2 py-[3px] text-right tabular-nums text-[10px] border-l border-violet-200/40 dark:border-violet-800/40 text-violet-600 dark:text-violet-400">
-                            {row.maisonNet > 0 ? fmtN(row.maisonNet) : ''}
-                          </td>
-                        )}
+                        {/* Maison Infospalte — editierbar */}
+                        {maisonEnabled && (() => {
+                          const d = format(row.day, 'yyyy-MM-dd');
+                          const grossVal = maisonDaily[d] ?? 0;
+                          return (
+                            <td className={cn(
+                              'px-1 py-[3px] text-right tabular-nums text-[10px] border-l border-violet-200/40 dark:border-violet-800/40',
+                              maisonExclude ? 'text-muted-foreground/40' : 'text-violet-600 dark:text-violet-400',
+                            )}>
+                              {editingMaisonDate === d ? (
+                                <input
+                                  autoFocus
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={editingMaisonValue}
+                                  onChange={e => setEditingMaisonValue(e.target.value)}
+                                  onBlur={() => commitMaisonEdit(d, editingMaisonValue)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') commitMaisonEdit(d, editingMaisonValue);
+                                    if (e.key === 'Escape') setEditingMaisonDate(null);
+                                  }}
+                                  className="w-16 text-right text-[10px] bg-violet-50 dark:bg-violet-950/30 border border-violet-300 dark:border-violet-700 rounded px-1 py-0 focus:outline-none"
+                                />
+                              ) : (
+                                <button
+                                  className={cn(
+                                    'w-full text-right transition-colors min-w-[2rem]',
+                                    maisonExclude
+                                      ? 'opacity-40 cursor-pointer hover:opacity-60'
+                                      : 'hover:text-violet-800 dark:hover:text-violet-200',
+                                  )}
+                                  title="Klicken zum Bearbeiten (Brutto CHF)"
+                                  onClick={() => {
+                                    setEditingMaisonDate(d);
+                                    setEditingMaisonValue(grossVal > 0 ? String(grossVal) : '');
+                                  }}
+                                >
+                                  {row.maisonNet > 0 ? fmtN(row.maisonNet) : <span className="opacity-30">+</span>}
+                                </button>
+                              )}
+                            </td>
+                          );
+                        })()}
                         {/* Umsatz VJ — exakt oder pro-rata (~) */}
                         {showVjCols && (
                           <td className={cn(tdR, row.vjIsExact ? 'text-muted-foreground' : 'text-muted-foreground/60 italic')}>

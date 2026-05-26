@@ -52,6 +52,7 @@ import {
   getMaisonDailySync, loadMaisonDaily, saveMaisonDaily,
   saveMaisonEnabled,
 } from '@/lib/maison-store';
+import { useMaisonExclude } from '@/hooks/useMaisonExclude';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -446,6 +447,7 @@ export default function TagesControllingPage() {
   const [maisonEnabled, setMaisonEnabledState] = useState(() => getMaisonEnabledSync(tenantKey));
   const [maisonMonthly, setMaisonMonthly]       = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
   const [maisonDaily,   setMaisonDaily]         = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
+  const [maisonExclude, setMaisonExclude]       = useMaisonExclude();
   const [editingMaisonDate,  setEditingMaisonDate]  = useState<string | null>(null);
   const [editingMaisonValue, setEditingMaisonValue] = useState('');
   useEffect(() => {
@@ -653,11 +655,11 @@ export default function TagesControllingPage() {
       const maisonNet   = maisonGross / 1.081;
       const maisonDisp  = maisonGross > 0 ? (showNetRevenue ? maisonNet : maisonGross) : 0;
 
-      // Umsätze (netto oder brutto) + Maison
+      // Umsätze (netto oder brutto) + Maison (nur wenn nicht ausgeschlossen)
       let umsatzTotal = showNetRevenue ? grossToNet(grossRev, takeaway) : grossRev;
       let umsatzFood  = showNetRevenue ? foodGross / (1 + 0.081) : foodGross;
       let umsatzBev   = showNetRevenue ? bevGross  / (1 + 0.081) : bevGross;
-      if (maisonDisp > 0) {
+      if (maisonDisp > 0 && !maisonExclude) {
         umsatzTotal += maisonDisp;
         umsatzFood  += maisonDisp * 0.5;
         umsatzBev   += maisonDisp * 0.5;
@@ -681,7 +683,7 @@ export default function TagesControllingPage() {
       const pkIstChf  = actualMap[d] ?? 0;
       return { date: d, day, umsatz, umsatzFood, umsatzBev, umsatzTotal, maisonNet: maisonDisp, pkPlanChf, pkIstChf, wesChf, wesTotal, wesFood, wesBev };
     });
-  }, [dates, dailyBudgets, planMap, actualMap, warenkostenMap, showNetRevenue, viewMode, categoryFilter, maisonEnabled, maisonDaily]);
+  }, [dates, dailyBudgets, planMap, actualMap, warenkostenMap, showNetRevenue, viewMode, categoryFilter, maisonEnabled, maisonDaily, maisonExclude]);
 
   // Total-Zeile (gewichtete Prozente; bei aktivem Pro-Rata nur bis Stichtag)
   // Wichtig: %-Werte nur auf Basis von Tagen mit vorhandenem Umsatz berechnen,
@@ -1326,7 +1328,7 @@ export default function TagesControllingPage() {
           </div>
 
           {/* Maison Toggle */}
-          <div className="flex items-center gap-1.5 border-r border-border pr-3">
+          <div className="flex items-center gap-1 border-r border-border pr-3">
             <button
               onClick={async () => {
                 const newVal = !maisonEnabled;
@@ -1343,6 +1345,20 @@ export default function TagesControllingPage() {
             >
               Marketing
             </button>
+            {maisonEnabled && (
+              <button
+                onClick={() => setMaisonExclude(!maisonExclude)}
+                title={maisonExclude ? 'Marketing zum Umsatz hinzuzählen' : 'Marketing vom Umsatz wegzählen'}
+                className={cn(
+                  'h-8 px-2 text-xs rounded border transition-colors font-medium',
+                  maisonExclude
+                    ? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-700'
+                    : 'border-border text-muted-foreground hover:bg-muted',
+                )}
+              >
+                {maisonExclude ? 'exkl.' : 'inkl.'}
+              </button>
+            )}
           </div>
 
           {/* Export-Buttons */}

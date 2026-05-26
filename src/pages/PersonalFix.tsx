@@ -28,6 +28,8 @@ import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
+import { useMaisonExclude } from '@/hooks/useMaisonExclude';
+import { getMaisonEnabledSync } from '@/lib/maison-store';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { loadWeekdayWeights, computeProRataBudget, logBudgetDayDebug } from '@/lib/budget-day';
@@ -1289,6 +1291,8 @@ function FlexBreakdownModal({ target, onClose }: {
 export default function PersonalFixPage() {
   const { isAdmin, isBeaulieuManager, canEditEmployees } = usePermissions();
   const { tenantId, tenantKey } = useTenant();
+  const [maisonExclude, setMaisonExclude] = useMaisonExclude();
+  const maisonOn = getMaisonEnabledSync(tenantKey);
   if (!isAdmin && !isBeaulieuManager) return <Navigate to="/personal" replace />;
 
   const today = new Date();
@@ -2455,6 +2459,23 @@ export default function PersonalFixPage() {
               <p className="text-xs text-muted-foreground">Lohnkosten-Übersicht & Hochrechnung</p>
             </div>
           </div>
+
+          {/* Marketing-Toggle */}
+          {maisonOn && (
+            <button
+              onClick={() => setMaisonExclude(!maisonExclude)}
+              title={maisonExclude ? 'Marketing zum Umsatz hinzuzählen' : 'Marketing vom Umsatz wegzählen'}
+              className={cn(
+                'h-8 px-2.5 text-xs rounded border transition-colors font-medium hidden sm:flex items-center gap-1.5',
+                maisonExclude
+                  ? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-700'
+                  : 'border-violet-200 text-violet-500 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30',
+              )}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
+              {maisonExclude ? 'exkl. Marketing' : 'inkl. Marketing'}
+            </button>
+          )}
 
           {/* PDF Export Button */}
           <Button
