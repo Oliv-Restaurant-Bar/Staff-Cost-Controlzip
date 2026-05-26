@@ -1480,21 +1480,12 @@ const SchedulePlanner = () => {
 
   const handlePasteCell = (empId: string, dateStr: string) => {
     if (!copiedCell) return;
-    const ds = scheduleData[`${empId}-${dateStr}`] || {};
-    const hasExisting = !!(ds.früh || ds.spät || ds.frühAbsence || ds.spätAbsence);
-    const doPaste = () => {
-      if (copiedCell.absence) {
-        handleSlotChange(empId, dateStr, 'früh', null, copiedCell.absence);
-        handleSlotChange(empId, dateStr, 'spät', null, null);
-      } else {
-        handleSlotChange(empId, dateStr, 'früh', copiedCell.primary, null);
-        handleSlotChange(empId, dateStr, 'spät', copiedCell.secondary, null);
-      }
-    };
-    if (hasExisting) {
-      toast('Bestehende Daten überschreiben?', { action: { label: 'Ja', onClick: doPaste } });
+    if (copiedCell.absence) {
+      handleSlotChange(empId, dateStr, 'früh', null, copiedCell.absence);
+      handleSlotChange(empId, dateStr, 'spät', null, null);
     } else {
-      doPaste();
+      handleSlotChange(empId, dateStr, 'früh', copiedCell.primary, null);
+      handleSlotChange(empId, dateStr, 'spät', copiedCell.secondary, null);
     }
   };
 
@@ -1526,25 +1517,17 @@ const SchedulePlanner = () => {
 
   const handlePasteWeek = (empId: string) => {
     if (!copiedWeek) return;
-    const hasExisting = displayDays.some(day => {
-      const ds = scheduleData[`${empId}-${format(day, 'yyyy-MM-dd')}`] || {};
-      return !!(ds.früh || ds.spät || ds.frühAbsence || ds.spätAbsence);
+    // Paste by day-index (Mo=0, Di=1, …) so it works across different weeks
+    const srcDates = Object.keys(copiedWeek.data).sort();
+    displayDays.forEach((day, idx) => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const srcDate = srcDates[idx];
+      const src = srcDate ? copiedWeek.data[srcDate] : null;
+      if (!src) return;
+      handleSlotChange(empId, dateStr, 'früh', src.früh, src.frühAbsence);
+      handleSlotChange(empId, dateStr, 'spät', src.spät, src.spätAbsence);
     });
-    const doPaste = () => {
-      displayDays.forEach(day => {
-        const dateStr = format(day, 'yyyy-MM-dd');
-        const src = copiedWeek.data[dateStr];
-        if (!src) return;
-        handleSlotChange(empId, dateStr, 'früh', src.früh, src.frühAbsence);
-        handleSlotChange(empId, dateStr, 'spät', src.spät, src.spätAbsence);
-      });
-      toast.success('Woche eingefügt');
-    };
-    if (hasExisting) {
-      toast('Bestehende Einträge dieser Woche überschreiben?', { action: { label: 'Ja, überschreiben', onClick: doPaste } });
-    } else {
-      doPaste();
-    }
+    toast.success('Woche eingefügt');
   };
 
   const handleMultiPlanCell = (empId: string, dateStr: string) => {

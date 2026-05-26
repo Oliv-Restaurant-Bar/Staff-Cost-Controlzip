@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useShiftConfig } from '@/hooks/useShiftConfig';
 import { cn } from '@/lib/utils';
-import { Settings, Info, ChevronDown, ChevronRight, X, Paintbrush } from 'lucide-react';
+import { Settings, Info, ChevronDown, ChevronRight, X, Paintbrush, Trash2, ChevronUp, ChevronDown as ChevronDownIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Tooltip,
@@ -30,7 +30,21 @@ export const ShiftLegend = ({
   onToolSelect,
   mode = 'bar',
 }: ShiftLegendProps) => {
-  const { shiftMap, workShifts, absenceShifts } = useShiftConfig();
+  const { shifts, shiftMap, workShifts, absenceShifts, updateShifts } = useShiftConfig();
+
+  const handleDeleteShift = (name: string) => {
+    updateShifts(shifts.filter(s => s.name !== name));
+  };
+
+  const handleMoveShift = (name: string, direction: 'up' | 'down') => {
+    const idx = shifts.findIndex(s => s.name === name);
+    if (idx < 0) return;
+    const newIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (newIdx < 0 || newIdx >= shifts.length) return;
+    const next = [...shifts];
+    [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+    updateShifts(next);
+  };
 
   const filteredWorkShifts = workShifts.filter(shiftName => {
     const config = shiftMap[shiftName];
@@ -108,39 +122,70 @@ export const ShiftLegend = ({
           {filteredWorkShifts.length > 0 && (
             <div className="px-2 py-1.5 space-y-0.5">
               <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-1">Schichten</p>
-              {filteredWorkShifts.map(shiftName => {
+              {filteredWorkShifts.map((shiftName, listIdx) => {
                 const config = shiftMap[shiftName];
                 if (!config) return null;
                 const toolValue = `shift:${shiftName}`;
                 const active = isToolActive(toolValue);
                 const isSplitShift = config.start2 && config.end2;
                 const formatT = (t: string) => t.replace(':00', '').replace(':30', ':30');
+                const shiftIdx = shifts.findIndex(s => s.name === shiftName);
+                const isFirst = listIdx === 0;
+                const isLast = listIdx === filteredWorkShifts.length - 1;
 
                 return (
-                  <div
-                    key={shiftName}
-                    draggable={hasPaintMode}
-                    onDragStart={hasPaintMode ? (e) => handleDragStart(e, toolValue) : undefined}
-                    onDragEnd={hasPaintMode ? handleDragEnd : undefined}
-                    onClick={() => hasPaintMode && handleShiftClick(toolValue)}
-                    className={cn(
-                      "flex items-center gap-1.5 w-full px-1.5 py-1 rounded-md text-[11px] font-medium border cursor-pointer select-none transition-all",
-                      config.color,
-                      active && "ring-2 ring-offset-1 ring-primary shadow-sm",
-                      !active && hasPaintMode && activeTool && "opacity-50",
-                      hasPaintMode && "hover:ring-1 hover:ring-foreground/30"
-                    )}
-                    title={hasPaintMode ? (active ? 'Klicken zum Deaktivieren' : `${shiftName} aktivieren oder ziehen`) : undefined}
-                  >
-                    <span className="flex-1 truncate">{shiftName}</span>
-                    <span className="text-[10px] opacity-60 shrink-0">
-                      {isSplitShift
-                        ? `${formatT(config.start)}-${formatT(config.end)}`
-                        : config.start && config.end
+                  <div key={shiftName} className="group relative">
+                    <div
+                      draggable={hasPaintMode}
+                      onDragStart={hasPaintMode ? (e) => handleDragStart(e, toolValue) : undefined}
+                      onDragEnd={hasPaintMode ? handleDragEnd : undefined}
+                      onClick={() => hasPaintMode && handleShiftClick(toolValue)}
+                      className={cn(
+                        "flex items-center gap-1.5 w-full px-1.5 py-1 rounded-md text-[11px] font-medium border select-none transition-all pr-14",
+                        config.color,
+                        hasPaintMode ? "cursor-pointer" : "cursor-default",
+                        active && "ring-2 ring-offset-1 ring-primary shadow-sm",
+                        !active && hasPaintMode && activeTool && "opacity-50",
+                        hasPaintMode && "hover:ring-1 hover:ring-foreground/30"
+                      )}
+                      title={hasPaintMode ? (active ? 'Klicken zum Deaktivieren' : `${shiftName} aktivieren oder ziehen`) : shiftName}
+                    >
+                      <span className="flex-1 truncate">{shiftName}</span>
+                      <span className="text-[10px] opacity-60 shrink-0">
+                        {isSplitShift
                           ? `${formatT(config.start)}-${formatT(config.end)}`
-                          : formatHours(config.hours)}
-                    </span>
-                    {hasPaintMode && active && <Paintbrush className="h-2.5 w-2.5 shrink-0 opacity-80" />}
+                          : config.start && config.end
+                            ? `${formatT(config.start)}-${formatT(config.end)}`
+                            : formatHours(config.hours)}
+                      </span>
+                      {hasPaintMode && active && <Paintbrush className="h-2.5 w-2.5 shrink-0 opacity-80" />}
+                    </div>
+                    {/* Inline action buttons — visible on hover */}
+                    <div className="absolute right-0.5 top-0.5 bottom-0.5 hidden group-hover:flex items-center gap-0.5">
+                      <button
+                        onClick={e => { e.stopPropagation(); handleMoveShift(shiftName, 'up'); }}
+                        disabled={isFirst || shiftIdx <= 0}
+                        className="h-5 w-5 flex items-center justify-center rounded text-[10px] bg-background/90 border border-border hover:bg-muted disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                        title="Nach oben verschieben"
+                      >
+                        <ChevronUp className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={e => { e.stopPropagation(); handleMoveShift(shiftName, 'down'); }}
+                        disabled={isLast}
+                        className="h-5 w-5 flex items-center justify-center rounded text-[10px] bg-background/90 border border-border hover:bg-muted disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                        title="Nach unten verschieben"
+                      >
+                        <ChevronDownIcon className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={e => { e.stopPropagation(); handleDeleteShift(shiftName); }}
+                        className="h-5 w-5 flex items-center justify-center rounded text-[10px] bg-background/90 border border-red-200 hover:bg-red-50 hover:border-red-400 hover:text-red-600 transition-colors"
+                        title={`${shiftName} löschen`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -156,34 +201,65 @@ export const ShiftLegend = ({
           {filteredAbsenceShifts.length > 0 && (
             <div className="px-2 py-1.5 space-y-0.5">
               <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-1">Abwesenheiten</p>
-              {filteredAbsenceShifts.map(shiftName => {
+              {filteredAbsenceShifts.map((shiftName, listIdx) => {
                 const config = shiftMap[shiftName];
                 if (!config) return null;
                 const toolValue = config.abbrev || shiftName;
                 const active = isToolActive(toolValue);
+                const shiftIdx = shifts.findIndex(s => s.name === shiftName);
+                const isFirst = listIdx === 0;
+                const isLast = listIdx === filteredAbsenceShifts.length - 1;
 
                 return (
-                  <div
-                    key={shiftName}
-                    draggable={hasPaintMode}
-                    onDragStart={hasPaintMode ? (e) => handleDragStart(e, toolValue) : undefined}
-                    onDragEnd={hasPaintMode ? handleDragEnd : undefined}
-                    onClick={() => hasPaintMode && handleShiftClick(toolValue)}
-                    className={cn(
-                      "flex items-center gap-1.5 w-full px-1.5 py-1 rounded-md text-[11px] font-medium border cursor-pointer select-none transition-all",
-                      config.color,
-                      active && "ring-2 ring-offset-1 ring-primary shadow-sm",
-                      !active && hasPaintMode && activeTool && "opacity-50",
-                      hasPaintMode && "hover:ring-1 hover:ring-foreground/30"
-                    )}
-                    title={hasPaintMode ? (active ? 'Klicken zum Deaktivieren' : `${shiftName} aktivieren oder ziehen`) : undefined}
-                  >
-                    <span className="font-bold shrink-0">{config.abbrev || shiftName}</span>
-                    <span className="flex-1 truncate opacity-70 text-[10px]">{shiftName}</span>
-                    {config.hours > 0 && (
-                      <span className="text-[10px] opacity-60 shrink-0">{formatHours(config.hours)}</span>
-                    )}
-                    {hasPaintMode && active && <Paintbrush className="h-2.5 w-2.5 shrink-0 opacity-80" />}
+                  <div key={shiftName} className="group relative">
+                    <div
+                      draggable={hasPaintMode}
+                      onDragStart={hasPaintMode ? (e) => handleDragStart(e, toolValue) : undefined}
+                      onDragEnd={hasPaintMode ? handleDragEnd : undefined}
+                      onClick={() => hasPaintMode && handleShiftClick(toolValue)}
+                      className={cn(
+                        "flex items-center gap-1.5 w-full px-1.5 py-1 rounded-md text-[11px] font-medium border select-none transition-all pr-14",
+                        config.color,
+                        hasPaintMode ? "cursor-pointer" : "cursor-default",
+                        active && "ring-2 ring-offset-1 ring-primary shadow-sm",
+                        !active && hasPaintMode && activeTool && "opacity-50",
+                        hasPaintMode && "hover:ring-1 hover:ring-foreground/30"
+                      )}
+                      title={hasPaintMode ? (active ? 'Klicken zum Deaktivieren' : `${shiftName} aktivieren oder ziehen`) : shiftName}
+                    >
+                      <span className="font-bold shrink-0">{config.abbrev || shiftName}</span>
+                      <span className="flex-1 truncate opacity-70 text-[10px]">{shiftName}</span>
+                      {config.hours > 0 && (
+                        <span className="text-[10px] opacity-60 shrink-0">{formatHours(config.hours)}</span>
+                      )}
+                      {hasPaintMode && active && <Paintbrush className="h-2.5 w-2.5 shrink-0 opacity-80" />}
+                    </div>
+                    {/* Inline action buttons — visible on hover */}
+                    <div className="absolute right-0.5 top-0.5 bottom-0.5 hidden group-hover:flex items-center gap-0.5">
+                      <button
+                        onClick={e => { e.stopPropagation(); handleMoveShift(shiftName, 'up'); }}
+                        disabled={isFirst || shiftIdx <= 0}
+                        className="h-5 w-5 flex items-center justify-center rounded text-[10px] bg-background/90 border border-border hover:bg-muted disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                        title="Nach oben verschieben"
+                      >
+                        <ChevronUp className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={e => { e.stopPropagation(); handleMoveShift(shiftName, 'down'); }}
+                        disabled={isLast}
+                        className="h-5 w-5 flex items-center justify-center rounded text-[10px] bg-background/90 border border-border hover:bg-muted disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                        title="Nach unten verschieben"
+                      >
+                        <ChevronDownIcon className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={e => { e.stopPropagation(); handleDeleteShift(shiftName); }}
+                        className="h-5 w-5 flex items-center justify-center rounded text-[10px] bg-background/90 border border-red-200 hover:bg-red-50 hover:border-red-400 hover:text-red-600 transition-colors"
+                        title={`${shiftName} löschen`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
                 );
               })}
