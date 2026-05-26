@@ -1,12 +1,13 @@
 /**
- * maison-import.ts — XLSX-Import für Maison-Tagesumsätze
- * ========================================================
+ * maison-import.ts — XLSX-Import für Marketing-Tagesumsätze
+ * ===========================================================
  * Liest einen GastronoVi-/POS-Export und extrahiert Tagesbeträge
- * aus Zeilen mit den Bezeichnungen "Maison", "marketing", "Marketing".
+ * ausschliesslich aus Zeilen mit der Bezeichnung "marketing" oder "Marketing".
+ * Andere Zeilen (z.B. "Maison", "Rabatte") werden ignoriert.
  *
  * Format:
  *   Zeile 1: Bezeichnung | Zeitraum | 01.05. | 02.05. | …
- *   Zeile N: Maison | CHF 2164,30 | CHF 191,10 | CHF 378,30 | …
+ *   Zeile N: marketing   | CHF …    | CHF …  | CHF …  | …
  */
 
 import ExcelJS from 'exceljs';
@@ -20,7 +21,7 @@ export interface MaisonImportResult {
   daysWithData: number;
 }
 
-const MAISON_LABELS = new Set(['maison', 'marketing']);
+const MAISON_LABELS = new Set(['marketing']);
 
 function parseCHFCell(val: ExcelJS.CellValue): number {
   if (val === null || val === undefined) return 0;
