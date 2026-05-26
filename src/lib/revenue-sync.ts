@@ -31,14 +31,16 @@ interface DailyEntry {
  *
  * Gibt 0 zurück wenn keine Tagesdaten vorhanden.
  *
- * @param maisonMonthly Optional: Record<"YYYY-MM", grossCHF> — Maison-Umsatz pro Monat.
- *   Wenn übergeben, wird der Maison-Betrag (Brutto) zum IST-Umsatz addiert (8.1% MwSt).
+ * @param maisonMonthly Legacy: Record<"YYYY-MM", grossCHF> — monatlicher Blob (veraltet).
+ * @param maisonDaily   Bevorzugt: Record<"YYYY-MM-DD", grossCHF> — Tageswerte (Marketing).
+ *   Wenn übergeben, hat maisonDaily Priorität über maisonMonthly.
  */
 export function computeMonthlyIstNet(
-  year:          number,
-  month:         number,
-  dailyBudgets:  Record<string, DailyEntry>,
+  year:           number,
+  month:          number,
+  dailyBudgets:   Record<string, DailyEntry>,
   maisonMonthly?: Record<string, number>,
+  maisonDaily?:   Record<string, number>,
 ): number {
   const days = new Date(year, month, 0).getDate();
   const mm   = String(month).padStart(2, '0');
@@ -52,8 +54,14 @@ export function computeMonthlyIstNet(
     if (gross === 0 && takeaway === 0) continue;
     total += grossToNet(gross, takeaway);
   }
-  // Maison-Umsatz (Brutto, 8.1% MwSt, kein Takeaway-Anteil)
-  if (maisonMonthly) {
+  // Marketing/Maison-Umsatz: Tageswerte haben Priorität über monatlichen Blob
+  if (maisonDaily) {
+    for (let d = 1; d <= days; d++) {
+      const key   = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+      const gross = maisonDaily[key] ?? 0;
+      if (gross > 0) total += gross / 1.081;
+    }
+  } else if (maisonMonthly) {
     const maison = maisonMonthly[`${year}-${mm}`] ?? 0;
     if (maison > 0) total += grossToNet(maison, 0);
   }

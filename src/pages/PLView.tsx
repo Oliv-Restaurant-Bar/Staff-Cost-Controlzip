@@ -56,7 +56,8 @@ import { computeMonthlyIstNet, computeMonthlyVjNet } from '@/lib/revenue-sync';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
   loadMaisonEnabled, loadMaisonMonthly,
-  saveMaisonEnabled, saveMaisonMonth,
+  saveMaisonEnabled,
+  getMaisonDailySync, loadMaisonDaily,
 } from '@/lib/maison-store';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
@@ -1240,6 +1241,8 @@ const BudgetPLView = ({
   revenuePrevYear = 0,
   compareMode = 'all',
   pctIsBudgetBased = false,
+  maisonEnabled = false,
+  maisonNet = 0,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
@@ -1255,6 +1258,8 @@ const BudgetPLView = ({
   revenuePrevYear?: number;
   compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr';
   pctIsBudgetBased?: boolean;
+  maisonEnabled?: boolean;
+  maisonNet?: number;
 }) => {
   const showBudget   = compareMode !== 'ist_vorjahr';
   const showPrevYear = compareMode !== 'ist_budget';
@@ -1300,25 +1305,51 @@ const BudgetPLView = ({
             !row.isCategory && row.catType !== 'result' && collapsedCats.has(row.catId);
           if (isHiddenByCollapse) return null;
 
+          const isLastRevItem =
+            row.catId === 'pl_revenue' && !row.isCategory && row.catType !== 'result' &&
+            (i === rows.length - 1 || rows[i + 1]?.catId !== 'pl_revenue');
+
           return (
-            <BPLRowComp
-              key={`${row.catId}-${row.itemId ?? 'cat'}-${i}`}
-              row={row}
-              onClick={() => onRowClick(row)}
-              compact={compact}
-              onDelete={onDeleteItem}
-              month={month}
-              year={year}
-              onSaved={onSaved}
-              highlightVariance={highlightVariance}
-              pctMode={pctMode}
-              revenueActual={revenueActual}
-              revenueBudget={revenueBudget}
-              revenuePrevYear={revenuePrevYear}
-              compareMode={compareMode}
-              isCollapsed={row.isCategory ? collapsedCats.has(row.catId) : undefined}
-              onToggleCollapse={row.isCategory ? () => toggleCat(row.catId) : undefined}
-            />
+            <React.Fragment key={`${row.catId}-${row.itemId ?? 'cat'}-${i}`}>
+              <BPLRowComp
+                row={row}
+                onClick={() => onRowClick(row)}
+                compact={compact}
+                onDelete={onDeleteItem}
+                month={month}
+                year={year}
+                onSaved={onSaved}
+                highlightVariance={highlightVariance}
+                pctMode={pctMode}
+                revenueActual={revenueActual}
+                revenueBudget={revenueBudget}
+                revenuePrevYear={revenuePrevYear}
+                compareMode={compareMode}
+                isCollapsed={row.isCategory ? collapsedCats.has(row.catId) : undefined}
+                onToggleCollapse={row.isCategory ? () => toggleCat(row.catId) : undefined}
+              />
+              {isLastRevItem && maisonEnabled && maisonNet > 0 && (
+                <tr className="bg-violet-50/70 dark:bg-violet-950/20 border-b border-violet-100 dark:border-violet-900/50">
+                  <td className={cn('pl-8 pr-2 text-xs text-violet-700 dark:text-violet-400 font-medium', compact ? 'py-0.5' : 'py-1')}>
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-violet-400 text-[10px]">↳</span>
+                      Marketing
+                    </span>
+                  </td>
+                  <td className={compact ? 'py-0.5' : 'py-1'} />
+                  <td className={cn('px-2 text-right text-xs font-mono tabular-nums text-violet-700 dark:text-violet-400 font-semibold', compact ? 'py-0.5' : 'py-1')}>
+                    {fmt(maisonNet)}
+                  </td>
+                  {pctMode !== 'off' && <td />}
+                  {showBudget && <td />}
+                  {showBudget && pctMode !== 'off' && <td />}
+                  {showBudget && <td />}
+                  {showPrevYear && <td />}
+                  {showPrevYear && pctMode !== 'off' && <td />}
+                  {showPrevYear && <td />}
+                </tr>
+              )}
+            </React.Fragment>
           );
         })}
       </tbody>
@@ -2118,22 +2149,17 @@ const PLViewPage = () => {
   const [refreshKey,       setRefreshKey]       = useState(0);
   const [addKontoOpen,    setAddKontoOpen]    = useState(false);
 
-  // ── Maison Umsatzkanal ────────────────────────────────────────────────────
+  // ── Maison / Marketing Umsatzkanal ───────────────────────────────────────
   const [maisonEnabled, setMaisonEnabled] = useState(() => getMaisonEnabledSync(tenantKey));
-  const [maisonMonthly, setMaisonMonthly] = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
-  const [maisonInput,   setMaisonInput]   = useState('');
-  const [maisonSaving,  setMaisonSaving]  = useState(false);
+  const [maisonMonthly]                   = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
+  const [maisonDaily,   setMaisonDaily]   = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
 
   useEffect(() => {
     loadMaisonEnabled(tenantKey).then(setMaisonEnabled);
-    loadMaisonMonthly(tenantKey).then(setMaisonMonthly);
+    loadMaisonMonthly(tenantKey); // warm cache; not used for display
+    loadMaisonDaily(tenantKey).then(setMaisonDaily);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
-
-  useEffect(() => {
-    const ym = `${year}-${String(month).padStart(2, '0')}`;
-    setMaisonInput(maisonMonthly[ym] ? String(Math.round(maisonMonthly[ym])) : '');
-  }, [year, month, maisonMonthly]);
 
   const handleMaisonToggle = async () => {
     const newVal = !maisonEnabled;
@@ -2141,25 +2167,18 @@ const PLViewPage = () => {
     await saveMaisonEnabled(tenantKey, newVal);
   };
 
-  const handleMaisonSave = async () => {
-    const raw    = maisonInput.replace(/['''\s]/g, '').replace(',', '.');
-    const amount = parseFloat(raw);
-    if (isNaN(amount) || amount < 0) return;
-    const ym = `${year}-${String(month).padStart(2, '0')}`;
-    setMaisonSaving(true);
-    try {
-      await saveMaisonMonth(tenantKey, ym, amount);
-      setMaisonMonthly(prev => amount > 0
-        ? { ...prev, [ym]: amount }
-        : Object.fromEntries(Object.entries(prev).filter(([k]) => k !== ym)),
-      );
-      toast.success(`Maison ${MONTH_NAMES_DE[month]} ${year}: ${Math.round(amount).toLocaleString('de-CH')} CHF gespeichert`);
-    } catch {
-      toast.error('Maison konnte nicht gespeichert werden');
-    } finally {
-      setMaisonSaving(false);
+  // Marketing-Nettobetrag für den aktuell gewählten Monat (aus Tagesdaten)
+  const maisonMonthNet = useMemo(() => {
+    if (!maisonEnabled) return 0;
+    const mm   = String(month).padStart(2, '0');
+    const days = new Date(year, month, 0).getDate();
+    let total  = 0;
+    for (let d = 1; d <= days; d++) {
+      const gross = maisonDaily[`${year}-${mm}-${String(d).padStart(2, '0')}`] ?? 0;
+      if (gross > 0) total += gross / 1.081;
     }
-  };
+    return total;
+  }, [maisonEnabled, maisonDaily, year, month]);
 
   // Stichtag — wenn aktiv, springt die Ansicht automatisch zu Jahr/Monat des Stichtags
   const { isActive: stichtagActive, stichtagYear, stichtagMonth } = useStichtag();
@@ -2228,7 +2247,7 @@ const PLViewPage = () => {
         return !isNaN(n) && n >= 3000 && n <= 3999;
       });
       if (!hasIndivRev) {
-        const tagesansichtRev = computeMonthlyIstNet(year, m, dailyBudgetsData, maisonEnabled ? maisonMonthly : undefined);
+        const tagesansichtRev = computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonEnabled ? maisonDaily : undefined);
         if (tagesansichtRev > 0) {
           if (r.revenueActual && Math.abs(r.revenueActual - tagesansichtRev) > 1) {
             console.warn(
@@ -2258,7 +2277,7 @@ const PLViewPage = () => {
 
       return r;
     });
-  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonMonthly]);
+  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonDaily]);
 
   // Effektiver Datensatz für den ausgewählten Monat
   const effectiveMonthRecord = useMemo(
@@ -2730,7 +2749,7 @@ const PLViewPage = () => {
           />
         )}
 
-        {/* ── Maison Umsatzkanal ──────────────────────────────────────────── */}
+        {/* ── Marketing/Maison Umsatzkanal ─────────────────────────────────── */}
         {(mode === 'monthly' || mode === 'budget_pl') && (
           <div className={cn(
             'rounded-lg border px-4 py-3 flex items-center gap-3 flex-wrap',
@@ -2742,7 +2761,7 @@ const PLViewPage = () => {
             <button
               onClick={handleMaisonToggle}
               className="flex items-center gap-2 shrink-0 group"
-              title={maisonEnabled ? 'Maison deaktivieren' : 'Maison aktivieren'}
+              title={maisonEnabled ? 'Marketing deaktivieren' : 'Marketing aktivieren'}
             >
               <span className={cn(
                 'h-5 w-9 rounded-full border-2 transition-all duration-200 relative block',
@@ -2762,50 +2781,14 @@ const PLViewPage = () => {
             </button>
 
             {maisonEnabled ? (
-              <>
-                {/* Eingabe: aktueller Monat */}
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs text-muted-foreground">{MONTH_NAMES_DE[month]} {year}:</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="Brutto CHF"
-                    value={maisonInput}
-                    onChange={e => setMaisonInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') handleMaisonSave(); }}
-                    className="w-28 h-7 text-right font-mono text-xs border border-violet-300 dark:border-violet-700 rounded px-2 bg-white dark:bg-violet-950/30 focus:outline-none focus:ring-1 focus:ring-violet-400"
-                  />
-                  <Button
-                    size="sm"
-                    className="h-7 text-xs bg-violet-600 hover:bg-violet-700 text-white gap-1"
-                    onClick={handleMaisonSave}
-                    disabled={maisonSaving || !maisonInput.trim()}
-                  >
-                    {maisonSaving ? '…' : 'Speichern'}
-                  </Button>
-                </div>
-
-                {/* Übersicht: Monate mit Maison */}
-                {Object.keys(maisonMonthly).filter(k => (maisonMonthly[k] ?? 0) > 0).length > 0 && (
-                  <div className="ml-auto flex flex-wrap gap-1.5">
-                    {Object.entries(maisonMonthly)
-                      .filter(([, v]) => v > 0)
-                      .sort(([a], [b]) => a.localeCompare(b))
-                      .map(([ym, v]) => {
-                        const [, mStr] = ym.split('-');
-                        const m        = parseInt(mStr, 10);
-                        return (
-                          <span key={ym} className="text-[11px] text-violet-700 dark:text-violet-300 bg-violet-100 dark:bg-violet-900/40 border border-violet-200 dark:border-violet-800 px-2 py-0.5 rounded-full font-medium">
-                            {MONTH_NAMES_SHORT_DE[m]}: {Math.round(v).toLocaleString('de-CH')}
-                          </span>
-                        );
-                      })}
-                  </div>
-                )}
-              </>
+              <span className="text-xs text-violet-700 dark:text-violet-400">
+                {maisonMonthNet > 0
+                  ? `${MONTH_NAMES_DE[month]} ${year}: ${Math.round(maisonMonthNet).toLocaleString('de-CH')} CHF netto — in Betriebsertrag eingerechnet`
+                  : `Keine Marketing-Tagesdaten für ${MONTH_NAMES_DE[month]} ${year} — Werte im Tages-Controlling erfassen`}
+              </span>
             ) : (
               <span className="text-xs text-muted-foreground">
-                Aktivieren um Maison-Umsatz zum IST-Umsatz zu addieren — wird in der Erfolgsrechnung und Tagesansicht berücksichtigt
+                Aktivieren um Marketing-Umsatz in Betriebsertrag einzurechnen (Tageswerte aus Tages-Controlling)
               </span>
             )}
           </div>
@@ -2871,6 +2854,8 @@ const PLViewPage = () => {
                 revenuePrevYear={bplPrevYearRevenue}
                 compareMode={compareMode}
                 pctIsBudgetBased={pctIsBudgetBased}
+                maisonEnabled={maisonEnabled}
+                maisonNet={maisonMonthNet}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
