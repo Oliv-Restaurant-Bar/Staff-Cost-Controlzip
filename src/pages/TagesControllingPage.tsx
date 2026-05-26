@@ -1778,7 +1778,9 @@ export default function TagesControllingPage() {
                                         setEditingMaisonValue(cur && cur > 0 ? String(cur) : '');
                                       }}
                                     >
-                                      {row.maisonNet > 0 ? fmtN(row.maisonNet) : ''}
+                                      {row.maisonNet > 0
+                                        ? fmtN(row.maisonNet)
+                                        : <span className="opacity-20 select-none">+</span>}
                                     </button>
                                   )}
                                 </td>
