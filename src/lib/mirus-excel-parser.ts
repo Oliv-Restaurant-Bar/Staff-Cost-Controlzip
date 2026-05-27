@@ -1,14 +1,16 @@
 /**
- * Mirus Excel Parser — Koordinatenbasiert
- * ========================================
- * Position-basierter Parser für Mirus-Monatsblätter (Excel-Drucklayout).
+ * Mirus Excel Parser — Marker-basiert
+ * =====================================
+ * Layout-unabhängiger Parser für Mirus-Monatsblätter (Excel-Drucklayout).
  *
  * Strategie:
- *   - Mitarbeiterblock = Zeile mit "Name / Vorname" in Spalte C
- *   - Name kommt aus Zelle M(blockStart)
- *   - Wochenstunden aus BO(blockStart)
- *   - Tageszeilen ab blockStart+6, per Datumszellen-Suche
- *   - Spalten-Map wird per Header-Zeilen-Scan automatisch ermittelt
+ *   - Mitarbeiterblock = Zeile mit "Name / Vorname" (JEDE Spalte, nicht nur C)
+ *   - Name = erste nicht-leere Zelle RECHTS vom Marker (keine fixen Spalten)
+ *   - Wochenstunden = label-basiert ("Pensum"/"Soll") oder Fallback auf BO
+ *   - Arbeitsverhältnis = "Arbeitsverhältnis"-Marker oder Datums-Range-Pattern
+ *   - Header-Zeile = Zeile mit "Datum" + "Arbeitszeit" (dynamisch gesucht)
+ *   - Tageszeilen beginnen NACH der Header-Zeile
+ *   - Eindeutige Tage über Set(dates) gezählt
  *
  * Kein Supabase, kein Speichern — rein diagnostisch.
  */
@@ -23,18 +25,16 @@ import * as XLSX from 'xlsx';
 const C = (letter: string) => XLSX.utils.decode_col(letter);
 
 /**
- * Standard-Layout für Mirus-Monatsblatt (Drucklayout).
- * Spalten werden per Header-Zeilen-Scan automatisch überschrieben,
- * wenn Schlüsselwörter ("Datum", "Arbeitszeit", "Pause", "Total") gefunden werden.
+ * Fallback-Layout — nur noch als Notfall-Defaults.
+ * Alle kritischen Werte (Name, Wochenstunden, Tagesstart) werden
+ * marker-basiert erkannt; diese Werte greifen nur wenn kein Marker gefunden wird.
  */
 const LAYOUT = {
-  markerCol:       C('C'),   // "Name / Vorname" steht hier
-  nameCol:         C('M'),   // Employee-Name
-  weeklyHoursCol:  C('BO'),  // Wochenstunden
-  metaRowOffset:   1,        // Kostenstelle etc. in der Zeile nach dem Block-Start
-  daySearchOffset: 5,        // Tageszeilen-Suche startet ab blockStart + diesen Offset
+  weeklyHoursCol:  C('BO'),  // Fallback: Wochenstunden-Spalte
+  metaRowOffset:   1,        // Fallback: Kostenstelle in der Zeile nach Block-Start
+  daySearchOffset: 5,        // Fallback: Tageszeilen-Suche ab blockStart + Offset
 
-  // Tagesspalten — Standard, wird per Header überschrieben
+  // Fallback-Tagesspalten — werden per Header-Scan dynamisch überschrieben
   day: {
     dateCol:    C('B'),
     weekdayCol: C('D'),
@@ -327,13 +327,267 @@ function findBlockStarts(ws: XLSX.WorkSheet): number[] {
   if (!ref) return [];
   const range = XLSX.utils.decode_range(ref);
   const starts: number[] = [];
+  // Scan ALL columns — not a fixed column C
   for (let r = range.s.r; r <= range.e.r; r++) {
-    const cell = getCell(ws, LAYOUT.markerCol, r);
-    if (!cell) continue;
-    const text = String(cell.v ?? cell.w ?? '').trim();
-    if (/Name\s*\/\s*Vorname/i.test(text)) starts.push(r);
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell) continue;
+      const text = String(cell.v ?? cell.w ?? '').trim();
+      if (/Name\s*\/\s*Vorname/i.test(text)) {
+        starts.push(r);
+        break; // Only one marker per row
+      }
+    }
   }
   return starts;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── MARKER-BASIERTE LAYOUT-ERKENNUNG ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * detectMirusLayout:
+ * Sucht "Name / Vorname" in JEDER Spalte und gibt alle gefundenen
+ * Marker-Positionen zurück (Zeile + Spalte).
+ * Ersetzt den früheren fixen Ansatz (nur Spalte C).
+ */
+function detectMirusLayout(ws: XLSX.WorkSheet): Array<{ row: number; markerCol: number }> {
+  const ref = ws['!ref'];
+  if (!ref) return [];
+  const range = XLSX.utils.decode_range(ref);
+  const blocks: Array<{ row: number; markerCol: number }> = [];
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell) continue;
+      const text = String(cell.v ?? cell.w ?? '').trim();
+      if (/Name\s*\/\s*Vorname/i.test(text)) {
+        blocks.push({ row: r, markerCol: c });
+        break;
+      }
+    }
+  }
+  return blocks;
+}
+
+/**
+ * findMarkerCol:
+ * Findet die Spalte des "Name / Vorname" Markers in einer gegebenen Zeile.
+ */
+function findMarkerCol(ws: XLSX.WorkSheet, row: number): number {
+  const ref = ws['!ref'];
+  if (!ref) return C('C'); // Fallback
+  const range = XLSX.utils.decode_range(ref);
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const cell = getCell(ws, c, row);
+    if (!cell) continue;
+    if (/Name\s*\/\s*Vorname/i.test(String(cell.v ?? cell.w ?? '').trim())) return c;
+  }
+  return C('C');
+}
+
+/**
+ * extractEmployee:
+ * Liest den Mitarbeiternamen als ERSTE nicht-leere Zelle RECHTS vom Marker.
+ * Keine fixen Spalten — passt sich an jedes Layout an.
+ */
+function extractEmployee(ws: XLSX.WorkSheet, markerRow: number, markerCol: number): string | null {
+  const ref = ws['!ref'];
+  if (!ref) return null;
+  const range = XLSX.utils.decode_range(ref);
+  for (let c = markerCol + 1; c <= range.e.c; c++) {
+    const cell = getCell(ws, c, markerRow);
+    if (!cell) continue;
+    const name = (cell.w ?? String(cell.v ?? '')).trim();
+    if (name && name.length > 1 && !/Name\s*\/\s*Vorname/i.test(name)) {
+      return name;
+    }
+  }
+  return null;
+}
+
+/**
+ * extractWeeklyHours:
+ * Sucht "Pensum", "Soll-Std", "Wochenstunden" als Label in den Header-Zeilen.
+ * Fallback auf feste Spalte BO aus LAYOUT (Rückwärts-Kompatibilität).
+ */
+function extractWeeklyHours(ws: XLSX.WorkSheet, blockStart: number, blockEnd: number): number | null {
+  const ref = ws['!ref'];
+  if (!ref) return null;
+  const range = XLSX.utils.decode_range(ref);
+  const scanLimit = Math.min(blockStart + 10, blockEnd);
+
+  for (let r = blockStart; r <= scanLimit; r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell) continue;
+      const text = String(cell.v ?? '').toLowerCase().trim();
+      if (/pensum|wochenstunden|sollstunden|soll[- ]?std/.test(text)) {
+        for (let dc = 1; dc <= 6; dc++) {
+          const vc = getCell(ws, c + dc, r);
+          if (!vc) continue;
+          if (vc.t === 'n' && typeof vc.v === 'number' && vc.v > 0 && vc.v <= 60)
+            return Math.round(vc.v * 10) / 10;
+          const n = parseFloat(String(vc.v ?? '').replace(',', '.'));
+          if (!isNaN(n) && n > 0 && n <= 60) return n;
+        }
+      }
+    }
+  }
+
+  // Fallback: feste Spalte BO auf der Marker-Zeile
+  const whCell = getCell(ws, LAYOUT.weeklyHoursCol, blockStart);
+  if (whCell?.t === 'n' && typeof whCell.v === 'number' && whCell.v > 0) return whCell.v;
+  const n = parseFloat(String(whCell?.v ?? '').replace(',', '.'));
+  if (!isNaN(n) && n > 0) return n;
+  return null;
+}
+
+/**
+ * extractEmployment:
+ * Sucht "Arbeitsverhältnis" als Marker und liest das Datums-Range rechts davon.
+ * Erkennt auch direkte "DD.MM.YYYY - DD.MM.YYYY" Patterns ohne Marker.
+ */
+function extractEmployment(ws: XLSX.WorkSheet, blockStart: number, blockEnd: number): string | null {
+  const ref = ws['!ref'];
+  if (!ref) return null;
+  const range = XLSX.utils.decode_range(ref);
+  const scanLimit = Math.min(blockStart + 12, blockEnd);
+
+  for (let r = blockStart; r <= scanLimit; r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell) continue;
+      const text = (cell.w ?? String(cell.v ?? '')).trim();
+
+      // Direktes Pattern: "01.11.2025 - 31.03.2026" oder "01.11.2025 – 31.03.2026"
+      const directMatch = text.match(/\d{2}\.\d{2}\.\d{4}\s*[-–]\s*\d{2}\.\d{2}\.\d{4}/);
+      if (directMatch) return directMatch[0];
+
+      // Label: "Arbeitsverhältnis" → Wert in der gleichen Zeile rechts davon
+      if (/Arbeitsverhältnis|Arbeitsverh\./i.test(text)) {
+        for (let nc = c + 1; nc <= Math.min(range.e.c, c + 12); nc++) {
+          const vc = getCell(ws, nc, r);
+          if (!vc) continue;
+          const vt = (vc.w ?? String(vc.v ?? '')).trim();
+          if (/\d{2}\.\d{2}\.\d{4}/.test(vt)) return vt;
+        }
+        // Auch nächste Zeile prüfen
+        for (let nc = range.s.c; nc <= range.e.c; nc++) {
+          const vc = getCell(ws, nc, r + 1);
+          if (!vc) continue;
+          const vt = (vc.w ?? String(vc.v ?? '')).trim();
+          if (/\d{2}\.\d{2}\.\d{4}/.test(vt)) return vt;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * extractHeaders:
+ * Sucht dynamisch die Header-Zeile mit "Datum" + ("Arbeitszeit" / "Von" / "Zeit").
+ * Gibt die Zeilennummer zurück, NACH der Tageszeilen beginnen.
+ * Kein fixer Offset mehr — reagiert auf jede Layout-Variante.
+ */
+function extractHeaders(ws: XLSX.WorkSheet, blockStart: number, blockEnd: number): number {
+  const ref = ws['!ref'];
+  if (!ref) return blockStart + LAYOUT.daySearchOffset - 1;
+  const range = XLSX.utils.decode_range(ref);
+
+  for (let r = blockStart + 1; r <= Math.min(blockEnd, blockStart + 20); r++) {
+    let hasDatum = false;
+    let hasZeit  = false;
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell) continue;
+      const text = String(cell.v ?? '').toLowerCase().trim();
+      if (text === 'datum' || text === 'date') hasDatum = true;
+      if (/arbeitszeit|von\b|zeit\b|beginn|from\b/.test(text)) hasZeit = true;
+    }
+    if (hasDatum && hasZeit) return r; // Tageszeilen starten ab r+1
+  }
+
+  // Fallback: fixer Offset
+  return blockStart + LAYOUT.daySearchOffset - 1;
+}
+
+/**
+ * extractBalances:
+ * Sucht Saldo-Werte für "Ferien", "Feiertag" und "Total" in den Totale-Zeilen.
+ * Nutzt den "Saldo"-Begriff als Wert-Indikator.
+ * Gibt die Werte als bereinigte Strings zurück (nie undefined/NaN).
+ */
+function extractBalances(
+  ws: XLSX.WorkSheet,
+  blockStart: number,
+  blockEnd: number,
+): { ferien: string | null; feiertag: string | null; total: string | null } {
+  const ref = ws['!ref'];
+  if (!ref) return { ferien: null, feiertag: null, total: null };
+  const range = XLSX.utils.decode_range(ref);
+
+  let ferien: string | null   = null;
+  let feiertag: string | null = null;
+  let total: string | null    = null;
+
+  // Scan obere + untere Zone (Saldi stehen nie in der Mitte)
+  const topEnd      = Math.min(blockStart + 14, blockEnd);
+  const bottomStart = Math.max(blockEnd - 14, topEnd + 1);
+  const zones: [number, number][] = [[blockStart, topEnd]];
+  if (bottomStart <= blockEnd) zones.push([bottomStart, blockEnd]);
+
+  for (const [zStart, zEnd] of zones) {
+    for (let r = zStart; r <= zEnd; r++) {
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const cell = getCell(ws, c, r);
+        if (!cell) continue;
+        const text = normLabel(String(cell.v ?? '').trim());
+        if (!text) continue;
+
+        const isFerienRow  = text === 'ferien' || text.startsWith('ferien ') || text === 'feriensaldo';
+        const isFeierRow   = text === 'feier'  || text.startsWith('feiertag') || text === 'feiertagssaldo';
+        const isTotalRow   = text === 'total'  || text === 'total stunden' || text === 'totals';
+
+        if (!isFerienRow && !isFeierRow && !isTotalRow) continue;
+
+        // Wert in den nächsten 10 Spalten suchen
+        for (let dc = 1; dc <= 10; dc++) {
+          const vc = getCell(ws, c + dc, r);
+          if (!vc) continue;
+          const parsed = parseHoursValue(vc);
+          const raw    = (vc.w ?? String(vc.v ?? '')).trim();
+          const val    = parsed ? (parsed.display || String(parsed.decimal)) : (raw && raw !== '0' && raw !== '-' ? raw : null);
+          if (!val) continue;
+
+          if (isFerienRow  && !ferien)  { ferien  = val; break; }
+          if (isFeierRow   && !feiertag){ feiertag = val; break; }
+          if (isTotalRow   && !total)   { total    = val; break; }
+        }
+      }
+    }
+  }
+  return { ferien, feiertag, total };
+}
+
+/**
+ * extractDayEntries:
+ * Öffentlich zugängliche Wrapper-Funktion rund um readDayRows.
+ * Filtert automatisch Ferien/Feiertag/Total-Zeilen aus — diese sind keine Tageszeilen.
+ * Gibt nur Einträge mit echtem Datum zurück.
+ */
+function extractDayEntries(
+  ws: XLSX.WorkSheet,
+  headerRow: number,
+  blockEnd: number,
+  map: ColMap,
+): DayRecord[] {
+  const all = readDayRows(ws, headerRow + 1, blockEnd, map);
+  // Saldo-/Total-Zeilen haben kein gültiges Datum — bereits durch readDayRows gefiltert.
+  // Zusätzlicher Guard: date muss existieren und ein gültiges ISO-Format haben.
+  return all.filter(d => d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -860,24 +1114,22 @@ function parseBlock(
   blockEnd: number,    // 0-basiert
   sheetName: string,
 ): ExcelEmployee {
-  // Name aus M(blockStart)
-  const nameCell = getCell(ws, LAYOUT.nameCol, blockStart);
-  const name = nameCell ? (nameCell.w ?? String(nameCell.v ?? '')).trim() || null : null;
+  // ── 1. Marker-Spalte ermitteln (nicht mehr fix auf C) ────────────────────────
+  const markerCol = findMarkerCol(ws, blockStart);
 
-  // Wochenstunden aus BO(blockStart)
-  const whCell = getCell(ws, LAYOUT.weeklyHoursCol, blockStart);
-  let weeklyHours: number | null = null;
-  if (whCell?.t === 'n' && typeof whCell.v === 'number') {
-    weeklyHours = whCell.v;
-  } else if (whCell) {
-    const n = parseFloat(String(whCell.v ?? '').replace(',', '.'));
-    if (!isNaN(n)) weeklyHours = n;
-  }
+  // ── 2. extractEmployee: Name RECHTS vom Marker — keine fixen Spalten ────────
+  const name = extractEmployee(ws, blockStart, markerCol);
 
-  // Meta-Zeile (Kostenstelle, Arbeitsverhältnis)
+  // ── 3. extractWeeklyHours: label-basiert + Fallback auf BO ──────────────────
+  const weeklyHours = extractWeeklyHours(ws, blockStart, blockEnd);
+
+  // ── 4. extractEmployment: "Arbeitsverhältnis"-Marker + Datums-Pattern ───────
+  const employmentPeriod = extractEmployment(ws, blockStart, blockEnd);
+
+  // ── 5. Meta-Zeile für Kostenstelle (Abteilung) ───────────────────────────────
   const metaRow  = blockStart + LAYOUT.metaRowOffset;
   const meta     = readMetaRow(ws, metaRow);
-  const { costCenter, employmentPeriod } = meta;
+  const { costCenter } = meta;
 
   // Abteilung ableiten
   let department: string | null = null;
@@ -890,21 +1142,27 @@ function parseBlock(
     else department = costCenter;
   }
 
-  // Spalten-Map erkennen
-  const { map: colMap, detected } = detectColMap(ws, blockStart, blockEnd);
+  // ── 6. extractHeaders: Header-Zeile dynamisch suchen ─────────────────────────
+  const headerRow = extractHeaders(ws, blockStart, blockEnd);
 
-  // Tageszeilen ab blockStart + daySearchOffset
-  const dayStart = blockStart + LAYOUT.daySearchOffset;
-  const days     = readDayRows(ws, dayStart, blockEnd, colMap);
+  // ── 7. Spalten-Map auf Basis der Header-Zeile ────────────────────────────────
+  const { map: colMap, detected } = detectColMap(ws, blockStart, Math.min(headerRow + 2, blockEnd));
 
-  // Totale
+  // ── 8. extractDayEntries: Tageszeilen ab NACH der Header-Zeile ───────────────
+  const days = extractDayEntries(ws, headerRow, blockEnd, colMap);
+
+  // ── 9. Totale + Monatskonten ─────────────────────────────────────────────────
   const totals = readTotals(ws, blockStart, blockEnd);
   computeTotalsCheck(totals, days);
 
-  // Monatskonten (Vorsaldi, Endsaldi)
+  // extractBalances: Ferien/Feiertag/Total-Saldi ergänzen falls readTotals leer
+  const balances = extractBalances(ws, blockStart, blockEnd);
+  if (!totals.ferien   && balances.ferien)   totals.ferien   = balances.ferien;
+  if (!totals.feiertag && balances.feiertag) totals.feiertag = balances.feiertag;
+
   const monthlyAccounts = readMonthlyAccounts(ws, blockStart, blockEnd);
 
-  // Fallback: Abteilung aus Bemerkungen in Tageszeilen ableiten (falls Meta-Zeile leer)
+  // ── 10. Fallback: Abteilung aus Tageszeilen-Bemerkungen ─────────────────────
   if (!department && days.length > 0) {
     const deptHints = days
       .map(d => d.notes ?? '')
@@ -918,15 +1176,17 @@ function parseBlock(
     if (deptHints.length > 0) department = deptHints[0];
   }
 
-  // Detected-ColMap als lesbare Strings
+  // ── Display-Infos für Diagnose ───────────────────────────────────────────────
   const detectedForDisplay: Record<string, string> = {
-    date:    `${XLSX.utils.encode_col(colMap.dateCol)}`,
-    weekday: `${XLSX.utils.encode_col(colMap.weekdayCol)}`,
-    from:    `${XLSX.utils.encode_col(colMap.fromCol)}`,
-    to:      colMap.toCol    !== null ? XLSX.utils.encode_col(colMap.toCol)    : '—',
-    pause:   colMap.pauseCol !== null ? XLSX.utils.encode_col(colMap.pauseCol) : '—',
-    total:   colMap.totalCol !== null ? XLSX.utils.encode_col(colMap.totalCol) : '—',
-    remark:  colMap.remarkCol !== null ? XLSX.utils.encode_col(colMap.remarkCol) : '—',
+    markerCol: XLSX.utils.encode_col(markerCol),
+    headerRow: String(headerRow + 1),
+    date:      XLSX.utils.encode_col(colMap.dateCol),
+    weekday:   XLSX.utils.encode_col(colMap.weekdayCol),
+    from:      XLSX.utils.encode_col(colMap.fromCol),
+    to:        colMap.toCol    !== null ? XLSX.utils.encode_col(colMap.toCol)    : '—',
+    pause:     colMap.pauseCol !== null ? XLSX.utils.encode_col(colMap.pauseCol) : '—',
+    total:     colMap.totalCol !== null ? XLSX.utils.encode_col(colMap.totalCol) : '—',
+    remark:    colMap.remarkCol !== null ? XLSX.utils.encode_col(colMap.remarkCol) : '—',
     ...detected,
   };
 
@@ -939,9 +1199,9 @@ function parseBlock(
     blockEndRow:   endRow1,
     days, totals, monthlyAccounts,
     rawBlock: {
-      markerCell:       XLSX.utils.encode_cell({ r: blockStart, c: LAYOUT.markerCol }),
-      nameCell:         XLSX.utils.encode_cell({ r: blockStart, c: LAYOUT.nameCol }),
-      weeklyHoursCell:  XLSX.utils.encode_cell({ r: blockStart, c: LAYOUT.weeklyHoursCol }),
+      markerCell:       XLSX.utils.encode_cell({ r: blockStart, c: markerCol }),
+      nameCell:         `${XLSX.utils.encode_col(markerCol + 1)}${blockStart + 1} (rechts vom Marker)`,
+      weeklyHoursCell:  `label-basiert + Fallback ${XLSX.utils.encode_col(LAYOUT.weeklyHoursCol)}`,
       metaRowText:      meta.text,
       detectedColMap:   detectedForDisplay,
     },
@@ -1266,7 +1526,7 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
     const starts = findBlockStarts(ws);
 
     if (starts.length === 0) {
-      warnings.push(`Sheet „${sheetName}": kein „Name / Vorname" in Spalte C gefunden`);
+      warnings.push(`Sheet „${sheetName}": kein „Name / Vorname"-Marker gefunden (Sheet übersprungen)`);
       continue;
     }
 
