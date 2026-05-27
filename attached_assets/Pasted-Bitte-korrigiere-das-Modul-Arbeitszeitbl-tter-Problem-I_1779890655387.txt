@@ -1,0 +1,62 @@
+Bitte korrigiere das Modul Arbeitszeitblätter.
+
+Problem:
+In der Arbeitszeitblätter-Übersicht werden aktuell auch Mitarbeiter angezeigt, die im ausgewählten Monat nicht mehr aktiv waren. Beispiel: Ali ist seit 31.03. nicht mehr arbeitstätig, erscheint aber im Mai 2026 trotzdem.
+
+Ziel:
+Die Liste der Mitarbeiter in /arbeitszeitblaetter soll nur Mitarbeiter anzeigen, die im ausgewählten Monat aktiv waren.
+
+Bitte prüfe die bestehende Mitarbeiter-Tabelle und verwende vorhandene Felder wie:
+employment_start_date
+employment_end_date
+start_date
+end_date
+termination_date
+is_active
+status
+oder ähnliche bestehende Felder.
+
+Logik:
+Ein Mitarbeiter gilt für einen Monat als relevant, wenn:
+
+1. Eintrittsdatum leer ist oder vor oder am letzten Tag des ausgewählten Monats liegt
+2. Austrittsdatum leer ist oder nach oder am ersten Tag des ausgewählten Monats liegt
+3. Mitarbeiter nicht ausdrücklich deaktiviert, gelöscht oder archiviert ist
+
+Beispiel:
+Ausgewählter Monat: Mai 2026
+Monatsbeginn: 2026-05-01
+Monatsende: 2026-05-31
+
+Ali Austritt: 2026-03-31
+Er darf nicht angezeigt werden.
+
+Wenn ein Mitarbeiter am 15.05. austritt, soll er im Mai noch angezeigt werden.
+Wenn ein Mitarbeiter am 01.06. eintritt, soll er im Mai nicht angezeigt werden.
+
+Bitte passe folgende Bereiche an:
+
+1. Admin-Seite Arbeitszeitblätter
+Die Mitarbeitertabelle soll nur aktive beziehungsweise im Monat relevante Mitarbeiter laden.
+
+2. Statistik-Kacheln
+Gesamt, bestätigt, Rückfrage und ausstehend sollen nur auf Basis der gefilterten Mitarbeiter berechnet werden.
+
+3. Link-Generierung
+Für nicht mehr relevante Mitarbeiter im ausgewählten Monat darf kein Link generiert werden.
+
+4. Soll-Stunden
+Falls ein Mitarbeiter nur einen Teil des Monats aktiv war, soll vorerst die bestehende Soll-Stunden-Logik beibehalten werden. Bitte keine neue komplexe Pro-Rata-Logik einbauen, ausser es existiert bereits eine solche Logik.
+
+5. Bestehende Daten nicht löschen
+Bereits erstellte Bestätigungen sollen nicht gelöscht werden, aber in der Übersicht sollen nur relevante Mitarbeiter für den ausgewählten Monat erscheinen.
+
+6. Falls keine passenden Eintritts- oder Austrittsfelder existieren
+Bitte prüfen, wo im System Austritt, Status oder aktive Mitarbeiter verwaltet werden.
+Keine neue parallele Logik erfinden, sondern die bestehende Employee-Struktur verwenden.
+
+Nach Umsetzung bitte ausgeben:
+Welche Felder zur Aktivitätsprüfung verwendet wurden
+Welche Dateien geändert wurden
+Ob Ali im Mai 2026 nicht mehr angezeigt wird
+Ob Mitarbeiter mit Austritt innerhalb des Monats weiterhin angezeigt werden

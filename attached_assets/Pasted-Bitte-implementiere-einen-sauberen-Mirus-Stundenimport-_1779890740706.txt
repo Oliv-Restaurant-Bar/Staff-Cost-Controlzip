@@ -1,0 +1,108 @@
+Bitte implementiere einen sauberen Mirus Stundenimport für die Arbeitszeitblätter.
+
+Ziel:
+Mirus Arbeitszeitexporte sollen hochgeladen werden können und automatisch die actual_hours Tabelle befüllen, damit die Arbeitszeitblätter mit echten Ist-Stunden funktionieren.
+
+Bitte zuerst prüfen:
+Ob bereits Importlogik, CSV Uploads oder actual_hours Importfunktionen existieren.
+Falls vorhanden, diese erweitern und nicht doppelt bauen.
+
+1. Neuer Menüpunkt
+
+Unter:
+Personal
+
+Neuer Unterpunkt:
+Stundenimport
+
+Route:
+/stundenimport
+
+2. Upload Seite erstellen
+
+Funktionen:
+CSV oder Excel Upload
+Datei auswählen
+Vorschau anzeigen
+Import starten
+
+Unterstützte Formate:
+csv
+xlsx
+xls falls möglich
+
+3. Mirus Mapping
+
+Bitte typische Mirus Felder erkennen wie:
+Mitarbeitername
+Personalnummer
+Datum
+Arbeitszeit
+Pausen
+Sollstunden falls vorhanden
+
+Falls Feldnamen unterschiedlich sind:
+automatisches Mapping versuchen
+
+4. Mitarbeiter Zuordnung
+
+Importierte Mitarbeiter automatisch bestehenden Mitarbeitern zuordnen über:
+Name
+Personalnummer
+oder vorhandene externe IDs
+
+Bei Unsicherheit:
+Warnung anzeigen
+
+5. actual_hours befüllen
+
+Bestehende actual_hours Tabelle verwenden.
+Keine parallele Stunden-Tabelle erstellen.
+
+Bitte vorhandene Struktur analysieren und bestehende Felder verwenden.
+
+Pro Tag speichern:
+employee_id
+date
+worked_hours
+break_minutes falls vorhanden
+source = 'mirus_import'
+
+6. Duplikate vermeiden
+
+Beim erneuten Import:
+gleicher Mitarbeiter + gleiches Datum
+
+soll aktualisiert werden statt doppelt gespeichert.
+
+7. Import Übersicht
+
+Nach Import anzeigen:
+Anzahl importierter Zeilen
+Anzahl aktualisierter Zeilen
+Nicht zugeordnete Mitarbeiter
+Fehlerhafte Zeilen
+
+8. Verbindung zu Arbeitszeitblättern
+
+Die Arbeitszeitblätter sollen automatisch die importierten actual_hours verwenden.
+
+Nach Import:
+IST Stunden in /arbeitszeitblaetter korrekt anzeigen.
+
+9. Vorbereitung für später
+
+Bitte Architektur so bauen, dass später möglich ist:
+automatische Mirus Datei Verarbeitung
+monatlicher Import
+PDF Export
+Lohnlauf Vorbereitung
+
+10. Nach Umsetzung ausgeben
+
+Welche Dateien geändert wurden
+Welche Tabellen verwendet wurden
+Wie actual_hours befüllt wird
+Wie Mitarbeiter gemappt werden
+Wo der Import in der Navigation sichtbar ist
+Welche Dateiformate unterstützt werden

@@ -28,6 +28,35 @@ interface Employee {
   department: string;
   weekly_hours: number;
   employment_type: string;
+  // HR-Felder (via Migration ergänzt – nicht in generierten Types)
+  contract_start?: string | null;      // ISO-Datum Eintrittsdatum
+  employment_end_date?: string | null; // ISO-Datum Austrittsdatum
+  employee_status?: string | null;     // 'active' | 'pending_review' | null
+}
+
+/**
+ * Gibt zurück ob ein Mitarbeiter im gewählten Monat aktiv war:
+ * 1. Kein Pending-Review-Status
+ * 2. Eintrittsdatum leer ODER ≤ letzter Monatstag
+ * 3. Austrittsdatum leer ODER ≥ erster Monatstag
+ */
+function isActiveInMonth(emp: Employee, year: number, month: number): boolean {
+  if (emp.employee_status === 'pending_review') return false;
+
+  const monthStart = new Date(year, month - 1, 1);
+  const monthEnd   = new Date(year, month, 0); // letzter Tag des Monats
+
+  if (emp.contract_start) {
+    const start = new Date(emp.contract_start);
+    if (start > monthEnd) return false;
+  }
+
+  if (emp.employment_end_date) {
+    const end = new Date(emp.employment_end_date);
+    if (end < monthStart) return false;
+  }
+
+  return true;
 }
 
 interface RowData {
@@ -90,15 +119,17 @@ export default function ArbeitszeitblaetterPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: empData } = await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: empData } = await (supabase as any)
         .from('employees')
-        .select('id, name, department, weekly_hours, employment_type')
+        .select('id, name, department, weekly_hours, employment_type, contract_start, employment_end_date, employee_status')
         .order('name');
 
       const allEmps = (empData ?? []) as Employee[];
-      const filtered = allEmps.filter(e =>
-        isBeaulieu ? e.id.startsWith('b-') : !e.id.startsWith('b-'),
-      );
+      const filtered = allEmps.filter(e => {
+        const tenantMatch = isBeaulieu ? e.id.startsWith('b-') : !e.id.startsWith('b-');
+        return tenantMatch && isActiveInMonth(e, year, month);
+      });
       setEmployees(filtered);
 
       const confs = await getConfirmationsForMonth(tenantId, year, month);
