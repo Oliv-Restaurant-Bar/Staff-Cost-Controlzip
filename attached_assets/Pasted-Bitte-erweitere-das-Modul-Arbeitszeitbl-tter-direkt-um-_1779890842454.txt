@@ -1,0 +1,193 @@
+Bitte erweitere das Modul "Arbeitszeitblätter" direkt um den Mirus Stundenimport und Import-Historie.
+
+Ziel:
+Der Import der Mirus Stundenblätter soll direkt auf der Seite /arbeitszeitblaetter stattfinden. Zusätzlich soll sichtbar sein, wann zuletzt importiert wurde, welcher Monat zuletzt importiert wurde und welche Daten daraus stammen.
+
+Bitte keine separate Seite /stundenimport erstellen. Alles direkt im bestehenden Modul Arbeitszeitblätter integrieren.
+
+1. Import-Bereich direkt oben auf /arbeitszeitblaetter
+
+Füge oberhalb der Mitarbeitertabelle oder neben den Monatsfiltern einen Bereich hinzu:
+
+"Mirus Import"
+
+Funktionen:
+- Datei hochladen
+- CSV und Excel unterstützen, falls bereits möglich
+- Vorschau anzeigen
+- Import starten
+- Importstatus anzeigen
+
+Der Import soll sich immer auf den aktuell ausgewählten Monat beziehen, ausser die Datei enthält eindeutig ein anderes Datum. Dann bitte Warnung anzeigen.
+
+2. Import-Historie anzeigen
+
+Direkt im Arbeitszeitblätter-Modul anzeigen:
+
+- Letzter Import Zeitstempel
+- Zuletzt importierter Monat
+- Anzahl importierte Einträge
+- Anzahl aktualisierte Einträge
+- Anzahl Fehler
+- Importquelle: Mirus
+- optional Dateiname
+
+Beispiel Anzeige:
+Letzter Import: 27.05.2026, 16:42
+Importierter Monat: Mai 2026
+Quelle: Mirus
+Einträge: 142 importiert, 18 aktualisiert, 3 Fehler
+
+3. Datenbank für Import-Historie
+
+Bitte prüfen, ob bereits eine Import-Historie existiert.
+
+Falls nicht, erstelle eine Tabelle:
+
+timesheet_import_history
+
+Felder:
+id uuid primary key
+tenant_id uuid nullable oder passend zur bestehenden Struktur
+source text not null default 'mirus'
+file_name text nullable
+month integer not null
+year integer not null
+imported_count integer default 0
+updated_count integer default 0
+error_count integer default 0
+errors jsonb nullable
+created_at timestamp default now()
+created_by uuid nullable
+
+4. Mirus Import direkt mit actual_hours verbinden
+
+Der Import soll die bestehende actual_hours Tabelle befüllen.
+
+Wichtig:
+Keine neue parallele Stunden-Tabelle erstellen.
+
+Pro Mitarbeiter und Datum:
+- employee_id
+- date
+- worked_hours
+- break_minutes falls vorhanden
+- source = 'mirus_import'
+
+Beim erneuten Import:
+gleicher Mitarbeiter + gleiches Datum soll aktualisiert werden, nicht doppelt erstellt.
+
+5. Mitarbeiter-Zuordnung
+
+Bitte bestehende Mitarbeiterdaten verwenden.
+
+Mapping über:
+- Personalnummer, falls vorhanden
+- Name
+- externe Mitarbeiter-ID, falls vorhanden
+
+Bei Unsicherheit:
+Fehler oder Warnung in Import-Vorschau anzeigen.
+
+6. Spalten in Arbeitszeitblätter erweitern
+
+In der Mitarbeitertabelle sollen zusätzlich angezeigt werden:
+
+- Soll
+- Ist
+- Differenz
+- Ferienguthaben kumuliert
+- Feiertagguthaben kumuliert
+- Status
+- Letzte Aktion
+- Aktionen
+
+Die neuen Spalten sollen heissen:
+
+Ferien
+Feiertage
+
+oder, falls Platz:
+Ferienguthaben
+Feiertagguthaben
+
+7. Ferienguthaben und Feiertagguthaben
+
+Bitte prüfen, ob in den Mirus Dateien oder bestehenden Tabellen diese Werte vorhanden sind.
+
+Falls Mirus Export Felder enthält wie:
+- Ferienguthaben
+- Ferien Saldo
+- Vacation balance
+- Urlaubssaldo
+- Feiertagguthaben
+- Holiday balance
+- Public holiday balance
+- Feiertagssaldo
+
+diese Werte pro Mitarbeiter und Monat importieren und kumuliert anzeigen.
+
+Falls keine bestehende Tabelle dafür existiert, bitte eine passende Tabelle erstellen:
+
+employee_time_balances
+
+Felder:
+id uuid primary key
+tenant_id uuid nullable oder passend zur bestehenden Struktur
+employee_id uuid not null
+month integer not null
+year integer not null
+vacation_balance_hours numeric nullable
+public_holiday_balance_hours numeric nullable
+source text default 'mirus_import'
+created_at timestamp default now()
+updated_at timestamp default now()
+
+Pro employee_id, month, year nur ein Datensatz.
+Bei erneutem Import aktualisieren.
+
+8. Anzeige in der Tabelle
+
+Beispiel:
+
+Mitarbeiter | Abteilung | Soll | Ist | Diff. | Ferien | Feiertage | Status | Letzte Aktion | Aktionen
+
+Werte:
+Soll: 186.0 h
+Ist: 172.5 h
+Diff.: -13.5 h
+Ferien: 42.0 h
+Feiertage: 8.4 h
+
+Wenn keine Werte vorhanden:
+anzeigen als "–"
+
+9. Import-Historie pro Monat
+
+Wenn der Admin den Monat wechselt, soll die Import-Historie für diesen Monat angezeigt werden.
+
+Zusätzlich soll oben klein angezeigt werden:
+"Zuletzt importierter Monat insgesamt: Mai 2026 am 27.05.2026, 16:42"
+
+10. Sicherheit und Rollen
+
+Import nur für Admin/Inhaber erlauben.
+Öffentliche Mitarbeiter-Bestätigungsseite bleibt unverändert und darf keinen Importzugriff haben.
+
+11. Nach Umsetzung ausgeben
+
+Bitte am Ende genau auflisten:
+- Welche Dateien geändert wurden
+- Welche neuen Tabellen erstellt wurden
+- Welches SQL in Supabase ausgeführt werden muss
+- Wo der Import sichtbar ist
+- Wie die Import-Historie gespeichert wird
+- Wie Ferienguthaben und Feiertagguthaben gelesen und angezeigt werden
+- Ob actual_hours weiterhin als Hauptquelle für Ist-Stunden verwendet wird
+
+Wichtig:
+Bestehende Arbeitszeitblatt-Bestätigungen nicht beschädigen.
+Keine separate Import-Seite bauen.
+Import direkt in /arbeitszeitblaetter integrieren.
+Keine Dummy-Daten verwenden.
+Bestehende App-Struktur und RLS beachten.

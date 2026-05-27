@@ -150,6 +150,14 @@ const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
         beaulieuAllowed: true,
       },
+      {
+        path: '/stundenimport',
+        label: 'Stundenimport',
+        shortLabel: 'Import',
+        icon: Upload,
+        adminOnly: true,
+        beaulieuAllowed: true,
+      },
     ],
   },
   {
