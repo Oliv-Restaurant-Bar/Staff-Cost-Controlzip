@@ -15,7 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import { parseMirusExcel, type ExcelEmployee } from '@/lib/mirus-excel-parser';
 import {
@@ -197,7 +197,10 @@ export default function ArbeitszeitblaetterPage() {
   const [importRunning, setImportRunning]     = useState(false);
   const [importRows, setImportRows]           = useState<ImportPreviewRow[]>([]);
   const [importFileName, setImportFileName]   = useState('');
-  const [importMonthMismatch, setImportMonthMismatch] = useState<string | null>(null);
+  /** null = kein Monat erkannt oder kein Mismatch; sonst der Dateimonat */
+  const [importMonthMismatch, setImportMonthMismatch] = useState<{ month: number; year: number } | null>(null);
+  /** true = Admin hat Abweichung explizit bestätigt */
+  const [importMonthOverride, setImportMonthOverride] = useState(false);
 
   // ── Create-Employee-Dialog ────────────────────────────────────────────────
 
@@ -288,7 +291,8 @@ export default function ArbeitszeitblaetterPage() {
   };
   const isImportReady = importRows.length > 0
     && importSummary.conflict === 0
-    && importSummary.unresolved === 0;
+    && importSummary.unresolved === 0
+    && (!importMonthMismatch || importMonthOverride);
 
   // ── Monat Navigation ──────────────────────────────────────────────────────
 
@@ -330,6 +334,8 @@ export default function ArbeitszeitblaetterPage() {
       const mirusName = exc.name ?? '(Kein Name)';
       const result = matchEmployeeByName(mirusName, tenantPersonnel);
       const validDays = exc.days.filter(d => d.date && (d.totalHours ?? 0) > 0);
+      // Eindeutige Tage zählen (mehrere Schichtblöcke pro Tag = 1 Arbeitstag)
+      const uniqueDates = new Set(validDays.map(d => d.date));
       const totalHours = validDays.reduce((s, d) => s + (d.totalHours ?? 0), 0);
       const vacH = parseMirusHoursString(exc.monthlyAccounts?.vacation?.closingBalance ?? exc.totals?.ferien);
       const holH = parseMirusHoursString(exc.monthlyAccounts?.holiday?.closingBalance  ?? exc.totals?.feiertag);
@@ -337,18 +343,22 @@ export default function ArbeitszeitblaetterPage() {
 
       // Skip-Mapping → ausgeschlossen
       if (result.matchStep === 'skip') {
-        return { mirusName, matchStatus: 'skipped' as const, employee: null, dayCount: validDays.length, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
+        const dc = uniqueDates.size;
+      return { mirusName, matchStatus: 'skipped' as const, employee: null, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
       }
       // Exakter oder gespeicherter Match → automatisch
       if (result.employee && (result.matchType === 'exact' || result.matchType === 'saved')) {
-        return { mirusName, matchStatus: 'matched' as const, employee: result.employee as unknown as Employee, dayCount: validDays.length, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
+        const dc = uniqueDates.size;
+        return { mirusName, matchStatus: 'matched' as const, employee: result.employee as unknown as Employee, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
       }
       // Vorname-Match → Konflikt (Admin muss bestätigen)
       if (result.employee && result.matchType === 'firstName') {
-        return { mirusName, matchStatus: 'conflict' as const, employee: result.employee as unknown as Employee, dayCount: validDays.length, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
+        const dc = uniqueDates.size;
+        return { mirusName, matchStatus: 'conflict' as const, employee: result.employee as unknown as Employee, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
       }
       // Kein Match → ungelöst
-      return { mirusName, matchStatus: 'unresolved' as const, employee: null, dayCount: validDays.length, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
+      const dc = uniqueDates.size;
+      return { mirusName, matchStatus: 'unresolved' as const, employee: null, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
     });
   }
 
@@ -358,14 +368,34 @@ export default function ArbeitszeitblaetterPage() {
     setImportParsing(true);
     setImportFileName(file.name);
     setImportMonthMismatch(null);
+    setImportMonthOverride(false);
     try {
       const parsed = await parseMirusExcel(file);
       if (!parsed.employees.length) { toast.error('Keine Mitarbeiterdaten in der Datei.'); return; }
-      const allDates = parsed.employees.flatMap(e => e.days.map(d => d.date)).filter(Boolean) as string[];
-      if (allDates.length) {
-        const [fy, fm] = allDates.sort()[0].split('-').map(Number);
-        if (fy !== year || fm !== month) setImportMonthMismatch(`${MONTH_NAMES_DE[fm - 1]} ${fy}`);
+
+      // Monat/Jahr: Parser-Meta hat Vorrang (aus Dateiname + Workbook-Inhalt)
+      let detectedMonth: number | null = parsed.month ?? null;
+      let detectedYear:  number | null = parsed.year  ?? null;
+
+      // Fallback: erste ISO-Datumszeile aus den Mitarbeiter-Daten
+      if (!detectedMonth || !detectedYear) {
+        const isoDates = parsed.employees
+          .flatMap(e => e.days.map(d => d.date))
+          .filter((d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))
+          .sort();
+        if (isoDates.length) {
+          const parts = isoDates[0].split('-');
+          const fy = parseInt(parts[0]);
+          const fm = parseInt(parts[1]);
+          if (!isNaN(fy) && !isNaN(fm)) { detectedYear = fy; detectedMonth = fm; }
+        }
       }
+
+      // Mismatch prüfen
+      if (detectedMonth && detectedYear && (detectedYear !== year || detectedMonth !== month)) {
+        setImportMonthMismatch({ month: detectedMonth, year: detectedYear });
+      }
+
       setImportRows(buildImportRows(parsed.employees));
     } catch (err) {
       console.error('[IMPORT] parse error', err);
@@ -721,11 +751,23 @@ export default function ArbeitszeitblaetterPage() {
           </SheetHeader>
 
           <div className="flex-1 overflow-auto">
-            {/* Monats-Warnung */}
+            {/* Monats-Warnung + Override */}
             {importMonthMismatch && (
-              <div className="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 p-3 text-xs text-amber-800 dark:text-amber-300">
-                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                <span>Die Datei enthält Daten für <strong>{importMonthMismatch}</strong>. Ausgewählt ist <strong>{MONTH_NAMES_DE[month - 1]} {year}</strong>. Bitte prüfe ob dies korrekt ist.</span>
+              <div className="mx-5 mt-4 space-y-2">
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 p-3 text-xs text-amber-800 dark:text-amber-300">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>
+                    Die Datei enthält Daten für{' '}
+                    <strong>{MONTH_NAMES_DE[importMonthMismatch.month - 1]} {importMonthMismatch.year}</strong>.
+                    Ausgewählt ist <strong>{MONTH_NAMES_DE[month - 1]} {year}</strong>.
+                    Der Import ist standardmässig gesperrt.
+                  </span>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer px-1 text-xs">
+                  <input type="checkbox" checked={importMonthOverride} onChange={e => setImportMonthOverride(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-border accent-primary" />
+                  <span>Ich möchte diese Datei trotzdem in <strong>{MONTH_NAMES_DE[month - 1]} {year}</strong> importieren</span>
+                </label>
               </div>
             )}
 
@@ -780,7 +822,7 @@ export default function ArbeitszeitblaetterPage() {
                 {/* Datei-Info */}
                 <div className="flex items-center gap-3 text-xs flex-wrap">
                   <span className="font-medium">{importFileName}</span>
-                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
+                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportMonthOverride(false); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
                     <X className="h-3.5 w-3.5" />Neue Datei
                   </button>
                 </div>
@@ -804,7 +846,7 @@ export default function ArbeitszeitblaetterPage() {
                           <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Mirus-Name</th>
                           <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Zuordnung</th>
                           <th className="px-3 py-2 text-center font-semibold text-muted-foreground">Status</th>
-                          <th className="px-3 py-2 text-right font-semibold text-muted-foreground">Tage</th>
+                          <th className="px-3 py-2 text-right font-semibold text-muted-foreground" title="Eindeutige Arbeitstage">Tage</th>
                           <th className="px-3 py-2 text-right font-semibold text-muted-foreground">Stunden</th>
                           <th className="px-3 py-2 text-right font-semibold text-muted-foreground hidden sm:table-cell">Ferien</th>
                           <th className="px-3 py-2 text-right font-semibold text-muted-foreground hidden sm:table-cell">Feiertage</th>
@@ -921,12 +963,22 @@ export default function ArbeitszeitblaetterPage() {
                       <span>Manuell zugeordnet:</span><span className="text-foreground font-medium">{importSummary.manual}</span>
                       <span>Neu erstellt:</span><span className="text-foreground font-medium">{importSummary.newEmployee}</span>
                       <span>Ausgeschlossen:</span><span className="text-muted-foreground">{importSummary.skipped}</span>
-                      <span>Tageseinträge:</span><span className="text-foreground font-medium">{importSummary.totalDays}</span>
+                      <span>Arbeitstags-Einträge:</span><span className="text-foreground font-medium">{importSummary.totalDays}</span>
                       <span>Monat (Datei):</span>
                       <span className={cn('font-medium', importMonthMismatch ? 'text-amber-600' : 'text-foreground')}>
-                        {importMonthMismatch ?? `${MONTH_NAMES_DE[month - 1]} ${year}`}
-                        {importMonthMismatch && <span className="text-amber-600"> ⚠ Abweichung!</span>}
+                        {importMonthMismatch
+                          ? `${MONTH_NAMES_DE[importMonthMismatch.month - 1]} ${importMonthMismatch.year}`
+                          : `${MONTH_NAMES_DE[month - 1]} ${year}`}
+                        {importMonthMismatch && <span className="text-amber-600 ml-1">⚠ Abweichung!</span>}
                       </span>
+                      {importMonthMismatch && (
+                        <>
+                          <span>Ausgewählter Monat:</span>
+                          <span className="text-foreground font-medium">{MONTH_NAMES_DE[month - 1]} {year}</span>
+                          <span>Abweichung:</span>
+                          <span className="text-amber-600 font-medium">Ja — Import trotzdem bestätigt</span>
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
@@ -959,6 +1011,7 @@ export default function ArbeitszeitblaetterPage() {
               <UserPlus className="h-5 w-5 text-primary" />
               Neuen Mitarbeiter erfassen
             </DialogTitle>
+            <DialogDescription className="sr-only">Formulare zum Erfassen eines neuen Mitarbeiters direkt aus dem Mirus-Import</DialogDescription>
           </DialogHeader>
 
           {createDialogRowIdx !== null && (

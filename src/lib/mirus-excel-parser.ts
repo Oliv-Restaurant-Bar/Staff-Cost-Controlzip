@@ -1126,15 +1126,30 @@ function mergeBlocks(raw: ExcelEmployee[]): ExcelEmployee[] {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const MONTH_MAP: Record<string, [number, string]> = {
-  januar: [1, 'Januar'], february: [2, 'Februar'], februar: [2, 'Februar'],
-  märz: [3, 'März'], april: [4, 'April'], mai: [5, 'Mai'],
-  juni: [6, 'Juni'], juli: [7, 'Juli'], august: [8, 'August'],
-  september: [9, 'September'], oktober: [10, 'Oktober'], november: [11, 'November'],
-  dezember: [12, 'Dezember'],
+  januar: [1, 'Januar'],  january: [1, 'Januar'],
+  februar: [2, 'Februar'], february: [2, 'Februar'],
+  maerz: [3, 'März'],     märz: [3, 'März'],    march: [3, 'März'],
+  april: [4, 'April'],
+  mai: [5, 'Mai'],        may: [5, 'Mai'],
+  juni: [6, 'Juni'],      june: [6, 'Juni'],
+  juli: [7, 'Juli'],      july: [7, 'Juli'],
+  august: [8, 'August'],
+  september: [9, 'September'],
+  oktober: [10, 'Oktober'], october: [10, 'Oktober'],
+  november: [11, 'November'],
+  dezember: [12, 'Dezember'], december: [12, 'Dezember'],
 };
 
+/** Normalisiert Umlaute: ä→ae, ö→oe, ü→ue, ß→ss (für Dateiname-Matching) */
+function normalizeUmlauts(s: string): string {
+  return s
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .replace(/Ä/g, 'ae').replace(/Ö/g, 'oe').replace(/Ü/g, 'ue');
+}
+
 function metaFromFileName(fileName: string): { month: number | null; monthName: string | null; year: number | null; restaurant: string | null } {
-  const lower = fileName.toLowerCase().replace(/[_\-]/g, ' ');
+  // Normalisierung: Umlauts → ASCII + lowercase
+  const lower = normalizeUmlauts(fileName).toLowerCase().replace(/[_\-]/g, ' ');
   let month: number | null = null;
   let monthName: string | null = null;
   let restaurant: string | null = null;
@@ -1143,11 +1158,58 @@ function metaFromFileName(fileName: string): { month: number | null; monthName: 
   if (/\boliv\b/.test(lower))    restaurant = 'oliv';
   else if (/beaulieu/.test(lower)) restaurant = 'beaulieu';
 
+  // Monatsname-Match (inkl. normalisierte Umlauts)
   for (const [token, [m, n]] of Object.entries(MONTH_MAP)) {
     if (lower.includes(token)) { month = m; monthName = n; break; }
   }
+
+  // Numerischer Monats-Fallback: "03 2026", "03.2026", "2026-03", "2026/03"
+  if (!month) {
+    const m1 = lower.match(/\b(0[1-9]|1[0-2])[.\s](20\d{2})\b/);
+    if (m1) { month = parseInt(m1[1]); }
+    const m2 = lower.match(/\b(20\d{2})[.\-\/\s](0[1-9]|1[0-2])\b/);
+    if (!month && m2) { month = parseInt(m2[2]); }
+    if (month) {
+      monthName = Object.values(MONTH_MAP).find(([m]) => m === month)?.[1] ?? null;
+    }
+  }
+
   const ym = fileName.match(/20\d{2}/);
   return { month, monthName, year: ym ? parseInt(ym[0]) : null, restaurant };
+}
+
+/** Versucht Monat/Jahr aus dem Workbook-Inhalt zu lesen (erste 15 Zeilen, alle Sheets) */
+function metaFromWorkbook(wb: XLSX.WorkBook): { month: number | null; year: number | null } {
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws) continue;
+    const ref = ws['!ref'];
+    if (!ref) continue;
+    const range = XLSX.utils.decode_range(ref);
+    for (let r = range.s.r; r <= Math.min(range.e.r, 14); r++) {
+      for (let c = range.s.c; c <= Math.min(range.e.c, 20); c++) {
+        const cell = ws[XLSX.utils.encode_cell({ r, c })];
+        if (!cell) continue;
+        const raw = String(cell.v ?? cell.w ?? '');
+        // Normalisiere Umlauts für Monatsname-Erkennung
+        const norm = normalizeUmlauts(raw).toLowerCase();
+        // "März 2026", "Monatsblatt März 2026"
+        for (const [token, [m]] of Object.entries(MONTH_MAP)) {
+          if (norm.includes(token)) {
+            const ymatch = raw.match(/20\d{2}/);
+            const y = ymatch ? parseInt(ymatch[0]) : null;
+            if (y) return { month: m, year: y };
+          }
+        }
+        // "03.2026", "2026-03", "03/2026"
+        const n1 = raw.match(/\b(0[1-9]|1[0-2])[.\-\/](20\d{2})\b/);
+        if (n1) return { month: parseInt(n1[1]), year: parseInt(n1[2]) };
+        const n2 = raw.match(/\b(20\d{2})[.\-\/](0[1-9]|1[0-2])\b/);
+        if (n2) return { month: parseInt(n2[2]), year: parseInt(n2[1]) };
+      }
+    }
+  }
+  return { month: null, year: null };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1190,6 +1252,15 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
   // Restaurant: erst aus Dateiname, dann aus Workbook-Inhalt
   const restaurant = meta.restaurant ?? restaurantFromWorkbook(wb);
 
+  // Monat/Jahr: Dateiname hat Vorrang, dann Workbook-Inhalt scannen
+  let fileMonth: number | null = meta.month;
+  let fileYear:  number | null = meta.year;
+  if (!fileMonth || !fileYear) {
+    const wbMeta = metaFromWorkbook(wb);
+    fileMonth = fileMonth ?? wbMeta.month;
+    fileYear  = fileYear  ?? wbMeta.year;
+  }
+
   for (const sheetName of wb.SheetNames) {
     const ws     = wb.Sheets[sheetName];
     const starts = findBlockStarts(ws);
@@ -1224,9 +1295,11 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
   }
 
   return {
-    fileName: file.name,
-    ...meta,
-    restaurant:   restaurant,
+    fileName:    file.name,
+    month:       fileMonth,
+    monthName:   meta.monthName ?? (fileMonth ? (Object.values(MONTH_MAP).find(([m]) => m === fileMonth)?.[1] ?? null) : null),
+    year:        fileYear,
+    restaurant,
     creationDate: null,
     employees:    merged,
     quality:      docQuality(merged),

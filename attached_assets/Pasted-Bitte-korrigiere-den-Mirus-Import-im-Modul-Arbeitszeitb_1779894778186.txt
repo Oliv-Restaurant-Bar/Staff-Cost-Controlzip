@@ -1,0 +1,82 @@
+Bitte korrigiere den Mirus Import im Modul Arbeitszeitblätter.
+
+Problem:
+Beim Upload der Datei "Monatsblatt März 2026.xls" zeigt die App als Dateimonat "undefined NaN" an. Der Monat wird also nicht korrekt erkannt.
+
+Ziel:
+Der Import muss deutsche Monatsnamen zuverlässig erkennen, insbesondere:
+Januar
+Februar
+März
+Maerz
+April
+Mai
+Juni
+Juli
+August
+September
+Oktober
+November
+Dezember
+
+Bitte passe die Monats-Erkennung an folgenden Stellen robust an:
+
+1. Dateiname auslesen
+Beispiel:
+Monatsblatt März 2026.xls
+Monatsblatt Maerz 2026.xls
+Monatsblatt 03 2026.xls
+Monatsblatt 2026-03.xls
+
+muss erkannt werden als:
+month = 3
+year = 2026
+
+2. Excel-Inhalt prüfen
+Falls der Dateiname nicht reicht, bitte zusätzlich die ersten Zeilen der Excel-Datei nach Texten wie:
+Monatsblatt März 2026
+März 2026
+03.2026
+2026-03
+durchsuchen.
+
+3. Umlaute normalisieren
+Bitte ä, ö, ü korrekt behandeln.
+März und Maerz müssen beide funktionieren.
+
+4. Anzeige korrigieren
+Niemals "undefined NaN" anzeigen.
+Wenn der Monat nicht erkannt wird, zeige:
+"Monat der Datei konnte nicht erkannt werden"
+
+5. Import-Sperre bei Monatsabweichung
+Wenn Datei-Monat und ausgewählter Monat unterschiedlich sind:
+Beispiel Datei März 2026, Auswahl Mai 2026
+
+Dann:
+Warnung anzeigen:
+"Die Datei enthält Daten für März 2026. Ausgewählt ist Mai 2026."
+
+Import starten soll standardmässig deaktiviert sein, ausser der Admin bestätigt bewusst:
+"Ich möchte diese Datei trotzdem in den ausgewählten Monat importieren"
+
+6. Zusammenfassung korrigieren
+In der Import-Zusammenfassung soll stehen:
+Monat Datei: März 2026
+Ausgewählter Monat: Mai 2026
+Abweichung: Ja
+
+Nicht mehr:
+undefined NaN
+
+7. Wichtig
+Bitte auch prüfen, warum aktuell 33 Tage angezeigt werden, obwohl März maximal 31 Tage hat.
+Falls mehrere Zeilen pro Tag oder mehrere Arbeitsblöcke gezählt werden, soll die Anzeige klar heissen:
+"Tages-/Arbeitszeiteinträge"
+statt "Tage".
+
+Nach Umsetzung bitte ausgeben:
+Welche Funktion angepasst wurde
+Wie März/Maerz erkannt wird
+Ob "undefined NaN" behoben ist
+Ob der Import bei Monatsabweichung blockiert wird

@@ -1,0 +1,135 @@
+Bitte refactore den kompletten Mirus Parser im Modul Arbeitszeitblätter auf einen robusten layoutbasierten Parser.
+
+Wichtig:
+Die aktuell hochgeladenen Monatsblätter Januar bis April 2026 zeigen, dass die XLS-Dateien unterschiedliche Layouts und Verschiebungen haben. Der Parser darf deshalb NICHT mit fixen Zeilen- oder Spaltennummern arbeiten.
+
+Bitte die Parser-Logik komplett auf Marker- und Layout-Erkennung umstellen.
+
+Wichtige Erkenntnisse aus den echten Mirus-Dateien:
+
+1. Monatserkennung
+
+Der Monat steht zuverlässig im Titel:
+"Monatsblatt Januar 2026"
+"Monatsblatt Februar 2026"
+"Monatsblatt März 2026"
+"Monatsblatt April 2026"
+
+Bitte:
+- deutsche Monatsnamen unterstützen
+- März + Maerz unterstützen
+- Regex-basierte Erkennung
+- Umlaute normalisieren
+
+Priorität:
+Dateiinhalt vor Dateiname.
+
+2. Mitarbeiter-Erkennung
+
+Der Mitarbeitername steht nach dem Marker:
+"Name / Vorname"
+
+Aber die Zielspalte verschiebt sich je nach Datei.
+
+Bitte:
+- zuerst den Marker suchen
+- danach die erste nicht-leere Zelle rechts davon als Mitarbeiternamen verwenden
+
+Keine fixen Spalten verwenden.
+
+3. Arbeitsverhältnis erkennen
+
+Marker:
+"Arbeitsverhältnis"
+
+Wert-Beispiel:
+"01.11.2025 - 31.03.2026"
+
+Bitte:
+- Eintrittsdatum erkennen
+- Austrittsdatum erkennen
+- für spätere Aktivitätsprüfungen speichern
+
+4. Tabellenkopf erkennen
+
+Die Tagesdaten beginnen erst nach einer Zeile mit:
+"Datum"
+und
+"Arbeitszeit"
+
+Bitte diese Header dynamisch suchen.
+
+5. Tageszeilen robust erkennen
+
+Tageszeilen enthalten:
+- ein Datum
+- Arbeitszeiten oder Brutto/Total Stunden
+
+Bitte:
+- echte Tageszeilen erkennen
+- Leerzeilen ignorieren
+- Zwischenzeilen ignorieren
+
+6. Ferien- und Feiertagsguthaben
+
+Die relevanten Zeilen heissen:
+"Ferien"
+"Feier"
+"Total"
+
+Relevanter Wert:
+Saldo
+
+Bitte:
+- Ferienguthaben korrekt extrahieren
+- Feiertagguthaben korrekt extrahieren
+- Total-Zeile nicht als Tageszeile zählen
+
+7. Falsche Tageszählung korrigieren
+
+Aktuell werden z.B. 33 Tage angezeigt.
+
+Das ist falsch.
+
+Bitte:
+- nur echte Tageseinträge zählen
+- alternative Beschriftung:
+"Tages-/Arbeitszeiteinträge"
+
+Falls mehrere Einsätze pro Tag existieren:
+nicht als mehrere Tage zählen.
+
+8. Parser-Architektur verbessern
+
+Bitte eine zentrale Parser-Struktur bauen:
+
+detectMirusLayout()
+extractMonth()
+extractEmployee()
+extractEmployment()
+extractHeaders()
+extractDayEntries()
+extractBalances()
+
+Damit spätere Varianten leichter ergänzt werden können.
+
+9. Fehlerbehandlung
+
+Nie mehr:
+undefined NaN
+
+Sondern:
+"Monat konnte nicht erkannt werden"
+
+10. Wichtig
+
+Bitte bestehende Importlogik NICHT zerstören.
+Nur die XLS/XLSX Parsing-Logik robust machen.
+
+Nach Umsetzung bitte ausgeben:
+- Welche Parserfunktionen neu erstellt wurden
+- Welche Marker verwendet werden
+- Wie Mitarbeiter erkannt werden
+- Wie Ferien-/Feiertagsguthaben erkannt werden
+- Wie echte Tageszeilen erkannt werden
+- Ob die 33-Tage-Problematik behoben wurde
