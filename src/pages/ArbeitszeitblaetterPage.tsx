@@ -30,6 +30,7 @@ import {
   getImportHistoryForMonth,
   upsertEmployeeTimeBalance,
   getEmployeeTimeBalancesForMonth,
+  loadDienstplanHoursForMonth,
   parseMirusHoursString,
   type TimesheetConfirmation,
   type TimesheetStatus,
@@ -69,7 +70,10 @@ interface ImportPreviewRow {
 interface RowData {
   employee: Employee;
   confirmation: TimesheetConfirmation | null;
+  /** Mirus / actual_hours */
   istHours: number;
+  /** schedule_entries */
+  dienstplanHours: number;
   sollHours: number;
   vacationBalance: number | null;
   holidayBalance: number | null;
@@ -162,13 +166,14 @@ export default function ArbeitszeitblaetterPage() {
 
   // ── Daten ─────────────────────────────────────────────────────────────────
 
-  const [employees, setEmployees]         = useState<Employee[]>([]);
-  const [confirmations, setConfirmations] = useState<TimesheetConfirmation[]>([]);
-  const [istMap, setIstMap]               = useState<Record<string, number>>({});
-  const [balances, setBalances]           = useState<Record<string, EmployeeTimeBalance>>({});
-  const [importHistory, setImportHistory] = useState<ImportHistoryEntry | null>(null);
-  const [loading, setLoading]             = useState(true);
-  const [generating, setGenerating]       = useState<string | null>(null);
+  const [employees, setEmployees]           = useState<Employee[]>([]);
+  const [confirmations, setConfirmations]   = useState<TimesheetConfirmation[]>([]);
+  const [istMap, setIstMap]                 = useState<Record<string, number>>({});
+  const [dienstplanMap, setDienstplanMap]   = useState<Record<string, number>>({});
+  const [balances, setBalances]             = useState<Record<string, EmployeeTimeBalance>>({});
+  const [importHistory, setImportHistory]   = useState<ImportHistoryEntry | null>(null);
+  const [loading, setLoading]               = useState(true);
+  const [generating, setGenerating]         = useState<string | null>(null);
 
   // ── Import-State ──────────────────────────────────────────────────────────
 
@@ -200,15 +205,18 @@ export default function ArbeitszeitblaetterPage() {
       setEmployees(filtered);
       setAllEmps(all as unknown as PersonnelEmployee[]);
 
-      const [confs, hours, bals, history] = await Promise.all([
+      const empIds = filtered.map(e => e.id);
+      const [confs, hours, dienstplan, bals, history] = await Promise.all([
         getConfirmationsForMonth(tenantId, year, month),
-        getActualHoursBatch(filtered.map(e => e.id), year, month),
+        getActualHoursBatch(empIds, year, month),
+        loadDienstplanHoursForMonth(empIds, year, month),
         getEmployeeTimeBalancesForMonth(tenantId, year, month),
         getImportHistoryForMonth(tenantId, year, month),
       ]);
 
       setConfirmations(confs);
       setIstMap(hours);
+      setDienstplanMap(dienstplan);
       setBalances(bals);
       setImportHistory(history);
     } catch (err) {
@@ -227,12 +235,13 @@ export default function ArbeitszeitblaetterPage() {
   const rows: RowData[] = employees
     .filter(e => deptFilter === 'all' || e.department === deptFilter)
     .map(e => ({
-      employee:       e,
-      confirmation:   confMap[e.id] ?? null,
-      istHours:       istMap[e.id] ?? 0,
-      sollHours:      e.weekly_hours ? sollHoursForMonth(e.weekly_hours, year, month) : 0,
-      vacationBalance: balances[e.id]?.vacation_balance_hours ?? null,
-      holidayBalance:  balances[e.id]?.public_holiday_balance_hours ?? null,
+      employee:        e,
+      confirmation:    confMap[e.id] ?? null,
+      istHours:        istMap[e.id]        ?? 0,
+      dienstplanHours: dienstplanMap[e.id] ?? 0,
+      sollHours:       e.weekly_hours ? sollHoursForMonth(e.weekly_hours, year, month) : 0,
+      vacationBalance: balances[e.id]?.vacation_balance_hours         ?? null,
+      holidayBalance:  balances[e.id]?.public_holiday_balance_hours   ?? null,
     }));
 
   const stats = {
@@ -545,8 +554,9 @@ export default function ArbeitszeitblaetterPage() {
                     <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">Mitarbeiter</th>
                     <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Abteilung</th>
                     <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide">Soll</th>
-                    <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ist</th>
-                    <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">Diff.</th>
+                    <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell" title="Stunden aus dem internen Dienstplan (schedule_entries)">Dienstplan IST</th>
+                    <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide" title="Importierte Stunden aus Mirus / actual_hours">AZB IST</th>
+                    <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell" title="AZB IST minus Soll">Diff.</th>
                     <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Ferien</th>
                     <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Feiertage</th>
                     <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
@@ -556,8 +566,12 @@ export default function ArbeitszeitblaetterPage() {
                 </thead>
                 <tbody className="divide-y divide-border/50">
                   {rows.map(row => {
-                    const { employee: emp, confirmation: conf, istHours, sollHours, vacationBalance, holidayBalance } = row;
+                    const { employee: emp, confirmation: conf, istHours, dienstplanHours, sollHours, vacationBalance, holidayBalance } = row;
+                    // Diff = Arbeitszeitblatt IST minus Soll
                     const diff = istHours - sollHours;
+                    // Warnung wenn Dienstplan vs. AZB > ±2 h (beide müssen vorhanden sein)
+                    const planDeviation = dienstplanHours > 0 && istHours > 0 ? Math.abs(dienstplanHours - istHours) : 0;
+                    const hasPlanWarning = planDeviation > 2;
                     const status = conf?.status ?? 'open';
                     const lastAction = conf?.confirmed_at ?? conf?.rejected_at ?? conf?.updated_at ?? null;
 
@@ -566,18 +580,39 @@ export default function ArbeitszeitblaetterPage() {
                         key={emp.id}
                         className={cn(
                           'hover:bg-muted/30 transition-colors',
-                          status === 'confirmed' && 'bg-emerald-50/30 dark:bg-emerald-950/10',
-                          status === 'rejected'  && 'bg-red-50/30 dark:bg-red-950/10',
+                          hasPlanWarning && 'bg-amber-50/40 dark:bg-amber-950/10',
+                          !hasPlanWarning && status === 'confirmed' && 'bg-emerald-50/30 dark:bg-emerald-950/10',
+                          !hasPlanWarning && status === 'rejected'  && 'bg-red-50/30 dark:bg-red-950/10',
                         )}
                       >
-                        <td className="px-4 py-2 font-medium text-sm">{emp.name}</td>
+                        <td className="px-4 py-2 font-medium text-sm">
+                          <div className="flex items-center gap-1.5">
+                            {hasPlanWarning && (
+                              <AlertTriangle
+                                className="h-3.5 w-3.5 text-amber-500 shrink-0"
+                                title={`Dienstplan (${fmtHours(dienstplanHours)}) vs. AZB (${fmtHours(istHours)}): ${fmtDiff(dienstplanHours - istHours)}`}
+                              />
+                            )}
+                            {emp.name}
+                          </div>
+                        </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground hidden sm:table-cell">{emp.department || '–'}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-xs text-muted-foreground">
                           {sollHours > 0 ? fmtHours(sollHours) : '–'}
                         </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-xs font-medium">
-                          {istHours > 0 ? fmtHours(istHours) : <span className="text-muted-foreground">–</span>}
+                        {/* Dienstplan IST */}
+                        <td className="px-3 py-2 text-right tabular-nums text-xs hidden md:table-cell">
+                          {dienstplanHours > 0
+                            ? <span className="text-foreground">{fmtHours(dienstplanHours)}</span>
+                            : <span className="text-muted-foreground">–</span>}
                         </td>
+                        {/* Arbeitszeitblatt IST (Mirus / actual_hours) */}
+                        <td className="px-3 py-2 text-right tabular-nums text-xs font-medium">
+                          {istHours > 0
+                            ? <span className={hasPlanWarning ? 'text-amber-700 dark:text-amber-400' : ''}>{fmtHours(istHours)}</span>
+                            : <span className="text-muted-foreground">–</span>}
+                        </td>
+                        {/* Diff = AZB IST - Soll */}
                         <td className="px-3 py-2 text-right tabular-nums text-xs hidden md:table-cell">
                           {istHours > 0 && sollHours > 0
                             ? <span className={diff >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{fmtDiff(diff)}</span>
@@ -644,7 +679,10 @@ export default function ArbeitszeitblaetterPage() {
         {/* Legende */}
         <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground pb-4">
           <span className="flex items-center gap-1"><Check className="h-3 w-3 text-emerald-500" />Soll = Wochenstunden ÷ 7 × Monatstage</span>
-          <span className="flex items-center gap-1 text-blue-500">■ Ferien/Feiertage = Mirus Abschluss-Saldo (letzte Importe)</span>
+          <span className="flex items-center gap-1">■ Dienstplan IST = schedule_entries (Früh/Spät-Einsätze)</span>
+          <span className="flex items-center gap-1">■ AZB IST = Mirus-Import (actual_hours)</span>
+          <span className="flex items-center gap-1 text-amber-600"><AlertTriangle className="h-3 w-3" />Warnung wenn |Dienstplan − AZB| &gt; 2 h</span>
+          <span className="flex items-center gap-1 text-blue-500">■ Ferien/Feiertage = Mirus Abschluss-Saldo</span>
         </div>
       </div>
 

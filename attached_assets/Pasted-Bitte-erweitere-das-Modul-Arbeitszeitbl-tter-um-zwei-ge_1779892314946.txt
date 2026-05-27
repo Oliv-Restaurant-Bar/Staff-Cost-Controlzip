@@ -1,0 +1,107 @@
+Bitte erweitere das Modul Arbeitszeitblätter um zwei getrennte IST-Stunden Quellen.
+
+Aktuelles Problem:
+Die Tabelle zeigt aktuell nur eine IST-Spalte, welche offenbar direkt aus actual_hours beziehungsweise dem Mirus Import kommt.
+
+Ziel:
+Die Arbeitszeitblätter sollen zwei getrennte IST-Werte anzeigen:
+
+1. Dienstplan IST
+= Stunden aus dem internen Dienstplan / geplanter Arbeitszeit / effektiver Einsatzplanung
+
+2. Arbeitszeitblatt IST
+= importierte Stunden aus Mirus / Zeiterfassung / actual_hours
+
+Damit soll später eine saubere Kontrolle zwischen Planung und realer Arbeitszeit möglich sein.
+
+Neue Tabellenstruktur in der UI:
+
+Mitarbeiter | Soll | Dienstplan IST | Arbeitszeitblatt IST | Diff. | Ferien | Feiertage | Status | Aktionen
+
+Beispiel:
+Soll: 186.0 h
+Dienstplan IST: 178.5 h
+Arbeitszeitblatt IST: 172.3 h
+Diff.: -13.7 h
+
+Wichtig:
+Die Diff.-Spalte soll sich standardmässig berechnen aus:
+
+Arbeitszeitblatt IST minus Soll
+
+Zusätzlich bitte eine kleine sekundäre Anzeige oder Tooltip vorbereiten:
+Differenz Dienstplan vs Arbeitszeitblatt
+
+1. Datenquellen analysieren
+
+Bitte prüfen:
+Wo aktuell die Dienstplan-Iststunden gespeichert werden.
+Mögliche Tabellen:
+shifts
+schedule_entries
+dienstplan
+planned_hours
+worked_shifts
+oder ähnliche bestehende Tabellen.
+
+Keine neue Dienstplan-Logik bauen.
+Bitte bestehende Datenquelle verwenden.
+
+2. actual_hours bleibt Quelle für Arbeitszeitblatt IST
+
+Die importierten Mirus Stunden in actual_hours bleiben die Quelle für:
+Arbeitszeitblatt IST
+
+Bitte Spalte umbenennen:
+Aktuelle IST-Spalte → Arbeitszeitblatt IST
+
+3. Neue Spalte Dienstplan IST
+
+Berechne pro Mitarbeiter und Monat:
+Total Stunden aus Dienstplan-Einsätzen.
+
+Falls bereits eine bestehende Funktion vorhanden ist:
+diese wiederverwenden.
+
+Falls mehrere Quellen existieren:
+bitte die produktiv verwendete Dienstplan-Logik verwenden.
+
+4. Farbliche Hervorhebung
+
+Wenn Differenz zwischen Dienstplan IST und Arbeitszeitblatt IST grösser als:
+±2 Stunden
+
+Dann:
+Zeile leicht orange markieren oder Warnsymbol anzeigen.
+
+5. Detailansicht vorbereiten
+
+Bitte Architektur vorbereiten, damit später pro Mitarbeiter ein Vergleich möglich ist:
+
+Datum | Dienstplan Stunden | Mirus Stunden | Differenz
+
+Noch keine vollständige Modal-Ansicht nötig.
+Aber Datenstruktur bereits sauber vorbereiten.
+
+6. Statistik-Kacheln oben nicht ändern
+
+Bestätigt / Rückfrage / Offen bleiben wie bisher.
+
+7. Importlogik nicht ändern
+
+Mirus Import soll weiterhin:
+actual_hours befüllen
+employee_time_balances befüllen
+
+8. Nach Umsetzung bitte ausgeben
+
+Welche Datenquelle für Dienstplan IST verwendet wurde
+Welche Datenquelle für Arbeitszeitblatt IST verwendet wurde
+Welche Dateien geändert wurden
+Wie die neue Differenz berechnet wird
+Ob Warnungen bei Abweichungen eingebaut wurden
+
+Wichtig:
+Keine bestehende Bestätigungslogik beschädigen.
+Keine parallelen Stunden-Systeme erfinden.
+Bestehende App-Struktur respektieren.

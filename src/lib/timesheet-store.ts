@@ -362,6 +362,58 @@ export async function getEmployeeTimeBalancesForMonth(
   return result;
 }
 
+// ─── Dienstplan-Stunden pro Mitarbeiter/Monat laden ──────────────────────────
+// Quelle: schedule_entries (frueh_start/end, spaet_start/end)
+// Gleiche Berechnungslogik wie usePersonnelData.calculateDayHoursInternal
+
+function schedSlotHours(start: string | null, end: string | null): number {
+  if (!start || !end) return 0;
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  let h = (eh - sh) + (em - sm) / 60;
+  if (h < 0) h += 24;
+  return Math.round(h * 100) / 100;
+}
+
+function schedBreak(grossHours: number): number {
+  return grossHours > 9 ? 0.5 : 0;
+}
+
+export async function loadDienstplanHoursForMonth(
+  employeeIds: string[],
+  year: number,
+  month: number,
+): Promise<Record<string, number>> {
+  if (!employeeIds.length) return {};
+  const startStr = `${year}-${String(month).padStart(2, '0')}-01`;
+  const endDay   = new Date(year, month, 0).getDate();
+  const endStr   = `${year}-${String(month).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
+
+  const { data, error } = await supabase
+    .from('schedule_entries')
+    .select('employee_id, frueh_start, frueh_end, spaet_start, spaet_end')
+    .in('employee_id', employeeIds)
+    .gte('date', startStr)
+    .lte('date', endStr);
+
+  if (error) {
+    if (error.code === '42P01' || error.code === '42501') return {};
+    console.error('[TIMESHEET] loadDienstplanHoursForMonth:', error);
+    return {};
+  }
+
+  const result: Record<string, number> = {};
+  for (const row of data ?? []) {
+    const frühH  = schedSlotHours(row.frueh_start, row.frueh_end);
+    const spätH  = schedSlotHours(row.spaet_start, row.spaet_end);
+    const gross  = frühH + spätH;
+    const net    = Math.round((gross - schedBreak(gross)) * 100) / 100;
+    if (net <= 0) continue;
+    result[row.employee_id] = Math.round(((result[row.employee_id] ?? 0) + net) * 100) / 100;
+  }
+  return result;
+}
+
 // ─── Mirus-Stunden-String parsen ──────────────────────────────────────────────
 // Formate: "42.5"  |  "3 T 2:00"  |  "3:00"  |  "-1.5"  |  "1 T 0:30"
 
