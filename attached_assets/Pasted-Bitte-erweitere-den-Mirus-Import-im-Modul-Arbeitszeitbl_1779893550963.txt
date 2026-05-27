@@ -1,0 +1,162 @@
+Bitte erweitere den Mirus Import im Modul Arbeitszeitblätter um einen sauberen Vorprüfungs- und Matching-Schritt vor dem Import.
+
+Ziel:
+Vor dem endgültigen Import muss der Admin sehen, welche Mitarbeiter und Daten importiert werden. Neue oder nicht zugeordnete Mitarbeiter sollen erkannt werden. Der Admin soll dann entscheiden können:
+
+1. Bestehendem Mitarbeiter zuordnen
+2. Neuen Mitarbeiter direkt erfassen
+3. Zeile/Mitarbeiter vom Import ausschliessen
+
+Wichtig:
+Der Import darf erst gestartet werden, wenn der Admin die Vorschau geprüft hat.
+
+1. Import-Vorschau erweitern
+
+Nach Upload der Mirus Datei soll eine Vorschau angezeigt werden mit:
+
+- Mirus Mitarbeitername
+- erkannte Personalnummer / externe ID, falls vorhanden
+- zugeordneter App-Mitarbeiter
+- Abteilung
+- Anzahl Tage
+- AZB Ist Stunden
+- Ferienguthaben
+- Feiertagguthaben
+- Status
+
+Statuswerte:
+- automatisch zugeordnet
+- manuell zugeordnet
+- neu
+- ausgeschlossen
+- Konflikt
+
+2. Nicht zugeordnete Mitarbeiter behandeln
+
+Wenn ein Mitarbeiter aus Mirus nicht eindeutig einem bestehenden Mitarbeiter zugeordnet werden kann:
+
+Option A:
+Dropdown „bestehendem Mitarbeiter zuordnen“
+
+Option B:
+Button „Mitarbeiter neu erfassen“
+
+Option C:
+Button „vom Import ausschliessen“
+
+3. Mitarbeiter neu erfassen direkt im Import
+
+Beim Klick auf „Mitarbeiter neu erfassen“ soll ein kleines Formular oder Dialog geöffnet werden:
+
+Felder:
+- Vorname / Name oder vollständiger Name
+- Abteilung
+- Eintrittsdatum
+- Personalnummer / externe ID, falls aus Mirus vorhanden
+- Pensum / Sollstunden falls im bestehenden Employee-Modell vorhanden
+- Status aktiv
+
+Nach Speichern:
+- Mitarbeiter wird in der bestehenden employees Tabelle erstellt
+- Import-Zeile wird automatisch diesem neuen Mitarbeiter zugeordnet
+- Status wird „neu erstellt“
+
+Wichtig:
+Keine parallele Mitarbeiter-Tabelle erstellen.
+Bestehende employees Struktur verwenden.
+
+4. Ausschliessen vom Import
+
+Der Admin soll pro Mitarbeiter oder Importgruppe sagen können:
+
+„Nicht importieren“
+
+Dann werden für diesen Mirus-Mitarbeiter:
+- keine actual_hours geschrieben
+- keine employee_time_balances geschrieben
+- keine Fehler gezählt, sondern als ausgelassen gezählt
+
+Import-Historie soll zusätzlich speichern:
+skipped_count
+
+Falls die Tabelle timesheet_import_history noch kein skipped_count hat:
+Migration ergänzen.
+
+5. Konflikte anzeigen
+
+Wenn mehrere bestehende Mitarbeiter möglich sind oder Name nicht eindeutig ist:
+
+Status „Konflikt“
+Import darf für diese Person nicht automatisch laufen, bis:
+- manuell zugeordnet
+oder
+- ausgeschlossen
+oder
+- neuer Mitarbeiter erstellt wurde
+
+6. Import starten nur bei gültiger Vorschau
+
+Button „Import starten“ soll nur aktiv sein, wenn alle Importgruppen einen dieser finalen Zustände haben:
+
+- automatisch zugeordnet
+- manuell zugeordnet
+- neu erstellt
+- ausgeschlossen
+
+Nicht erlaubt:
+- neu ohne Zuordnung
+- Konflikt
+
+7. Import-Zusammenfassung vor Start
+
+Vor dem finalen Import bitte anzeigen:
+
+- Anzahl Mitarbeiter gesamt
+- Anzahl automatisch zugeordnet
+- Anzahl manuell zugeordnet
+- Anzahl neu erstellt
+- Anzahl ausgeschlossen
+- Anzahl Konflikte
+- Anzahl Tageszeilen
+- Monat der Datei
+- aktuell gewählter Monat
+
+Wenn Datei-Monat und gewählter Monat nicht übereinstimmen:
+deutliche Warnung anzeigen.
+
+8. Import-Historie erweitern
+
+Nach Import speichern:
+
+- imported_count
+- updated_count
+- error_count
+- skipped_count
+- created_employees_count
+- manual_matches_count
+- file_name
+- source = mirus
+- month
+- year
+- created_at
+
+9. Sicherheit
+
+Nur Admin/Inhaber dürfen neue Mitarbeiter aus dem Import erstellen.
+Normale Manager dürfen den Import sehen falls bisher erlaubt, aber keine neuen Mitarbeiter erstellen, ausser die bestehende Rollenlogik erlaubt das bereits.
+
+10. Nach Umsetzung bitte ausgeben
+
+- Welche Dateien geändert wurden
+- Welche Migration ergänzt wurde
+- Welche Felder in timesheet_import_history neu sind
+- Wie neue Mitarbeiter erstellt werden
+- Wie Ausschlüsse gespeichert werden
+- Wann der Import-Button aktiv/inaktiv ist
+- Ob actual_hours nur für zugeordnete oder neu erstellte Mitarbeiter geschrieben wird
+
+Wichtig:
+Keine Dummy-Daten verwenden.
+Bestehende employee-Struktur respektieren.
+Keine parallele Mitarbeiter-Tabelle bauen.
+Bestehende Importlogik nicht zerstören, sondern um Vorschau, Matching, Neuerfassung und Ausschluss erweitern.

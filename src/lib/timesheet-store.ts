@@ -255,24 +255,35 @@ export async function saveImportHistory(params: {
   fileName?: string | null;
   importedCount: number;
   updatedCount?: number;
+  skippedCount?: number;
+  createdEmployeesCount?: number;
+  manualMatchesCount?: number;
   errors?: string[];
   createdBy?: string | null;
 }): Promise<void> {
-  const { tenantId, year, month, source = 'mirus', fileName, importedCount, updatedCount = 0, errors = [], createdBy } = params;
+  const {
+    tenantId, year, month, source = 'mirus', fileName,
+    importedCount, updatedCount = 0,
+    skippedCount = 0, createdEmployeesCount = 0, manualMatchesCount = 0,
+    errors = [], createdBy,
+  } = params;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (supabase as any)
     .from('timesheet_import_history')
     .insert({
-      tenant_id:      tenantId,
+      tenant_id:                tenantId,
       source,
-      file_name:      fileName ?? null,
+      file_name:                fileName ?? null,
       month,
       year,
-      imported_count: importedCount,
-      updated_count:  updatedCount,
-      error_count:    errors.length,
-      errors:         errors.length ? errors : null,
-      created_by:     createdBy ?? null,
+      imported_count:           importedCount,
+      updated_count:            updatedCount,
+      skipped_count:            skippedCount,
+      created_employees_count:  createdEmployeesCount,
+      manual_matches_count:     manualMatchesCount,
+      error_count:              errors.length,
+      errors:                   errors.length ? errors : null,
+      created_by:               createdBy ?? null,
     });
   if (error) console.error('[TIMESHEET-HISTORY] saveImportHistory:', error);
 }

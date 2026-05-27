@@ -18,6 +18,12 @@ CREATE TABLE IF NOT EXISTS timesheet_import_history (
   created_by      TEXT
 );
 
+-- Spalten für erweiterte Import-Statistik (können via ALTER TABLE nachgerüstet werden)
+ALTER TABLE timesheet_import_history
+  ADD COLUMN IF NOT EXISTS skipped_count           INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS created_employees_count INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS manual_matches_count    INTEGER NOT NULL DEFAULT 0;
+
 ALTER TABLE timesheet_import_history ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "import_history_select_auth"
