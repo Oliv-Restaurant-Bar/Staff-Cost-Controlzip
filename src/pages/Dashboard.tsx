@@ -23,7 +23,7 @@ import {
 } from '@/lib/absence-utils';
 import { cn } from '@/lib/utils';
 import { useMaisonExclude, getMaisonExcludeSync } from '@/hooks/useMaisonExclude';
-import { getMaisonEnabledSync } from '@/lib/maison-store';
+import { getMaisonEnabledSync, getMaisonDailySync, loadMaisonDaily } from '@/lib/maison-store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -239,6 +239,8 @@ const Dashboard = () => {
   const { tenantId, tenantKey } = useTenant();
   const [maisonExclude, setMaisonExclude] = useMaisonExclude();
   const maisonOn = getMaisonEnabledSync(tenantKey);
+  const [maisonDaily, setMaisonDaily] = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
+  useEffect(() => { loadMaisonDaily(tenantKey).then(setMaisonDaily); }, [tenantKey]);
 
   const deptLabel = allowedDepartment === 'service' ? 'Service'
     : allowedDepartment === 'küche' ? 'Küche'
@@ -471,7 +473,20 @@ const Dashboard = () => {
     () => loadMonth(currentYear, currentMonth).revenueActual ?? 0,
     [currentYear, currentMonth, reportingTick] // eslint-disable-line react-hooks/exhaustive-deps
   );
-  const revenueMonth = revenueMonthDaily > 0 ? revenueMonthDaily : reportingActualRevenue;
+  const revenueMonthBase = revenueMonthDaily > 0 ? revenueMonthDaily : reportingActualRevenue;
+
+  // Maison-Korrektur: Summe der Tages-Marketingwerte für aktive Tage / Monat
+  const maisonSumGross = (days: string[]) =>
+    maisonOn && maisonExclude
+      ? days.reduce((s, d) => s + (maisonDaily[d] ?? 0), 0)
+      : 0;
+  const maisonActiveGross = maisonSumGross(activeDays);
+  const maisonMonthGross  = maisonSumGross(monthDays);
+  // Marketing MWST-Satz: 8.1% (Restaurationsumsatz)
+  const maisonActiveNet = showNetRevenue ? maisonActiveGross / 1.081 : maisonActiveGross;
+  const maisonMonthNet  = showNetRevenue ? maisonMonthGross  / 1.081 : maisonMonthGross;
+
+  const revenueMonth = revenueMonthBase - maisonMonthNet;
 
   // Fallback Vorjahr: zuerst revenuePreviousYear im aktuellen Datensatz (manuell eingegeben),
   // dann Vorjahres-Ist aus reporting_v1 des Vorjahres.
@@ -498,9 +513,10 @@ const Dashboard = () => {
   // Periodenspezifische Umsatz-Werte
   // Für 'month' nutzen wir denselben Fallback; für today/week nur Tagesdaten
   const revenueActiveDailyRaw = sumRevenue(activeDays, 'actualRevenue');
-  const revenueActive = (period === 'month' && revenueActiveDailyRaw === 0)
+  const revenueActiveBase = (period === 'month' && revenueActiveDailyRaw === 0)
     ? reportingActualRevenue
     : revenueActiveDailyRaw;
+  const revenueActive = revenueActiveBase - maisonActiveNet;
   const revenuePrevYearDailyRaw = sumRevenuePrevYear(activeDays);
   const revenuePrevYearActive = revenuePrevYearDailyRaw > 0
     ? revenuePrevYearDailyRaw
