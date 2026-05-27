@@ -60,6 +60,8 @@ import MirusExcelTest from "./pages/MirusExcelTest";
 import MirusImportPreview from "./pages/MirusImportPreview";
 import MirusReview from "./pages/MirusReview";
 import StaffSchedulePage from "./pages/StaffSchedulePage";
+import ArbeitszeitblaetterPage from "./pages/ArbeitszeitblaetterPage";
+import TimesheetConfirmationPage from "./pages/TimesheetConfirmationPage";
 
 const queryClient = new QueryClient();
 
@@ -214,6 +216,7 @@ const AppContent = () => {
             <Route path="/personal-fix"
               element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
             />
+            <Route path="/arbeitszeitblaetter" element={<ArbeitszeitblaetterPage />} />
             <Route path="/integrity-test" element={<DataIntegrityTest />} />
             <Route path="/produkte"
               element={<ProdukteSeite />}
@@ -303,6 +306,7 @@ const App = () => {
                     {/* ── Öffentliche Routen — kein Login erforderlich ── */}
                     <Route path="/onboarding/:token" element={<OnboardingForm />} />
                     <Route path="/staff-schedule/:token" element={<StaffSchedulePage />} />
+                    <Route path="/timesheet-confirmation/:token" element={<TimesheetConfirmationPage />} />
                     <Route path="/gast" element={<GuestAccess />} />
 
                     {/* ── Alle anderen Routen → Auth-Check ── */}

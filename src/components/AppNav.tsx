@@ -30,7 +30,7 @@ import {
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
   Wallet, BarChart3, ShoppingCart, LineChart, TrendingUp,
-  Menu,
+  Menu, ClipboardCheck,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -141,6 +141,14 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'FIX',
         icon: DollarSign,
         module: 'personal_fix' as import('@/hooks/usePermissions').AppModule,
+      },
+      {
+        path: '/arbeitszeitblaetter',
+        label: 'Arbeitszeitblätter',
+        shortLabel: 'AZ-Blätter',
+        icon: ClipboardCheck,
+        adminOnly: true,
+        beaulieuAllowed: true,
       },
     ],
   },

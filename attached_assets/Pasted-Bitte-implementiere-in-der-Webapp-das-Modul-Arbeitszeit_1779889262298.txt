@@ -1,0 +1,179 @@
+Bitte implementiere in der Webapp das Modul "Arbeitszeitblätter" für digitale Mitarbeiterbestätigungen.
+
+Ziel:
+Mitarbeiter sollen ihre monatlichen Arbeitszeitblätter digital prüfen, bestätigen oder mit Kommentar zurückweisen können. Der Admin soll den Status pro Mitarbeiter und Monat sehen.
+
+Bitte zuerst prüfen, ob bereits Tabellen, Komponenten oder Routen für Arbeitszeitblätter, timesheets, work time confirmations oder employee confirmations existieren. Falls ja, diese weiterverwenden und nicht doppelt erstellen.
+
+1. Navigation und Modul sichtbar machen
+
+Füge im Hauptmenü einen neuen Menüpunkt hinzu:
+
+Arbeitszeitblätter
+
+Der Menüpunkt soll für Admin und Inhaber sichtbar sein.
+Falls es bereits Bereiche wie Dienstplanung, Ist Stunden oder Reporting gibt, soll Arbeitszeitblätter als eigener Hauptpunkt oder als Unterpunkt bei Dienstplanung erscheinen, je nachdem was besser zur bestehenden Struktur passt.
+
+Route:
+/admin/arbeitszeitblaetter
+
+oder falls das Routing englisch aufgebaut ist:
+/admin/timesheets
+
+2. Admin Übersicht erstellen
+
+Erstelle eine Admin Seite "Arbeitszeitblätter".
+
+Funktionen:
+Monat und Jahr auswählen
+Abteilung filtern, falls vorhanden
+Mitarbeiterliste anzeigen
+Pro Mitarbeiter anzeigen:
+Name
+Abteilung
+Soll Stunden
+Ist Stunden
+Differenz
+Status
+Letzte Aktion
+Button "Arbeitszeitblatt öffnen"
+Button "Link generieren"
+Button "Link kopieren"
+Button "Erneut senden" falls E Mail Versand bereits vorhanden ist
+
+Statuswerte:
+offen
+Link erstellt
+gesendet
+bestätigt
+abgelehnt
+abgelaufen
+
+3. Datenbankstruktur
+
+Falls noch nicht vorhanden, erstelle eine Tabelle für digitale Arbeitszeitblatt Bestätigungen.
+
+Tabellenname bevorzugt:
+employee_timesheet_confirmations
+
+Felder:
+id uuid primary key
+tenant_id uuid nullable oder passend zur bestehenden Multi Tenant Struktur
+employee_id uuid not null
+month integer not null
+year integer not null
+token text unique not null
+status text not null default 'open'
+confirmed_at timestamp nullable
+rejected_at timestamp nullable
+employee_comment text nullable
+admin_comment text nullable
+created_at timestamp default now()
+updated_at timestamp default now()
+expires_at timestamp nullable
+
+Wichtig:
+Pro employee_id, month und year soll es nur eine aktive Bestätigung geben.
+
+4. Sicheren Mitarbeiterlink erstellen
+
+Der Admin soll für jeden Mitarbeiter und Monat einen persönlichen Link generieren können.
+
+Beispiel:
+https://APP_DOMAIN/timesheet-confirmation/TOKEN
+
+Der Token muss zufällig, sicher und nicht erratbar sein.
+
+5. Öffentliche Bestätigungsseite für Mitarbeiter
+
+Erstelle eine öffentliche Seite ohne Login:
+
+/timesheet-confirmation/:token
+
+Diese Seite zeigt dem Mitarbeiter:
+Name
+Monat und Jahr
+Übersicht der Arbeitszeiten
+Total Ist Stunden
+Pausen, falls vorhanden
+Soll Stunden, falls vorhanden
+Differenz
+Kommentar Feld
+
+Buttons:
+"Arbeitszeitblatt bestätigen"
+"Rückfrage / nicht korrekt"
+
+Wenn bestätigt:
+status = confirmed
+confirmed_at = now()
+
+Wenn Rückfrage:
+status = rejected
+rejected_at = now()
+employee_comment speichern
+
+Nach Absenden eine Danke Seite anzeigen:
+"Vielen Dank. Deine Rückmeldung wurde gespeichert."
+
+6. Arbeitszeitdaten korrekt beziehen
+
+Nutze die bereits vorhandenen Ist Stunden Daten aus der bestehenden App.
+Bitte prüfe die vorhandenen Tabellen und Logik für:
+Dienstplan
+Ist Stunden
+Arbeitszeit
+Mitarbeiter
+Abteilungen
+
+Keine neue parallele Stundenlogik erstellen, sondern die bestehenden Ist Stunden pro Mitarbeiter und Monat auslesen.
+
+7. Admin Status aktualisieren
+
+In der Admin Übersicht soll der Status automatisch sichtbar sein.
+Bei bestätigten Arbeitszeitblättern:
+grün markieren
+Bestätigungsdatum anzeigen
+
+Bei abgelehnten Arbeitszeitblättern:
+rot oder orange markieren
+Kommentar des Mitarbeiters anzeigen
+
+8. Berechtigungen und Sicherheit
+
+Die öffentliche Bestätigungsseite darf nur über gültigen Token funktionieren.
+Keine vollständige Mitarbeiterliste öffentlich anzeigen.
+Nur Daten des Mitarbeiters anzeigen, der zum Token gehört.
+Abgelaufene oder ungültige Tokens sauber behandeln.
+Admin Seiten müssen weiterhin geschützt bleiben.
+
+9. Optional vorbereiten, aber nur wenn bestehende E Mail Logik vorhanden ist
+
+Falls bereits E Mail Versand implementiert ist:
+Button "Arbeitszeitblatt senden" ergänzen.
+E Mail Text:
+Hallo {Name}
+
+Bitte prüfe dein Arbeitszeitblatt für {Monat Jahr} und bestätige es über folgenden Link:
+
+{Link}
+
+Vielen Dank.
+
+Falls keine E Mail Logik vorhanden ist:
+Nur Link generieren und kopieren ermöglichen.
+
+10. Bitte nach der Umsetzung anzeigen
+
+Welche Dateien geändert wurden
+Welche Tabellen erstellt oder angepasst wurden
+Welche Route für Admin neu ist
+Welche öffentliche Route für Mitarbeiter neu ist
+Ob eine bestehende Stundenlogik verwendet wurde
+Ob noch ein SQL Script in Supabase manuell ausgeführt werden muss
+
+Wichtig:
+Bitte keine bestehenden Funktionen beschädigen.
+Bitte keine Dummy Stundenlogik einbauen.
+Bitte bestehende App Struktur respektieren.
+Bitte das Modul so einbauen, dass wir später PDF Export und E Mail Versand sauber ergänzen können.
