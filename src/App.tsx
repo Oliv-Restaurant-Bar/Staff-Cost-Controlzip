@@ -62,7 +62,6 @@ import MirusReview from "./pages/MirusReview";
 import StaffSchedulePage from "./pages/StaffSchedulePage";
 import ArbeitszeitblaetterPage from "./pages/ArbeitszeitblaetterPage";
 import TimesheetConfirmationPage from "./pages/TimesheetConfirmationPage";
-import StundenimportPage from "./pages/StundenimportPage";
 
 const queryClient = new QueryClient();
 
@@ -218,7 +217,6 @@ const AppContent = () => {
               element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
             />
             <Route path="/arbeitszeitblaetter" element={<ArbeitszeitblaetterPage />} />
-            <Route path="/stundenimport" element={<StundenimportPage />} />
             <Route path="/integrity-test" element={<DataIntegrityTest />} />
             <Route path="/produkte"
               element={<ProdukteSeite />}

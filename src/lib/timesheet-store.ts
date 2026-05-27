@@ -46,7 +46,11 @@ export async function getConfirmationsForMonth(
     .eq('year', year)
     .eq('month', month)
     .order('created_at', { ascending: false });
-  if (error) throw error;
+  if (error) {
+    // Tabelle existiert noch nicht (Migration ausstehend) → leer zurückgeben
+    if (error.code === '42P01' || error.code === '42501') return [];
+    throw error;
+  }
   return (data ?? []) as TimesheetConfirmation[];
 }
 
@@ -225,3 +229,165 @@ export const MONTH_NAMES_DE = [
   'Januar','Februar','März','April','Mai','Juni',
   'Juli','August','September','Oktober','November','Dezember',
 ];
+
+// ─── Import-Historie ──────────────────────────────────────────────────────────
+
+export interface ImportHistoryEntry {
+  id: string;
+  tenant_id: string;
+  source: string;
+  file_name: string | null;
+  month: number;
+  year: number;
+  imported_count: number;
+  updated_count: number;
+  error_count: number;
+  errors: string[] | null;
+  created_at: string;
+  created_by: string | null;
+}
+
+export async function saveImportHistory(params: {
+  tenantId: string;
+  year: number;
+  month: number;
+  source?: string;
+  fileName?: string | null;
+  importedCount: number;
+  updatedCount?: number;
+  errors?: string[];
+  createdBy?: string | null;
+}): Promise<void> {
+  const { tenantId, year, month, source = 'mirus', fileName, importedCount, updatedCount = 0, errors = [], createdBy } = params;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase as any)
+    .from('timesheet_import_history')
+    .insert({
+      tenant_id:      tenantId,
+      source,
+      file_name:      fileName ?? null,
+      month,
+      year,
+      imported_count: importedCount,
+      updated_count:  updatedCount,
+      error_count:    errors.length,
+      errors:         errors.length ? errors : null,
+      created_by:     createdBy ?? null,
+    });
+  if (error) console.error('[TIMESHEET-HISTORY] saveImportHistory:', error);
+}
+
+export async function getImportHistoryForMonth(
+  tenantId: string,
+  year: number,
+  month: number,
+): Promise<ImportHistoryEntry | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase as any)
+    .from('timesheet_import_history')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('year', year)
+    .eq('month', month)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error?.code === '42P01' || error?.code === '42501') return null;
+  return (data ?? null) as ImportHistoryEntry | null;
+}
+
+// ─── Mitarbeiter-Zeitguthaben ─────────────────────────────────────────────────
+
+export interface EmployeeTimeBalance {
+  employee_id: string;
+  vacation_balance_hours: number | null;
+  public_holiday_balance_hours: number | null;
+  overtime_balance_hours: number | null;
+  hours_balance: number | null;
+}
+
+export async function upsertEmployeeTimeBalance(params: {
+  tenantId: string;
+  employeeId: string;
+  year: number;
+  month: number;
+  vacationHours?: number | null;
+  holidayHours?: number | null;
+  overtimeHours?: number | null;
+  hoursBalance?: number | null;
+}): Promise<void> {
+  const { tenantId, employeeId, year, month, vacationHours, holidayHours, overtimeHours, hoursBalance } = params;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase as any)
+    .from('employee_time_balances')
+    .upsert({
+      tenant_id:                    tenantId,
+      employee_id:                  employeeId,
+      month,
+      year,
+      vacation_balance_hours:       vacationHours       ?? null,
+      public_holiday_balance_hours: holidayHours        ?? null,
+      overtime_balance_hours:       overtimeHours       ?? null,
+      hours_balance:                hoursBalance        ?? null,
+      source:                       'mirus_import',
+      updated_at:                   new Date().toISOString(),
+    }, { onConflict: 'employee_id,month,year' });
+  if (error) console.error('[TIMESHEET-BALANCE] upsertEmployeeTimeBalance:', error);
+}
+
+export async function getEmployeeTimeBalancesForMonth(
+  tenantId: string,
+  year: number,
+  month: number,
+): Promise<Record<string, EmployeeTimeBalance>> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase as any)
+    .from('employee_time_balances')
+    .select('employee_id, vacation_balance_hours, public_holiday_balance_hours, overtime_balance_hours, hours_balance')
+    .eq('tenant_id', tenantId)
+    .eq('year', year)
+    .eq('month', month);
+  if (error?.code === '42P01' || error?.code === '42501') return {};
+
+  const result: Record<string, EmployeeTimeBalance> = {};
+  for (const row of data ?? []) {
+    result[row.employee_id] = {
+      employee_id:                  row.employee_id,
+      vacation_balance_hours:       row.vacation_balance_hours       ?? null,
+      public_holiday_balance_hours: row.public_holiday_balance_hours ?? null,
+      overtime_balance_hours:       row.overtime_balance_hours       ?? null,
+      hours_balance:                row.hours_balance                ?? null,
+    };
+  }
+  return result;
+}
+
+// ─── Mirus-Stunden-String parsen ──────────────────────────────────────────────
+// Formate: "42.5"  |  "3 T 2:00"  |  "3:00"  |  "-1.5"  |  "1 T 0:30"
+
+export function parseMirusHoursString(s: string | undefined): number | null {
+  if (!s || s.trim() === '' || s.trim() === '-') return null;
+  const t = s.trim();
+  // Einfache Zahl: "42.5" oder "-1.5"
+  const simple = parseFloat(t.replace(',', '.'));
+  if (!isNaN(simple) && !t.includes('T') && !t.includes(':')) return simple;
+  // Format "X T H:MM" (Tage + Zeit)
+  const dayTime = t.match(/(-?\d+(?:[.,]\d+)?)\s*T\s*(\d+):(\d+)/i);
+  if (dayTime) {
+    const days  = parseFloat(dayTime[1].replace(',', '.'));
+    const hours = parseInt(dayTime[2]);
+    const mins  = parseInt(dayTime[3]);
+    return Math.round((days * 8 + hours + mins / 60) * 100) / 100;
+  }
+  // Format "H:MM" oder "-H:MM"
+  const timeMatch = t.match(/^(-?)(\d+):(\d+)$/);
+  if (timeMatch) {
+    const sign = timeMatch[1] === '-' ? -1 : 1;
+    const h    = parseInt(timeMatch[2]);
+    const m    = parseInt(timeMatch[3]);
+    return sign * Math.round((h + m / 60) * 100) / 100;
+  }
+  // Nochmal als float (Komma-Decimal)
+  const fallback = parseFloat(t.replace(',', '.'));
+  return isNaN(fallback) ? null : fallback;
+}
