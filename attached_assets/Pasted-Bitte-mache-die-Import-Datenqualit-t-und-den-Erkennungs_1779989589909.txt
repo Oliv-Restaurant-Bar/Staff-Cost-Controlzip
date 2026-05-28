@@ -1,0 +1,98 @@
+Bitte mache die Import-Datenqualität und den Erkennungsgrad dauerhaft sichtbar im Modul Arbeitszeitblätter.
+
+Aktuelles Problem:
+Die parser_quality wird zwar offenbar berechnet und gespeichert, aber ich sehe nach dem Import nirgends klar:
+- was zu wie viel % erkannt wurde
+- welche Daten fehlten
+- wie die Datenqualität war
+
+Ich möchte pro Import eine sichtbare Qualitätsübersicht haben.
+
+1. Sichtbare Qualitätsübersicht DIREKT nach jedem Import
+
+Nach erfolgreichem Import:
+nicht nur Toast anzeigen,
+sondern eine feste Import-Zusammenfassung direkt im UI.
+
+Bereich:
+"Import-Auswertung"
+
+Mit Tabelle:
+
+Datenfeld | Erkannt | Erwartet | Qualität | Status
+
+Beispiele:
+Mitarbeiter | 21 | 21 | 100 % | 🟢
+Abteilungen | 21 | 21 | 100 % | 🟢
+Zeitstempel | 262 | 262 | 100 % | 🟢
+Ferienguthaben | 13 | 21 | 62 % | 🔴
+Feiertagguthaben | 0 | 21 | 0 % | 🔴
+Krankheit | 4 | 4 | 100 % | 🟢
+Unfall | 1 | 1 | 100 % | 🟢
+
+2. Import-Historie dauerhaft sichtbar machen
+
+Unterhalb der Arbeitszeitblatt-Tabelle neue Sektion:
+
+"Import-Historie"
+
+Pro Import anzeigen:
+- Zeitpunkt
+- Monat
+- Dateiname
+- Mitarbeiter %
+- Zeitstempel %
+- Ferien %
+- Feiertage %
+- Gesamtstatus
+- Re-Import ja/nein
+
+3. Detailansicht pro Import
+
+Klick auf Historienzeile öffnet Detailansicht:
+
+Vollständige Qualitäts-Tabelle
+Fehlende Mitarbeiter
+Fehlende Ferien-/Feiertagguthaben
+Warnings
+Parser-Hinweise
+Importfehler
+Anzahl Zeitblöcke
+Anzahl geschützter Tage
+Anzahl manueller Änderungen
+
+4. Farben
+
+🟢 95–100 %
+🟡 80–94 %
+🔴 <80 %
+
+5. Wichtig
+
+Die Qualitätsübersicht darf nicht nur während Upload sichtbar sein.
+Sie muss dauerhaft nachvollziehbar bleiben.
+
+Ich möchte später auditieren können:
+- wie gut war Import April?
+- was fehlte?
+- wann wurde reimportiert?
+- was wurde erkannt?
+- was wurde nicht erkannt?
+
+6. parser_quality vollständig verwenden
+
+Die bereits gespeicherte parser_quality JSONB aus timesheet_import_history auswerten und sichtbar rendern.
+
+7. Wenn parser_quality fehlt
+
+Bei alten Imports:
+Hinweis:
+"Für diesen Import liegen noch keine Qualitätsdaten vor."
+
+8. Nach Umsetzung bitte ausgeben
+
+- Wo die Qualitätsübersicht sichtbar ist
+- Wo die Import-Historie sichtbar ist
+- Wie man die Detailansicht öffnet
+- Welche Felder angezeigt werden
+- Wie Farben berechnet werden

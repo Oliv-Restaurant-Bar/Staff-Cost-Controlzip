@@ -45,8 +45,8 @@ function QualityFieldRow({ f }: { f: QualityFieldEntry }) {
         className={cn(
           'border-b border-border/40 transition-colors',
           hasMissing && 'cursor-pointer hover:bg-muted/20',
-          f.percent < 95 && 'bg-amber-50/30 dark:bg-amber-950/10',
-          f.percent < 70 && 'bg-red-50/30 dark:bg-red-950/10',
+          f.percent < 95 && f.percent >= 80 && 'bg-amber-50/30 dark:bg-amber-950/10',
+          f.percent < 80 && 'bg-red-50/30 dark:bg-red-950/10',
         )}
         onClick={() => { if (hasMissing) setOpen(v => !v); }}
       >

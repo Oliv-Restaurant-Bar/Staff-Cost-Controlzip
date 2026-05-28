@@ -1,0 +1,97 @@
+Bitte verbessere den Mirus Parser gezielt für Abwesenheiten und Salden.
+
+Problem:
+Im April-Import werden bei Mitarbeitern Ferien/Unfall/Krankheit nicht korrekt erkannt.
+Beispiele:
+- Arber hatte im April Ferien, aber in der Übersicht steht Ferien "-"
+- Saad war im Unfall, aber das wird nicht als Unfall erkannt/angezeigt
+
+Ziel:
+Der Parser muss Abwesenheiten aus dem Monatsblatt erkennen und pro Tag speichern/anzeigen.
+
+Bitte prüfen:
+
+1. Abwesenheitscodes aus Mirus erkennen
+
+Suche in Tageszeilen und Neben-Spalten nach Codes/Labels wie:
+- Ferien
+- Feri
+- Urlaub
+- U
+- FE
+- Frei
+- Feiertag
+- Feier
+- Krankheit
+- Krank
+- K
+- Unfall
+- UVG
+- Unfalltag
+- AUF
+- Abwesenheit
+
+2. Tagesansicht erweitern
+
+In der Mitarbeiter-Detailansicht soll in der Spalte "Typ" stehen:
+- Ferien
+- Unfall
+- Krankheit
+- Feiertag
+- Frei
+
+Nicht nur aus dem Dienstplan, sondern auch aus dem Mirus-Monatsblatt.
+
+3. Import speichern
+
+Falls nötig neue Tabelle erstellen:
+
+actual_day_annotations
+
+Felder:
+id uuid primary key
+employee_id text not null
+date date not null
+type text not null
+label text nullable
+hours numeric nullable
+source text default 'mirus_import'
+created_at timestamptz default now()
+
+Unique:
+employee_id, date, type, source
+
+4. Re-Import
+
+Beim Re-Import sollen diese Annotationen für den Monat auch ersetzt werden, ausser der Tag ist manuell geschützt.
+
+5. Übersicht verbessern
+
+In der Mitarbeiteransicht und Gesamtübersicht sollen Ferien/Unfall/Krankheit sichtbar werden:
+- Ferien-Tage
+- Krankheit-Tage
+- Unfall-Tage
+- Feiertage
+
+6. Datenqualität erweitern
+
+Parser-Qualität soll zusätzlich anzeigen:
+- Ferien-Tage erkannt
+- Unfall-Tage erkannt
+- Krankheit-Tage erkannt
+- Feiertage erkannt
+- Abwesenheiten total erkannt
+
+7. Debug für Arber und Saad
+
+Bitte gezielt im April-Monatsblatt debuggen:
+- Welche Zeilen/Tage bei Arber Ferien enthalten
+- Welche Zeilen/Tage bei Saad Unfall enthalten
+- Warum diese bisher nicht erkannt wurden
+
+8. Nach Umsetzung ausgeben:
+- Welche Mirus-Codes für Ferien erkannt wurden
+- Welche Codes für Unfall erkannt wurden
+- Welche Tabelle verwendet wird
+- Wo Ferien/Unfall/Krankheit in der UI angezeigt werden
+- Ob Arber Ferien und Saad Unfall im April jetzt sichtbar sind

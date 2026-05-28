@@ -20,7 +20,7 @@ import {
 import { parseMirusExcel, MirusParseError, type ExcelEmployee, type ExcelParseStats } from '@/lib/mirus-excel-parser';
 import { computeImportQuality, type QualityFieldEntry } from '@/lib/import-quality';
 import { DataQualityPanel } from '@/components/DataQualityPanel';
-import { ImportHistoryPanel } from '@/components/ImportHistoryPanel';
+import { ImportHistoryPanel, ImportQualitySummaryCard } from '@/components/ImportHistoryPanel';
 import EmployeeDetailView from '@/components/EmployeeDetailView';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
@@ -937,12 +937,12 @@ export default function ArbeitszeitblaetterPage() {
           ))}
         </div>
 
-        {/* Import-Historie */}
-        <ImportHistoryPanel
-          historyList={importHistoryList}
-          loading={loading}
-          onRefresh={loadData}
-        />
+        {/* Import-Auswertung — letzter Import dieses Monats */}
+        {(() => {
+          const latest = importHistoryList.find(e => e.year === year && e.month === month);
+          if (!latest) return null;
+          return <ImportQualitySummaryCard entry={latest} />;
+        })()}
 
         {/* Mitarbeiter-Filter */}
         <div className="flex items-center gap-2 flex-wrap">
@@ -1122,13 +1122,20 @@ export default function ArbeitszeitblaetterPage() {
         </div>
 
         {/* Legende */}
-        <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground pb-4">
+        <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground pb-2">
           <span className="flex items-center gap-1"><Check className="h-3 w-3 text-emerald-500" />Soll = Wochenstunden ÷ 7 × Monatstage</span>
           <span className="flex items-center gap-1">■ Dienstplan IST = schedule_entries</span>
           <span className="flex items-center gap-1">■ AZB IST = Mirus-Import (actual_hours)</span>
           <span className="flex items-center gap-1 text-amber-600"><AlertTriangle className="h-3 w-3" />Warnung wenn |Dienstplan − AZB| &gt; 2 h</span>
           <span className="flex items-center gap-1 text-blue-500">■ Ferien/Feiertage = Mirus Abschluss-Saldo</span>
         </div>
+
+        {/* Import-Historie — alle Imports für diesen Tenant */}
+        <ImportHistoryPanel
+          historyList={importHistoryList}
+          loading={loading}
+          onRefresh={loadData}
+        />
       </div>
       )}
 
