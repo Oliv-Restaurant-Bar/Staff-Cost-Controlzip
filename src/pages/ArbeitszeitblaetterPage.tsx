@@ -635,8 +635,16 @@ export default function ArbeitszeitblaetterPage() {
               }
             }
           }
+          console.debug(
+            `[runImport] ${row.employee.name} / ${day.date}: ${blockEntries.length} Blöcke aus ${day.shifts?.length ?? 0} Schichten`,
+            blockEntries,
+          );
           if (blockEntries.length > 0) {
-            await saveActualHourEntries(row.employee.id, day.date, blockEntries);
+            const result = await saveActualHourEntries(row.employee.id, day.date, blockEntries);
+            if (!result.ok) {
+              errors.push(`actual_hour_entries ${row.employee.name}/${day.date}: ${result.error ?? 'unbekannter Fehler'}`);
+              console.error('[runImport] saveActualHourEntries fehlgeschlagen:', row.employee.name, day.date, result.error);
+            }
           }
           importedCount++;
         } catch (err) {

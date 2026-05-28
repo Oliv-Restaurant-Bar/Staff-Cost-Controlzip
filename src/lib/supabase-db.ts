@@ -786,20 +786,26 @@ export interface HourBlockEntry {
  * Speichert alle Arbeitsblöcke eines Tages.
  * Strategie: bestehende Blöcke für diesen Tag löschen, dann neu einfügen.
  * → Idempotent bei Re-Import; verhindert Duplikate.
+ * Gibt { ok, error } zurück — wirft nicht, damit Caller selbst entscheiden kann.
  */
 export async function saveActualHourEntries(
   employeeId: string,
   date: string,
   blocks: Array<{ start_time: string; end_time: string; duration_hours: number; source?: string }>,
-): Promise<void> {
+): Promise<{ ok: boolean; error?: string }> {
   try {
-    await supabase
+    const { error: delError } = await supabase
       .from('actual_hour_entries')
       .delete()
       .eq('employee_id', employeeId)
       .eq('date', date);
 
-    if (blocks.length === 0) return;
+    if (delError) {
+      console.error('[supabase-db] saveActualHourEntries (delete):', delError);
+      return { ok: false, error: delError.message };
+    }
+
+    if (blocks.length === 0) return { ok: true };
 
     const { error } = await supabase.from('actual_hour_entries').insert(
       blocks.map(b => ({
@@ -811,9 +817,15 @@ export async function saveActualHourEntries(
         source:         b.source ?? 'mirus_import',
       })),
     );
-    if (error) console.error('[supabase-db] saveActualHourEntries:', error);
+    if (error) {
+      console.error('[supabase-db] saveActualHourEntries (insert):', error);
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
   } catch (e) {
+    const msg = String(e);
     console.error('[supabase-db] saveActualHourEntries exception:', e);
+    return { ok: false, error: msg };
   }
 }
 
@@ -837,19 +849,35 @@ export async function loadActualHourEntriesForDay(
 }
 
 /**
+ * Ergebnis von loadActualHourEntriesForMonth.
+ * tableAvailable: false wenn die Tabelle nicht existiert oder keine Berechtigung hat.
+ * tableError: Fehlermeldung für UI-Hinweis.
+ */
+export interface ActualHourEntriesResult {
+  blocks:         Map<string, HourBlockEntry[]>;
+  tableAvailable: boolean;
+  tableError?:    string;
+  totalEntries:   number;
+}
+
+/**
  * Lädt alle Arbeitsblöcke für einen ganzen Monat in einem Query.
- * Gibt eine Map<YYYY-MM-DD, HourBlockEntry[]> zurück.
- * Bei fehlendem Tisch (Migration ausstehend) → leere Map (kein Crash).
+ * Gibt { blocks, tableAvailable, totalEntries } zurück.
+ * Bei fehlendem Tisch (Migration ausstehend) → tableAvailable: false, leere Map.
  */
 export async function loadActualHourEntriesForMonth(
   employeeId: string,
   year: number,
   month: number,
-): Promise<Map<string, HourBlockEntry[]>> {
+): Promise<ActualHourEntriesResult> {
   const pad      = (n: number) => String(n).padStart(2, '0');
   const fromDate = `${year}-${pad(month)}-01`;
   const lastDay  = new Date(year, month, 0).getDate();
   const toDate   = `${year}-${pad(month)}-${pad(lastDay)}`;
+
+  console.debug(
+    `[actual_hour_entries] Lade Blöcke für ${employeeId} ${year}-${pad(month)} (${fromDate}–${toDate})`,
+  );
 
   const { data, error } = await supabase
     .from('actual_hour_entries')
@@ -860,9 +888,14 @@ export async function loadActualHourEntriesForMonth(
     .order('start_time');
 
   if (error) {
-    // Tabelle existiert noch nicht → still degraded, leere Map
-    console.warn('[supabase-db] loadActualHourEntriesForMonth:', error.message);
-    return new Map();
+    const isMissingTable = error.code === '42P01' || error.code === '42501' || error.message.includes('permission denied') || error.message.includes('does not exist');
+    console.warn('[supabase-db] loadActualHourEntriesForMonth:', error.code, error.message);
+    return {
+      blocks:         new Map(),
+      tableAvailable: !isMissingTable,
+      tableError:     error.message,
+      totalEntries:   0,
+    };
   }
 
   const map = new Map<string, HourBlockEntry[]>();
@@ -876,7 +909,18 @@ export async function loadActualHourEntriesForMonth(
       source:         row.source,
     });
   }
-  return map;
+
+  const total = data?.length ?? 0;
+  console.debug(
+    `[actual_hour_entries] Geladen: ${total} Blöcke für ${map.size} Tage (employee=${employeeId}, ${year}-${pad(month)})`,
+    total > 0 ? `Erster Block: ${data![0].date} ${data![0].start_time}–${data![0].end_time}` : 'Keine Blöcke vorhanden.',
+  );
+
+  return {
+    blocks:         map,
+    tableAvailable: true,
+    totalEntries:   total,
+  };
 }
 
 // ─── Re-Import: prüfen + löschen ──────────────────────────────────────────────

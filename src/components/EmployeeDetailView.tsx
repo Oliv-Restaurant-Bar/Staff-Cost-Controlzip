@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import {
-  ChevronLeft, RefreshCw, AlertTriangle,
+  ChevronLeft, RefreshCw, AlertTriangle, Database,
 } from 'lucide-react';
 import {
   loadEmployeeMonthDetail,
@@ -13,6 +13,7 @@ import {
 import {
   loadActualHourEntriesForMonth,
   type HourBlockEntry,
+  type ActualHourEntriesResult,
 } from '@/lib/supabase-db';
 import DayDetailDrawer from '@/components/DayDetailDrawer';
 
@@ -245,28 +246,38 @@ export default function EmployeeDetailView({
   vacationBalance, holidayBalance, confirmation,
   year, month, onBack,
 }: EmployeeDetailProps) {
-  const [entries, setEntries]           = useState<DayComparisonEntry[]>([]);
-  const [loading, setLoading]           = useState(false);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [blocksByDate, setBlocksByDate] =
+  const [entries, setEntries]             = useState<DayComparisonEntry[]>([]);
+  const [loading, setLoading]             = useState(false);
+  const [selectedDate, setSelectedDate]   = useState<string | null>(null);
+  const [blocksByDate, setBlocksByDate]   =
     useState<Map<string, HourBlockEntry[]>>(new Map());
+  const [blocksResult, setBlocksResult]   = useState<ActualHourEntriesResult | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setEntries([]);
     setBlocksByDate(new Map());
+    setBlocksResult(null);
+
+    console.debug(`[EmployeeDetailView] Lade Daten für employee=${employeeId} ${year}-${String(month).padStart(2, '0')}`);
 
     Promise.all([
       loadEmployeeMonthDetail(employeeId, year, month),
       loadActualHourEntriesForMonth(employeeId, year, month),
-    ]).then(([dayData, blocksMap]) => {
+    ]).then(([dayData, result]) => {
       if (!cancelled) {
+        console.debug(
+          `[EmployeeDetailView] Daten geladen: ${dayData.length} Tage, ${result.totalEntries} Blöcke, tableAvailable=${result.tableAvailable}`,
+          result.tableError ? `Fehler: ${result.tableError}` : '',
+        );
         setEntries(dayData);
-        setBlocksByDate(blocksMap);
+        setBlocksByDate(result.blocks);
+        setBlocksResult(result);
         setLoading(false);
       }
-    }).catch(() => {
+    }).catch((err) => {
+      console.error('[EmployeeDetailView] Ladefehler:', err);
       if (!cancelled) setLoading(false);
     });
 
@@ -312,6 +323,49 @@ export default function EmployeeDetailView({
         holidayBalance={holidayBalance}
         confirmation={confirmation}
       />
+
+      {/* Migration-Hinweis: actual_hour_entries Tabelle nicht verfügbar */}
+      {!loading && blocksResult && !blocksResult.tableAvailable && (
+        <div className="shrink-0 mx-4 mt-3 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 px-4 py-3 text-sm">
+          <Database className="h-4 w-4 mt-0.5 text-amber-600 dark:text-amber-400 shrink-0" />
+          <div className="flex flex-col gap-1 min-w-0">
+            <p className="font-semibold text-amber-800 dark:text-amber-300">SQL-Migration ausstehend — keine Zeitstempel verfügbar</p>
+            <p className="text-amber-700 dark:text-amber-400 text-xs">
+              Die Tabelle <code className="font-mono bg-amber-100 dark:bg-amber-900/50 px-1 rounded">actual_hour_entries</code> ist noch nicht angelegt.
+              Bitte das Script <code className="font-mono bg-amber-100 dark:bg-amber-900/50 px-1 rounded">supabase/migrations/20260528_actual_hour_entries.sql</code> im Supabase SQL-Editor ausführen, dann den Monat neu importieren.
+            </p>
+            {blocksResult.tableError && (
+              <p className="text-amber-600/80 dark:text-amber-500/80 text-[11px] font-mono mt-0.5 break-all">
+                DB-Fehler: {blocksResult.tableError}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Debug-Info: Zeitstempel-Status */}
+      {!loading && blocksResult && blocksResult.tableAvailable && blocksResult.totalEntries === 0 && entries.some(e => e.azb_hours != null) && (
+        <div className="shrink-0 mx-4 mt-3 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 px-4 py-3 text-sm">
+          <AlertTriangle className="h-4 w-4 mt-0.5 text-blue-500 shrink-0" />
+          <div className="flex flex-col gap-1">
+            <p className="font-semibold text-blue-800 dark:text-blue-300">Zeitstempel für diesen Monat noch nicht gespeichert</p>
+            <p className="text-blue-700 dark:text-blue-400 text-xs">
+              Die Tabelle ist vorhanden, enthält aber keine Blöcke für{' '}
+              <strong>{MONTH_NAMES_DE[month - 1]} {year}</strong> ({employeeName}).
+              Bitte diesen Monat neu importieren, damit die Stempelzeiten angezeigt werden.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Debug-Info: Zeitstempel geladen */}
+      {!loading && blocksResult && blocksResult.tableAvailable && blocksResult.totalEntries > 0 && (
+        <div className="shrink-0 mx-4 mt-3 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/20 px-3 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-400">
+          <span className="font-semibold">{blocksResult.totalEntries} Zeitblöcke</span>
+          <span className="text-emerald-600/60">·</span>
+          <span>{blocksResult.blocks.size} Arbeitstage mit Stempeln</span>
+        </div>
+      )}
 
       {/* Tages-Tabelle */}
       <div className="flex flex-col flex-1 min-h-0">
