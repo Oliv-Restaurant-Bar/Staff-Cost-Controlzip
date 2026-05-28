@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import {
-  ChevronLeft, RefreshCw, AlertTriangle, Database,
+  ChevronLeft, RefreshCw, AlertTriangle, Database, Lock,
 } from 'lucide-react';
 import {
   loadEmployeeMonthDetail,
@@ -12,6 +12,7 @@ import {
 } from '@/lib/timesheet-store';
 import {
   loadActualHourEntriesForMonth,
+  getManualEditDatesForEmployee,
   type HourBlockEntry,
   type ActualHourEntriesResult,
 } from '@/lib/supabase-db';
@@ -246,12 +247,16 @@ export default function EmployeeDetailView({
   vacationBalance, holidayBalance, confirmation,
   year, month, onBack,
 }: EmployeeDetailProps) {
-  const [entries, setEntries]             = useState<DayComparisonEntry[]>([]);
-  const [loading, setLoading]             = useState(false);
-  const [selectedDate, setSelectedDate]   = useState<string | null>(null);
-  const [blocksByDate, setBlocksByDate]   =
+  const [entries, setEntries]               = useState<DayComparisonEntry[]>([]);
+  const [loading, setLoading]               = useState(false);
+  const [selectedDate, setSelectedDate]     = useState<string | null>(null);
+  const [blocksByDate, setBlocksByDate]     =
     useState<Map<string, HourBlockEntry[]>>(new Map());
-  const [blocksResult, setBlocksResult]   = useState<ActualHourEntriesResult | null>(null);
+  const [blocksResult, setBlocksResult]     = useState<ActualHourEntriesResult | null>(null);
+  const [manualEditDates, setManualEditDates] = useState<Set<string>>(new Set());
+  const [reloadKey, setReloadKey]           = useState(0);
+
+  const reload = useCallback(() => setReloadKey(k => k + 1), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -259,13 +264,15 @@ export default function EmployeeDetailView({
     setEntries([]);
     setBlocksByDate(new Map());
     setBlocksResult(null);
+    setManualEditDates(new Set());
 
     console.debug(`[EmployeeDetailView] Lade Daten für employee=${employeeId} ${year}-${String(month).padStart(2, '0')}`);
 
     Promise.all([
       loadEmployeeMonthDetail(employeeId, year, month),
       loadActualHourEntriesForMonth(employeeId, year, month),
-    ]).then(([dayData, result]) => {
+      getManualEditDatesForEmployee(employeeId, year, month),
+    ]).then(([dayData, result, editDates]) => {
       if (!cancelled) {
         console.debug(
           `[EmployeeDetailView] Daten geladen: ${dayData.length} Tage, ${result.totalEntries} Blöcke, tableAvailable=${result.tableAvailable}`,
@@ -274,6 +281,7 @@ export default function EmployeeDetailView({
         setEntries(dayData);
         setBlocksByDate(result.blocks);
         setBlocksResult(result);
+        setManualEditDates(editDates);
         setLoading(false);
       }
     }).catch((err) => {
@@ -282,7 +290,7 @@ export default function EmployeeDetailView({
     });
 
     return () => { cancelled = true; };
-  }, [employeeId, year, month]);
+  }, [employeeId, year, month, reloadKey]);
 
   const warnCount = entries.filter(e => {
     const s = getDayStatus(e);
@@ -385,7 +393,7 @@ export default function EmployeeDetailView({
             <p className="text-sm">Daten werden geladen…</p>
           </div>
         ) : (
-          <TableContent entries={entries} blocksByDate={blocksByDate} onSelectDate={setSelectedDate} />
+          <TableContent entries={entries} blocksByDate={blocksByDate} manualEditDates={manualEditDates} onSelectDate={setSelectedDate} />
         )}
       </div>
 
@@ -396,7 +404,10 @@ export default function EmployeeDetailView({
         employeeId={employeeId}
         employeeName={employeeName}
         date={selectedDate ?? ''}
+        year={year}
+        month={month}
         dayEntry={entries.find(e => e.date === selectedDate) ?? null}
+        onCorrectionSaved={reload}
       />
     </div>
   );
@@ -407,11 +418,13 @@ export default function EmployeeDetailView({
 function TableContent({
   entries,
   blocksByDate,
+  manualEditDates,
   onSelectDate,
 }: {
-  entries:      DayComparisonEntry[];
-  blocksByDate: Map<string, HourBlockEntry[]>;
-  onSelectDate: (date: string) => void;
+  entries:          DayComparisonEntry[];
+  blocksByDate:     Map<string, HourBlockEntry[]>;
+  manualEditDates:  Set<string>;
+  onSelectDate:     (date: string) => void;
 }) {
 
   // ── Totals ──────────────────────────────────────────────────────────────────
@@ -469,6 +482,7 @@ function TableContent({
             const wday    = weekday(e.date);
             const dayBlocks = blocksByDate.get(e.date) ?? [];
 
+            const isManualEdit = manualEditDates.has(e.date);
             return (
               <tr
                 key={e.date}
@@ -480,7 +494,12 @@ function TableContent({
                 )}
               >
                 <td className={cn('px-4 py-1.5 font-medium whitespace-nowrap', weekend && 'text-muted-foreground')}>
-                  {fmtDate(e.date)}
+                  <span className="flex items-center gap-1">
+                    {fmtDate(e.date)}
+                    {isManualEdit && (
+                      <Lock className="h-2.5 w-2.5 text-amber-500 shrink-0" title="Manuell korrigiert — vor Re-Import geschützt" />
+                    )}
+                  </span>
                 </td>
                 <td className={cn('px-2 py-1.5 font-medium whitespace-nowrap', weekend ? 'text-muted-foreground' : '')}>
                   {wday}

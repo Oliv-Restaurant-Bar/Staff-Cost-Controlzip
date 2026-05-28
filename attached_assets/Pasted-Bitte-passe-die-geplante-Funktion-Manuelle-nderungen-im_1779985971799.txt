@@ -1,0 +1,136 @@
+Bitte passe die geplante Funktion "Manuelle Änderungen" im Modul Arbeitszeitblätter an.
+
+Neue gewünschte Logik:
+
+1. Manuelle Änderungen ohne Pflichtgrund erlauben
+
+Admins sollen AZB Tagesstunden, Zeitblöcke und Pausen manuell ändern können.
+Ein Grund/Bemerkung soll optional sein, nicht verpflichtend.
+
+Trotzdem muss jede Änderung automatisch in einer Historie gespeichert werden.
+
+2. Änderungsprotokoll weiterhin zwingend
+
+Jede Änderung soll protokolliert werden mit:
+
+- Mitarbeiter
+- Datum
+- Feld
+- alter Wert
+- neuer Wert
+- Benutzer
+- Zeitpunkt
+- Quelle: manual_edit
+- optionale Bemerkung
+
+3. Re-Import Verhalten ändern
+
+Wenn beim Re-Import bereits manuelle Änderungen für den Monat existieren, soll die App fragen:
+
+"Für diesen Monat existieren manuelle Änderungen. Wie sollen diese behandelt werden?"
+
+Option A:
+"Manuelle Änderungen behalten"
+→ Standard
+→ manuell geänderte Tage bleiben geschützt
+→ Import aktualisiert nur nicht manuell geänderte Tage
+
+Option B:
+"Manuelle Änderungen überschreiben"
+→ Import ersetzt auch manuell geänderte Tage
+→ Historie bleibt erhalten
+→ zusätzlich im Log speichern:
+change_type = reimport_overwrite_manual
+
+4. Wichtig
+
+Manuelle Änderungen sollen nicht automatisch blockieren.
+Der Admin entscheidet beim Re-Import.
+
+5. UI im Re-Import Banner
+
+Wenn manuelle Änderungen gefunden werden:
+- Anzahl geänderter Tage anzeigen
+- Auswahl anzeigen:
+  - Manuelle Änderungen behalten
+  - Manuelle Änderungen überschreiben
+
+Standardauswahl:
+Manuelle Änderungen behalten
+
+6. Historie bei Import speichern
+
+Beim normalen Import und Re-Import soll sichtbar bleiben:
+- ursprünglicher Importwert
+- manuelle Änderung
+- späterer Re-Import
+- ob manuelle Änderung überschrieben wurde oder nicht
+
+7. Tagesdetail
+
+Im Tagesdetail Button:
+"Bearbeiten"
+
+Bearbeitbar:
+- AZB Stunden
+- Zeitblöcke hinzufügen
+- Zeitblöcke ändern
+- Zeitblöcke löschen
+- Bemerkung optional
+
+8. Tagesdetail Historie
+
+Im Tagesdetail anzeigen:
+"Änderungsverlauf"
+
+Dort chronologisch:
+- importiert
+- manuell geändert
+- reimportiert
+- überschrieben
+- geschützt
+
+9. SQL Migration
+
+Falls noch nicht vorhanden, Tabelle erstellen:
+
+timesheet_change_log
+
+Felder:
+id uuid primary key
+employee_id text not null
+date date not null
+month integer not null
+year integer not null
+table_name text not null
+field_name text not null
+old_value text nullable
+new_value text nullable
+change_type text not null
+note text nullable
+changed_by uuid nullable
+changed_at timestamptz default now()
+source text default 'manual_edit'
+
+10. Re-Import Löschlogik
+
+Bei Option "Manuelle Änderungen behalten":
+- actual_hours mit manually_edited = true NICHT löschen
+- actual_hour_entries mit manually_edited = true NICHT löschen
+
+Bei Option "Manuelle Änderungen überschreiben":
+- auch manually_edited = true löschen und neu aus Import schreiben
+- change_log Eintrag schreiben, dass Überschreibung bewusst gewählt wurde
+
+11. Nach Umsetzung ausgeben
+
+- Wo man manuell bearbeiten kann
+- Wie die Historie gespeichert wird
+- Wie Re-Import bei manuellen Änderungen fragt
+- Welche SQL Migration nötig ist
+- Welche Daten bei welcher Option überschrieben werden
+
+Wichtig:
+Kein Pflichtgrund.
+Keine stillen Änderungen.
+Historie bleibt immer erhalten.

@@ -790,11 +790,14 @@ export async function saveActualHourEntry(
 // ─── Einzelne Stempelzeiten (actual_hour_entries) ─────────────────────────────
 
 export interface HourBlockEntry {
-  id:             string;
-  start_time:     string;   // HH:MM
-  end_time:       string;   // HH:MM
-  duration_hours: number;
-  source:         string;
+  id:              string;
+  start_time:      string;   // HH:MM
+  end_time:        string;   // HH:MM
+  duration_hours:  number;
+  source:          string;
+  is_locked?:      boolean;
+  manually_edited?: boolean;
+  locked_reason?:  string | null;
 }
 
 /**
@@ -868,12 +871,25 @@ export async function loadActualHourEntriesForDay(
   employeeId: string,
   date: string,
 ): Promise<HourBlockEntry[]> {
+  const extSelect = 'id, start_time, end_time, duration_hours, source, is_locked, manually_edited, locked_reason';
   const { data, error } = await supabase
     .from('actual_hour_entries')
-    .select('id, start_time, end_time, duration_hours, source')
+    .select(extSelect)
     .eq('employee_id', employeeId)
     .eq('date', date)
     .order('start_time');
+
+  if (error?.code === '42703') {
+    // Neue Spalten fehlen noch — Fallback auf Basis-Query
+    const { data: d2, error: e2 } = await supabase
+      .from('actual_hour_entries')
+      .select('id, start_time, end_time, duration_hours, source')
+      .eq('employee_id', employeeId)
+      .eq('date', date)
+      .order('start_time');
+    if (e2) throw e2;
+    return (d2 ?? []) as HourBlockEntry[];
+  }
 
   if (error) throw error;
   return (data ?? []) as HourBlockEntry[];
@@ -910,13 +926,26 @@ export async function loadActualHourEntriesForMonth(
     `[actual_hour_entries] Lade Blöcke für ${employeeId} ${year}-${pad(month)} (${fromDate}–${toDate})`,
   );
 
-  const { data, error } = await supabase
+  const extCols = 'id, date, start_time, end_time, duration_hours, source, is_locked, manually_edited, locked_reason';
+  let { data, error } = await supabase
     .from('actual_hour_entries')
-    .select('id, date, start_time, end_time, duration_hours, source')
+    .select(extCols)
     .eq('employee_id', employeeId)
     .gte('date', fromDate)
     .lte('date', toDate)
     .order('start_time');
+
+  if (error?.code === '42703') {
+    // Neue Spalten fehlen noch — Fallback auf Basis-Spalten
+    const r = await supabase
+      .from('actual_hour_entries')
+      .select('id, date, start_time, end_time, duration_hours, source')
+      .eq('employee_id', employeeId)
+      .gte('date', fromDate)
+      .lte('date', toDate)
+      .order('start_time');
+    data = r.data; error = r.error;
+  }
 
   if (error) {
     const isMissingTable = error.code === '42P01' || error.code === '42501' || error.message.includes('permission denied') || error.message.includes('does not exist');
@@ -933,11 +962,14 @@ export async function loadActualHourEntriesForMonth(
   for (const row of data ?? []) {
     if (!map.has(row.date)) map.set(row.date, []);
     map.get(row.date)!.push({
-      id:             row.id,
-      start_time:     row.start_time,
-      end_time:       row.end_time,
-      duration_hours: row.duration_hours,
-      source:         row.source,
+      id:              row.id,
+      start_time:      row.start_time,
+      end_time:        row.end_time,
+      duration_hours:  row.duration_hours,
+      source:          row.source,
+      is_locked:       row.is_locked ?? false,
+      manually_edited: row.manually_edited ?? false,
+      locked_reason:   row.locked_reason ?? null,
     });
   }
 
@@ -1031,28 +1063,53 @@ export async function deleteMonthDataForEmployees(
   let deletedHours = 0, deletedBlocks = 0, deletedBalances = 0;
 
   try {
-    // actual_hours — keine source-Spalte, alle löschen (immer Mirus-Import)
-    const { count: h } = await supabase
+    // actual_hours — gesperrte (manuell korrigierte) Einträge überspringen
+    const { count: h, error: hErr } = await supabase
       .from('actual_hours')
       .delete({ count: 'exact' })
       .in('employee_id', employeeIds)
       .gte('date', fromDate)
-      .lte('date', toDate);
-    deletedHours = h ?? 0;
+      .lte('date', toDate)
+      .not('is_locked', 'is', true);
+    if (hErr?.code === '42703') {
+      // Spalte existiert noch nicht — alle löschen
+      const { count: h2 } = await supabase
+        .from('actual_hours')
+        .delete({ count: 'exact' })
+        .in('employee_id', employeeIds)
+        .gte('date', fromDate)
+        .lte('date', toDate);
+      deletedHours = h2 ?? 0;
+    } else {
+      deletedHours = h ?? 0;
+    }
   } catch (e) {
     console.error('[supabase-db] deleteMonthData actual_hours:', e);
   }
 
   try {
-    // actual_hour_entries — nur source = 'mirus_import'
-    const { count: b } = await supabase
+    // actual_hour_entries — nur source = 'mirus_import', gesperrte überspringen
+    const { count: b, error: bErr } = await supabase
       .from('actual_hour_entries')
       .delete({ count: 'exact' })
       .in('employee_id', employeeIds)
       .gte('date', fromDate)
       .lte('date', toDate)
-      .eq('source', 'mirus_import');
-    deletedBlocks = b ?? 0;
+      .eq('source', 'mirus_import')
+      .not('is_locked', 'is', true);
+    if (bErr?.code === '42703') {
+      // Spalte existiert noch nicht — alle mirus_import-Blöcke löschen
+      const { count: b2 } = await supabase
+        .from('actual_hour_entries')
+        .delete({ count: 'exact' })
+        .in('employee_id', employeeIds)
+        .gte('date', fromDate)
+        .lte('date', toDate)
+        .eq('source', 'mirus_import');
+      deletedBlocks = b2 ?? 0;
+    } else {
+      deletedBlocks = b ?? 0;
+    }
   } catch {
     // Tabelle existiert noch nicht (Migration ausstehend) — ignorieren
   }
@@ -1882,4 +1939,298 @@ export async function seedBeaulieuBudget2026(): Promise<BeaulieuBudgetSeedResult
     olivLeakDetected,
     totalRevenue,
   };
+}
+
+// ─── Manuelle Korrekturen & Änderungsprotokoll ────────────────────────────────
+
+export interface TimesheetChangeLog {
+  id:          string;
+  employee_id: string;
+  date:        string;
+  month:       number;
+  year:        number;
+  table_name:  string;
+  field_name:  string;
+  old_value:   string | null;
+  new_value:   string | null;
+  change_type: string;
+  reason:      string | null;
+  changed_by:  string | null;
+  changed_at:  string;
+  source:      string;
+}
+
+export async function logTimesheetChange(params: {
+  employeeId:  string;
+  date:        string;
+  year:        number;
+  month:       number;
+  tableName:   string;
+  fieldName:   string;
+  oldValue?:   string | null;
+  newValue?:   string | null;
+  changeType:  string;
+  reason:      string;
+  changedBy?:  string | null;
+}): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase as any)
+    .from('timesheet_change_log')
+    .insert({
+      employee_id: params.employeeId,
+      date:        params.date,
+      year:        params.year,
+      month:       params.month,
+      table_name:  params.tableName,
+      field_name:  params.fieldName,
+      old_value:   params.oldValue ?? null,
+      new_value:   params.newValue ?? null,
+      change_type: params.changeType,
+      reason:      params.reason,
+      changed_by:  params.changedBy ?? null,
+      source:      'manual_edit',
+    });
+  if (error && error.code !== '42P01') {
+    console.error('[supabase-db] logTimesheetChange:', error);
+  }
+}
+
+export async function getChangeLogsForDay(
+  employeeId: string,
+  date: string,
+): Promise<TimesheetChangeLog[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase as any)
+    .from('timesheet_change_log')
+    .select('*')
+    .eq('employee_id', employeeId)
+    .eq('date', date)
+    .order('changed_at', { ascending: false });
+  if (error?.code === '42P01' || error?.code === '42501') return [];
+  if (error) { console.error('[supabase-db] getChangeLogsForDay:', error); return []; }
+  return (data ?? []) as TimesheetChangeLog[];
+}
+
+export async function getManualEditDatesForEmployee(
+  employeeId: string,
+  year: number,
+  month: number,
+): Promise<Set<string>> {
+  const pad      = (n: number) => String(n).padStart(2, '0');
+  const fromDate = `${year}-${pad(month)}-01`;
+  const lastDay  = new Date(year, month, 0).getDate();
+  const toDate   = `${year}-${pad(month)}-${pad(lastDay)}`;
+
+  const { data, error } = await supabase
+    .from('actual_hours')
+    .select('date')
+    .eq('employee_id', employeeId)
+    .eq('manually_edited', true)
+    .gte('date', fromDate)
+    .lte('date', toDate);
+
+  if (error?.code === '42703' || error?.code === '42P01' || error?.code === '42501') return new Set();
+  if (error) { console.error('[supabase-db] getManualEditDatesForEmployee:', error); return new Set(); }
+  return new Set((data ?? []).map((r: { date: string }) => r.date));
+}
+
+export async function getManualEditCountsForMonth(
+  employeeIds: string[],
+  year: number,
+  month: number,
+): Promise<Record<string, number>> {
+  if (!employeeIds.length) return {};
+  const pad      = (n: number) => String(n).padStart(2, '0');
+  const fromDate = `${year}-${pad(month)}-01`;
+  const lastDay  = new Date(year, month, 0).getDate();
+  const toDate   = `${year}-${pad(month)}-${pad(lastDay)}`;
+
+  const { data, error } = await supabase
+    .from('actual_hours')
+    .select('employee_id, date')
+    .in('employee_id', employeeIds)
+    .eq('manually_edited', true)
+    .gte('date', fromDate)
+    .lte('date', toDate);
+
+  if (error?.code === '42703' || error?.code === '42P01' || error?.code === '42501') return {};
+  if (error) { console.error('[supabase-db] getManualEditCountsForMonth:', error); return {}; }
+
+  const counts: Record<string, number> = {};
+  for (const row of (data ?? []) as { employee_id: string; date: string }[]) {
+    counts[row.employee_id] = (counts[row.employee_id] ?? 0) + 1;
+  }
+  return counts;
+}
+
+export async function loadActualHoursForDay(
+  employeeId: string,
+  date: string,
+): Promise<{
+  hours: number | null;
+  is_locked: boolean;
+  manually_edited: boolean;
+  locked_reason: string | null;
+} | null> {
+  const { data, error } = await supabase
+    .from('actual_hours')
+    .select('hours, is_locked, manually_edited, locked_reason')
+    .eq('employee_id', employeeId)
+    .eq('date', date)
+    .maybeSingle();
+
+  if (error?.code === '42703') {
+    const { data: d2 } = await supabase
+      .from('actual_hours')
+      .select('hours')
+      .eq('employee_id', employeeId)
+      .eq('date', date)
+      .maybeSingle();
+    if (!d2) return null;
+    return { hours: (d2 as { hours?: number }).hours ?? null, is_locked: false, manually_edited: false, locked_reason: null };
+  }
+
+  if (error || !data) return null;
+  const row = data as { hours?: number; is_locked?: boolean; manually_edited?: boolean; locked_reason?: string | null };
+  return {
+    hours:           row.hours ?? null,
+    is_locked:       row.is_locked ?? false,
+    manually_edited: row.manually_edited ?? false,
+    locked_reason:   row.locked_reason ?? null,
+  };
+}
+
+export async function getLockedDatesForMonth(
+  employeeId: string,
+  year: number,
+  month: number,
+): Promise<Set<string>> {
+  const pad      = (n: number) => String(n).padStart(2, '0');
+  const fromDate = `${year}-${pad(month)}-01`;
+  const lastDay  = new Date(year, month, 0).getDate();
+  const toDate   = `${year}-${pad(month)}-${pad(lastDay)}`;
+
+  const { data, error } = await supabase
+    .from('actual_hours')
+    .select('date')
+    .eq('employee_id', employeeId)
+    .eq('is_locked', true)
+    .gte('date', fromDate)
+    .lte('date', toDate);
+
+  if (error?.code === '42703' || error?.code === '42P01' || error?.code === '42501') return new Set();
+  if (error) { console.error('[supabase-db] getLockedDatesForMonth:', error); return new Set(); }
+  return new Set((data ?? []).map((r: { date: string }) => r.date));
+}
+
+export async function saveManualDayCorrection(params: {
+  employeeId:  string;
+  date:        string;
+  year:        number;
+  month:       number;
+  newHours:    number;
+  newBlocks:   Array<{ start_time: string; end_time: string; duration_hours: number }>;
+  reason:      string;
+  changedBy:   string | null;
+  oldHours:    number | null;
+  oldBlocks:   HourBlockEntry[];
+}): Promise<{ ok: boolean; error?: string }> {
+  const { employeeId, date, year, month, newHours, newBlocks, reason, changedBy, oldHours, oldBlocks } = params;
+
+  try {
+    // 1. actual_hours — als manuell bearbeitet + gesperrt markieren
+    const { error: hourErr } = await supabase
+      .from('actual_hours')
+      .upsert({
+        employee_id:     employeeId,
+        date:            date,
+        hours:           newHours,
+        is_locked:       true,
+        manually_edited: true,
+        locked_reason:   'manual_edit',
+      }, { onConflict: 'employee_id,date' });
+    if (hourErr) return { ok: false, error: hourErr.message };
+
+    // 2. Bestehende actual_hour_entries für diesen Tag ersetzen
+    const { error: delErr } = await supabase
+      .from('actual_hour_entries')
+      .delete()
+      .eq('employee_id', employeeId)
+      .eq('date', date);
+    if (delErr && delErr.code !== '42P01') return { ok: false, error: delErr.message };
+
+    if (newBlocks.length > 0) {
+      const { error: insErr } = await supabase
+        .from('actual_hour_entries')
+        .insert(newBlocks.map(b => ({
+          employee_id:     employeeId,
+          date:            date,
+          start_time:      b.start_time.length === 5 ? `${b.start_time}:00` : b.start_time.slice(0, 8),
+          end_time:        b.end_time.length   === 5 ? `${b.end_time}:00`   : b.end_time.slice(0, 8),
+          duration_hours:  b.duration_hours,
+          source:          'manual_edit',
+          is_locked:       true,
+          manually_edited: true,
+          locked_reason:   'manual_edit',
+        })));
+      if (insErr && insErr.code !== '42P01') return { ok: false, error: insErr.message };
+    }
+
+    // 3. Stundenwert protokollieren (wenn geändert)
+    if (oldHours !== newHours) {
+      await logTimesheetChange({
+        employeeId, date, year, month,
+        tableName:  'actual_hours',
+        fieldName:  'hours',
+        oldValue:   oldHours != null ? String(oldHours) : null,
+        newValue:   String(newHours),
+        changeType: 'update_daily_hours',
+        reason,     changedBy,
+      });
+    }
+
+    // 4. Gelöschte Blöcke protokollieren
+    for (const ob of oldBlocks) {
+      const stillExists = newBlocks.some(
+        nb => nb.start_time.slice(0, 5) === ob.start_time.slice(0, 5) &&
+              nb.end_time.slice(0, 5)   === ob.end_time.slice(0, 5),
+      );
+      if (!stillExists) {
+        await logTimesheetChange({
+          employeeId, date, year, month,
+          tableName: 'actual_hour_entries',
+          fieldName: 'time_block',
+          oldValue:  `${ob.start_time.slice(0, 5)}–${ob.end_time.slice(0, 5)}`,
+          newValue:  null,
+          changeType: 'delete_time_block',
+          reason,    changedBy,
+        });
+      }
+    }
+
+    // 5. Neue Blöcke protokollieren
+    for (const nb of newBlocks) {
+      const wasExisting = oldBlocks.some(
+        ob => ob.start_time.slice(0, 5) === nb.start_time.slice(0, 5) &&
+              ob.end_time.slice(0, 5)   === nb.end_time.slice(0, 5),
+      );
+      if (!wasExisting) {
+        await logTimesheetChange({
+          employeeId, date, year, month,
+          tableName: 'actual_hour_entries',
+          fieldName: 'time_block',
+          oldValue:  null,
+          newValue:  `${nb.start_time.slice(0, 5)}–${nb.end_time.slice(0, 5)}`,
+          changeType: 'add_time_block',
+          reason,    changedBy,
+        });
+      }
+    }
+
+    return { ok: true };
+  } catch (e) {
+    const msg = String(e);
+    console.error('[supabase-db] saveManualDayCorrection exception:', e);
+    return { ok: false, error: msg };
+  }
 }

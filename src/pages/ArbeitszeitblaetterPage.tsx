@@ -10,7 +10,7 @@ import {
   ClipboardCheck, ChevronLeft, ChevronRight, Copy, Link,
   CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw, Trash2,
   Users, Check, Upload, FileSpreadsheet, AlertTriangle, X, Info,
-  History, UserPlus, SkipForward, Undo2, ShieldCheck,
+  History, UserPlus, SkipForward, Undo2, ShieldCheck, Lock,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -25,7 +25,7 @@ import EmployeeDetailView from '@/components/EmployeeDetailView';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
-import { saveActualHourEntry, saveActualHourEntries, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees, checkConfirmedEmployees } from '@/lib/supabase-db';
+import { saveActualHourEntry, saveActualHourEntries, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees, checkConfirmedEmployees, getLockedDatesForMonth, getManualEditCountsForMonth } from '@/lib/supabase-db';
 import type { Employee as PersonnelEmployee } from '@/types/personnel';
 import {
   getConfirmationsForMonth,
@@ -239,6 +239,9 @@ export default function ArbeitszeitblaetterPage() {
     fileType:  string;
   } | null>(null);
 
+  // ── Manuelle Korrekturen (Tages-Lock-Zähler) ────────────────────────────
+  const [manualEditCounts, setManualEditCounts] = useState<Record<string, number>>({});
+
   // ── Mitarbeiter-Einzelansicht ─────────────────────────────────────────────
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
 
@@ -270,13 +273,14 @@ export default function ArbeitszeitblaetterPage() {
       setAllEmps(all as unknown as PersonnelEmployee[]);
 
       const empIds = filtered.map(e => e.id);
-      const [confs, hours, dienstplan, bals, history, historyAll] = await Promise.all([
+      const [confs, hours, dienstplan, bals, history, historyAll, editCounts] = await Promise.all([
         getConfirmationsForMonth(tenantId, year, month),
         getActualHoursBatch(empIds, year, month),
         loadDienstplanHoursForMonth(empIds, year, month),
         getEmployeeTimeBalancesForMonth(tenantId, year, month),
         getImportHistoryForMonth(tenantId, year, month),
         getImportHistoryAll(tenantId, 30),
+        getManualEditCountsForMonth(empIds, year, month),
       ]);
 
       setConfirmations(confs);
@@ -285,6 +289,7 @@ export default function ArbeitszeitblaetterPage() {
       setBalances(bals);
       setImportHistory(history);
       setImportHistoryList(historyAll);
+      setManualEditCounts(editCounts);
     } catch (err) {
       console.error('[TIMESHEET] loadData error', err);
       toast.error('Fehler beim Laden der Daten');
@@ -648,6 +653,17 @@ export default function ArbeitszeitblaetterPage() {
       }
     }
 
+    // Gesperrte Tage (manuell korrigiert) vorladen — diese werden beim Import übersprungen
+    const lockedDatesMap: Record<string, Set<string>> = {};
+    {
+      const idsToCheck = importRows
+        .filter(r => r.employee && r.matchStatus !== 'skipped' && r.protectionStatus !== 'protected_confirmed')
+        .map(r => r.employee!.id);
+      await Promise.all(idsToCheck.map(async id => {
+        lockedDatesMap[id] = await getLockedDatesForMonth(id, year, month);
+      }));
+    }
+
     for (const row of importRows) {
       if (row.matchStatus === 'skipped') { skippedCount++; continue; }
       if (!row.employee) continue;
@@ -661,8 +677,14 @@ export default function ArbeitszeitblaetterPage() {
       if (row.matchStatus === 'manual') manualCount++;
 
       // Tagesstunden → actual_hours + Zeitblöcke → actual_hour_entries
+      const empLockedDates = lockedDatesMap[row.employee.id] ?? new Set<string>();
       for (const day of row.excEmployee.days) {
         if (!day.date) continue;
+        // Manuell gesperrte Tage überspringen — Daten bleiben unverändert
+        if (empLockedDates.has(day.date)) {
+          console.debug(`[runImport] ${row.employee.name} / ${day.date}: gesperrt (manuell korrigiert) — übersprungen`);
+          continue;
+        }
 
         // ── Zeitblöcke aus Schichten berechnen ────────────────────────────────
         const blockEntries: Array<{ start_time: string; end_time: string; duration_hours: number }> = [];
@@ -981,6 +1003,16 @@ export default function ArbeitszeitblaetterPage() {
                               </button>
                             )}
                             {emp.name}
+                            {(manualEditCounts[emp.id] ?? 0) > 0 && (
+                              <button
+                                onClick={() => setSelectedEmployeeId(emp.id)}
+                                title={`${manualEditCounts[emp.id]} manuell korrigierter Tag${manualEditCounts[emp.id] !== 1 ? 'e' : ''} — vor Re-Import geschützt`}
+                                className="flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-700 hover:bg-amber-100 transition-colors shrink-0"
+                              >
+                                <Lock className="h-2.5 w-2.5" />
+                                {manualEditCounts[emp.id]}
+                              </button>
+                            )}
                           </div>
                         </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground hidden sm:table-cell">{emp.department || '–'}</td>
