@@ -2099,10 +2099,11 @@ export async function loadActualHoursForDay(
   is_locked: boolean;
   manually_edited: boolean;
   locked_reason: string | null;
+  absence_type: string | null;
 } | null> {
   const { data, error } = await supabase
     .from('actual_hours')
-    .select('hours, is_locked, manually_edited, locked_reason')
+    .select('hours, is_locked, manually_edited, locked_reason, absence_type')
     .eq('employee_id', employeeId)
     .eq('date', date)
     .maybeSingle();
@@ -2115,17 +2116,135 @@ export async function loadActualHoursForDay(
       .eq('date', date)
       .maybeSingle();
     if (!d2) return null;
-    return { hours: (d2 as { hours?: number }).hours ?? null, is_locked: false, manually_edited: false, locked_reason: null };
+    return { hours: (d2 as { hours?: number }).hours ?? null, is_locked: false, manually_edited: false, locked_reason: null, absence_type: null };
   }
 
   if (error || !data) return null;
-  const row = data as { hours?: number; is_locked?: boolean; manually_edited?: boolean; locked_reason?: string | null };
+  const row = data as { hours?: number; is_locked?: boolean; manually_edited?: boolean; locked_reason?: string | null; absence_type?: string | null };
   return {
     hours:           row.hours ?? null,
     is_locked:       row.is_locked ?? false,
     manually_edited: row.manually_edited ?? false,
     locked_reason:   row.locked_reason ?? null,
+    absence_type:    row.absence_type ?? null,
   };
+}
+
+// ─── Tages-Annotationen (actual_day_annotations) ──────────────────────────────
+
+export interface DayAnnotation {
+  id:          string;
+  employee_id: string;
+  date:        string;
+  type:        string;        // vacation | accident | sick | holiday | free | note | compensation
+  label:       string | null; // Roh-Code aus Mirus
+  hours:       number | null;
+  notes:       string | null;
+  source:      string;
+  created_at:  string;
+}
+
+/**
+ * Löscht bestehende mirus_import-Annotationen für (employee_id, date) und
+ * speichert die neuen Annotationen.
+ */
+export async function saveActualDayAnnotations(
+  employeeId: string,
+  date: string,
+  annotations: Array<{
+    type:   string;
+    label?: string | null;
+    hours?: number | null;
+    notes?: string | null;
+    source?: string;
+  }>,
+): Promise<{ ok: boolean; error?: string }> {
+  const isoDate = toIsoDate(date);
+  try {
+    const { error: delError } = await supabase
+      .from('actual_day_annotations')
+      .delete()
+      .eq('employee_id', employeeId)
+      .eq('date', isoDate)
+      .eq('source', 'mirus_import');
+    if (delError) {
+      if (delError.code === '42P01') return { ok: true }; // Tabelle noch nicht migriert
+      return { ok: false, error: delError.message };
+    }
+    if (annotations.length === 0) return { ok: true };
+
+    const { error } = await supabase.from('actual_day_annotations').insert(
+      annotations.map(a => ({
+        employee_id: employeeId,
+        date:        isoDate,
+        type:        a.type,
+        label:       a.label ?? null,
+        hours:       a.hours ?? null,
+        notes:       a.notes ?? null,
+        source:      a.source ?? 'mirus_import',
+      })),
+    );
+    if (error) {
+      if (error.code === '42P01') return { ok: true }; // Tabelle noch nicht migriert
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/**
+ * Lädt alle Annotationen für einen Mitarbeiter an einem Tag.
+ */
+export async function loadActualDayAnnotationsForDay(
+  employeeId: string,
+  date: string,
+): Promise<DayAnnotation[]> {
+  const isoDate = toIsoDate(date);
+  const { data, error } = await supabase
+    .from('actual_day_annotations')
+    .select('*')
+    .eq('employee_id', employeeId)
+    .eq('date', isoDate)
+    .order('created_at');
+  if (error?.code === '42P01' || error?.code === '42501') return [];
+  if (error) { console.error('[supabase-db] loadActualDayAnnotationsForDay:', error); return []; }
+  return (data ?? []) as DayAnnotation[];
+}
+
+/**
+ * Lädt alle Annotationen für einen Mitarbeiter in einem Monat.
+ * Gibt eine Map date → DayAnnotation[] zurück.
+ */
+export async function loadActualDayAnnotationsForMonth(
+  employeeId: string,
+  year: number,
+  month: number,
+): Promise<Map<string, DayAnnotation[]>> {
+  const pad      = (n: number) => String(n).padStart(2, '0');
+  const fromDate = `${year}-${pad(month)}-01`;
+  const lastDay  = new Date(year, month, 0).getDate();
+  const toDate   = `${year}-${pad(month)}-${pad(lastDay)}`;
+
+  const { data, error } = await supabase
+    .from('actual_day_annotations')
+    .select('*')
+    .eq('employee_id', employeeId)
+    .gte('date', fromDate)
+    .lte('date', toDate)
+    .order('date')
+    .order('created_at');
+  if (error?.code === '42P01' || error?.code === '42501') return new Map();
+  if (error) { console.error('[supabase-db] loadActualDayAnnotationsForMonth:', error); return new Map(); }
+
+  const result = new Map<string, DayAnnotation[]>();
+  for (const row of (data ?? []) as DayAnnotation[]) {
+    const existing = result.get(row.date) ?? [];
+    existing.push(row);
+    result.set(row.date, existing);
+  }
+  return result;
 }
 
 export async function getLockedDatesForMonth(

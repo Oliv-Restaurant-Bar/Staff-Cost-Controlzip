@@ -6,9 +6,11 @@ import { Clock, AlertTriangle, Database, RefreshCw, PenLine, Lock, History } fro
 import {
   loadActualHourEntriesForDay,
   loadActualHoursForDay,
+  loadActualDayAnnotationsForDay,
   getChangeLogsForDay,
   type HourBlockEntry,
   type TimesheetChangeLog,
+  type DayAnnotation,
 } from '@/lib/supabase-db';
 import type { DayComparisonEntry } from '@/lib/timesheet-store';
 import { MONTH_NAMES_DE } from '@/lib/timesheet-store';
@@ -111,7 +113,9 @@ export default function DayDetailDrawer({
     is_locked: boolean;
     manually_edited: boolean;
     locked_reason: string | null;
+    absence_type: string | null;
   } | null>(null);
+  const [annotations, setAnnotations]   = useState<DayAnnotation[]>([]);
   const [changeLogs, setChangeLogs]     = useState<TimesheetChangeLog[]>([]);
   const [loading, setLoading]           = useState(false);
   const [noTable, setNoTable]           = useState(false);
@@ -122,17 +126,20 @@ export default function DayDetailDrawer({
     setLoading(true);
     setBlocks([]);
     setActualHoursRow(null);
+    setAnnotations([]);
     setChangeLogs([]);
     setNoTable(false);
 
     try {
-      const [bData, ahRow, logs] = await Promise.all([
+      const [bData, ahRow, annots, logs] = await Promise.all([
         loadActualHourEntriesForDay(employeeId, date),
         loadActualHoursForDay(employeeId, date),
+        loadActualDayAnnotationsForDay(employeeId, date),
         getChangeLogsForDay(employeeId, date),
       ]);
       setBlocks(bData);
       setActualHoursRow(ahRow);
+      setAnnotations(annots);
       setChangeLogs(logs);
     } catch (err) {
       const msg = String((err as { message?: string })?.message ?? err);
@@ -172,6 +179,22 @@ export default function DayDetailDrawer({
 
   const isLocked         = actualHoursRow?.is_locked ?? false;
   const isManuallyEdited = actualHoursRow?.manually_edited ?? false;
+
+  // Abwesenheit: kanonischer Typ aus DB oder aus dayEntry-Prop
+  const absenceType = actualHoursRow?.absence_type ?? dayEntry?.absence_type ?? null;
+  // Nicht-Notiz-Annotation (Abwesenheit) und Notiz-Annotationen aus actual_day_annotations
+  const absenceAnnot = annotations.find(a => a.type !== 'note') ?? null;
+  const noteAnnots   = annotations.filter(a => a.type === 'note');
+
+  const ABSENCE_LABEL: Record<string, { label: string; color: string; bg: string }> = {
+    vacation:     { label: 'Ferien',       color: 'text-blue-700 dark:text-blue-400',   bg: 'bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800' },
+    sick:         { label: 'Krank',        color: 'text-amber-700 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800' },
+    accident:     { label: 'Unfall/UVG',   color: 'text-red-700 dark:text-red-400',     bg: 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800' },
+    holiday:      { label: 'Feiertag',     color: 'text-purple-700 dark:text-purple-400', bg: 'bg-purple-50 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800' },
+    free:         { label: 'Frei',         color: 'text-slate-600 dark:text-slate-400', bg: 'bg-slate-50 dark:bg-slate-900/30 border-slate-200 dark:border-slate-700' },
+    compensation: { label: 'Kompensation', color: 'text-teal-700 dark:text-teal-400',   bg: 'bg-teal-50 dark:bg-teal-950/30 border-teal-200 dark:border-teal-800' },
+  };
+  const absenceMeta = absenceType ? (ABSENCE_LABEL[absenceType] ?? { label: absenceType, color: 'text-foreground', bg: 'bg-muted/40 border-border' }) : null;
 
   return (
     <>
@@ -279,6 +302,55 @@ export default function DayDetailDrawer({
                     </div>
                   </div>
                 </div>
+
+                {/* ── Abwesenheit / Notizen ── */}
+                {(absenceMeta || noteAnnots.length > 0) && (
+                  <div className="px-4 pb-4">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                      Abwesenheit / Notizen
+                    </p>
+                    <div className="space-y-2">
+                      {absenceMeta && (
+                        <div className={cn(
+                          'rounded-lg border px-3 py-2.5 flex flex-col gap-1',
+                          absenceMeta.bg,
+                        )}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={cn('text-xs font-bold', absenceMeta.color)}>
+                              {absenceMeta.label}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              {absenceAnnot?.label && absenceAnnot.label !== absenceType && (
+                                <span className="text-[10px] font-mono bg-white/60 dark:bg-black/20 border border-current/20 rounded px-1.5 py-0.5 text-muted-foreground">
+                                  {absenceAnnot.label}
+                                </span>
+                              )}
+                              {absenceAnnot?.hours != null && (
+                                <span className={cn('text-xs font-semibold tabular-nums', absenceMeta.color)}>
+                                  {absenceAnnot.hours.toFixed(1)} h
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {absenceAnnot?.notes && (
+                            <p className="text-[11px] text-muted-foreground italic">
+                              «{absenceAnnot.notes}»
+                            </p>
+                          )}
+                          <p className="text-[10px] text-muted-foreground/60">
+                            Quelle: {absenceAnnot?.source ?? 'mirus_import'}
+                          </p>
+                        </div>
+                      )}
+                      {noteAnnots.map(n => (
+                        <div key={n.id} className="rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+                          <p className="text-xs text-muted-foreground italic">«{n.notes ?? n.label}»</p>
+                          <p className="text-[10px] text-muted-foreground/50 mt-0.5">Bemerkung · {n.source}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* ── Mirus/AZB Zeitblöcke ── */}
                 <div className="px-4 pt-0 pb-1">

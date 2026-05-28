@@ -39,6 +39,15 @@ function fmtDate(dateStr: string): string {
 
 const WEEKDAYS_DE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 
+const ABSENCE_LABEL_SHORT: Record<string, { label: string; cls: string }> = {
+  vacation:     { label: 'Ferien',   cls: 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800' },
+  sick:         { label: 'Krank',    cls: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800' },
+  accident:     { label: 'Unfall',   cls: 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800' },
+  holiday:      { label: 'Feiertag', cls: 'text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800' },
+  free:         { label: 'Frei',     cls: 'text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/30 border-slate-200 dark:border-slate-700' },
+  compensation: { label: 'Kompen.',  cls: 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/30 border-teal-200 dark:border-teal-800' },
+};
+
 export default function TimesheetConfirmationPage() {
   const { token } = useParams<{ token: string }>();
 
@@ -276,12 +285,14 @@ export default function TimesheetConfirmationPage() {
                       <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Datum</th>
                       <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground hidden sm:table-cell">Beginn</th>
                       <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground hidden sm:table-cell">Ende</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Abw.</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">Stunden</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50">
                     {hours.days.map(day => {
                       const weekday = WEEKDAYS_DE[new Date(day.date + 'T00:00:00').getDay()];
+                      const absLabel = ABSENCE_LABEL_SHORT[day.absence_type ?? ''] ?? null;
                       return (
                         <tr key={day.date} className="hover:bg-muted/30">
                           <td className="px-3 py-1.5 text-xs">
@@ -294,8 +305,15 @@ export default function TimesheetConfirmationPage() {
                           <td className="px-3 py-1.5 text-xs text-muted-foreground hidden sm:table-cell">
                             {day.end_time ?? '–'}
                           </td>
+                          <td className="px-3 py-1.5 text-xs">
+                            {absLabel && (
+                              <span className={cn('inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold border', absLabel.cls)}>
+                                {absLabel.label}
+                              </span>
+                            )}
+                          </td>
                           <td className="px-3 py-1.5 text-right tabular-nums text-xs font-medium">
-                            {fmtH(day.hours)}
+                            {day.absence_type && day.hours === 0 ? '–' : fmtH(day.hours)}
                           </td>
                         </tr>
                       );
@@ -303,13 +321,37 @@ export default function TimesheetConfirmationPage() {
                   </tbody>
                   <tfoot className="bg-muted/40">
                     <tr>
-                      <td colSpan={3} className="px-3 py-2 text-xs font-semibold">Total</td>
+                      <td colSpan={4} className="px-3 py-2 text-xs font-semibold">Total</td>
                       <td className="px-3 py-2 text-right tabular-nums text-xs font-bold">{fmtH(hours.total)}</td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
             </div>
+
+            {/* Abwesenheits-Zusammenfassung */}
+            {(() => {
+              const counts: Record<string, number> = {};
+              for (const d of hours.days) {
+                if (d.absence_type) counts[d.absence_type] = (counts[d.absence_type] ?? 0) + 1;
+              }
+              const entries = Object.entries(counts);
+              if (entries.length === 0) return null;
+              return (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {entries.map(([type, n]) => {
+                    const meta = ABSENCE_LABEL_SHORT[type];
+                    if (!meta) return null;
+                    return (
+                      <span key={type} className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium border', meta.cls)}>
+                        {meta.label}
+                        <span className="font-bold">{n}×</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         )}
 

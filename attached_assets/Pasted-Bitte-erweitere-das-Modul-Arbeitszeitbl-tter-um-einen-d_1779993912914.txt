@@ -1,0 +1,115 @@
+Bitte erweitere das Modul Arbeitszeitblätter um einen digitalen Mitarbeiter-Freigabeprozess mit Rückfragen und Änderungsanträgen.
+
+Ziel:
+Mitarbeiter sollen ihr Monatsblatt über einen persönlichen Link prüfen, bestätigen oder Rückfragen/Korrekturwünsche einreichen können. Mitarbeiter dürfen die produktiven Stunden nicht direkt ändern. Änderungen werden nur als Antrag gespeichert und müssen durch Admin geprüft werden.
+
+1. Admin Freigabe pro Monat
+
+Im Modul Arbeitszeitblätter Button ergänzen:
+"Monat zur Mitarbeiterprüfung freigeben"
+
+Erst danach können Mitarbeiterlinks aktiv genutzt werden.
+
+2. Mitarbeiterseite erweitern
+
+Auf /timesheet-confirmation/:token soll der Mitarbeiter sehen:
+- vollständiges Monatsblatt
+- Zeitstempel
+- Pausen
+- AZB Stunden
+- Ferien
+- Feiertage
+- Krankheit
+- Unfall
+- Salden
+- Total Monatsstunden
+- manuelle Korrekturen falls vorhanden
+
+3. Mitarbeiteraktionen
+
+Buttons:
+- Monatsblatt bestätigen
+- Rückfrage stellen
+- Korrektur beantragen
+
+4. Rückfrage pro Tag
+
+Mitarbeiter kann bei einem Tag anklicken:
+"Rückfrage zu diesem Tag"
+
+Felder:
+- Kommentar
+- optional gewünschte neue Zeit
+- optional gewünschte neue Stunden
+- optional Kategorie: Arbeitszeit, Pause, Ferien, Krankheit, Unfall, Sonstiges
+
+5. Neue Tabelle
+
+timesheet_employee_requests
+
+Felder:
+id uuid primary key
+confirmation_id uuid nullable
+employee_id text not null
+date date nullable
+month integer not null
+year integer not null
+request_type text not null
+message text nullable
+requested_hours numeric nullable
+requested_start_time time nullable
+requested_end_time time nullable
+status text default 'open'
+admin_response text nullable
+created_at timestamptz default now()
+resolved_at timestamptz nullable
+resolved_by uuid nullable
+
+6. Admin Übersicht Rückfragen
+
+Im Modul Arbeitszeitblätter neue Sektion:
+"Offene Rückfragen"
+
+Anzeigen:
+- Mitarbeiter
+- Datum
+- Typ
+- Nachricht
+- Status
+- Button öffnen
+- Button erledigen
+- Button ablehnen
+- Button Änderung übernehmen
+
+7. Änderung übernehmen
+
+Wenn Admin eine beantragte Änderung übernimmt:
+- actual_hours oder actual_hour_entries aktualisieren
+- manually_edited = true
+- is_locked = true
+- timesheet_change_log schreiben
+- request status = resolved
+
+8. Bestätigungsstatus
+
+Statuswerte:
+- offen
+- an Mitarbeiter gesendet
+- Rückfrage offen
+- bestätigt
+- final abgeschlossen
+
+9. Re-Import Schutz
+
+Sobald Mitarbeiter bestätigt hat oder Admin Änderungen übernommen hat:
+- Daten geschützt
+- Re-Import fragt, ob geschützte/manuelle Daten behalten oder überschrieben werden sollen
+
+10. Nach Umsetzung ausgeben
+
+Welche Dateien geändert wurden
+Welche SQL Migration nötig ist
+Wie Mitarbeiter Rückfragen stellen
+Wo Admin Rückfragen sieht
+Wie Änderungen übernommen werden
+Wie Bestätigung und finaler Abschluss funktionieren

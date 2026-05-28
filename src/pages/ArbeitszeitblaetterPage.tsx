@@ -25,7 +25,7 @@ import EmployeeDetailView from '@/components/EmployeeDetailView';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
-import { saveActualHourEntry, saveActualHourEntries, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees, checkConfirmedEmployees, getLockedDatesForMonth, getManualEditCountsForMonth, logTimesheetChange } from '@/lib/supabase-db';
+import { saveActualHourEntry, saveActualHourEntries, saveActualDayAnnotations, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees, checkConfirmedEmployees, getLockedDatesForMonth, getManualEditCountsForMonth, logTimesheetChange } from '@/lib/supabase-db';
 import type { Employee as PersonnelEmployee } from '@/types/personnel';
 import {
   getConfirmationsForMonth,
@@ -86,6 +86,7 @@ interface ImportPreviewRow {
   vacationHours: number | null;
   holidayHours: number | null;
   overtimeHours: number | null;
+  compensationHours: number | null;
   excEmployee: ExcelEmployee;
   newEmployeeCreated?: boolean;
   /** Re-Import: Schutzstatus dieses Mitarbeiters */
@@ -409,28 +410,29 @@ export default function ArbeitszeitblaetterPage() {
       // Eindeutige Tage zählen (mehrere Schichtblöcke pro Tag = 1 Arbeitstag)
       const uniqueDates = new Set(validDays.map(d => d.date));
       const totalHours = validDays.reduce((s, d) => s + (d.totalHours ?? 0), 0);
-      const vacH = parseMirusHoursString(exc.monthlyAccounts?.vacation?.closingBalance ?? exc.totals?.ferien);
-      const holH = parseMirusHoursString(exc.monthlyAccounts?.holiday?.closingBalance  ?? exc.totals?.feiertag);
+      const vacH  = parseMirusHoursString(exc.monthlyAccounts?.vacation?.closingBalance ?? exc.totals?.ferien);
+      const holH  = parseMirusHoursString(exc.monthlyAccounts?.holiday?.closingBalance  ?? exc.totals?.feiertag);
       const overH = parseMirusHoursString(exc.monthlyAccounts?.overtime?.closingBalance ?? exc.totals?.ueberzeit);
+      const compH = parseMirusHoursString(exc.monthlyAccounts?.comp?.closingBalance     ?? exc.totals?.kompensation);
 
       // Skip-Mapping → ausgeschlossen
       if (result.matchStep === 'skip') {
         const dc = uniqueDates.size;
-      return { mirusName, matchStatus: 'skipped' as const, employee: null, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
+        return { mirusName, matchStatus: 'skipped' as const, employee: null, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, compensationHours: compH, excEmployee: exc };
       }
       // Exakter oder gespeicherter Match → automatisch
       if (result.employee && (result.matchType === 'exact' || result.matchType === 'saved')) {
         const dc = uniqueDates.size;
-        return { mirusName, matchStatus: 'matched' as const, employee: result.employee as unknown as Employee, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
+        return { mirusName, matchStatus: 'matched' as const, employee: result.employee as unknown as Employee, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, compensationHours: compH, excEmployee: exc };
       }
       // Vorname-Match → Konflikt (Admin muss bestätigen)
       if (result.employee && result.matchType === 'firstName') {
         const dc = uniqueDates.size;
-        return { mirusName, matchStatus: 'conflict' as const, employee: result.employee as unknown as Employee, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
+        return { mirusName, matchStatus: 'conflict' as const, employee: result.employee as unknown as Employee, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, compensationHours: compH, excEmployee: exc };
       }
       // Kein Match → ungelöst
       const dc = uniqueDates.size;
-      return { mirusName, matchStatus: 'unresolved' as const, employee: null, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, excEmployee: exc };
+      return { mirusName, matchStatus: 'unresolved' as const, employee: null, dayCount: dc, totalHours, vacationHours: vacH, holidayHours: holH, overtimeHours: overH, compensationHours: compH, excEmployee: exc };
     });
   }
 
@@ -773,6 +775,27 @@ export default function ArbeitszeitblaetterPage() {
             }
           }
 
+          // ── 3. actual_day_annotations (Abwesenheit + Notizen) speichern ──
+          {
+            const toSave: Array<{ type: string; label?: string | null; hours?: number | null; notes?: string | null }> = [];
+            if (absenceType) {
+              toSave.push({
+                type:  absenceType,
+                label: day.absenceCode ?? null,
+                hours: effectiveHours > 0 ? effectiveHours : null,
+                notes: day.notes ?? null,
+              });
+            } else if (day.notes) {
+              toSave.push({ type: 'note', label: null, hours: null, notes: day.notes });
+            }
+            if (toSave.length > 0) {
+              // Non-blocking: Fehler werden nur geloggt, nicht als Import-Fehler behandelt
+              saveActualDayAnnotations(row.employee.id, day.date, toSave).then(res => {
+                if (!res.ok) console.warn('[runImport] saveActualDayAnnotations fehlgeschlagen:', row.employee.name, day.date, res.error);
+              });
+            }
+          }
+
           importedCount++;
 
           // 'overwrite'-Modus: war gesperrter Tag → im Log vermerken
@@ -800,8 +823,8 @@ export default function ArbeitszeitblaetterPage() {
       }
 
       // Zeitguthaben → employee_time_balances
-      if (row.vacationHours != null || row.holidayHours != null || row.overtimeHours != null) {
-        await upsertEmployeeTimeBalance({ tenantId, employeeId: row.employee.id, year, month, vacationHours: row.vacationHours, holidayHours: row.holidayHours, overtimeHours: row.overtimeHours });
+      if (row.vacationHours != null || row.holidayHours != null || row.overtimeHours != null || row.compensationHours != null) {
+        await upsertEmployeeTimeBalance({ tenantId, employeeId: row.employee.id, year, month, vacationHours: row.vacationHours, holidayHours: row.holidayHours, overtimeHours: row.overtimeHours, compensationHours: row.compensationHours });
       }
     }
 
