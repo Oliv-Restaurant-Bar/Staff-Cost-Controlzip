@@ -245,6 +245,16 @@ export interface ImportHistoryEntry {
   errors: string[] | null;
   created_at: string;
   created_by: string | null;
+  // extended fields (may be absent in older rows)
+  skipped_count?: number;
+  created_employees_count?: number;
+  manual_matches_count?: number;
+  is_reimport?: boolean;
+  deleted_count?: number;
+  protected_count?: number;
+  parser_quality?: Record<string, unknown> | null;
+  import_status?: string | null;
+  error_summary?: string | null;
 }
 
 export async function saveImportHistory(params: {
@@ -318,6 +328,22 @@ export async function getImportHistoryForMonth(
     .maybeSingle();
   if (error?.code === '42P01' || error?.code === '42501') return null;
   return (data ?? null) as ImportHistoryEntry | null;
+}
+
+export async function getImportHistoryAll(
+  tenantId: string,
+  limit: number = 30,
+): Promise<ImportHistoryEntry[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase as any)
+    .from('timesheet_import_history')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error?.code === '42P01' || error?.code === '42501') return [];
+  if (error) { console.error('[TIMESHEET-HISTORY] getImportHistoryAll:', error); return []; }
+  return (data ?? []) as ImportHistoryEntry[];
 }
 
 // ─── Mitarbeiter-Zeitguthaben ─────────────────────────────────────────────────

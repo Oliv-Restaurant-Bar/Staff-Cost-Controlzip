@@ -18,7 +18,9 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import { parseMirusExcel, MirusParseError, type ExcelEmployee, type ExcelParseStats } from '@/lib/mirus-excel-parser';
+import { computeImportQuality, type QualityFieldEntry } from '@/lib/import-quality';
 import { DataQualityPanel } from '@/components/DataQualityPanel';
+import { ImportHistoryPanel } from '@/components/ImportHistoryPanel';
 import EmployeeDetailView from '@/components/EmployeeDetailView';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
@@ -34,6 +36,7 @@ import {
   MONTH_NAMES_DE,
   saveImportHistory,
   getImportHistoryForMonth,
+  getImportHistoryAll,
   upsertEmployeeTimeBalance,
   getEmployeeTimeBalancesForMonth,
   loadDienstplanHoursForMonth,
@@ -196,6 +199,7 @@ export default function ArbeitszeitblaetterPage() {
   const [dienstplanMap, setDienstplanMap]   = useState<Record<string, number>>({});
   const [balances, setBalances]             = useState<Record<string, EmployeeTimeBalance>>({});
   const [importHistory, setImportHistory]   = useState<ImportHistoryEntry | null>(null);
+  const [importHistoryList, setImportHistoryList] = useState<ImportHistoryEntry[]>([]);
   const [loading, setLoading]               = useState(true);
   const [generating, setGenerating]         = useState<string | null>(null);
   const [allEmps, setAllEmps]               = useState<PersonnelEmployee[]>([]);
@@ -214,6 +218,8 @@ export default function ArbeitszeitblaetterPage() {
   const [importMonthOverride, setImportMonthOverride] = useState(false);
   /** Parser-Statistiken aus dem letzten Datei-Upload */
   const [parseStats, setParseStats] = useState<ExcelParseStats | null>(null);
+  /** Per-Feld-Qualitätsauswertung (berechnet aus Parser-Ergebnis) */
+  const [qualityFields, setQualityFields] = useState<QualityFieldEntry[]>([]);
   /** Re-Import: true wenn bereits Daten für diesen Monat existieren */
   const [isReimport, setIsReimport] = useState(false);
   /** Anzahl bereits vorhandener Einträge (für Warnung) */
@@ -264,12 +270,13 @@ export default function ArbeitszeitblaetterPage() {
       setAllEmps(all as unknown as PersonnelEmployee[]);
 
       const empIds = filtered.map(e => e.id);
-      const [confs, hours, dienstplan, bals, history] = await Promise.all([
+      const [confs, hours, dienstplan, bals, history, historyAll] = await Promise.all([
         getConfirmationsForMonth(tenantId, year, month),
         getActualHoursBatch(empIds, year, month),
         loadDienstplanHoursForMonth(empIds, year, month),
         getEmployeeTimeBalancesForMonth(tenantId, year, month),
         getImportHistoryForMonth(tenantId, year, month),
+        getImportHistoryAll(tenantId, 30),
       ]);
 
       setConfirmations(confs);
@@ -277,6 +284,7 @@ export default function ArbeitszeitblaetterPage() {
       setDienstplanMap(dienstplan);
       setBalances(bals);
       setImportHistory(history);
+      setImportHistoryList(historyAll);
     } catch (err) {
       console.error('[TIMESHEET] loadData error', err);
       toast.error('Fehler beim Laden der Daten');
@@ -465,6 +473,7 @@ export default function ArbeitszeitblaetterPage() {
       }
 
       setParseStats(parsed.parseStats);
+      setQualityFields(computeImportQuality(parsed.employees, parsed.parseStats));
 
       // Re-Import-Erkennung: prüfe ob bereits Daten für diesen Monat existieren
       const rows = buildImportRows(parsed.employees);
@@ -747,7 +756,10 @@ export default function ArbeitszeitblaetterPage() {
       manualMatchesCount:    manualCount,
       errors,
       createdBy:             user?.email ?? null,
-      parserQuality:         parseStats ? (parseStats as unknown as Record<string, unknown>) : null,
+      parserQuality:         parseStats ? {
+        ...(parseStats as unknown as Record<string, unknown>),
+        ...(qualityFields.length ? { qualityFields } : {}),
+      } : null,
       isReimport,
       deletedCount:          totalDeleted,
       protectedCount:        skippedConfirmedCount,
@@ -760,6 +772,7 @@ export default function ArbeitszeitblaetterPage() {
     setImportRows([]);
     setImportMonthMismatch(null);
     setParseStats(null);
+    setQualityFields([]);
     setIsReimport(false);
     setExistingDataCount(0);
     setConfirmedProtectedIds(new Set());
@@ -867,6 +880,13 @@ export default function ArbeitszeitblaetterPage() {
             </div>
           ))}
         </div>
+
+        {/* Import-Historie */}
+        <ImportHistoryPanel
+          historyList={importHistoryList}
+          loading={loading}
+          onRefresh={loadData}
+        />
 
         {/* Mitarbeiter-Filter */}
         <div className="flex items-center gap-2 flex-wrap">
@@ -1287,7 +1307,7 @@ export default function ArbeitszeitblaetterPage() {
 
                 {/* ── Datenqualität / Erkennungsgrad ──────────────────────────── */}
                 {parseStats && (
-                  <DataQualityPanel stats={parseStats} />
+                  <DataQualityPanel stats={parseStats} qualityFields={qualityFields.length ? qualityFields : undefined} />
                 )}
 
                 {/* Status-Chips */}

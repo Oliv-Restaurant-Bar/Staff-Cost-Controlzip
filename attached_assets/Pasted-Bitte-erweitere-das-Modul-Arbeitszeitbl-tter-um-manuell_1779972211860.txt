@@ -1,0 +1,154 @@
+Bitte erweitere das Modul Arbeitszeitblätter um manuelle Korrekturen der Mitarbeiterzeiten mit vollständigem Änderungsprotokoll.
+
+Ziel:
+Admins sollen in der Mitarbeiter-Detailansicht einzelne Tageswerte und Zeitblöcke manuell korrigieren können. Jede Änderung muss protokolliert werden, damit später nachvollziehbar ist:
+- wer hat geändert
+- wann wurde geändert
+- welcher Wert war vorher
+- welcher Wert ist neu
+- warum wurde geändert
+
+1. Wo die Bearbeitung sichtbar sein soll
+
+In der Mitarbeiter-Detailansicht pro Tag:
+
+- Klick auf Tageszeile öffnet Tagesdetail
+- Im Tagesdetail Button ergänzen:
+  "Manuell korrigieren"
+
+Bearbeitbar:
+- AZB Tagesstunden
+- einzelne IST-Zeitblöcke
+- Pause
+- Bemerkung / Korrekturgrund
+
+2. Schutzlogik
+
+Wenn ein Wert manuell geändert wurde:
+- actual_hours.manually_edited = true
+- actual_hours.is_locked = true
+- actual_hours.locked_reason = 'manual_edit'
+
+Bei Zeitblöcken:
+- actual_hour_entries.manually_edited = true
+- actual_hour_entries.is_locked = true
+- actual_hour_entries.locked_reason = 'manual_edit'
+
+Wichtig:
+Diese Daten dürfen bei Re-Import nicht überschrieben oder gelöscht werden.
+
+3. Änderungsprotokoll Tabelle
+
+Neue Tabelle erstellen:
+
+timesheet_change_log
+
+Felder:
+id uuid primary key
+employee_id text not null
+date date not null
+month integer not null
+year integer not null
+table_name text not null
+field_name text not null
+old_value text nullable
+new_value text nullable
+change_type text not null
+reason text nullable
+changed_by uuid nullable
+changed_at timestamptz default now()
+source text default 'manual_edit'
+
+change_type Beispiele:
+- update_daily_hours
+- update_time_block
+- add_time_block
+- delete_time_block
+- update_pause
+- add_comment
+- lock_day
+- unlock_day
+
+4. UI für manuelle Korrektur
+
+Im Tagesdetail:
+
+Abschnitt:
+"Manuelle Korrektur"
+
+Felder:
+- AZB Tagesstunden
+- Zeitblock Start
+- Zeitblock Ende
+- Zeitblock löschen
+- Zeitblock hinzufügen
+- Korrekturgrund Pflichtfeld
+
+Buttons:
+- Speichern
+- Abbrechen
+
+Ohne Korrekturgrund darf nicht gespeichert werden.
+
+5. Protokoll anzeigen
+
+In der Tagesdetailansicht zusätzlich Tab oder Abschnitt:
+
+"Änderungsprotokoll"
+
+Dort anzeigen:
+- Datum/Zeit
+- Benutzer
+- Änderung
+- Alter Wert
+- Neuer Wert
+- Grund
+
+6. Mitarbeiter-Monatsansicht markieren
+
+Wenn ein Tag manuell geändert wurde:
+- Badge "Manuell geändert"
+- kleines Schloss-Symbol
+- Tooltip:
+  "Dieser Tag ist manuell korrigiert und vor Re-Import geschützt"
+
+7. Übersicht markieren
+
+In der Gesamtübersicht pro Mitarbeiter:
+Wenn im Monat manuelle Änderungen vorhanden sind:
+- Badge "Manuelle Änderungen"
+- Anzahl geänderter Tage
+
+8. Re-Import Logik erweitern
+
+Beim Re-Import:
+- manuell geänderte Tage nicht löschen
+- manuell geänderte Zeitblöcke nicht löschen
+- Mitarbeiter nicht komplett überspringen, sondern nur geschützte Tage behalten
+- neue Importdaten für nicht geschützte Tage trotzdem aktualisieren
+
+9. SQL Migration
+
+Bitte Migration erstellen für:
+- timesheet_change_log
+- falls noch nicht vorhanden:
+  actual_hours.is_locked
+  actual_hours.locked_reason
+  actual_hours.manually_edited
+  actual_hour_entries.is_locked
+  actual_hour_entries.locked_reason
+  actual_hour_entries.manually_edited
+
+10. Nach Umsetzung bitte ausgeben
+
+- Welche Dateien geändert wurden
+- Welche SQL Migration ausgeführt werden muss
+- Wo manuelle Korrektur sichtbar ist
+- Wie Änderungen protokolliert werden
+- Wie Re-Import geschützte Tage behandelt
+- Wie man später sieht, was geändert wurde
+
+Wichtig:
+Keine stillen Änderungen erlauben.
+Jede manuelle Änderung braucht einen Grund.
+Manuell geänderte Daten dürfen bei Re-Import nicht überschrieben werden.
