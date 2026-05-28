@@ -101,7 +101,7 @@ export async function getMirusAdjustmentStatuses(
     .eq('year',  year)
     .eq('month', month);
 
-  if (error?.code === '42P01' || error?.code === '42501') return [];
+  if (error?.code === '42P01' || error?.code === '42501' || error?.code === 'PGRST205') return [];
   if (error) {
     console.error('[mirus-korrekturen-store] getMirusAdjustmentStatuses:', error);
     return [];

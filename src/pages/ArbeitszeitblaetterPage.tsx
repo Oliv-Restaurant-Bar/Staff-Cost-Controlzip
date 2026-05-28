@@ -11,7 +11,7 @@ import {
   CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw, Trash2,
   Users, Check, Upload, FileSpreadsheet, AlertTriangle, X, Info,
   History, UserPlus, SkipForward, Undo2, ShieldCheck, Lock,
-  MessageSquare, SendHorizontal, CheckCheck,
+  MessageSquare, SendHorizontal, CheckCheck, LockOpen,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -24,6 +24,11 @@ import { DataQualityPanel } from '@/components/DataQualityPanel';
 import { ImportHistoryPanel, ImportQualitySummaryCard } from '@/components/ImportHistoryPanel';
 import EmployeeDetailView from '@/components/EmployeeDetailView';
 import MirusKorrekturlisteSection from '@/components/MirusKorrekturlisteSection';
+import MonthAbschlussHeader from '@/components/MonthAbschlussHeader';
+import {
+  getMonthStatuses,
+  type MonthStatusRecord,
+} from '@/lib/timesheet-month-status-store';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
@@ -214,6 +219,7 @@ export default function ArbeitszeitblaetterPage() {
   const [generating, setGenerating]         = useState<string | null>(null);
   const [allEmps, setAllEmps]               = useState<PersonnelEmployee[]>([]);
   const [requests, setRequests]            = useState<EmployeeRequest[]>([]);
+  const [monthStatuses, setMonthStatuses]  = useState<Record<string, MonthStatusRecord>>({});
 
   // ── Import-State ──────────────────────────────────────────────────────────
 
@@ -307,6 +313,8 @@ export default function ArbeitszeitblaetterPage() {
       setImportHistoryList(historyAll);
       setManualEditCounts(editCounts);
       setRequests(reqs);
+      const mStatuses = await getMonthStatuses(tenantId, year, month);
+      setMonthStatuses(mStatuses);
     } catch (err) {
       console.error('[TIMESHEET] loadData error', err);
       toast.error('Fehler beim Laden der Daten');
@@ -345,6 +353,8 @@ export default function ArbeitszeitblaetterPage() {
     pending:      rows.filter(r => !r.confirmation || r.confirmation.status === 'open').length,
   };
   const openRequestCount = requests.filter(r => r.status === 'open' || r.status === 'in_review').length;
+  const isMonthFinalizedAll = employees.length > 0
+    && employees.every(e => monthStatuses[e.id]?.status === 'finalized');
 
   // Einzelansicht: Daten für ausgewählten Mitarbeiter (unabhängig vom Abteilungsfilter)
   const selectedRow: RowData | null = selectedEmployeeId
@@ -413,6 +423,7 @@ export default function ArbeitszeitblaetterPage() {
   // ── Freigabe: Monat zur Mitarbeiterprüfung freigeben ──────────────────────
 
   async function handleMarkMonthSent() {
+    if (isMonthFinalizedAll) { toast.error('Monat ist finalisiert und gesperrt — Freigabe nicht möglich'); return; }
     if (!employees.length) { toast.error('Keine aktiven Mitarbeiter im Monat'); return; }
     if (!confirm(`Alle ${employees.length} Mitarbeiter für ${MONTH_NAMES_DE[month - 1]} ${year} zur Mitarbeiterprüfung freigeben?`)) return;
     try {
@@ -743,6 +754,11 @@ export default function ArbeitszeitblaetterPage() {
 
   async function runImport() {
     if (!isImportReady) return;
+    if (isMonthFinalizedAll) {
+      toast.error('Monat ist finalisiert und gesperrt — kein Import möglich. Entsperren Sie den Monat zuerst.');
+      setImportRunning(false);
+      return;
+    }
     setImportRunning(true);
     const errors: string[] = [];
     let importedCount = 0, skippedCount = 0, createdCount = 0, manualCount = 0;
@@ -1004,13 +1020,23 @@ export default function ArbeitszeitblaetterPage() {
               <span className="px-3 text-sm font-medium min-w-[130px] text-center">{MONTH_NAMES_DE[month - 1]} {year}</span>
               <button onClick={nextMonth} className="px-2 h-full hover:bg-muted rounded-r-md transition-colors"><ChevronRight className="h-4 w-4" /></button>
             </div>
-            {isAdmin && (
+            {isAdmin && !isMonthFinalizedAll && (
               <Button variant="outline" size="sm" onClick={handleMarkMonthSent} className="h-8 gap-1.5 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20">
                 <SendHorizontal className="h-3.5 w-3.5" />Monat freigeben
               </Button>
             )}
+            {isAdmin && isMonthFinalizedAll && (
+              <span className="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium rounded-md border border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/20 text-teal-700 dark:text-teal-400">
+                <Lock className="h-3.5 w-3.5" />Finalisiert
+              </span>
+            )}
             {isAdmin && (
-              <Button variant="outline" size="sm" onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportSheetOpen(true); }} className="h-8 gap-1.5 border-primary/30 text-primary hover:bg-primary/5">
+              <Button variant="outline" size="sm"
+                onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportSheetOpen(true); }}
+                disabled={isMonthFinalizedAll}
+                title={isMonthFinalizedAll ? 'Monat finalisiert — kein Import möglich' : undefined}
+                className="h-8 gap-1.5 border-primary/30 text-primary hover:bg-primary/5 disabled:opacity-40"
+              >
                 <Upload className="h-3.5 w-3.5" />Mirus Import
               </Button>
             )}
@@ -1225,6 +1251,11 @@ export default function ArbeitszeitblaetterPage() {
                         <td className="px-3 py-2">
                           <div className="flex flex-col gap-1">
                             <StatusBadge status={status} />
+                            {monthStatuses[emp.id]?.status === 'finalized' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-teal-50 dark:bg-teal-950/20 text-teal-700 dark:text-teal-400 border border-teal-200 dark:border-teal-800">
+                                <Lock className="h-2.5 w-2.5" />Final
+                              </span>
+                            )}
                             {status === 'rejected' && conf?.employee_comment && (
                               <p className="text-[10px] text-red-600 dark:text-red-400 max-w-[180px] truncate" title={conf.employee_comment}>„{conf.employee_comment}"</p>
                             )}
@@ -1352,6 +1383,21 @@ export default function ArbeitszeitblaetterPage() {
             </div>
           );
         })()}
+
+        {/* Monatsabschluss-Header: Statusübersicht + Finalisierung */}
+        <MonthAbschlussHeader
+          tenantId={tenantId}
+          year={year}
+          month={month}
+          employees={employees}
+          confirmations={confirmations}
+          requests={requests}
+          monthStatuses={monthStatuses}
+          istMap={istMap}
+          balances={balances}
+          userEmail={user?.email ?? null}
+          onChanged={loadData}
+        />
 
         {/* Mirus-Korrekturliste */}
         <MirusKorrekturlisteSection
