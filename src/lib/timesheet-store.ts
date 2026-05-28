@@ -261,12 +261,14 @@ export async function saveImportHistory(params: {
   errors?: string[];
   createdBy?: string | null;
   parserQuality?: Record<string, unknown> | null;
+  isReimport?: boolean;
+  deletedCount?: number;
 }): Promise<void> {
   const {
     tenantId, year, month, source = 'mirus', fileName,
     importedCount, updatedCount = 0,
     skippedCount = 0, createdEmployeesCount = 0, manualMatchesCount = 0,
-    errors = [], createdBy, parserQuality,
+    errors = [], createdBy, parserQuality, isReimport = false, deletedCount = 0,
   } = params;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (supabase as any)
@@ -286,6 +288,7 @@ export async function saveImportHistory(params: {
       errors:                   errors.length ? errors : null,
       created_by:               createdBy ?? null,
       ...(parserQuality ? { parser_quality: parserQuality } : {}),
+      ...(isReimport ? { is_reimport: true, deleted_count: deletedCount } : {}),
     });
   if (error) console.error('[TIMESHEET-HISTORY] saveImportHistory:', error);
 }

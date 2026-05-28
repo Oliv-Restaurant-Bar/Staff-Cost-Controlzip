@@ -879,6 +879,105 @@ export async function loadActualHourEntriesForMonth(
   return map;
 }
 
+// ─── Re-Import: prüfen + löschen ──────────────────────────────────────────────
+
+/**
+ * Prüft ob für die angegebenen Mitarbeiter im Monat bereits actual_hours-Daten existieren.
+ * Wird vor dem Import aufgerufen um Re-Import zu erkennen.
+ */
+export async function checkExistingMonthData(
+  employeeIds: string[],
+  year: number,
+  month: number,
+): Promise<{ exists: boolean; count: number }> {
+  if (!employeeIds.length) return { exists: false, count: 0 };
+  const pad      = (n: number) => String(n).padStart(2, '0');
+  const fromDate = `${year}-${pad(month)}-01`;
+  const lastDay  = new Date(year, month, 0).getDate();
+  const toDate   = `${year}-${pad(month)}-${pad(lastDay)}`;
+
+  try {
+    const { count, error } = await supabase
+      .from('actual_hours')
+      .select('*', { count: 'exact', head: true })
+      .in('employee_id', employeeIds)
+      .gte('date', fromDate)
+      .lte('date', toDate);
+    if (error) return { exists: false, count: 0 };
+    return { exists: (count ?? 0) > 0, count: count ?? 0 };
+  } catch {
+    return { exists: false, count: 0 };
+  }
+}
+
+/**
+ * Löscht alle Ist-Stunden, Zeitblöcke und Guthaben für die angegebenen Mitarbeiter im Monat.
+ * Nur Daten mit source = 'mirus_import' werden gelöscht (actual_hours hat keine source-Spalte,
+ * wird aber vollständig für den Zeitraum gelöscht, da der Schreibpfad immer Mirus ist).
+ * Gibt die Anzahl gelöschter Datensätze pro Tabelle zurück.
+ */
+export async function deleteMonthDataForEmployees(
+  employeeIds: string[],
+  year: number,
+  month: number,
+): Promise<{ deletedHours: number; deletedBlocks: number; deletedBalances: number }> {
+  if (!employeeIds.length) return { deletedHours: 0, deletedBlocks: 0, deletedBalances: 0 };
+  const pad      = (n: number) => String(n).padStart(2, '0');
+  const fromDate = `${year}-${pad(month)}-01`;
+  const lastDay  = new Date(year, month, 0).getDate();
+  const toDate   = `${year}-${pad(month)}-${pad(lastDay)}`;
+
+  let deletedHours = 0, deletedBlocks = 0, deletedBalances = 0;
+
+  try {
+    // actual_hours — keine source-Spalte, alle löschen (immer Mirus-Import)
+    const { count: h } = await supabase
+      .from('actual_hours')
+      .delete({ count: 'exact' })
+      .in('employee_id', employeeIds)
+      .gte('date', fromDate)
+      .lte('date', toDate);
+    deletedHours = h ?? 0;
+  } catch (e) {
+    console.error('[supabase-db] deleteMonthData actual_hours:', e);
+  }
+
+  try {
+    // actual_hour_entries — nur source = 'mirus_import'
+    const { count: b } = await supabase
+      .from('actual_hour_entries')
+      .delete({ count: 'exact' })
+      .in('employee_id', employeeIds)
+      .gte('date', fromDate)
+      .lte('date', toDate)
+      .eq('source', 'mirus_import');
+    deletedBlocks = b ?? 0;
+  } catch {
+    // Tabelle existiert noch nicht (Migration ausstehend) — ignorieren
+  }
+
+  try {
+    // employee_time_balances — nur source = 'mirus_import'
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { count: bal } = await (supabase as any)
+      .from('employee_time_balances')
+      .delete({ count: 'exact' })
+      .in('employee_id', employeeIds)
+      .eq('year', year)
+      .eq('month', month)
+      .eq('source', 'mirus_import');
+    deletedBalances = bal ?? 0;
+  } catch (e) {
+    console.error('[supabase-db] deleteMonthData employee_time_balances:', e);
+  }
+
+  console.log(
+    `[supabase-db] deleteMonthDataForEmployees ${year}-${pad(month)}: ` +
+    `${deletedHours} Tage, ${deletedBlocks} Blöcke, ${deletedBalances} Guthaben gelöscht`
+  );
+  return { deletedHours, deletedBlocks, deletedBalances };
+}
+
 // ─── App-Einstellungen (app_settings) ────────────────────────────────────────
 
 export async function loadSetting<T>(key: string): Promise<T | null> {

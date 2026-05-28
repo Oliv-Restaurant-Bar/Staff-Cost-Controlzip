@@ -23,7 +23,7 @@ import EmployeeDetailView from '@/components/EmployeeDetailView';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
-import { saveActualHourEntry, saveActualHourEntries, upsertEmployee } from '@/lib/supabase-db';
+import { saveActualHourEntry, saveActualHourEntries, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees } from '@/lib/supabase-db';
 import type { Employee as PersonnelEmployee } from '@/types/personnel';
 import {
   getConfirmationsForMonth,
@@ -205,6 +205,14 @@ export default function ArbeitszeitblaetterPage() {
   const [importMonthOverride, setImportMonthOverride] = useState(false);
   /** Parser-Statistiken aus dem letzten Datei-Upload */
   const [parseStats, setParseStats] = useState<ExcelParseStats | null>(null);
+  /** Re-Import: true wenn bereits Daten für diesen Monat existieren */
+  const [isReimport, setIsReimport] = useState(false);
+  /** Anzahl bereits vorhandener Einträge (für Warnung) */
+  const [existingDataCount, setExistingDataCount] = useState(0);
+  /** Resultat der Lösch-Operation beim Re-Import */
+  const [reimportDeleteResult, setReimportDeleteResult] = useState<{
+    deletedHours: number; deletedBlocks: number; deletedBalances: number;
+  } | null>(null);
 
   // ── Mitarbeiter-Einzelansicht ─────────────────────────────────────────────
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
@@ -424,7 +432,24 @@ export default function ArbeitszeitblaetterPage() {
       }
 
       setParseStats(parsed.parseStats);
-      setImportRows(buildImportRows(parsed.employees));
+
+      // Re-Import-Erkennung: prüfe ob bereits Daten für diesen Monat existieren
+      const rows = buildImportRows(parsed.employees);
+      const matchedIds = rows
+        .filter(r => r.employee && r.matchStatus !== 'skipped')
+        .map(r => r.employee!.id);
+      if (matchedIds.length > 0) {
+        const checkYear  = (importMonthMismatch?.year  ?? detectedYear  ?? year);
+        const checkMonth = (importMonthMismatch?.month ?? detectedMonth ?? month);
+        const { exists, count } = await checkExistingMonthData(matchedIds, checkYear, checkMonth);
+        setIsReimport(exists);
+        setExistingDataCount(count);
+      } else {
+        setIsReimport(false);
+        setExistingDataCount(0);
+      }
+      setReimportDeleteResult(null);
+      setImportRows(rows);
     } catch (err) {
       console.error('[IMPORT] parse error', err);
       toast.error('Fehler beim Lesen der Datei.');
@@ -522,6 +547,19 @@ export default function ArbeitszeitblaetterPage() {
     setImportRunning(true);
     const errors: string[] = [];
     let importedCount = 0, skippedCount = 0, createdCount = 0, manualCount = 0;
+    let totalDeleted = 0;
+
+    // Re-Import: bestehende Daten für diesen Monat löschen
+    if (isReimport) {
+      const matchedIds = importRows
+        .filter(r => r.employee && r.matchStatus !== 'skipped')
+        .map(r => r.employee!.id);
+      if (matchedIds.length > 0) {
+        const delResult = await deleteMonthDataForEmployees(matchedIds, year, month);
+        setReimportDeleteResult(delResult);
+        totalDeleted = delResult.deletedHours;
+      }
+    }
 
     for (const row of importRows) {
       if (row.matchStatus === 'skipped') { skippedCount++; continue; }
@@ -591,6 +629,8 @@ export default function ArbeitszeitblaetterPage() {
       errors,
       createdBy:     user?.email ?? null,
       parserQuality: parseStats ? (parseStats as unknown as Record<string, unknown>) : null,
+      isReimport,
+      deletedCount:  totalDeleted,
     });
 
     setImportRunning(false);
@@ -598,6 +638,9 @@ export default function ArbeitszeitblaetterPage() {
     setImportRows([]);
     setImportMonthMismatch(null);
     setParseStats(null);
+    setIsReimport(false);
+    setExistingDataCount(0);
+    setReimportDeleteResult(null);
 
     if (errors.length === 0) toast.success(`Import abgeschlossen: ${importedCount} Einträge, ${skippedCount} übersprungen`);
     else toast.warning(`Import mit ${errors.length} Fehler(n). ${importedCount} Einträge gespeichert.`);
@@ -946,10 +989,44 @@ export default function ArbeitszeitblaetterPage() {
                 {/* Datei-Info */}
                 <div className="flex items-center gap-3 text-xs flex-wrap">
                   <span className="font-medium">{importFileName}</span>
-                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportMonthOverride(false); setParseStats(null); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
+                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportMonthOverride(false); setParseStats(null); setIsReimport(false); setExistingDataCount(0); setReimportDeleteResult(null); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
                     <X className="h-3.5 w-3.5" />Neue Datei
                   </button>
                 </div>
+
+                {/* ── Re-Import Warnung ────────────────────────────────────────── */}
+                {isReimport && (
+                  <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-xs">
+                    <div className="flex items-start gap-2.5 px-3 py-2.5">
+                      <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <div className="font-semibold text-amber-800 dark:text-amber-300 text-[13px]">
+                          Re-Import: Bestehende Daten werden ersetzt
+                        </div>
+                        <div className="text-amber-700 dark:text-amber-400 leading-relaxed">
+                          Für <strong>{MONTH_NAMES_DE[month - 1]} {year}</strong> existieren bereits{' '}
+                          <strong>{existingDataCount}</strong> importierte Arbeitstag{existingDataCount !== 1 ? 'e' : ''}.
+                          Der neue Import löscht diese vollständig und ersetzt sie durch die Daten der neuen Datei.
+                        </div>
+                        <div className="text-amber-600/80 dark:text-amber-500/80">
+                          Gelöscht werden: <code className="font-mono text-[11px]">actual_hours</code>,{' '}
+                          <code className="font-mono text-[11px]">actual_hour_entries</code>,{' '}
+                          <code className="font-mono text-[11px]">employee_time_balances</code> — nur Quelle: <code className="font-mono text-[11px]">mirus_import</code>
+                        </div>
+                      </div>
+                    </div>
+                    {reimportDeleteResult && (
+                      <div className="border-t border-amber-200 dark:border-amber-800 px-3 py-2 flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          Bereinigt: <strong>{reimportDeleteResult.deletedHours}</strong> Tage,{' '}
+                          <strong>{reimportDeleteResult.deletedBlocks}</strong> Zeitblöcke,{' '}
+                          <strong>{reimportDeleteResult.deletedBalances}</strong> Guthaben gelöscht
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* ── Parser-Analyse ───────────────────────────────────────────── */}
                 {parseStats && (
