@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 
-export type TimesheetStatus = 'open' | 'link_created' | 'sent' | 'confirmed' | 'rejected' | 'expired';
+export type TimesheetStatus = 'open' | 'link_created' | 'sent' | 'confirmed' | 'rejected' | 'expired' | 'question_open' | 'finalized';
 
 export interface TimesheetConfirmation {
   id: string;
@@ -609,6 +609,179 @@ export async function loadEmployeeMonthDetail(
   }
 
   return entries;
+}
+
+// ─── Mitarbeiter-Rückfragen (timesheet_employee_requests) ─────────────────────
+
+export interface EmployeeRequest {
+  id:                   string;
+  confirmation_id:      string | null;
+  tenant_id:            string | null;
+  employee_id:          string;
+  date:                 string | null;    // YYYY-MM-DD oder null = allgemein
+  month:                number;
+  year:                 number;
+  request_type:         string;           // 'question' | 'correction_request' | 'general'
+  category:             string | null;    // 'arbeitszeit' | 'pause' | 'ferien' | 'krankheit' | 'unfall' | 'sonstiges'
+  message:              string | null;
+  requested_hours:      number | null;
+  requested_start_time: string | null;
+  requested_end_time:   string | null;
+  status:               string;           // 'open' | 'in_review' | 'resolved' | 'rejected'
+  admin_response:       string | null;
+  created_at:           string;
+  resolved_at:          string | null;
+  resolved_by:          string | null;
+}
+
+export async function createEmployeeRequest(params: {
+  confirmationId?:      string | null;
+  tenantId?:            string | null;
+  employeeId:           string;
+  date?:                string | null;
+  month:                number;
+  year:                 number;
+  requestType:          string;
+  category?:            string | null;
+  message?:             string | null;
+  requestedHours?:      number | null;
+  requestedStartTime?:  string | null;
+  requestedEndTime?:    string | null;
+}): Promise<{ ok: boolean; id?: string; error?: string }> {
+  try {
+    const { data, error } = await supabase
+      .from('timesheet_employee_requests')
+      .insert({
+        confirmation_id:      params.confirmationId      ?? null,
+        tenant_id:            params.tenantId            ?? null,
+        employee_id:          params.employeeId,
+        date:                 params.date                ?? null,
+        month:                params.month,
+        year:                 params.year,
+        request_type:         params.requestType,
+        category:             params.category            ?? null,
+        message:              params.message             ?? null,
+        requested_hours:      params.requestedHours      ?? null,
+        requested_start_time: params.requestedStartTime  ?? null,
+        requested_end_time:   params.requestedEndTime    ?? null,
+        status:               'open',
+      })
+      .select('id')
+      .single();
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, id: (data as { id: string }).id };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+export async function getRequestsForMonth(
+  tenantId: string,
+  year:     number,
+  month:    number,
+): Promise<EmployeeRequest[]> {
+  const { data, error } = await supabase
+    .from('timesheet_employee_requests')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('year', year)
+    .eq('month', month)
+    .order('created_at', { ascending: false });
+  if (error?.code === '42P01' || error?.code === '42501') return [];
+  if (error) { console.error('[TIMESHEET] getRequestsForMonth:', error); return []; }
+  return (data ?? []) as EmployeeRequest[];
+}
+
+export async function getRequestsForConfirmation(
+  confirmationId: string,
+): Promise<EmployeeRequest[]> {
+  const { data, error } = await supabase
+    .from('timesheet_employee_requests')
+    .select('*')
+    .eq('confirmation_id', confirmationId)
+    .order('created_at', { ascending: false });
+  if (error?.code === '42P01' || error?.code === '42501') return [];
+  if (error) { console.error('[TIMESHEET] getRequestsForConfirmation:', error); return []; }
+  return (data ?? []) as EmployeeRequest[];
+}
+
+export async function updateRequestStatus(
+  id:            string,
+  status:        string,
+  adminResponse?: string | null,
+  resolvedBy?:   string | null,
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const payload: Record<string, any> = { status };
+  if (adminResponse != null) payload.admin_response = adminResponse;
+  if (status === 'resolved' || status === 'rejected') {
+    payload.resolved_at = new Date().toISOString();
+    if (resolvedBy) payload.resolved_by = resolvedBy;
+  }
+  const { error } = await supabase
+    .from('timesheet_employee_requests')
+    .update(payload)
+    .eq('id', id);
+  if (error) throw error;
+}
+
+/**
+ * Setzt Bestätigung-Status auf 'question_open' (Mitarbeiter hat Rückfrage gestellt).
+ * Verwendet den öffentlichen Token (kein Auth erforderlich).
+ */
+export async function questionTimesheet(token: string): Promise<void> {
+  const { error } = await db()
+    .update({ status: 'question_open', updated_at: new Date().toISOString() })
+    .eq('token', token);
+  if (error) throw error;
+}
+
+/**
+ * Setzt Status auf 'finalized' (Admin schliesst Monat final ab).
+ */
+export async function finalizeTimesheet(id: string): Promise<void> {
+  const { error } = await db()
+    .update({ status: 'finalized', updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+/**
+ * Setzt alle Bestätigungen eines Monats auf 'sent' (Monat zur Prüfung freigegeben).
+ * Erstellt neue Bestätigungen für Mitarbeiter ohne bestehenden Eintrag.
+ */
+export async function markMonthSent(
+  tenantId:    string,
+  year:        number,
+  month:       number,
+  employeeIds: string[],
+): Promise<{ created: number; updated: number }> {
+  let created = 0;
+  let updated = 0;
+  const existingConfs = await getConfirmationsForMonth(tenantId, year, month);
+  const existingMap   = Object.fromEntries(existingConfs.map(c => [c.employee_id, c]));
+
+  for (const empId of employeeIds) {
+    const existing = existingMap[empId];
+    if (!existing) {
+      try {
+        await createOrGetConfirmation(tenantId, empId, year, month);
+        const { error } = await db()
+          .update({ status: 'sent', updated_at: new Date().toISOString() })
+          .eq('employee_id', empId)
+          .eq('year', year)
+          .eq('month', month)
+          .eq('tenant_id', tenantId);
+        if (!error) created++;
+      } catch {}
+    } else if (existing.status === 'open' || existing.status === 'link_created') {
+      const { error } = await db()
+        .update({ status: 'sent', updated_at: new Date().toISOString() })
+        .eq('id', existing.id);
+      if (!error) updated++;
+    }
+  }
+  return { created, updated };
 }
 
 // ─── Mirus-Stunden-String parsen ──────────────────────────────────────────────

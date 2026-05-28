@@ -4,17 +4,19 @@ import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import {
   CheckCircle2, XCircle, Clock, AlertCircle, ClipboardCheck,
-  CalendarDays, User, Loader2,
+  CalendarDays, User, Loader2, MessageSquare, Pencil, ShieldCheck,
 } from 'lucide-react';
 import {
   getConfirmationByToken,
-  getActualHoursForMonth,
   confirmTimesheet,
-  rejectTimesheet,
+  questionTimesheet,
+  createEmployeeRequest,
+  getRequestsForConfirmation,
   MONTH_NAMES_DE,
   type TimesheetConfirmation,
-  type DailyHourEntry,
+  type EmployeeRequest,
 } from '@/lib/timesheet-store';
+import DayRequestSheet from '@/components/DayRequestSheet';
 
 interface EmployeeInfo {
   id: string;
@@ -23,43 +25,71 @@ interface EmployeeInfo {
   weekly_hours: number;
 }
 
-type PageState = 'loading' | 'invalid' | 'expired' | 'already_done' | 'ready' | 'submitting' | 'done';
-
-function sollHoursForMonth(weeklyHours: number, year: number, month: number): number {
-  const daysInMonth = new Date(year, month, 0).getDate();
-  return Math.round((weeklyHours / 7) * daysInMonth * 10) / 10;
+interface FullDayEntry {
+  date:            string;
+  hours:           number;
+  start_time:      string | null;
+  end_time:        string | null;
+  absence_type:    string | null;
+  manually_edited: boolean;
+  is_locked:       boolean;
 }
+
+interface BalanceInfo {
+  vacation_balance_hours:       number | null;
+  public_holiday_balance_hours: number | null;
+  overtime_balance_hours:       number | null;
+  compensation_balance_hours:   number | null;
+}
+
+type PageState = 'loading' | 'invalid' | 'expired' | 'already_done' | 'ready' | 'submitting' | 'done';
+type Mode = 'confirm' | 'question' | null;
+
+const WEEKDAYS_DE  = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+const WEEKENDS     = new Set([0, 6]);
+
+const ABSENCE_META: Record<string, { label: string; cls: string }> = {
+  vacation: { label: 'Ferien',   cls: 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800' },
+  sick:     { label: 'Krank',    cls: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800' },
+  accident: { label: 'Unfall',   cls: 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800' },
+  holiday:  { label: 'Feiertag', cls: 'text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800' },
+  free:     { label: 'Frei',     cls: 'text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/30 border-slate-200 dark:border-slate-700' },
+};
+
+const REQ_TYPE_LABEL: Record<string, string> = {
+  question:           'Rückfrage',
+  correction_request: 'Korrektur',
+  general:            'Allgemein',
+};
 
 function fmtH(h: number) { return h.toFixed(1) + ' h'; }
-
-function fmtDate(dateStr: string): string {
+function fmtTime(t: string | null) { if (!t) return '–'; return t.length > 5 ? t.slice(0, 5) : t; }
+function fmtDateShort(dateStr: string) {
   const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
 }
-
-const WEEKDAYS_DE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
-
-const ABSENCE_LABEL_SHORT: Record<string, { label: string; cls: string }> = {
-  vacation:     { label: 'Ferien',   cls: 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800' },
-  sick:         { label: 'Krank',    cls: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800' },
-  accident:     { label: 'Unfall',   cls: 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800' },
-  holiday:      { label: 'Feiertag', cls: 'text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800' },
-  free:         { label: 'Frei',     cls: 'text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/30 border-slate-200 dark:border-slate-700' },
-  compensation: { label: 'Kompen.',  cls: 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/30 border-teal-200 dark:border-teal-800' },
-};
+function fmtDatetime(iso: string) {
+  return new Date(iso).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+function sollHoursForMonth(weeklyHours: number, year: number, month: number) {
+  return Math.round((weeklyHours / 7) * new Date(year, month, 0).getDate() * 10) / 10;
+}
 
 export default function TimesheetConfirmationPage() {
   const { token } = useParams<{ token: string }>();
 
-  const [pageState, setPageState] = useState<PageState>('loading');
-  const [confirmation, setConfirmation] = useState<TimesheetConfirmation | null>(null);
-  const [employee, setEmployee] = useState<EmployeeInfo | null>(null);
-  const [hours, setHours] = useState<{ total: number; days: DailyHourEntry[] }>({ total: 0, days: [] });
+  const [pageState, setPageState]         = useState<PageState>('loading');
+  const [confirmation, setConfirmation]   = useState<TimesheetConfirmation | null>(null);
+  const [employee, setEmployee]           = useState<EmployeeInfo | null>(null);
+  const [days, setDays]                   = useState<FullDayEntry[]>([]);
+  const [balances, setBalances]           = useState<BalanceInfo | null>(null);
+  const [requests, setRequests]           = useState<EmployeeRequest[]>([]);
 
-  const [mode, setMode] = useState<'confirm' | 'reject' | null>(null);
-  const [comment, setComment] = useState('');
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [finalStatus, setFinalStatus] = useState<'confirmed' | 'rejected' | null>(null);
+  const [mode, setMode]                   = useState<Mode>(null);
+  const [comment, setComment]             = useState('');
+  const [submitError, setSubmitError]     = useState<string | null>(null);
+  const [finalStatus, setFinalStatus]     = useState<string | null>(null);
+  const [dayRequestDate, setDayRequestDate] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) { setPageState('invalid'); return; }
@@ -74,23 +104,59 @@ export default function TimesheetConfirmationPage() {
       if (conf.expires_at && new Date(conf.expires_at) < new Date()) {
         setPageState('expired'); return;
       }
-      if (conf.status === 'confirmed' || conf.status === 'rejected') {
-        setConfirmation(conf);
-        setFinalStatus(conf.status as 'confirmed' | 'rejected');
-        setPageState('already_done'); return;
+      if (conf.status === 'confirmed' || conf.status === 'finalized' || conf.status === 'rejected') {
+        setConfirmation(conf); setFinalStatus(conf.status); setPageState('already_done'); return;
       }
-
       setConfirmation(conf);
 
-      const { data: empData } = await supabase
-        .from('employees')
-        .select('id, name, department, weekly_hours')
-        .eq('id', conf.employee_id)
-        .maybeSingle();
-      setEmployee((empData as EmployeeInfo | null) ?? null);
+      const fromDate = `${conf.year}-${String(conf.month).padStart(2, '0')}-01`;
+      const lastDay  = new Date(conf.year, conf.month, 0).getDate();
+      const toDate   = `${conf.year}-${String(conf.month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
-      const h = await getActualHoursForMonth(conf.employee_id, conf.year, conf.month);
-      setHours(h);
+      const [empRes, daysRes, balRes, reqRes] = await Promise.allSettled([
+        supabase
+          .from('employees')
+          .select('id, name, department, weekly_hours')
+          .eq('id', conf.employee_id)
+          .maybeSingle(),
+        supabase
+          .from('actual_hours')
+          .select('date, hours, start_time, end_time, absence_type, manually_edited, is_locked')
+          .eq('employee_id', conf.employee_id)
+          .gte('date', fromDate)
+          .lte('date', toDate)
+          .order('date'),
+        (supabase as any)
+          .from('employee_time_balances')
+          .select('vacation_balance_hours, public_holiday_balance_hours, overtime_balance_hours, compensation_balance_hours')
+          .eq('employee_id', conf.employee_id)
+          .eq('year', conf.year)
+          .eq('month', conf.month)
+          .maybeSingle(),
+        getRequestsForConfirmation(conf.id),
+      ]);
+
+      if (empRes.status === 'fulfilled' && empRes.value.data)
+        setEmployee(empRes.value.data as EmployeeInfo);
+
+      if (daysRes.status === 'fulfilled') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        setDays((daysRes.value.data ?? []).map((d: any) => ({
+          date:            d.date,
+          hours:           d.hours ?? 0,
+          start_time:      d.start_time,
+          end_time:        d.end_time,
+          absence_type:    d.absence_type,
+          manually_edited: d.manually_edited ?? false,
+          is_locked:       d.is_locked ?? false,
+        })));
+      }
+
+      if (balRes.status === 'fulfilled' && balRes.value.data)
+        setBalances(balRes.value.data as BalanceInfo);
+
+      if (reqRes.status === 'fulfilled')
+        setRequests(reqRes.value);
 
       setPageState('ready');
     } catch (err) {
@@ -99,11 +165,20 @@ export default function TimesheetConfirmationPage() {
     }
   }
 
+  async function reloadRequests() {
+    if (!confirmation || !token) return;
+    const reqs = await getRequestsForConfirmation(confirmation.id);
+    setRequests(reqs);
+    if (confirmation.status !== 'question_open') {
+      await questionTimesheet(token).catch(() => {});
+      setConfirmation(prev => prev ? { ...prev, status: 'question_open' as any } : prev);
+    }
+  }
+
   async function handleSubmit() {
     if (!token || !mode) return;
-    if (mode === 'reject' && !comment.trim()) {
-      setSubmitError('Bitte gib einen Kommentar ein.');
-      return;
+    if (mode === 'question' && !comment.trim()) {
+      setSubmitError('Bitte gib einen Kommentar ein.'); return;
     }
     setSubmitError(null);
     setPageState('submitting');
@@ -112,8 +187,19 @@ export default function TimesheetConfirmationPage() {
         await confirmTimesheet(token);
         setFinalStatus('confirmed');
       } else {
-        await rejectTimesheet(token, comment.trim());
-        setFinalStatus('rejected');
+        if (confirmation) {
+          await createEmployeeRequest({
+            confirmationId: confirmation.id,
+            tenantId:       confirmation.tenant_id,
+            employeeId:     confirmation.employee_id,
+            month:          confirmation.month,
+            year:           confirmation.year,
+            requestType:    'general',
+            message:        comment.trim(),
+          });
+        }
+        await questionTimesheet(token);
+        setFinalStatus('question_open');
       }
       setPageState('done');
     } catch (err) {
@@ -123,118 +209,135 @@ export default function TimesheetConfirmationPage() {
     }
   }
 
-  const monthLabel = confirmation
-    ? `${MONTH_NAMES_DE[confirmation.month - 1]} ${confirmation.year}`
-    : '';
-
-  const sollHours = employee && confirmation
+  const monthLabel  = confirmation ? `${MONTH_NAMES_DE[confirmation.month - 1]} ${confirmation.year}` : '';
+  const totalHours  = days.reduce((s, d) => s + (d.hours ?? 0), 0);
+  const sollHours   = employee && confirmation
     ? sollHoursForMonth(employee.weekly_hours, confirmation.year, confirmation.month)
     : 0;
-  const diff = hours.total - sollHours;
+  const diff = totalHours - sollHours;
 
-  if (pageState === 'loading') {
-    return (
-      <PublicShell>
-        <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
-          <Loader2 className="h-8 w-8 animate-spin" />
-          <p className="text-sm">Lade Arbeitszeitblatt…</p>
-        </div>
-      </PublicShell>
-    );
+  const absenceCounts: Record<string, number> = {};
+  for (const d of days) {
+    if (d.absence_type) absenceCounts[d.absence_type] = (absenceCounts[d.absence_type] ?? 0) + 1;
   }
+  const hasQuestionOpen = confirmation?.status === 'question_open';
 
-  if (pageState === 'invalid') {
-    return (
-      <PublicShell>
-        <div className="flex flex-col items-center gap-3 py-12 text-center">
-          <AlertCircle className="h-10 w-10 text-red-400" />
-          <h2 className="text-lg font-bold">Ungültiger Link</h2>
-          <p className="text-sm text-muted-foreground max-w-sm">
-            Dieser Link ist nicht gültig. Bitte wende dich an die Administration.
-          </p>
-        </div>
-      </PublicShell>
-    );
-  }
+  // ── Loading state ────────────────────────────────────────────────────────────
 
-  if (pageState === 'expired') {
-    return (
-      <PublicShell>
-        <div className="flex flex-col items-center gap-3 py-12 text-center">
-          <Clock className="h-10 w-10 text-amber-400" />
-          <h2 className="text-lg font-bold">Link abgelaufen</h2>
-          <p className="text-sm text-muted-foreground max-w-sm">
-            Dieser Link ist abgelaufen. Bitte fordere einen neuen Link bei der Administration an.
-          </p>
-        </div>
-      </PublicShell>
-    );
-  }
+  if (pageState === 'loading') return (
+    <PublicShell>
+      <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <p className="text-sm">Lade Arbeitszeitblatt…</p>
+      </div>
+    </PublicShell>
+  );
 
-  if (pageState === 'already_done') {
-    return (
-      <PublicShell>
-        <div className="flex flex-col items-center gap-3 py-12 text-center">
-          {finalStatus === 'confirmed' ? (
-            <>
-              <CheckCircle2 className="h-12 w-12 text-emerald-500" />
-              <h2 className="text-lg font-bold text-emerald-700 dark:text-emerald-400">Bereits bestätigt</h2>
-              <p className="text-sm text-muted-foreground">
-                Du hast dein Arbeitszeitblatt für {monthLabel} bereits bestätigt.
-                {confirmation?.confirmed_at && (
-                  <span className="block mt-1 text-xs">
-                    am {new Date(confirmation.confirmed_at).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                )}
-              </p>
-            </>
-          ) : (
-            <>
-              <XCircle className="h-12 w-12 text-red-400" />
-              <h2 className="text-lg font-bold text-red-700 dark:text-red-400">Rückfrage bereits gesendet</h2>
-              <p className="text-sm text-muted-foreground max-w-sm">
-                Du hast für dieses Arbeitszeitblatt bereits eine Rückfrage gesendet.
-                Die Administration wird sich bei dir melden.
-              </p>
-            </>
-          )}
-        </div>
-      </PublicShell>
-    );
-  }
+  if (pageState === 'invalid') return (
+    <PublicShell>
+      <div className="flex flex-col items-center gap-3 py-12 text-center">
+        <AlertCircle className="h-10 w-10 text-red-400" />
+        <h2 className="text-lg font-bold">Ungültiger Link</h2>
+        <p className="text-sm text-muted-foreground max-w-sm">
+          Dieser Link ist nicht gültig. Bitte wende dich an die Administration.
+        </p>
+      </div>
+    </PublicShell>
+  );
 
-  if (pageState === 'done') {
-    return (
-      <PublicShell>
-        <div className="flex flex-col items-center gap-4 py-12 text-center">
-          {finalStatus === 'confirmed' ? (
-            <>
-              <CheckCircle2 className="h-14 w-14 text-emerald-500" />
-              <h2 className="text-xl font-bold">Vielen Dank!</h2>
-              <p className="text-sm text-muted-foreground max-w-sm">
-                Dein Arbeitszeitblatt für <strong>{monthLabel}</strong> wurde erfolgreich bestätigt.
-                Deine Rückmeldung wurde gespeichert.
-              </p>
-            </>
-          ) : (
-            <>
-              <XCircle className="h-14 w-14 text-amber-500" />
-              <h2 className="text-xl font-bold">Rückfrage gesendet</h2>
-              <p className="text-sm text-muted-foreground max-w-sm">
-                Deine Rückmeldung für <strong>{monthLabel}</strong> wurde gespeichert.
-                Die Administration wird sich bei dir melden.
-              </p>
-            </>
-          )}
-        </div>
-      </PublicShell>
-    );
-  }
+  if (pageState === 'expired') return (
+    <PublicShell>
+      <div className="flex flex-col items-center gap-3 py-12 text-center">
+        <Clock className="h-10 w-10 text-amber-400" />
+        <h2 className="text-lg font-bold">Link abgelaufen</h2>
+        <p className="text-sm text-muted-foreground max-w-sm">
+          Dieser Link ist abgelaufen. Bitte fordere einen neuen Link bei der Administration an.
+        </p>
+      </div>
+    </PublicShell>
+  );
+
+  if (pageState === 'already_done') return (
+    <PublicShell>
+      <div className="flex flex-col items-center gap-3 py-12 text-center">
+        {finalStatus === 'confirmed' ? (
+          <>
+            <CheckCircle2 className="h-12 w-12 text-emerald-500" />
+            <h2 className="text-lg font-bold text-emerald-700 dark:text-emerald-400">Bereits bestätigt</h2>
+            <p className="text-sm text-muted-foreground">
+              Du hast dein Arbeitszeitblatt für {monthLabel} bereits bestätigt.
+              {confirmation?.confirmed_at && (
+                <span className="block mt-1 text-xs">
+                  am {new Date(confirmation.confirmed_at).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+            </p>
+          </>
+        ) : finalStatus === 'finalized' ? (
+          <>
+            <ShieldCheck className="h-12 w-12 text-emerald-500" />
+            <h2 className="text-lg font-bold text-emerald-700 dark:text-emerald-400">Final abgeschlossen</h2>
+            <p className="text-sm text-muted-foreground max-w-sm">
+              Dein Arbeitszeitblatt für {monthLabel} wurde von der Verwaltung final abgeschlossen.
+            </p>
+          </>
+        ) : (
+          <>
+            <XCircle className="h-12 w-12 text-red-400" />
+            <h2 className="text-lg font-bold text-red-700 dark:text-red-400">Rückfrage bereits gesendet</h2>
+            <p className="text-sm text-muted-foreground max-w-sm">
+              Du hast für dieses Arbeitszeitblatt bereits eine Rückfrage gesendet.
+              Die Administration wird sich bei dir melden.
+            </p>
+          </>
+        )}
+      </div>
+    </PublicShell>
+  );
+
+  if (pageState === 'done') return (
+    <PublicShell>
+      <div className="flex flex-col items-center gap-4 py-12 text-center">
+        {finalStatus === 'confirmed' ? (
+          <>
+            <CheckCircle2 className="h-14 w-14 text-emerald-500" />
+            <h2 className="text-xl font-bold">Vielen Dank!</h2>
+            <p className="text-sm text-muted-foreground max-w-sm">
+              Dein Arbeitszeitblatt für <strong>{monthLabel}</strong> wurde erfolgreich bestätigt.
+            </p>
+          </>
+        ) : (
+          <>
+            <MessageSquare className="h-14 w-14 text-amber-500" />
+            <h2 className="text-xl font-bold">Rückfrage gesendet</h2>
+            <p className="text-sm text-muted-foreground max-w-sm">
+              Deine Rückmeldung für <strong>{monthLabel}</strong> wurde gespeichert.
+              Die Administration wird sich bei dir melden.
+            </p>
+          </>
+        )}
+      </div>
+    </PublicShell>
+  );
+
+  // ── Main content (ready / submitting) ─────────────────────────────────────────
 
   return (
     <PublicShell>
       <div className="space-y-5">
-        {/* Employee + Monat Info */}
+
+        {/* Rückfrage-offen Banner */}
+        {hasQuestionOpen && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-300">
+            <MessageSquare className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>
+              Du hast eine Rückfrage gesendet. Die Administration wird sich bei dir melden.
+              Du kannst jederzeit weitere tagespezifische Rückfragen hinzufügen.
+            </span>
+          </div>
+        )}
+
+        {/* Employee + Monat */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-4 pb-4 border-b border-border">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
@@ -242,9 +345,7 @@ export default function TimesheetConfirmationPage() {
             </div>
             <div>
               <p className="font-bold text-base">{employee?.name ?? '–'}</p>
-              {employee?.department && (
-                <p className="text-xs text-muted-foreground">{employee.department}</p>
-              )}
+              {employee?.department && <p className="text-xs text-muted-foreground">{employee.department}</p>}
             </div>
           </div>
           <div className="sm:ml-auto flex items-center gap-2 text-sm text-muted-foreground">
@@ -260,114 +361,226 @@ export default function TimesheetConfirmationPage() {
             <p className="text-lg font-bold tabular-nums">{sollHours > 0 ? fmtH(sollHours) : '–'}</p>
           </div>
           <div className="bg-muted/40 rounded-lg p-3 text-center">
-            <p className="text-[11px] text-muted-foreground mb-1">Ist-Stunden</p>
-            <p className="text-lg font-bold tabular-nums">{hours.total > 0 ? fmtH(hours.total) : '–'}</p>
+            <p className="text-[11px] text-muted-foreground mb-1">AZB-Stunden</p>
+            <p className="text-lg font-bold tabular-nums">{totalHours > 0 ? fmtH(totalHours) : '–'}</p>
           </div>
           <div className={cn('rounded-lg p-3 text-center', diff >= 0 ? 'bg-emerald-50 dark:bg-emerald-950/20' : 'bg-red-50 dark:bg-red-950/20')}>
             <p className="text-[11px] text-muted-foreground mb-1">Differenz</p>
             <p className={cn('text-lg font-bold tabular-nums', diff >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
-              {hours.total > 0 && sollHours > 0 ? (diff > 0 ? '+' : '') + fmtH(diff) : '–'}
+              {totalHours > 0 && sollHours > 0 ? (diff > 0 ? '+' : '') + fmtH(diff) : '–'}
             </p>
           </div>
         </div>
 
-        {/* Tages-Details */}
-        {hours.days.length > 0 && (
+        {/* Salden */}
+        {balances && (
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-              Tagesdetails
-            </h3>
-            <div className="border border-border rounded-lg overflow-hidden">
-              <div className="overflow-x-auto max-h-72 overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-muted/60 backdrop-blur-sm">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Datum</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground hidden sm:table-cell">Beginn</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground hidden sm:table-cell">Ende</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Abw.</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">Stunden</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/50">
-                    {hours.days.map(day => {
-                      const weekday = WEEKDAYS_DE[new Date(day.date + 'T00:00:00').getDay()];
-                      const absLabel = ABSENCE_LABEL_SHORT[day.absence_type ?? ''] ?? null;
-                      return (
-                        <tr key={day.date} className="hover:bg-muted/30">
-                          <td className="px-3 py-1.5 text-xs">
-                            <span className="text-muted-foreground mr-1.5">{weekday}</span>
-                            {fmtDate(day.date)}
-                          </td>
-                          <td className="px-3 py-1.5 text-xs text-muted-foreground hidden sm:table-cell">
-                            {day.start_time ?? '–'}
-                          </td>
-                          <td className="px-3 py-1.5 text-xs text-muted-foreground hidden sm:table-cell">
-                            {day.end_time ?? '–'}
-                          </td>
-                          <td className="px-3 py-1.5 text-xs">
-                            {absLabel && (
-                              <span className={cn('inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold border', absLabel.cls)}>
-                                {absLabel.label}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-1.5 text-right tabular-nums text-xs font-medium">
-                            {day.absence_type && day.hours === 0 ? '–' : fmtH(day.hours)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot className="bg-muted/40">
-                    <tr>
-                      <td colSpan={4} className="px-3 py-2 text-xs font-semibold">Total</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-xs font-bold">{fmtH(hours.total)}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-
-            {/* Abwesenheits-Zusammenfassung */}
-            {(() => {
-              const counts: Record<string, number> = {};
-              for (const d of hours.days) {
-                if (d.absence_type) counts[d.absence_type] = (counts[d.absence_type] ?? 0) + 1;
-              }
-              const entries = Object.entries(counts);
-              if (entries.length === 0) return null;
-              return (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {entries.map(([type, n]) => {
-                    const meta = ABSENCE_LABEL_SHORT[type];
-                    if (!meta) return null;
-                    return (
-                      <span key={type} className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium border', meta.cls)}>
-                        {meta.label}
-                        <span className="font-bold">{n}×</span>
-                      </span>
-                    );
-                  })}
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Salden</h3>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { label: 'Ferien',       value: balances.vacation_balance_hours,       cls: 'text-blue-600 dark:text-blue-400' },
+                { label: 'Feiertag',     value: balances.public_holiday_balance_hours, cls: 'text-purple-600 dark:text-purple-400' },
+                { label: 'Überstunden',  value: balances.overtime_balance_hours,       cls: 'text-emerald-600 dark:text-emerald-400' },
+                { label: 'Kompensation', value: balances.compensation_balance_hours,   cls: 'text-teal-600 dark:text-teal-400' },
+              ] as { label: string; value: number | null; cls: string }[]).map(b => (
+                <div key={b.label} className="bg-muted/30 rounded-lg px-3 py-2 flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">{b.label}</span>
+                  <span className={cn('text-sm font-semibold tabular-nums', b.cls)}>
+                    {b.value != null ? fmtH(b.value) : '–'}
+                  </span>
                 </div>
-              );
-            })()}
+              ))}
+            </div>
           </div>
         )}
 
-        {hours.days.length === 0 && (
-          <div className="rounded-lg border border-border bg-muted/20 py-6 text-center text-sm text-muted-foreground">
-            <Clock className="h-5 w-5 mx-auto mb-1.5 opacity-40" />
-            Für diesen Monat sind noch keine Ist-Stunden erfasst.
+        {/* Abwesenheits-Zusammenfassung */}
+        {Object.keys(absenceCounts).length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(absenceCounts).map(([type, n]) => {
+              const meta = ABSENCE_META[type];
+              if (!meta) return null;
+              return (
+                <span key={type} className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium border', meta.cls)}>
+                  {meta.label} <span className="font-bold">{n}×</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Tages-Details */}
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+            Tagesdetails — {days.length} Tage erfasst
+          </h3>
+          {days.length > 0 ? (
+            <>
+              <div className="border border-border rounded-lg overflow-hidden">
+                <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm z-10">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Datum</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground hidden sm:table-cell">Beginn</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground hidden sm:table-cell">Ende</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Abw.</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">Std.</th>
+                        <th className="px-3 py-2 w-9 text-center text-xs text-muted-foreground" title="Rückfrage zu diesem Tag">
+                          <MessageSquare className="h-3 w-3 mx-auto opacity-50" />
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/50">
+                      {days.map(day => {
+                        const d          = new Date(day.date + 'T00:00:00');
+                        const weekday    = WEEKDAYS_DE[d.getDay()];
+                        const isWeekend  = WEEKENDS.has(d.getDay());
+                        const absenceMeta = ABSENCE_META[day.absence_type ?? ''] ?? null;
+                        const hasRequest  = requests.some(r => r.date === day.date);
+                        return (
+                          <tr key={day.date} className={cn('hover:bg-muted/20 transition-colors', isWeekend && 'bg-muted/10')}>
+                            <td className="px-3 py-1.5 text-xs whitespace-nowrap">
+                              <span className={cn('mr-1.5 font-medium', isWeekend ? 'text-muted-foreground/50' : 'text-muted-foreground')}>
+                                {weekday}
+                              </span>
+                              <span className={cn(isWeekend && 'text-muted-foreground/60')}>{fmtDateShort(day.date)}</span>
+                              {day.manually_edited && (
+                                <Pencil className="inline h-2.5 w-2.5 ml-1 text-blue-400" title="Manuell korrigiert" />
+                              )}
+                            </td>
+                            <td className="px-3 py-1.5 text-xs text-muted-foreground hidden sm:table-cell">{fmtTime(day.start_time)}</td>
+                            <td className="px-3 py-1.5 text-xs text-muted-foreground hidden sm:table-cell">{fmtTime(day.end_time)}</td>
+                            <td className="px-3 py-1.5 text-xs">
+                              {absenceMeta && (
+                                <span className={cn('inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold border', absenceMeta.cls)}>
+                                  {absenceMeta.label}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-1.5 text-right tabular-nums text-xs font-medium">
+                              {day.absence_type && day.hours === 0 ? '–' : fmtH(day.hours)}
+                            </td>
+                            <td className="px-3 py-1.5 text-center">
+                              {hasRequest ? (
+                                <span
+                                  title="Rückfrage bereits gestellt"
+                                  className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/30"
+                                >
+                                  <MessageSquare className="h-2.5 w-2.5 text-amber-600 dark:text-amber-400" />
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => setDayRequestDate(day.date)}
+                                  title="Rückfrage zu diesem Tag"
+                                  className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground/30 hover:text-primary hover:bg-primary/10 transition-colors"
+                                >
+                                  <MessageSquare className="h-3 w-3" />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="bg-muted/40 sticky bottom-0">
+                      <tr>
+                        <td colSpan={4} className="px-3 py-2 text-xs font-semibold">Total Monatsstunden</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-xs font-bold">{fmtH(totalHours)}</td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
+                <MessageSquare className="h-2.5 w-2.5" />
+                Klick auf das Symbol bei einem Tag um eine Rückfrage zu stellen.
+              </p>
+            </>
+          ) : (
+            <div className="rounded-lg border border-border bg-muted/20 py-6 text-center text-sm text-muted-foreground">
+              <Clock className="h-5 w-5 mx-auto mb-1.5 opacity-40" />
+              Für diesen Monat sind noch keine Ist-Stunden erfasst.
+            </div>
+          )}
+        </div>
+
+        {/* Eingereichte Rückfragen */}
+        {requests.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+              Deine Rückfragen ({requests.length})
+            </h3>
+            <div className="space-y-2">
+              {requests.map(req => (
+                <div
+                  key={req.id}
+                  className={cn(
+                    'rounded-lg border px-3 py-2.5 space-y-1',
+                    req.status === 'resolved'
+                      ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/30 dark:bg-emerald-950/10'
+                      : req.status === 'rejected'
+                        ? 'border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/10'
+                        : 'border-border bg-muted/20',
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[11px] font-semibold text-foreground">
+                        {req.date ? fmtDateShort(req.date) : 'Allgemein'}
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted border border-border text-muted-foreground">
+                        {REQ_TYPE_LABEL[req.request_type] ?? req.request_type}
+                      </span>
+                      {req.category && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted border border-border text-muted-foreground capitalize">
+                          {req.category}
+                        </span>
+                      )}
+                      {req.requested_hours != null && (
+                        <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">
+                          → {req.requested_hours.toFixed(1)} h
+                        </span>
+                      )}
+                      {req.requested_start_time && (
+                        <span className="text-[10px] text-blue-600 dark:text-blue-400">
+                          {fmtTime(req.requested_start_time)}–{fmtTime(req.requested_end_time)}
+                        </span>
+                      )}
+                    </div>
+                    <span className={cn(
+                      'text-[10px] font-semibold shrink-0',
+                      req.status === 'resolved' ? 'text-emerald-600 dark:text-emerald-400'
+                        : req.status === 'rejected' ? 'text-red-600 dark:text-red-400'
+                        : 'text-amber-600 dark:text-amber-400',
+                    )}>
+                      {req.status === 'resolved' ? '✓ Erledigt' : req.status === 'rejected' ? '✗ Abgelehnt' : '◌ Offen'}
+                    </span>
+                  </div>
+                  {req.message && <p className="text-xs text-muted-foreground leading-snug">{req.message}</p>}
+                  {req.admin_response && (
+                    <div className="text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 rounded px-2 py-1.5 border border-emerald-200 dark:border-emerald-800">
+                      <span className="font-semibold">Antwort: </span>{req.admin_response}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-muted-foreground/60">{fmtDatetime(req.created_at)}</p>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
         {/* Aktions-Sektion */}
-        {mode === null ? (
-          <div className="pt-2 border-t border-border">
-            <p className="text-sm text-muted-foreground mb-3">
-              Bitte prüfe deine Arbeitszeiten und bestätige das Arbeitszeitblatt oder sende eine Rückfrage.
-            </p>
+        {mode === null && confirmation?.status !== 'confirmed' && confirmation?.status !== 'finalized' ? (
+          <div className="pt-3 border-t border-border space-y-3">
+            {!hasQuestionOpen && (
+              <p className="text-sm text-muted-foreground">
+                Prüfe deine Arbeitszeiten sorgfältig. Du kannst das Blatt bestätigen oder eine Rückfrage senden.
+                Für tagespezifische Rückfragen klicke auf das{' '}
+                <MessageSquare className="inline h-3 w-3 text-primary" /> Symbol in der Tabelle.
+              </p>
+            )}
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={() => setMode('confirm')}
@@ -376,22 +589,23 @@ export default function TimesheetConfirmationPage() {
                 <CheckCircle2 className="h-4 w-4" />
                 Arbeitszeitblatt bestätigen
               </button>
-              <button
-                onClick={() => setMode('reject')}
-                className="flex-1 flex items-center justify-center gap-2 h-11 rounded-lg border border-border hover:bg-muted text-foreground font-medium text-sm transition-colors"
-              >
-                <XCircle className="h-4 w-4 text-red-500" />
-                Rückfrage / nicht korrekt
-              </button>
+              {!hasQuestionOpen && (
+                <button
+                  onClick={() => setMode('question')}
+                  className="flex-1 flex items-center justify-center gap-2 h-11 rounded-lg border border-border hover:bg-muted text-foreground font-medium text-sm transition-colors"
+                >
+                  <MessageSquare className="h-4 w-4 text-amber-500" />
+                  Rückfrage / nicht korrekt
+                </button>
+              )}
             </div>
           </div>
-        ) : (
-          <div className="pt-2 border-t border-border space-y-3">
+        ) : mode !== null ? (
+          <div className="pt-3 border-t border-border space-y-3">
             {mode === 'confirm' ? (
               <>
                 <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Arbeitszeitblatt bestätigen
+                  <CheckCircle2 className="h-4 w-4" />Arbeitszeitblatt bestätigen
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Mit deiner Bestätigung erklärst du, dass die aufgeführten Arbeitszeiten korrekt sind.
@@ -399,9 +613,8 @@ export default function TimesheetConfirmationPage() {
               </>
             ) : (
               <>
-                <div className="flex items-center gap-2 text-sm font-medium text-red-600 dark:text-red-400">
-                  <XCircle className="h-4 w-4" />
-                  Rückfrage senden
+                <div className="flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
+                  <MessageSquare className="h-4 w-4" />Rückfrage senden
                 </div>
                 <textarea
                   value={comment}
@@ -412,9 +625,7 @@ export default function TimesheetConfirmationPage() {
                 />
               </>
             )}
-            {submitError && (
-              <p className="text-xs text-red-600 dark:text-red-400">{submitError}</p>
-            )}
+            {submitError && <p className="text-xs text-red-600 dark:text-red-400">{submitError}</p>}
             <div className="flex gap-2">
               <button
                 onClick={() => { setMode(null); setComment(''); setSubmitError(null); }}
@@ -429,7 +640,7 @@ export default function TimesheetConfirmationPage() {
                   'flex-1 h-10 rounded-lg text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-60',
                   mode === 'confirm'
                     ? 'bg-emerald-600 hover:bg-emerald-700'
-                    : 'bg-red-600 hover:bg-red-700',
+                    : 'bg-amber-600 hover:bg-amber-700',
                 )}
               >
                 {pageState === 'submitting' && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -437,8 +648,23 @@ export default function TimesheetConfirmationPage() {
               </button>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
+
+      {/* DayRequestSheet */}
+      {dayRequestDate && confirmation && (
+        <DayRequestSheet
+          open={!!dayRequestDate}
+          onClose={() => setDayRequestDate(null)}
+          date={dayRequestDate}
+          employeeId={confirmation.employee_id}
+          confirmationId={confirmation.id}
+          tenantId={confirmation.tenant_id}
+          year={confirmation.year}
+          month={confirmation.month}
+          onSubmitted={reloadRequests}
+        />
+      )}
     </PublicShell>
   );
 }
@@ -451,9 +677,7 @@ function PublicShell({ children }: { children: React.ReactNode }) {
         <span className="font-bold text-sm">Arbeitszeitblatt</span>
       </header>
       <main className="flex-1 flex justify-center px-4 py-6">
-        <div className="w-full max-w-xl">
-          {children}
-        </div>
+        <div className="w-full max-w-xl">{children}</div>
       </main>
       <footer className="border-t border-border px-4 py-3 text-center text-[11px] text-muted-foreground">
         Personalkostentracker · Vertraulich

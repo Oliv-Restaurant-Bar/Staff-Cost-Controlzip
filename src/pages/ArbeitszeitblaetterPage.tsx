@@ -11,6 +11,7 @@ import {
   CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw, Trash2,
   Users, Check, Upload, FileSpreadsheet, AlertTriangle, X, Info,
   History, UserPlus, SkipForward, Undo2, ShieldCheck, Lock,
+  MessageSquare, SendHorizontal, CheckCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -45,6 +46,11 @@ import {
   type TimesheetStatus,
   type ImportHistoryEntry,
   type EmployeeTimeBalance,
+  getRequestsForMonth,
+  updateRequestStatus,
+  markMonthSent,
+  finalizeTimesheet,
+  type EmployeeRequest,
 } from '@/lib/timesheet-store';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
@@ -147,6 +153,8 @@ const STATUS_META: Record<TimesheetStatus, { label: string; color: string; icon:
   confirmed:    { label: 'Bestätigt',     color: 'text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40', icon: <CheckCircle2 className="h-3 w-3" /> },
   rejected:     { label: 'Rückfrage',     color: 'text-red-700 bg-red-50 dark:text-red-300 dark:bg-red-950/40',             icon: <XCircle className="h-3 w-3" /> },
   expired:      { label: 'Abgelaufen',    color: 'text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-950/40',     icon: <AlertCircle className="h-3 w-3" /> },
+  question_open:{ label: 'Rückfrage offen', color: 'text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-950/40',  icon: <MessageSquare className="h-3 w-3" /> },
+  finalized:    { label: 'Final',           color: 'text-teal-700 bg-teal-50 dark:text-teal-300 dark:bg-teal-950/40',      icon: <CheckCheck className="h-3 w-3" /> },
 };
 
 function StatusBadge({ status }: { status: TimesheetStatus }) {
@@ -204,6 +212,7 @@ export default function ArbeitszeitblaetterPage() {
   const [loading, setLoading]               = useState(true);
   const [generating, setGenerating]         = useState<string | null>(null);
   const [allEmps, setAllEmps]               = useState<PersonnelEmployee[]>([]);
+  const [requests, setRequests]            = useState<EmployeeRequest[]>([]);
 
   // ── Import-State ──────────────────────────────────────────────────────────
 
@@ -278,7 +287,7 @@ export default function ArbeitszeitblaetterPage() {
       setAllEmps(all as unknown as PersonnelEmployee[]);
 
       const empIds = filtered.map(e => e.id);
-      const [confs, hours, dienstplan, bals, history, historyAll, editCounts] = await Promise.all([
+      const [confs, hours, dienstplan, bals, history, historyAll, editCounts, reqs] = await Promise.all([
         getConfirmationsForMonth(tenantId, year, month),
         getActualHoursBatch(empIds, year, month),
         loadDienstplanHoursForMonth(empIds, year, month),
@@ -286,6 +295,7 @@ export default function ArbeitszeitblaetterPage() {
         getImportHistoryForMonth(tenantId, year, month),
         getImportHistoryAll(tenantId, 30),
         getManualEditCountsForMonth(empIds, year, month),
+        getRequestsForMonth(tenantId, year, month),
       ]);
 
       setConfirmations(confs);
@@ -295,6 +305,7 @@ export default function ArbeitszeitblaetterPage() {
       setImportHistory(history);
       setImportHistoryList(historyAll);
       setManualEditCounts(editCounts);
+      setRequests(reqs);
     } catch (err) {
       console.error('[TIMESHEET] loadData error', err);
       toast.error('Fehler beim Laden der Daten');
@@ -326,11 +337,13 @@ export default function ArbeitszeitblaetterPage() {
     }));
 
   const stats = {
-    total:     rows.length,
-    confirmed: rows.filter(r => r.confirmation?.status === 'confirmed').length,
-    rejected:  rows.filter(r => r.confirmation?.status === 'rejected').length,
-    pending:   rows.filter(r => !r.confirmation || r.confirmation.status === 'open').length,
+    total:        rows.length,
+    confirmed:    rows.filter(r => r.confirmation?.status === 'confirmed').length,
+    questionOpen: rows.filter(r => r.confirmation?.status === 'question_open').length,
+    rejected:     rows.filter(r => r.confirmation?.status === 'rejected').length,
+    pending:      rows.filter(r => !r.confirmation || r.confirmation.status === 'open').length,
   };
+  const openRequestCount = requests.filter(r => r.status === 'open' || r.status === 'in_review').length;
 
   // Einzelansicht: Daten für ausgewählten Mitarbeiter (unabhängig vom Abteilungsfilter)
   const selectedRow: RowData | null = selectedEmployeeId
@@ -394,6 +407,88 @@ export default function ArbeitszeitblaetterPage() {
     if (!confirm(`Bestätigung für ${empName} löschen? Der Link wird ungültig.`)) return;
     try { await deleteConfirmation(conf.id); toast.success('Gelöscht'); await loadData(); }
     catch { toast.error('Fehler beim Löschen'); }
+  }
+
+  // ── Freigabe: Monat zur Mitarbeiterprüfung freigeben ──────────────────────
+
+  async function handleMarkMonthSent() {
+    if (!employees.length) { toast.error('Keine aktiven Mitarbeiter im Monat'); return; }
+    if (!confirm(`Alle ${employees.length} Mitarbeiter für ${MONTH_NAMES_DE[month - 1]} ${year} zur Mitarbeiterprüfung freigeben?`)) return;
+    try {
+      const empIds = employees.map(e => e.id);
+      const result = await markMonthSent(tenantId, year, month, empIds);
+      toast.success(`Monat freigegeben: ${result.created} neue Links erstellt, ${result.updated} aktualisiert`);
+      await loadData();
+    } catch (err) {
+      console.error('[TIMESHEET] markMonthSent error', err);
+      toast.error('Fehler beim Freigeben');
+    }
+  }
+
+  // ── Rückfragen: Admin-Aktionen ────────────────────────────────────────────
+
+  async function handleResolveRequest(req: EmployeeRequest) {
+    try {
+      await updateRequestStatus(req.id, 'resolved', 'Erledigt', user?.email ?? null);
+      toast.success('Rückfrage als erledigt markiert');
+      await loadData();
+    } catch { toast.error('Fehler beim Aktualisieren'); }
+  }
+
+  async function handleRejectRequest(req: EmployeeRequest) {
+    try {
+      await updateRequestStatus(req.id, 'rejected', 'Abgelehnt', user?.email ?? null);
+      toast.success('Rückfrage abgelehnt');
+      await loadData();
+    } catch { toast.error('Fehler beim Aktualisieren'); }
+  }
+
+  async function handleApplyChange(req: EmployeeRequest) {
+    if (!req.date) { toast.error('Kein Datum angegeben'); return; }
+    const emp = employees.find(e => e.id === req.employee_id);
+    if (!confirm(`Korrektur für ${emp?.name ?? req.employee_id} am ${req.date} übernehmen und Eintrag sperren?`)) return;
+    try {
+      const { data: existing } = await supabase
+        .from('actual_hours')
+        .select('hours, start_time, end_time, absence_type')
+        .eq('employee_id', req.employee_id)
+        .eq('date', req.date)
+        .maybeSingle();
+
+      const hourResult = await saveActualHourEntry(req.employee_id, req.date, {
+        hours:       req.requested_hours       ?? (existing?.hours ?? 0),
+        start:       req.requested_start_time  ?? existing?.start_time  ?? undefined,
+        end:         req.requested_end_time    ?? existing?.end_time    ?? undefined,
+        absenceType: existing?.absence_type ?? undefined,
+      });
+      if (!hourResult.ok) { toast.error(`Fehler: ${hourResult.error}`); return; }
+
+      await supabase.from('actual_hours')
+        .update({ manually_edited: true, is_locked: true })
+        .eq('employee_id', req.employee_id)
+        .eq('date', req.date);
+
+      await logTimesheetChange({
+        employeeId: req.employee_id,
+        date:       req.date,
+        year:       req.year,
+        month:      req.month,
+        tableName:  'actual_hours',
+        fieldName:  'hours',
+        oldValue:   existing?.hours != null ? String(existing.hours) : null,
+        newValue:   req.requested_hours != null ? String(req.requested_hours) : null,
+        changeType: 'admin_apply_employee_request',
+        reason:     `Admin übernimmt Mitarbeiterantrag: ${req.message ?? ''}`.trim(),
+        changedBy:  user?.email ?? null,
+      });
+
+      await updateRequestStatus(req.id, 'resolved', 'Korrektur übernommen', user?.email ?? null);
+      toast.success('Korrektur übernommen und Eintrag gesperrt');
+      await loadData();
+    } catch (err) {
+      console.error('[handleApplyChange]', err);
+      toast.error('Fehler beim Übernehmen der Korrektur');
+    }
   }
 
   // ── Mirus Import: Datei parsen ────────────────────────────────────────────
@@ -909,6 +1004,11 @@ export default function ArbeitszeitblaetterPage() {
               <button onClick={nextMonth} className="px-2 h-full hover:bg-muted rounded-r-md transition-colors"><ChevronRight className="h-4 w-4" /></button>
             </div>
             {isAdmin && (
+              <Button variant="outline" size="sm" onClick={handleMarkMonthSent} className="h-8 gap-1.5 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20">
+                <SendHorizontal className="h-3.5 w-3.5" />Monat freigeben
+              </Button>
+            )}
+            {isAdmin && (
               <Button variant="outline" size="sm" onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportSheetOpen(true); }} className="h-8 gap-1.5 border-primary/30 text-primary hover:bg-primary/5">
                 <Upload className="h-3.5 w-3.5" />Mirus Import
               </Button>
@@ -955,10 +1055,10 @@ export default function ArbeitszeitblaetterPage() {
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: 'Gesamt',    value: stats.total,     color: 'text-foreground',                          Icon: Users },
-            { label: 'Bestätigt', value: stats.confirmed, color: 'text-emerald-600 dark:text-emerald-400',   Icon: CheckCircle2 },
-            { label: 'Rückfrage', value: stats.rejected,  color: 'text-red-600 dark:text-red-400',           Icon: XCircle },
-            { label: 'Ausstehend', value: stats.pending,  color: 'text-amber-600 dark:text-amber-400',       Icon: Clock },
+            { label: 'Gesamt',     value: stats.total,                                color: 'text-foreground',                                  Icon: Users },
+            { label: 'Bestätigt', value: stats.confirmed,                             color: 'text-emerald-600 dark:text-emerald-400',           Icon: CheckCircle2 },
+            { label: 'Rückfragen', value: stats.questionOpen + stats.rejected + openRequestCount, color: 'text-amber-600 dark:text-amber-400',  Icon: MessageSquare },
+            { label: 'Ausstehend', value: stats.pending,                              color: 'text-muted-foreground',                            Icon: Clock },
           ].map(s => (
             <div key={s.label} className="bg-card border border-border rounded-lg p-3 flex items-center gap-3">
               <s.Icon className={cn('h-5 w-5 shrink-0', s.color)} />
@@ -1162,6 +1262,95 @@ export default function ArbeitszeitblaetterPage() {
           <span className="flex items-center gap-1 text-amber-600"><AlertTriangle className="h-3 w-3" />Warnung wenn |Dienstplan − AZB| &gt; 2 h</span>
           <span className="flex items-center gap-1 text-blue-500">■ Ferien/Feiertage = Mirus Abschluss-Saldo</span>
         </div>
+
+        {/* Offene Rückfragen */}
+        {openRequestCount > 0 && (() => {
+          const openReqs = requests.filter(r => r.status === 'open' || r.status === 'in_review');
+          return (
+            <div className="bg-card border border-amber-200 dark:border-amber-800 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 flex items-center gap-2">
+                <MessageSquare className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <h3 className="text-sm font-semibold">Offene Rückfragen</h3>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-700">
+                  {openReqs.length}
+                </span>
+              </div>
+              <div className="divide-y divide-border">
+                {openReqs.map(req => {
+                  const emp      = employees.find(e => e.id === req.employee_id);
+                  const empName  = emp?.name ?? req.employee_id;
+                  const isCorr   = req.request_type === 'correction_request';
+                  const d        = req.date ? new Date(req.date + 'T00:00:00') : null;
+                  const dateLabel = d
+                    ? d.toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' })
+                    : 'Allgemein';
+                  return (
+                    <div key={req.id} className="px-4 py-3 space-y-2">
+                      <div className="flex items-start gap-3 flex-wrap">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-sm">{empName}</span>
+                            <span className="text-xs text-muted-foreground">{dateLabel}</span>
+                            <span className={cn(
+                              'text-[10px] px-1.5 py-0.5 rounded-full font-medium border',
+                              isCorr
+                                ? 'bg-blue-50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800'
+                                : 'bg-muted text-muted-foreground border-border',
+                            )}>
+                              {isCorr ? 'Korrektur' : 'Rückfrage'}
+                            </span>
+                            {req.category && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground border border-border capitalize">
+                                {req.category}
+                              </span>
+                            )}
+                          </div>
+                          {req.message && (
+                            <p className="text-sm text-muted-foreground leading-snug">{req.message}</p>
+                          )}
+                          {isCorr && (req.requested_hours != null || req.requested_start_time) && (
+                            <div className="inline-flex items-center gap-2 text-xs text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/20 rounded px-2.5 py-1 border border-blue-200 dark:border-blue-800">
+                              <span className="font-medium">Korrekturwunsch:</span>
+                              {req.requested_start_time && (
+                                <span>{req.requested_start_time.slice(0, 5)} – {req.requested_end_time?.slice(0, 5) ?? '?'}</span>
+                              )}
+                              {req.requested_hours != null && (
+                                <span className="font-bold">{req.requested_hours.toFixed(1)} h</span>
+                              )}
+                            </div>
+                          )}
+                          <p className="text-[10px] text-muted-foreground/60">{fmtDatetime(req.created_at)}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
+                        <button
+                          onClick={() => handleResolveRequest(req)}
+                          className="h-7 px-3 text-[11px] font-medium rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 transition-colors"
+                        >
+                          <CheckCheck className="h-3 w-3 inline mr-1" />Erledigen
+                        </button>
+                        <button
+                          onClick={() => handleRejectRequest(req)}
+                          className="h-7 px-3 text-[11px] font-medium rounded-md bg-red-50 hover:bg-red-100 text-red-700 dark:bg-red-950/20 dark:hover:bg-red-950/40 dark:text-red-400 border border-red-200 dark:border-red-800 transition-colors"
+                        >
+                          <XCircle className="h-3 w-3 inline mr-1" />Ablehnen
+                        </button>
+                        {isCorr && req.date && (req.requested_hours != null || req.requested_start_time) && (
+                          <button
+                            onClick={() => handleApplyChange(req)}
+                            className="h-7 px-3 text-[11px] font-medium rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 dark:text-blue-400 border border-blue-200 dark:border-blue-800 transition-colors"
+                          >
+                            <CheckCircle2 className="h-3 w-3 inline mr-1" />Änderung übernehmen
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Import-Historie — alle Imports für diesen Tenant */}
         <ImportHistoryPanel

@@ -1,0 +1,125 @@
+Bitte erweitere das Modul Arbeitszeitblätter um eine Mirus-Korrekturliste für genehmigte Admin-Korrekturen.
+
+Ziel:
+Alle vom Admin genehmigten oder manuell übernommenen Korrekturen sollen pro Mitarbeiter und Monat zusammengefasst werden, damit sie anschliessend manuell in Mirus nachgetragen werden können.
+
+1. Neue Sektion im Modul Arbeitszeitblätter
+
+Auf /arbeitszeitblaetter ergänzen:
+
+"Mirus-Korrekturliste"
+
+Filter:
+- Monat/Jahr
+- Mitarbeiter
+- Status: offen / erledigt / alle
+
+2. Datenquelle
+
+Verwende:
+timesheet_change_log
+
+Berücksichtige nur relevante Einträge mit:
+- source = 'manual_edit'
+- oder change_type wie:
+  - update_daily_hours
+  - update_time_block
+  - add_time_block
+  - delete_time_block
+  - reimport_overwrite_manual
+  - approved_employee_request
+
+Falls Mitarbeiter-Korrekturanträge später übernommen werden:
+auch diese als approved_employee_request protokollieren.
+
+3. Zusammenfassung pro Mitarbeiter
+
+Pro Mitarbeiter anzeigen:
+
+Mitarbeiter
+Monat
+Anzahl korrigierte Tage
+Alte AZB Stunden total
+Neue AZB Stunden total
+Differenz
+Anzahl Zeitblock-Änderungen
+Status Mirus-Nachtrag
+Aktionen
+
+4. Detailansicht pro Mitarbeiter
+
+Klick auf Mitarbeiter öffnet Detail:
+
+Datum
+Änderungstyp
+Alter Wert
+Neuer Wert
+Differenz
+Bemerkung
+Geändert durch
+Geändert am
+
+Beispiel:
+03.04.2026 | Tagesstunden geändert | 8.7 h | 9.2 h | +0.5 h
+04.04.2026 | Zeitblock geändert | 17:28-23:00 | 17:00-23:00
+05.04.2026 | Zeitblock gelöscht | 18:00-20:00 | gelöscht
+
+5. Mirus-Nachtrag Status
+
+Neue Tabelle oder Feld:
+
+timesheet_mirus_adjustment_status
+
+Felder:
+id uuid primary key
+employee_id text not null
+month integer not null
+year integer not null
+status text default 'open'
+marked_done_at timestamptz nullable
+marked_done_by uuid nullable
+note text nullable
+created_at timestamptz default now()
+
+Statuswerte:
+- open
+- done
+
+Button:
+"Als in Mirus angepasst markieren"
+
+6. Export
+
+Button:
+"Export Korrekturliste"
+
+CSV oder Excel mit Spalten:
+- Mitarbeiter
+- Datum
+- Änderungstyp
+- Alter Wert
+- Neuer Wert
+- Differenz
+- Bemerkung
+- Geändert durch
+- Geändert am
+- Mirus Status
+
+7. Sichtbarkeit
+
+Die Korrekturliste soll nur Admin/Inhaber sehen.
+
+8. Hinweis im Workflow
+
+Wenn im Monat genehmigte Korrekturen vorhanden sind:
+oben Hinweis anzeigen:
+"Für diesen Monat gibt es X Korrekturen, die noch in Mirus nachgetragen werden müssen."
+
+9. Nach Umsetzung ausgeben
+
+- Welche Dateien geändert wurden
+- Welche SQL Migration nötig ist
+- Wo die Mirus-Korrekturliste sichtbar ist
+- Wie die Zusammenfassung berechnet wird
+- Wie man Korrekturen als in Mirus erledigt markiert
+- Wie der Export funktioniert
