@@ -466,8 +466,8 @@ export async function loadDienstplanHoursForMonth(
 
 // ─── Tagesvergleich: schedule_entries + actual_hours für 1 Mitarbeiter ────────
 
-/** Abwesenheitstypen gemäss Absence-Codes aus schedule_entries */
-export type AbsenceType = 'vacation' | 'sick' | 'holiday' | 'free' | null;
+/** Abwesenheitstypen gemäss Absence-Codes aus schedule_entries oder Mirus-Import */
+export type AbsenceType = 'vacation' | 'sick' | 'holiday' | 'free' | 'accident' | null;
 
 export interface DayComparisonEntry {
   date: string;                    // YYYY-MM-DD
@@ -489,18 +489,24 @@ export interface DayComparisonEntry {
   absence_type:   AbsenceType;
 }
 
-const VACATION_CODES = new Set(['FE', 'FW', 'FERIEN', 'URLAUB', 'U', 'FER']);
-const SICK_CODES     = new Set(['K',  'KO', 'KRANK', 'KRANKHEIT', 'AUF', 'KRANK']);
-const HOLIDAY_CODES  = new Set(['FT', 'FEIERTAG', 'PH', 'PHFT']);
-const FREE_CODES     = new Set(['F',  'FREI']);
+const VACATION_CODES  = new Set(['FE', 'FW', 'FERIEN', 'FERI', 'URLAUB', 'U', 'FER', 'VACATION']);
+const ACCIDENT_CODES  = new Set(['UNFALL', 'UVG', 'UNFALLTAG', 'AUF', 'ACCIDENT']);
+const SICK_CODES      = new Set(['K', 'KR', 'KRANK', 'KRANKHEIT', 'SICK']);
+const HOLIDAY_CODES   = new Set(['FT', 'FEIERTAG', 'PH', 'PHFT', 'HOLIDAY']);
+const FREE_CODES      = new Set(['F', 'FR', 'FREI', 'KO', 'KOMPENSATION', 'FREE']);
+
+/** Canonical-type values die direkt gespeichert wurden — kein Mapping nötig */
+const CANONICAL_TYPES = new Set<string>(['vacation', 'accident', 'sick', 'holiday', 'free']);
 
 function classifyAbsence(code: string | null | undefined): AbsenceType {
   if (!code) return null;
   const c = code.toUpperCase().trim();
-  if (VACATION_CODES.has(c)) return 'vacation';
-  if (SICK_CODES.has(c))     return 'sick';
-  if (HOLIDAY_CODES.has(c))  return 'holiday';
-  if (FREE_CODES.has(c))     return 'free';
+  if (CANONICAL_TYPES.has(code.toLowerCase())) return code.toLowerCase() as AbsenceType;
+  if (VACATION_CODES.has(c))  return 'vacation';
+  if (ACCIDENT_CODES.has(c))  return 'accident';
+  if (SICK_CODES.has(c))      return 'sick';
+  if (HOLIDAY_CODES.has(c))   return 'holiday';
+  if (FREE_CODES.has(c))      return 'free';
   return null;
 }
 
@@ -527,7 +533,7 @@ export async function loadEmployeeMonthDetail(
       .order('date'),
     supabase
       .from('actual_hours')
-      .select('date, hours, start_time, end_time')
+      .select('date, hours, start_time, end_time, absence_type')
       .eq('employee_id', employeeId)
       .gte('date', fromDate)
       .lte('date', toDate)
@@ -540,9 +546,16 @@ export async function loadEmployeeMonthDetail(
   }> = {};
   for (const row of schedRes.data ?? []) schedMap[row.date] = row;
 
-  const azbMap: Record<string, { hours: number; start_time: string | null; end_time: string | null }> = {};
+  const azbMap: Record<string, {
+    hours: number; start_time: string | null; end_time: string | null; absence_type: string | null;
+  }> = {};
   for (const row of azbRes.data ?? []) {
-    azbMap[row.date] = { hours: row.hours ?? 0, start_time: row.start_time, end_time: row.end_time };
+    azbMap[row.date] = {
+      hours:        row.hours ?? 0,
+      start_time:   row.start_time,
+      end_time:     row.end_time,
+      absence_type: row.absence_type ?? null,
+    };
   }
 
   const entries: DayComparisonEntry[] = [];
@@ -565,6 +578,12 @@ export async function loadEmployeeMonthDetail(
       absCode      = sched.frueh_absence || sched.spaet_absence || null;
     }
 
+    // Mirus-Abwesenheitstyp hat Vorrang vor Dienstplan-Abwesenheitscode
+    const mirusAbsence = azb?.absence_type ?? null;
+    const finalAbsenceType = mirusAbsence
+      ? classifyAbsence(mirusAbsence)   // bereits kanonisch, classifyAbsence gibt ihn direkt zurück
+      : classifyAbsence(absCode);       // Fallback: Dienstplan-Code
+
     entries.push({
       date:          dateStr,
       frueh_start:   sched?.frueh_start   ?? null,
@@ -578,8 +597,8 @@ export async function loadEmployeeMonthDetail(
       azb_hours:     azb?.hours     ?? null,
       azb_start:     azb?.start_time ?? null,
       azb_end:       azb?.end_time   ?? null,
-      absence_code:  absCode,
-      absence_type:  classifyAbsence(absCode),
+      absence_code:  mirusAbsence ?? absCode,
+      absence_type:  finalAbsenceType,
     });
   }
 

@@ -51,6 +51,7 @@ const STATUS_META: Record<TimesheetStatus, { label: string; cls: string }> = {
 const ABSENCE_META: Record<string, { label: string; cls: string }> = {
   vacation: { label: 'Ferien',   cls: 'text-blue-700 bg-blue-100 dark:text-blue-300 dark:bg-blue-950/60' },
   sick:     { label: 'Krank',    cls: 'text-orange-700 bg-orange-100 dark:text-orange-300 dark:bg-orange-950/60' },
+  accident: { label: 'Unfall',   cls: 'text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-950/60' },
   holiday:  { label: 'Feiertag', cls: 'text-purple-700 bg-purple-100 dark:text-purple-300 dark:bg-purple-950/60' },
   free:     { label: 'Frei',     cls: 'text-slate-600 bg-slate-100 dark:text-slate-400 dark:bg-slate-800' },
 };

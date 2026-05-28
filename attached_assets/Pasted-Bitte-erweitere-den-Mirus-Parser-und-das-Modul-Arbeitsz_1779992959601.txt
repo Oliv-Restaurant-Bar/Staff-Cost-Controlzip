@@ -1,0 +1,168 @@
+Bitte erweitere den Mirus Parser und das Modul Arbeitszeitblätter so, dass das digitale Arbeitszeitblatt vollständig dem Mirus-Monatsblatt entspricht.
+
+Ziel:
+Das digitale Arbeitszeitblatt wird später dem Mitarbeiter zur Kontrolle und Bestätigung zugestellt. Deshalb müssen alle relevanten Angaben aus dem Mirus-Monatsblatt erkannt, gespeichert und angezeigt werden.
+
+Es reicht nicht, nur AZB Stunden und Zeitstempel zu importieren.
+
+Bitte alle folgenden Daten aus dem Mirus-Monatsblatt erkennen:
+
+1. Stammdaten pro Mitarbeiter
+- Name / Vorname
+- Personalnummer falls vorhanden
+- Abteilung
+- Arbeitsverhältnis
+- Eintritt
+- Austritt
+- Pensum / Sollzeit falls vorhanden
+
+2. Tagesdaten
+Pro Datum erkennen:
+- Datum
+- Wochentag
+- Zeitstempel / Zeitblöcke
+- Kommen / Gehen
+- Pausen
+- Tagesarbeitszeit
+- Totalstunden
+- Zuschläge falls vorhanden
+- Bemerkungen / Codes
+
+3. Abwesenheiten
+Pro Tag erkennen und anzeigen:
+- Ferien
+- Feiertag
+- Krankheit
+- Unfall
+- Frei
+- Kompensation
+- unbezahlte Abwesenheit
+- sonstige Abwesenheit
+
+Mögliche Mirus-Codes/Labels:
+Ferien, Feri, FE, Urlaub, U
+Feiertag, Feier, FT, PH
+Krankheit, Krank, K
+Unfall, UVG, AUF, Unfalltag
+Frei, F
+Kompensation, Komp, KOMP
+Abwesenheit, Absenz
+
+4. Salden und Guthaben
+Pro Mitarbeiter und Monat erkennen:
+- Ferienguthaben
+- Feriensaldo
+- Ferien bezogen
+- Ferien Rest
+- Feiertagguthaben
+- Feiertagssaldo
+- Überstunden falls vorhanden
+- Mehrstunden / Minderstunden falls vorhanden
+
+5. Neue oder erweiterte Speicherung
+
+Falls bestehende Tabellen nicht reichen, bitte ergänzen:
+
+actual_day_annotations
+- employee_id
+- date
+- type
+- label
+- hours
+- source = 'mirus_import'
+
+employee_time_balances erweitern falls nötig um:
+- vacation_taken_hours
+- vacation_balance_hours
+- public_holiday_balance_hours
+- overtime_balance_hours
+- compensation_balance_hours
+
+6. Mitarbeiter-Detailansicht erweitern
+
+Die Mitarbeiteransicht soll ein echtes digitales Monatsblatt werden.
+
+Pro Tag anzeigen:
+Datum | WT | IST Zeitstempel | Dienstplan IST | AZB IST | Pause | Typ | Abwesenheit | Diff. | Status
+
+Wenn Arber Ferien hatte:
+Typ/Abwesenheit muss Ferien anzeigen.
+
+Wenn Saad Unfall hatte:
+Typ/Abwesenheit muss Unfall anzeigen.
+
+7. Tagesdetail erweitern
+
+Beim Klick auf einen Tag anzeigen:
+- Zeitblöcke
+- Pausen
+- AZB Tagesstunden
+- Dienstplanstunden
+- Abwesenheitsart
+- Abwesenheitsstunden
+- Bemerkungen / Codes aus Mirus
+- Importquelle
+- Änderungsverlauf
+
+8. Mitarbeiter-Bestätigungsseite erweitern
+
+Die öffentliche Mitarbeiterseite muss dieselben relevanten Daten zeigen:
+- Arbeitszeiten
+- Zeitstempel
+- Pausen
+- Ferien
+- Feiertage
+- Krankheit
+- Unfall
+- Salden
+- Total Monatsstunden
+
+Der Mitarbeiter soll nicht nur eine Summe bestätigen, sondern das komplette Monatsblatt digital kontrollieren können.
+
+9. Datenqualität erweitern
+
+Import-Auswertung muss pro Import zeigen:
+- Mitarbeiter erkannt %
+- Abteilungen erkannt %
+- Zeitstempel erkannt %
+- Pausen erkannt %
+- Tagesstunden erkannt %
+- Ferien erkannt %
+- Feiertage erkannt %
+- Krankheit erkannt %
+- Unfall erkannt %
+- Salden erkannt %
+- Abwesenheiten total erkannt %
+
+Wichtig:
+Wenn in der Datei Ferien/Unfall/Krankheit vorhanden ist, aber nicht erkannt wird, muss es als Parser-Problem ausgewiesen werden.
+
+10. Debug gezielt für April
+
+Bitte im April-Monatsblatt prüfen:
+- Arber Ferien: welche Tage, welche Codes, welche Spalten
+- Saad Unfall: welche Tage, welche Codes, welche Spalten
+
+Danach sicherstellen:
+- Arber zeigt Ferien in der Mitarbeiteransicht
+- Saad zeigt Unfall in der Mitarbeiteransicht
+
+11. Re-Import
+
+Beim Re-Import:
+- Abwesenheiten ebenfalls neu importieren
+- manuell bearbeitete Tage je nach Re-Import-Auswahl behalten oder überschreiben
+- Historie bleibt erhalten
+
+12. Nach Umsetzung bitte ausgeben
+
+- Welche Datenfelder jetzt aus Mirus gelesen werden
+- Welche Abwesenheitscodes erkannt werden
+- Welche Tabellen angepasst oder erstellt wurden
+- Wo Ferien/Unfall/Krankheit angezeigt werden
+- Ob Arber Ferien und Saad Unfall im April erkannt werden
+- Welche Qualitätswerte pro Import angezeigt werden
+
+Wichtig:
+Das digitale Arbeitszeitblatt muss möglichst vollständig dem originalen Mirus-Monatsblatt entsprechen.
+Keine relevanten Angaben aus dem Monatsblatt dürfen still ignoriert werden.

@@ -46,7 +46,18 @@ const LAYOUT = {
   },
 };
 
-const ABSENCE_CODES = ['FR', 'FE', 'KR', 'Frei', 'Ferien', 'Krank', 'Unfall', 'Kompensation', 'KO'];
+/**
+ * Abwesenheitserkennung:
+ * - Exakt-Codes (≤4 Zeichen): müssen exakt (case-insensitiv) dem Zellinhalt entsprechen
+ * - Pattern-Codes: Substring-Match, sicher da lang genug
+ */
+const ABSENCE_EXACT = new Set([
+  'FE', 'FR', 'FT', 'KR', 'KO', 'K', 'U', 'F', 'AUF', 'UVG',
+]);
+const ABSENCE_PATTERNS = [
+  'ferien', 'feri', 'urlaub', 'unfall', 'uvg', 'unfalltag', 'krank', 'krankheit',
+  'feiertag', 'frei', 'kompensation',
+];
 
 const TOTAL_LABELS: { key: keyof EmployeeTotals; patterns: string[] }[] = [
   { key: 'totalHours',   patterns: ['total stunden', 'total h', 'gesamtarbeitszeit', 'bruttoarbeitszeit', 'brutto'] },
@@ -278,10 +289,38 @@ function parseDateCell(cell: XLSX.CellObject | undefined): string | null {
   return null;
 }
 
+/**
+ * Erkennt Abwesenheitscodes aus dem Zellinhalt.
+ * Kurze Codes (≤4 Zeichen) werden nur bei exaktem Zellinhalt erkannt,
+ * um Fehlerkennungen zu vermeiden (z.B. 'FR' in 'Früh', 'K' in 'Kantine').
+ */
 function detectAbsence(text: string): string | null {
-  for (const code of ABSENCE_CODES) {
-    if (text.toLowerCase().includes(code.toLowerCase())) return code;
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const upper = trimmed.toUpperCase();
+  const lower = trimmed.toLowerCase();
+
+  if (ABSENCE_EXACT.has(upper)) return upper;
+
+  for (const pat of ABSENCE_PATTERNS) {
+    if (lower.includes(pat)) return trimmed;
   }
+  return null;
+}
+
+/**
+ * Normalisiert einen rohen Absence-Code auf einen kanonischen Typ.
+ * Rückgabe: 'vacation' | 'accident' | 'sick' | 'holiday' | 'free' | null
+ */
+export function normalizeAbsenceCode(raw: string | null | undefined): 'vacation' | 'accident' | 'sick' | 'holiday' | 'free' | null {
+  if (!raw) return null;
+  const lower = raw.toLowerCase().trim();
+  const upper = raw.toUpperCase().trim();
+  if (/feri|ferien|urlaub/.test(lower) || upper === 'FE' || upper === 'U') return 'vacation';
+  if (/unfall|uvg|unfalltag/.test(lower) || upper === 'AUF') return 'accident';
+  if (/krank|krankheit/.test(lower) || upper === 'KR' || upper === 'K') return 'sick';
+  if (/feiertag/.test(lower) || upper === 'FT') return 'holiday';
+  if (/frei|kompensation/.test(lower) || upper === 'FR' || upper === 'KO' || upper === 'F') return 'free';
   return null;
 }
 
@@ -806,13 +845,22 @@ function readDayRows(
     const dateCell = getCell(ws, map.dateCol, r);
     const date     = parseDateCell(dateCell);
 
-    // Absenzen: erste 25 Spalten scannen
+    // Absenzen: erste 25 Spalten + Bemerkungsspalte scannen
     let absenceCode: string | null = null;
-    for (let c = range.s.c; c <= Math.min(range.e.c, 25); c++) {
+    const absenceColLimit = Math.min(range.e.c, 25);
+    for (let c = range.s.c; c <= absenceColLimit; c++) {
       const cell = getCell(ws, c, r);
       if (!cell) continue;
       const code = detectAbsence(String(cell.v ?? ''));
       if (code) { absenceCode = code; break; }
+    }
+    // Bemerkungsspalte (z.B. BJ) separat prüfen — liegt ausserhalb des 0-25 Scans
+    if (!absenceCode && map.remarkCol !== null && map.remarkCol > absenceColLimit) {
+      const remarkCell = getCell(ws, map.remarkCol, r);
+      if (remarkCell) {
+        const code = detectAbsence(String(remarkCell.v ?? ''));
+        if (code) absenceCode = code;
+      }
     }
 
     if (!date && !absenceCode) continue;

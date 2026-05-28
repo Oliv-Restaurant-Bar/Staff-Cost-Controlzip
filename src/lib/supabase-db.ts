@@ -19,6 +19,7 @@ export interface ActualHourEntry {
   hours: number;
   start?: string;
   end?: string;
+  absenceType?: string | null;
 }
 
 // ─── Hilfsfunktionen ────────────────────────────────────────────────────────
@@ -768,11 +769,12 @@ export async function saveActualHourEntry(
       }
     } else {
       const { error } = await supabase.from('actual_hours').upsert({
-        employee_id: employeeId,
-        date:        isoDate,
-        hours:       entry.hours,
-        start_time:  entry.start ?? null,
-        end_time:    entry.end   ?? null,
+        employee_id:  employeeId,
+        date:         isoDate,
+        hours:        entry.hours,
+        start_time:   entry.start ?? null,
+        end_time:     entry.end   ?? null,
+        absence_type: entry.absenceType ?? null,
       }, { onConflict: 'employee_id,date' });
       if (error) {
         console.error('[supabase-db] saveActualHourEntry (upsert):', error);

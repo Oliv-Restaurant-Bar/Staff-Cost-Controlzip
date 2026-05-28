@@ -214,7 +214,7 @@ export function computeImportQuality(
     let sickDays = 0;
     for (const emp of employees)
       for (const day of emp.days)
-        if (matchesAbsence(day.absenceCode, ['kr', 'krank'])) sickDays++;
+        if (matchesAbsence(day.absenceCode, ['kr', 'krank', 'krankheit', 'sick'])) sickDays++;
     fields.push(field('sick_days', 'Krankheit', sickDays, sickDays));
   }
 
@@ -223,8 +223,8 @@ export function computeImportQuality(
     let accDays = 0;
     for (const emp of employees)
       for (const day of emp.days)
-        if (matchesAbsence(day.absenceCode, ['unfall'])) accDays++;
-    fields.push(field('accident_days', 'Unfall', accDays, accDays));
+        if (matchesAbsence(day.absenceCode, ['unfall', 'uvg', 'unfalltag', 'auf', 'accident'])) accDays++;
+    fields.push(field('accident_days', 'Unfall / UVG', accDays, accDays));
   }
 
   // ── 16. Frei-Tage ─────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ export function computeImportQuality(
     let freeDays = 0;
     for (const emp of employees)
       for (const day of emp.days)
-        if (matchesAbsence(day.absenceCode, ['fr', 'frei'])) freeDays++;
+        if (matchesAbsence(day.absenceCode, ['frei', 'kompensation', 'free'])) freeDays++;
     fields.push(field('free_days', 'Frei-Tage', freeDays, freeDays));
   }
 

@@ -17,7 +17,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
-import { parseMirusExcel, MirusParseError, type ExcelEmployee, type ExcelParseStats } from '@/lib/mirus-excel-parser';
+import { parseMirusExcel, normalizeAbsenceCode, MirusParseError, type ExcelEmployee, type ExcelParseStats } from '@/lib/mirus-excel-parser';
 import { computeImportQuality, type QualityFieldEntry } from '@/lib/import-quality';
 import { DataQualityPanel } from '@/components/DataQualityPanel';
 import { ImportHistoryPanel, ImportQualitySummaryCard } from '@/components/ImportHistoryPanel';
@@ -720,12 +720,21 @@ export default function ArbeitszeitblaetterPage() {
           ? Math.round(blockSum * 100) / 100   // Fallback: Summe der Zeitblöcke
           : 0;
 
-        if (effectiveHours <= 0 && blockEntries.length === 0) continue;  // wirklich leerer Tag
+        // Abwesenheitscode aus Mirus → kanonischer Typ
+        const absenceType = normalizeAbsenceCode(day.absenceCode ?? null);
+
+        // Wirklich leerer Tag: keine Stunden, keine Blöcke, kein Abwesenheitscode → überspringen
+        if (effectiveHours <= 0 && blockEntries.length === 0 && !absenceType) continue;
 
         const isFallback = mirusTotal <= 0 && blockSum > 0;
         if (isFallback) {
           console.debug(
             `[runImport] ${row.employee.name} / ${day.date}: totalHours fehlt → Fallback auf Blocksumme ${effectiveHours}h`,
+          );
+        }
+        if (absenceType && effectiveHours <= 0) {
+          console.debug(
+            `[runImport] ${row.employee.name} / ${day.date}: Abwesenheitstag (${day.absenceCode} → ${absenceType})`,
           );
         }
 
@@ -737,9 +746,10 @@ export default function ArbeitszeitblaetterPage() {
               : null;
 
           const hourResult = await saveActualHourEntry(row.employee.id, day.date, {
-            hours: effectiveHours,
-            start: singleShift?.from ?? undefined,
-            end:   singleShift?.to   ?? undefined,
+            hours:       effectiveHours,
+            start:       singleShift?.from ?? undefined,
+            end:         singleShift?.to   ?? undefined,
+            absenceType: absenceType ?? undefined,
           });
           if (!hourResult.ok) {
             const code = hourResult.code ?? '';
