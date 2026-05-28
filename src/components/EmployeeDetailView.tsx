@@ -10,6 +10,10 @@ import {
   type TimesheetConfirmation,
   type TimesheetStatus,
 } from '@/lib/timesheet-store';
+import {
+  loadActualHourEntriesForMonth,
+  type HourBlockEntry,
+} from '@/lib/supabase-db';
 import DayDetailDrawer from '@/components/DayDetailDrawer';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -63,20 +67,7 @@ function fmtTime(t: string | null): string {
   return t.slice(0, 5);
 }
 
-/**
- * Prüft ob start/end-Zeiten die gesamte AZB-Stundenanzahl plausibel erklären.
- * Erlaubt ±1.5h Toleranz (Pausen, Rundung).
- * Verhindert Anzeige von Teilblöcken wenn hours = Tages-Total mehrerer Blöcke.
- */
-function timesMatchHours(start: string | null, end: string | null, hours: number): boolean {
-  if (!start || !end) return false;
-  const sp = start.split(':').map(Number);
-  const ep = end.split(':').map(Number);
-  if (sp.length < 2 || ep.length < 2) return false;
-  const durationH = (ep[0] * 60 + ep[1] - (sp[0] * 60 + sp[1])) / 60;
-  if (durationH <= 0 || durationH > 16) return false;
-  return Math.abs(durationH - hours) <= 1.5;
-}
+
 function fmtDate(iso: string): string {
   const d = new Date(iso + 'T12:00:00');
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
@@ -133,16 +124,69 @@ function rowBg(s: DayStatus): string {
   return '';
 }
 
-// ─── Dienstplan-Zelle ─────────────────────────────────────────────────────────
+// ─── Zeitblock-Helfer ─────────────────────────────────────────────────────────
 
-function PlanCell({ e }: { e: DayComparisonEntry }) {
-  const hasFrüh = !!(e.frueh_start && e.frueh_end);
-  const hasSpät = !!(e.spaet_start && e.spaet_end);
-  if (!hasFrüh && !hasSpät) return <span className="text-muted-foreground">–</span>;
+function toMin(t: string): number {
+  const [h, m] = t.slice(0, 5).split(':').map(Number);
+  return h * 60 + m;
+}
+function fmtPauseMin(m: number): string {
+  if (m <= 0) return '';
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  if (h === 0) return `${min}m`;
+  return `${h}h ${String(min).padStart(2, '0')}m`;
+}
+
+// ─── IST-Zeitstempel-Zelle ────────────────────────────────────────────────────
+
+function IstCell({ blocks, e }: { blocks: HourBlockEntry[]; e: DayComparisonEntry }) {
+  // Dienstplan-Info für native Tooltip
+  const planParts: string[] = [];
+  if (e.frueh_start && e.frueh_end) planParts.push(`Früh: ${fmtTime(e.frueh_start)}–${fmtTime(e.frueh_end)}`);
+  if (e.spaet_start && e.spaet_end) planParts.push(`Spät: ${fmtTime(e.spaet_start)}–${fmtTime(e.spaet_end)}`);
+  const planTitle = planParts.length > 0 ? `Dienstplan: ${planParts.join(' / ')}` : undefined;
+
+  if (blocks.length === 0) {
+    // Keine IST-Blöcke — zeige Abwesenheitscode oder Platzhalter
+    if (e.absence_type) return <span className="text-muted-foreground">–</span>;
+    if (planTitle) {
+      return (
+        <span
+          className="text-muted-foreground/60 text-[10px] italic"
+          title={planTitle}
+        >
+          keine Stempel
+        </span>
+      );
+    }
+    return <span className="text-muted-foreground">–</span>;
+  }
+
+  const sorted = [...blocks].sort((a, b) => a.start_time.localeCompare(b.start_time));
+  const rows: React.ReactNode[] = [];
+
+  sorted.forEach((b, i) => {
+    if (i > 0) {
+      const pauseMin = Math.max(0, toMin(b.start_time) - toMin(sorted[i - 1].end_time));
+      if (pauseMin > 0) {
+        rows.push(
+          <div key={`pause-${i}`} className="text-[9px] text-blue-500 dark:text-blue-400 leading-tight font-sans">
+            ↕ {fmtPauseMin(pauseMin)}
+          </div>,
+        );
+      }
+    }
+    rows.push(
+      <div key={b.id} className="tabular-nums leading-tight">
+        {b.start_time.slice(0, 5)}–{b.end_time.slice(0, 5)}
+      </div>,
+    );
+  });
+
   return (
-    <div className="space-y-0.5 text-[11px]">
-      {hasFrüh && <div><span className="font-medium">Früh</span> {fmtTime(e.frueh_start)}–{fmtTime(e.frueh_end)}</div>}
-      {hasSpät && <div><span className="font-medium">Spät</span> {fmtTime(e.spaet_start)}–{fmtTime(e.spaet_end)}</div>}
+    <div className="font-mono text-[11px] space-y-0.5" title={planTitle}>
+      {rows}
     </div>
   );
 }
@@ -201,19 +245,31 @@ export default function EmployeeDetailView({
   vacationBalance, holidayBalance, confirmation,
   year, month, onBack,
 }: EmployeeDetailProps) {
-  const [entries, setEntries]         = useState<DayComparisonEntry[]>([]);
-  const [loading, setLoading]         = useState(false);
+  const [entries, setEntries]           = useState<DayComparisonEntry[]>([]);
+  const [loading, setLoading]           = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [blocksByDate, setBlocksByDate] =
+    useState<Map<string, HourBlockEntry[]>>(new Map());
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setEntries([]);
-    loadEmployeeMonthDetail(employeeId, year, month).then(data => {
-      if (!cancelled) { setEntries(data); setLoading(false); }
+    setBlocksByDate(new Map());
+
+    Promise.all([
+      loadEmployeeMonthDetail(employeeId, year, month),
+      loadActualHourEntriesForMonth(employeeId, year, month),
+    ]).then(([dayData, blocksMap]) => {
+      if (!cancelled) {
+        setEntries(dayData);
+        setBlocksByDate(blocksMap);
+        setLoading(false);
+      }
     }).catch(() => {
       if (!cancelled) setLoading(false);
     });
+
     return () => { cancelled = true; };
   }, [employeeId, year, month]);
 
@@ -275,7 +331,7 @@ export default function EmployeeDetailView({
             <p className="text-sm">Daten werden geladen…</p>
           </div>
         ) : (
-          <TableContent entries={entries} onSelectDate={setSelectedDate} />
+          <TableContent entries={entries} blocksByDate={blocksByDate} onSelectDate={setSelectedDate} />
         )}
       </div>
 
@@ -296,9 +352,11 @@ export default function EmployeeDetailView({
 
 function TableContent({
   entries,
+  blocksByDate,
   onSelectDate,
 }: {
   entries:      DayComparisonEntry[];
+  blocksByDate: Map<string, HourBlockEntry[]>;
   onSelectDate: (date: string) => void;
 }) {
 
@@ -335,7 +393,7 @@ function TableContent({
           <tr className="border-b-2 border-border bg-card text-[10px] uppercase tracking-wide text-muted-foreground shadow-sm">
             <th className="px-4 py-2 text-left font-semibold whitespace-nowrap">Datum</th>
             <th className="px-2 py-2 text-left font-semibold">WT</th>
-            <th className="px-3 py-2 text-left font-semibold">Dienstplan</th>
+            <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">IST Zeitstempel</th>
             <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Plan (h)</th>
             <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">AZB (h)</th>
             <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Differenz</th>
@@ -355,6 +413,7 @@ function TableContent({
             const absM    = e.absence_type ? ABSENCE_META[e.absence_type] : null;
             const weekend = isWeekend(e.date);
             const wday    = weekday(e.date);
+            const dayBlocks = blocksByDate.get(e.date) ?? [];
 
             return (
               <tr
@@ -373,7 +432,7 @@ function TableContent({
                   {wday}
                 </td>
                 <td className="px-3 py-1.5">
-                  <PlanCell e={e} />
+                  <IstCell blocks={dayBlocks} e={e} />
                 </td>
                 <td className="px-3 py-1.5 text-right tabular-nums">
                   {e.plan_hours != null
@@ -381,18 +440,9 @@ function TableContent({
                     : <span className="text-muted-foreground">–</span>}
                 </td>
                 <td className="px-3 py-1.5 text-right tabular-nums">
-                  {e.azb_hours != null ? (
-                    <div>
-                      <div className="font-medium">{fmtH(e.azb_hours)}</div>
-                      {timesMatchHours(e.azb_start, e.azb_end, e.azb_hours) && (
-                        <div className="text-[10px] text-muted-foreground">
-                          {fmtTime(e.azb_start)}–{fmtTime(e.azb_end)}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-muted-foreground">–</span>
-                  )}
+                  {e.azb_hours != null
+                    ? <span className="font-medium">{fmtH(e.azb_hours)}</span>
+                    : <span className="text-muted-foreground">–</span>}
                 </td>
                 <td className="px-3 py-1.5 text-right tabular-nums">
                   {diff != null ? (

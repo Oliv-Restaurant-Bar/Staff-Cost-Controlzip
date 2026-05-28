@@ -174,10 +174,49 @@ export default function DayDetailDrawer({
           {/* ── Inhalt ── */}
           {!loading && !noTable && (
             <>
-              {/* ── Zeitblöcke-Tabelle ── */}
-              <div className="px-4 pt-4 pb-1">
+              {/* ── Dienstplan oben ── */}
+              {(hasFrüh || hasSpät || dayEntry?.frueh_absence) && (
+                <div className="px-4 pt-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                    Dienstplan (Soll)
+                  </p>
+                  <div className="rounded-lg border border-border bg-card divide-y divide-border/50 mb-4">
+                    {hasFrüh && (
+                      <div className="px-3 py-2 flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground font-medium">Frühschicht</span>
+                        <span className="font-mono font-semibold">
+                          {fmtTime(dayEntry?.frueh_start)}–{fmtTime(dayEntry?.frueh_end)}
+                        </span>
+                      </div>
+                    )}
+                    {hasSpät && (
+                      <div className="px-3 py-2 flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground font-medium">Spätschicht</span>
+                        <span className="font-mono font-semibold">
+                          {fmtTime(dayEntry?.spaet_start)}–{fmtTime(dayEntry?.spaet_end)}
+                        </span>
+                      </div>
+                    )}
+                    {dayEntry?.frueh_absence && (
+                      <div className="px-3 py-2 flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground font-medium">Abwesenheit</span>
+                        <span className="font-semibold text-blue-600 dark:text-blue-400">
+                          {dayEntry.frueh_absence}
+                        </span>
+                      </div>
+                    )}
+                    <div className="px-3 py-2 flex items-center justify-between text-xs bg-muted/20">
+                      <span className="text-muted-foreground font-medium">Plan Total</span>
+                      <span className="font-semibold">{fmtHours(planH)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── IST Zeitblöcke-Tabelle ── */}
+              <div className="px-4 pt-2 pb-1">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                  Zeitblöcke
+                  IST Zeitstempel (Mirus)
                 </p>
               </div>
 
@@ -290,40 +329,6 @@ export default function DayDetailDrawer({
                 </div>
               </div>
 
-              {/* ── Dienstplan ── */}
-              {(hasFrüh || hasSpät) && (
-                <div className="px-4 pt-2 pb-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                    Dienstplan
-                  </p>
-                  <div className="rounded-lg border border-border bg-card divide-y divide-border/50">
-                    {hasFrüh && (
-                      <div className="px-3 py-2 flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground font-medium">Frühschicht</span>
-                        <span className="font-mono font-semibold">
-                          {fmtTime(dayEntry?.frueh_start)}–{fmtTime(dayEntry?.frueh_end)}
-                        </span>
-                      </div>
-                    )}
-                    {hasSpät && (
-                      <div className="px-3 py-2 flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground font-medium">Spätschicht</span>
-                        <span className="font-mono font-semibold">
-                          {fmtTime(dayEntry?.spaet_start)}–{fmtTime(dayEntry?.spaet_end)}
-                        </span>
-                      </div>
-                    )}
-                    {dayEntry?.frueh_absence && (
-                      <div className="px-3 py-2 flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground font-medium">Abwesenheit</span>
-                        <span className="font-semibold text-blue-600 dark:text-blue-400">
-                          {dayEntry.frueh_absence}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
 
               {/* ── Hinweis ── */}
               <div className="px-4 pb-5 text-[10px] text-muted-foreground/50">

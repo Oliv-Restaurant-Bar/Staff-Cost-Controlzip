@@ -836,6 +836,49 @@ export async function loadActualHourEntriesForDay(
   return (data ?? []) as HourBlockEntry[];
 }
 
+/**
+ * Lädt alle Arbeitsblöcke für einen ganzen Monat in einem Query.
+ * Gibt eine Map<YYYY-MM-DD, HourBlockEntry[]> zurück.
+ * Bei fehlendem Tisch (Migration ausstehend) → leere Map (kein Crash).
+ */
+export async function loadActualHourEntriesForMonth(
+  employeeId: string,
+  year: number,
+  month: number,
+): Promise<Map<string, HourBlockEntry[]>> {
+  const pad      = (n: number) => String(n).padStart(2, '0');
+  const fromDate = `${year}-${pad(month)}-01`;
+  const lastDay  = new Date(year, month, 0).getDate();
+  const toDate   = `${year}-${pad(month)}-${pad(lastDay)}`;
+
+  const { data, error } = await supabase
+    .from('actual_hour_entries')
+    .select('id, date, start_time, end_time, duration_hours, source')
+    .eq('employee_id', employeeId)
+    .gte('date', fromDate)
+    .lte('date', toDate)
+    .order('start_time');
+
+  if (error) {
+    // Tabelle existiert noch nicht → still degraded, leere Map
+    console.warn('[supabase-db] loadActualHourEntriesForMonth:', error.message);
+    return new Map();
+  }
+
+  const map = new Map<string, HourBlockEntry[]>();
+  for (const row of data ?? []) {
+    if (!map.has(row.date)) map.set(row.date, []);
+    map.get(row.date)!.push({
+      id:             row.id,
+      start_time:     row.start_time,
+      end_time:       row.end_time,
+      duration_hours: row.duration_hours,
+      source:         row.source,
+    });
+  }
+  return map;
+}
+
 // ─── App-Einstellungen (app_settings) ────────────────────────────────────────
 
 export async function loadSetting<T>(key: string): Promise<T | null> {
