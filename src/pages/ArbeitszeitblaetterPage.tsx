@@ -12,6 +12,7 @@ import {
   Users, Check, Upload, FileSpreadsheet, AlertTriangle, X, Info,
   History, UserPlus, SkipForward, Undo2, ShieldCheck, Lock,
   MessageSquare, SendHorizontal, CheckCheck, LockOpen,
+  BanIcon, UserCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -58,6 +59,12 @@ import {
   finalizeTimesheet,
   type EmployeeRequest,
 } from '@/lib/timesheet-store';
+import ExclusionDialog, { type ExclusionDialogMode } from '@/components/ExclusionDialog';
+import {
+  type ExclusionRecord, type InclusionRecord,
+  getExclusionsForTenant, getInclusionsForMonth, isExcludedForMonth,
+  excludeEmployee, reIncludeEmployeePermanent, reIncludeEmployeeMonth,
+} from '@/lib/timesheet-exclusions-store';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -270,6 +277,13 @@ export default function ArbeitszeitblaetterPage() {
   // ── Mitarbeiter-Einzelansicht ─────────────────────────────────────────────
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
 
+  // ── Ausschluss-Funktion ────────────────────────────────────────────────────
+  const [exclusions,       setExclusions]       = useState<ExclusionRecord[]>([]);
+  const [inclusions,       setInclusions]        = useState<InclusionRecord[]>([]);
+  const [exclusionFilter,  setExclusionFilter]   = useState<'all' | 'active' | 'excluded'>('active');
+  const [excludeDialogEmp,  setExcludeDialogEmp]  = useState<Employee | null>(null);
+  const [excludeDialogMode, setExcludeDialogMode] = useState<ExclusionDialogMode>('exclude');
+
   // ── Create-Employee-Dialog ────────────────────────────────────────────────
 
   const [createDialogRowIdx, setCreateDialogRowIdx] = useState<number | null>(null);
@@ -298,7 +312,7 @@ export default function ArbeitszeitblaetterPage() {
       setAllEmps(all as unknown as PersonnelEmployee[]);
 
       const empIds = filtered.map(e => e.id);
-      const [confs, hours, dienstplan, bals, history, historyAll, editCounts, reqs] = await Promise.all([
+      const [confs, hours, dienstplan, bals, history, historyAll, editCounts, reqs, excls, incls] = await Promise.all([
         getConfirmationsForMonth(tenantId, year, month),
         getActualHoursBatch(empIds, year, month),
         loadDienstplanHoursForMonth(empIds, year, month),
@@ -307,6 +321,8 @@ export default function ArbeitszeitblaetterPage() {
         getImportHistoryAll(tenantId, 30),
         getManualEditCountsForMonth(empIds, year, month),
         getRequestsForMonth(tenantId, year, month),
+        getExclusionsForTenant(tenantId),
+        getInclusionsForMonth(tenantId, year, month),
       ]);
 
       setConfirmations(confs);
@@ -317,6 +333,8 @@ export default function ArbeitszeitblaetterPage() {
       setImportHistoryList(historyAll);
       setManualEditCounts(editCounts);
       setRequests(reqs);
+      setExclusions(excls);
+      setInclusions(incls);
       const mStatuses = await getMonthStatuses(tenantId, year, month);
       setMonthStatuses(mStatuses);
     } catch (err) {
@@ -336,6 +354,10 @@ export default function ArbeitszeitblaetterPage() {
 
   const confMap = Object.fromEntries(confirmations.map(c => [c.employee_id, c]));
   const departments = ['all', ...Array.from(new Set(employees.map(e => e.department).filter(Boolean)))];
+  const excludedIds = new Set(
+    employees.filter(e => isExcludedForMonth(e.id, year, month, exclusions, inclusions)).map(e => e.id),
+  );
+  const activeEmployees = employees.filter(e => !excludedIds.has(e.id));
 
   const rows: RowData[] = employees
     .filter(e => deptFilter === 'all' || e.department === deptFilter)
@@ -351,16 +373,22 @@ export default function ArbeitszeitblaetterPage() {
       holidayTaken:    balances[e.id]?.holiday_taken_hours            ?? null,
     }));
 
+  const displayedRows = exclusionFilter === 'all'
+    ? rows
+    : exclusionFilter === 'excluded'
+      ? rows.filter(r => excludedIds.has(r.employee.id))
+      : rows.filter(r => !excludedIds.has(r.employee.id));
+  const activeRows = rows.filter(r => !excludedIds.has(r.employee.id));
   const stats = {
-    total:        rows.length,
-    confirmed:    rows.filter(r => r.confirmation?.status === 'confirmed').length,
-    questionOpen: rows.filter(r => r.confirmation?.status === 'question_open').length,
-    rejected:     rows.filter(r => r.confirmation?.status === 'rejected').length,
-    pending:      rows.filter(r => !r.confirmation || r.confirmation.status === 'open').length,
+    total:        activeRows.length,
+    confirmed:    activeRows.filter(r => r.confirmation?.status === 'confirmed').length,
+    questionOpen: activeRows.filter(r => r.confirmation?.status === 'question_open').length,
+    rejected:     activeRows.filter(r => r.confirmation?.status === 'rejected').length,
+    pending:      activeRows.filter(r => !r.confirmation || r.confirmation.status === 'open').length,
   };
   const openRequestCount = requests.filter(r => r.status === 'open' || r.status === 'in_review').length;
-  const isMonthFinalizedAll = employees.length > 0
-    && employees.every(e => monthStatuses[e.id]?.status === 'finalized');
+  const isMonthFinalizedAll = activeEmployees.length > 0
+    && activeEmployees.every(e => monthStatuses[e.id]?.status === 'finalized');
 
   // Einzelansicht: Daten für ausgewählten Mitarbeiter (unabhängig vom Abteilungsfilter)
   const selectedRow: RowData | null = selectedEmployeeId
@@ -432,16 +460,56 @@ export default function ArbeitszeitblaetterPage() {
 
   async function handleMarkMonthSent() {
     if (isMonthFinalizedAll) { toast.error('Monat ist finalisiert und gesperrt — Freigabe nicht möglich'); return; }
-    if (!employees.length) { toast.error('Keine aktiven Mitarbeiter im Monat'); return; }
-    if (!confirm(`Alle ${employees.length} Mitarbeiter für ${MONTH_NAMES_DE[month - 1]} ${year} zur Mitarbeiterprüfung freigeben?`)) return;
+    if (!activeEmployees.length) { toast.error('Keine aktiven Mitarbeiter im Monat'); return; }
+    if (!confirm(`${activeEmployees.length} Mitarbeiter für ${MONTH_NAMES_DE[month - 1]} ${year} zur Mitarbeiterprüfung freigeben?${excludedIds.size > 0 ? ` (${excludedIds.size} ausgeschlossen, werden übersprungen)` : ''}`)) return;
     try {
-      const empIds = employees.map(e => e.id);
+      const empIds = activeEmployees.map(e => e.id);
       const result = await markMonthSent(tenantId, year, month, empIds);
       toast.success(`Monat freigegeben: ${result.created} neue Links erstellt, ${result.updated} aktualisiert`);
       await loadData();
     } catch (err) {
       console.error('[TIMESHEET] markMonthSent error', err);
       toast.error('Fehler beim Freigeben');
+    }
+  }
+
+  // ── Ausschluss-Handler ────────────────────────────────────────────────────
+
+  async function handleExcludeEmployee(scope: 'month_only' | 'permanent', reason: string | null) {
+    if (!excludeDialogEmp) return;
+    try {
+      await excludeEmployee({
+        tenantId,
+        employeeId: excludeDialogEmp.id,
+        startYear:  year,
+        startMonth: month,
+        scope,
+        reason,
+        excludedBy: user?.email ?? null,
+      });
+      toast.success(`${excludeDialogEmp.name} ausgeschlossen`);
+      await loadData();
+    } catch (err) {
+      console.error('[EXCLUSION] exclude:', err);
+      toast.error('Fehler beim Ausschliessen');
+      throw err;
+    }
+  }
+
+  async function handleIncludeEmployee(scope: 'month_only' | 'permanent', _reason: string | null) {
+    if (!excludeDialogEmp) return;
+    try {
+      if (scope === 'permanent') {
+        await reIncludeEmployeePermanent(tenantId, excludeDialogEmp.id, year, month, user?.email ?? null);
+      } else {
+        await reIncludeEmployeeMonth(tenantId, excludeDialogEmp.id, year, month, null, user?.email ?? null);
+      }
+      toast.success(`${excludeDialogEmp.name} wieder eingeschlossen`);
+      await loadData();
+    } catch (err) {
+      console.error('[EXCLUSION] include:', err);
+      toast.error('Fehler beim Einschliessen');
+      throw err;
     }
   }
 
@@ -1164,15 +1232,41 @@ export default function ArbeitszeitblaetterPage() {
           </div>
         )}
 
+        {/* Ausschluss-Filter */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {([
+            { key: 'active',   label: 'Aktive',         title: 'Ausgeschlossene ausblenden' },
+            { key: 'all',      label: 'Alle',            title: 'Alle Mitarbeiter anzeigen' },
+            { key: 'excluded', label: `Ausgeschlossene${excludedIds.size > 0 ? ` (${excludedIds.size})` : ''}`, title: 'Nur ausgeschlossene Mitarbeiter' },
+          ] as const).map(f => (
+            <button
+              key={f.key}
+              onClick={() => setExclusionFilter(f.key)}
+              title={f.title}
+              className={cn(
+                'px-3 py-1 rounded-full text-xs font-medium border transition-colors',
+                exclusionFilter === f.key
+                  ? f.key === 'excluded'
+                    ? 'bg-zinc-600 text-white border-zinc-600 dark:bg-zinc-500 dark:border-zinc-500'
+                    : 'bg-primary text-primary-foreground border-primary'
+                  : 'border-border text-muted-foreground hover:bg-muted',
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
         {/* Mitarbeiter-Tabelle */}
         <div className="bg-card border border-border rounded-lg overflow-hidden">
           {loading ? (
             <div className="py-16 text-center text-muted-foreground text-sm">
               <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2" />Lade Daten…
             </div>
-          ) : rows.length === 0 ? (
+          ) : displayedRows.length === 0 ? (
             <div className="py-16 text-center text-muted-foreground text-sm">
-              <Users className="h-8 w-8 mx-auto mb-2 opacity-30" />Keine aktiven Mitarbeiter für diesen Monat
+              <Users className="h-8 w-8 mx-auto mb-2 opacity-30" />
+              {exclusionFilter === 'excluded' ? 'Keine ausgeschlossenen Mitarbeiter in diesem Monat' : 'Keine aktiven Mitarbeiter für diesen Monat'}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -1193,8 +1287,9 @@ export default function ArbeitszeitblaetterPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/50">
-                  {rows.map(row => {
+                  {displayedRows.map(row => {
                     const { employee: emp, confirmation: conf, istHours, dienstplanHours, sollHours, vacationBalance, holidayBalance } = row;
+                    const isExcluded = excludedIds.has(emp.id);
                     const diff = istHours - sollHours;
                     const planDeviation = dienstplanHours > 0 && istHours > 0 ? Math.abs(dienstplanHours - istHours) : 0;
                     const hasPlanWarning = planDeviation > 2;
@@ -1202,9 +1297,10 @@ export default function ArbeitszeitblaetterPage() {
                     const lastAction = conf?.confirmed_at ?? conf?.rejected_at ?? conf?.updated_at ?? null;
                     return (
                       <tr key={emp.id} className={cn('hover:bg-muted/30 transition-colors',
-                        hasPlanWarning && 'bg-amber-50/40 dark:bg-amber-950/10',
-                        !hasPlanWarning && status === 'confirmed' && 'bg-emerald-50/30 dark:bg-emerald-950/10',
-                        !hasPlanWarning && status === 'rejected'  && 'bg-red-50/30 dark:bg-red-950/10',
+                        isExcluded && 'opacity-50 bg-zinc-50/50 dark:bg-zinc-900/20',
+                        !isExcluded && hasPlanWarning && 'bg-amber-50/40 dark:bg-amber-950/10',
+                        !isExcluded && !hasPlanWarning && status === 'confirmed' && 'bg-emerald-50/30 dark:bg-emerald-950/10',
+                        !isExcluded && !hasPlanWarning && status === 'rejected'  && 'bg-red-50/30 dark:bg-red-950/10',
                       )}>
                         <td className="px-4 py-2 font-medium text-sm">
                           <div className="flex items-center gap-1.5">
@@ -1271,13 +1367,19 @@ export default function ArbeitszeitblaetterPage() {
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex flex-col gap-1">
-                            <StatusBadge status={status} />
+                            {isExcluded ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-100 dark:bg-zinc-800/60 text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700">
+                                <BanIcon className="h-2.5 w-2.5" />Ausgeschlossen
+                              </span>
+                            ) : (
+                              <StatusBadge status={status} />
+                            )}
                             {monthStatuses[emp.id]?.status === 'finalized' && (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-teal-50 dark:bg-teal-950/20 text-teal-700 dark:text-teal-400 border border-teal-200 dark:border-teal-800">
                                 <Lock className="h-2.5 w-2.5" />Final
                               </span>
                             )}
-                            {status === 'rejected' && conf?.employee_comment && (
+                            {!isExcluded && status === 'rejected' && conf?.employee_comment && (
                               <p className="text-[10px] text-red-600 dark:text-red-400 max-w-[180px] truncate" title={conf.employee_comment}>„{conf.employee_comment}"</p>
                             )}
                           </div>
@@ -1285,14 +1387,32 @@ export default function ArbeitszeitblaetterPage() {
                         <td className="px-3 py-2 text-xs text-muted-foreground hidden xl:table-cell">{lastAction ? fmtDatetime(lastAction) : '–'}</td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-1 justify-end">
+                            {/* Ausschluss / Einschluss-Button */}
+                            <button
+                              onClick={() => { setExcludeDialogEmp(emp); setExcludeDialogMode(isExcluded ? 'include' : 'exclude'); }}
+                              title={isExcluded ? 'Wieder einschliessen' : 'Aus Monatslauf ausschliessen'}
+                              className={cn(
+                                'h-7 w-7 flex items-center justify-center rounded border transition-colors',
+                                isExcluded
+                                  ? 'border-zinc-200 dark:border-zinc-700 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20'
+                                  : 'border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-amber-500 hover:border-amber-200 dark:hover:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/20',
+                              )}
+                            >
+                              {isExcluded ? <UserCheck className="h-3.5 w-3.5" /> : <BanIcon className="h-3.5 w-3.5" />}
+                            </button>
                             {conf ? (
                               <>
                                 <button onClick={() => handleCopyLink(conf)} title="Link kopieren" className="h-7 w-7 flex items-center justify-center rounded border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><Copy className="h-3.5 w-3.5" /></button>
-                                <button onClick={() => handleGenerateLink(emp)} disabled={generating === emp.id} title="Link neu generieren" className="h-7 w-7 flex items-center justify-center rounded border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground disabled:opacity-50"><RefreshCw className={cn('h-3.5 w-3.5', generating === emp.id && 'animate-spin')} /></button>
+                                <button onClick={() => handleGenerateLink(emp)} disabled={generating === emp.id || isExcluded} title={isExcluded ? 'Ausgeschlossen — kein neuer Link' : 'Link neu generieren'} className="h-7 w-7 flex items-center justify-center rounded border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40"><RefreshCw className={cn('h-3.5 w-3.5', generating === emp.id && 'animate-spin')} /></button>
                                 <button onClick={() => handleDelete(conf, emp.name)} title="Löschen" className="h-7 w-7 flex items-center justify-center rounded border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors text-red-400 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
                               </>
                             ) : (
-                              <button onClick={() => handleGenerateLink(emp)} disabled={generating === emp.id} className="h-7 px-2.5 flex items-center gap-1 text-[11px] font-medium rounded border border-primary text-primary hover:bg-primary/10 transition-colors disabled:opacity-50">
+                              <button
+                                onClick={() => !isExcluded && handleGenerateLink(emp)}
+                                disabled={generating === emp.id || isExcluded}
+                                title={isExcluded ? 'Dieser Mitarbeiter ist für diesen Monat ausgeschlossen.' : undefined}
+                                className="h-7 px-2.5 flex items-center gap-1 text-[11px] font-medium rounded border border-primary text-primary hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
                                 {generating === emp.id ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Link className="h-3 w-3" />}Link generieren
                               </button>
                             )}
@@ -1418,6 +1538,7 @@ export default function ArbeitszeitblaetterPage() {
           balances={balances}
           userEmail={user?.email ?? null}
           onChanged={loadData}
+          excludedEmployeeIds={excludedIds}
         />
 
         {/* Mirus-Korrekturliste */}
@@ -1993,6 +2114,19 @@ export default function ArbeitszeitblaetterPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Ausschluss-Dialog ─────────────────────────────────────────────── */}
+      {excludeDialogEmp && (
+        <ExclusionDialog
+          open={!!excludeDialogEmp}
+          onOpenChange={open => { if (!open) setExcludeDialogEmp(null); }}
+          mode={excludeDialogMode}
+          employeeName={excludeDialogEmp.name}
+          year={year}
+          month={month}
+          onConfirm={excludeDialogMode === 'exclude' ? handleExcludeEmployee : handleIncludeEmployee}
+        />
+      )}
 
     </div>
   );

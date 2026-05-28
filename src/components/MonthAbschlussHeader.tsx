@@ -26,17 +26,18 @@ interface EmployeeLookup {
 }
 
 interface Props {
-  tenantId:      string;
-  year:          number;
-  month:         number;
-  employees:     EmployeeLookup[];
-  confirmations: TimesheetConfirmation[];
-  requests:      EmployeeRequest[];
-  monthStatuses: Record<string, MonthStatusRecord>;
-  istMap:        Record<string, number>;
-  balances:      Record<string, EmployeeTimeBalance>;
-  userEmail:     string | null;
-  onChanged:     () => void;
+  tenantId:            string;
+  year:                number;
+  month:               number;
+  employees:           EmployeeLookup[];
+  confirmations:       TimesheetConfirmation[];
+  requests:            EmployeeRequest[];
+  monthStatuses:       Record<string, MonthStatusRecord>;
+  istMap:              Record<string, number>;
+  balances:            Record<string, EmployeeTimeBalance>;
+  userEmail:           string | null;
+  onChanged:           () => void;
+  excludedEmployeeIds: Set<string>;
 }
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
@@ -102,7 +103,7 @@ function computeStatusCounts(
 
 export default function MonthAbschlussHeader({
   tenantId, year, month, employees, confirmations, requests,
-  monthStatuses, istMap, balances, userEmail, onChanged,
+  monthStatuses, istMap, balances, userEmail, onChanged, excludedEmployeeIds,
 }: Props) {
   const [showDialog, setShowDialog]               = useState(false);
   const [overrideUnconfirmed, setOverrideUnconfirmed] = useState(false);
@@ -111,13 +112,17 @@ export default function MonthAbschlussHeader({
 
   if (employees.length === 0) return null;
 
-  // Berechnungen
-  const counts    = computeStatusCounts(employees, monthStatuses, confirmations, requests);
+  // Ausgeschlossene herausfiltern — sie zählen weder für Finalisierung noch für Status
+  const activeEmps    = employees.filter(e => !excludedEmployeeIds.has(e.id));
+  const excludedCount = excludedEmployeeIds.size;
+
+  // Berechnungen (nur aktive Mitarbeiter)
+  const counts    = computeStatusCounts(activeEmps, monthStatuses, confirmations, requests);
   const confMap   = Object.fromEntries(confirmations.map(c => [c.employee_id, c]));
 
-  const isAllFinalized    = employees.length > 0 && counts.finalized === employees.length;
+  const isAllFinalized    = activeEmps.length > 0 && counts.finalized === activeEmps.length;
   const openRequestCount  = requests.filter(r => r.status === 'open' || r.status === 'in_review').length;
-  const unconfirmedCount  = employees.filter(e => confMap[e.id]?.status !== 'confirmed').length;
+  const unconfirmedCount  = activeEmps.filter(e => confMap[e.id]?.status !== 'confirmed').length;
   const latestFinalizedAt = isAllFinalized
     ? Object.values(monthStatuses)
         .filter(s => s.status === 'finalized' && s.finalized_at)
@@ -128,7 +133,7 @@ export default function MonthAbschlussHeader({
     ? Object.values(monthStatuses).find(s => s.status === 'finalized')?.finalized_by ?? null
     : null;
 
-  // Snapshot zusammenstellen
+  // Snapshot zusammenstellen (nur aktive Mitarbeiter)
   function buildSnapshot(): MonthSnapshotData {
     const now = new Date().toISOString();
     return {
@@ -137,11 +142,11 @@ export default function MonthAbschlussHeader({
       month,
       finalized_at:       now,
       finalized_by:       userEmail,
-      employee_count:     employees.length,
-      confirmed_count:    employees.filter(e => confMap[e.id]?.status === 'confirmed').length,
-      total_ist_hours:    Math.round(employees.reduce((s, e) => s + (istMap[e.id] ?? 0), 0) * 10) / 10,
+      employee_count:     activeEmps.length,
+      confirmed_count:    activeEmps.filter(e => confMap[e.id]?.status === 'confirmed').length,
+      total_ist_hours:    Math.round(activeEmps.reduce((s, e) => s + (istMap[e.id] ?? 0), 0) * 10) / 10,
       open_request_count: openRequestCount,
-      employees: employees.map(e => {
+      employees: activeEmps.map(e => {
         const conf = confMap[e.id];
         const soll = sollHoursForMonth(e.weekly_hours, year, month);
         const ist  = istMap[e.id] ?? 0;
@@ -162,7 +167,7 @@ export default function MonthAbschlussHeader({
     };
   }
 
-  // Finalisierungs-Handler
+  // Finalisierungs-Handler (nur aktive Mitarbeiter werden finalisiert)
   async function handleFinalize() {
     if (openRequestCount > 0) {
       toast.error(`${openRequestCount} offene Rückfragen müssen zuerst bearbeitet werden`);
@@ -173,7 +178,7 @@ export default function MonthAbschlussHeader({
       const snapshot = buildSnapshot();
       await saveMonthSnapshot(tenantId, year, month, snapshot, userEmail);
       await Promise.all(
-        employees.map(e => upsertMonthStatus(tenantId, e.id, year, month, 'finalized', userEmail)),
+        activeEmps.map(e => upsertMonthStatus(tenantId, e.id, year, month, 'finalized', userEmail)),
       );
       toast.success(`${MONTH_NAMES_DE[month - 1]} ${year} finalisiert und gesperrt`);
       setShowDialog(false);
@@ -191,14 +196,14 @@ export default function MonthAbschlussHeader({
   async function handleUnlock() {
     if (!confirm(
       `Monat ${MONTH_NAMES_DE[month - 1]} ${year} entsperren?\n\n` +
-      `Alle ${employees.length} Mitarbeiter werden auf "bestätigt" zurückgesetzt. ` +
+      `${activeEmps.length} Mitarbeiter werden auf "bestätigt" zurückgesetzt. ` +
       `Der Snapshot bleibt erhalten.`,
     )) return;
 
     setUnlocking(true);
     try {
       await Promise.all(
-        employees.map(e => upsertMonthStatus(tenantId, e.id, year, month, 'confirmed', userEmail)),
+        activeEmps.map(e => upsertMonthStatus(tenantId, e.id, year, month, 'confirmed', userEmail)),
       );
       toast.success('Monat entsperrt');
       onChanged();
@@ -263,6 +268,7 @@ export default function MonthAbschlussHeader({
     { key: 'confirmed',     label: 'Bestätigt',   count: counts.confirmed,     color: 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800', icon: <CheckCircle2 className="h-3 w-3" /> },
     { key: 'finalized',     label: 'Finalisiert', count: counts.finalized,     color: 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/20 border-teal-200 dark:border-teal-800', icon: <Lock         className="h-3 w-3" /> },
   ] as const;
+  const excludedPillColor = 'text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800/40 border-zinc-200 dark:border-zinc-700';
 
   const blockReason = openRequestCount > 0
     ? `${openRequestCount} offene Rückfragen müssen zuerst bearbeitet werden`
@@ -287,7 +293,12 @@ export default function MonthAbschlussHeader({
               </span>
             ) : null
           ))}
-          {PILLS.every(p => p.count === 0) && (
+          {excludedCount > 0 && (
+            <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border', excludedPillColor)}>
+              <AlertTriangle className="h-3 w-3" />Ausgeschlossen: <strong>{excludedCount}</strong>
+            </span>
+          )}
+          {PILLS.every(p => p.count === 0) && excludedCount === 0 && (
             <span className="text-xs text-muted-foreground">Keine Daten für diesen Monat</span>
           )}
         </div>
@@ -326,12 +337,18 @@ export default function MonthAbschlussHeader({
             {/* Zusammenfassung */}
             <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm space-y-1.5">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Mitarbeiter total</span>
-                <strong>{employees.length}</strong>
+                <span className="text-muted-foreground">Mitarbeiter aktiv</span>
+                <strong>{activeEmps.length}</strong>
               </div>
+              {excludedCount > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Ausgeschlossen (werden ignoriert)</span>
+                  <strong className="text-zinc-400">{excludedCount}</strong>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Bestätigt</span>
-                <strong className="text-emerald-600 dark:text-emerald-400">{employees.length - unconfirmedCount}</strong>
+                <strong className="text-emerald-600 dark:text-emerald-400">{activeEmps.length - unconfirmedCount}</strong>
               </div>
               {unconfirmedCount > 0 && (
                 <div className="flex justify-between">
