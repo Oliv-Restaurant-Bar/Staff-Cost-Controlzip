@@ -651,52 +651,73 @@ export default function ArbeitszeitblaetterPage() {
       if (row.matchStatus === 'new_employee') createdCount++;
       if (row.matchStatus === 'manual') manualCount++;
 
-      // Tagesstunden → actual_hours
+      // Tagesstunden → actual_hours + Zeitblöcke → actual_hour_entries
       for (const day of row.excEmployee.days) {
-        if (!day.date || (day.totalHours ?? 0) <= 0) continue;
+        if (!day.date) continue;
+
+        // ── Zeitblöcke aus Schichten berechnen ────────────────────────────────
+        const blockEntries: Array<{ start_time: string; end_time: string; duration_hours: number }> = [];
+        for (const shift of day.shifts ?? []) {
+          if (shift.from && shift.from !== '?' && shift.to && shift.to !== '?') {
+            const [sh, sm] = shift.from.split(':').map(Number);
+            const [eh, em] = shift.to.split(':').map(Number);
+            const dur = Math.round(((eh * 60 + em) - (sh * 60 + sm)) / 60 * 100) / 100;
+            if (dur > 0) blockEntries.push({ start_time: shift.from, end_time: shift.to, duration_hours: dur });
+          }
+        }
+
+        // ── Tages-Totalstunden: Mirus-Wert hat Vorrang, Fallback = Summe Blöcke ─
+        const blockSum = blockEntries.reduce((s, b) => s + b.duration_hours, 0);
+        const mirusTotal = day.totalHours ?? 0;
+        const effectiveHours = mirusTotal > 0
+          ? mirusTotal
+          : blockSum > 0
+          ? Math.round(blockSum * 100) / 100   // Fallback: Summe der Zeitblöcke
+          : 0;
+
+        if (effectiveHours <= 0 && blockEntries.length === 0) continue;  // wirklich leerer Tag
+
+        const isFallback = mirusTotal <= 0 && blockSum > 0;
+        if (isFallback) {
+          console.debug(
+            `[runImport] ${row.employee.name} / ${day.date}: totalHours fehlt → Fallback auf Blocksumme ${effectiveHours}h`,
+          );
+        }
+
         try {
-          // Zeiten nur speichern wenn exakt EIN Schichtblock vorhanden — bei mehreren
-          // Blöcken würde shifts[0] nur den ersten Block widerspiegeln, hours aber
-          // das Tages-Total aller Blöcke. Das würde in der Anzeige verwirren.
+          // ── 1. actual_hours (Tages-Total) speichern ───────────────────────
           const singleShift =
             day.shifts?.length === 1 && day.shifts[0].from && day.shifts[0].to
               ? day.shifts[0]
               : null;
-          await saveActualHourEntry(row.employee.id, day.date, {
-            hours: day.totalHours!,
+
+          const hourResult = await saveActualHourEntry(row.employee.id, day.date, {
+            hours: effectiveHours,
             start: singleShift?.from ?? undefined,
             end:   singleShift?.to   ?? undefined,
           });
-
-          // Einzelne Arbeitsblöcke (start/end/duration) speichern
-          const blockEntries: Array<{ start_time: string; end_time: string; duration_hours: number }> = [];
-          for (const shift of day.shifts ?? []) {
-            if (shift.from && shift.from !== '?' && shift.to && shift.to !== '?') {
-              const [sh, sm] = shift.from.split(':').map(Number);
-              const [eh, em] = shift.to.split(':').map(Number);
-              const durationHours = Math.round(((eh * 60 + em) - (sh * 60 + sm)) / 60 * 100) / 100;
-              if (durationHours > 0) {
-                blockEntries.push({ start_time: shift.from, end_time: shift.to, duration_hours: durationHours });
-              }
-            }
+          if (!hourResult.ok) {
+            const code = hourResult.code ?? '';
+            const hint = code === '42501' ? ' (Berechtigung fehlt)' : code === '22008' ? ' (Datumsformat)' : '';
+            errors.push(`[AZB-Total] ${row.employee.name} / ${day.date}: ${hourResult.error ?? 'unbekannt'}${hint}`);
+            console.error('[runImport] saveActualHourEntry fehlgeschlagen:', row.employee.name, day.date, `code=${code}`, hourResult.error);
           }
+
+          // ── 2. actual_hour_entries (Einzelblöcke) speichern ───────────────
           console.debug(
-            `[runImport] ${row.employee.name} / ${day.date}: ${blockEntries.length} Blöcke aus ${day.shifts?.length ?? 0} Schichten`,
+            `[runImport] ${row.employee.name} / ${day.date}: ${blockEntries.length} Blöcke (total=${effectiveHours}h${isFallback ? ' Fallback' : ''})`,
             blockEntries,
           );
           if (blockEntries.length > 0) {
-            const result = await saveActualHourEntries(row.employee.id, day.date, blockEntries);
-            if (!result.ok) {
-              const code = result.code ?? '';
-              const hint = code === '42501'
-                ? ' (Berechtigung fehlt — SQL-Script ausführen)'
-                : code === '22008'
-                ? ' (Datumsformat-Fehler)'
-                : '';
-              errors.push(`[Zeitblöcke] ${row.employee.name} / ${day.date}: ${result.error ?? 'unbekannter Fehler'}${hint}`);
-              console.error('[runImport] saveActualHourEntries fehlgeschlagen:', row.employee.name, day.date, `code=${code}`, result.error);
+            const blockResult = await saveActualHourEntries(row.employee.id, day.date, blockEntries);
+            if (!blockResult.ok) {
+              const code = blockResult.code ?? '';
+              const hint = code === '42501' ? ' (Berechtigung fehlt — SQL-Script ausführen)' : code === '22008' ? ' (Datumsformat-Fehler)' : '';
+              errors.push(`[Zeitblöcke] ${row.employee.name} / ${day.date}: ${blockResult.error ?? 'unbekannter Fehler'}${hint}`);
+              console.error('[runImport] saveActualHourEntries fehlgeschlagen:', row.employee.name, day.date, `code=${code}`, blockResult.error);
             }
           }
+
           importedCount++;
         } catch (err) {
           errors.push(`${row.employee.name}/${day.date}: ${String(err)}`);

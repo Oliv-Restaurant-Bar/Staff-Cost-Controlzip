@@ -1,0 +1,98 @@
+Bitte passe die Mitarbeiter-Detailansicht im Modul Arbeitszeitblätter an.
+
+Ziel:
+In der Mitarbeiteransicht sollen die Ist-Stunden aus dem Dienstplan sauber den AZB/Mirus-Werten gegenübergestellt werden.
+
+Aktuelle Spalten:
+Datum | WT | IST Zeitstempel | Plan (h) | AZB (h) | Differenz | Pause | Typ | Status
+
+Bitte ändern zu:
+
+Datum | WT | IST Zeitstempel | Dienstplan IST | AZB IST | Diff. AZB - Dienstplan | Pause | Typ | Status
+
+Wichtig:
+"Dienstplan IST" kommt aus schedule_entries.
+"AZB IST" kommt aus actual_hours.
+"IST Zeitstempel" kommt aus actual_hour_entries.
+
+1. Spaltennamen ändern
+
+Plan (h) → Dienstplan IST
+AZB (h) → AZB IST
+Differenz → Diff. AZB - Dienstplan
+
+2. Berechnung
+
+Dienstplan IST:
+bestehende Berechnung aus schedule_entries weiterverwenden
+
+AZB IST:
+actual_hours.hours
+
+Diff:
+AZB IST minus Dienstplan IST
+
+3. Totalzeile ändern
+
+Unten Totalzeile:
+
+TOTAL | | | Total Dienstplan IST | Total AZB IST | Total Diff. AZB - Dienstplan | Total Pause | | Anzahl Abweichungen
+
+4. Obere Kacheln prüfen
+
+In den Kacheln oben soll sichtbar bleiben:
+
+Soll
+Dienstplan IST
+AZB IST
+Diff. AZB - Soll
+Diff. AZB - Dienstplan
+Ferien
+Feiertage
+Status AZB
+
+5. Statuslogik
+
+Status pro Tag:
+- OK, wenn Diff. AZB - Dienstplan maximal ±0.5 h
+- Abweichung, wenn grösser als ±0.5 h
+- Dienstplan ohne AZB, wenn Dienstplan vorhanden aber AZB fehlt
+- AZB ohne Dienstplan, wenn AZB vorhanden aber Dienstplan fehlt
+- Abwesenheit/Ferien/Frei weiterhin beachten
+
+6. Klickbare Details
+
+Wenn man auf:
+- IST Zeitstempel
+- Dienstplan IST
+- AZB IST
+- Diff.
+klickt, soll die Tagesdetailansicht geöffnet werden.
+
+7. Tagesdetailansicht
+
+In der Tagesdetailansicht klar anzeigen:
+
+Dienstplan:
+Frühschicht
+Spätschicht
+Dienstplan Total
+
+Mirus/AZB:
+Zeitblöcke
+AZB Total
+
+Vergleich:
+Diff. AZB - Dienstplan
+
+8. Wichtig
+
+Bitte die bisherige Diff. AZB - Soll nicht entfernen, sondern nur oben in der Kachel behalten.
+In der Tageszeile ist die wichtigste Differenz:
+AZB IST minus Dienstplan IST.
+
+Nach Umsetzung bitte ausgeben:
+- Welche Dateien geändert wurden
+- Welche Spalten neu benannt wurden
+- Wie Diff. berechnet wird
+- Ob Tagesdetail-Klicks weiterhin funktionieren

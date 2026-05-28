@@ -750,25 +750,40 @@ export async function saveActualHourEntry(
   employeeId: string,
   date: string,
   entry: ActualHourEntry | null
-): Promise<void> {
+): Promise<{ ok: boolean; error?: string; code?: string }> {
+  const isoDate = toIsoDate(date);
+  if (isoDate !== date) {
+    console.debug(`[supabase-db] saveActualHourEntry: Datum normalisiert "${date}" → "${isoDate}"`);
+  }
   try {
     if (!entry) {
-      await supabase
+      const { error } = await supabase
         .from('actual_hours')
         .delete()
         .eq('employee_id', employeeId)
-        .eq('date', date);
+        .eq('date', isoDate);
+      if (error) {
+        console.error('[supabase-db] saveActualHourEntry (delete):', error);
+        return { ok: false, error: error.message, code: error.code };
+      }
     } else {
-      await supabase.from('actual_hours').upsert({
+      const { error } = await supabase.from('actual_hours').upsert({
         employee_id: employeeId,
-        date,
-        hours: entry.hours,
-        start_time: entry.start ?? null,
-        end_time: entry.end ?? null,
+        date:        isoDate,
+        hours:       entry.hours,
+        start_time:  entry.start ?? null,
+        end_time:    entry.end   ?? null,
       }, { onConflict: 'employee_id,date' });
+      if (error) {
+        console.error('[supabase-db] saveActualHourEntry (upsert):', error);
+        return { ok: false, error: error.message, code: error.code };
+      }
     }
+    return { ok: true };
   } catch (e) {
+    const msg = String(e);
     console.error('[supabase-db] saveActualHourEntry exception:', e);
+    return { ok: false, error: msg };
   }
 }
 
