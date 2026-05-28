@@ -1293,8 +1293,7 @@ function parseBlock(
 
   // extractBalances: Ferien/Feiertag/Total-Saldi ergänzen falls readTotals leer
   // Mitarbeitername für Debug-Ausgabe mitgeben
-  const empNameForDebug = employeeName ?? undefined;
-  const balances = extractBalances(ws, blockStart, blockEnd, empNameForDebug);
+  const balances = extractBalances(ws, blockStart, blockEnd, name ?? undefined);
   if (!totals.ferien   && balances.ferien   != null) totals.ferien   = balances.ferien;
   if (!totals.feiertag && balances.feiertag != null) totals.feiertag = balances.feiertag;
   // Row-Found-Flags: OR aus readTotals-Treffern und extractBalances-Befunden
