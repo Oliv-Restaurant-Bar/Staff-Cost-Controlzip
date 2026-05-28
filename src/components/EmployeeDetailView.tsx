@@ -242,140 +242,201 @@ export default function EmployeeDetailView({
       />
 
       {/* Tages-Tabelle */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex flex-col flex-1 min-h-0">
+
+        {/* Legende — fixiert, scrollt nicht mit */}
+        <div className="shrink-0 flex flex-wrap gap-x-4 gap-y-1 px-5 py-2 text-[10px] text-muted-foreground border-b border-border/50 bg-muted/10">
+          <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-200 dark:bg-emerald-900" />OK (Diff ≤ 0.5 h)</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-amber-200 dark:bg-amber-900" />Abweichung (&gt; 0.5 h)</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-red-200 dark:bg-red-900" />Nur eine Seite</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-blue-100 dark:bg-blue-900" />Abwesenheit</span>
+          <span className="flex items-center gap-1 ml-auto text-muted-foreground/60">Wochenende = ausgegraut wenn leer</span>
+        </div>
+
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground">
+          <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground flex-1">
             <RefreshCw className="h-6 w-6 animate-spin" />
             <p className="text-sm">Daten werden geladen…</p>
           </div>
         ) : (
-          <>
-            {/* Legende */}
-            <div className="flex flex-wrap gap-x-4 gap-y-1 px-5 py-2 text-[10px] text-muted-foreground border-b border-border/50 bg-muted/10">
-              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-200 dark:bg-emerald-900" />OK (Diff ≤ 0.5 h)</span>
-              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-amber-200 dark:bg-amber-900" />Abweichung (&gt; 0.5 h)</span>
-              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-red-200 dark:bg-red-900" />Nur eine Seite</span>
-              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-blue-100 dark:bg-blue-900" />Abwesenheit</span>
-              <span className="flex items-center gap-1 ml-auto text-muted-foreground/60">Wochenende = ausgegraut wenn leer</span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground">
-                    <th className="px-4 py-2 text-left font-semibold">Datum</th>
-                    <th className="px-2 py-2 text-left font-semibold">WT</th>
-                    <th className="px-3 py-2 text-left font-semibold">Dienstplan</th>
-                    <th className="px-3 py-2 text-right font-semibold">Plan (h)</th>
-                    <th className="px-3 py-2 text-right font-semibold">AZB (h)</th>
-                    <th className="px-3 py-2 text-right font-semibold">Differenz</th>
-                    <th className="px-3 py-2 text-center font-semibold">Pause</th>
-                    <th className="px-3 py-2 text-left font-semibold">Typ</th>
-                    <th className="px-3 py-2 text-left font-semibold">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/40">
-                  {entries.map(e => {
-                    const status = getDayStatus(e);
-                    const diff   = e.azb_hours != null && e.plan_hours != null
-                      ? e.azb_hours - e.plan_hours : null;
-                    const pause  = e.plan_gross != null && e.plan_gross > 9 ? '30 min' : null;
-                    const absM   = e.absence_type ? ABSENCE_META[e.absence_type] : null;
-                    const weekend = isWeekend(e.date);
-                    const wday   = weekday(e.date);
-
-                    return (
-                      <tr key={e.date} className={cn(
-                        'transition-colors',
-                        rowBg(status),
-                        weekend && status === 'empty' && 'opacity-40',
-                      )}>
-                        {/* Datum */}
-                        <td className={cn('px-4 py-1.5 font-medium whitespace-nowrap', weekend && 'text-muted-foreground')}>
-                          {fmtDate(e.date)}
-                        </td>
-
-                        {/* Wochentag */}
-                        <td className={cn('px-2 py-1.5 font-medium whitespace-nowrap', weekend ? 'text-muted-foreground' : '')}>
-                          {wday}
-                        </td>
-
-                        {/* Dienstplan (Zeiten) */}
-                        <td className="px-3 py-1.5">
-                          <PlanCell e={e} />
-                        </td>
-
-                        {/* Plan (h) */}
-                        <td className="px-3 py-1.5 text-right tabular-nums">
-                          {e.plan_hours != null
-                            ? <span className="font-medium">{fmtH(e.plan_hours)}</span>
-                            : <span className="text-muted-foreground">–</span>}
-                        </td>
-
-                        {/* AZB (h) */}
-                        <td className="px-3 py-1.5 text-right tabular-nums">
-                          {e.azb_hours != null ? (
-                            <div>
-                              <div className="font-medium">{fmtH(e.azb_hours)}</div>
-                              {(e.azb_start || e.azb_end) && (
-                                <div className="text-[10px] text-muted-foreground">
-                                  {fmtTime(e.azb_start)}{e.azb_start && e.azb_end ? '–' : ''}{fmtTime(e.azb_end)}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">–</span>
-                          )}
-                        </td>
-
-                        {/* Differenz */}
-                        <td className="px-3 py-1.5 text-right tabular-nums">
-                          {diff != null ? (
-                            <span className={cn(
-                              'font-medium',
-                              Math.abs(diff) > 0.5
-                                ? (diff < 0 ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400')
-                                : 'text-emerald-600 dark:text-emerald-400',
-                            )}>
-                              {fmtDiff(diff)}
-                            </span>
-                          ) : <span className="text-muted-foreground">–</span>}
-                        </td>
-
-                        {/* Pause */}
-                        <td className="px-3 py-1.5 text-center text-muted-foreground">
-                          {pause ?? '–'}
-                        </td>
-
-                        {/* Typ (Abwesenheit) */}
-                        <td className="px-3 py-1.5">
-                          {absM ? (
-                            <span className={cn('inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none', absM.cls)}>
-                              {absM.label}
-                            </span>
-                          ) : <span className="text-muted-foreground">–</span>}
-                        </td>
-
-                        {/* Status */}
-                        <td className="px-3 py-1.5">
-                          <DayStatusBadge status={status} />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Footer */}
-            {entries.length > 0 && (
-              <div className="px-5 py-3 border-t border-border/50 text-[10px] text-muted-foreground">
-                Kommentare, Genehmigungen und PDF-Export folgen in einer nächsten Version.
-              </div>
-            )}
-          </>
+          <TableContent entries={entries} />
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Tabellen-Inhalt (ausgelagert für Übersichtlichkeit) ──────────────────────
+
+function TableContent({ entries }: { entries: DayComparisonEntry[] }) {
+
+  // ── Totals ──────────────────────────────────────────────────────────────────
+  const totalPlanHours = entries.reduce((s, e) => s + (e.plan_hours ?? 0), 0);
+  const totalAzbHours  = entries.reduce((s, e) => s + (e.azb_hours  ?? 0), 0);
+  const totalDiff      = totalAzbHours - totalPlanHours;
+
+  // Gesamtpause: 30 min pro Tag mit plan_gross > 9h
+  const totalPauseMin  = entries.filter(e => e.plan_gross != null && e.plan_gross > 9).length * 30;
+
+  // Abweichungstage: |diff| > 0.5h, kein Leertag, keine Abwesenheit
+  const deviationDays  = entries.filter(e => {
+    if (!e.plan_hours && !e.azb_hours) return false;
+    if (e.absence_type) return false;
+    const diff = e.azb_hours != null && e.plan_hours != null
+      ? Math.abs(e.azb_hours - e.plan_hours) : 0;
+    return diff > 0.5;
+  }).length;
+
+  // Vorbereitung für spätere Totals (noch nicht implementiert):
+  // const totalNightSurcharge = 0;  // Nachtzuschläge
+  // const totalOvertime       = 0;  // Überstunden
+  // const totalHolidayHours   = 0;  // Feiertagsstunden
+  // const totalVacationHours  = 0;  // Ferienstunden
+
+  return (
+    // Einziger Scroll-Container — übernimmt X+Y, damit sticky thead/tfoot funktionieren
+    <div className="flex-1 overflow-auto">
+      <table className="w-full text-xs border-collapse">
+
+        {/* ── Sticky Header ──────────────────────────────────────────────────── */}
+        <thead className="sticky top-0 z-20">
+          <tr className="border-b-2 border-border bg-card text-[10px] uppercase tracking-wide text-muted-foreground shadow-sm">
+            <th className="px-4 py-2 text-left font-semibold whitespace-nowrap">Datum</th>
+            <th className="px-2 py-2 text-left font-semibold">WT</th>
+            <th className="px-3 py-2 text-left font-semibold">Dienstplan</th>
+            <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Plan (h)</th>
+            <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">AZB (h)</th>
+            <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Differenz</th>
+            <th className="px-3 py-2 text-center font-semibold">Pause</th>
+            <th className="px-3 py-2 text-left font-semibold">Typ</th>
+            <th className="px-3 py-2 text-left font-semibold">Status</th>
+          </tr>
+        </thead>
+
+        {/* ── Datenzeilen ────────────────────────────────────────────────────── */}
+        <tbody className="divide-y divide-border/40">
+          {entries.map(e => {
+            const status  = getDayStatus(e);
+            const diff    = e.azb_hours != null && e.plan_hours != null
+              ? e.azb_hours - e.plan_hours : null;
+            const pause   = e.plan_gross != null && e.plan_gross > 9 ? '30 min' : null;
+            const absM    = e.absence_type ? ABSENCE_META[e.absence_type] : null;
+            const weekend = isWeekend(e.date);
+            const wday    = weekday(e.date);
+
+            return (
+              <tr key={e.date} className={cn(
+                'transition-colors',
+                rowBg(status),
+                weekend && status === 'empty' && 'opacity-40',
+              )}>
+                <td className={cn('px-4 py-1.5 font-medium whitespace-nowrap', weekend && 'text-muted-foreground')}>
+                  {fmtDate(e.date)}
+                </td>
+                <td className={cn('px-2 py-1.5 font-medium whitespace-nowrap', weekend ? 'text-muted-foreground' : '')}>
+                  {wday}
+                </td>
+                <td className="px-3 py-1.5">
+                  <PlanCell e={e} />
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums">
+                  {e.plan_hours != null
+                    ? <span className="font-medium">{fmtH(e.plan_hours)}</span>
+                    : <span className="text-muted-foreground">–</span>}
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums">
+                  {e.azb_hours != null ? (
+                    <div>
+                      <div className="font-medium">{fmtH(e.azb_hours)}</div>
+                      {(e.azb_start || e.azb_end) && (
+                        <div className="text-[10px] text-muted-foreground">
+                          {fmtTime(e.azb_start)}{e.azb_start && e.azb_end ? '–' : ''}{fmtTime(e.azb_end)}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">–</span>
+                  )}
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums">
+                  {diff != null ? (
+                    <span className={cn(
+                      'font-medium',
+                      Math.abs(diff) > 0.5
+                        ? (diff < 0 ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400')
+                        : 'text-emerald-600 dark:text-emerald-400',
+                    )}>
+                      {fmtDiff(diff)}
+                    </span>
+                  ) : <span className="text-muted-foreground">–</span>}
+                </td>
+                <td className="px-3 py-1.5 text-center text-muted-foreground">
+                  {pause ?? '–'}
+                </td>
+                <td className="px-3 py-1.5">
+                  {absM ? (
+                    <span className={cn('inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none', absM.cls)}>
+                      {absM.label}
+                    </span>
+                  ) : <span className="text-muted-foreground">–</span>}
+                </td>
+                <td className="px-3 py-1.5">
+                  <DayStatusBadge status={status} />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+
+        {/* ── Sticky Total-Zeile ──────────────────────────────────────────────── */}
+        {entries.length > 0 && (
+          <tfoot className="sticky bottom-0 z-20">
+            <tr className="border-t-2 border-border bg-muted/60 backdrop-blur-sm text-xs font-bold">
+              <td className="px-4 py-2 uppercase tracking-wide text-[10px] text-muted-foreground whitespace-nowrap" colSpan={3}>
+                TOTAL
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">
+                {totalPlanHours > 0 ? fmtH(totalPlanHours) : <span className="font-normal text-muted-foreground">–</span>}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">
+                {totalAzbHours > 0 ? fmtH(totalAzbHours) : <span className="font-normal text-muted-foreground">–</span>}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">
+                {(totalPlanHours > 0 || totalAzbHours > 0) ? (
+                  <span className={cn(
+                    totalDiff < -0.5 ? 'text-red-600 dark:text-red-400'
+                    : totalDiff > 0.5 ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-emerald-600 dark:text-emerald-400',
+                  )}>
+                    {fmtDiff(totalDiff)}
+                  </span>
+                ) : <span className="font-normal text-muted-foreground">–</span>}
+              </td>
+              <td className="px-3 py-2 text-center text-muted-foreground font-normal">
+                {totalPauseMin > 0 ? `${totalPauseMin} min` : '–'}
+              </td>
+              <td className="px-3 py-2" />
+              <td className="px-3 py-2 whitespace-nowrap">
+                {deviationDays > 0 ? (
+                  <span className="text-amber-600 dark:text-amber-400">
+                    {deviationDays} Abw.
+                  </span>
+                ) : (
+                  <span className="text-emerald-600 dark:text-emerald-400 font-normal">OK</span>
+                )}
+              </td>
+            </tr>
+          </tfoot>
+        )}
+
+      </table>
+
+      {/* Footer-Notiz */}
+      {entries.length > 0 && (
+        <div className="px-5 py-3 border-t border-border/50 text-[10px] text-muted-foreground">
+          Kommentare, Genehmigungen und PDF-Export folgen in einer nächsten Version.
+        </div>
+      )}
     </div>
   );
 }
