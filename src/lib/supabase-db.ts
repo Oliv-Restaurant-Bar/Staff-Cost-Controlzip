@@ -882,6 +882,32 @@ export async function loadActualHourEntriesForMonth(
 // ─── Re-Import: prüfen + löschen ──────────────────────────────────────────────
 
 /**
+ * Gibt die IDs aller bestätigten Mitarbeiter (status = 'confirmed') für den Monat zurück.
+ * Wird vor dem Re-Import aufgerufen um bestätigte Arbeitszeitblätter zu schützen.
+ */
+export async function checkConfirmedEmployees(
+  employeeIds: string[],
+  year: number,
+  month: number,
+): Promise<Set<string>> {
+  if (!employeeIds.length) return new Set();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .from('employee_timesheet_confirmations')
+      .select('employee_id')
+      .in('employee_id', employeeIds)
+      .eq('year', year)
+      .eq('month', month)
+      .eq('status', 'confirmed');
+    if (error) return new Set();
+    return new Set((data ?? []).map((r: { employee_id: string }) => r.employee_id));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
  * Prüft ob für die angegebenen Mitarbeiter im Monat bereits actual_hours-Daten existieren.
  * Wird vor dem Import aufgerufen um Re-Import zu erkennen.
  */

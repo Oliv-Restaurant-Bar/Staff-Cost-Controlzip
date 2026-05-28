@@ -1,0 +1,103 @@
+Bitte korrigiere den Re-Import im Mirus Import.
+
+Wichtiges Problem:
+Wenn ein Mitarbeiter sein Arbeitszeitblatt bereits bestätigt hat oder wenn Tagesdaten manuell geändert/korrigiert wurden, darf ein erneuter Mirus Import diese Daten nicht einfach löschen oder überschreiben.
+
+Neue Regel:
+Ein Re-Import darf nur offene, nicht bestätigte und nicht manuell bearbeitete Mirus-Daten ersetzen.
+
+1. Bestätigte Arbeitszeitblätter schützen
+
+Vor dem Löschen prüfen:
+employee_timesheet_confirmations
+
+Wenn employee_id + month + year den Status:
+confirmed
+hat, dann:
+- keine actual_hours löschen
+- keine actual_hour_entries löschen
+- keine employee_time_balances überschreiben
+- Mitarbeiter im Import als "geschützt / bestätigt" anzeigen
+- Import für diesen Mitarbeiter überspringen
+
+Bei Status rejected/offen:
+Re-Import weiterhin erlaubt, ausser manuelle Änderungen existieren.
+
+2. Manuell bearbeitete Daten schützen
+
+Bitte prüfen, ob actual_hours oder actual_hour_entries Felder haben wie:
+source
+updated_by
+edited_by
+is_manual
+manual_override
+locked
+approved
+oder ähnliche.
+
+Wenn nicht vorhanden:
+Bitte nicht blind löschen.
+Stattdessen Migration vorbereiten für:
+actual_hours:
+is_locked boolean default false
+locked_reason text nullable
+manually_edited boolean default false
+
+actual_hour_entries:
+is_locked boolean default false
+locked_reason text nullable
+manually_edited boolean default false
+
+3. Re-Import Löschlogik ändern
+
+Beim Re-Import nur löschen, wenn:
+source = 'mirus_import'
+AND nicht bestätigt
+AND nicht locked
+AND nicht manually_edited
+
+Falls actual_hours keine source-Spalte hat:
+Bitte nicht pauschal alles löschen.
+Dann zuerst source-Spalte ergänzen oder Import-Daten sauber kennzeichnen.
+
+4. Import-Vorschau erweitern
+
+In der Vorschau pro Mitarbeiter anzeigen:
+
+- Frei für Re-Import
+- Geschützt: bereits bestätigt
+- Geschützt: manuell bearbeitet
+- Wird übersprungen
+- Wird ersetzt
+
+5. Import-Historie erweitern
+
+Zusätzlich speichern:
+protected_count
+skipped_confirmed_count
+skipped_manual_count
+
+Falls Spalten fehlen:
+Migration mit ADD COLUMN IF NOT EXISTS erstellen.
+
+6. Warnung ändern
+
+Nicht mehr:
+"Der neue Import ersetzt die bisherigen Daten dieses Monats."
+
+Sondern:
+"Der neue Import ersetzt nur offene, nicht bestätigte und nicht manuell bearbeitete Daten. Bestätigte oder geschützte Mitarbeiter bleiben unverändert."
+
+7. Nach Umsetzung ausgeben
+
+- Wie bestätigte Mitarbeiter erkannt werden
+- Wie manuelle Änderungen geschützt werden
+- Welche Tabellen angepasst wurden
+- Welche Daten beim Re-Import gelöscht werden
+- Welche Daten bewusst nicht überschrieben werden
+- Welches SQL in Supabase ausgeführt werden muss
+
+Wichtig:
+Keine bestätigten Mitarbeiter überschreiben.
+Keine manuell korrigierten Werte überschreiben.
+Keine pauschalen Deletes mehr auf actual_hours ohne Schutzlogik.

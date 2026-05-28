@@ -263,12 +263,17 @@ export async function saveImportHistory(params: {
   parserQuality?: Record<string, unknown> | null;
   isReimport?: boolean;
   deletedCount?: number;
+  protectedCount?: number;
+  skippedConfirmedCount?: number;
+  skippedManualCount?: number;
 }): Promise<void> {
   const {
     tenantId, year, month, source = 'mirus', fileName,
     importedCount, updatedCount = 0,
     skippedCount = 0, createdEmployeesCount = 0, manualMatchesCount = 0,
-    errors = [], createdBy, parserQuality, isReimport = false, deletedCount = 0,
+    errors = [], createdBy, parserQuality,
+    isReimport = false, deletedCount = 0,
+    protectedCount = 0, skippedConfirmedCount = 0, skippedManualCount = 0,
   } = params;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (supabase as any)
@@ -289,6 +294,9 @@ export async function saveImportHistory(params: {
       created_by:               createdBy ?? null,
       ...(parserQuality ? { parser_quality: parserQuality } : {}),
       ...(isReimport ? { is_reimport: true, deleted_count: deletedCount } : {}),
+      ...(protectedCount > 0 || skippedConfirmedCount > 0 || skippedManualCount > 0
+        ? { protected_count: protectedCount, skipped_confirmed_count: skippedConfirmedCount, skipped_manual_count: skippedManualCount }
+        : {}),
     });
   if (error) console.error('[TIMESHEET-HISTORY] saveImportHistory:', error);
 }

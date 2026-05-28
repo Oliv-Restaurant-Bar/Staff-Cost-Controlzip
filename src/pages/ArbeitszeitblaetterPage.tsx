@@ -10,7 +10,7 @@ import {
   ClipboardCheck, ChevronLeft, ChevronRight, Copy, Link,
   CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw, Trash2,
   Users, Check, Upload, FileSpreadsheet, AlertTriangle, X, Info,
-  History, UserPlus, SkipForward, Undo2,
+  History, UserPlus, SkipForward, Undo2, ShieldCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -23,7 +23,7 @@ import EmployeeDetailView from '@/components/EmployeeDetailView';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
-import { saveActualHourEntry, saveActualHourEntries, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees } from '@/lib/supabase-db';
+import { saveActualHourEntry, saveActualHourEntries, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees, checkConfirmedEmployees } from '@/lib/supabase-db';
 import type { Employee as PersonnelEmployee } from '@/types/personnel';
 import {
   getConfirmationsForMonth,
@@ -67,6 +67,13 @@ interface Employee {
  */
 type MatchStatus = 'matched' | 'manual' | 'conflict' | 'unresolved' | 'new_employee' | 'skipped';
 
+/**
+ * null            = noch nicht geprüft oder erster Import (kein Re-Import)
+ * 'free'          = kann ersetzt werden (offene / abgelehnte / keine Bestätigung)
+ * 'protected_confirmed' = Arbeitszeitblatt bereits bestätigt → wird NICHT überschrieben
+ */
+type ProtectionStatus = null | 'free' | 'protected_confirmed';
+
 interface ImportPreviewRow {
   mirusName: string;
   matchStatus: MatchStatus;
@@ -78,6 +85,8 @@ interface ImportPreviewRow {
   overtimeHours: number | null;
   excEmployee: ExcelEmployee;
   newEmployeeCreated?: boolean;
+  /** Re-Import: Schutzstatus dieses Mitarbeiters */
+  protectionStatus?: ProtectionStatus;
 }
 
 interface NewEmployeeFormData {
@@ -209,6 +218,8 @@ export default function ArbeitszeitblaetterPage() {
   const [isReimport, setIsReimport] = useState(false);
   /** Anzahl bereits vorhandener Einträge (für Warnung) */
   const [existingDataCount, setExistingDataCount] = useState(0);
+  /** IDs bestätigter Mitarbeiter für diesen Monat (geschützt, werden nicht überschrieben) */
+  const [confirmedProtectedIds, setConfirmedProtectedIds] = useState<Set<string>>(new Set());
   /** Resultat der Lösch-Operation beim Re-Import */
   const [reimportDeleteResult, setReimportDeleteResult] = useState<{
     deletedHours: number; deletedBlocks: number; deletedBalances: number;
@@ -321,6 +332,7 @@ export default function ArbeitszeitblaetterPage() {
     skipped:     importRows.filter(r => r.matchStatus === 'skipped').length,
     conflict:    importRows.filter(r => r.matchStatus === 'conflict').length,
     unresolved:  importRows.filter(r => r.matchStatus === 'unresolved').length,
+    protected:   importRows.filter(r => r.protectionStatus === 'protected_confirmed').length,
     totalDays:   importRows.filter(r => r.employee && r.matchStatus !== 'skipped')
                            .reduce((s, r) => s + r.dayCount, 0),
   };
@@ -438,18 +450,39 @@ export default function ArbeitszeitblaetterPage() {
       const matchedIds = rows
         .filter(r => r.employee && r.matchStatus !== 'skipped')
         .map(r => r.employee!.id);
+
+      let enrichedRows = rows;
       if (matchedIds.length > 0) {
-        const checkYear  = (importMonthMismatch?.year  ?? detectedYear  ?? year);
-        const checkMonth = (importMonthMismatch?.month ?? detectedMonth ?? month);
-        const { exists, count } = await checkExistingMonthData(matchedIds, checkYear, checkMonth);
+        const checkYear  = detectedYear  ?? year;
+        const checkMonth = detectedMonth ?? month;
+
+        // Parallel: existierende Daten + bestätigte MA prüfen
+        const [{ exists, count }, confirmedIds] = await Promise.all([
+          checkExistingMonthData(matchedIds, checkYear, checkMonth),
+          checkConfirmedEmployees(matchedIds, checkYear, checkMonth),
+        ]);
+
         setIsReimport(exists);
         setExistingDataCount(count);
+        setConfirmedProtectedIds(confirmedIds);
+
+        // Schutzstatus je Zeile setzen
+        enrichedRows = rows.map(r => {
+          if (!r.employee || r.matchStatus === 'skipped') return r;
+          const ps: ProtectionStatus = !exists
+            ? null
+            : confirmedIds.has(r.employee.id)
+              ? 'protected_confirmed'
+              : 'free';
+          return { ...r, protectionStatus: ps };
+        });
       } else {
         setIsReimport(false);
         setExistingDataCount(0);
+        setConfirmedProtectedIds(new Set());
       }
       setReimportDeleteResult(null);
-      setImportRows(rows);
+      setImportRows(enrichedRows);
     } catch (err) {
       console.error('[IMPORT] parse error', err);
       toast.error('Fehler beim Lesen der Datei.');
@@ -547,15 +580,15 @@ export default function ArbeitszeitblaetterPage() {
     setImportRunning(true);
     const errors: string[] = [];
     let importedCount = 0, skippedCount = 0, createdCount = 0, manualCount = 0;
-    let totalDeleted = 0;
+    let totalDeleted = 0, skippedConfirmedCount = 0;
 
-    // Re-Import: bestehende Daten für diesen Monat löschen
+    // Re-Import: nur freie (nicht bestätigte) MAs löschen + reimportieren
     if (isReimport) {
-      const matchedIds = importRows
-        .filter(r => r.employee && r.matchStatus !== 'skipped')
+      const freeIds = importRows
+        .filter(r => r.employee && r.matchStatus !== 'skipped' && r.protectionStatus !== 'protected_confirmed')
         .map(r => r.employee!.id);
-      if (matchedIds.length > 0) {
-        const delResult = await deleteMonthDataForEmployees(matchedIds, year, month);
+      if (freeIds.length > 0) {
+        const delResult = await deleteMonthDataForEmployees(freeIds, year, month);
         setReimportDeleteResult(delResult);
         totalDeleted = delResult.deletedHours;
       }
@@ -564,6 +597,12 @@ export default function ArbeitszeitblaetterPage() {
     for (const row of importRows) {
       if (row.matchStatus === 'skipped') { skippedCount++; continue; }
       if (!row.employee) continue;
+      // Bestätigte Mitarbeiter überspringen — Daten bleiben unverändert
+      if (row.protectionStatus === 'protected_confirmed') {
+        skippedConfirmedCount++;
+        skippedCount++;
+        continue;
+      }
       if (row.matchStatus === 'new_employee') createdCount++;
       if (row.matchStatus === 'manual') manualCount++;
 
@@ -627,10 +666,13 @@ export default function ArbeitszeitblaetterPage() {
       createdEmployeesCount: createdCount,
       manualMatchesCount:    manualCount,
       errors,
-      createdBy:     user?.email ?? null,
-      parserQuality: parseStats ? (parseStats as unknown as Record<string, unknown>) : null,
+      createdBy:             user?.email ?? null,
+      parserQuality:         parseStats ? (parseStats as unknown as Record<string, unknown>) : null,
       isReimport,
-      deletedCount:  totalDeleted,
+      deletedCount:          totalDeleted,
+      protectedCount:        skippedConfirmedCount,
+      skippedConfirmedCount,
+      skippedManualCount:    0,
     });
 
     setImportRunning(false);
@@ -640,6 +682,7 @@ export default function ArbeitszeitblaetterPage() {
     setParseStats(null);
     setIsReimport(false);
     setExistingDataCount(0);
+    setConfirmedProtectedIds(new Set());
     setReimportDeleteResult(null);
 
     if (errors.length === 0) toast.success(`Import abgeschlossen: ${importedCount} Einträge, ${skippedCount} übersprungen`);
@@ -989,7 +1032,7 @@ export default function ArbeitszeitblaetterPage() {
                 {/* Datei-Info */}
                 <div className="flex items-center gap-3 text-xs flex-wrap">
                   <span className="font-medium">{importFileName}</span>
-                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportMonthOverride(false); setParseStats(null); setIsReimport(false); setExistingDataCount(0); setReimportDeleteResult(null); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
+                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportMonthOverride(false); setParseStats(null); setIsReimport(false); setExistingDataCount(0); setConfirmedProtectedIds(new Set()); setReimportDeleteResult(null); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
                     <X className="h-3.5 w-3.5" />Neue Datei
                   </button>
                 </div>
@@ -1006,10 +1049,19 @@ export default function ArbeitszeitblaetterPage() {
                         <div className="text-amber-700 dark:text-amber-400 leading-relaxed">
                           Für <strong>{MONTH_NAMES_DE[month - 1]} {year}</strong> existieren bereits{' '}
                           <strong>{existingDataCount}</strong> importierte Arbeitstag{existingDataCount !== 1 ? 'e' : ''}.
-                          Der neue Import löscht diese vollständig und ersetzt sie durch die Daten der neuen Datei.
+                          Der neue Import ersetzt nur <strong>offene, nicht bestätigte</strong> Daten.
+                          Bestätigte oder geschützte Mitarbeiter bleiben unverändert.
                         </div>
+                        {confirmedProtectedIds.size > 0 && (
+                          <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400 font-medium">
+                            <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                            <span>
+                              <strong>{confirmedProtectedIds.size}</strong> Mitarbeiter mit bestätigtem Arbeitszeitblatt — werden übersprungen
+                            </span>
+                          </div>
+                        )}
                         <div className="text-amber-600/80 dark:text-amber-500/80">
-                          Gelöscht werden: <code className="font-mono text-[11px]">actual_hours</code>,{' '}
+                          Gelöscht werden (nur offene MAs): <code className="font-mono text-[11px]">actual_hours</code>,{' '}
                           <code className="font-mono text-[11px]">actual_hour_entries</code>,{' '}
                           <code className="font-mono text-[11px]">employee_time_balances</code> — nur Quelle: <code className="font-mono text-[11px]">mirus_import</code>
                         </div>
@@ -1099,6 +1151,7 @@ export default function ArbeitszeitblaetterPage() {
                   {importSummary.matched > 0    && <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><CheckCircle2 className="h-3 w-3" />{importSummary.matched} automatisch</span>}
                   {importSummary.manual > 0     && <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"><Check className="h-3 w-3" />{importSummary.manual} manuell</span>}
                   {importSummary.newEmployee > 0 && <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300"><UserPlus className="h-3 w-3" />{importSummary.newEmployee} neu erstellt</span>}
+                  {importSummary.protected > 0  && <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 border border-blue-200 dark:border-blue-800"><ShieldCheck className="h-3 w-3" />{importSummary.protected} geschützt (bestätigt)</span>}
                   {importSummary.skipped > 0    && <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-muted-foreground"><SkipForward className="h-3 w-3" />{importSummary.skipped} ausgeschlossen</span>}
                   {importSummary.conflict > 0   && <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"><AlertTriangle className="h-3 w-3" />{importSummary.conflict} Konflikt{importSummary.conflict > 1 ? 'e' : ''} — bitte bestätigen</span>}
                   {importSummary.unresolved > 0 && <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300"><XCircle className="h-3 w-3" />{importSummary.unresolved} kein Match — bitte zuordnen</span>}
@@ -1123,9 +1176,10 @@ export default function ArbeitszeitblaetterPage() {
                       <tbody className="divide-y divide-border/50">
                         {importRows.map((row, idx) => (
                           <tr key={idx} className={cn('hover:bg-muted/20 transition-colors',
-                            row.matchStatus === 'skipped'   && 'opacity-50',
-                            row.matchStatus === 'conflict'  && 'bg-amber-50/30 dark:bg-amber-950/10',
-                            row.matchStatus === 'unresolved' && 'bg-red-50/20 dark:bg-red-950/10',
+                            row.matchStatus === 'skipped'              && 'opacity-50',
+                            row.matchStatus === 'conflict'             && 'bg-amber-50/30 dark:bg-amber-950/10',
+                            row.matchStatus === 'unresolved'           && 'bg-red-50/20 dark:bg-red-950/10',
+                            row.protectionStatus === 'protected_confirmed' && 'bg-blue-50/40 dark:bg-blue-950/15',
                           )}>
                             {/* Mirus-Name */}
                             <td className="px-3 py-2 font-mono text-muted-foreground max-w-[110px]">
@@ -1160,7 +1214,14 @@ export default function ArbeitszeitblaetterPage() {
                             </td>
 
                             {/* Status-Badge */}
-                            <td className="px-3 py-2 text-center"><MatchBadge status={row.matchStatus} /></td>
+                            <td className="px-3 py-2 text-center">
+                              {row.protectionStatus === 'protected_confirmed'
+                                ? <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                    <ShieldCheck className="h-3 w-3" />geschützt
+                                  </span>
+                                : <MatchBadge status={row.matchStatus} />
+                              }
+                            </td>
 
                             {/* Statistiken */}
                             <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{row.dayCount}</td>
