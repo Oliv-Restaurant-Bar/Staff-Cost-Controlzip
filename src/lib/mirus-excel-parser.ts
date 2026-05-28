@@ -1652,9 +1652,98 @@ function restaurantFromWorkbook(wb: XLSX.WorkBook): string | null {
   return null;
 }
 
+// ─── Parser-Fehlerklasse ──────────────────────────────────────────────────────
+
+export type MirusParseStage =
+  | 'fileRead'       // file.arrayBuffer() / FileReader fehlgeschlagen
+  | 'xlsRead'        // XLSX.read() fehlgeschlagen (kein gültiges Excel)
+  | 'noSheets'       // Workbook hat keine Sheets
+  | 'noMarkers'      // Kein „Name / Vorname"-Marker in keinem Sheet
+  | 'noEmployees'    // Parsing ergab keine Mitarbeiter
+  | 'parse'          // Unbekannter Fehler beim Parsen
+
+export class MirusParseError extends Error {
+  stage:  MirusParseStage;
+  detail: string;
+  constructor(stage: MirusParseStage, detail: string, cause?: unknown) {
+    super(`[MirusParser:${stage}] ${detail}`);
+    this.name    = 'MirusParseError';
+    this.stage   = stage;
+    this.detail  = detail;
+    if (cause instanceof Error && cause.stack) {
+      this.stack = this.stack + '\nCaused by: ' + cause.stack;
+    }
+  }
+}
+
+/** Liest eine Datei als BinaryString über FileReader (Fallback für alte XLS-Dateien) */
+function readAsBinaryString(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = e => resolve(e.target?.result as string);
+    reader.onerror = () => reject(new Error(`FileReader error: ${reader.error?.message ?? 'unbekannt'}`));
+    reader.readAsBinaryString(file);
+  });
+}
+
+/** Liest eine Datei als ArrayBuffer über FileReader */
+function readAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = e => resolve(e.target?.result as ArrayBuffer);
+    reader.onerror = () => reject(new Error(`FileReader error: ${reader.error?.message ?? 'unbekannt'}`));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> {
-  const buf = await file.arrayBuffer();
-  const wb  = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: true, cellText: true });
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  console.debug(`[MIRUS-PARSER] Datei erkannt: „${file.name}" (${(file.size / 1024).toFixed(1)} KB, type="${file.type}", ext=".${ext}")`);
+
+  // ── Stage 1: Datei lesen ────────────────────────────────────────────────────
+  let buf: ArrayBuffer;
+  try {
+    buf = await file.arrayBuffer();
+    console.debug(`[MIRUS-PARSER] ArrayBuffer gelesen: ${buf.byteLength} Bytes`);
+  } catch (e) {
+    // Fallback via FileReader (einige Browser unterstützen arrayBuffer() bei alten Files nicht)
+    console.warn('[MIRUS-PARSER] file.arrayBuffer() fehlgeschlagen, versuche FileReader…', e);
+    try {
+      buf = await readAsArrayBuffer(file);
+      console.debug(`[MIRUS-PARSER] FileReader ArrayBuffer gelesen: ${buf.byteLength} Bytes`);
+    } catch (e2) {
+      throw new MirusParseError('fileRead', `Datei konnte nicht gelesen werden: ${e2 instanceof Error ? e2.message : String(e2)}`, e2);
+    }
+  }
+
+  // ── Stage 2: Workbook öffnen ────────────────────────────────────────────────
+  let wb: XLSX.WorkBook;
+  try {
+    wb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: true, cellText: true });
+    console.debug(`[MIRUS-PARSER] Workbook geöffnet (array-Modus): ${wb.SheetNames.length} Sheets: [${wb.SheetNames.join(', ')}]`);
+  } catch (e) {
+    // Fallback: binary-Modus über FileReader.readAsBinaryString (häufig besser für alte .xls)
+    console.warn('[MIRUS-PARSER] XLSX.read(array) fehlgeschlagen, versuche binary-Fallback…', e);
+    try {
+      const binaryStr = await readAsBinaryString(file);
+      wb = XLSX.read(binaryStr, { type: 'binary', cellDates: true, cellNF: true, cellText: true });
+      console.debug(`[MIRUS-PARSER] Workbook geöffnet (binary-Fallback): ${wb.SheetNames.length} Sheets: [${wb.SheetNames.join(', ')}]`);
+    } catch (e2) {
+      const msg = e2 instanceof Error ? e2.message : String(e2);
+      console.error('[MIRUS-PARSER] Workbook konnte nicht geöffnet werden (array + binary fehlgeschlagen):', e, e2);
+      throw new MirusParseError(
+        'xlsRead',
+        `Excel-Datei konnte nicht geöffnet werden (weder array- noch binary-Modus). Ist die Datei ein gültiges .xlsx/.xls? Fehler: ${msg}`,
+        e2,
+      );
+    }
+  }
+
+  // ── Stage 3: Sheets prüfen ──────────────────────────────────────────────────
+  if (!wb.SheetNames.length) {
+    throw new MirusParseError('noSheets', 'Das Workbook enthält keine Sheets.');
+  }
+  console.debug(`[MIRUS-PARSER] Parsing gestartet für ${wb.SheetNames.length} Sheet(s)…`);
 
   const meta      = metaFromFileName(file.name);
   const employees: ExcelEmployee[] = [];
@@ -1678,15 +1767,18 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
 
   for (const sheetName of wb.SheetNames) {
     const ws     = wb.Sheets[sheetName];
+    console.debug(`[MIRUS-PARSER] Sheet „${sheetName}" wird analysiert…`);
     const starts = findBlockStarts(ws);
 
     if (starts.length === 0) {
+      console.debug(`[MIRUS-PARSER] Sheet „${sheetName}": kein Marker gefunden`);
       warnings.push(`Sheet „${sheetName}": kein „Name / Vorname"-Marker gefunden (Sheet übersprungen)`);
       continue;
     }
 
     totalMarkersFound += starts.length;
     sheetsProcessed.push(sheetName);
+    console.debug(`[MIRUS-PARSER] Sheet „${sheetName}": ${starts.length} Marker auf Zeilen ${starts.map(r => r + 1).join(', ')}`);
     const ref   = ws['!ref'];
     if (!ref) continue;
     const range = XLSX.utils.decode_range(ref);
@@ -1724,6 +1816,19 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
       }
     }
   }
+
+  // ── Stage 4: Marker-Check ────────────────────────────────────────────────────
+  if (totalMarkersFound === 0) {
+    const sheetList = wb.SheetNames.join(', ');
+    throw new MirusParseError(
+      'noMarkers',
+      `Kein „Name / Vorname"-Marker in keinem Sheet gefunden. ` +
+      `Sheets: [${sheetList}]. ` +
+      `Ist das die richtige Mirus-Datei? Wird das korrekte Format verwendet?`,
+    );
+  }
+
+  console.debug(`[MIRUS-PARSER] Parsing beendet: ${employees.length} Roh-Blöcke aus ${sheetsProcessed.length} Sheet(s)`);
 
   // Blöcke mit gleichem Namen zusammenführen, leere überspringen
   const rawCount = employees.length;

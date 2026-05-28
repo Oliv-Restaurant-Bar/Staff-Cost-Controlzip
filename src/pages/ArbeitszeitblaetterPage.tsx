@@ -17,7 +17,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
-import { parseMirusExcel, type ExcelEmployee, type ExcelParseStats } from '@/lib/mirus-excel-parser';
+import { parseMirusExcel, MirusParseError, type ExcelEmployee, type ExcelParseStats } from '@/lib/mirus-excel-parser';
 import { DataQualityPanel } from '@/components/DataQualityPanel';
 import EmployeeDetailView from '@/components/EmployeeDetailView';
 import {
@@ -224,6 +224,14 @@ export default function ArbeitszeitblaetterPage() {
   const [reimportDeleteResult, setReimportDeleteResult] = useState<{
     deletedHours: number; deletedBlocks: number; deletedBalances: number;
   } | null>(null);
+  /** Detaillierter Fehler beim Datei-Lesen / Parsen */
+  const [importError, setImportError] = useState<{
+    stage:     string;
+    message:   string;
+    fileName:  string;
+    fileSize:  string;
+    fileType:  string;
+  } | null>(null);
 
   // ── Mitarbeiter-Einzelansicht ─────────────────────────────────────────────
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
@@ -416,9 +424,22 @@ export default function ArbeitszeitblaetterPage() {
     setImportFileName(file.name);
     setImportMonthMismatch(null);
     setImportMonthOverride(false);
+    setImportError(null);
+
+    const fileSizeKb = (file.size / 1024).toFixed(1) + ' KB';
+    const fileType   = file.type || `application/octet-stream (.${ext})`;
+
+    console.debug(`[IMPORT] Starte Verarbeitung: „${file.name}" (${fileSizeKb}, type="${fileType}")`);
+
     try {
       const parsed = await parseMirusExcel(file);
-      if (!parsed.employees.length) { toast.error('Keine Mitarbeiterdaten in der Datei.'); return; }
+      if (!parsed.employees.length) {
+        const msg = 'Keine Mitarbeiterdaten in der Datei erkannt.';
+        console.warn('[IMPORT] Keine Mitarbeiter:', { file: file.name, sheets: parsed.sheetsProcessed, warnings: parsed.warnings });
+        setImportError({ stage: 'noEmployees', message: msg, fileName: file.name, fileSize: fileSizeKb, fileType });
+        toast.error(msg);
+        return;
+      }
 
       // Monat/Jahr: Parser-Meta hat Vorrang (aus Dateiname + Workbook-Inhalt)
       let detectedMonth: number | null = parsed.month ?? null;
@@ -484,8 +505,32 @@ export default function ArbeitszeitblaetterPage() {
       setReimportDeleteResult(null);
       setImportRows(enrichedRows);
     } catch (err) {
-      console.error('[IMPORT] parse error', err);
-      toast.error('Fehler beim Lesen der Datei.');
+      console.error('[IMPORT] Fehler beim Datei-Parsen:', err);
+
+      let stage   = 'parse';
+      let message = err instanceof Error ? err.message : String(err);
+
+      if (err instanceof MirusParseError) {
+        stage   = err.stage;
+        message = err.detail;
+        console.error(`[IMPORT] MirusParseError stage="${err.stage}": ${err.detail}`, err.stack);
+      } else if (err instanceof Error) {
+        console.error(`[IMPORT] Unbekannter Fehler: ${err.message}`, err.stack);
+      }
+
+      // Benutzerfreundliche Meldung nach Stage
+      const stageLabels: Record<string, string> = {
+        fileRead:    'Datei konnte nicht gelesen werden',
+        xlsRead:     'Excel-Datei ungültig oder beschädigt',
+        noSheets:    'Workbook enthält keine Sheets',
+        noMarkers:   'Kein Mirus-Format erkannt',
+        noEmployees: 'Keine Mitarbeiterdaten gefunden',
+        parse:       'Fehler beim Parsen',
+      };
+      const stageLabel = stageLabels[stage] ?? 'Unbekannter Fehler';
+
+      setImportError({ stage, message, fileName: file.name, fileSize: fileSizeKb, fileType });
+      toast.error(`${stageLabel} — Details im Fehler-Banner`);
     } finally {
       setImportParsing(false);
     }
@@ -986,6 +1031,54 @@ export default function ArbeitszeitblaetterPage() {
                     className="h-3.5 w-3.5 rounded border-border accent-primary" />
                   <span>Ich möchte diese Datei trotzdem in <strong>{MONTH_NAMES_DE[month - 1]} {year}</strong> importieren</span>
                 </label>
+              </div>
+            )}
+
+            {/* ── Fehler-Banner ───────────────────────────────────────────────── */}
+            {importError && (
+              <div className="mx-5 mt-4 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 overflow-hidden">
+                <div className="flex items-start gap-3 p-3 border-b border-red-200 dark:border-red-800">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-sm text-red-800 dark:text-red-300">
+                      {{
+                        fileRead:    'Datei konnte nicht gelesen werden',
+                        xlsRead:     'Excel-Datei ungültig oder beschädigt',
+                        noSheets:    'Workbook enthält keine Sheets',
+                        noMarkers:   'Kein Mirus-Format erkannt',
+                        noEmployees: 'Keine Mitarbeiterdaten gefunden',
+                        parse:       'Fehler beim Parsen',
+                      }[importError.stage] ?? 'Unbekannter Fehler'}
+                    </p>
+                    <p className="text-xs text-red-700 dark:text-red-400 mt-0.5 break-words">
+                      {importError.message}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setImportError(null)}
+                    className="shrink-0 text-red-400 hover:text-red-600 dark:hover:text-red-300 text-lg leading-none"
+                    title="Schliessen"
+                  >×</button>
+                </div>
+                <div className="grid grid-cols-3 divide-x divide-red-200 dark:divide-red-800 text-[11px]">
+                  <div className="px-3 py-2">
+                    <p className="text-red-500 dark:text-red-500 uppercase tracking-wide mb-0.5">Dateiname</p>
+                    <p className="text-red-800 dark:text-red-300 font-mono break-all">{importError.fileName}</p>
+                  </div>
+                  <div className="px-3 py-2">
+                    <p className="text-red-500 dark:text-red-500 uppercase tracking-wide mb-0.5">Grösse</p>
+                    <p className="text-red-800 dark:text-red-300 font-mono">{importError.fileSize}</p>
+                  </div>
+                  <div className="px-3 py-2">
+                    <p className="text-red-500 dark:text-red-500 uppercase tracking-wide mb-0.5">MIME-Typ</p>
+                    <p className="text-red-800 dark:text-red-300 font-mono break-all">{importError.fileType}</p>
+                  </div>
+                </div>
+                <div className="px-3 py-2 border-t border-red-200 dark:border-red-800 text-[11px] text-red-600 dark:text-red-400">
+                  <span className="font-semibold">Stage:</span> <code className="font-mono">{importError.stage}</code>
+                  <span className="mx-2 opacity-40">·</span>
+                  Vollständiger Stacktrace in der Browser-Konsole (F12 → Console)
+                </div>
               </div>
             )}
 
