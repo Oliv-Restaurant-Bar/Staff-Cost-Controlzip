@@ -352,11 +352,13 @@ export async function getImportHistoryAll(
 
 export interface EmployeeTimeBalance {
   employee_id: string;
-  vacation_balance_hours: number | null;
+  vacation_balance_hours:       number | null;
+  vacation_taken_hours:         number | null;
   public_holiday_balance_hours: number | null;
-  overtime_balance_hours: number | null;
-  compensation_balance_hours: number | null;
-  hours_balance: number | null;
+  holiday_taken_hours:          number | null;
+  overtime_balance_hours:       number | null;
+  compensation_balance_hours:   number | null;
+  hours_balance:                number | null;
 }
 
 export async function upsertEmployeeTimeBalance(params: {
@@ -365,12 +367,14 @@ export async function upsertEmployeeTimeBalance(params: {
   year: number;
   month: number;
   vacationHours?: number | null;
+  vacationTakenHours?: number | null;
   holidayHours?: number | null;
+  holidayTakenHours?: number | null;
   overtimeHours?: number | null;
   compensationHours?: number | null;
   hoursBalance?: number | null;
 }): Promise<void> {
-  const { tenantId, employeeId, year, month, vacationHours, holidayHours, overtimeHours, compensationHours, hoursBalance } = params;
+  const { tenantId, employeeId, year, month, vacationHours, vacationTakenHours, holidayHours, holidayTakenHours, overtimeHours, compensationHours, hoursBalance } = params;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (supabase as any)
     .from('employee_time_balances')
@@ -380,7 +384,9 @@ export async function upsertEmployeeTimeBalance(params: {
       month,
       year,
       vacation_balance_hours:       vacationHours       ?? null,
+      vacation_taken_hours:         vacationTakenHours  ?? null,
       public_holiday_balance_hours: holidayHours        ?? null,
+      holiday_taken_hours:          holidayTakenHours   ?? null,
       overtime_balance_hours:       overtimeHours       ?? null,
       compensation_balance_hours:   compensationHours   ?? null,
       hours_balance:                hoursBalance        ?? null,
@@ -398,7 +404,7 @@ export async function getEmployeeTimeBalancesForMonth(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (supabase as any)
     .from('employee_time_balances')
-    .select('employee_id, vacation_balance_hours, public_holiday_balance_hours, overtime_balance_hours, compensation_balance_hours, hours_balance')
+    .select('employee_id, vacation_balance_hours, vacation_taken_hours, public_holiday_balance_hours, holiday_taken_hours, overtime_balance_hours, compensation_balance_hours, hours_balance')
     .eq('tenant_id', tenantId)
     .eq('year', year)
     .eq('month', month);
@@ -409,7 +415,9 @@ export async function getEmployeeTimeBalancesForMonth(
     result[row.employee_id] = {
       employee_id:                  row.employee_id,
       vacation_balance_hours:       row.vacation_balance_hours       ?? null,
+      vacation_taken_hours:         row.vacation_taken_hours         ?? null,
       public_holiday_balance_hours: row.public_holiday_balance_hours ?? null,
+      holiday_taken_hours:          row.holiday_taken_hours          ?? null,
       overtime_balance_hours:       row.overtime_balance_hours       ?? null,
       compensation_balance_hours:   row.compensation_balance_hours   ?? null,
       hours_balance:                row.hours_balance                ?? null,

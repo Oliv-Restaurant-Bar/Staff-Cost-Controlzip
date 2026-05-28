@@ -1094,7 +1094,7 @@ const ACCT_SUB_PATS: { key: SubKey; pats: string[] }[] = [
   { key: 'openingBalance', pats: ['vortr', 'vorsaldo', 'übertrag', 'übertr.', 'anfangss'] },
   { key: 'correction',     pats: ['korr', 'korrekt'] },
   { key: 'planned',        pats: ['soll', 'gut.', 'gutschr'] },
-  { key: 'actual',         pats: ['ist', 'bez.', 'bezug'] },
+  { key: 'actual',         pats: ['ist', 'bez.', 'bezug', 'bezogen', 'bez', 'verb.', 'verbrauch'] },
   { key: 'paidOut',        pats: ['ausbez.', 'ausb.', 'ausbez'] },
   { key: 'difference',     pats: ['diff.', 'diff'] },
   { key: 'compensation',   pats: ['komp.', 'kompens'] },
@@ -1187,7 +1187,9 @@ function readMonthlyAccounts(ws: XLSX.WorkSheet, blockStart: number, blockEnd: n
     { acct: 'holiday',  sub: 'closingBalance', pats: ['feiertagssaldo', 'feiertage saldo', 'feiertagguthaben', 'feiertag guthaben', 'feiertage endsaldo', 'feiertagendsaldo', 'feiertagbestand', 'endsaldo feiertag'] },
     { acct: 'holiday',  sub: 'openingBalance', pats: ['feiertage vortr', 'feiertag vortrag', 'feiertage vortrag', 'feiertag vortr'] },
     { acct: 'overtime', sub: 'closingBalance', pats: ['überzeitsaldo', 'ueberzeit saldo', 'überstd saldo'] },
-    { acct: 'overtime', sub: 'openingBalance', pats: ['überzeit vortr', 'ueberzeit vortr'] },
+    { acct: 'overtime',  sub: 'openingBalance', pats: ['überzeit vortr', 'ueberzeit vortr'] },
+    { acct: 'vacation',  sub: 'actual', pats: ['ferien bezogen', 'ferien ist', 'ferienbezug', 'ferien-bezogen', 'bezogen ferien', 'ferienbezogen', 'ferien verb.', 'ferien verbrauch', 'ferienistsaldo'] },
+    { acct: 'holiday',   sub: 'actual', pats: ['feiertag bezogen', 'feiertage bezogen', 'feiertag ist', 'feiertagbezogen', 'feiertag-bezogen', 'feiertag verb.'] },
   ];
   for (let r = blockStart; r <= scanEnd; r++) {
     for (let c = range.s.c; c <= Math.min(range.e.c, 80); c++) {

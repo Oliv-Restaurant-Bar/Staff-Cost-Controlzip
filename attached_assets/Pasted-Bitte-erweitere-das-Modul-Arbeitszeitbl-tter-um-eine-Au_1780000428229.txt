@@ -1,0 +1,119 @@
+Bitte erweitere das Modul Arbeitszeitblätter um eine Ausschluss-Funktion für Mitarbeiter ohne Mirus-Arbeitszeitblatt.
+
+Problem:
+Gewisse Mitarbeiter haben kein Mirus-Arbeitszeitblatt oder müssen kein digitales Monatsblatt kontrollieren/bestätigen. Diese sollen in der Übersicht, beim Monat freigeben und bei der Finalisierung ausgeschlossen werden können.
+
+Ziel:
+Admin kann pro Mitarbeiter und Monat direkt in der Arbeitszeitblätter-Übersicht festlegen:
+"Für diesen Monat ausschliessen"
+
+1. Neue Funktion in der Übersicht
+
+In der Mitarbeiter-Tabelle eine Checkbox oder Button ergänzen:
+
+"Aus Monatslauf ausschliessen"
+
+oder Icon/Button:
+"Nicht erforderlich"
+
+Wenn aktiv:
+- Mitarbeiter wird optisch ausgegraut
+- Status: "ausgeschlossen"
+- kein Link generieren
+- nicht bei Monat freigeben berücksichtigen
+- nicht bei Finalisierung berücksichtigen
+- nicht in offenen/ausstehenden Zählungen enthalten
+
+2. Neue Tabelle
+
+timesheet_month_exclusions
+
+Felder:
+id uuid primary key
+tenant_id text nullable
+employee_id text not null
+month integer not null
+year integer not null
+reason text nullable
+excluded_by uuid nullable
+excluded_at timestamptz default now()
+is_active boolean default true
+
+Unique:
+employee_id, month, year
+
+3. UI Verhalten
+
+Pro Mitarbeiter:
+Button "Ausschliessen"
+Nach Klick optionaler Dialog:
+Grund optional:
+- Kein Mirus-Arbeitszeitblatt
+- Nicht arbeitszeitpflichtig
+- Austritt / Eintritt ausserhalb Periode
+- Sonstiges
+
+Button:
+"Für diesen Monat ausschliessen"
+
+Wenn ausgeschlossen:
+Button:
+"Wieder einschliessen"
+
+4. Filter
+
+Oben ergänzen:
+- Alle anzeigen
+- Nur aktive
+- Ausgeschlossene anzeigen
+
+Standard:
+Ausgeschlossene ausblenden oder ausgegraut anzeigen, je nachdem was besser zur bestehenden UI passt.
+
+5. Zählungen anpassen
+
+Die Kacheln oben müssen ausgeschlossene Mitarbeiter ignorieren:
+
+Gesamt
+Bestätigt
+Rückfrage
+Ausstehend
+
+6. Monat freigeben
+
+Beim Button "Monat freigeben":
+Ausgeschlossene Mitarbeiter nicht markieren, nicht versenden, keinen Link aktivieren.
+
+7. Finalisierung
+
+Beim "Monat finalisieren":
+Ausgeschlossene Mitarbeiter nicht als offen zählen.
+Finalisierung darf möglich sein, wenn nur ausgeschlossene Mitarbeiter nicht bestätigt haben.
+
+8. Link-Generierung
+
+Bei ausgeschlossenen Mitarbeitern:
+Button "Link generieren" deaktivieren.
+Tooltip:
+"Dieser Mitarbeiter ist für diesen Monat ausgeschlossen."
+
+9. Import bleibt unverändert
+
+Mirus Import darf Daten weiterhin importieren, falls vorhanden.
+Aber die Bestätigungspflicht und Monatsfreigabe ignoriert ausgeschlossene Mitarbeiter.
+
+10. Audit
+
+Ausschluss muss nachvollziehbar bleiben:
+- wer ausgeschlossen hat
+- wann
+- Grund optional
+
+11. Nach Umsetzung bitte ausgeben
+
+- Welche Dateien geändert wurden
+- Welche SQL Migration nötig ist
+- Wo man Mitarbeiter ausschliesst
+- Wie Monat freigeben angepasst wurde
+- Wie Finalisierung angepasst wurde
+- Wie ausgeschlossene Mitarbeiter wieder eingeschlossen werden

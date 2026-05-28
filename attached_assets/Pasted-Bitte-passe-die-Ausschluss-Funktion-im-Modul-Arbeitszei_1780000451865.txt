@@ -1,0 +1,108 @@
+Bitte passe die Ausschluss-Funktion im Modul Arbeitszeitblätter so an, dass ein Ausschluss ab einem Monat automatisch für Folgemonate gilt.
+
+Gewünschte Logik:
+Wenn ein Mitarbeiter z.B. im April 2026 ausgeschlossen wird, soll er automatisch auch in Mai, Juni usw. ausgeschlossen bleiben.
+
+Ausnahme:
+Der Admin kann ihn in einem einzelnen Folgemonat wieder einschliessen.
+
+1. Datenmodell anpassen
+
+timesheet_month_exclusions soll nicht nur einen einzelnen Monat abbilden, sondern eine Gültigkeit ab Monat.
+
+Bitte Struktur verwenden oder ergänzen:
+
+employee_id
+start_month
+start_year
+end_month nullable
+end_year nullable
+reason nullable
+excluded_by
+excluded_at
+is_active boolean default true
+
+Logik:
+- Ausschluss gilt ab start_year/start_month
+- gilt unbegrenzt, solange end_month/end_year leer ist
+- wenn end_month/end_year gesetzt ist, endet der Ausschluss dort
+
+2. Einzelmonat-Ausnahme ermöglichen
+
+Wenn ein Mitarbeiter grundsätzlich ausgeschlossen ist, aber in einem bestimmten Monat wieder dabei sein soll:
+
+Neue Tabelle oder Feld:
+timesheet_month_inclusions
+
+employee_id
+month
+year
+included_by
+included_at
+reason nullable
+
+Diese Inclusion überschreibt den laufenden Ausschluss nur für diesen Monat.
+
+3. UI Verhalten
+
+Wenn Mitarbeiter ausgeschlossen wird:
+
+Dialog anzeigen:
+"Ab wann soll dieser Mitarbeiter ausgeschlossen werden?"
+
+Optionen:
+- Nur diesen Monat
+- Ab diesem Monat dauerhaft
+
+Standard:
+Ab diesem Monat dauerhaft
+
+Wenn dauerhaft:
+April ausgeschlossen → Mai/Juni/... ebenfalls ausgeschlossen.
+
+4. Wieder einschliessen
+
+Bei einem ausgeschlossenen Mitarbeiter Button:
+"Wieder einschliessen"
+
+Dialog:
+- Nur diesen Monat einschliessen
+- Dauerhaft ab diesem Monat wieder einschliessen
+
+Nur diesen Monat:
+Eintrag in timesheet_month_inclusions
+
+Dauerhaft:
+laufenden Ausschluss beenden mit end_month/end_year = Vormonat
+
+5. Anzeige
+
+In der Übersicht klar anzeigen:
+- Ausgeschlossen ab April 2026
+- Für diesen Monat wieder eingeschlossen
+- Dauerhaft wieder eingeschlossen ab Mai 2026
+
+6. Monat freigeben und finalisieren
+
+Ausgeschlossen bedeutet:
+- nicht bei Monat freigeben
+- kein Link
+- nicht bei Finalisierung mitzählen
+- nicht als offen/ausstehend zählen
+
+Wenn für einen Monat wieder eingeschlossen:
+- normal berücksichtigen
+
+7. Bestehende monatliche Ausschlüsse migrieren
+
+Falls bereits timesheet_month_exclusions mit month/year existiert:
+Bitte abwärtskompatibel lesen:
+month/year als start_month/start_year behandeln.
+
+8. Nach Umsetzung ausgeben
+
+- Welche Tabellen/Felder geändert wurden
+- Wie laufende Ausschlüsse berechnet werden
+- Wie Einzelmonat-Ausnahmen funktionieren
+- Wie dauerhaftes Wiedereinschliessen funktioniert
+- Wie Monat freigeben und Finalisierung angepasst wurden

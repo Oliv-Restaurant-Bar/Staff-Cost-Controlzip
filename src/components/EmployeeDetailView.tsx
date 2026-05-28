@@ -28,7 +28,9 @@ export interface EmployeeDetailProps {
   dienstplanHours:  number;
   istHours:         number;
   vacationBalance:  number | null;
+  vacationTaken:    number | null;
   holidayBalance:   number | null;
+  holidayTaken:     number | null;
   confirmation:     TimesheetConfirmation | null;
   year:             number;
   month:            number;
@@ -198,29 +200,47 @@ function IstCell({ blocks, e }: { blocks: HourBlockEntry[]; e: DayComparisonEntr
 
 function SummaryCards({
   sollHours, dienstplanHours, istHours,
-  vacationBalance, holidayBalance, confirmation,
-}: Pick<EmployeeDetailProps, 'sollHours' | 'dienstplanHours' | 'istHours' | 'vacationBalance' | 'holidayBalance' | 'confirmation'>) {
+  vacationBalance, vacationTaken, holidayBalance, holidayTaken, confirmation,
+}: Pick<EmployeeDetailProps, 'sollHours' | 'dienstplanHours' | 'istHours' | 'vacationBalance' | 'vacationTaken' | 'holidayBalance' | 'holidayTaken' | 'confirmation'>) {
   const diffSoll      = istHours > 0 && sollHours > 0 ? istHours - sollHours : null;
   const diffDienstplan = istHours > 0 && dienstplanHours > 0 ? istHours - dienstplanHours : null;
   const status        = confirmation?.status ?? 'open';
   const statusM       = STATUS_META[status];
 
   const cards = [
-    { label: 'Soll',              value: fmtH(sollHours || null),              color: 'text-foreground' },
-    { label: 'Dienstplan IST',    value: fmtH(dienstplanHours || null),         color: 'text-foreground' },
-    { label: 'AZB IST',          value: fmtH(istHours || null),                color: 'text-foreground' },
+    { label: 'Soll',              value: fmtH(sollHours || null),       color: 'text-foreground' },
+    { label: 'Dienstplan IST',    value: fmtH(dienstplanHours || null),  color: 'text-foreground' },
+    { label: 'AZB IST',          value: fmtH(istHours || null),         color: 'text-foreground' },
     {
       label: 'Diff. AZB − Soll',
       value: diffSoll != null ? fmtDiff(diffSoll) : '–',
       color: diffSoll == null ? 'text-muted-foreground' : diffSoll >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
     },
     {
-      label: 'Diff. AZB − Dienstplan',
+      label: 'Diff. AZB − Plan',
       value: diffDienstplan != null ? fmtDiff(diffDienstplan) : '–',
       color: diffDienstplan == null ? 'text-muted-foreground' : Math.abs(diffDienstplan) > 2 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400',
     },
-    { label: 'Ferien',       value: fmtH(vacationBalance), color: vacationBalance != null ? 'text-blue-600 dark:text-blue-400'   : 'text-muted-foreground' },
-    { label: 'Feiertage',    value: fmtH(holidayBalance),  color: holidayBalance  != null ? 'text-purple-600 dark:text-purple-400' : 'text-muted-foreground' },
+    {
+      label: 'Ferien bezogen',
+      value: fmtH(vacationTaken, 'nicht erkannt'),
+      color: vacationTaken != null ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground',
+    },
+    {
+      label: 'Ferien Rest',
+      value: fmtH(vacationBalance, 'nicht erkannt'),
+      color: vacationBalance != null ? 'text-blue-500 dark:text-blue-300' : 'text-muted-foreground',
+    },
+    {
+      label: 'FT bezogen',
+      value: fmtH(holidayTaken, 'nicht erkannt'),
+      color: holidayTaken != null ? 'text-purple-600 dark:text-purple-400' : 'text-muted-foreground',
+    },
+    {
+      label: 'FT Rest',
+      value: fmtH(holidayBalance, 'nicht erkannt'),
+      color: holidayBalance != null ? 'text-purple-500 dark:text-purple-300' : 'text-muted-foreground',
+    },
     {
       label: 'Status AZB',
       value: statusM.label,
@@ -229,7 +249,7 @@ function SummaryCards({
   ];
 
   return (
-    <div className="grid grid-cols-4 gap-2 px-5 py-3 border-b border-border bg-muted/10">
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 px-5 py-3 border-b border-border bg-muted/10">
       {cards.map(c => (
         <div key={c.label} className="bg-card border border-border rounded-lg px-3 py-2 min-w-0">
           <p className="text-[10px] text-muted-foreground uppercase tracking-wide truncate mb-0.5">{c.label}</p>
@@ -245,7 +265,7 @@ function SummaryCards({
 export default function EmployeeDetailView({
   employeeId, employeeName, department,
   sollHours, dienstplanHours, istHours,
-  vacationBalance, holidayBalance, confirmation,
+  vacationBalance, vacationTaken, holidayBalance, holidayTaken, confirmation,
   year, month, onBack,
 }: EmployeeDetailProps) {
   const [entries, setEntries]               = useState<DayComparisonEntry[]>([]);
@@ -329,7 +349,9 @@ export default function EmployeeDetailView({
         dienstplanHours={dienstplanHours}
         istHours={istHours}
         vacationBalance={vacationBalance}
+        vacationTaken={vacationTaken}
         holidayBalance={holidayBalance}
+        holidayTaken={holidayTaken}
         confirmation={confirmation}
       />
 

@@ -1,0 +1,122 @@
+Bitte erweitere die Ferien-/Feiertag-Logik im Arbeitszeitblätter-Modul.
+
+Problem:
+Ferien-Tage werden bereits korrekt erkannt und in der Tagesansicht angezeigt.
+Aber die obere Summary-Card zeigt bei Ferien weiterhin "-" obwohl im Monatsblatt Ferien vorhanden sind.
+
+Ziel:
+Obere Summary-Cards sollen korrekt zwischen:
+- Ferien bezogen
+- Ferienguthaben
+- Feiertagguthaben
+- Feiertage bezogen
+unterscheiden.
+
+1. Analyse der aktuellen Situation
+
+Bitte prüfen:
+- Welche Werte aktuell aus Mirus gelesen werden
+- Welche Werte aktuell in employee_time_balances gespeichert werden
+- Welche Werte oben in EmployeeDetailView geladen werden
+
+2. Ferien-Tage vs Ferien-Saldo sauber trennen
+
+Aktuell wird nur erkannt:
+Typ = Ferien
+
+Neu unterscheiden:
+
+A) Tagesabsenz:
+Ferien an einzelnen Tagen
+
+B) Monatswerte:
+- Ferien bezogen
+- Ferien Restguthaben
+- Ferien Endsaldos
+- Feiertagguthaben
+- Feiertage bezogen
+
+3. employee_time_balances erweitern falls nötig
+
+Folgende Felder ergänzen falls noch nicht vorhanden:
+
+vacation_taken_days
+vacation_taken_hours
+vacation_balance_days
+vacation_balance_hours
+
+holiday_taken_days
+holiday_taken_hours
+holiday_balance_days
+holiday_balance_hours
+
+4. Parser erweitern
+
+Der Parser soll erkennen:
+- Ferien bezogen
+- Ferien Rest
+- Ferien Saldo
+- Feiertag Rest
+- Feiertag Saldo
+
+Auch Varianten wie:
+Ferienguthaben
+Ferien Rest
+Ferienbestand
+Ferien Endsald
+Ferien Saldo
+Urlaub
+Urlaubssaldo
+Feiertagguthaben
+Feiertagbestand
+FT Rest
+
+5. EmployeeDetailView erweitern
+
+Obere Cards neu:
+
+Ferien bezogen
+Ferien Rest
+Feiertage bezogen
+Feiertag Rest
+
+Wenn keine Werte vorhanden:
+klar anzeigen:
+"nicht erkannt"
+
+statt einfach "-"
+
+6. Tagesansicht verbessern
+
+Wenn Typ = Ferien:
+optional Ferienstunden anzeigen
+
+Beispiel:
+Ferien · 8.4 h
+
+7. Datenqualität erweitern
+
+Importbericht soll getrennt anzeigen:
+
+- Ferientage erkannt %
+- Ferienguthaben erkannt %
+- Feiertage erkannt %
+- Feiertagguthaben erkannt %
+
+Aktuell wird das vermischt.
+
+8. Debug speziell für Arber April 2026
+
+Bitte prüfen:
+- Welche Ferienwerte im Mirus-Blatt vorhanden sind
+- Welche davon erkannt werden
+- Welche gespeichert werden
+- Warum oben "-" erscheint
+
+9. Nach Umsetzung ausgeben
+
+- Welche Felder neu gespeichert werden
+- Welche Mirus-Labels erkannt werden
+- Welche Summary-Cards jetzt angezeigt werden
+- Warum Arber vorher "-" hatte
+- Ob Ferienguthaben jetzt korrekt angezeigt wird
