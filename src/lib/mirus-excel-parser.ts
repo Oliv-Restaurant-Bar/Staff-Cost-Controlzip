@@ -574,9 +574,10 @@ function extractBalances(
 
 /**
  * extractDayEntries:
- * Öffentlich zugängliche Wrapper-Funktion rund um readDayRows.
- * Filtert automatisch Ferien/Feiertag/Total-Zeilen aus — diese sind keine Tageszeilen.
- * Gibt nur Einträge mit echtem Datum zurück.
+ * Wrapper rund um readDayRows — startet NACH der dynamisch erkannten Header-Zeile.
+ * Gibt alle von readDayRows erkannten Einträge zurück (Tage + Abwesenheiten).
+ * Ferien/Feiertag/Total-Zeilen haben kein gültiges Datum und werden von
+ * readDayRows bereits nicht als DayRecord erzeugt.
  */
 function extractDayEntries(
   ws: XLSX.WorkSheet,
@@ -584,10 +585,7 @@ function extractDayEntries(
   blockEnd: number,
   map: ColMap,
 ): DayRecord[] {
-  const all = readDayRows(ws, headerRow + 1, blockEnd, map);
-  // Saldo-/Total-Zeilen haben kein gültiges Datum — bereits durch readDayRows gefiltert.
-  // Zusätzlicher Guard: date muss existieren und ein gültiges ISO-Format haben.
-  return all.filter(d => d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date));
+  return readDayRows(ws, headerRow + 1, blockEnd, map);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1279,21 +1277,16 @@ function normName(name: string | null): string {
 }
 
 /**
- * Restblock-Erkennung:
- * Ein Block gilt als Restblock wenn Tagesdaten oder Qualität sehr gering sind.
- * Restblöcke sollen mit dem vorangegangenen Block zusammengeführt werden.
+ * Leerer-Block-Erkennung:
+ * Ein Block ist wirklich leer wenn er KEINEN Namen, KEINE Tage und KEINE Totale hat.
+ * Leere Blöcke werden übersprungen (nicht mit dem vorherigen Block zusammengeführt).
+ * NICHT mehr: "weniger als 8 Tage" — das würde in grossen Sheets alle MA zusammenführen.
  */
-function isRestBlock(emp: ExcelEmployee): boolean {
-  const shifts   = emp.days.reduce((s, d) => s + d.shifts.length, 0);
-  const absences = emp.days.filter(d => !!d.absenceCode).length;
-  const hasTotals = Object.values(emp.totals).some(Boolean);
-  const q = employeeQuality(emp);
-  return (
-    emp.days.length < 8 ||
-    (shifts === 0 && absences === 0) ||
-    (!hasTotals && emp.days.length < 5) ||
-    q < 45
-  );
+function isEmptyBlock(emp: ExcelEmployee): boolean {
+  const hasName   = !!emp.name;
+  const hasDays   = emp.days.length > 0;
+  const hasTotals = Object.values(emp.totals).some(v => v !== undefined && v !== null && v !== '');
+  return !hasName && !hasDays && !hasTotals;
 }
 
 function mergeTotals(a: EmployeeTotals, b: EmployeeTotals): EmployeeTotals {
@@ -1343,11 +1336,14 @@ function mergeTwoBlocks(main: ExcelEmployee, extra: ExcelEmployee): ExcelEmploye
 }
 
 /**
- * Hauptfunktion: fügt Blöcke mit gleichem Namen oder Restblöcke zusammen.
+ * Hauptfunktion: fügt Blöcke mit gleichem Namen zusammen und überspringt leere Blöcke.
  *
- * Merge-Bedingungen (eine genügt):
- *   A) Gleicher normalisierter Name, Abstand ≤ 30 Zeilen
- *   B) Block ist ein Restblock (< 8 Tage / Qualität < 45 %), Abstand ≤ 8 Zeilen
+ * Merge-Bedingungen:
+ *   A) Gleicher normalisierter Name (nicht leer) → immer zusammenführen (Fortsetzungs-Seiten)
+ *   B) Block ist vollständig leer (kein Name, keine Tage, keine Totale) → überspringen
+ *
+ * ENTFERNT: Gap-basierte Restblock-Zusammenführung.
+ * Grund: blockEnd = nextStart-1 → gap ist immer 1 → alle Blöcke würden zusammengeführt.
  */
 function mergeBlocks(raw: ExcelEmployee[]): ExcelEmployee[] {
   const tagged: ExcelEmployee[] = raw.map(e => ({
@@ -1356,28 +1352,35 @@ function mergeBlocks(raw: ExcelEmployee[]): ExcelEmployee[] {
     mergedBlockRows: [[e.blockStartRow, e.blockEndRow ?? e.blockStartRow]] as [number, number][],
   }));
 
+  let skippedEmpty = 0;
   const result: ExcelEmployee[] = [];
+
   for (const emp of tagged) {
-    const last = result[result.length - 1];
-    if (!last) { result.push(emp); continue; }
-
-    const gap = emp.blockStartRow - (last.blockEndRow ?? last.blockStartRow);
-
-    // Condition A: same name, close gap
-    const sameNorm = normName(emp.name) === normName(last.name) && normName(emp.name) !== '';
-    if (sameNorm && gap <= 30) {
-      result[result.length - 1] = mergeTwoBlocks(last, emp);
+    // Condition B: truly empty block → überspringen, nicht zusammenführen
+    if (isEmptyBlock(emp)) {
+      skippedEmpty++;
       continue;
     }
 
-    // Condition B: rest block very close (continuation page, different marker)
-    if (isRestBlock(emp) && gap <= 8) {
+    const last = result[result.length - 1];
+    if (!last) { result.push(emp); continue; }
+
+    // Condition A: gleicher Name (nicht leer) → Fortsetzungs-Seite zusammenführen
+    const normA = normName(emp.name);
+    const normB = normName(last.name);
+    const sameNorm = normA !== '' && normA === normB;
+    if (sameNorm) {
       result[result.length - 1] = mergeTwoBlocks(last, emp);
       continue;
     }
 
     result.push(emp);
   }
+
+  if (skippedEmpty > 0) {
+    console.log(`[MIRUS-PARSER] ${skippedEmpty} leere Block(e) übersprungen`);
+  }
+
   return result;
 }
 
@@ -1521,6 +1524,9 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
     fileYear  = fileYear  ?? wbMeta.year;
   }
 
+  let totalMarkersFound = 0;
+  let totalHeaderTablesFound = 0;
+
   for (const sheetName of wb.SheetNames) {
     const ws     = wb.Sheets[sheetName];
     const starts = findBlockStarts(ws);
@@ -1530,10 +1536,34 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
       continue;
     }
 
+    totalMarkersFound += starts.length;
     sheetsProcessed.push(sheetName);
     const ref   = ws['!ref'];
     if (!ref) continue;
     const range = XLSX.utils.decode_range(ref);
+
+    // Zähle Tabellen mit "Datum"+"Arbeitszeit" Header für Debug
+    let headerTablesInSheet = 0;
+    for (const startRow of starts) {
+      const endRow = starts[starts.indexOf(startRow) + 1] ?? range.e.r;
+      const hRow = extractHeaders(ws, startRow, endRow);
+      // extractHeaders gibt blockStart+daySearchOffset-1 zurück wenn kein Header gefunden
+      // Prüfen ob es wirklich eine Header-Zeile ist (nicht nur Fallback)
+      const ref2 = ws['!ref'];
+      if (ref2) {
+        const r2 = XLSX.utils.decode_range(ref2);
+        let hasDatum = false, hasZeit = false;
+        for (let c = r2.s.c; c <= r2.e.c; c++) {
+          const cell = getCell(ws, c, hRow);
+          if (!cell) continue;
+          const t = String(cell.v ?? '').toLowerCase().trim();
+          if (t === 'datum' || t === 'date') hasDatum = true;
+          if (/arbeitszeit|von\b|zeit\b|beginn|from\b/.test(t)) hasZeit = true;
+        }
+        if (hasDatum && hasZeit) headerTablesInSheet++;
+      }
+    }
+    totalHeaderTablesFound += headerTablesInSheet;
 
     for (let i = 0; i < starts.length; i++) {
       const blockStart = starts[i];
@@ -1546,12 +1576,31 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
     }
   }
 
-  // Blöcke mit gleichem Namen oder Restblöcke zusammenführen
-  const rawCount   = employees.length;
-  const merged     = mergeBlocks(employees);
-  const mergedCount = rawCount - merged.length;
+  // Blöcke mit gleichem Namen zusammenführen, leere überspringen
+  const rawCount    = employees.length;
+  const merged      = mergeBlocks(employees);
+  const skipped     = rawCount - merged.length - (merged.reduce((s, e) => s + e.mergedFromCount - 1, 0));
+  const mergedCount = merged.reduce((s, e) => s + (e.mergedFromCount > 1 ? 1 : 0), 0);
+
+  // Debug-Ausgabe: immer in Konsole (für Diagnose)
+  console.log(
+    `[MIRUS-PARSER] „${file.name}": ` +
+    `Marker=${totalMarkersFound} | Arbeitszeitstabellen=${totalHeaderTablesFound} | ` +
+    `Roh-Blöcke=${rawCount} | Übersprungen (leer)=${rawCount - merged.length - merged.reduce((s, e) => s + e.mergedFromCount - 1, 0)} | ` +
+    `Zusammengeführt=${mergedCount} | Finale MA=${merged.length}`
+  );
+  console.log(
+    `[MIRUS-PARSER] Monat=${fileMonth ?? '?'} Jahr=${fileYear ?? '?'} ` +
+    `Restaurant=${restaurant ?? '?'}`
+  );
+
   if (mergedCount > 0) {
-    warnings.push(`${mergedCount} Restblock${mergedCount !== 1 ? 'e' : ''} zusammengeführt (${rawCount} Roh-Blöcke → ${merged.length} Mitarbeiter)`);
+    warnings.push(`${mergedCount} Mitarbeiter aus mehreren Blöcken zusammengeführt (${rawCount} Roh-Blöcke → ${merged.length} Mitarbeiter)`);
+  }
+
+  // Warnung wenn Monat nicht erkannt
+  if (!fileMonth || !fileYear) {
+    warnings.push(`Monat/Jahr konnte nicht automatisch erkannt werden — bitte manuell prüfen`);
   }
 
   return {

@@ -1,0 +1,67 @@
+Bitte korrigiere den Mirus Parser nochmals.
+
+Ich habe die Datei "Monatsblatt April 2026.xls" geprüft:
+Sie enthält mehrere Mitarbeiter-Blöcke:
+- 37 Marker "Name / Vorname"
+- 22 Tabellen mit "Datum" und "Arbeitszeit"
+
+Aktuell erkennt der Import aber nur 1 Mitarbeiter. Das ist falsch.
+
+Problem:
+Der Parser verarbeitet offenbar nur den ersten Block oder überschreibt/importiert nur den letzten/ersten gültigen Block.
+
+Ziel:
+Der Parser muss ALLE Mitarbeiter-Blöcke im gesamten Sheet erkennen und daraus Importgruppen bilden.
+
+Bitte anpassen:
+
+1. Alle "Name / Vorname"-Marker im gesamten Sheet sammeln
+Nicht nach dem ersten Treffer stoppen.
+
+2. Pro Marker einen Block bilden:
+BlockStart = aktuelle Name/Vorname-Zeile
+BlockEnd = Zeile vor dem nächsten Name/Vorname-Marker
+oder bis Sheet-Ende
+
+3. Innerhalb jedes Blocks:
+- Mitarbeitername rechts vom Marker lesen
+- Arbeitsverhältnis lesen
+- Header-Zeile mit "Datum" + "Arbeitszeit" suchen
+- Tagesdaten bis BlockEnd lesen
+- Ferien/Feiertag-Saldo lesen
+
+4. Blöcke ohne Tagesdaten nicht einfach als einziger Mitarbeiter übernehmen.
+Wenn ein Block keinen Header oder keine Tagesdaten hat:
+- als leer/überspringen markieren
+- aber weiter zum nächsten Block gehen
+
+5. Doppelte Mitarbeiter-Blöcke zusammenführen
+Falls derselbe Mitarbeiter mehrfach im Sheet vorkommt:
+- Tagesdaten zusammenführen
+- Stunden addieren
+- Ferien/Feiertage aus dem letzten gültigen Saldo übernehmen
+- keine doppelte Importzeile anzeigen
+
+6. Anzeige korrigieren
+Bei "Monatsblatt April 2026.xls" dürfen nicht 1 MA / 0 Tage erscheinen.
+Es müssen alle erkannten Mitarbeiter angezeigt werden.
+
+7. Monat automatisch erkennen
+Der Monat aus dem Titel "Monatsblatt April 2026" muss automatisch erkannt werden:
+month = 4
+year = 2026
+
+Wenn Datei-Monat und ausgewählter Monat übereinstimmen, keine Warnung anzeigen.
+
+8. Debug-Ausgabe ergänzen
+Bitte im Parser oder in der Konsole ausgeben:
+- Anzahl gefundene Name/Vorname Marker
+- Anzahl gefundene Arbeitszeit-Tabellen
+- Anzahl finaler Import-Mitarbeiter
+- Anzahl übersprungene leere Blöcke
+
+Nach Umsetzung bitte bestätigen:
+- Ob alle 37 Marker erkannt werden
+- Ob daraus mehrere Mitarbeiter entstehen
+- Ob April 2026 korrekt erkannt wird
+- Ob leere/duplicate Blöcke korrekt behandelt werden
