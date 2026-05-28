@@ -774,21 +774,23 @@ export async function saveActualHourEntry(
 
 // ─── Einzelne Stempelzeiten (actual_hour_entries) ─────────────────────────────
 
-export interface HourStampEntry {
-  id:          string;
-  entry_type:  'in' | 'out';
-  time:        string;   // HH:MM
-  source:      string;
+export interface HourBlockEntry {
+  id:             string;
+  start_time:     string;   // HH:MM
+  end_time:       string;   // HH:MM
+  duration_hours: number;
+  source:         string;
 }
 
 /**
- * Löscht alle bestehenden Stempel für employee/date, dann fügt neue ein.
- * Wird beim Mirus-Import aufgerufen (idempotent bei Re-Import).
+ * Speichert alle Arbeitsblöcke eines Tages.
+ * Strategie: bestehende Blöcke für diesen Tag löschen, dann neu einfügen.
+ * → Idempotent bei Re-Import; verhindert Duplikate.
  */
 export async function saveActualHourEntries(
   employeeId: string,
   date: string,
-  entries: Array<{ entry_type: 'in' | 'out'; time: string; source?: string }>,
+  blocks: Array<{ start_time: string; end_time: string; duration_hours: number; source?: string }>,
 ): Promise<void> {
   try {
     await supabase
@@ -797,15 +799,16 @@ export async function saveActualHourEntries(
       .eq('employee_id', employeeId)
       .eq('date', date);
 
-    if (entries.length === 0) return;
+    if (blocks.length === 0) return;
 
     const { error } = await supabase.from('actual_hour_entries').insert(
-      entries.map(e => ({
-        employee_id: employeeId,
+      blocks.map(b => ({
+        employee_id:    employeeId,
         date,
-        entry_type:  e.entry_type,
-        time:        e.time.slice(0, 5),   // nur HH:MM
-        source:      e.source ?? 'mirus',
+        start_time:     b.start_time.slice(0, 5),
+        end_time:       b.end_time.slice(0, 5),
+        duration_hours: b.duration_hours,
+        source:         b.source ?? 'mirus_import',
       })),
     );
     if (error) console.error('[supabase-db] saveActualHourEntries:', error);
@@ -815,22 +818,22 @@ export async function saveActualHourEntries(
 }
 
 /**
- * Lädt alle Stempel für einen Mitarbeiter an einem Tag, sortiert nach Zeit.
+ * Lädt alle Arbeitsblöcke für einen Mitarbeiter an einem Tag, sortiert nach Startzeit.
  * Wirft einen Fehler wenn die Tabelle noch nicht existiert (Migration ausstehend).
  */
 export async function loadActualHourEntriesForDay(
   employeeId: string,
   date: string,
-): Promise<HourStampEntry[]> {
+): Promise<HourBlockEntry[]> {
   const { data, error } = await supabase
     .from('actual_hour_entries')
-    .select('id, entry_type, time, source')
+    .select('id, start_time, end_time, duration_hours, source')
     .eq('employee_id', employeeId)
     .eq('date', date)
-    .order('time');
+    .order('start_time');
 
   if (error) throw error;
-  return (data ?? []) as HourStampEntry[];
+  return (data ?? []) as HourBlockEntry[];
 }
 
 // ─── App-Einstellungen (app_settings) ────────────────────────────────────────

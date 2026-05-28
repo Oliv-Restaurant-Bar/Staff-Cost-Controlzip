@@ -545,14 +545,20 @@ export default function ArbeitszeitblaetterPage() {
             end:   singleShift?.to   ?? undefined,
           });
 
-          // Einzelne Stempelzeiten aus allen Schichtblöcken speichern
-          const stampEntries: Array<{ entry_type: 'in' | 'out'; time: string }> = [];
+          // Einzelne Arbeitsblöcke (start/end/duration) speichern
+          const blockEntries: Array<{ start_time: string; end_time: string; duration_hours: number }> = [];
           for (const shift of day.shifts ?? []) {
-            if (shift.from && shift.from !== '?') stampEntries.push({ entry_type: 'in',  time: shift.from });
-            if (shift.to   && shift.to   !== '?') stampEntries.push({ entry_type: 'out', time: shift.to   });
+            if (shift.from && shift.from !== '?' && shift.to && shift.to !== '?') {
+              const [sh, sm] = shift.from.split(':').map(Number);
+              const [eh, em] = shift.to.split(':').map(Number);
+              const durationHours = Math.round(((eh * 60 + em) - (sh * 60 + sm)) / 60 * 100) / 100;
+              if (durationHours > 0) {
+                blockEntries.push({ start_time: shift.from, end_time: shift.to, duration_hours: durationHours });
+              }
+            }
           }
-          if (stampEntries.length > 0) {
-            await saveActualHourEntries(row.employee.id, day.date, stampEntries);
+          if (blockEntries.length > 0) {
+            await saveActualHourEntries(row.employee.id, day.date, blockEntries);
           }
           importedCount++;
         } catch (err) {

@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
-import {
-  Clock, AlertTriangle, CheckCircle2, LogIn, LogOut, RefreshCw, Database,
-} from 'lucide-react';
+import { Clock, AlertTriangle, Database, RefreshCw } from 'lucide-react';
 import {
   loadActualHourEntriesForDay,
-  type HourStampEntry,
+  type HourBlockEntry,
 } from '@/lib/supabase-db';
 import type { DayComparisonEntry } from '@/lib/timesheet-store';
 import { MONTH_NAMES_DE } from '@/lib/timesheet-store';
@@ -14,17 +12,17 @@ import { MONTH_NAMES_DE } from '@/lib/timesheet-store';
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 export interface DayDetailDrawerProps {
-  open:           boolean;
-  onClose:        () => void;
-  employeeId:     string;
-  employeeName:   string;
-  date:           string;         // YYYY-MM-DD
-  dayEntry:       DayComparisonEntry | null;
+  open:         boolean;
+  onClose:      () => void;
+  employeeId:   string;
+  employeeName: string;
+  date:         string;         // YYYY-MM-DD
+  dayEntry:     DayComparisonEntry | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const WEEKDAY_DE = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+const WEEKDAY_DE = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag'];
 
 function fmtDateLong(iso: string): string {
   const d = new Date(iso + 'T12:00:00');
@@ -36,139 +34,46 @@ function fmtTime(t: string | null | undefined): string {
   return t.slice(0, 5);
 }
 
-/** Konvertiert HH:MM-String in Minuten seit Mitternacht */
+/** Konvertiert HH:MM in Minuten seit Mitternacht */
 function toMinutes(t: string): number {
   const [h, m] = t.slice(0, 5).split(':').map(Number);
   return h * 60 + m;
 }
 
-/** Formatiert Minuten als "Xh Ym" */
+/** Minuten → "Xh Ym" */
 function fmtMinutes(m: number): string {
   if (m <= 0) return '–';
-  const h = Math.floor(m / 60);
+  const h   = Math.floor(m / 60);
   const min = m % 60;
   if (h === 0) return `${min}m`;
   if (min === 0) return `${h}h`;
   return `${h}h ${String(min).padStart(2, '0')}m`;
 }
 
-function fmtHours(h: number | null): string {
+function fmtHours(h: number | null | undefined): string {
   if (h == null) return '–';
   return h.toFixed(1) + ' h';
 }
 
-// ─── Tageszusammenfassung berechnen ───────────────────────────────────────────
-
-interface DaySummary {
-  workBlocks:    Array<{ from: string; to: string; durationMin: number }>;
-  nettoMin:      number;   // Summe aller Arbeitsblöcke
-  bruttoMin:     number;   // Letzter Out − Erster In
-  pauseMin:      number;   // Pausenzeit zwischen Blöcken
-  isIncomplete:  boolean;  // Ungerade Anzahl / fehlendes Gehen
+/** Prüft ob Startzeit vor Endzeit liegt (kein Nacht-Überlauf) */
+function isValidBlock(b: HourBlockEntry): boolean {
+  return toMinutes(b.start_time) < toMinutes(b.end_time);
 }
 
-function calcSummary(stamps: HourStampEntry[]): DaySummary {
-  // Sortiert nach Zeit
-  const sorted = [...stamps].sort((a, b) => a.time.localeCompare(b.time));
-  const workBlocks: DaySummary['workBlocks'] = [];
-  let pauseMin = 0;
-  let lastOutMin: number | null = null;
-  let openInTime: string | null = null;
+// ─── Pause zwischen zwei Blöcken ─────────────────────────────────────────────
 
-  for (const s of sorted) {
-    if (s.entry_type === 'in') {
-      if (lastOutMin !== null) {
-        pauseMin += toMinutes(s.time) - lastOutMin;
-      }
-      openInTime = s.time;
-    } else {
-      // 'out'
-      if (openInTime) {
-        const durationMin = toMinutes(s.time) - toMinutes(openInTime);
-        workBlocks.push({ from: openInTime, to: s.time, durationMin: Math.max(0, durationMin) });
-        lastOutMin = toMinutes(s.time);
-        openInTime = null;
-      }
-    }
-  }
-
-  const nettoMin   = workBlocks.reduce((s, b) => s + b.durationMin, 0);
-  const firstIn    = sorted.find(s => s.entry_type === 'in');
-  const lastOut    = [...sorted].reverse().find(s => s.entry_type === 'out');
-  const bruttoMin  = firstIn && lastOut
-    ? toMinutes(lastOut.time) - toMinutes(firstIn.time)
-    : nettoMin;
-
-  return {
-    workBlocks,
-    nettoMin,
-    bruttoMin,
-    pauseMin:     Math.max(0, pauseMin),
-    isIncomplete: openInTime !== null,
-  };
+function pauseMinutesBetween(prev: HourBlockEntry, next: HourBlockEntry): number {
+  return Math.max(0, toMinutes(next.start_time) - toMinutes(prev.end_time));
 }
 
-// ─── Timeline-Zeile ───────────────────────────────────────────────────────────
+// ─── Karte ────────────────────────────────────────────────────────────────────
 
-function TimelineRow({
-  stamp,
-  prev,
-  idx,
-}: {
-  stamp: HourStampEntry;
-  prev:  HourStampEntry | null;
-  idx:   number;
-}) {
-  const isIn    = stamp.entry_type === 'in';
-  const durMin  = prev ? toMinutes(stamp.time) - toMinutes(prev.time) : null;
-  const durLabel = durMin != null && durMin >= 0 ? fmtMinutes(durMin) : '–';
-  const isBreak = isIn && prev?.entry_type === 'out';
-
-  return (
-    <tr className={cn(
-      'border-b border-border/30 text-sm',
-      idx % 2 === 0 ? 'bg-card' : 'bg-muted/20',
-    )}>
-      <td className="px-4 py-2.5 font-mono font-semibold tabular-nums text-sm">
-        {fmtTime(stamp.time)}
-      </td>
-      <td className="px-3 py-2.5">
-        <span className={cn(
-          'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold',
-          isIn
-            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
-            : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
-        )}>
-          {isIn ? <LogIn className="h-3 w-3" /> : <LogOut className="h-3 w-3" />}
-          {isIn ? 'Kommen' : 'Gehen'}
-        </span>
-      </td>
-      <td className="px-3 py-2.5 tabular-nums text-right">
-        {durMin != null && (
-          <span className={cn(
-            'text-xs',
-            isBreak
-              ? 'text-blue-500 dark:text-blue-400'   // Pause
-              : !isIn
-                ? 'text-foreground font-medium'        // Arbeitsdauer
-                : 'text-muted-foreground',
-          )}>
-            {isBreak ? `Pause: ${durLabel}` : durLabel}
-          </span>
-        )}
-      </td>
-    </tr>
-  );
-}
-
-// ─── Zusammenfassungs-Karte ────────────────────────────────────────────────────
-
-function SummaryCard({ label, value, sub, color }: {
+function Card({ label, value, sub, color }: {
   label: string; value: string; sub?: string; color?: string;
 }) {
   return (
     <div className="bg-card border border-border rounded-lg px-3 py-2.5 min-w-0">
-      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">{label}</p>
+      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5 truncate">{label}</p>
       <p className={cn('text-sm font-bold tabular-nums', color ?? 'text-foreground')}>{value}</p>
       {sub && <p className="text-[10px] text-muted-foreground mt-0.5">{sub}</p>}
     </div>
@@ -180,7 +85,7 @@ function SummaryCard({ label, value, sub, color }: {
 export default function DayDetailDrawer({
   open, onClose, employeeId, employeeName, date, dayEntry,
 }: DayDetailDrawerProps) {
-  const [stamps, setStamps]   = useState<HourStampEntry[]>([]);
+  const [blocks, setBlocks]   = useState<HourBlockEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [noTable, setNoTable] = useState(false);
 
@@ -188,17 +93,16 @@ export default function DayDetailDrawer({
     if (!open || !date) return;
     let cancelled = false;
     setLoading(true);
-    setStamps([]);
+    setBlocks([]);
     setNoTable(false);
 
     loadActualHourEntriesForDay(employeeId, date)
-      .then(data => { if (!cancelled) { setStamps(data); setLoading(false); } })
+      .then(data => { if (!cancelled) { setBlocks(data); setLoading(false); } })
       .catch(err => {
         if (cancelled) return;
         setLoading(false);
-        // Tabelle existiert noch nicht → Migration ausstehend
-        if (String(err?.message ?? err).includes('does not exist') ||
-            String(err?.code ?? '').includes('42P01')) {
+        const msg = String(err?.message ?? err);
+        if (msg.includes('does not exist') || String(err?.code ?? '').includes('42P01')) {
           setNoTable(true);
         }
       });
@@ -206,14 +110,21 @@ export default function DayDetailDrawer({
     return () => { cancelled = true; };
   }, [open, employeeId, date]);
 
-  const sortedStamps = [...stamps].sort((a, b) => a.time.localeCompare(b.time));
-  const summary      = calcSummary(stamps);
+  // ── Berechnungen ──────────────────────────────────────────────────────────
+  const validBlocks   = blocks.filter(isValidBlock).sort((a, b) => a.start_time.localeCompare(b.start_time));
+  const nettoMin      = validBlocks.reduce((s, b) => s + Math.round(b.duration_hours * 60), 0);
+  const pauseSegments = validBlocks.slice(1).map((b, i) => ({
+    afterBlock: i,
+    minutes:    pauseMinutesBetween(validBlocks[i], b),
+  })).filter(p => p.minutes > 0);
+  const totalPauseMin = pauseSegments.reduce((s, p) => s + p.minutes, 0);
 
-  // Dienstplan-Info aus dayEntry
-  const planH        = dayEntry?.plan_hours ?? null;
-  const azbH         = dayEntry?.azb_hours  ?? null;
-  const diffH        = azbH != null && planH != null ? azbH - planH : null;
+  // Plan + AZB aus dayEntry
+  const planH = dayEntry?.plan_hours ?? null;
+  const azbH  = dayEntry?.azb_hours  ?? null;
+  const diffH = azbH != null && planH != null ? azbH - planH : null;
 
+  // Dienstplan-Schichten
   const hasFrüh = !!(dayEntry?.frueh_start && dayEntry?.frueh_end);
   const hasSpät = !!(dayEntry?.spaet_start && dayEntry?.spaet_end);
 
@@ -221,32 +132,36 @@ export default function DayDetailDrawer({
     <Sheet open={open} onOpenChange={v => { if (!v) onClose(); }}>
       <SheetContent side="right" className="w-full sm:max-w-lg flex flex-col p-0 gap-0">
 
-        {/* Header */}
+        {/* ── Header ── */}
         <SheetHeader className="px-5 py-4 border-b border-border shrink-0 bg-card">
           <SheetTitle className="flex items-center gap-2 text-sm">
             <Clock className="h-4 w-4 text-primary shrink-0" />
-            <span className="truncate">Arbeitszeit Details</span>
+            Arbeitszeit Details
           </SheetTitle>
-          <div className="mt-0.5">
+          <div className="mt-1">
             <p className="text-sm font-semibold text-foreground">{employeeName}</p>
-            <p className="text-xs text-muted-foreground">{fmtDateLong(date)}</p>
+            <p className="text-xs text-muted-foreground">{date ? fmtDateLong(date) : ''}</p>
           </div>
         </SheetHeader>
 
         <div className="flex-1 overflow-auto">
 
-          {loading ? (
+          {/* ── Loading ── */}
+          {loading && (
             <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground">
               <RefreshCw className="h-5 w-5 animate-spin" />
-              <p className="text-sm">Lade Stempelzeiten…</p>
+              <p className="text-sm">Lade Zeitblöcke…</p>
             </div>
-          ) : noTable ? (
+          )}
+
+          {/* ── Tabelle nicht migriert ── */}
+          {!loading && noTable && (
             <div className="flex flex-col items-center justify-center py-16 gap-4 px-6 text-center">
-              <Database className="h-10 w-10 text-muted-foreground/40" />
+              <Database className="h-10 w-10 text-muted-foreground/30" />
               <div>
-                <p className="text-sm font-medium text-foreground mb-1">Tabelle noch nicht migriert</p>
+                <p className="text-sm font-medium mb-1">Tabelle noch nicht migriert</p>
                 <p className="text-xs text-muted-foreground">
-                  Bitte die SQL-Migration{' '}
+                  Bitte{' '}
                   <code className="bg-muted px-1 py-0.5 rounded text-[10px]">
                     20260528_actual_hour_entries.sql
                   </code>{' '}
@@ -254,49 +169,67 @@ export default function DayDetailDrawer({
                 </p>
               </div>
             </div>
-          ) : (
-            <>
-              {/* ── Warnung bei unvollständigen Stempeln ── */}
-              {summary.isIncomplete && (
-                <div className="mx-4 mt-4 flex items-start gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2.5 text-xs text-amber-700 dark:text-amber-300">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                  <span>Unvollständige Zeitbuchung — fehlendes «Gehen»</span>
-                </div>
-              )}
+          )}
 
-              {/* ── Stempel-Timeline ── */}
+          {/* ── Inhalt ── */}
+          {!loading && !noTable && (
+            <>
+              {/* ── Zeitblöcke-Tabelle ── */}
               <div className="px-4 pt-4 pb-1">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                  Stempelzeiten
+                  Zeitblöcke
                 </p>
               </div>
 
-              {sortedStamps.length === 0 ? (
-                <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  <p>Keine Stempelzeiten vorhanden.</p>
-                  <p className="text-xs mt-1 text-muted-foreground/70">
-                    Beim nächsten Mirus-Import werden die Einzelzeiten gespeichert.
+              {validBlocks.length === 0 ? (
+                <div className="px-4 py-8 text-center">
+                  <p className="text-sm text-muted-foreground">Keine Zeitblöcke vorhanden.</p>
+                  <p className="text-xs text-muted-foreground/60 mt-1">
+                    Beim nächsten Mirus-Import werden die Blöcke gespeichert.
                   </p>
                 </div>
               ) : (
-                <div className="overflow-x-auto mx-4 rounded-lg border border-border overflow-hidden mb-4">
+                <div className="mx-4 mb-4 rounded-lg border border-border overflow-hidden">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="bg-muted/40 border-b border-border text-[10px] uppercase tracking-wide text-muted-foreground">
-                        <th className="px-4 py-2 text-left font-semibold">Zeit</th>
-                        <th className="px-3 py-2 text-left font-semibold">Typ</th>
+                        <th className="px-3 py-2 text-left font-semibold w-8">#</th>
+                        <th className="px-3 py-2 text-left font-semibold">Start</th>
+                        <th className="px-3 py-2 text-left font-semibold">Ende</th>
                         <th className="px-3 py-2 text-right font-semibold">Dauer</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {sortedStamps.map((s, i) => (
-                        <TimelineRow
-                          key={s.id}
-                          stamp={s}
-                          prev={i > 0 ? sortedStamps[i - 1] : null}
-                          idx={i}
-                        />
-                      ))}
+                      {validBlocks.map((b, i) => {
+                        const blockMin  = Math.round(b.duration_hours * 60);
+                        const pauseSeg  = pauseSegments.find(p => p.afterBlock === i);
+                        return (
+                          <>
+                            <tr key={b.id} className={cn(
+                              'border-b border-border/30',
+                              i % 2 === 0 ? 'bg-card' : 'bg-muted/20',
+                            )}>
+                              <td className="px-3 py-2.5 text-muted-foreground font-medium">{i + 1}</td>
+                              <td className="px-3 py-2.5 font-mono font-semibold tabular-nums">
+                                {fmtTime(b.start_time)}
+                              </td>
+                              <td className="px-3 py-2.5 font-mono font-semibold tabular-nums">
+                                {fmtTime(b.end_time)}
+                              </td>
+                              <td className="px-3 py-2.5 text-right tabular-nums font-medium">
+                                {fmtMinutes(blockMin)}
+                              </td>
+                            </tr>
+                            {pauseSeg && (
+                              <tr key={`pause-${i}`} className="bg-blue-50 dark:bg-blue-950/20 border-b border-border/20">
+                                <td colSpan={4} className="px-3 py-1.5 text-[10px] text-blue-600 dark:text-blue-400 text-center font-medium tracking-wide">
+                                  Pause: {fmtMinutes(pauseSeg.minutes)}
+                                </td>
+                              </tr>
+                            )}
+                          </>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -308,56 +241,59 @@ export default function DayDetailDrawer({
                   Tageszusammenfassung
                 </p>
                 <div className="grid grid-cols-2 gap-2">
-                  <SummaryCard
-                    label="Bruttozeit"
-                    value={summary.bruttoMin > 0 ? fmtMinutes(summary.bruttoMin) : '–'}
-                    sub="Erster Kommen → Letzter Gehen"
+                  <Card
+                    label="Nettozeit (Blöcke)"
+                    value={nettoMin > 0 ? fmtMinutes(nettoMin) : '–'}
+                    sub={`${validBlocks.length} Block${validBlocks.length !== 1 ? 'e' : ''}`}
                   />
-                  <SummaryCard
-                    label="Pause"
-                    value={summary.pauseMin > 0 ? fmtMinutes(summary.pauseMin) : '–'}
-                    sub="Zwischen Blöcken"
+                  <Card
+                    label="Pause (zwischen Blöcken)"
+                    value={totalPauseMin > 0 ? fmtMinutes(totalPauseMin) : '–'}
                   />
-                  <SummaryCard
-                    label="Nettozeit (AZB)"
+                  <Card
+                    label="AZB Total"
                     value={fmtHours(azbH)}
-                    sub={summary.nettoMin > 0 ? `Stempel: ${fmtMinutes(summary.nettoMin)}` : undefined}
+                    sub="Aus actual_hours"
                     color={azbH != null ? 'text-foreground' : 'text-muted-foreground'}
                   />
-                  <SummaryCard
-                    label="Dienstplan"
+                  <Card
+                    label="Dienstplan Total"
                     value={fmtHours(planH)}
+                    sub="Aus schedule_entries"
                     color={planH != null ? 'text-foreground' : 'text-muted-foreground'}
                   />
-                  <SummaryCard
+                  <Card
                     label="Differenz (AZB − Plan)"
                     value={diffH != null
                       ? (diffH > 0 ? '+' : '') + diffH.toFixed(1) + ' h'
                       : '–'}
-                    color={diffH == null
-                      ? 'text-muted-foreground'
-                      : Math.abs(diffH) > 0.5
-                        ? diffH < 0
-                          ? 'text-red-600 dark:text-red-400'
-                          : 'text-amber-600 dark:text-amber-400'
-                        : 'text-emerald-600 dark:text-emerald-400'}
+                    color={
+                      diffH == null       ? 'text-muted-foreground'
+                      : Math.abs(diffH) <= 0.5 ? 'text-emerald-600 dark:text-emerald-400'
+                      : diffH < 0         ? 'text-red-600 dark:text-red-400'
+                                          : 'text-amber-600 dark:text-amber-400'
+                    }
                   />
-                  <SummaryCard
+                  <Card
                     label="Status"
-                    value={summary.isIncomplete ? 'Unvollständig' : stamps.length === 0 ? 'Keine Stempel' : 'OK'}
-                    color={summary.isIncomplete
-                      ? 'text-amber-600 dark:text-amber-400'
-                      : stamps.length === 0
-                        ? 'text-muted-foreground'
-                        : 'text-emerald-600 dark:text-emerald-400'}
+                    value={
+                      validBlocks.length === 0 ? 'Keine Daten'
+                      : Math.abs(diffH ?? 0) <= 0.5 ? 'OK'
+                      : 'Abweichung'
+                    }
+                    color={
+                      validBlocks.length === 0    ? 'text-muted-foreground'
+                      : Math.abs(diffH ?? 0) <= 0.5 ? 'text-emerald-600 dark:text-emerald-400'
+                                                    : 'text-amber-600 dark:text-amber-400'
+                    }
                   />
                 </div>
               </div>
 
-              {/* ── Dienstplan-Info ── */}
+              {/* ── Dienstplan ── */}
               {(hasFrüh || hasSpät) && (
-                <div className="px-4 pb-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2 mt-2">
+                <div className="px-4 pt-2 pb-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
                     Dienstplan
                   </p>
                   <div className="rounded-lg border border-border bg-card divide-y divide-border/50">
@@ -377,33 +313,23 @@ export default function DayDetailDrawer({
                         </span>
                       </div>
                     )}
-                  </div>
-                </div>
-              )}
-
-              {/* ── Arbeitsblöcke (falls mehrere) ── */}
-              {summary.workBlocks.length > 1 && (
-                <div className="px-4 pb-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                    Arbeitsblöcke ({summary.workBlocks.length})
-                  </p>
-                  <div className="rounded-lg border border-border bg-card divide-y divide-border/50">
-                    {summary.workBlocks.map((b, i) => (
-                      <div key={i} className="px-3 py-2 flex items-center justify-between text-xs">
-                        <span className="font-mono font-semibold">
-                          {fmtTime(b.from)}–{fmtTime(b.to)}
+                    {dayEntry?.frueh_absence && (
+                      <div className="px-3 py-2 flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground font-medium">Abwesenheit</span>
+                        <span className="font-semibold text-blue-600 dark:text-blue-400">
+                          {dayEntry.frueh_absence}
                         </span>
-                        <span className="text-muted-foreground">{fmtMinutes(b.durationMin)}</span>
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
               )}
 
               {/* ── Hinweis ── */}
-              <div className="px-4 pb-4 text-[10px] text-muted-foreground/60">
-                Quelle: actual_hour_entries · {stamps.length} Stempel gespeichert
-                {/* Zukünftig: manuelle Korrekturen, Kommentare, Freigaben, Payroll-Export */}
+              <div className="px-4 pb-5 text-[10px] text-muted-foreground/50">
+                Quelle: actual_hour_entries ·{' '}
+                {validBlocks.length} Block{validBlocks.length !== 1 ? 'e' : ''} ·{' '}
+                mirus_import
               </div>
             </>
           )}
