@@ -260,12 +260,13 @@ export async function saveImportHistory(params: {
   manualMatchesCount?: number;
   errors?: string[];
   createdBy?: string | null;
+  parserQuality?: Record<string, unknown> | null;
 }): Promise<void> {
   const {
     tenantId, year, month, source = 'mirus', fileName,
     importedCount, updatedCount = 0,
     skippedCount = 0, createdEmployeesCount = 0, manualMatchesCount = 0,
-    errors = [], createdBy,
+    errors = [], createdBy, parserQuality,
   } = params;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (supabase as any)
@@ -284,6 +285,7 @@ export async function saveImportHistory(params: {
       error_count:              errors.length,
       errors:                   errors.length ? errors : null,
       created_by:               createdBy ?? null,
+      ...(parserQuality ? { parser_quality: parserQuality } : {}),
     });
   if (error) console.error('[TIMESHEET-HISTORY] saveImportHistory:', error);
 }

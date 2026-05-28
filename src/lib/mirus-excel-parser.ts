@@ -56,8 +56,8 @@ const TOTAL_LABELS: { key: keyof EmployeeTotals; patterns: string[] }[] = [
   { key: 'zeitzuschlag', patterns: ['zeitzuschlag', 'zuschlag'] },
   { key: 'ueberzeit',    patterns: ['überzeit', 'ueberzeit', 'überstunden'] },
   { key: 'saldo',        patterns: ['saldo'] },
-  { key: 'ferien',       patterns: ['feriensaldo', 'ferien'] },
-  { key: 'feiertag',     patterns: ['feiertag'] },
+  { key: 'ferien',       patterns: ['feriensaldo', 'ferien', 'ferienguthaben', 'ferien guthaben', 'ferienrest', 'ferienbestand', 'urlaub', 'urlaubssaldo', 'urlaubsguthaben', 'urlaub saldo', 'endsaldo ferien', 'schlussbestand ferien'] },
+  { key: 'feiertag',     patterns: ['feiertag', 'feiertagguthaben', 'feiertag guthaben', 'feiertagssaldo', 'feiertagsaldo', 'feiertage saldo', 'feiertage', 'feiertagbestand', 'endsaldo feiertag'] },
   { key: 'kompensation', patterns: ['kompensation', 'komp'] },
   { key: 'krankheit',    patterns: ['krankheit', 'krank', 'unfall'] },
 ];
@@ -181,6 +181,16 @@ export interface ExcelParseStats {
   skippedEmpty: number;        // Übersprungene leere Blöcke (kein Name, kein Tag, kein Total)
   mergedDuplicates: number;    // Zusammengeführte doppelte Mitarbeiter-Blöcke
   finalEmployees: number;      // Finale importierbare Mitarbeiter
+  // ─── Qualitäts-Metriken ───────────────────────────────────────────────────
+  monthDetected: boolean;                   // Monat + Jahr erkannt
+  daysWithHours: number;                    // Tage mit totalHours > 0
+  daysWithTimeBlocks: number;               // Tage mit ≥1 Zeitblock (shifts)
+  employeesWithVacationBalance: number;     // MA mit Ferienguthaben
+  employeesWithHolidayBalance: number;      // MA mit Feiertagguthaben
+  employeesMissingVacation: string[];       // Namen MA ohne Ferienguthaben
+  employeesMissingHoliday: string[];        // Namen MA ohne Feiertagguthaben
+  incompleteTimeBlocks: number;             // Tage mit unvollständiger Stempelung
+  qualityWarnings: string[];                // Warnungen bei tiefer Erkennungsquote
 }
 
 export interface ExcelParsedDocument {
@@ -557,8 +567,13 @@ function extractBalances(
         const text = normLabel(String(cell.v ?? '').trim());
         if (!text) continue;
 
-        const isFerienRow  = text === 'ferien' || text.startsWith('ferien ') || text === 'feriensaldo';
-        const isFeierRow   = text === 'feier'  || text.startsWith('feiertag') || text === 'feiertagssaldo';
+        const isFerienRow  = text === 'ferien' || text.startsWith('ferien') ||
+                             text === 'ferienguthaben' || text === 'ferienrest' || text === 'ferienbestand' ||
+                             text === 'urlaub' || text.startsWith('urlaub') ||
+                             text === 'schlussbestand ferien' || text === 'endsaldo ferien';
+        const isFeierRow   = text === 'feier'  || text.startsWith('feiertag') || text.startsWith('feiertage') ||
+                             text === 'feiertagguthaben' || text === 'feiertagssaldo' || text === 'feiertagbestand' ||
+                             text === 'endsaldo feiertag';
         const isTotalRow   = text === 'total'  || text === 'total stunden' || text === 'totals';
 
         if (!isFerienRow && !isFeierRow && !isTotalRow) continue;
@@ -1004,12 +1019,12 @@ function readMonthlyAccounts(ws: XLSX.WorkSheet, blockStart: number, blockEnd: n
   // Compound-label fallback: e.g. "Feriensaldo", "Ferien Vortr." without explicit section header
   type CompoundRule = { acct: AcctKey; sub: SubKey; pats: string[] };
   const COMPOUND: CompoundRule[] = [
-    { acct: 'vacation', sub: 'closingBalance', pats: ['feriensaldo', 'ferien saldo', 'ferien endsaldo'] },
-    { acct: 'vacation', sub: 'openingBalance', pats: ['ferien vortr', 'ferien vorsaldo', 'ferienvortrag'] },
+    { acct: 'vacation', sub: 'closingBalance', pats: ['feriensaldo', 'ferien saldo', 'ferien endsaldo', 'ferienguthaben', 'ferien guthaben', 'ferienendsaldo', 'urlaub saldo', 'urlaubssaldo', 'urlaubsguthaben', 'schlussbestand ferien', 'endsaldo ferien', 'ferienbestand', 'ferienrest'] },
+    { acct: 'vacation', sub: 'openingBalance', pats: ['ferien vortr', 'ferien vorsaldo', 'ferienvortrag', 'ferien vortrag', 'urlaub vortr', 'urlaubsvortrag'] },
     { acct: 'hours',    sub: 'closingBalance', pats: ['stundensaldo', 'std saldo', 'zeit saldo'] },
     { acct: 'hours',    sub: 'openingBalance', pats: ['stunden vortr', 'std vortr', 'stundenvortrag'] },
-    { acct: 'holiday',  sub: 'closingBalance', pats: ['feiertagssaldo', 'feiertage saldo'] },
-    { acct: 'holiday',  sub: 'openingBalance', pats: ['feiertage vortr', 'feiertag vortrag'] },
+    { acct: 'holiday',  sub: 'closingBalance', pats: ['feiertagssaldo', 'feiertage saldo', 'feiertagguthaben', 'feiertag guthaben', 'feiertage endsaldo', 'feiertagendsaldo', 'feiertagbestand', 'endsaldo feiertag'] },
+    { acct: 'holiday',  sub: 'openingBalance', pats: ['feiertage vortr', 'feiertag vortrag', 'feiertage vortrag', 'feiertag vortr'] },
     { acct: 'overtime', sub: 'closingBalance', pats: ['überzeitsaldo', 'ueberzeit saldo', 'überstd saldo'] },
     { acct: 'overtime', sub: 'openingBalance', pats: ['überzeit vortr', 'ueberzeit vortr'] },
   ];
@@ -1592,6 +1607,49 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
   const rawCount = employees.length;
   const { result: merged, skippedEmpty, mergedDuplicates } = mergeBlocks(employees);
 
+  // ─── QUALITÄTS-METRIKEN ───────────────────────────────────────────────────
+  const hasVacBal = (e: ExcelEmployee): boolean =>
+    !!(e.totals.ferien ||
+       e.monthlyAccounts.vacation?.closingBalance ||
+       e.monthlyAccounts.vacation?.actual);
+
+  const hasHolBal = (e: ExcelEmployee): boolean =>
+    !!(e.totals.feiertag ||
+       e.monthlyAccounts.holiday?.closingBalance ||
+       e.monthlyAccounts.holiday?.actual);
+
+  const daysWithHours      = merged.reduce((s, e) => s + e.days.filter(d => (d.totalHours ?? 0) > 0).length, 0);
+  const daysWithTimeBlocks = merged.reduce((s, e) => s + e.days.filter(d => d.shifts.length > 0).length, 0);
+  const empWithVacation    = merged.filter(hasVacBal).length;
+  const empWithHoliday     = merged.filter(hasHolBal).length;
+  const empMissingVacation = merged.filter(e => !hasVacBal(e)).map(e => e.name ?? '?');
+  const empMissingHoliday  = merged.filter(e => !hasHolBal(e)).map(e => e.name ?? '?');
+  const incompleteBlocks   = merged.reduce(
+    (s, e) => s + e.days.filter(d => d.shifts.some(sh => sh.to === '?')).length, 0
+  );
+
+  const qualityWarnings: string[] = [];
+  if (merged.length > 0) {
+    const blockRate = daysWithHours > 0 ? daysWithTimeBlocks / daysWithHours : 1;
+    if (blockRate < 0.90) {
+      qualityWarnings.push(
+        `Zeitblöcke: nur ${Math.round(blockRate * 100)} % erkannt (${daysWithTimeBlocks}/${daysWithHours} Tage) — bitte Import prüfen`
+      );
+    }
+    const vacRate = empWithVacation / merged.length;
+    if (vacRate < 0.80) {
+      qualityWarnings.push(
+        `Ferienguthaben: nur ${Math.round(vacRate * 100)} % erkannt (${empWithVacation}/${merged.length} MA) — bitte Import prüfen`
+      );
+    }
+    const holRate = empWithHoliday / merged.length;
+    if (holRate < 0.80) {
+      qualityWarnings.push(
+        `Feiertagguthaben: nur ${Math.round(holRate * 100)} % erkannt (${empWithHoliday}/${merged.length} MA) — bitte Import prüfen`
+      );
+    }
+  }
+
   const parseStats: ExcelParseStats = {
     markersFound:      totalMarkersFound,
     headerTablesFound: totalHeaderTablesFound,
@@ -1599,6 +1657,15 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
     skippedEmpty,
     mergedDuplicates,
     finalEmployees:    merged.length,
+    monthDetected:     !!(fileMonth && fileYear),
+    daysWithHours,
+    daysWithTimeBlocks,
+    employeesWithVacationBalance: empWithVacation,
+    employeesWithHolidayBalance:  empWithHoliday,
+    employeesMissingVacation:     empMissingVacation,
+    employeesMissingHoliday:      empMissingHoliday,
+    incompleteTimeBlocks:         incompleteBlocks,
+    qualityWarnings,
   };
 
   // Debug-Ausgabe in Konsole

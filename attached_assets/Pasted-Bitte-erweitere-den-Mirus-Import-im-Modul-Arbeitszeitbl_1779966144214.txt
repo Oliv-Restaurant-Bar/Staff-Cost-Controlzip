@@ -1,0 +1,149 @@
+Bitte erweitere den Mirus Import im Modul Arbeitszeitblätter um eine Parser-Confidence und Datenqualitätsanalyse.
+
+Ziel:
+Nach dem Hochladen einer Mirus Excel-Datei soll die App anzeigen, wie viel der Datei erkannt wurde und welche Bereiche unsicher oder unvollständig sind.
+
+1. Neues Analyse-Panel im Import-Sheet
+
+Direkt unter der bestehenden Parser-Analyse ergänzen:
+
+"Datenqualität / Erkennungsgrad"
+
+Anzeigen als Prozentwerte und Zähler:
+
+- Monat erkannt
+- Mitarbeiter erkannt
+- Arbeitszeit-Tabellen erkannt
+- Tagesstunden erkannt
+- Zeitblöcke erkannt
+- Ferienguthaben erkannt
+- Feiertagguthaben erkannt
+- Abwesenheiten erkannt
+- Ungültige oder unvollständige Zeilen
+
+Beispiel:
+
+Monat: 100 %
+Mitarbeiter: 21 / 21 = 100 %
+Tagesstunden: 262 / 262 = 100 %
+Zeitblöcke: 241 / 262 = 92 %
+Ferienguthaben: 18 / 21 = 86 %
+Feiertage: 16 / 21 = 76 %
+
+2. Qualitätsstatus
+
+Je Bereich Status anzeigen:
+
+- Grün: 95–100 %
+- Orange: 80–94 %
+- Rot: unter 80 %
+
+3. Detail-Liste "Was fehlt?"
+
+Unterhalb anzeigen:
+
+- Mitarbeiter ohne Ferienguthaben
+- Mitarbeiter ohne Feiertagguthaben
+- Tage ohne Zeitblöcke
+- Tage mit unvollständigen Zeitblöcken
+- Blöcke ohne Tagesstunden
+- erkannte aber übersprungene Tabellen
+
+4. Zeitblöcke verbessern
+
+Bitte den Parser gezielt verbessern, damit Zeitblöcke möglichst vollständig erkannt werden.
+
+Prüfen:
+- mehrere Zeitblöcke pro Tag
+- Zeiten mit Format HH:mm
+- Zeiten mit Format H:mm
+- Excel-Zeitwerte als Dezimalwert
+- Zeiten in mehreren benachbarten Spalten
+- Kommen/Gehen-Paare
+- fehlende Pause-Zeilen
+- Mirus-Zellen mit kombiniertem Text wie "09:56 - 11:00"
+
+Alle erkannten Blöcke in actual_hour_entries speichern.
+
+5. Ferien- und Feiertage verbessern
+
+Bitte Parser gezielt verbessern für:
+- Ferien
+- Ferienguthaben
+- Ferien Saldo
+- Feriensaldo
+- Urlaub
+- Urlaubssaldo
+- Feiertage
+- Feiertagguthaben
+- Feiertagssaldo
+- Feier
+- Feiertag
+- Saldo
+- Schlussbestand
+- Endsaldo
+
+Bitte verschiedene Schreibweisen und Abkürzungen erkennen.
+
+6. Qualität nicht schönrechnen
+
+Wenn ein Wert nicht erkannt wurde, nicht einfach 0.0 h als erkannt zählen.
+
+Unterscheiden:
+- Wert fehlt wirklich
+- Wert ist 0.0 h
+- Wert konnte nicht gelesen werden
+
+7. Import-Warnung bei tiefer Qualität
+
+Wenn:
+- Zeitblöcke unter 90 %
+oder
+- Ferien/Feiertage unter 80 %
+
+dann Warnung anzeigen:
+"Bitte Import prüfen. Nicht alle Daten konnten sicher erkannt werden."
+
+Import darf weiterhin möglich sein, aber mit sichtbarer Warnung.
+
+8. Datenstruktur erweitern
+
+Falls sinnvoll, parseStats erweitern um:
+
+timeBlocksExpected
+timeBlocksDetected
+daysWithHours
+daysWithTimeBlocks
+employeesWithVacationBalance
+employeesWithHolidayBalance
+employeesMissingVacationBalance
+employeesMissingHolidayBalance
+incompleteTimeBlocks
+unparsedRows
+qualityWarnings
+
+9. Import-Historie erweitern
+
+Bitte in timesheet_import_history optional speichern:
+
+parser_quality jsonb nullable
+
+Falls Spalte noch fehlt:
+Migration ergänzen mit:
+
+ALTER TABLE timesheet_import_history
+ADD COLUMN IF NOT EXISTS parser_quality JSONB;
+
+10. Nach Umsetzung bitte ausgeben
+
+- Welche Dateien geändert wurden
+- Welche neuen Qualitätsmetriken berechnet werden
+- Wie Zeitblöcke verbessert wurden
+- Wie Ferien/Feiertage verbessert wurden
+- Welche Warnungen angezeigt werden
+- Welches SQL in Supabase ausgeführt werden muss
+
+Wichtig:
+Keine bestehenden Importfunktionen beschädigen.
+Keine Dummy-Erkennungsquoten anzeigen.
+Nur echte erkannte Daten zählen.

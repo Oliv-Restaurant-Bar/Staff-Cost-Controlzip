@@ -18,6 +18,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import { parseMirusExcel, type ExcelEmployee, type ExcelParseStats } from '@/lib/mirus-excel-parser';
+import { DataQualityPanel } from '@/components/DataQualityPanel';
 import EmployeeDetailView from '@/components/EmployeeDetailView';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
@@ -588,7 +589,8 @@ export default function ArbeitszeitblaetterPage() {
       createdEmployeesCount: createdCount,
       manualMatchesCount:    manualCount,
       errors,
-      createdBy: user?.email ?? null,
+      createdBy:     user?.email ?? null,
+      parserQuality: parseStats ? (parseStats as unknown as Record<string, unknown>) : null,
     });
 
     setImportRunning(false);
@@ -1008,6 +1010,11 @@ export default function ArbeitszeitblaetterPage() {
                       </div>
                     )}
                   </div>
+                )}
+
+                {/* ── Datenqualität / Erkennungsgrad ──────────────────────────── */}
+                {parseStats && (
+                  <DataQualityPanel stats={parseStats} />
                 )}
 
                 {/* Status-Chips */}
