@@ -772,6 +772,67 @@ export async function saveActualHourEntry(
   }
 }
 
+// ─── Einzelne Stempelzeiten (actual_hour_entries) ─────────────────────────────
+
+export interface HourStampEntry {
+  id:          string;
+  entry_type:  'in' | 'out';
+  time:        string;   // HH:MM
+  source:      string;
+}
+
+/**
+ * Löscht alle bestehenden Stempel für employee/date, dann fügt neue ein.
+ * Wird beim Mirus-Import aufgerufen (idempotent bei Re-Import).
+ */
+export async function saveActualHourEntries(
+  employeeId: string,
+  date: string,
+  entries: Array<{ entry_type: 'in' | 'out'; time: string; source?: string }>,
+): Promise<void> {
+  try {
+    await supabase
+      .from('actual_hour_entries')
+      .delete()
+      .eq('employee_id', employeeId)
+      .eq('date', date);
+
+    if (entries.length === 0) return;
+
+    const { error } = await supabase.from('actual_hour_entries').insert(
+      entries.map(e => ({
+        employee_id: employeeId,
+        date,
+        entry_type:  e.entry_type,
+        time:        e.time.slice(0, 5),   // nur HH:MM
+        source:      e.source ?? 'mirus',
+      })),
+    );
+    if (error) console.error('[supabase-db] saveActualHourEntries:', error);
+  } catch (e) {
+    console.error('[supabase-db] saveActualHourEntries exception:', e);
+  }
+}
+
+/**
+ * Lädt alle Stempel für einen Mitarbeiter an einem Tag, sortiert nach Zeit.
+ * Wirft einen Fehler wenn die Tabelle noch nicht existiert (Migration ausstehend).
+ */
+export async function loadActualHourEntriesForDay(
+  employeeId: string,
+  date: string,
+): Promise<HourStampEntry[]> {
+  const { data, error } = await supabase
+    .from('actual_hour_entries')
+    .select('id, entry_type, time, source')
+    .eq('employee_id', employeeId)
+    .eq('date', date)
+    .order('time');
+
+  if (error) throw error;
+  return (data ?? []) as HourStampEntry[];
+}
+
 // ─── App-Einstellungen (app_settings) ────────────────────────────────────────
 
 export async function loadSetting<T>(key: string): Promise<T | null> {

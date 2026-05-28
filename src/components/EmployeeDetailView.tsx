@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import {
-  ChevronLeft, RefreshCw, CheckCircle2, XCircle, AlertTriangle, Info,
-  Clock, Link, AlertCircle,
+  ChevronLeft, RefreshCw, AlertTriangle,
 } from 'lucide-react';
 import {
   loadEmployeeMonthDetail,
@@ -11,6 +10,7 @@ import {
   type TimesheetConfirmation,
   type TimesheetStatus,
 } from '@/lib/timesheet-store';
+import DayDetailDrawer from '@/components/DayDetailDrawer';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -201,8 +201,9 @@ export default function EmployeeDetailView({
   vacationBalance, holidayBalance, confirmation,
   year, month, onBack,
 }: EmployeeDetailProps) {
-  const [entries, setEntries] = useState<DayComparisonEntry[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [entries, setEntries]         = useState<DayComparisonEntry[]>([]);
+  const [loading, setLoading]         = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -274,16 +275,32 @@ export default function EmployeeDetailView({
             <p className="text-sm">Daten werden geladen…</p>
           </div>
         ) : (
-          <TableContent entries={entries} />
+          <TableContent entries={entries} onSelectDate={setSelectedDate} />
         )}
       </div>
+
+      {/* Tages-Detailansicht */}
+      <DayDetailDrawer
+        open={selectedDate != null}
+        onClose={() => setSelectedDate(null)}
+        employeeId={employeeId}
+        employeeName={employeeName}
+        date={selectedDate ?? ''}
+        dayEntry={entries.find(e => e.date === selectedDate) ?? null}
+      />
     </div>
   );
 }
 
 // ─── Tabellen-Inhalt (ausgelagert für Übersichtlichkeit) ──────────────────────
 
-function TableContent({ entries }: { entries: DayComparisonEntry[] }) {
+function TableContent({
+  entries,
+  onSelectDate,
+}: {
+  entries:      DayComparisonEntry[];
+  onSelectDate: (date: string) => void;
+}) {
 
   // ── Totals ──────────────────────────────────────────────────────────────────
   const totalPlanHours = entries.reduce((s, e) => s + (e.plan_hours ?? 0), 0);
@@ -340,11 +357,15 @@ function TableContent({ entries }: { entries: DayComparisonEntry[] }) {
             const wday    = weekday(e.date);
 
             return (
-              <tr key={e.date} className={cn(
-                'transition-colors',
-                rowBg(status),
-                weekend && status === 'empty' && 'opacity-40',
-              )}>
+              <tr
+                key={e.date}
+                onClick={() => onSelectDate(e.date)}
+                className={cn(
+                  'transition-colors cursor-pointer hover:brightness-[0.96] dark:hover:brightness-110',
+                  rowBg(status),
+                  weekend && status === 'empty' && 'opacity-40',
+                )}
+              >
                 <td className={cn('px-4 py-1.5 font-medium whitespace-nowrap', weekend && 'text-muted-foreground')}>
                   {fmtDate(e.date)}
                 </td>

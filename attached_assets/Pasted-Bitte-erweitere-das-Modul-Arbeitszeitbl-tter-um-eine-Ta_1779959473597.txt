@@ -1,0 +1,125 @@
+Bitte erweitere das Modul Arbeitszeitblätter um eine Tages-Detailansicht mit einzelnen Stempelzeiten.
+
+Ziel:
+Wenn in der Mitarbeiter-Detailansicht auf einen Tag oder auf AZB Stunden geklickt wird, soll sich eine Tages-Detailansicht öffnen, welche zeigt, wie sich die Totalstunden zusammensetzen.
+
+1. Klickbare Tageszeilen
+
+In der Mitarbeiter-Detailansicht:
+Klick auf:
+- Datum
+- AZB Stunden
+- Differenz
+- ganze Tabellenzeile optional
+
+öffnet:
+Tages-Detailansicht (Drawer oder Modal)
+
+2. Tages-Detailansicht
+
+Titel:
+Arbeitszeit Details — {Mitarbeiter} — {Datum}
+
+3. Einzelne Stempelzeiten anzeigen
+
+Tabelle:
+
+Zeit | Typ | Dauer seit letzter Buchung
+
+Beispiele:
+09:56 | Kommen
+11:00 | Gehen | 1h 04m
+11:45 | Kommen
+18:30 | Gehen | 6h 45m
+
+4. Tageszusammenfassung
+
+Unterhalb anzeigen:
+
+- Bruttozeit
+- Pause
+- Nettozeit / AZB Total
+- Dienstplan Stunden
+- Differenz
+- Ferien-/Feiertagstatus
+- Frühdienst / Spätdienst falls vorhanden
+
+5. Parser erweitern
+
+Aktuell werden offenbar nur Tages-Totalstunden gespeichert.
+
+Bitte prüfen:
+Ob die Mirus-Datei einzelne Zeitstempel enthält.
+
+Falls ja:
+zusätzlich speichern.
+
+Neue Tabelle falls nötig:
+actual_hour_entries
+
+Felder:
+id
+employee_id
+date
+entry_type ('in' / 'out')
+time
+source
+created_at
+
+Keine bestehende actual_hours Logik entfernen.
+
+6. Mehrere Arbeitsblöcke unterstützen
+
+Ein Tag kann enthalten:
+Kommen
+Gehen
+Kommen
+Gehen
+
+Bitte alle Intervalle korrekt speichern und anzeigen.
+
+7. Fehlende oder unvollständige Stempel
+
+Wenn:
+nur Kommen ohne Gehen
+oder
+ungerade Anzahl Stempel
+
+→ Warnung anzeigen:
+"Unvollständige Zeitbuchung"
+
+8. Datenquellen
+
+Dienstplan:
+schedule_entries
+
+Tagesstempel:
+actual_hour_entries
+
+Tagessummen:
+actual_hours
+
+9. Vorbereitung für später
+
+Struktur vorbereiten für:
+- manuelle Korrekturen
+- Payroll Export
+- Freigaben
+- Kommentare
+- Genehmigungen
+
+Noch nicht implementieren.
+
+10. Nach Umsetzung bitte ausgeben
+
+- Welche Tabellen verwendet werden
+- Ob actual_hour_entries neu erstellt wurde
+- Wie die Zeitstempel aus Mirus gelesen werden
+- Wie mehrere Arbeitsblöcke gespeichert werden
+- Wie die Tagesdetailansicht geöffnet wird
+- Wie Nettozeit berechnet wird
+
+Wichtig:
+Bestehende Monatsübersicht nicht beschädigen.
+Bestehende actual_hours Struktur weiterverwenden.
+Keine parallelen Stunden-Systeme erfinden.

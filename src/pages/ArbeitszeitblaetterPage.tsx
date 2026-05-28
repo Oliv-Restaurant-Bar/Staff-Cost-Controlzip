@@ -22,7 +22,7 @@ import EmployeeDetailView from '@/components/EmployeeDetailView';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
-import { saveActualHourEntry, upsertEmployee } from '@/lib/supabase-db';
+import { saveActualHourEntry, saveActualHourEntries, upsertEmployee } from '@/lib/supabase-db';
 import type { Employee as PersonnelEmployee } from '@/types/personnel';
 import {
   getConfirmationsForMonth,
@@ -544,6 +544,16 @@ export default function ArbeitszeitblaetterPage() {
             start: singleShift?.from ?? undefined,
             end:   singleShift?.to   ?? undefined,
           });
+
+          // Einzelne Stempelzeiten aus allen Schichtblöcken speichern
+          const stampEntries: Array<{ entry_type: 'in' | 'out'; time: string }> = [];
+          for (const shift of day.shifts ?? []) {
+            if (shift.from && shift.from !== '?') stampEntries.push({ entry_type: 'in',  time: shift.from });
+            if (shift.to   && shift.to   !== '?') stampEntries.push({ entry_type: 'out', time: shift.to   });
+          }
+          if (stampEntries.length > 0) {
+            await saveActualHourEntries(row.employee.id, day.date, stampEntries);
+          }
           importedCount++;
         } catch (err) {
           errors.push(`${row.employee.name}/${day.date}: ${String(err)}`);
