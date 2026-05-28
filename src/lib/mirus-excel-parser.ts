@@ -174,6 +174,15 @@ export interface ExcelDocQuality {
   qualityPercent: number;
 }
 
+export interface ExcelParseStats {
+  markersFound: number;        // "Name / Vorname" Marker im Sheet
+  headerTablesFound: number;   // Tabellen mit "Datum"+"Arbeitszeit" Header
+  rawBlocks: number;           // Roh-Blöcke vor Merge/Skip
+  skippedEmpty: number;        // Übersprungene leere Blöcke (kein Name, kein Tag, kein Total)
+  mergedDuplicates: number;    // Zusammengeführte doppelte Mitarbeiter-Blöcke
+  finalEmployees: number;      // Finale importierbare Mitarbeiter
+}
+
 export interface ExcelParsedDocument {
   fileName: string;
   month: number | null;
@@ -185,6 +194,7 @@ export interface ExcelParsedDocument {
   quality: ExcelDocQuality;
   warnings: string[];
   sheetsProcessed: string[];
+  parseStats: ExcelParseStats;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1377,11 +1387,13 @@ function mergeBlocks(raw: ExcelEmployee[]): ExcelEmployee[] {
     result.push(emp);
   }
 
+  const mergedDuplicates = result.reduce((s, e) => s + (e.mergedFromCount > 1 ? e.mergedFromCount - 1 : 0), 0);
+
   if (skippedEmpty > 0) {
     console.log(`[MIRUS-PARSER] ${skippedEmpty} leere Block(e) übersprungen`);
   }
 
-  return result;
+  return { result, skippedEmpty, mergedDuplicates };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1577,26 +1589,26 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
   }
 
   // Blöcke mit gleichem Namen zusammenführen, leere überspringen
-  const rawCount    = employees.length;
-  const merged      = mergeBlocks(employees);
-  const skipped     = rawCount - merged.length - (merged.reduce((s, e) => s + e.mergedFromCount - 1, 0));
-  const mergedCount = merged.reduce((s, e) => s + (e.mergedFromCount > 1 ? 1 : 0), 0);
+  const rawCount = employees.length;
+  const { result: merged, skippedEmpty, mergedDuplicates } = mergeBlocks(employees);
 
-  // Debug-Ausgabe: immer in Konsole (für Diagnose)
+  const parseStats: ExcelParseStats = {
+    markersFound:      totalMarkersFound,
+    headerTablesFound: totalHeaderTablesFound,
+    rawBlocks:         rawCount,
+    skippedEmpty,
+    mergedDuplicates,
+    finalEmployees:    merged.length,
+  };
+
+  // Debug-Ausgabe in Konsole
   console.log(
     `[MIRUS-PARSER] „${file.name}": ` +
-    `Marker=${totalMarkersFound} | Arbeitszeitstabellen=${totalHeaderTablesFound} | ` +
-    `Roh-Blöcke=${rawCount} | Übersprungen (leer)=${rawCount - merged.length - merged.reduce((s, e) => s + e.mergedFromCount - 1, 0)} | ` +
-    `Zusammengeführt=${mergedCount} | Finale MA=${merged.length}`
+    `Marker=${parseStats.markersFound} | Tabellen=${parseStats.headerTablesFound} | ` +
+    `Roh-Blöcke=${parseStats.rawBlocks} | Übersprungen=${parseStats.skippedEmpty} | ` +
+    `Zusammengeführt=${parseStats.mergedDuplicates} | Finale MA=${parseStats.finalEmployees} | ` +
+    `Monat=${fileMonth ?? '?'}/${fileYear ?? '?'}`
   );
-  console.log(
-    `[MIRUS-PARSER] Monat=${fileMonth ?? '?'} Jahr=${fileYear ?? '?'} ` +
-    `Restaurant=${restaurant ?? '?'}`
-  );
-
-  if (mergedCount > 0) {
-    warnings.push(`${mergedCount} Mitarbeiter aus mehreren Blöcken zusammengeführt (${rawCount} Roh-Blöcke → ${merged.length} Mitarbeiter)`);
-  }
 
   // Warnung wenn Monat nicht erkannt
   if (!fileMonth || !fileYear) {
@@ -1614,5 +1626,6 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
     quality:      docQuality(merged),
     warnings,
     sheetsProcessed,
+    parseStats,
   };
 }

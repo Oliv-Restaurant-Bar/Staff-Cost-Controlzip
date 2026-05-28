@@ -17,7 +17,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
-import { parseMirusExcel, type ExcelEmployee } from '@/lib/mirus-excel-parser';
+import { parseMirusExcel, type ExcelEmployee, type ExcelParseStats } from '@/lib/mirus-excel-parser';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
@@ -201,6 +201,8 @@ export default function ArbeitszeitblaetterPage() {
   const [importMonthMismatch, setImportMonthMismatch] = useState<{ month: number; year: number } | null>(null);
   /** true = Admin hat Abweichung explizit bestätigt */
   const [importMonthOverride, setImportMonthOverride] = useState(false);
+  /** Parser-Statistiken aus dem letzten Datei-Upload */
+  const [parseStats, setParseStats] = useState<ExcelParseStats | null>(null);
 
   // ── Create-Employee-Dialog ────────────────────────────────────────────────
 
@@ -396,6 +398,7 @@ export default function ArbeitszeitblaetterPage() {
         setImportMonthMismatch({ month: detectedMonth, year: detectedYear });
       }
 
+      setParseStats(parsed.parseStats);
       setImportRows(buildImportRows(parsed.employees));
     } catch (err) {
       console.error('[IMPORT] parse error', err);
@@ -545,6 +548,7 @@ export default function ArbeitszeitblaetterPage() {
     setImportSheetOpen(false);
     setImportRows([]);
     setImportMonthMismatch(null);
+    setParseStats(null);
 
     if (errors.length === 0) toast.success(`Import abgeschlossen: ${importedCount} Einträge, ${skippedCount} übersprungen`);
     else toast.warning(`Import mit ${errors.length} Fehler(n). ${importedCount} Einträge gespeichert.`);
@@ -822,10 +826,71 @@ export default function ArbeitszeitblaetterPage() {
                 {/* Datei-Info */}
                 <div className="flex items-center gap-3 text-xs flex-wrap">
                   <span className="font-medium">{importFileName}</span>
-                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportMonthOverride(false); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
+                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportMonthOverride(false); setParseStats(null); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
                     <X className="h-3.5 w-3.5" />Neue Datei
                   </button>
                 </div>
+
+                {/* ── Parser-Analyse ───────────────────────────────────────────── */}
+                {parseStats && (
+                  <div className="rounded-lg border border-border bg-muted/20 text-xs">
+                    <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+                      <Info className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      <span className="font-semibold text-foreground">Parser-Analyse</span>
+                      <span className="text-muted-foreground ml-auto">{importFileName}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 px-3 py-2.5 text-muted-foreground">
+                      <span>Name/Vorname-Marker:</span>
+                      <span className="text-foreground font-medium">{parseStats.markersFound}</span>
+
+                      <span>Arbeitszeit-Tabellen:</span>
+                      <span className="text-foreground font-medium">{parseStats.headerTablesFound}</span>
+
+                      <span>Roh-Blöcke (gesamt):</span>
+                      <span className="text-foreground font-medium">{parseStats.rawBlocks}</span>
+
+                      <span>Übersprungen (leer):</span>
+                      <span className={cn('font-medium', parseStats.skippedEmpty > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')}>
+                        {parseStats.skippedEmpty}
+                        {parseStats.skippedEmpty > 0 && <span className="ml-1 font-normal text-muted-foreground">(kein Name + keine Daten)</span>}
+                      </span>
+
+                      <span>Zusammengeführt (doppelt):</span>
+                      <span className={cn('font-medium', parseStats.mergedDuplicates > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-foreground')}>
+                        {parseStats.mergedDuplicates}
+                        {parseStats.mergedDuplicates > 0 && <span className="ml-1 font-normal text-muted-foreground">(gleicher Name, mehrere Blöcke)</span>}
+                      </span>
+
+                      <span className="font-semibold text-foreground">Finale Mitarbeiter:</span>
+                      <span className="font-semibold text-foreground">{parseStats.finalEmployees}</span>
+                    </div>
+
+                    {/* Warnungen wenn Blöcke übersprungen oder zusammengeführt */}
+                    {(parseStats.skippedEmpty > 0 || parseStats.mergedDuplicates > 0) && (
+                      <div className="border-t border-border px-3 py-2 space-y-1">
+                        {parseStats.skippedEmpty > 0 && (
+                          <div className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                            <span>
+                              <strong>{parseStats.skippedEmpty}</strong> leere Block{parseStats.skippedEmpty !== 1 ? 'e' : ''} übersprungen
+                              {parseStats.markersFound !== parseStats.headerTablesFound && (
+                                <> — {parseStats.markersFound - parseStats.headerTablesFound} Marker ohne Arbeitszeit-Tabelle (z.B. Deckblatt-Blöcke)</>
+                              )}
+                            </span>
+                          </div>
+                        )}
+                        {parseStats.mergedDuplicates > 0 && (
+                          <div className="flex items-start gap-1.5 text-blue-700 dark:text-blue-400">
+                            <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                            <span>
+                              <strong>{parseStats.mergedDuplicates}</strong> Folgeblock{parseStats.mergedDuplicates !== 1 ? 'e' : ''} mit gleichem Namen zusammengeführt (Fortsetzungsseiten)
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Status-Chips */}
                 <div className="flex flex-wrap gap-2 text-xs">
