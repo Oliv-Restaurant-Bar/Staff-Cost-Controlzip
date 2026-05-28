@@ -1,0 +1,154 @@
+Bitte erweitere den Mirus Import im Modul Arbeitszeitblätter um eine detaillierte Qualitätsauswertung pro Import.
+
+Ziel:
+Nach jedem Import soll dauerhaft gespeichert und angezeigt werden, welche Datenfelder zu wie viel Prozent erkannt wurden.
+
+Nicht nur Gesamtqualität, sondern eine vollständige Auflistung pro Import.
+
+Beispiel Anzeige pro Import:
+
+Import April 2026 · Monatsblatt April 2026.xls · 28.05.2026 14:30
+
+Erkennungsgrad:
+- Mitarbeiter: 21 / 21 = 100 %
+- Abteilung: 21 / 21 = 100 %
+- Arbeitsverhältnis: 21 / 21 = 100 %
+- Eintrittsdatum: 21 / 21 = 100 %
+- Austrittsdatum: 3 / 3 = 100 %
+- Sollstunden: 21 / 21 = 100 %
+- AZB Tagesstunden: 262 / 262 = 100 %
+- Zeitstempel / Zeitblöcke: 262 / 262 = 100 %
+- Pausen: 262 / 262 = 100 %
+- Ferien-Tage: x / y = %
+- Feiertage: x / y = %
+- Feriensaldo: x / y = %
+- Ferienguthaben: x / y = %
+- Feiertagsguthaben: x / y = %
+- Krankheit: x / y = %
+- Unfall: x / y = %
+- Frei-Tage: x / y = %
+- Abwesenheiten total: x / y = %
+
+1. Parser-Quality strukturieren
+
+Bitte parser_quality JSONB so erweitern, dass pro Datenfeld gespeichert wird:
+
+{
+  key: "employees",
+  label: "Mitarbeiter",
+  detected: 21,
+  expected: 21,
+  percent: 100,
+  missing: [],
+  warnings: []
+}
+
+Für alle relevanten Felder.
+
+2. Pflicht-Felder auswerten
+
+Bitte mindestens diese Qualitätsfelder berechnen und speichern:
+
+- employees = Mitarbeiter
+- departments = Abteilung
+- employment_period = Arbeitsverhältnis
+- start_dates = Eintrittsdatum
+- end_dates = Austrittsdatum, nur expected zählen wenn Austritt in Datei vorhanden ist
+- target_hours = Sollstunden
+- azb_daily_hours = AZB Tagesstunden
+- time_blocks = Zeitstempel / Zeitblöcke
+- breaks = Pausen
+- vacation_days = Ferientage
+- public_holidays = Feiertage
+- vacation_balance = Feriensaldo / Ferienguthaben
+- public_holiday_balance = Feiertagsguthaben
+- sick_days = Krankheit
+- accident_days = Unfall
+- free_days = Frei-Tage
+- absence_days_total = Abwesenheiten total
+
+3. Expected sauber berechnen
+
+Bitte nicht überall pauschal Mitarbeiterzahl als expected verwenden.
+
+Beispiele:
+- Mitarbeiter expected = alle gefundenen Mitarbeiterblöcke
+- Zeitblöcke expected = alle Arbeitstage mit AZB-Stunden > 0
+- Feriensaldo expected = alle Mitarbeiter, bei denen eine Ferien-/Saldo-Zeile in der Datei existiert
+- Feiertagguthaben expected = alle Mitarbeiter, bei denen eine Feiertags-/Saldo-Zeile in der Datei existiert
+- Krankheit expected = nur erkannte Krankheitseinträge in Datei
+- Unfall expected = nur erkannte Unfall-Einträge in Datei
+- Austrittsdatum expected = nur Mitarbeiter, bei denen ein Arbeitsverhältnis mit Enddatum existiert
+
+4. 0.0 als erkannt zählen
+
+Wichtig:
+0.0 h oder 0 Tage ist ein gültiger erkannter Wert, wenn das Feld in der Datei vorhanden ist.
+
+Nicht als fehlend zählen.
+
+5. Anzeige während Import
+
+Im Import-Dialog unter Datenqualität eine Tabelle anzeigen:
+
+Datenfeld | Erkannt | Erwartet | Qualität | Status
+
+Beispiel:
+Mitarbeiter | 21 | 21 | 100 % | grün
+Feriensaldo | 13 | 21 | 62 % | rot
+Feiertagsguthaben | 0 | 21 | 0 % | rot
+
+6. Import-Historie pro Import
+
+Auf /arbeitszeitblaetter eine Sektion ergänzen:
+
+"Import-Historie"
+
+Pro Import eine Zeile:
+Datum/Zeit
+Monat
+Dateiname
+Mitarbeiter %
+Zeitstempel %
+Ferien %
+Feiertage %
+Abwesenheiten %
+Gesamtstatus
+
+Klick auf Import öffnet Detailansicht mit der vollständigen Qualitäts-Tabelle.
+
+7. Gesamtstatus nicht wichtiger als Details
+
+Gesamtstatus optional, aber die Detailwerte pro Feld sind entscheidend.
+
+8. Warnungen und fehlende Daten
+
+Für jedes Feld mit < 100 % anzeigen:
+- welche Mitarbeiter fehlen
+- welche Tage fehlen
+- welche Werte nicht gelesen wurden
+- ob Feld in Datei nicht vorhanden war oder Parser es nicht lesen konnte
+
+9. Import-History speichern
+
+parser_quality JSONB muss die vollständige Qualitätsliste speichern.
+Falls import_status oder error_summary noch fehlen, ergänzen:
+
+ALTER TABLE timesheet_import_history
+ADD COLUMN IF NOT EXISTS import_status TEXT DEFAULT 'success',
+ADD COLUMN IF NOT EXISTS error_summary TEXT;
+
+10. Nach Umsetzung bitte ausgeben
+
+- Welche Qualitätsfelder erfasst werden
+- Wie expected je Feld berechnet wird
+- Wie 0.0 Werte behandelt werden
+- Wo die Qualitätsliste pro Import sichtbar ist
+- Wie die Import-Historie geöffnet wird
+- Welche SQL-Migration nötig ist
+
+Wichtig:
+Ich will pro Import exakt sehen, was zu 100 % erkannt wurde und was nicht.
+Keine geschönten Prozentwerte.
+Keine Dummy-Werte.
+Nur echte Parser-Erkennung zählen.

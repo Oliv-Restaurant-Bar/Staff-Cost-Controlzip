@@ -174,49 +174,52 @@ export default function DayDetailDrawer({
           {/* ── Inhalt ── */}
           {!loading && !noTable && (
             <>
-              {/* ── Dienstplan oben ── */}
-              {(hasFrüh || hasSpät || dayEntry?.frueh_absence) && (
-                <div className="px-4 pt-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                    Dienstplan (Soll)
-                  </p>
-                  <div className="rounded-lg border border-border bg-card divide-y divide-border/50 mb-4">
-                    {hasFrüh && (
-                      <div className="px-3 py-2 flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground font-medium">Frühschicht</span>
-                        <span className="font-mono font-semibold">
-                          {fmtTime(dayEntry?.frueh_start)}–{fmtTime(dayEntry?.frueh_end)}
-                        </span>
-                      </div>
-                    )}
-                    {hasSpät && (
-                      <div className="px-3 py-2 flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground font-medium">Spätschicht</span>
-                        <span className="font-mono font-semibold">
-                          {fmtTime(dayEntry?.spaet_start)}–{fmtTime(dayEntry?.spaet_end)}
-                        </span>
-                      </div>
-                    )}
-                    {dayEntry?.frueh_absence && (
-                      <div className="px-3 py-2 flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground font-medium">Abwesenheit</span>
-                        <span className="font-semibold text-blue-600 dark:text-blue-400">
-                          {dayEntry.frueh_absence}
-                        </span>
-                      </div>
-                    )}
-                    <div className="px-3 py-2 flex items-center justify-between text-xs bg-muted/20">
-                      <span className="text-muted-foreground font-medium">Plan Total</span>
-                      <span className="font-semibold">{fmtHours(planH)}</span>
+              {/* ── Dienstplan ── */}
+              <div className="px-4 pt-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                  Dienstplan
+                </p>
+                <div className="rounded-lg border border-border bg-card divide-y divide-border/50 mb-4">
+                  {hasFrüh ? (
+                    <div className="px-3 py-2 flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground font-medium">Frühschicht</span>
+                      <span className="font-mono font-semibold">
+                        {fmtTime(dayEntry?.frueh_start)}–{fmtTime(dayEntry?.frueh_end)}
+                      </span>
                     </div>
+                  ) : null}
+                  {hasSpät ? (
+                    <div className="px-3 py-2 flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground font-medium">Spätschicht</span>
+                      <span className="font-mono font-semibold">
+                        {fmtTime(dayEntry?.spaet_start)}–{fmtTime(dayEntry?.spaet_end)}
+                      </span>
+                    </div>
+                  ) : null}
+                  {dayEntry?.frueh_absence ? (
+                    <div className="px-3 py-2 flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground font-medium">Abwesenheit</span>
+                      <span className="font-semibold text-blue-600 dark:text-blue-400">
+                        {dayEntry.frueh_absence}
+                      </span>
+                    </div>
+                  ) : null}
+                  {!hasFrüh && !hasSpät && !dayEntry?.frueh_absence ? (
+                    <div className="px-3 py-2 text-xs text-muted-foreground italic">Kein Dienstplan vorhanden</div>
+                  ) : null}
+                  <div className="px-3 py-2 flex items-center justify-between text-xs bg-muted/20 font-semibold">
+                    <span className="text-muted-foreground">Dienstplan Total</span>
+                    <span className={planH != null ? 'text-foreground' : 'text-muted-foreground'}>
+                      {fmtHours(planH)}
+                    </span>
                   </div>
                 </div>
-              )}
+              </div>
 
-              {/* ── IST Zeitblöcke-Tabelle ── */}
-              <div className="px-4 pt-2 pb-1">
+              {/* ── Mirus/AZB Zeitblöcke ── */}
+              <div className="px-4 pt-0 pb-1">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                  IST Zeitstempel (Mirus)
+                  Mirus / AZB — Zeitblöcke
                 </p>
               </div>
 
@@ -274,58 +277,79 @@ export default function DayDetailDrawer({
                 </div>
               )}
 
-              {/* ── Tageszusammenfassung ── */}
-              <div className="px-4 pb-2">
+              {/* ── AZB Total (unter den Blöcken) ── */}
+              {(validBlocks.length > 0 || azbH != null) && (
+                <div className="mx-4 mb-4 rounded-lg border border-border bg-card divide-y divide-border/50">
+                  {nettoMin > 0 && (
+                    <div className="px-3 py-2 flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground font-medium">
+                        Nettozeit ({validBlocks.length} Block{validBlocks.length !== 1 ? 'e' : ''})
+                      </span>
+                      <span className="font-mono font-semibold">{fmtMinutes(nettoMin)}</span>
+                    </div>
+                  )}
+                  {totalPauseMin > 0 && (
+                    <div className="px-3 py-2 flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground font-medium">Pause (zwischen Blöcken)</span>
+                      <span className="font-mono text-blue-600 dark:text-blue-400">{fmtMinutes(totalPauseMin)}</span>
+                    </div>
+                  )}
+                  <div className="px-3 py-2 flex items-center justify-between text-xs bg-muted/20 font-semibold">
+                    <span className="text-muted-foreground">AZB Total</span>
+                    <span className={azbH != null ? 'text-foreground' : 'text-muted-foreground'}>
+                      {fmtHours(azbH)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Vergleich ── */}
+              <div className="px-4 pb-4">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                  Tageszusammenfassung
+                  Vergleich
                 </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Card
-                    label="Nettozeit (Blöcke)"
-                    value={nettoMin > 0 ? fmtMinutes(nettoMin) : '–'}
-                    sub={`${validBlocks.length} Block${validBlocks.length !== 1 ? 'e' : ''}`}
-                  />
-                  <Card
-                    label="Pause (zwischen Blöcken)"
-                    value={totalPauseMin > 0 ? fmtMinutes(totalPauseMin) : '–'}
-                  />
-                  <Card
-                    label="AZB Total"
-                    value={fmtHours(azbH)}
-                    sub="Aus actual_hours"
-                    color={azbH != null ? 'text-foreground' : 'text-muted-foreground'}
-                  />
-                  <Card
-                    label="Dienstplan Total"
-                    value={fmtHours(planH)}
-                    sub="Aus schedule_entries"
-                    color={planH != null ? 'text-foreground' : 'text-muted-foreground'}
-                  />
-                  <Card
-                    label="Differenz (AZB − Plan)"
-                    value={diffH != null
-                      ? (diffH > 0 ? '+' : '') + diffH.toFixed(1) + ' h'
-                      : '–'}
-                    color={
-                      diffH == null       ? 'text-muted-foreground'
+                <div className="rounded-lg border border-border bg-card divide-y divide-border/50">
+                  <div className="px-3 py-2 flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground font-medium">Dienstplan Total</span>
+                    <span className={cn('font-semibold tabular-nums', planH != null ? 'text-foreground' : 'text-muted-foreground')}>
+                      {fmtHours(planH)}
+                    </span>
+                  </div>
+                  <div className="px-3 py-2 flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground font-medium">AZB Total</span>
+                    <span className={cn('font-semibold tabular-nums', azbH != null ? 'text-foreground' : 'text-muted-foreground')}>
+                      {fmtHours(azbH)}
+                    </span>
+                  </div>
+                  <div className="px-3 py-2 flex items-center justify-between text-xs bg-muted/20 font-semibold">
+                    <span className="text-muted-foreground">Diff. AZB − Dienstplan</span>
+                    <span className={cn(
+                      'tabular-nums',
+                      diffH == null            ? 'text-muted-foreground'
                       : Math.abs(diffH) <= 0.5 ? 'text-emerald-600 dark:text-emerald-400'
-                      : diffH < 0         ? 'text-red-600 dark:text-red-400'
-                                          : 'text-amber-600 dark:text-amber-400'
-                    }
-                  />
-                  <Card
-                    label="Status"
-                    value={
-                      validBlocks.length === 0 ? 'Keine Daten'
-                      : Math.abs(diffH ?? 0) <= 0.5 ? 'OK'
-                      : 'Abweichung'
-                    }
-                    color={
-                      validBlocks.length === 0    ? 'text-muted-foreground'
+                      : diffH < 0              ? 'text-red-600 dark:text-red-400'
+                                               : 'text-amber-600 dark:text-amber-400',
+                    )}>
+                      {diffH != null ? (diffH > 0 ? '+' : '') + diffH.toFixed(1) + ' h' : '–'}
+                    </span>
+                  </div>
+                  <div className="px-3 py-2 flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground font-medium">Status</span>
+                    <span className={cn(
+                      'font-semibold',
+                      azbH == null && planH == null ? 'text-muted-foreground'
+                      : azbH != null && planH == null ? 'text-red-600 dark:text-red-400'
+                      : azbH == null && planH != null ? 'text-red-600 dark:text-red-400'
                       : Math.abs(diffH ?? 0) <= 0.5 ? 'text-emerald-600 dark:text-emerald-400'
-                                                    : 'text-amber-600 dark:text-amber-400'
-                    }
-                  />
+                      : 'text-amber-600 dark:text-amber-400',
+                    )}>
+                      {azbH == null && planH == null ? 'Keine Daten'
+                       : azbH != null && planH == null ? 'AZB ohne Dienstplan'
+                       : azbH == null && planH != null ? 'Dienstplan ohne AZB'
+                       : Math.abs(diffH ?? 0) <= 0.5 ? 'OK'
+                       : 'Abweichung'}
+                    </span>
+                  </div>
                 </div>
               </div>
 

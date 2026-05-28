@@ -448,9 +448,9 @@ function TableContent({
             <th className="px-4 py-2 text-left font-semibold whitespace-nowrap">Datum</th>
             <th className="px-2 py-2 text-left font-semibold">WT</th>
             <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">IST Zeitstempel</th>
-            <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Plan (h)</th>
-            <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">AZB (h)</th>
-            <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Differenz</th>
+            <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Dienstplan IST</th>
+            <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">AZB IST</th>
+            <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Diff. AZB − Dienstplan</th>
             <th className="px-3 py-2 text-center font-semibold">Pause</th>
             <th className="px-3 py-2 text-left font-semibold">Typ</th>
             <th className="px-3 py-2 text-left font-semibold">Status</th>
@@ -536,12 +536,15 @@ function TableContent({
                 TOTAL
               </td>
               <td className="px-3 py-2 text-right tabular-nums">
+                <div className="text-[9px] font-normal text-muted-foreground uppercase tracking-wide mb-0.5">Dienstplan IST</div>
                 {totalPlanHours > 0 ? fmtH(totalPlanHours) : <span className="font-normal text-muted-foreground">–</span>}
               </td>
               <td className="px-3 py-2 text-right tabular-nums">
+                <div className="text-[9px] font-normal text-muted-foreground uppercase tracking-wide mb-0.5">AZB IST</div>
                 {totalAzbHours > 0 ? fmtH(totalAzbHours) : <span className="font-normal text-muted-foreground">–</span>}
               </td>
               <td className="px-3 py-2 text-right tabular-nums">
+                <div className="text-[9px] font-normal text-muted-foreground uppercase tracking-wide mb-0.5">Diff. AZB − Dienstplan</div>
                 {(totalPlanHours > 0 || totalAzbHours > 0) ? (
                   <span className={cn(
                     totalDiff < -0.5 ? 'text-red-600 dark:text-red-400'
@@ -553,16 +556,18 @@ function TableContent({
                 ) : <span className="font-normal text-muted-foreground">–</span>}
               </td>
               <td className="px-3 py-2 text-center text-muted-foreground font-normal">
+                <div className="text-[9px] uppercase tracking-wide mb-0.5">Pause</div>
                 {totalPauseMin > 0 ? `${totalPauseMin} min` : '–'}
               </td>
               <td className="px-3 py-2" />
               <td className="px-3 py-2 whitespace-nowrap">
+                <div className="text-[9px] font-normal text-muted-foreground uppercase tracking-wide mb-0.5">Abweichungen</div>
                 {deviationDays > 0 ? (
                   <span className="text-amber-600 dark:text-amber-400">
-                    {deviationDays} Abw.
+                    {deviationDays} Tag{deviationDays !== 1 ? 'e' : ''}
                   </span>
                 ) : (
-                  <span className="text-emerald-600 dark:text-emerald-400 font-normal">OK</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-normal">Keine</span>
                 )}
               </td>
             </tr>
