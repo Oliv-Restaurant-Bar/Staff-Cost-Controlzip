@@ -687,8 +687,14 @@ export default function ArbeitszeitblaetterPage() {
           if (blockEntries.length > 0) {
             const result = await saveActualHourEntries(row.employee.id, day.date, blockEntries);
             if (!result.ok) {
-              errors.push(`actual_hour_entries ${row.employee.name}/${day.date}: ${result.error ?? 'unbekannter Fehler'}`);
-              console.error('[runImport] saveActualHourEntries fehlgeschlagen:', row.employee.name, day.date, result.error);
+              const code = result.code ?? '';
+              const hint = code === '42501'
+                ? ' (Berechtigung fehlt — SQL-Script ausführen)'
+                : code === '22008'
+                ? ' (Datumsformat-Fehler)'
+                : '';
+              errors.push(`[Zeitblöcke] ${row.employee.name} / ${day.date}: ${result.error ?? 'unbekannter Fehler'}${hint}`);
+              console.error('[runImport] saveActualHourEntries fehlgeschlagen:', row.employee.name, day.date, `code=${code}`, result.error);
             }
           }
           importedCount++;
@@ -738,8 +744,24 @@ export default function ArbeitszeitblaetterPage() {
     setConfirmedProtectedIds(new Set());
     setReimportDeleteResult(null);
 
-    if (errors.length === 0) toast.success(`Import abgeschlossen: ${importedCount} Einträge, ${skippedCount} übersprungen`);
-    else toast.warning(`Import mit ${errors.length} Fehler(n). ${importedCount} Einträge gespeichert.`);
+    if (errors.length === 0) {
+      toast.success(`Import abgeschlossen: ${importedCount} Einträge, ${skippedCount} übersprungen`);
+    } else {
+      const blockErrors  = errors.filter(e => e.startsWith('[Zeitblöcke]'));
+      const otherErrors  = errors.filter(e => !e.startsWith('[Zeitblöcke]'));
+      const parts: string[] = [];
+      if (blockErrors.length)  parts.push(`${blockErrors.length} Zeitblöcke konnten nicht gespeichert werden`);
+      if (otherErrors.length)  parts.push(`${otherErrors.length} sonstige Fehler`);
+      const firstFive = errors.slice(0, 5).join('\n');
+      console.warn('[runImport] Importfehler:\n' + errors.join('\n'));
+      toast.warning(
+        `Import mit Fehlern — ${importedCount} Einträge gespeichert.\n` +
+        parts.join(' · ') + '\n' +
+        'Details:\n' + firstFive +
+        (errors.length > 5 ? `\n…und ${errors.length - 5} weitere` : ''),
+        { duration: 10000 },
+      );
+    }
     await loadData();
   }
 

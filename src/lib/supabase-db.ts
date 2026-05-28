@@ -783,43 +783,59 @@ export interface HourBlockEntry {
 }
 
 /**
- * Speichert alle Arbeitsblöcke eines Tages.
- * Strategie: bestehende Blöcke für diesen Tag löschen, dann neu einfügen.
- * → Idempotent bei Re-Import; verhindert Duplikate.
- * Gibt { ok, error } zurück — wirft nicht, damit Caller selbst entscheiden kann.
+ * Normalisiert ein Datum in ISO-Format (YYYY-MM-DD).
+ * Akzeptiert: "DD.MM.YYYY" (deutsches Format), "YYYY-MM-DD" (ISO), "DD.MM.YY".
  */
+function toIsoDate(date: string): string {
+  // DD.MM.YYYY  oder  DD.MM.YY
+  const de = date.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
+  if (de) {
+    const d  = de[1].padStart(2, '0');
+    const mo = de[2].padStart(2, '0');
+    const y  = de[3].length === 2 ? `20${de[3]}` : de[3];
+    return `${y}-${mo}-${d}`;
+  }
+  return date; // bereits ISO oder unbekannt → unverändert
+}
+
 export async function saveActualHourEntries(
   employeeId: string,
   date: string,
   blocks: Array<{ start_time: string; end_time: string; duration_hours: number; source?: string }>,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; code?: string }> {
+  const isoDate = toIsoDate(date);
+  if (isoDate !== date) {
+    console.debug(`[supabase-db] saveActualHourEntries: Datum normalisiert "${date}" → "${isoDate}"`);
+  }
+
   try {
     const { error: delError } = await supabase
       .from('actual_hour_entries')
       .delete()
       .eq('employee_id', employeeId)
-      .eq('date', date);
+      .eq('date', isoDate);
 
     if (delError) {
       console.error('[supabase-db] saveActualHourEntries (delete):', delError);
-      return { ok: false, error: delError.message };
+      return { ok: false, error: delError.message, code: delError.code };
     }
 
     if (blocks.length === 0) return { ok: true };
 
-    const { error } = await supabase.from('actual_hour_entries').insert(
+    const { error } = await supabase.from('actual_hour_entries').upsert(
       blocks.map(b => ({
         employee_id:    employeeId,
-        date,
-        start_time:     b.start_time.slice(0, 5),
-        end_time:       b.end_time.slice(0, 5),
+        date:           isoDate,
+        start_time:     b.start_time.length === 5 ? `${b.start_time}:00` : b.start_time.slice(0, 8),
+        end_time:       b.end_time.length   === 5 ? `${b.end_time}:00`   : b.end_time.slice(0, 8),
         duration_hours: b.duration_hours,
         source:         b.source ?? 'mirus_import',
       })),
+      { onConflict: 'employee_id,date,start_time,end_time' },
     );
     if (error) {
-      console.error('[supabase-db] saveActualHourEntries (insert):', error);
-      return { ok: false, error: error.message };
+      console.error('[supabase-db] saveActualHourEntries (upsert):', error);
+      return { ok: false, error: error.message, code: error.code };
     }
     return { ok: true };
   } catch (e) {

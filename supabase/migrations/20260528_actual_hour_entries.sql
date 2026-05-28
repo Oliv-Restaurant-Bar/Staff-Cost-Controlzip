@@ -25,15 +25,21 @@ CREATE INDEX IF NOT EXISTS idx_actual_hour_entries_emp_date
 CREATE INDEX IF NOT EXISTS idx_actual_hour_entries_date
   ON actual_hour_entries (date);
 
--- Row Level Security (analog zu actual_hours)
+-- Row Level Security
 ALTER TABLE actual_hour_entries ENABLE ROW LEVEL SECURITY;
 
+-- Policy: alle eingeloggten Benutzer dürfen lesen und schreiben
 CREATE POLICY "Authenticated users can manage actual_hour_entries"
   ON actual_hour_entries
   FOR ALL
   TO authenticated
   USING (true)
   WITH CHECK (true);
+
+-- Grants: explizit erforderlich — RLS allein reicht nicht
+GRANT ALL ON TABLE actual_hour_entries TO authenticated;
+GRANT ALL ON TABLE actual_hour_entries TO service_role;
+GRANT SELECT ON TABLE actual_hour_entries TO anon;
 
 COMMENT ON TABLE actual_hour_entries IS
   'Einzelne Arbeitsblöcke (Kommen/Gehen-Paare) pro Mitarbeiter und Tag. '
