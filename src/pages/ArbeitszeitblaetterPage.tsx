@@ -18,7 +18,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import { parseMirusExcel, type ExcelEmployee, type ExcelParseStats } from '@/lib/mirus-excel-parser';
-import EmployeeTimesheetDetailDrawer, { type DetailDrawerEmployee } from '@/components/EmployeeTimesheetDetailDrawer';
+import EmployeeDetailView from '@/components/EmployeeDetailView';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
@@ -205,8 +205,8 @@ export default function ArbeitszeitblaetterPage() {
   /** Parser-Statistiken aus dem letzten Datei-Upload */
   const [parseStats, setParseStats] = useState<ExcelParseStats | null>(null);
 
-  // ── Detail-Drawer (Tagesvergleich pro Mitarbeiter) ─────────────────────────
-  const [detailEmployee, setDetailEmployee] = useState<DetailDrawerEmployee | null>(null);
+  // ── Mitarbeiter-Einzelansicht ─────────────────────────────────────────────
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
 
   // ── Create-Employee-Dialog ────────────────────────────────────────────────
 
@@ -259,6 +259,9 @@ export default function ArbeitszeitblaetterPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Einzelansicht zurücksetzen wenn Monat wechselt
+  useEffect(() => { setSelectedEmployeeId(null); }, [year, month, tenantId]);
+
   if (!isAdmin) { navigate('/'); return null; }
 
   const confMap = Object.fromEntries(confirmations.map(c => [c.employee_id, c]));
@@ -282,6 +285,23 @@ export default function ArbeitszeitblaetterPage() {
     rejected:  rows.filter(r => r.confirmation?.status === 'rejected').length,
     pending:   rows.filter(r => !r.confirmation || r.confirmation.status === 'open').length,
   };
+
+  // Einzelansicht: Daten für ausgewählten Mitarbeiter (unabhängig vom Abteilungsfilter)
+  const selectedRow: RowData | null = selectedEmployeeId
+    ? (() => {
+        const emp = employees.find(e => e.id === selectedEmployeeId);
+        if (!emp) return null;
+        return {
+          employee:        emp,
+          confirmation:    confMap[emp.id]    ?? null,
+          istHours:        istMap[emp.id]     ?? 0,
+          dienstplanHours: dienstplanMap[emp.id] ?? 0,
+          sollHours:       emp.weekly_hours ? sollHoursForMonth(emp.weekly_hours, year, month) : 0,
+          vacationBalance: balances[emp.id]?.vacation_balance_hours         ?? null,
+          holidayBalance:  balances[emp.id]?.public_holiday_balance_hours   ?? null,
+        };
+      })()
+    : null;
 
   // ── Import-Berechnungen ───────────────────────────────────────────────────
 
@@ -606,6 +626,22 @@ export default function ArbeitszeitblaetterPage() {
         )}
       </div>
 
+      {selectedRow ? (
+        <EmployeeDetailView
+          employeeId={selectedRow.employee.id}
+          employeeName={selectedRow.employee.name}
+          department={selectedRow.employee.department || ''}
+          sollHours={selectedRow.sollHours}
+          dienstplanHours={selectedRow.dienstplanHours}
+          istHours={selectedRow.istHours}
+          vacationBalance={selectedRow.vacationBalance}
+          holidayBalance={selectedRow.holidayBalance}
+          confirmation={selectedRow.confirmation}
+          year={year}
+          month={month}
+          onBack={() => setSelectedEmployeeId(null)}
+        />
+      ) : (
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -623,6 +659,32 @@ export default function ArbeitszeitblaetterPage() {
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Mitarbeiter-Filter */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Users className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <select
+            value={selectedEmployeeId ?? ''}
+            onChange={e => setSelectedEmployeeId(e.target.value || null)}
+            className="text-xs border border-border rounded-md px-2 py-1 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary h-7 min-w-[160px]"
+          >
+            <option value="">Alle Mitarbeiter</option>
+            {[...employees]
+              .sort((a, b) => a.name.localeCompare(b.name, 'de'))
+              .map(emp => (
+                <option key={emp.id} value={emp.id}>{emp.name}</option>
+              ))
+            }
+          </select>
+          {selectedEmployeeId && (
+            <button
+              onClick={() => setSelectedEmployeeId(null)}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-border rounded-md px-2 py-1 h-7 hover:bg-muted transition-colors"
+            >
+              <X className="h-3 w-3" />Alle
+            </button>
+          )}
         </div>
 
         {/* Abteilungs-Filter */}
@@ -684,7 +746,7 @@ export default function ArbeitszeitblaetterPage() {
                           <div className="flex items-center gap-1.5">
                             {hasPlanWarning && (
                               <button
-                                onClick={() => setDetailEmployee({ id: emp.id, name: emp.name, department: emp.department, planHours: dienstplanHours, istHours })}
+                                onClick={() => setSelectedEmployeeId(emp.id)}
                                 title={`Detail anzeigen — Dienstplan (${fmtHours(dienstplanHours)}) vs. AZB (${fmtHours(istHours)}): ${fmtDiff(dienstplanHours - istHours)}`}
                                 className="shrink-0 hover:scale-110 transition-transform"
                               >
@@ -698,7 +760,7 @@ export default function ArbeitszeitblaetterPage() {
                         <td className="px-3 py-2 text-right tabular-nums text-xs text-muted-foreground">{sollHours > 0 ? fmtHours(sollHours) : '–'}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-xs hidden md:table-cell">
                           <button
-                            onClick={() => setDetailEmployee({ id: emp.id, name: emp.name, department: emp.department, planHours: dienstplanHours, istHours })}
+                            onClick={() => setSelectedEmployeeId(emp.id)}
                             className={cn('tabular-nums hover:underline underline-offset-2 cursor-pointer', dienstplanHours > 0 ? 'text-foreground' : 'text-muted-foreground')}
                             title="Tagesdetails anzeigen"
                           >
@@ -707,7 +769,7 @@ export default function ArbeitszeitblaetterPage() {
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums text-xs font-medium">
                           <button
-                            onClick={() => setDetailEmployee({ id: emp.id, name: emp.name, department: emp.department, planHours: dienstplanHours, istHours })}
+                            onClick={() => setSelectedEmployeeId(emp.id)}
                             className={cn('tabular-nums hover:underline underline-offset-2 cursor-pointer', istHours > 0 ? (hasPlanWarning ? 'text-amber-700 dark:text-amber-400' : 'text-foreground') : 'text-muted-foreground')}
                             title="Tagesdetails anzeigen"
                           >
@@ -717,7 +779,7 @@ export default function ArbeitszeitblaetterPage() {
                         <td className="px-3 py-2 text-right tabular-nums text-xs hidden md:table-cell">
                           {istHours > 0 && sollHours > 0 ? (
                             <button
-                              onClick={() => setDetailEmployee({ id: emp.id, name: emp.name, department: emp.department, planHours: dienstplanHours, istHours })}
+                              onClick={() => setSelectedEmployeeId(emp.id)}
                               className={cn('tabular-nums hover:underline underline-offset-2 cursor-pointer', diff >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}
                               title="Tagesdetails anzeigen"
                             >
@@ -775,6 +837,7 @@ export default function ArbeitszeitblaetterPage() {
           <span className="flex items-center gap-1 text-blue-500">■ Ferien/Feiertage = Mirus Abschluss-Saldo</span>
         </div>
       </div>
+      )}
 
       {/* ── Mirus Import Sheet ──────────────────────────────────────────────── */}
       <Sheet open={importSheetOpen} onOpenChange={setImportSheetOpen}>
@@ -1175,14 +1238,6 @@ export default function ArbeitszeitblaetterPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Tagesdetail-Drawer ───────────────────────────────────────────────── */}
-      <EmployeeTimesheetDetailDrawer
-        open={detailEmployee !== null}
-        onClose={() => setDetailEmployee(null)}
-        employee={detailEmployee}
-        year={year}
-        month={month}
-      />
     </div>
   );
 }
