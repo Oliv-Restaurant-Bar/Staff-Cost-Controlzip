@@ -162,6 +162,8 @@ export interface ExcelEmployee {
   rawBlock: RawBlock;
   mergedFromCount: number;           // 1 = einzelner Block, ≥2 = zusammengeführt
   mergedBlockRows: [number, number][]; // [startRow, endRow] jedes Teil-Blocks
+  vacationRowFound?: boolean;          // Ferien-Zeile im Sheet gefunden (auch wenn Wert 0 oder leer)
+  holidayRowFound?:  boolean;          // Feiertag-Zeile im Sheet gefunden
 }
 
 export interface ExcelDocQuality {
@@ -185,10 +187,12 @@ export interface ExcelParseStats {
   monthDetected: boolean;                   // Monat + Jahr erkannt
   daysWithHours: number;                    // Tage mit totalHours > 0
   daysWithTimeBlocks: number;               // Tage mit ≥1 Zeitblock (shifts)
-  employeesWithVacationBalance: number;     // MA mit Ferienguthaben
-  employeesWithHolidayBalance: number;      // MA mit Feiertagguthaben
-  employeesMissingVacation: string[];       // Namen MA ohne Ferienguthaben
-  employeesMissingHoliday: string[];        // Namen MA ohne Feiertagguthaben
+  employeesWithVacationBalance: number;     // MA mit Ferienguthaben (inkl. 0.0)
+  employeesWithHolidayBalance: number;      // MA mit Feiertagguthaben (inkl. 0.0)
+  employeesMissingVacation: string[];       // MA: Zeile nicht gefunden
+  employeesMissingHoliday: string[];        // MA: Zeile nicht gefunden
+  employeesVacationRowFoundNoValue: string[];  // MA: Zeile vorhanden, Wert nicht lesbar
+  employeesHolidayRowFoundNoValue: string[];   // MA: Zeile vorhanden, Wert nicht lesbar
   incompleteTimeBlocks: number;             // Tage mit unvollständiger Stempelung
   qualityWarnings: string[];                // Warnungen bei tiefer Erkennungsquote
 }
@@ -291,6 +295,8 @@ function normLabel(text: string): string {
 /**
  * Parst einen Zellwert als Dezimalstunden.
  * Akzeptiert: HH:MM-String, Excel-Zeitfraktion (0..~3), direkte Dezimalzahl.
+ * Wichtig: 0.0 ist ein gültiger Wert (z.B. kein Ferienguthaben) und wird
+ * NICHT als "kein Wert" behandelt. Nur leere Zellen liefern null.
  */
 function parseHoursValue(cell: XLSX.CellObject | undefined): { display: string; decimal: number } | null {
   if (!cell) return null;
@@ -305,6 +311,8 @@ function parseHoursValue(cell: XLSX.CellObject | undefined): { display: string; 
 
   if (cell.t === 'n' && typeof cell.v === 'number') {
     const v = cell.v;
+    // 0.0 = gültiger Nullwert (z.B. kein Ferienguthaben)
+    if (v === 0) return { display: w || '0', decimal: 0 };
     // Excel-Zeitfraktion (Bruchteile eines Tages, < 3 = < 72 h)
     if (v > 0 && v < 3) {
       const decimal = Math.round(v * 24 * 100) / 100;
@@ -316,7 +324,10 @@ function parseHoursValue(cell: XLSX.CellObject | undefined): { display: string; 
   }
 
   const s = String(cell.v ?? '').trim();
-  if (!s || s === '0' || s === '-') return null;
+  if (!s || s === '-') return null;
+
+  // Explizit "0" oder "0.0" / "0,0" als Nullwert akzeptieren
+  if (s === '0' || /^0[.,]0+$/.test(s)) return { display: s, decimal: 0 };
 
   // HH:MM im Rohwert
   const hhmmS = s.match(/^(\d{1,3}):(\d{2})$/);
@@ -325,8 +336,9 @@ function parseHoursValue(cell: XLSX.CellObject | undefined): { display: string; 
     return { display: s, decimal: Math.round(decimal * 100) / 100 };
   }
 
+  // Schweizer Dezimalformat: 7,5 oder 7.5 (negativ erlaubt für Saldoabzüge)
   const d = parseFloat(s.replace(',', '.'));
-  if (!isNaN(d) && d > 0 && d < 500) return { display: s, decimal: d };
+  if (!isNaN(d) && Math.abs(d) < 500) return { display: s, decimal: d };
   return null;
 }
 
@@ -534,67 +546,168 @@ function extractHeaders(ws: XLSX.WorkSheet, blockStart: number, blockEnd: number
   return blockStart + LAYOUT.daySearchOffset - 1;
 }
 
+// ─── Ferien/Feiertag Label-Muster ────────────────────────────────────────────
+
+const FERIEN_LABEL_PATS = [
+  'ferien', 'feriensaldo', 'ferienguthaben', 'ferien saldo', 'ferien guthaben',
+  'ferienrest', 'ferienbestand', 'ferienendsaldo', 'ferien endsaldo',
+  'urlaub', 'urlaubssaldo', 'urlaubsguthaben', 'urlaub saldo', 'urlaub rest',
+  'endsaldo ferien', 'schlussbestand ferien', 'ferienstand',
+];
+
+const FEIERTAG_LABEL_PATS = [
+  'feiertag', 'feiertage', 'feiertagguthaben', 'feiertagssaldo', 'feiertagsaldo',
+  'feiertag guthaben', 'feiertage saldo', 'feiertag saldo', 'feiertagbestand',
+  'feiertag bestand', 'feiertag rest', 'endsaldo feiertag', 'feiertage endsaldo',
+  'feiertagendsaldo', 'feiertag endsaldo', 'feiertagstand',
+];
+
+// Spalten-Header-Muster die auf eine "Saldo"-Spalte in einer Balance-Tabelle hinweisen
+const SALDO_COL_EXACT  = ['saldo', 'endsaldo', 'schlussbestand', 'schluss'];
+const SALDO_COL_STARTS = ['saldo ', 'endsaldo ', 'schlussbestand '];
+const BALANCE_TABLE_COLS = [
+  'vortrag', 'soll', 'ist', 'monat', 'korrektur', 'korr', 'ausbezahlt',
+  'saldo', 'endsaldo', 'schlussbestand', 'total', 'bestand', 'kompens',
+];
+
 /**
- * extractBalances:
- * Sucht Saldo-Werte für "Ferien", "Feiertag" und "Total" in den Totale-Zeilen.
- * Nutzt den "Saldo"-Begriff als Wert-Indikator.
- * Gibt die Werte als bereinigte Strings zurück (nie undefined/NaN).
+ * Hilfsfunktion: liest Stundenwert einer Zelle inkl. Nullwert (0.0 = gültiger Wert).
+ * Gibt null zurück wenn die Zelle leer / kein Zahlenwert ist.
+ */
+function readBalanceCellValue(cell: XLSX.CellObject | undefined): string | null {
+  if (!cell) return null;
+  const parsed = parseHoursValue(cell);
+  if (parsed !== null) return parsed.display || String(parsed.decimal);
+  const raw = (cell.w ?? String(cell.v ?? '')).trim();
+  if (raw && raw !== '-') return raw;
+  return null;
+}
+
+/**
+ * extractBalances (v2):
+ * Verbesserte Balance-Erkennung mit:
+ *  1. Dynamischer Saldo-Spalten-Erkennung (für Tabellenformat)
+ *  2. Vollem Block-Scan (nicht nur Top/Bottom)
+ *  3. Akzeptiert 0.0 als gültigen Wert
+ *  4. "Last value"-Strategie bei Tabellen (Endsaldo ist meist ganz rechts)
+ *  5. Erweiterte Label-Varianten
+ *  6. Debug-Logging für fehlende Mitarbeiter
  */
 function extractBalances(
   ws: XLSX.WorkSheet,
   blockStart: number,
   blockEnd: number,
-): { ferien: string | null; feiertag: string | null; total: string | null } {
+  employeeName?: string,
+): {
+  ferien:         string | null;
+  feiertag:       string | null;
+  total:          string | null;
+  ferienRowFound:  boolean;
+  feierRowFound:   boolean;
+} {
+  const EMPTY = { ferien: null, feiertag: null, total: null, ferienRowFound: false, feierRowFound: false };
   const ref = ws['!ref'];
-  if (!ref) return { ferien: null, feiertag: null, total: null };
+  if (!ref) return EMPTY;
   const range = XLSX.utils.decode_range(ref);
 
-  let ferien: string | null   = null;
-  let feiertag: string | null = null;
-  let total: string | null    = null;
+  // ── 1. Saldo-Spalte dynamisch ermitteln ──────────────────────────────────
+  // Eine Balance-Tabellen-Headerzeile hat ≥3 bekannte Balance-Spalten-Begriffe.
+  // Die "Saldo"- oder "Schlussbestand"-Spalte ist der bevorzugte Wertträger.
+  let saldoCol: number | null = null;
 
-  // Scan obere + untere Zone (Saldi stehen nie in der Mitte)
-  const topEnd      = Math.min(blockStart + 14, blockEnd);
-  const bottomStart = Math.max(blockEnd - 14, topEnd + 1);
-  const zones: [number, number][] = [[blockStart, topEnd]];
-  if (bottomStart <= blockEnd) zones.push([bottomStart, blockEnd]);
-
-  for (const [zStart, zEnd] of zones) {
-    for (let r = zStart; r <= zEnd; r++) {
-      for (let c = range.s.c; c <= range.e.c; c++) {
-        const cell = getCell(ws, c, r);
-        if (!cell) continue;
-        const text = normLabel(String(cell.v ?? '').trim());
-        if (!text) continue;
-
-        const isFerienRow  = text === 'ferien' || text.startsWith('ferien') ||
-                             text === 'ferienguthaben' || text === 'ferienrest' || text === 'ferienbestand' ||
-                             text === 'urlaub' || text.startsWith('urlaub') ||
-                             text === 'schlussbestand ferien' || text === 'endsaldo ferien';
-        const isFeierRow   = text === 'feier'  || text.startsWith('feiertag') || text.startsWith('feiertage') ||
-                             text === 'feiertagguthaben' || text === 'feiertagssaldo' || text === 'feiertagbestand' ||
-                             text === 'endsaldo feiertag';
-        const isTotalRow   = text === 'total'  || text === 'total stunden' || text === 'totals';
-
-        if (!isFerienRow && !isFeierRow && !isTotalRow) continue;
-
-        // Wert in den nächsten 10 Spalten suchen
-        for (let dc = 1; dc <= 10; dc++) {
-          const vc = getCell(ws, c + dc, r);
-          if (!vc) continue;
-          const parsed = parseHoursValue(vc);
-          const raw    = (vc.w ?? String(vc.v ?? '')).trim();
-          const val    = parsed ? (parsed.display || String(parsed.decimal)) : (raw && raw !== '0' && raw !== '-' ? raw : null);
-          if (!val) continue;
-
-          if (isFerienRow  && !ferien)  { ferien  = val; break; }
-          if (isFeierRow   && !feiertag){ feiertag = val; break; }
-          if (isTotalRow   && !total)   { total    = val; break; }
+  outer:
+  for (let r = blockStart; r <= Math.min(blockStart + 30, blockEnd); r++) {
+    let matchCount = 0;
+    let bestSaldoC: number | null = null;
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell || cell.t !== 's') continue;
+      const t = normLabel(String(cell.v ?? ''));
+      if (BALANCE_TABLE_COLS.some(p => t === p || t.startsWith(p + ' '))) {
+        matchCount++;
+        if (SALDO_COL_EXACT.includes(t) || SALDO_COL_STARTS.some(p => t.startsWith(p))) {
+          bestSaldoC = c;
         }
       }
     }
+    if (matchCount >= 3 && bestSaldoC !== null) {
+      saldoCol = bestSaldoC;
+      break outer;
+    }
   }
-  return { ferien, feiertag, total };
+
+  // ── 2. Ganzen Block nach Ferien/Feiertag-Zeilen scannen ─────────────────
+  let ferien:  string | null = null;
+  let feiertag: string | null = null;
+  let total:   string | null = null;
+  let ferienRowFound  = false;
+  let feierRowFound   = false;
+
+  for (let r = blockStart; r <= blockEnd; r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = getCell(ws, c, r);
+      if (!cell) continue;
+      const text = normLabel(String(cell.v ?? '').trim());
+      if (!text || text.length < 3) continue;
+
+      const isFerienRow  = FERIEN_LABEL_PATS.some(p =>
+        text === p || text === p.replace(/\s/g, '') || text.startsWith(p + ' '));
+      const isFeierRow   = FEIERTAG_LABEL_PATS.some(p =>
+        text === p || text === p.replace(/\s/g, '') || text.startsWith(p + ' '));
+      const isTotalRow   = (text === 'total' || text === 'total stunden' || text === 'totals') && !total;
+
+      if (!isFerienRow && !isFeierRow && !isTotalRow) continue;
+      if (isFerienRow  && ferien  !== null)  continue; // bereits gefunden
+      if (isFeierRow   && feiertag !== null) continue;
+
+      if (isFerienRow)  ferienRowFound = true;
+      if (isFeierRow)   feierRowFound  = true;
+
+      // ── Wert ermitteln ────────────────────────────────────────────────────
+      let val: string | null = null;
+
+      // Option A: Saldo-Spalte bekannt und rechts vom Label → direkt lesen
+      if (saldoCol !== null && saldoCol > c) {
+        val = readBalanceCellValue(getCell(ws, saldoCol, r));
+      }
+
+      // Option B: Alle Zahlenwerte in der Zeile rechts sammeln
+      //   → Bei Tabellenformat: letzter Wert = Schlussbestand
+      //   → Bei einfachem Format: erster Wert
+      if (val === null) {
+        const candidates: string[] = [];
+        for (let dc = 1; dc <= 25; dc++) {
+          const vc = getCell(ws, c + dc, r);
+          if (!vc) continue;
+          const v = readBalanceCellValue(vc);
+          if (v !== null) candidates.push(v);
+        }
+        if (candidates.length > 0) {
+          // Mit Saldo-Spalte → letzter Wert (Schlussbestand ist rechts)
+          // Ohne Saldo-Spalte → erster Wert (einfacher inline-Wert)
+          val = saldoCol !== null ? candidates[candidates.length - 1] : candidates[0];
+        }
+      }
+
+      if (isFerienRow)  ferien   = val ?? null;
+      if (isFeierRow)   feiertag = val ?? null;
+      if (isTotalRow && val) total = val;
+    }
+  }
+
+  // ── 3. Debug-Ausgabe für fehlende Werte ──────────────────────────────────
+  if (employeeName && (!ferien || !feiertag)) {
+    console.debug(
+      `[PARSER] Balance-Debug "${employeeName}" (Zeilen ${blockStart + 1}–${blockEnd + 1}):`,
+      {
+        saldoCol:       saldoCol !== null ? XLSX.utils.encode_col(saldoCol) : '—',
+        ferienRowFound, ferien:   ferien   ?? 'null',
+        feierRowFound,  feiertag: feiertag ?? 'null',
+      }
+    );
+  }
+
+  return { ferien, feiertag, total, ferienRowFound, feierRowFound };
 }
 
 /**
@@ -880,15 +993,15 @@ function readTotals(ws: XLSX.WorkSheet, blockStart: number, blockEnd: number): E
           for (let dc = 1; dc <= 5; dc++) {
             const valCell = getCell(ws, c + dc, r);
             if (!valCell) continue;
-            // Zuerst als Stundenwert interpretieren (HH:MM oder Dezimal)
+            // Zuerst als Stundenwert interpretieren (HH:MM oder Dezimal, inkl. 0.0)
             const parsed = parseHoursValue(valCell);
-            if (parsed) {
+            if (parsed !== null) {
               totals[key] = parsed.display || String(parsed.decimal);
               break;
             }
-            // Fallback: beliebiger nicht-leerer String
+            // Fallback: beliebiger nicht-leerer String (ausser Strich/leer)
             const s = (valCell.w ?? String(valCell.v ?? '')).trim();
-            if (s && s !== '0' && s !== '-') {
+            if (s && s !== '-') {
               totals[key] = s;
               break;
             }
@@ -1179,9 +1292,14 @@ function parseBlock(
   computeTotalsCheck(totals, days);
 
   // extractBalances: Ferien/Feiertag/Total-Saldi ergänzen falls readTotals leer
-  const balances = extractBalances(ws, blockStart, blockEnd);
-  if (!totals.ferien   && balances.ferien)   totals.ferien   = balances.ferien;
-  if (!totals.feiertag && balances.feiertag) totals.feiertag = balances.feiertag;
+  // Mitarbeitername für Debug-Ausgabe mitgeben
+  const empNameForDebug = employeeName ?? undefined;
+  const balances = extractBalances(ws, blockStart, blockEnd, empNameForDebug);
+  if (!totals.ferien   && balances.ferien   != null) totals.ferien   = balances.ferien;
+  if (!totals.feiertag && balances.feiertag != null) totals.feiertag = balances.feiertag;
+  // Row-Found-Flags: OR aus readTotals-Treffern und extractBalances-Befunden
+  const vacationRowFound = balances.ferienRowFound  || !!(totals.ferien);
+  const holidayRowFound  = balances.feierRowFound   || !!(totals.feiertag);
 
   const monthlyAccounts = readMonthlyAccounts(ws, blockStart, blockEnd);
 
@@ -1230,6 +1348,8 @@ function parseBlock(
     },
     mergedFromCount: 1,
     mergedBlockRows: [[startRow1, endRow1]],
+    vacationRowFound,
+    holidayRowFound,
   };
 }
 
@@ -1354,6 +1474,8 @@ function mergeTwoBlocks(main: ExcelEmployee, extra: ExcelEmployee): ExcelEmploye
     rawBlock:         main.rawBlock,
     mergedFromCount:  main.mergedFromCount + 1,
     mergedBlockRows:  [...existingRows, extraRow],
+    vacationRowFound: (main.vacationRowFound || extra.vacationRowFound) ?? false,
+    holidayRowFound:  (main.holidayRowFound  || extra.holidayRowFound)  ?? false,
   };
   // Totales-Cross-Check nach Merge neu berechnen (mehr Tage verfügbar)
   computeTotalsCheck(merged.totals, merged.days);
@@ -1608,23 +1730,37 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
   const { result: merged, skippedEmpty, mergedDuplicates } = mergeBlocks(employees);
 
   // ─── QUALITÄTS-METRIKEN ───────────────────────────────────────────────────
+  // Balance erkannt = Wert vorhanden (inkl. '0') in totals, monthlyAccounts.vacation oder .holiday
   const hasVacBal = (e: ExcelEmployee): boolean =>
-    !!(e.totals.ferien ||
-       e.monthlyAccounts.vacation?.closingBalance ||
-       e.monthlyAccounts.vacation?.actual);
+    e.totals.ferien != null ||
+    e.monthlyAccounts.vacation?.closingBalance != null ||
+    e.monthlyAccounts.vacation?.actual != null;
 
   const hasHolBal = (e: ExcelEmployee): boolean =>
-    !!(e.totals.feiertag ||
-       e.monthlyAccounts.holiday?.closingBalance ||
-       e.monthlyAccounts.holiday?.actual);
+    e.totals.feiertag != null ||
+    e.monthlyAccounts.holiday?.closingBalance != null ||
+    e.monthlyAccounts.holiday?.actual != null;
 
   const daysWithHours      = merged.reduce((s, e) => s + e.days.filter(d => (d.totalHours ?? 0) > 0).length, 0);
   const daysWithTimeBlocks = merged.reduce((s, e) => s + e.days.filter(d => d.shifts.length > 0).length, 0);
   const empWithVacation    = merged.filter(hasVacBal).length;
   const empWithHoliday     = merged.filter(hasHolBal).length;
-  const empMissingVacation = merged.filter(e => !hasVacBal(e)).map(e => e.name ?? '?');
-  const empMissingHoliday  = merged.filter(e => !hasHolBal(e)).map(e => e.name ?? '?');
-  const incompleteBlocks   = merged.reduce(
+
+  // Unterscheide: "Zeile nicht vorhanden" vs "Zeile vorhanden aber Wert nicht gelesen"
+  const empMissingVacation = merged
+    .filter(e => !hasVacBal(e) && !e.vacationRowFound)
+    .map(e => e.name ?? '?');
+  const empMissingHoliday = merged
+    .filter(e => !hasHolBal(e) && !e.holidayRowFound)
+    .map(e => e.name ?? '?');
+  const empVacRowFoundNoValue = merged
+    .filter(e => !hasVacBal(e) && !!e.vacationRowFound)
+    .map(e => e.name ?? '?');
+  const empHolRowFoundNoValue = merged
+    .filter(e => !hasHolBal(e) && !!e.holidayRowFound)
+    .map(e => e.name ?? '?');
+
+  const incompleteBlocks = merged.reduce(
     (s, e) => s + e.days.filter(d => d.shifts.some(sh => sh.to === '?')).length, 0
   );
 
@@ -1660,11 +1796,13 @@ export async function parseMirusExcel(file: File): Promise<ExcelParsedDocument> 
     monthDetected:     !!(fileMonth && fileYear),
     daysWithHours,
     daysWithTimeBlocks,
-    employeesWithVacationBalance: empWithVacation,
-    employeesWithHolidayBalance:  empWithHoliday,
-    employeesMissingVacation:     empMissingVacation,
-    employeesMissingHoliday:      empMissingHoliday,
-    incompleteTimeBlocks:         incompleteBlocks,
+    employeesWithVacationBalance:    empWithVacation,
+    employeesWithHolidayBalance:     empWithHoliday,
+    employeesMissingVacation,
+    employeesMissingHoliday,
+    employeesVacationRowFoundNoValue: empVacRowFoundNoValue,
+    employeesHolidayRowFoundNoValue:  empHolRowFoundNoValue,
+    incompleteTimeBlocks:             incompleteBlocks,
     qualityWarnings,
   };
 

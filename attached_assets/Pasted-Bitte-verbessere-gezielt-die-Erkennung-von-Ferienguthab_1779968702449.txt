@@ -1,0 +1,100 @@
+Bitte verbessere gezielt die Erkennung von Ferienguthaben und Feiertagguthaben im Mirus Parser.
+
+Aktuelles Problem:
+Im Import für April 2026 erkennt der Parser:
+- Zeitblöcke: 100 %
+- Ferienguthaben: nur 62 % (13/21 MA)
+- Feiertagguthaben: nur 62 % (13/21 MA)
+
+Die fehlenden Mitarbeiter werden im Datenqualitäts-Panel angezeigt, z.B.:
+Arvanitidou Georgia, Bolsinger Joana Jamina Alicia, Collazo Marsal Carlos, Domi Sadete, Dzhymsheleishvili Yuliia, Goi Isabelle, Guggisberg Nora Anais, Momand Sajed
+
+Ziel:
+Ferienguthaben und Feiertagguthaben sollen deutlich zuverlässiger erkannt werden.
+
+Bitte im Parser prüfen und erweitern:
+
+1. Pro Mitarbeiterblock die Saldo-Tabelle dynamisch erkennen
+
+Nicht nur nach fixen Labels suchen, sondern innerhalb jedes Mitarbeiterblocks nach Tabellen/Zeilen mit Begriffen wie:
+
+Ferien
+Ferienguthaben
+Ferien Saldo
+Feriensaldo
+Ferienrest
+Ferienbestand
+Urlaub
+Urlaubssaldo
+Urlaubsguthaben
+Urlaub Rest
+Feier
+Feiertag
+Feiertage
+Feiertagguthaben
+Feiertagssaldo
+Feiertag Bestand
+Feiertag Rest
+
+2. Saldo-Spalte dynamisch finden
+
+Der relevante Wert steht oft unter oder neben Spalten wie:
+
+Saldo
+Schlussbestand
+Endsaldo
+Rest
+Guthaben
+Bestand
+Total
+Saldo per
+Stand
+
+Bitte nicht fixe Spalten verwenden.
+Stattdessen:
+- Header-Zeile suchen
+- Saldo-/Bestand-Spalte bestimmen
+- Wert aus Ferien-/Feiertagszeile lesen
+
+3. Fallback-Logik erweitern
+
+Falls kein Saldo-Header gefunden wird:
+- in der Ferien-/Feiertagszeile die letzten numerischen Werte prüfen
+- bevorzugt letzten plausiblen Wert verwenden
+- Excel-Dezimalwerte korrekt lesen
+- Schweizer Zahlenformate wie 7.5, 7,5, -1.25 erkennen
+
+4. Nullwerte korrekt unterscheiden
+
+Wichtig:
+0.0 h ist ein gültiger erkannter Wert.
+Aber fehlender Wert ist nicht erkannt.
+
+Aktuell sollen Mitarbeiter mit 0.0 h nicht fälschlich als „nicht erkannt“ gelten, wenn die Zeile existiert und der Wert eindeutig 0 ist.
+
+5. Debug pro fehlendem Mitarbeiter ergänzen
+
+Für Mitarbeiter ohne erkanntes Ferien-/Feiertagguthaben bitte im Parser-Debug ausgeben:
+- Blockstart
+- ob Ferien-Zeile gefunden wurde
+- ob Feiertags-Zeile gefunden wurde
+- welche Kandidatenwerte gefunden wurden
+- warum keiner akzeptiert wurde
+
+6. Datenqualitäts-Panel verbessern
+
+Wenn ein Mitarbeiter wirklich keinen Ferien-/Feiertagssaldo in der Datei hat:
+anzeigen als:
+„Nicht in Datei vorhanden“
+
+Wenn die Zeile vorhanden ist, aber Parser konnte Wert nicht lesen:
+anzeigen als:
+„Vorhanden, aber nicht gelesen“
+
+7. Nach Umsetzung bitte ausgeben
+
+- Welche zusätzlichen Labels erkannt werden
+- Wie die Saldo-Spalte gefunden wird
+- Ob 0.0 h als gültiger erkannter Wert zählt
+- Warum die bisher fehlenden 8 Mitarbeiter nicht erkannt wurden
+- Neue Erkennungsquote für April 2026

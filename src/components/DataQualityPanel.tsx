@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, XCircle, Info } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, Info, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ExcelParseStats } from '@/lib/mirus-excel-parser';
 
@@ -66,6 +66,8 @@ export function DataQualityPanel({ stats }: Props) {
     employeesWithHolidayBalance,
     employeesMissingVacation,
     employeesMissingHoliday,
+    employeesVacationRowFoundNoValue = [],
+    employeesHolidayRowFoundNoValue  = [],
     incompleteTimeBlocks,
     qualityWarnings,
   } = stats;
@@ -78,6 +80,8 @@ export function DataQualityPanel({ stats }: Props) {
   const hasMissing =
     employeesMissingVacation.length > 0 ||
     employeesMissingHoliday.length  > 0 ||
+    employeesVacationRowFoundNoValue.length > 0 ||
+    employeesHolidayRowFoundNoValue.length  > 0 ||
     incompleteTimeBlocks > 0;
 
   return (
@@ -166,11 +170,12 @@ export function DataQualityPanel({ stats }: Props) {
         <div className="border-t border-border px-3 py-2 space-y-2">
           <div className="font-semibold text-foreground">Was fehlt?</div>
 
+          {/* Zeile NICHT in Datei vorhanden */}
           {employeesMissingVacation.length > 0 && (
             <div className="space-y-0.5">
-              <div className="flex items-center gap-1 text-amber-700 dark:text-amber-400 font-medium">
-                <AlertTriangle className="h-3 w-3 shrink-0" />
-                MA ohne Ferienguthaben ({employeesMissingVacation.length}):
+              <div className="flex items-center gap-1 text-red-700 dark:text-red-400 font-medium">
+                <XCircle className="h-3 w-3 shrink-0" />
+                Ferienguthaben — Zeile nicht in Datei ({employeesMissingVacation.length}):
               </div>
               <div className="pl-4 text-muted-foreground leading-relaxed">
                 {employeesMissingVacation.join(', ')}
@@ -178,14 +183,39 @@ export function DataQualityPanel({ stats }: Props) {
             </div>
           )}
 
-          {employeesMissingHoliday.length > 0 && (
+          {/* Zeile vorhanden, Wert nicht lesbar */}
+          {employeesVacationRowFoundNoValue.length > 0 && (
             <div className="space-y-0.5">
               <div className="flex items-center gap-1 text-amber-700 dark:text-amber-400 font-medium">
-                <AlertTriangle className="h-3 w-3 shrink-0" />
-                MA ohne Feiertagguthaben ({employeesMissingHoliday.length}):
+                <Search className="h-3 w-3 shrink-0" />
+                Ferienguthaben — Zeile vorhanden, Wert nicht lesbar ({employeesVacationRowFoundNoValue.length}):
+              </div>
+              <div className="pl-4 text-muted-foreground leading-relaxed">
+                {employeesVacationRowFoundNoValue.join(', ')}
+              </div>
+            </div>
+          )}
+
+          {employeesMissingHoliday.length > 0 && (
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1 text-red-700 dark:text-red-400 font-medium">
+                <XCircle className="h-3 w-3 shrink-0" />
+                Feiertagguthaben — Zeile nicht in Datei ({employeesMissingHoliday.length}):
               </div>
               <div className="pl-4 text-muted-foreground leading-relaxed">
                 {employeesMissingHoliday.join(', ')}
+              </div>
+            </div>
+          )}
+
+          {employeesHolidayRowFoundNoValue.length > 0 && (
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1 text-amber-700 dark:text-amber-400 font-medium">
+                <Search className="h-3 w-3 shrink-0" />
+                Feiertagguthaben — Zeile vorhanden, Wert nicht lesbar ({employeesHolidayRowFoundNoValue.length}):
+              </div>
+              <div className="pl-4 text-muted-foreground leading-relaxed">
+                {employeesHolidayRowFoundNoValue.join(', ')}
               </div>
             </div>
           )}
