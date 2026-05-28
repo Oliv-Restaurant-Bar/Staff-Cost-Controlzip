@@ -1,0 +1,130 @@
+Bitte erweitere das Modul Arbeitszeitblätter um eine Detailansicht pro Mitarbeiter für die Nachvollziehbarkeit von Dienstplan IST vs AZB IST.
+
+Ziel:
+Wenn der Admin auf:
+- Dienstplan IST
+- AZB IST
+- Diff.
+- oder das Warnsymbol ⚠
+
+klickt, soll sich eine Detailansicht (Drawer oder Modal) öffnen.
+
+Die Detailansicht soll pro Tag zeigen, wo die Abweichungen entstehen.
+
+1. Klickbare Werte
+
+Folgende Elemente klickbar machen:
+- Dienstplan IST Stunden
+- AZB IST Stunden
+- Diff.-Wert
+- Warnsymbol ⚠
+
+2. Detailansicht öffnen
+
+Beim Klick:
+rechte Seitenleiste (Drawer) oder Modal öffnen.
+
+Titel:
+Arbeitszeitvergleich — {Mitarbeitername} — {Monat Jahr}
+
+3. Tagesvergleich anzeigen
+
+Tabelle:
+
+Datum | Dienstplan | AZB | Differenz | Pause | Status | Bemerkung
+
+Beispiele:
+01.04.2026 | 8.5 h | 8.5 h | 0.0 h | 30 min | ✓
+02.04.2026 | 9.0 h | 7.5 h | -1.5 h | 30 min | ⚠
+03.04.2026 | – | 6.0 h | +6.0 h | – | ⚠
+
+4. Datenquellen
+
+Dienstplan:
+schedule_entries
+
+AZB:
+actual_hours
+
+Verknüpfung:
+employee_id + date
+
+Keine neue Datenstruktur bauen.
+
+5. Dienstplan Details
+
+Falls vorhanden anzeigen:
+- Frühdienst
+- Spätdienst
+- Startzeit
+- Endzeit
+
+Beispiel:
+Früh: 09:00–14:00
+Spät: 18:00–22:00
+
+6. Feiertage / Ferien markieren
+
+Wenn Tag:
+- Ferien
+- Feiertag
+- Abwesenheit
+- Krankheit
+- Frei
+
+dann Badge oder Farbe anzeigen.
+
+Bitte bestehende Legend-/Abwesenheitslogik verwenden falls vorhanden.
+
+7. Warnlogik
+
+Wenn Differenz pro Tag:
+größer als ±0.5h
+
+→ Warnsymbol anzeigen.
+
+Wenn:
+AZB vorhanden aber kein Dienstplan
+oder
+Dienstplan vorhanden aber keine AZB
+
+→ rot markieren.
+
+8. Monatszusammenfassung oben
+
+Im Drawer oben anzeigen:
+
+Soll:
+Dienstplan IST:
+AZB IST:
+Gesamtdifferenz:
+Anzahl Abweichungstage:
+
+9. Vorbereitung für später
+
+Architektur vorbereiten für:
+- Kommentare pro Tag
+- Genehmigung pro Differenz
+- PDF Export
+- Payroll Kontrolle
+
+Noch nicht implementieren, aber Struktur sauber halten.
+
+10. Performance
+
+Bitte keine komplette Monatstabelle aller Mitarbeiter gleichzeitig laden.
+Nur Daten des angeklickten Mitarbeiters nachladen.
+
+11. Nach Umsetzung bitte ausgeben
+
+- Welche Dateien geändert wurden
+- Welche Queries verwendet werden
+- Wie die Tagesdifferenzen berechnet werden
+- Wann Warnungen erscheinen
+- Ob Feiertage/Ferien erkannt werden
+- Wie der Drawer geöffnet wird
+
+Wichtig:
+Bestehende Arbeitszeitblatt-Logik nicht beschädigen.
+Keine parallelen Stunden-Systeme bauen.
+Bestehende schedule_entries und actual_hours weiterverwenden.

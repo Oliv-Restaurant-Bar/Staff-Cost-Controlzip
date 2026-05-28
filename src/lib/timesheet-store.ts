@@ -425,6 +425,128 @@ export async function loadDienstplanHoursForMonth(
   return result;
 }
 
+// ─── Tagesvergleich: schedule_entries + actual_hours für 1 Mitarbeiter ────────
+
+/** Abwesenheitstypen gemäss Absence-Codes aus schedule_entries */
+export type AbsenceType = 'vacation' | 'sick' | 'holiday' | 'free' | null;
+
+export interface DayComparisonEntry {
+  date: string;                    // YYYY-MM-DD
+  // Dienstplan (schedule_entries)
+  frueh_start:    string | null;
+  frueh_end:      string | null;
+  frueh_absence:  string | null;
+  spaet_start:    string | null;
+  spaet_end:      string | null;
+  spaet_absence:  string | null;
+  plan_hours:     number | null;   // Nettostunden (inkl. Pausenabzug)
+  plan_gross:     number | null;   // Bruttostunden (ohne Pause)
+  // AZB (actual_hours)
+  azb_hours:      number | null;
+  azb_start:      string | null;
+  azb_end:        string | null;
+  // Abwesenheit (aus absence-Code)
+  absence_code:   string | null;
+  absence_type:   AbsenceType;
+}
+
+const VACATION_CODES = new Set(['FE', 'FW', 'FERIEN', 'URLAUB', 'U', 'FER']);
+const SICK_CODES     = new Set(['K',  'KO', 'KRANK', 'KRANKHEIT', 'AUF', 'KRANK']);
+const HOLIDAY_CODES  = new Set(['FT', 'FEIERTAG', 'PH', 'PHFT']);
+const FREE_CODES     = new Set(['F',  'FREI']);
+
+function classifyAbsence(code: string | null | undefined): AbsenceType {
+  if (!code) return null;
+  const c = code.toUpperCase().trim();
+  if (VACATION_CODES.has(c)) return 'vacation';
+  if (SICK_CODES.has(c))     return 'sick';
+  if (HOLIDAY_CODES.has(c))  return 'holiday';
+  if (FREE_CODES.has(c))     return 'free';
+  return null;
+}
+
+/**
+ * Lädt die Tagesdetails (Dienstplan + AZB) für einen Mitarbeiter im angegebenen Monat.
+ * Gibt ein Array mit allen Kalendertagen zurück (fehlende = leere Einträge).
+ */
+export async function loadEmployeeMonthDetail(
+  employeeId: string,
+  year: number,
+  month: number,
+): Promise<DayComparisonEntry[]> {
+  const fromDate = `${year}-${String(month).padStart(2, '0')}-01`;
+  const lastDay  = new Date(year, month, 0).getDate();
+  const toDate   = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+  const [schedRes, azbRes] = await Promise.all([
+    supabase
+      .from('schedule_entries')
+      .select('date, frueh_start, frueh_end, frueh_absence, spaet_start, spaet_end, spaet_absence')
+      .eq('employee_id', employeeId)
+      .gte('date', fromDate)
+      .lte('date', toDate)
+      .order('date'),
+    supabase
+      .from('actual_hours')
+      .select('date, hours, start_time, end_time')
+      .eq('employee_id', employeeId)
+      .gte('date', fromDate)
+      .lte('date', toDate)
+      .order('date'),
+  ]);
+
+  const schedMap: Record<string, {
+    frueh_start: string | null; frueh_end: string | null; frueh_absence: string | null;
+    spaet_start: string | null; spaet_end: string | null; spaet_absence: string | null;
+  }> = {};
+  for (const row of schedRes.data ?? []) schedMap[row.date] = row;
+
+  const azbMap: Record<string, { hours: number; start_time: string | null; end_time: string | null }> = {};
+  for (const row of azbRes.data ?? []) {
+    azbMap[row.date] = { hours: row.hours ?? 0, start_time: row.start_time, end_time: row.end_time };
+  }
+
+  const entries: DayComparisonEntry[] = [];
+  for (let d = 1; d <= lastDay; d++) {
+    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const sched   = schedMap[dateStr];
+    const azb     = azbMap[dateStr];
+
+    let planHours: number | null = null;
+    let planGross: number | null = null;
+    let absCode:   string | null = null;
+
+    if (sched) {
+      const frühH  = schedSlotHours(sched.frueh_start, sched.frueh_end);
+      const spätH  = schedSlotHours(sched.spaet_start, sched.spaet_end);
+      const gross  = Math.round((frühH + spätH) * 100) / 100;
+      const net    = Math.round((gross - schedBreak(gross)) * 100) / 100;
+      planGross    = gross > 0 ? gross : null;
+      planHours    = net   > 0 ? net   : null;
+      absCode      = sched.frueh_absence || sched.spaet_absence || null;
+    }
+
+    entries.push({
+      date:          dateStr,
+      frueh_start:   sched?.frueh_start   ?? null,
+      frueh_end:     sched?.frueh_end     ?? null,
+      frueh_absence: sched?.frueh_absence ?? null,
+      spaet_start:   sched?.spaet_start   ?? null,
+      spaet_end:     sched?.spaet_end     ?? null,
+      spaet_absence: sched?.spaet_absence ?? null,
+      plan_hours:    planHours,
+      plan_gross:    planGross,
+      azb_hours:     azb?.hours     ?? null,
+      azb_start:     azb?.start_time ?? null,
+      azb_end:       azb?.end_time   ?? null,
+      absence_code:  absCode,
+      absence_type:  classifyAbsence(absCode),
+    });
+  }
+
+  return entries;
+}
+
 // ─── Mirus-Stunden-String parsen ──────────────────────────────────────────────
 // Formate: "42.5"  |  "3 T 2:00"  |  "3:00"  |  "-1.5"  |  "1 T 0:30"
 

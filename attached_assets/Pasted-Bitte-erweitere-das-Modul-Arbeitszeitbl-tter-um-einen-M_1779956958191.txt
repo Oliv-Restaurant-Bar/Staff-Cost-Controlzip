@@ -1,0 +1,113 @@
+Bitte erweitere das Modul Arbeitszeitblätter um einen Mitarbeiter-Filter mit automatischem Wechsel in eine Einzelansicht.
+
+Ziel:
+Wenn im Arbeitszeitblätter-Modul ein einzelner Mitarbeiter gefiltert oder ausgewählt wird, soll die Ansicht automatisch von der Gesamtübersicht in eine Mitarbeiter-Detailansicht wechseln.
+
+1. Neuer Mitarbeiter-Filter
+
+Oben bei den bestehenden Filtern ergänzen:
+- Mitarbeiter suchen / auswählen
+- Dropdown oder Suchfeld mit allen relevanten Mitarbeitern des ausgewählten Monats
+
+Optionen:
+- Alle Mitarbeiter
+- einzelner Mitarbeiter
+
+2. Verhalten bei Auswahl
+
+Wenn "Alle Mitarbeiter" gewählt ist:
+Normale Übersicht wie bisher anzeigen.
+
+Wenn ein einzelner Mitarbeiter gewählt ist:
+Ansicht wechseln auf Mitarbeiter-Detailansicht.
+
+3. Mitarbeiter-Detailansicht
+
+Titel:
+Arbeitszeitvergleich — {Mitarbeitername} — {Monat Jahr}
+
+Oben Zusammenfassung:
+- Soll
+- Dienstplan IST
+- AZB IST
+- Differenz AZB minus Soll
+- Differenz AZB minus Dienstplan
+- Ferienguthaben
+- Feiertagguthaben
+- Status Arbeitszeitblatt
+
+4. Tagesvergleich anzeigen
+
+Tabelle:
+
+Datum | Wochentag | Dienstplan | AZB | Differenz | Pause | Typ | Status
+
+Status:
+- OK
+- Abweichung
+- AZB ohne Dienstplan
+- Dienstplan ohne AZB
+- Ferien
+- Feiertag
+- Frei
+- Krankheit falls vorhanden
+
+5. Datenquellen
+
+Dienstplan:
+schedule_entries
+
+AZB:
+actual_hours
+
+Verknüpfung:
+employee_id + date
+
+Bitte keine neue Stundenlogik bauen.
+
+6. Klickverhalten zusätzlich beibehalten
+
+Auch in der Gesamtübersicht sollen weiterhin folgende Werte klickbar sein:
+- Dienstplan IST
+- AZB IST
+- Diff.
+- Warnsymbol
+
+Beim Klick soll derselbe Mitarbeiter automatisch in der Einzelansicht geöffnet werden.
+
+7. Zurück zur Übersicht
+
+In der Einzelansicht Button:
+"Zurück zur Übersicht"
+
+oder Auswahl im Mitarbeiterfilter wieder auf:
+"Alle Mitarbeiter"
+
+8. Warnlogik pro Tag
+
+Wenn Differenz zwischen Dienstplan und AZB pro Tag grösser als ±0.5h:
+Warnung anzeigen.
+
+Wenn AZB vorhanden aber kein Dienstplan:
+rot/orange markieren.
+
+Wenn Dienstplan vorhanden aber kein AZB:
+rot/orange markieren.
+
+9. Performance
+
+Bitte Tagesdaten nur für den ausgewählten Mitarbeiter laden, nicht für alle Mitarbeiter gleichzeitig.
+
+10. Nach Umsetzung ausgeben
+
+- Welche Dateien geändert wurden
+- Wo der Mitarbeiterfilter eingebaut wurde
+- Welche Daten beim Einzelmitarbeiter geladen werden
+- Wie die Tagesdifferenz berechnet wird
+- Wie man zurück zur Gesamtübersicht kommt
+- Ob Klicks aus der Gesamtübersicht direkt in die Einzelansicht führen
+
+Wichtig:
+Bestehende Gesamtübersicht nicht beschädigen.
+Bestehenden Mirus Import nicht verändern.
+Keine parallele Datenstruktur erstellen.

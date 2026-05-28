@@ -18,6 +18,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import { parseMirusExcel, type ExcelEmployee, type ExcelParseStats } from '@/lib/mirus-excel-parser';
+import EmployeeTimesheetDetailDrawer, { type DetailDrawerEmployee } from '@/components/EmployeeTimesheetDetailDrawer';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
@@ -203,6 +204,9 @@ export default function ArbeitszeitblaetterPage() {
   const [importMonthOverride, setImportMonthOverride] = useState(false);
   /** Parser-Statistiken aus dem letzten Datei-Upload */
   const [parseStats, setParseStats] = useState<ExcelParseStats | null>(null);
+
+  // ── Detail-Drawer (Tagesvergleich pro Mitarbeiter) ─────────────────────────
+  const [detailEmployee, setDetailEmployee] = useState<DetailDrawerEmployee | null>(null);
 
   // ── Create-Employee-Dialog ────────────────────────────────────────────────
 
@@ -678,22 +682,50 @@ export default function ArbeitszeitblaetterPage() {
                       )}>
                         <td className="px-4 py-2 font-medium text-sm">
                           <div className="flex items-center gap-1.5">
-                            {hasPlanWarning && <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" title={`Dienstplan (${fmtHours(dienstplanHours)}) vs. AZB (${fmtHours(istHours)}): ${fmtDiff(dienstplanHours - istHours)}`} />}
+                            {hasPlanWarning && (
+                              <button
+                                onClick={() => setDetailEmployee({ id: emp.id, name: emp.name, department: emp.department, planHours: dienstplanHours, istHours })}
+                                title={`Detail anzeigen — Dienstplan (${fmtHours(dienstplanHours)}) vs. AZB (${fmtHours(istHours)}): ${fmtDiff(dienstplanHours - istHours)}`}
+                                className="shrink-0 hover:scale-110 transition-transform"
+                              >
+                                <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                              </button>
+                            )}
                             {emp.name}
                           </div>
                         </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground hidden sm:table-cell">{emp.department || '–'}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-xs text-muted-foreground">{sollHours > 0 ? fmtHours(sollHours) : '–'}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-xs hidden md:table-cell">
-                          {dienstplanHours > 0 ? <span>{fmtHours(dienstplanHours)}</span> : <span className="text-muted-foreground">–</span>}
+                          <button
+                            onClick={() => setDetailEmployee({ id: emp.id, name: emp.name, department: emp.department, planHours: dienstplanHours, istHours })}
+                            className={cn('tabular-nums hover:underline underline-offset-2 cursor-pointer', dienstplanHours > 0 ? 'text-foreground' : 'text-muted-foreground')}
+                            title="Tagesdetails anzeigen"
+                          >
+                            {dienstplanHours > 0 ? fmtHours(dienstplanHours) : '–'}
+                          </button>
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums text-xs font-medium">
-                          {istHours > 0 ? <span className={hasPlanWarning ? 'text-amber-700 dark:text-amber-400' : ''}>{fmtHours(istHours)}</span> : <span className="text-muted-foreground">–</span>}
+                          <button
+                            onClick={() => setDetailEmployee({ id: emp.id, name: emp.name, department: emp.department, planHours: dienstplanHours, istHours })}
+                            className={cn('tabular-nums hover:underline underline-offset-2 cursor-pointer', istHours > 0 ? (hasPlanWarning ? 'text-amber-700 dark:text-amber-400' : 'text-foreground') : 'text-muted-foreground')}
+                            title="Tagesdetails anzeigen"
+                          >
+                            {istHours > 0 ? fmtHours(istHours) : '–'}
+                          </button>
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums text-xs hidden md:table-cell">
-                          {istHours > 0 && sollHours > 0
-                            ? <span className={diff >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{fmtDiff(diff)}</span>
-                            : <span className="text-muted-foreground">–</span>}
+                          {istHours > 0 && sollHours > 0 ? (
+                            <button
+                              onClick={() => setDetailEmployee({ id: emp.id, name: emp.name, department: emp.department, planHours: dienstplanHours, istHours })}
+                              className={cn('tabular-nums hover:underline underline-offset-2 cursor-pointer', diff >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}
+                              title="Tagesdetails anzeigen"
+                            >
+                              {fmtDiff(diff)}
+                            </button>
+                          ) : (
+                            <span className="text-muted-foreground">–</span>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums text-xs hidden lg:table-cell">
                           {vacationBalance != null ? <span className="text-blue-600 dark:text-blue-400">{fmtHours(vacationBalance)}</span> : <span className="text-muted-foreground">–</span>}
@@ -1142,6 +1174,15 @@ export default function ArbeitszeitblaetterPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Tagesdetail-Drawer ───────────────────────────────────────────────── */}
+      <EmployeeTimesheetDetailDrawer
+        open={detailEmployee !== null}
+        onClose={() => setDetailEmployee(null)}
+        employee={detailEmployee}
+        year={year}
+        month={month}
+      />
     </div>
   );
 }
