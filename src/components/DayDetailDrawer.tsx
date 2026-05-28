@@ -76,10 +76,12 @@ function fmtChangedAt(ts: string): string {
     ' ' + d.toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' });
 }
 
-const CHANGE_TYPE_LABEL: Record<string, string> = {
-  update_daily_hours: 'Tagesstunden geändert',
-  delete_time_block:  'Zeitblock gelöscht',
-  add_time_block:     'Zeitblock hinzugefügt',
+const CHANGE_TYPE_LABEL: Record<string, { label: string; color: string }> = {
+  update_daily_hours:       { label: 'Tagesstunden geändert',      color: 'text-blue-600 dark:text-blue-400' },
+  delete_time_block:        { label: 'Zeitblock gelöscht',          color: 'text-red-600 dark:text-red-400' },
+  add_time_block:           { label: 'Zeitblock hinzugefügt',       color: 'text-emerald-600 dark:text-emerald-400' },
+  reimport_overwrite_manual:{ label: 'Re-Import: Manuell überschrieben', color: 'text-orange-600 dark:text-orange-400' },
+  mirus_import:             { label: 'Importiert (Mirus)',           color: 'text-muted-foreground' },
 };
 
 // ─── Karte ────────────────────────────────────────────────────────────────────
@@ -200,7 +202,7 @@ export default function DayDetailDrawer({
                   onClick={() => setCorrectionOpen(true)}
                 >
                   <PenLine className="h-3 w-3" />
-                  {isManuallyEdited ? 'Korrektur bearbeiten' : 'Manuell korrigieren'}
+                  {isManuallyEdited ? 'Erneut bearbeiten' : 'Bearbeiten'}
                 </Button>
               )}
             </div>
@@ -428,45 +430,48 @@ export default function DayDetailDrawer({
                   </div>
                 </div>
 
-                {/* ── Änderungsprotokoll ── */}
+                {/* ── Änderungsverlauf ── */}
                 {changeLogs.length > 0 && (
                   <div className="px-4 pb-4">
                     <div className="flex items-center gap-1.5 mb-2">
                       <History className="h-3.5 w-3.5 text-muted-foreground" />
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Änderungsprotokoll ({changeLogs.length})
+                        Änderungsverlauf ({changeLogs.length})
                       </p>
                     </div>
                     <div className="rounded-lg border border-border overflow-hidden divide-y divide-border/50">
-                      {changeLogs.map(log => (
-                        <div key={log.id} className="px-3 py-2.5 bg-card">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="text-xs font-medium text-foreground">
-                                {CHANGE_TYPE_LABEL[log.change_type] ?? log.change_type}
-                              </p>
-                              {(log.old_value || log.new_value) && (
-                                <p className="text-[11px] text-muted-foreground font-mono mt-0.5">
-                                  {log.old_value && <span className="line-through text-red-500">{log.old_value}</span>}
-                                  {log.old_value && log.new_value && <span className="mx-1">→</span>}
-                                  {log.new_value && <span className="text-emerald-600 dark:text-emerald-400">{log.new_value}</span>}
+                      {changeLogs.map(log => {
+                        const typeMeta = CHANGE_TYPE_LABEL[log.change_type];
+                        return (
+                          <div key={log.id} className="px-3 py-2.5 bg-card">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className={cn('text-xs font-medium', typeMeta?.color ?? 'text-foreground')}>
+                                  {typeMeta?.label ?? log.change_type}
                                 </p>
-                              )}
-                              {log.reason && (
-                                <p className="text-[11px] text-muted-foreground mt-0.5 italic">
-                                  «{log.reason}»
-                                </p>
-                              )}
-                            </div>
-                            <div className="text-right shrink-0">
-                              <p className="text-[10px] text-muted-foreground/70">{fmtChangedAt(log.changed_at)}</p>
-                              {log.changed_by && (
-                                <p className="text-[10px] text-muted-foreground/60 truncate max-w-[140px]">{log.changed_by}</p>
-                              )}
+                                {(log.old_value || log.new_value) && (
+                                  <p className="text-[11px] text-muted-foreground font-mono mt-0.5">
+                                    {log.old_value && <span className="line-through text-red-500">{log.old_value}</span>}
+                                    {log.old_value && log.new_value && <span className="mx-1">→</span>}
+                                    {log.new_value && <span className="text-emerald-600 dark:text-emerald-400">{log.new_value}</span>}
+                                  </p>
+                                )}
+                                {log.reason && (
+                                  <p className="text-[11px] text-muted-foreground mt-0.5 italic">
+                                    «{log.reason}»
+                                  </p>
+                                )}
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="text-[10px] text-muted-foreground/70">{fmtChangedAt(log.changed_at)}</p>
+                                {log.changed_by && (
+                                  <p className="text-[10px] text-muted-foreground/60 truncate max-w-[140px]">{log.changed_by}</p>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}

@@ -25,7 +25,7 @@ import EmployeeDetailView from '@/components/EmployeeDetailView';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
-import { saveActualHourEntry, saveActualHourEntries, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees, checkConfirmedEmployees, getLockedDatesForMonth, getManualEditCountsForMonth } from '@/lib/supabase-db';
+import { saveActualHourEntry, saveActualHourEntries, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees, checkConfirmedEmployees, getLockedDatesForMonth, getManualEditCountsForMonth, logTimesheetChange } from '@/lib/supabase-db';
 import type { Employee as PersonnelEmployee } from '@/types/personnel';
 import {
   getConfirmationsForMonth,
@@ -241,6 +241,10 @@ export default function ArbeitszeitblaetterPage() {
 
   // ── Manuelle Korrekturen (Tages-Lock-Zähler) ────────────────────────────
   const [manualEditCounts, setManualEditCounts] = useState<Record<string, number>>({});
+  /** Gesamtanzahl manuell geänderter Tage im Import-Monat (für Re-Import-Dialog) */
+  const [monthManualEditCount, setMonthManualEditCount] = useState(0);
+  /** Verhalten bei Re-Import wenn manuelle Änderungen existieren */
+  const [manualOverwriteMode, setManualOverwriteMode] = useState<'keep' | 'overwrite'>('keep');
 
   // ── Mitarbeiter-Einzelansicht ─────────────────────────────────────────────
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
@@ -491,11 +495,16 @@ export default function ArbeitszeitblaetterPage() {
         const checkYear  = detectedYear  ?? year;
         const checkMonth = detectedMonth ?? month;
 
-        // Parallel: existierende Daten + bestätigte MA prüfen
-        const [{ exists, count }, confirmedIds] = await Promise.all([
+        // Parallel: existierende Daten + bestätigte MA + manuelle Änderungen prüfen
+        const [{ exists, count }, confirmedIds, manualCounts] = await Promise.all([
           checkExistingMonthData(matchedIds, checkYear, checkMonth),
           checkConfirmedEmployees(matchedIds, checkYear, checkMonth),
+          getManualEditCountsForMonth(matchedIds, checkYear, checkMonth),
         ]);
+
+        const totalManualEdits = Object.values(manualCounts).reduce((s, c) => s + c, 0);
+        setMonthManualEditCount(totalManualEdits);
+        setManualOverwriteMode('keep');
 
         setIsReimport(exists);
         setExistingDataCount(count);
@@ -647,13 +656,17 @@ export default function ArbeitszeitblaetterPage() {
         .filter(r => r.employee && r.matchStatus !== 'skipped' && r.protectionStatus !== 'protected_confirmed')
         .map(r => r.employee!.id);
       if (freeIds.length > 0) {
-        const delResult = await deleteMonthDataForEmployees(freeIds, year, month);
+        // skipLocked = true (behalten) oder false (überschreiben) — je nach Admin-Wahl
+        const delResult = await deleteMonthDataForEmployees(freeIds, year, month, {
+          skipLocked: manualOverwriteMode === 'keep',
+        });
         setReimportDeleteResult(delResult);
         totalDeleted = delResult.deletedHours;
       }
     }
 
-    // Gesperrte Tage (manuell korrigiert) vorladen — diese werden beim Import übersprungen
+    // Gesperrte Tage (manuell korrigiert) vorladen — immer, auch im Überschreiben-Modus
+    // (im 'keep'-Modus werden sie übersprungen; im 'overwrite'-Modus für das Logging gebraucht)
     const lockedDatesMap: Record<string, Set<string>> = {};
     {
       const idsToCheck = importRows
@@ -680,9 +693,10 @@ export default function ArbeitszeitblaetterPage() {
       const empLockedDates = lockedDatesMap[row.employee.id] ?? new Set<string>();
       for (const day of row.excEmployee.days) {
         if (!day.date) continue;
-        // Manuell gesperrte Tage überspringen — Daten bleiben unverändert
-        if (empLockedDates.has(day.date)) {
-          console.debug(`[runImport] ${row.employee.name} / ${day.date}: gesperrt (manuell korrigiert) — übersprungen`);
+        const wasLocked = empLockedDates.has(day.date);
+        // 'keep'-Modus: gesperrte Tage überspringen — Daten bleiben unverändert
+        if (manualOverwriteMode === 'keep' && wasLocked) {
+          console.debug(`[runImport] ${row.employee.name} / ${day.date}: gesperrt (manuell korrigiert) — übersprungen (Modus: behalten)`);
           continue;
         }
 
@@ -750,6 +764,26 @@ export default function ArbeitszeitblaetterPage() {
           }
 
           importedCount++;
+
+          // 'overwrite'-Modus: war gesperrter Tag → im Log vermerken
+          if (manualOverwriteMode === 'overwrite' && wasLocked) {
+            try {
+              await logTimesheetChange({
+                employeeId: row.employee.id,
+                date:       day.date,
+                year,       month,
+                tableName:  'actual_hours',
+                fieldName:  'hours',
+                oldValue:   null,
+                newValue:   String(effectiveHours),
+                changeType: 'reimport_overwrite_manual',
+                reason:     `Re-Import hat manuelle Änderung überschrieben (Datei: ${importFileName})`,
+                changedBy:  user?.email ?? null,
+              });
+            } catch (logErr) {
+              console.warn('[runImport] reimport_overwrite_manual log fehlgeschlagen:', logErr);
+            }
+          }
         } catch (err) {
           errors.push(`${row.employee.name}/${day.date}: ${String(err)}`);
         }
@@ -1228,49 +1262,101 @@ export default function ArbeitszeitblaetterPage() {
                 {/* Datei-Info */}
                 <div className="flex items-center gap-3 text-xs flex-wrap">
                   <span className="font-medium">{importFileName}</span>
-                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportMonthOverride(false); setParseStats(null); setIsReimport(false); setExistingDataCount(0); setConfirmedProtectedIds(new Set()); setReimportDeleteResult(null); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
+                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportMonthOverride(false); setParseStats(null); setIsReimport(false); setExistingDataCount(0); setConfirmedProtectedIds(new Set()); setReimportDeleteResult(null); setMonthManualEditCount(0); setManualOverwriteMode('keep'); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
                     <X className="h-3.5 w-3.5" />Neue Datei
                   </button>
                 </div>
 
                 {/* ── Re-Import Warnung ────────────────────────────────────────── */}
                 {isReimport && (
-                  <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-xs">
-                    <div className="flex items-start gap-2.5 px-3 py-2.5">
-                      <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                      <div className="space-y-1">
-                        <div className="font-semibold text-amber-800 dark:text-amber-300 text-[13px]">
-                          Re-Import: Bestehende Daten werden ersetzt
-                        </div>
-                        <div className="text-amber-700 dark:text-amber-400 leading-relaxed">
-                          Für <strong>{MONTH_NAMES_DE[month - 1]} {year}</strong> existieren bereits{' '}
-                          <strong>{existingDataCount}</strong> importierte Arbeitstag{existingDataCount !== 1 ? 'e' : ''}.
-                          Der neue Import ersetzt nur <strong>offene, nicht bestätigte</strong> Daten.
-                          Bestätigte oder geschützte Mitarbeiter bleiben unverändert.
-                        </div>
-                        {confirmedProtectedIds.size > 0 && (
-                          <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400 font-medium">
-                            <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
-                            <span>
-                              <strong>{confirmedProtectedIds.size}</strong> Mitarbeiter mit bestätigtem Arbeitszeitblatt — werden übersprungen
-                            </span>
+                  <div className="space-y-2">
+                    <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-xs">
+                      <div className="flex items-start gap-2.5 px-3 py-2.5">
+                        <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          <div className="font-semibold text-amber-800 dark:text-amber-300 text-[13px]">
+                            Re-Import: Bestehende Daten werden ersetzt
                           </div>
-                        )}
-                        <div className="text-amber-600/80 dark:text-amber-500/80">
-                          Gelöscht werden (nur offene MAs): <code className="font-mono text-[11px]">actual_hours</code>,{' '}
-                          <code className="font-mono text-[11px]">actual_hour_entries</code>,{' '}
-                          <code className="font-mono text-[11px]">employee_time_balances</code> — nur Quelle: <code className="font-mono text-[11px]">mirus_import</code>
+                          <div className="text-amber-700 dark:text-amber-400 leading-relaxed">
+                            Für <strong>{MONTH_NAMES_DE[month - 1]} {year}</strong> existieren bereits{' '}
+                            <strong>{existingDataCount}</strong> importierte Arbeitstag{existingDataCount !== 1 ? 'e' : ''}.
+                            Der neue Import ersetzt nur <strong>offene, nicht bestätigte</strong> Daten.
+                            Bestätigte oder geschützte Mitarbeiter bleiben unverändert.
+                          </div>
+                          {confirmedProtectedIds.size > 0 && (
+                            <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400 font-medium">
+                              <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                              <span>
+                                <strong>{confirmedProtectedIds.size}</strong> Mitarbeiter mit bestätigtem Arbeitszeitblatt — werden übersprungen
+                              </span>
+                            </div>
+                          )}
+                          <div className="text-amber-600/80 dark:text-amber-500/80">
+                            Gelöscht werden (nur offene MAs): <code className="font-mono text-[11px]">actual_hours</code>,{' '}
+                            <code className="font-mono text-[11px]">actual_hour_entries</code>,{' '}
+                            <code className="font-mono text-[11px]">employee_time_balances</code> — nur Quelle: <code className="font-mono text-[11px]">mirus_import</code>
+                          </div>
                         </div>
                       </div>
+                      {reimportDeleteResult && (
+                        <div className="border-t border-amber-200 dark:border-amber-800 px-3 py-2 flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                          <span>
+                            Bereinigt: <strong>{reimportDeleteResult.deletedHours}</strong> Tage,{' '}
+                            <strong>{reimportDeleteResult.deletedBlocks}</strong> Zeitblöcke,{' '}
+                            <strong>{reimportDeleteResult.deletedBalances}</strong> Guthaben gelöscht
+                          </span>
+                        </div>
+                      )}
                     </div>
-                    {reimportDeleteResult && (
-                      <div className="border-t border-amber-200 dark:border-amber-800 px-3 py-2 flex items-center gap-2 text-amber-700 dark:text-amber-400">
-                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                        <span>
-                          Bereinigt: <strong>{reimportDeleteResult.deletedHours}</strong> Tage,{' '}
-                          <strong>{reimportDeleteResult.deletedBlocks}</strong> Zeitblöcke,{' '}
-                          <strong>{reimportDeleteResult.deletedBalances}</strong> Guthaben gelöscht
-                        </span>
+
+                    {/* ── Manuelle Änderungen: Behandlung beim Re-Import ── */}
+                    {monthManualEditCount > 0 && (
+                      <div className="rounded-lg border border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 text-xs p-3 space-y-2.5">
+                        <div className="flex items-center gap-2 font-semibold text-orange-800 dark:text-orange-300 text-[13px]">
+                          <Lock className="h-3.5 w-3.5 shrink-0" />
+                          {monthManualEditCount} manuell geänderte{' '}
+                          Tag{monthManualEditCount !== 1 ? 'e' : ''} in diesem Monat
+                        </div>
+                        <p className="text-orange-700 dark:text-orange-400">
+                          Wie sollen diese beim Re-Import behandelt werden?
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() => setManualOverwriteMode('keep')}
+                            className={cn(
+                              'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors',
+                              manualOverwriteMode === 'keep'
+                                ? 'bg-orange-600 text-white border-orange-600'
+                                : 'bg-background text-orange-700 dark:text-orange-300 border-orange-400 dark:border-orange-600 hover:bg-orange-100 dark:hover:bg-orange-900/30',
+                            )}
+                          >
+                            <ShieldCheck className="h-3 w-3 shrink-0" />
+                            Manuelle Änderungen behalten
+                          </button>
+                          <button
+                            onClick={() => setManualOverwriteMode('overwrite')}
+                            className={cn(
+                              'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors',
+                              manualOverwriteMode === 'overwrite'
+                                ? 'bg-red-600 text-white border-red-600'
+                                : 'bg-background text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/20',
+                            )}
+                          >
+                            <Undo2 className="h-3 w-3 shrink-0" />
+                            Manuelle Änderungen überschreiben
+                          </button>
+                        </div>
+                        {manualOverwriteMode === 'keep' && (
+                          <p className="text-[11px] text-orange-600/80 dark:text-orange-400/80">
+                            Standard: Manuell geänderte Tage werden beim Re-Import übersprungen. Nur nicht bearbeitete Tage werden aktualisiert.
+                          </p>
+                        )}
+                        {manualOverwriteMode === 'overwrite' && (
+                          <p className="text-[11px] text-red-600 dark:text-red-400">
+                            Achtung: Alle manuellen Änderungen für diesen Monat werden durch den Import ersetzt. Die Änderungshistorie bleibt erhalten und wird als «überschrieben» markiert.
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>

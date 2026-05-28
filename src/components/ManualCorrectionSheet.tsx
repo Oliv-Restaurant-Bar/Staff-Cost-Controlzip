@@ -123,7 +123,7 @@ export default function ManualCorrectionSheet({
     setEditBlocks(prev => prev.filter(b => b.tempId !== tempId));
   }
 
-  const canSave = reason.trim().length >= 3 && !saving;
+  const canSave = !saving;
 
   async function handleSave() {
     if (!canSave) return;
@@ -193,7 +193,7 @@ export default function ManualCorrectionSheet({
           </div>
           <div className="flex items-center gap-1.5 mt-1 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 rounded px-2 py-1">
             <Lock className="h-3 w-3 shrink-0" />
-            Manuell geänderte Tage sind vor Re-Import geschützt.
+            Änderung wird protokolliert. Beim Re-Import entscheidet der Admin, ob sie behalten oder überschrieben wird.
           </div>
         </SheetHeader>
 
@@ -291,29 +291,19 @@ export default function ManualCorrectionSheet({
             )}
           </div>
 
-          {/* Korrekturgrund (Pflichtfeld) */}
+          {/* Bemerkung (optional) */}
           <div>
             <label className="block text-xs font-semibold text-foreground mb-1.5">
-              Korrekturgrund <span className="text-red-500">*</span>
+              Bemerkung <span className="text-muted-foreground font-normal">(optional)</span>
             </label>
             <textarea
               value={reason}
               onChange={e => setReason(e.target.value)}
-              placeholder="Pflichtfeld — z.B. «Zeitstempel fehlerha nach Systemausfall, manuelle Übernahme aus Papierzettel»"
+              placeholder="z.B. «Zeitstempel fehlerhaft nach Systemausfall, manuelle Übernahme aus Papierzettel»"
               rows={3}
-              className={cn(
-                'w-full border rounded-lg px-3 py-2 text-sm bg-background text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 resize-none',
-                reason.trim().length < 3 && reason.length > 0
-                  ? 'border-red-300 dark:border-red-700 focus:ring-red-400'
-                  : 'border-border focus:ring-primary',
-              )}
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary resize-none"
             />
-            {reason.length > 0 && reason.trim().length < 3 && (
-              <p className="text-[11px] text-red-500 mt-1">Bitte einen aussagekräftigen Grund eingeben (min. 3 Zeichen).</p>
-            )}
-            {reason.trim().length === 0 && (
-              <p className="text-[11px] text-muted-foreground mt-1">Ohne Korrekturgrund kann nicht gespeichert werden.</p>
-            )}
+            <p className="text-[11px] text-muted-foreground mt-1">Wird im Änderungsverlauf angezeigt. Kann leer gelassen werden.</p>
           </div>
 
           {/* Vorher/Nachher-Übersicht */}
@@ -352,8 +342,8 @@ export default function ManualCorrectionSheet({
             className="gap-1.5"
             size="sm"
           >
-            <Lock className="h-3.5 w-3.5" />
-            {saving ? 'Speichern…' : 'Speichern & sperren'}
+            <PenLine className="h-3.5 w-3.5" />
+            {saving ? 'Speichern…' : 'Speichern'}
           </Button>
         </div>
       </SheetContent>

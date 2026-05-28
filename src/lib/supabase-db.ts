@@ -1047,14 +1047,18 @@ export async function checkExistingMonthData(
  * Löscht alle Ist-Stunden, Zeitblöcke und Guthaben für die angegebenen Mitarbeiter im Monat.
  * Nur Daten mit source = 'mirus_import' werden gelöscht (actual_hours hat keine source-Spalte,
  * wird aber vollständig für den Zeitraum gelöscht, da der Schreibpfad immer Mirus ist).
+ * Mit options.skipLocked=true (Standard) werden manuell gesperrte Tage übersprungen.
+ * Mit options.skipLocked=false werden auch gesperrte Einträge gelöscht (Re-Import-Überschreiben).
  * Gibt die Anzahl gelöschter Datensätze pro Tabelle zurück.
  */
 export async function deleteMonthDataForEmployees(
   employeeIds: string[],
   year: number,
   month: number,
+  options?: { skipLocked?: boolean },
 ): Promise<{ deletedHours: number; deletedBlocks: number; deletedBalances: number }> {
   if (!employeeIds.length) return { deletedHours: 0, deletedBlocks: 0, deletedBalances: 0 };
+  const skipLocked = options?.skipLocked ?? true;
   const pad      = (n: number) => String(n).padStart(2, '0');
   const fromDate = `${year}-${pad(month)}-01`;
   const lastDay  = new Date(year, month, 0).getDate();
@@ -1063,24 +1067,35 @@ export async function deleteMonthDataForEmployees(
   let deletedHours = 0, deletedBlocks = 0, deletedBalances = 0;
 
   try {
-    // actual_hours — gesperrte (manuell korrigierte) Einträge überspringen
-    const { count: h, error: hErr } = await supabase
-      .from('actual_hours')
-      .delete({ count: 'exact' })
-      .in('employee_id', employeeIds)
-      .gte('date', fromDate)
-      .lte('date', toDate)
-      .not('is_locked', 'is', true);
-    if (hErr?.code === '42703') {
-      // Spalte existiert noch nicht — alle löschen
-      const { count: h2 } = await supabase
+    if (skipLocked) {
+      // Gesperrte (manuell korrigierte) Einträge überspringen
+      const { count: h, error: hErr } = await supabase
+        .from('actual_hours')
+        .delete({ count: 'exact' })
+        .in('employee_id', employeeIds)
+        .gte('date', fromDate)
+        .lte('date', toDate)
+        .not('is_locked', 'is', true);
+      if (hErr?.code === '42703') {
+        // Spalte existiert noch nicht — alle löschen
+        const { count: h2 } = await supabase
+          .from('actual_hours')
+          .delete({ count: 'exact' })
+          .in('employee_id', employeeIds)
+          .gte('date', fromDate)
+          .lte('date', toDate);
+        deletedHours = h2 ?? 0;
+      } else {
+        deletedHours = h ?? 0;
+      }
+    } else {
+      // Überschreiben-Modus: auch gesperrte Einträge löschen
+      const { count: h } = await supabase
         .from('actual_hours')
         .delete({ count: 'exact' })
         .in('employee_id', employeeIds)
         .gte('date', fromDate)
         .lte('date', toDate);
-      deletedHours = h2 ?? 0;
-    } else {
       deletedHours = h ?? 0;
     }
   } catch (e) {
@@ -1088,26 +1103,37 @@ export async function deleteMonthDataForEmployees(
   }
 
   try {
-    // actual_hour_entries — nur source = 'mirus_import', gesperrte überspringen
-    const { count: b, error: bErr } = await supabase
-      .from('actual_hour_entries')
-      .delete({ count: 'exact' })
-      .in('employee_id', employeeIds)
-      .gte('date', fromDate)
-      .lte('date', toDate)
-      .eq('source', 'mirus_import')
-      .not('is_locked', 'is', true);
-    if (bErr?.code === '42703') {
-      // Spalte existiert noch nicht — alle mirus_import-Blöcke löschen
-      const { count: b2 } = await supabase
+    if (skipLocked) {
+      // actual_hour_entries — nur source = 'mirus_import', gesperrte überspringen
+      const { count: b, error: bErr } = await supabase
         .from('actual_hour_entries')
         .delete({ count: 'exact' })
         .in('employee_id', employeeIds)
         .gte('date', fromDate)
         .lte('date', toDate)
-        .eq('source', 'mirus_import');
-      deletedBlocks = b2 ?? 0;
+        .eq('source', 'mirus_import')
+        .not('is_locked', 'is', true);
+      if (bErr?.code === '42703') {
+        // Spalte existiert noch nicht — alle mirus_import-Blöcke löschen
+        const { count: b2 } = await supabase
+          .from('actual_hour_entries')
+          .delete({ count: 'exact' })
+          .in('employee_id', employeeIds)
+          .gte('date', fromDate)
+          .lte('date', toDate)
+          .eq('source', 'mirus_import');
+        deletedBlocks = b2 ?? 0;
+      } else {
+        deletedBlocks = b ?? 0;
+      }
     } else {
+      // Überschreiben-Modus: alle Blöcke löschen (mirus_import + manual_edit)
+      const { count: b } = await supabase
+        .from('actual_hour_entries')
+        .delete({ count: 'exact' })
+        .in('employee_id', employeeIds)
+        .gte('date', fromDate)
+        .lte('date', toDate);
       deletedBlocks = b ?? 0;
     }
   } catch {
@@ -2130,7 +2156,7 @@ export async function saveManualDayCorrection(params: {
   month:       number;
   newHours:    number;
   newBlocks:   Array<{ start_time: string; end_time: string; duration_hours: number }>;
-  reason:      string;
+  reason?:     string;
   changedBy:   string | null;
   oldHours:    number | null;
   oldBlocks:   HourBlockEntry[];
