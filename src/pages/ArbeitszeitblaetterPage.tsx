@@ -23,6 +23,7 @@ import { computeImportQuality, type QualityFieldEntry } from '@/lib/import-quali
 import { DataQualityPanel } from '@/components/DataQualityPanel';
 import { ImportHistoryPanel, ImportQualitySummaryCard } from '@/components/ImportHistoryPanel';
 import EmployeeDetailView from '@/components/EmployeeDetailView';
+import MirusKorrekturlisteSection from '@/components/MirusKorrekturlisteSection';
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
@@ -1351,6 +1352,15 @@ export default function ArbeitszeitblaetterPage() {
             </div>
           );
         })()}
+
+        {/* Mirus-Korrekturliste */}
+        <MirusKorrekturlisteSection
+          tenantId={tenantId}
+          year={year}
+          month={month}
+          employees={employees.map(e => ({ id: e.id, name: e.name }))}
+          userEmail={user?.email ?? null}
+        />
 
         {/* Import-Historie — alle Imports für diesen Tenant */}
         <ImportHistoryPanel
