@@ -62,6 +62,21 @@ function fmtTime(t: string | null): string {
   if (!t) return '';
   return t.slice(0, 5);
 }
+
+/**
+ * Prüft ob start/end-Zeiten die gesamte AZB-Stundenanzahl plausibel erklären.
+ * Erlaubt ±1.5h Toleranz (Pausen, Rundung).
+ * Verhindert Anzeige von Teilblöcken wenn hours = Tages-Total mehrerer Blöcke.
+ */
+function timesMatchHours(start: string | null, end: string | null, hours: number): boolean {
+  if (!start || !end) return false;
+  const sp = start.split(':').map(Number);
+  const ep = end.split(':').map(Number);
+  if (sp.length < 2 || ep.length < 2) return false;
+  const durationH = (ep[0] * 60 + ep[1] - (sp[0] * 60 + sp[1])) / 60;
+  if (durationH <= 0 || durationH > 16) return false;
+  return Math.abs(durationH - hours) <= 1.5;
+}
 function fmtDate(iso: string): string {
   const d = new Date(iso + 'T12:00:00');
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
@@ -348,9 +363,9 @@ function TableContent({ entries }: { entries: DayComparisonEntry[] }) {
                   {e.azb_hours != null ? (
                     <div>
                       <div className="font-medium">{fmtH(e.azb_hours)}</div>
-                      {(e.azb_start || e.azb_end) && (
+                      {timesMatchHours(e.azb_start, e.azb_end, e.azb_hours) && (
                         <div className="text-[10px] text-muted-foreground">
-                          {fmtTime(e.azb_start)}{e.azb_start && e.azb_end ? '–' : ''}{fmtTime(e.azb_end)}
+                          {fmtTime(e.azb_start)}–{fmtTime(e.azb_end)}
                         </div>
                       )}
                     </div>

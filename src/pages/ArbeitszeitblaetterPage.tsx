@@ -532,10 +532,17 @@ export default function ArbeitszeitblaetterPage() {
       for (const day of row.excEmployee.days) {
         if (!day.date || (day.totalHours ?? 0) <= 0) continue;
         try {
+          // Zeiten nur speichern wenn exakt EIN Schichtblock vorhanden — bei mehreren
+          // Blöcken würde shifts[0] nur den ersten Block widerspiegeln, hours aber
+          // das Tages-Total aller Blöcke. Das würde in der Anzeige verwirren.
+          const singleShift =
+            day.shifts?.length === 1 && day.shifts[0].from && day.shifts[0].to
+              ? day.shifts[0]
+              : null;
           await saveActualHourEntry(row.employee.id, day.date, {
             hours: day.totalHours!,
-            start: day.shifts?.[0]?.from ?? undefined,
-            end:   day.shifts?.[0]?.to   ?? undefined,
+            start: singleShift?.from ?? undefined,
+            end:   singleShift?.to   ?? undefined,
           });
           importedCount++;
         } catch (err) {
