@@ -435,14 +435,35 @@ export default function ArbeitszeitblaetterPage() {
   // ── Confirmation-Aktionen ─────────────────────────────────────────────────
 
   async function handleGenerateLink(emp: Employee) {
+    if (isMonthFinalizedAll) {
+      toast.error('Monat ist finalisiert — kein neuer Link möglich');
+      return;
+    }
     setGenerating(emp.id);
     try {
       const conf = await createOrGetConfirmation(tenantId, emp.id, year, month);
-      await navigator.clipboard.writeText(timesheetPublicUrl(conf.token));
-      toast.success(`Link für ${emp.name} kopiert`);
+      const url  = timesheetPublicUrl(conf.token);
+      // Clipboard-Fehler (z.B. kein HTTPS oder Permission denied) separat behandeln
+      try {
+        await navigator.clipboard.writeText(url);
+        toast.success(`Link für ${emp.name} kopiert`);
+      } catch {
+        // Clipboard nicht verfügbar — Link trotzdem anzeigen
+        toast.info(`Link generiert (Clipboard nicht verfügbar): ${url}`, { duration: 8000 });
+      }
       await loadData();
-    } catch { toast.error('Fehler beim Generieren des Links'); }
-    finally { setGenerating(null); }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[TIMESHEET] handleGenerateLink Fehler:', {
+        employee_id: emp.id,
+        employee:    emp.name,
+        month, year, tenantId,
+        error: msg,
+      });
+      toast.error(`Link konnte nicht generiert werden: ${msg}`, { duration: 8000 });
+    } finally {
+      setGenerating(null);
+    }
   }
 
   async function handleCopyLink(conf: TimesheetConfirmation) {

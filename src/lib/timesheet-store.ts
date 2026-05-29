@@ -61,42 +61,93 @@ export async function createOrGetConfirmation(
   year: number,
   month: number,
 ): Promise<TimesheetConfirmation> {
-  const { data: existing } = await db()
+  // Lookup existing record — filter by tenant_id to avoid cross-tenant collisions
+  const { data: existing, error: selectErr } = await db()
     .select('*')
+    .eq('tenant_id', tenantId)
     .eq('employee_id', employeeId)
     .eq('year', year)
     .eq('month', month)
     .maybeSingle();
 
+  // Table doesn't exist yet → clear error
+  if (selectErr?.code === '42P01') {
+    const err = new Error(
+      `Tabelle employee_timesheet_confirmations existiert noch nicht. ` +
+      `Bitte Migration supabase/migrations/20260529_timesheet_confirmations_fix.sql im Supabase SQL-Editor ausführen.`
+    );
+    (err as Error & { code: string; details: string }).code = '42P01';
+    (err as Error & { code: string; details: string }).details = selectErr.message ?? '';
+    throw err;
+  }
+  // Permission denied
+  if (selectErr?.code === '42501') {
+    const err = new Error(`Keine Berechtigung (RLS). Bitte Grants im SQL-Editor prüfen. [${selectErr.message}]`);
+    throw err;
+  }
+
   if (existing) {
+    // Bestehenden Eintrag zurückgeben (Token bleibt stabil)
     if (existing.status === 'open') {
-      const { data: updated } = await db()
+      const { data: updated, error: updateErr } = await db()
         .update({ status: 'link_created', updated_at: new Date().toISOString() })
         .eq('id', existing.id)
         .select()
         .single();
+      if (updateErr) {
+        console.error('[TIMESHEET] createOrGetConfirmation update:', {
+          message: updateErr.message,
+          code:    updateErr.code,
+          details: updateErr.details,
+          employee_id: employeeId,
+          month, year,
+        });
+        throw new Error(`Update fehlgeschlagen: ${updateErr.message} (${updateErr.code})`);
+      }
       return (updated ?? existing) as TimesheetConfirmation;
     }
     return existing as TimesheetConfirmation;
   }
 
+  // Neuen Eintrag anlegen
   const token = generateToken();
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 60);
 
-  const { data, error } = await db()
+  const { data, error: insertErr } = await db()
     .insert({
-      tenant_id: tenantId,
+      tenant_id:   tenantId,
       employee_id: employeeId,
       year,
       month,
       token,
-      status: 'link_created',
-      expires_at: expiresAt.toISOString(),
+      status:      'link_created',
+      expires_at:  expiresAt.toISOString(),
     })
     .select()
     .single();
-  if (error) throw error;
+
+  if (insertErr) {
+    // Unique-Conflict: Parallelzugriff – nochmals lesen
+    if (insertErr.code === '23505') {
+      const { data: retry } = await db()
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('employee_id', employeeId)
+        .eq('year', year)
+        .eq('month', month)
+        .maybeSingle();
+      if (retry) return retry as TimesheetConfirmation;
+    }
+    console.error('[TIMESHEET] createOrGetConfirmation insert:', {
+      message:    insertErr.message,
+      code:       insertErr.code,
+      details:    insertErr.details,
+      employee_id: employeeId,
+      month, year,
+    });
+    throw new Error(`${insertErr.message} (Code: ${insertErr.code ?? '–'}${insertErr.details ? ' · ' + insertErr.details : ''})`);
+  }
   return data as TimesheetConfirmation;
 }
 
