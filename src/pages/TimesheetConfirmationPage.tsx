@@ -75,6 +75,23 @@ function sollHoursForMonth(weeklyHours: number, year: number, month: number) {
   return Math.round((weeklyHours / 7) * new Date(year, month, 0).getDate() * 10) / 10;
 }
 
+interface DebugInfo {
+  method:          'rpc' | 'direct' | 'none';
+  employee_id:     string;
+  tenant_id:       string;
+  year:            number;
+  month:           number;
+  date_from:       string;
+  date_to:         string;
+  actual_hours_rows: number;
+  emp_found:       boolean;
+  rpc_error:       string | null;
+  emp_error:       string | null;
+  days_error:      string | null;
+  bal_error:       string | null;
+  raw_conf:        Record<string, unknown> | null;
+}
+
 export default function TimesheetConfirmationPage() {
   const { token } = useParams<{ token: string }>();
 
@@ -84,6 +101,8 @@ export default function TimesheetConfirmationPage() {
   const [days, setDays]                   = useState<FullDayEntry[]>([]);
   const [balances, setBalances]           = useState<BalanceInfo | null>(null);
   const [requests, setRequests]           = useState<EmployeeRequest[]>([]);
+  const [debugInfo, setDebugInfo]         = useState<DebugInfo | null>(null);
+  const [showDebug, setShowDebug]         = useState(false);
 
   const [mode, setMode]                   = useState<Mode>(null);
   const [comment, setComment]             = useState('');
@@ -99,7 +118,10 @@ export default function TimesheetConfirmationPage() {
   async function loadPage(tok: string) {
     setPageState('loading');
     try {
+      // ── Step 1: Confirmation via Token ──────────────────────────────────────
       const conf = await getConfirmationByToken(tok);
+      console.log('[TIMESHEET-DEBUG] getConfirmationByToken result:', conf);
+
       if (!conf) { setPageState('invalid'); return; }
       if (conf.expires_at && new Date(conf.expires_at) < new Date()) {
         setPageState('expired'); return;
@@ -109,58 +131,156 @@ export default function TimesheetConfirmationPage() {
       }
       setConfirmation(conf);
 
-      const fromDate = `${conf.year}-${String(conf.month).padStart(2, '0')}-01`;
+      const pad      = (n: number) => String(n).padStart(2, '0');
+      const fromDate = `${conf.year}-${pad(conf.month)}-01`;
       const lastDay  = new Date(conf.year, conf.month, 0).getDate();
-      const toDate   = `${conf.year}-${String(conf.month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      const toDate   = `${conf.year}-${pad(conf.month)}-${pad(lastDay)}`;
 
-      const [empRes, daysRes, balRes, reqRes] = await Promise.allSettled([
-        supabase
-          .from('employees')
-          .select('id, name, department, weekly_hours')
-          .eq('id', conf.employee_id)
-          .maybeSingle(),
-        supabase
-          .from('actual_hours')
-          .select('date, hours, start_time, end_time, absence_type, manually_edited, is_locked')
-          .eq('employee_id', conf.employee_id)
-          .gte('date', fromDate)
-          .lte('date', toDate)
-          .order('date'),
-        (supabase as any)
-          .from('employee_time_balances')
-          .select('vacation_balance_hours, public_holiday_balance_hours, overtime_balance_hours, compensation_balance_hours')
-          .eq('employee_id', conf.employee_id)
-          .eq('year', conf.year)
-          .eq('month', conf.month)
-          .maybeSingle(),
-        getRequestsForConfirmation(conf.id),
-      ]);
+      console.log('[TIMESHEET-DEBUG] Confirmation details:', {
+        employee_id: conf.employee_id,
+        tenant_id:   conf.tenant_id,
+        year:        conf.year,
+        month:       conf.month,
+        status:      conf.status,
+        fromDate,
+        toDate,
+      });
 
-      if (empRes.status === 'fulfilled' && empRes.value.data)
-        setEmployee(empRes.value.data as EmployeeInfo);
+      const dbg: DebugInfo = {
+        method:            'none',
+        employee_id:       conf.employee_id,
+        tenant_id:         conf.tenant_id,
+        year:              conf.year,
+        month:             conf.month,
+        date_from:         fromDate,
+        date_to:           toDate,
+        actual_hours_rows: 0,
+        emp_found:         false,
+        rpc_error:         null,
+        emp_error:         null,
+        days_error:        null,
+        bal_error:         null,
+        raw_conf:          conf as unknown as Record<string, unknown>,
+      };
 
-      if (daysRes.status === 'fulfilled') {
+      // ── Step 2: Try SECURITY DEFINER RPC (bypasses RLS for public page) ─────
+      console.log('[TIMESHEET-DEBUG] Calling RPC get_confirmation_page_data...');
+      const { data: rpcData, error: rpcErr } = await (supabase as any)
+        .rpc('get_confirmation_page_data', { p_token: tok });
+
+      console.log('[TIMESHEET-DEBUG] RPC result:', { data: rpcData, error: rpcErr });
+
+      if (!rpcErr && rpcData) {
+        // ── RPC succeeded ────────────────────────────────────────────────────
+        dbg.method = 'rpc';
+
+        const rpcDebug = rpcData._debug ?? {};
+        dbg.actual_hours_rows = rpcDebug.days_count ?? (rpcData.days?.length ?? 0);
+        dbg.emp_found         = rpcDebug.emp_found ?? !!rpcData.employee;
+
+        if (rpcData.employee) {
+          setEmployee(rpcData.employee as EmployeeInfo);
+        }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        setDays((daysRes.value.data ?? []).map((d: any) => ({
+        setDays((rpcData.days ?? []).map((d: any) => ({
           date:            d.date,
           hours:           d.hours ?? 0,
-          start_time:      d.start_time,
-          end_time:        d.end_time,
-          absence_type:    d.absence_type,
+          start_time:      d.start_time ?? null,
+          end_time:        d.end_time ?? null,
+          absence_type:    d.absence_type ?? null,
           manually_edited: d.manually_edited ?? false,
           is_locked:       d.is_locked ?? false,
         })));
+
+        if (rpcData.balances) {
+          setBalances(rpcData.balances as BalanceInfo);
+        }
+
+        console.log('[TIMESHEET-DEBUG] RPC data loaded:', {
+          employee:  rpcData.employee,
+          days_count: rpcData.days?.length ?? 0,
+          balances:  rpcData.balances,
+          _debug:    rpcData._debug,
+        });
+
+      } else {
+        // ── RPC not available (migration not yet run) — fall back to direct queries ──
+        dbg.rpc_error = rpcErr ? `${rpcErr.code}: ${rpcErr.message}` : 'no data returned';
+        console.warn('[TIMESHEET-DEBUG] RPC failed, falling back to direct queries. Error:', rpcErr);
+
+        dbg.method = 'direct';
+
+        const [empRes, daysRes, balRes] = await Promise.allSettled([
+          supabase
+            .from('employees')
+            .select('id, name, department, weekly_hours')
+            .eq('id', conf.employee_id)
+            .maybeSingle(),
+          supabase
+            .from('actual_hours')
+            .select('date, hours, start_time, end_time, absence_type, manually_edited, is_locked')
+            .eq('employee_id', conf.employee_id)
+            .gte('date', fromDate)
+            .lte('date', toDate)
+            .order('date'),
+          (supabase as any)
+            .from('employee_time_balances')
+            .select('vacation_balance_hours, public_holiday_balance_hours, overtime_balance_hours, compensation_balance_hours')
+            .eq('employee_id', conf.employee_id)
+            .eq('year', conf.year)
+            .eq('month', conf.month)
+            .maybeSingle(),
+        ]);
+
+        console.log('[TIMESHEET-DEBUG] Direct query results:', {
+          employees: empRes.status === 'fulfilled'
+            ? { data: empRes.value.data, error: empRes.value.error }
+            : { rejected: empRes.reason },
+          actual_hours: daysRes.status === 'fulfilled'
+            ? { rows: daysRes.value.data?.length ?? 0, error: daysRes.value.error }
+            : { rejected: daysRes.reason },
+          time_balances: balRes.status === 'fulfilled'
+            ? { data: balRes.value.data, error: balRes.value.error }
+            : { rejected: balRes.reason },
+        });
+
+        if (empRes.status === 'fulfilled') {
+          dbg.emp_error = empRes.value.error ? `${empRes.value.error.code}: ${empRes.value.error.message}` : null;
+          dbg.emp_found = !!empRes.value.data;
+          if (empRes.value.data) setEmployee(empRes.value.data as EmployeeInfo);
+        }
+
+        if (daysRes.status === 'fulfilled') {
+          dbg.days_error        = daysRes.value.error ? `${daysRes.value.error.code}: ${daysRes.value.error.message}` : null;
+          dbg.actual_hours_rows = daysRes.value.data?.length ?? 0;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          setDays((daysRes.value.data ?? []).map((d: any) => ({
+            date:            d.date,
+            hours:           d.hours ?? 0,
+            start_time:      d.start_time,
+            end_time:        d.end_time,
+            absence_type:    d.absence_type,
+            manually_edited: d.manually_edited ?? false,
+            is_locked:       d.is_locked ?? false,
+          })));
+        }
+
+        if (balRes.status === 'fulfilled') {
+          dbg.bal_error = balRes.value.error ? `${balRes.value.error.code}: ${balRes.value.error.message}` : null;
+          if (balRes.value.data) setBalances(balRes.value.data as BalanceInfo);
+        }
       }
 
-      if (balRes.status === 'fulfilled' && balRes.value.data)
-        setBalances(balRes.value.data as BalanceInfo);
+      // ── Step 3: Requests (public access via token — always direct) ───────────
+      const reqRes = await getRequestsForConfirmation(conf.id).catch(() => []);
+      setRequests(reqRes);
 
-      if (reqRes.status === 'fulfilled')
-        setRequests(reqRes.value);
+      setDebugInfo(dbg);
+      console.log('[TIMESHEET-DEBUG] Final debug info:', dbg);
 
       setPageState('ready');
     } catch (err) {
-      console.error('[TIMESHEET PUBLIC]', err);
+      console.error('[TIMESHEET PUBLIC] loadPage error:', err);
       setPageState('invalid');
     }
   }
@@ -650,6 +770,84 @@ export default function TimesheetConfirmationPage() {
           </div>
         ) : null}
       </div>
+
+      {/* Debug Panel */}
+      {debugInfo && (
+        <div className="mt-6 border border-amber-300 dark:border-amber-700 rounded-lg overflow-hidden text-xs">
+          <button
+            onClick={() => setShowDebug(p => !p)}
+            className="w-full flex items-center justify-between px-3 py-2 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 font-mono font-semibold hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+          >
+            <span>🐛 Debug-Info (Arbeitszeitblatt)</span>
+            <span className="text-[10px] opacity-60">{showDebug ? '▲ einklappen' : '▼ ausklappen'}</span>
+          </button>
+
+          {/* Status-Zeile immer sichtbar */}
+          <div className="px-3 py-2 bg-amber-50/50 dark:bg-amber-950/20 border-t border-amber-200 dark:border-amber-800 flex flex-wrap gap-x-4 gap-y-1">
+            <span>
+              Methode: <strong className={debugInfo.method === 'rpc' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}>
+                {debugInfo.method === 'rpc' ? '✓ RPC (SECURITY DEFINER)' : debugInfo.method === 'direct' ? '⚠ Direct (RLS aktiv!)' : '–'}
+              </strong>
+            </span>
+            <span>actual_hours: <strong className={debugInfo.actual_hours_rows > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}>{debugInfo.actual_hours_rows} Zeilen</strong></span>
+            <span>Mitarbeiter: <strong className={debugInfo.emp_found ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}>{debugInfo.emp_found ? '✓ gefunden' : '✗ nicht gefunden'}</strong></span>
+          </div>
+
+          {showDebug && (
+            <div className="px-3 py-3 bg-white dark:bg-black/20 border-t border-amber-200 dark:border-amber-800 space-y-2 font-mono">
+
+              <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+                <span className="text-muted-foreground">employee_id:</span>
+                <span className="break-all">{debugInfo.employee_id || '—'}</span>
+
+                <span className="text-muted-foreground">tenant_id:</span>
+                <span className="break-all">{debugInfo.tenant_id || '—'}</span>
+
+                <span className="text-muted-foreground">year:</span>
+                <span>{debugInfo.year}</span>
+
+                <span className="text-muted-foreground">month:</span>
+                <span>{debugInfo.month}</span>
+
+                <span className="text-muted-foreground">date_from:</span>
+                <span>{debugInfo.date_from}</span>
+
+                <span className="text-muted-foreground">date_to:</span>
+                <span>{debugInfo.date_to}</span>
+
+                <span className="text-muted-foreground">actual_hours rows:</span>
+                <span className={debugInfo.actual_hours_rows > 0 ? 'text-emerald-700 dark:text-emerald-400 font-bold' : 'text-red-700 dark:text-red-400 font-bold'}>
+                  {debugInfo.actual_hours_rows}
+                </span>
+              </div>
+
+              {(debugInfo.rpc_error || debugInfo.emp_error || debugInfo.days_error || debugInfo.bal_error) && (
+                <div className="mt-2 space-y-1">
+                  <p className="text-red-600 dark:text-red-400 font-semibold">Fehler:</p>
+                  {debugInfo.rpc_error  && <p className="text-red-600 dark:text-red-400 break-all">RPC: {debugInfo.rpc_error}</p>}
+                  {debugInfo.emp_error  && <p className="text-red-600 dark:text-red-400 break-all">employees: {debugInfo.emp_error}</p>}
+                  {debugInfo.days_error && <p className="text-red-600 dark:text-red-400 break-all">actual_hours: {debugInfo.days_error}</p>}
+                  {debugInfo.bal_error  && <p className="text-red-600 dark:text-red-400 break-all">time_balances: {debugInfo.bal_error}</p>}
+                </div>
+              )}
+
+              {debugInfo.method === 'direct' && !debugInfo.emp_error && !debugInfo.days_error && debugInfo.actual_hours_rows === 0 && (
+                <div className="mt-2 rounded bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 px-2 py-1.5 text-red-700 dark:text-red-400">
+                  ⚠ RPC fehlt → RLS blockiert anon-Zugriff.<br />
+                  <strong>Fix:</strong> Migration <code>20260529_confirmation_page_rpc.sql</code> im Supabase SQL-Editor ausführen.
+                </div>
+              )}
+
+              <details className="mt-1">
+                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">raw confirmation record</summary>
+                <pre className="mt-1 text-[10px] overflow-x-auto whitespace-pre-wrap break-all text-muted-foreground">
+                  {JSON.stringify(debugInfo.raw_conf, null, 2)}
+                </pre>
+              </details>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* DayRequestSheet */}
       {dayRequestDate && confirmation && (
