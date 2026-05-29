@@ -1,0 +1,136 @@
+Bitte behebe die Erkennung von Ferien und Feiertagen im Mirus Import vollständig.
+
+Problem:
+In der Mitarbeiter-Detailansicht werden Ferientage zwar in der Tagesliste als "Ferien" erkannt, aber die oberen Cards zeigen:
+- Ferien bezogen: nicht erkannt
+- Ferien Rest: nicht erkannt
+- FT bezogen: nicht erkannt
+- FT Rest: nicht erkannt
+
+Beispiel:
+Arber im April hat Ferien vom 06.04 bis 17.04, aber die Ferien-Salden werden oben nicht erkannt.
+
+Ziel:
+Der Parser muss Ferien und Feiertage vollständig erkennen und korrekt speichern:
+
+1. Ferientage pro Tag
+2. Ferien bezogen im Monat
+3. Ferien Rest / Feriensaldo
+4. Feiertage bezogen
+5. Feiertag Rest / Feiertagguthaben
+
+Bitte prüfen:
+
+1. Parser
+In src/lib/mirus-excel-parser.ts prüfen:
+- Wo Ferientage erkannt werden
+- Wo Ferien-/Feiertagssalden erkannt werden
+- Warum Tages-Typ Ferien funktioniert, aber Salden nicht
+
+2. Mirus-Labels erweitern
+
+Bitte alle Varianten erkennen:
+
+Ferien:
+- Ferien
+- Feri
+- Urlaub
+- Urlaubssaldo
+- Ferien bezogen
+- Ferien Bezug
+- Ferien Saldo
+- Feriensaldo
+- Ferienguthaben
+- Ferien Rest
+- Ferienbestand
+- Schlussbestand Ferien
+- Endsaldo Ferien
+
+Feiertage:
+- Feiertag
+- Feiertage
+- Feier
+- FT
+- Feiertage bezogen
+- Feiertag Bezug
+- Feiertag Saldo
+- Feiertagssaldo
+- Feiertagguthaben
+- Feiertag Rest
+- Feiertagbestand
+- Schlussbestand Feiertag
+- Endsaldo Feiertag
+
+3. Saldo-Tabellen dynamisch lesen
+
+Nicht fixe Spalten verwenden.
+
+Stattdessen:
+- innerhalb jedes Mitarbeiterblocks nach Ferien-/Feiertags-Zeilen suchen
+- Header wie Bezug, Bezogen, Saldo, Rest, Schlussbestand, Endsaldo, Guthaben erkennen
+- den passenden Wert aus derselben Zeile lesen
+
+4. 0.0 korrekt behandeln
+
+0.0 ist ein gültiger erkannter Wert.
+Nicht als "nicht erkannt" anzeigen, wenn der Wert tatsächlich in der Datei steht.
+
+5. Speichern
+
+employee_time_balances muss speichern:
+
+vacation_taken_days
+vacation_taken_hours
+vacation_balance_days
+vacation_balance_hours
+holiday_taken_days
+holiday_taken_hours
+holiday_balance_days
+holiday_balance_hours
+
+Falls Spalten fehlen, Migration ergänzen.
+
+6. Anzeige
+
+EmployeeDetailView oben soll anzeigen:
+
+Ferien bezogen
+Ferien Rest
+FT bezogen
+FT Rest
+
+Wenn Wert wirklich nicht vorhanden:
+"nicht in Datei"
+
+Wenn Parser ihn nicht lesen konnte:
+"nicht erkannt"
+
+7. Import-Qualität
+
+Importbericht getrennt anzeigen:
+
+Ferientage erkannt
+Ferien bezogen erkannt
+Ferien Rest erkannt
+Feiertage erkannt
+Feiertage bezogen erkannt
+Feiertag Rest erkannt
+
+8. Debug speziell Arber April
+
+Bitte gezielt loggen:
+- welche Ferienzeilen bei Arber gefunden wurden
+- welche Kandidatenwerte gelesen wurden
+- was in employee_time_balances gespeichert wird
+- warum vorher oben "nicht erkannt" stand
+
+9. Nach Umsetzung ausgeben
+
+- Welche Labels neu erkannt werden
+- Welche Felder in employee_time_balances geschrieben werden
+- Ob Arber April Ferien bezogen und Ferien Rest jetzt angezeigt werden
+- Ob Feiertage/FT Rest korrekt erkannt werden
+- Welche SQL Migration in Supabase nötig ist
+
+Wichtig:
+Das digitale Arbeitszeitblatt muss für die Mitarbeiterkontrolle vollständig sein. Ferien und Feiertage dürfen nicht fehlen.

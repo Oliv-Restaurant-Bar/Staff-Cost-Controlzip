@@ -67,8 +67,8 @@ const TOTAL_LABELS: { key: keyof EmployeeTotals; patterns: string[] }[] = [
   { key: 'zeitzuschlag', patterns: ['zeitzuschlag', 'zuschlag'] },
   { key: 'ueberzeit',    patterns: ['überzeit', 'ueberzeit', 'überstunden'] },
   { key: 'saldo',        patterns: ['saldo'] },
-  { key: 'ferien',       patterns: ['feriensaldo', 'ferien', 'ferienguthaben', 'ferien guthaben', 'ferienrest', 'ferienbestand', 'urlaub', 'urlaubssaldo', 'urlaubsguthaben', 'urlaub saldo', 'endsaldo ferien', 'schlussbestand ferien'] },
-  { key: 'feiertag',     patterns: ['feiertag', 'feiertagguthaben', 'feiertag guthaben', 'feiertagssaldo', 'feiertagsaldo', 'feiertage saldo', 'feiertage', 'feiertagbestand', 'endsaldo feiertag'] },
+  { key: 'ferien',       patterns: ['feriensaldo', 'ferien', 'feri', 'ferienguthaben', 'ferien guthaben', 'ferienrest', 'ferien rest', 'ferienbestand', 'ferienendsaldo', 'urlaub', 'urlaubssaldo', 'urlaubsguthaben', 'urlaub saldo', 'urlaubsrest', 'endsaldo ferien', 'schlussbestand ferien', 'ferienstand', 'resturlaub'] },
+  { key: 'feiertag',     patterns: ['feiertag', 'feier', 'feiertagguthaben', 'feiertag guthaben', 'feiertagssaldo', 'feiertagsaldo', 'feiertage saldo', 'feiertage', 'feiertagbestand', 'feiertag rest', 'feiertage rest', 'endsaldo feiertag', 'schlussbestand feiertag', 'ft saldo', 'ft rest', 'ft guthaben'] },
   { key: 'kompensation', patterns: ['kompensation', 'komp'] },
   { key: 'krankheit',    patterns: ['krankheit', 'krank', 'unfall'] },
 ];
@@ -588,17 +588,33 @@ function extractHeaders(ws: XLSX.WorkSheet, blockStart: number, blockEnd: number
 // ─── Ferien/Feiertag Label-Muster ────────────────────────────────────────────
 
 const FERIEN_LABEL_PATS = [
-  'ferien', 'feriensaldo', 'ferienguthaben', 'ferien saldo', 'ferien guthaben',
-  'ferienrest', 'ferienbestand', 'ferienendsaldo', 'ferien endsaldo',
-  'urlaub', 'urlaubssaldo', 'urlaubsguthaben', 'urlaub saldo', 'urlaub rest',
+  // Standardbezeichnungen
+  'ferien', 'feri',
+  // Saldo / Guthaben / Rest
+  'feriensaldo', 'ferienguthaben', 'ferien saldo', 'ferien guthaben',
+  'ferienrest', 'ferien rest', 'ferienrestguthaben', 'ferien rest guthaben',
+  'ferienbestand', 'ferienendsaldo', 'ferien endsaldo',
   'endsaldo ferien', 'schlussbestand ferien', 'ferienstand',
+  'ferienresttage', 'ferien resttage', 'ferien restguthaben',
+  // Urlaub-Varianten (DE)
+  'urlaub', 'urlaubssaldo', 'urlaubsguthaben', 'urlaub saldo', 'urlaub rest',
+  'urlaubsrest', 'urlaubsbestand', 'urlaubsendsaldo', 'resturlaub',
+  'endsaldo urlaub', 'schlussbestand urlaub',
 ];
 
 const FEIERTAG_LABEL_PATS = [
-  'feiertag', 'feiertage', 'feiertagguthaben', 'feiertagssaldo', 'feiertagsaldo',
-  'feiertag guthaben', 'feiertage saldo', 'feiertag saldo', 'feiertagbestand',
-  'feiertag bestand', 'feiertag rest', 'endsaldo feiertag', 'feiertage endsaldo',
+  // Standardbezeichnungen
+  'feiertag', 'feiertage', 'feier',
+  // Saldo / Guthaben / Rest
+  'feiertagguthaben', 'feiertagssaldo', 'feiertagsaldo',
+  'feiertag guthaben', 'feiertage saldo', 'feiertag saldo', 'feiertage rest',
+  'feiertagbestand', 'feiertag bestand', 'feiertag rest',
+  'endsaldo feiertag', 'feiertage endsaldo',
   'feiertagendsaldo', 'feiertag endsaldo', 'feiertagstand',
+  'schlussbestand feiertag',
+  // FT-Abkürzungen
+  'ft saldo', 'ft rest', 'ft guthaben', 'ft bestand',
+  'gesetzliche feiertage', 'ges. feiertage',
 ];
 
 // Spalten-Header-Muster die auf eine "Saldo"-Spalte in einer Balance-Tabelle hinweisen
@@ -1083,24 +1099,24 @@ type AcctKey = 'hours' | 'vacation' | 'holiday' | 'overtime' | 'comp';
 type SubKey  = keyof MonthlyAccountEntry;
 
 const ACCT_SECTION_PATS: { type: AcctKey; pats: string[] }[] = [
-  { type: 'hours',    pats: ['stundenkonto', 'zeitkonto', 'std-kto', 'stunden-kto', 'stunden kto'] },
-  { type: 'vacation', pats: ['ferienkonto', 'ferien-kto', 'ferien kto', 'ferien-konto'] },
-  { type: 'holiday',  pats: ['feiertagskonto', 'feiertag konto', 'feiertag-kto', 'feiertagsk.'] },
-  { type: 'overtime', pats: ['überzeitkonto', 'ueberzeit konto', 'überzeit-kto', 'überstdkonto', 'überstunden'] },
-  { type: 'comp',     pats: ['kompensationskonto', 'kompens.-kto', 'komp-konto', 'kompkonto'] },
+  { type: 'hours',    pats: ['stundenkonto', 'zeitkonto', 'std-kto', 'stunden-kto', 'stunden kto', 'std kto', 'std.kto', 'arbeitszeitkonto', 'arbeitszeit konto'] },
+  { type: 'vacation', pats: ['ferienkonto', 'ferien-kto', 'ferien kto', 'ferien-konto', 'ferien kto.', 'ferienkto', 'urlaubskonto', 'urlaub konto', 'urlaub-kto'] },
+  { type: 'holiday',  pats: ['feiertagskonto', 'feiertag konto', 'feiertag-kto', 'feiertagsk.', 'feiertag kto', 'feiertagskto', 'feiertage konto', 'gesetzl. feiertage'] },
+  { type: 'overtime', pats: ['überzeitkonto', 'ueberzeit konto', 'überzeit-kto', 'überstdkonto', 'überstunden', 'überzeit kto', 'überzeitkto', 'ueberzeit-kto'] },
+  { type: 'comp',     pats: ['kompensationskonto', 'kompens.-kto', 'komp-konto', 'kompkonto', 'kompensation konto', 'komp konto', 'kompens kto'] },
 ];
 
 const ACCT_SUB_PATS: { key: SubKey; pats: string[] }[] = [
-  { key: 'openingBalance', pats: ['vortr', 'vorsaldo', 'übertrag', 'übertr.', 'anfangss'] },
-  { key: 'correction',     pats: ['korr', 'korrekt'] },
-  { key: 'planned',        pats: ['soll', 'gut.', 'gutschr'] },
-  { key: 'actual',         pats: ['ist', 'bez.', 'bezug', 'bezogen', 'bez', 'verb.', 'verbrauch'] },
-  { key: 'paidOut',        pats: ['ausbez.', 'ausb.', 'ausbez'] },
-  { key: 'difference',     pats: ['diff.', 'diff'] },
-  { key: 'compensation',   pats: ['komp.', 'kompens'] },
-  { key: 'surcharge',      pats: ['zus.', 'zuschlag', 'zeitzu'] },
-  { key: 'days',           pats: ['tage', 'arbeitstage'] },
-  { key: 'closingBalance', pats: ['saldo', 'endsaldo'] },
+  { key: 'openingBalance', pats: ['vortr', 'vorsaldo', 'übertrag', 'übertr.', 'anfangss', 'anfang', 'anfangssaldo', 'vortrag'] },
+  { key: 'correction',     pats: ['korr', 'korrekt', 'korrektur'] },
+  { key: 'planned',        pats: ['soll', 'gut.', 'gutschr', 'gutschrift', 'geplant', 'anspruch'] },
+  { key: 'actual',         pats: ['ist', 'bez.', 'bezug', 'bezogen', 'bez', 'verb.', 'verbrauch', 'genommen', 'genommene', 'tatsächlich', 'tatsächl.'] },
+  { key: 'paidOut',        pats: ['ausbez.', 'ausb.', 'ausbez', 'ausgezahlt', 'auszahlung'] },
+  { key: 'difference',     pats: ['diff.', 'diff', 'differenz', 'abw.', 'abweichung'] },
+  { key: 'compensation',   pats: ['komp.', 'kompens', 'kompensation'] },
+  { key: 'surcharge',      pats: ['zus.', 'zuschlag', 'zeitzu', 'zeitzuschlag'] },
+  { key: 'days',           pats: ['tage', 'arbeitstage', 'ferientage', 'tg.', 'tg'] },
+  { key: 'closingBalance', pats: ['saldo', 'endsaldo', 'schluss', 'schlussbestand', 'endbestand', 'rest', 'guthaben'] },
 ];
 
 function readMonthlyAccounts(ws: XLSX.WorkSheet, blockStart: number, blockEnd: number): MonthlyAccounts {
@@ -1111,8 +1127,6 @@ function readMonthlyAccounts(ws: XLSX.WorkSheet, blockStart: number, blockEnd: n
   const ref = ws['!ref'];
   if (!ref) return result;
   const range = XLSX.utils.decode_range(ref);
-  // Accounts appear in the header zone — scan top 15 rows of block
-  const scanEnd = Math.min(blockStart + 14, blockEnd);
 
   function toNorm(s: string): string {
     return s.toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1130,7 +1144,7 @@ function readMonthlyAccounts(ws: XLSX.WorkSheet, blockStart: number, blockEnd: n
     return null;
   }
   function readRight(c: number, r: number): string | null {
-    for (let dc = 1; dc <= 4; dc++) {
+    for (let dc = 1; dc <= 8; dc++) {
       const vc = getCell(ws, c + dc, r);
       if (!vc) continue;
       const ph = parseHoursValue(vc);
@@ -1144,7 +1158,9 @@ function readMonthlyAccounts(ws: XLSX.WorkSheet, blockStart: number, blockEnd: n
 
   let currentSection: AcctKey | null = null;
 
-  for (let r = blockStart; r <= scanEnd; r++) {
+  // Scan the entire block — Mirus places Monatskonten both at the top (header zone)
+  // and at the bottom (summary zone). Limiting to top 15 rows missed bottom-placed accounts.
+  for (let r = blockStart; r <= blockEnd; r++) {
     for (let c = range.s.c; c <= Math.min(range.e.c, 80); c++) {
       const cell = getCell(ws, c, r);
       if (!cell) continue;
@@ -1178,20 +1194,64 @@ function readMonthlyAccounts(ws: XLSX.WorkSheet, blockStart: number, blockEnd: n
   }
 
   // Compound-label fallback: e.g. "Feriensaldo", "Ferien Vortr." without explicit section header
+  // Scans the ENTIRE block — Mirus places these labels anywhere (top header or bottom summary).
   type CompoundRule = { acct: AcctKey; sub: SubKey; pats: string[] };
   const COMPOUND: CompoundRule[] = [
-    { acct: 'vacation', sub: 'closingBalance', pats: ['feriensaldo', 'ferien saldo', 'ferien endsaldo', 'ferienguthaben', 'ferien guthaben', 'ferienendsaldo', 'urlaub saldo', 'urlaubssaldo', 'urlaubsguthaben', 'schlussbestand ferien', 'endsaldo ferien', 'ferienbestand', 'ferienrest'] },
-    { acct: 'vacation', sub: 'openingBalance', pats: ['ferien vortr', 'ferien vorsaldo', 'ferienvortrag', 'ferien vortrag', 'urlaub vortr', 'urlaubsvortrag'] },
-    { acct: 'hours',    sub: 'closingBalance', pats: ['stundensaldo', 'std saldo', 'zeit saldo'] },
-    { acct: 'hours',    sub: 'openingBalance', pats: ['stunden vortr', 'std vortr', 'stundenvortrag'] },
-    { acct: 'holiday',  sub: 'closingBalance', pats: ['feiertagssaldo', 'feiertage saldo', 'feiertagguthaben', 'feiertag guthaben', 'feiertage endsaldo', 'feiertagendsaldo', 'feiertagbestand', 'endsaldo feiertag'] },
-    { acct: 'holiday',  sub: 'openingBalance', pats: ['feiertage vortr', 'feiertag vortrag', 'feiertage vortrag', 'feiertag vortr'] },
-    { acct: 'overtime', sub: 'closingBalance', pats: ['überzeitsaldo', 'ueberzeit saldo', 'überstd saldo'] },
-    { acct: 'overtime',  sub: 'openingBalance', pats: ['überzeit vortr', 'ueberzeit vortr'] },
-    { acct: 'vacation',  sub: 'actual', pats: ['ferien bezogen', 'ferien ist', 'ferienbezug', 'ferien-bezogen', 'bezogen ferien', 'ferienbezogen', 'ferien verb.', 'ferien verbrauch', 'ferienistsaldo'] },
-    { acct: 'holiday',   sub: 'actual', pats: ['feiertag bezogen', 'feiertage bezogen', 'feiertag ist', 'feiertagbezogen', 'feiertag-bezogen', 'feiertag verb.'] },
+    // ── Ferien: Endsaldo / Rest ──────────────────────────────────────────────
+    { acct: 'vacation', sub: 'closingBalance', pats: [
+      'feriensaldo', 'ferien saldo', 'ferien endsaldo', 'ferienguthaben', 'ferien guthaben',
+      'ferienendsaldo', 'urlaub saldo', 'urlaubssaldo', 'urlaubsguthaben',
+      'schlussbestand ferien', 'endsaldo ferien', 'ferienbestand', 'ferienrest',
+      'ferien rest', 'ferien restguthaben', 'ferienrestguthaben',
+      'urlaubsrest', 'urlaubsbestand', 'urlaubsendsaldo', 'resturlaub',
+      'endsaldo urlaub', 'schlussbestand urlaub',
+    ]},
+    // ── Ferien: Vortrag ──────────────────────────────────────────────────────
+    { acct: 'vacation', sub: 'openingBalance', pats: [
+      'ferien vortr', 'ferien vorsaldo', 'ferienvortrag', 'ferien vortrag',
+      'urlaub vortr', 'urlaubsvortrag', 'ferien übertrag', 'ferienvortrag',
+    ]},
+    // ── Ferien: Bezogen / IST ────────────────────────────────────────────────
+    { acct: 'vacation', sub: 'actual', pats: [
+      'ferien bezogen', 'ferien ist', 'ferienbezug', 'ferien bezug',
+      'ferien-bezogen', 'ferien-bezug', 'bezogen ferien', 'ferienbezogen',
+      'ferien verb.', 'ferien verbrauch', 'ferienistsaldo',
+      'urlaub bezogen', 'urlaubsbezug', 'urlaub bezug',
+      'ferien tage bezogen', 'ferien-tage', 'ferien genommen',
+    ]},
+    // ── Ferien: Soll / Anspruch ──────────────────────────────────────────────
+    { acct: 'vacation', sub: 'planned', pats: [
+      'ferien soll', 'ferien anspruch', 'ferienanspruch', 'feriengutsoll',
+      'urlaub soll', 'urlaubsanspruch',
+    ]},
+    // ── Stunden: Endsaldo ───────────────────────────────────────────────────
+    { acct: 'hours',    sub: 'closingBalance', pats: ['stundensaldo', 'std saldo', 'zeit saldo', 'zeitkonto saldo'] },
+    { acct: 'hours',    sub: 'openingBalance', pats: ['stunden vortr', 'std vortr', 'stundenvortrag', 'std. vortr'] },
+    // ── Feiertage: Endsaldo / Rest ───────────────────────────────────────────
+    { acct: 'holiday',  sub: 'closingBalance', pats: [
+      'feiertagssaldo', 'feiertage saldo', 'feiertagguthaben', 'feiertag guthaben',
+      'feiertage endsaldo', 'feiertagendsaldo', 'feiertagbestand', 'endsaldo feiertag',
+      'schlussbestand feiertag', 'feiertage rest', 'feiertag rest',
+      'ft saldo', 'ft rest', 'ft guthaben',
+    ]},
+    // ── Feiertage: Vortrag ───────────────────────────────────────────────────
+    { acct: 'holiday',  sub: 'openingBalance', pats: [
+      'feiertage vortr', 'feiertag vortrag', 'feiertage vortrag', 'feiertag vortr',
+      'ft vortr', 'ft vortrag',
+    ]},
+    // ── Feiertage: Bezogen / IST ─────────────────────────────────────────────
+    { acct: 'holiday',   sub: 'actual', pats: [
+      'feiertag bezogen', 'feiertage bezogen', 'feiertag ist', 'feiertagbezogen',
+      'feiertag-bezogen', 'feiertag verb.', 'feiertag bezug', 'feiertage bezug',
+      'ft bezogen', 'ft bezug', 'ft ist', 'feiertag genommen',
+    ]},
+    // ── Überzeit ─────────────────────────────────────────────────────────────
+    { acct: 'overtime', sub: 'closingBalance', pats: ['überzeitsaldo', 'ueberzeit saldo', 'überstd saldo', 'ueberzeit saldo'] },
+    { acct: 'overtime',  sub: 'openingBalance', pats: ['überzeit vortr', 'ueberzeit vortr', 'überstd vortr'] },
   ];
-  for (let r = blockStart; r <= scanEnd; r++) {
+  // CRITICAL: scan the full block, not just the top 15 rows.
+  // Mirus can place compound balance labels at the bottom of the employee block.
+  for (let r = blockStart; r <= blockEnd; r++) {
     for (let c = range.s.c; c <= Math.min(range.e.c, 80); c++) {
       const cell = getCell(ws, c, r);
       if (!cell || cell.t !== 's') continue;

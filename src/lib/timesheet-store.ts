@@ -405,8 +405,12 @@ export interface EmployeeTimeBalance {
   employee_id: string;
   vacation_balance_hours:       number | null;
   vacation_taken_hours:         number | null;
+  vacation_taken_days:          number | null;
+  vacation_balance_days:        number | null;
   public_holiday_balance_hours: number | null;
   holiday_taken_hours:          number | null;
+  holiday_taken_days:           number | null;
+  holiday_balance_days:         number | null;
   overtime_balance_hours:       number | null;
   compensation_balance_hours:   number | null;
   hours_balance:                number | null;
@@ -419,31 +423,55 @@ export async function upsertEmployeeTimeBalance(params: {
   month: number;
   vacationHours?: number | null;
   vacationTakenHours?: number | null;
+  vacationTakenDays?: number | null;
+  vacationBalanceDays?: number | null;
   holidayHours?: number | null;
   holidayTakenHours?: number | null;
+  holidayTakenDays?: number | null;
+  holidayBalanceDays?: number | null;
   overtimeHours?: number | null;
   compensationHours?: number | null;
   hoursBalance?: number | null;
 }): Promise<void> {
-  const { tenantId, employeeId, year, month, vacationHours, vacationTakenHours, holidayHours, holidayTakenHours, overtimeHours, compensationHours, hoursBalance } = params;
+  const {
+    tenantId, employeeId, year, month,
+    vacationHours, vacationTakenHours, vacationTakenDays, vacationBalanceDays,
+    holidayHours, holidayTakenHours, holidayTakenDays, holidayBalanceDays,
+    overtimeHours, compensationHours, hoursBalance,
+  } = params;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase as any)
+  const basePayload = {
+    tenant_id:                    tenantId,
+    employee_id:                  employeeId,
+    month,
+    year,
+    vacation_balance_hours:       vacationHours        ?? null,
+    vacation_taken_hours:         vacationTakenHours   ?? null,
+    public_holiday_balance_hours: holidayHours         ?? null,
+    holiday_taken_hours:          holidayTakenHours    ?? null,
+    overtime_balance_hours:       overtimeHours        ?? null,
+    compensation_balance_hours:   compensationHours    ?? null,
+    hours_balance:                hoursBalance         ?? null,
+    source:                       'mirus_import',
+    updated_at:                   new Date().toISOString(),
+  };
+  const fullPayload = {
+    ...basePayload,
+    vacation_taken_days:          vacationTakenDays    ?? null,
+    vacation_balance_days:        vacationBalanceDays  ?? null,
+    holiday_taken_days:           holidayTakenDays     ?? null,
+    holiday_balance_days:         holidayBalanceDays   ?? null,
+  };
+  let { error } = await (supabase as any)
     .from('employee_time_balances')
-    .upsert({
-      tenant_id:                    tenantId,
-      employee_id:                  employeeId,
-      month,
-      year,
-      vacation_balance_hours:       vacationHours       ?? null,
-      vacation_taken_hours:         vacationTakenHours  ?? null,
-      public_holiday_balance_hours: holidayHours        ?? null,
-      holiday_taken_hours:          holidayTakenHours   ?? null,
-      overtime_balance_hours:       overtimeHours       ?? null,
-      compensation_balance_hours:   compensationHours   ?? null,
-      hours_balance:                hoursBalance        ?? null,
-      source:                       'mirus_import',
-      updated_at:                   new Date().toISOString(),
-    }, { onConflict: 'employee_id,month,year' });
+    .upsert(fullPayload, { onConflict: 'employee_id,month,year' });
+  // Spalte noch nicht migriert → Fallback ohne Tage-Felder
+  if (error?.code === '42703') {
+    const fallback = await (supabase as any)
+      .from('employee_time_balances')
+      .upsert(basePayload, { onConflict: 'employee_id,month,year' });
+    error = fallback.error;
+  }
   if (error) console.error('[TIMESHEET-BALANCE] upsertEmployeeTimeBalance:', error);
 }
 
@@ -453,13 +481,45 @@ export async function getEmployeeTimeBalancesForMonth(
   month: number,
 ): Promise<Record<string, EmployeeTimeBalance>> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (supabase as any)
+  // Vollständiger SELECT inkl. Tage-Spalten (nach Migration vorhanden)
+  const FULL_COLS = [
+    'employee_id',
+    'vacation_balance_hours', 'vacation_taken_hours',
+    'vacation_taken_days',    'vacation_balance_days',
+    'public_holiday_balance_hours', 'holiday_taken_hours',
+    'holiday_taken_days',     'holiday_balance_days',
+    'overtime_balance_hours', 'compensation_balance_hours', 'hours_balance',
+  ].join(', ');
+
+  // Fallback-SELECT ohne Tage-Spalten (vor Migration)
+  const BASE_COLS = [
+    'employee_id',
+    'vacation_balance_hours', 'vacation_taken_hours',
+    'public_holiday_balance_hours', 'holiday_taken_hours',
+    'overtime_balance_hours', 'compensation_balance_hours', 'hours_balance',
+  ].join(', ');
+
+  let { data, error } = await (supabase as any)
     .from('employee_time_balances')
-    .select('employee_id, vacation_balance_hours, vacation_taken_hours, public_holiday_balance_hours, holiday_taken_hours, overtime_balance_hours, compensation_balance_hours, hours_balance')
+    .select(FULL_COLS)
     .eq('tenant_id', tenantId)
     .eq('year', year)
     .eq('month', month);
+
+  // Spalte existiert noch nicht (Migration ausstehend) → Fallback auf Basis-Spalten
+  if (error?.code === '42703') {
+    const fallback = await (supabase as any)
+      .from('employee_time_balances')
+      .select(BASE_COLS)
+      .eq('tenant_id', tenantId)
+      .eq('year', year)
+      .eq('month', month);
+    data  = fallback.data;
+    error = fallback.error;
+  }
+
   if (error?.code === '42P01' || error?.code === '42501') return {};
+  if (error) { console.error('[TIMESHEET-BALANCE] getEmployeeTimeBalancesForMonth:', error); return {}; }
 
   const result: Record<string, EmployeeTimeBalance> = {};
   for (const row of data ?? []) {
@@ -467,8 +527,12 @@ export async function getEmployeeTimeBalancesForMonth(
       employee_id:                  row.employee_id,
       vacation_balance_hours:       row.vacation_balance_hours       ?? null,
       vacation_taken_hours:         row.vacation_taken_hours         ?? null,
+      vacation_taken_days:          row.vacation_taken_days          ?? null,
+      vacation_balance_days:        row.vacation_balance_days        ?? null,
       public_holiday_balance_hours: row.public_holiday_balance_hours ?? null,
       holiday_taken_hours:          row.holiday_taken_hours          ?? null,
+      holiday_taken_days:           row.holiday_taken_days           ?? null,
+      holiday_balance_days:         row.holiday_balance_days         ?? null,
       overtime_balance_hours:       row.overtime_balance_hours       ?? null,
       compensation_balance_hours:   row.compensation_balance_hours   ?? null,
       hours_balance:                row.hours_balance                ?? null,
