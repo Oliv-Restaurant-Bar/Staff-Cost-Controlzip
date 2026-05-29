@@ -3014,15 +3014,45 @@ const SchedulePlanner = () => {
           name:       getEmployeeDisplayName(emp),
           department: emp.department as 'service' | 'küche',
           days: days.map(day => {
-            const dateStr = format(day, 'yyyy-MM-dd');
-            const slot    = scheduleData[`${emp.id}-${dateStr}`] ?? {};
+            const dateStr  = format(day, 'yyyy-MM-dd');
+            const slot     = scheduleData[`${emp.id}-${dateStr}`] ?? {};
+            const frühSlot = slot.früh ?? null;
+            const spätSlot = slot.spät ?? null;
+
+            // Shift-Code-Lookup aus ShiftConfig (reverse: start+end → name).
+            // Wird in der Mitarbeiteransicht für Pausenhinweise genutzt.
+            // Keine Auswirkung auf Berechnungen.
+            let frühCode: string | undefined;
+            let spätCode: string | undefined;
+            if (frühSlot && spätSlot) {
+              // Versuche zuerst Split-Schicht (ein Code deckt beide Slots ab)
+              const splitKey = Object.keys(shiftMap).find(k => {
+                const s = shiftMap[k];
+                return s.start === frühSlot.start && s.end === frühSlot.end
+                    && s.start2 === spätSlot.start && s.end2 === spätSlot.end;
+              });
+              if (splitKey) {
+                frühCode = splitKey; // ein Code für die ganze Schicht
+              } else {
+                // Zwei unabhängige Schichten
+                frühCode = Object.keys(shiftMap).find(k => shiftMap[k].start === frühSlot.start && shiftMap[k].end === frühSlot.end);
+                spätCode = Object.keys(shiftMap).find(k => shiftMap[k].start === spätSlot.start && shiftMap[k].end === spätSlot.end);
+              }
+            } else if (frühSlot) {
+              frühCode = Object.keys(shiftMap).find(k => shiftMap[k].start === frühSlot.start && shiftMap[k].end === frühSlot.end);
+            } else if (spätSlot) {
+              spätCode = Object.keys(shiftMap).find(k => shiftMap[k].start === spätSlot.start && shiftMap[k].end === spätSlot.end);
+            }
+
             const newDay: import('@/lib/schedule-publish-store').PublicDayEntry = {
               date:        dateStr,
               dayLabel:    format(day, 'EEEE, d. MMMM', { locale: de }),
-              früh:        slot.früh        ?? null,
-              spät:        slot.spät        ?? null,
+              früh:        frühSlot,
+              spät:        spätSlot,
               frühAbsence: slot.frühAbsence ?? null,
               spätAbsence: slot.spätAbsence ?? null,
+              ...(frühCode ? { frühCode } : {}),
+              ...(spätCode ? { spätCode } : {}),
             };
 
             // Change detection against previous publish

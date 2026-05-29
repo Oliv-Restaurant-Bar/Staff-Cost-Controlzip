@@ -12,6 +12,15 @@ export interface PublicDayEntry {
   spät?: PublicTimeSlot | null;
   frühAbsence?: string | null;
   spätAbsence?: string | null;
+  /**
+   * Shift-Code-Name aus der ShiftConfig (z.B. "S1", "S3").
+   * Bei Split-Schichten enthält frühCode den Namen des Gesamt-Shifts
+   * (spätCode ist dann nicht gesetzt).
+   * Wird nur in der Mitarbeiteransicht für Pausenhinweise genutzt —
+   * keine Auswirkung auf Berechnungen.
+   */
+  frühCode?: string | null;
+  spätCode?: string | null;
   /** Change tracking — set when re-publishing with modifications */
   changed?: boolean;
   changeType?: 'new' | 'changed';

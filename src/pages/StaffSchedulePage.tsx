@@ -94,6 +94,64 @@ function absenceMeta(code: string) {
   };
 }
 
+// ── Pausenmatrix ──────────────────────────────────────────────────────────────
+// NUR für die Mitarbeiteransicht — hat keinerlei Einfluss auf Stundenberechnungen,
+// AZB, Dienstplan-Editor oder Admin-Ansichten.
+
+const BREAK_MATRIX: Record<string, string> = {
+  'S1':  '11:00–11:30',
+  'S2':  '21:30–22:00',
+  'S3':  '14:30–15:00 + 17:30–18:00',
+  'S4':  'keine Pause',
+  'S5':  'keine Pause',
+  'S6':  '11:30–12:00',
+  'S7':  '16:00–17:15',
+  'S8':  '17:30–18:00',
+  'S9':  '17:30–18:00',
+  'S10': '14:30–15:00 + 17:00–17:30 + 15 Min um 21:00',
+  'S11': '15 Min ab 21:30',
+  'S12': '21:45–22:15',
+  'S13': 'keine Pause',
+  'S14': '15 Min ab 21:30',
+};
+
+/**
+ * Gibt Pausenhinweis-Zeilen zurück (eine pro bekanntem Schichtcode).
+ * Gibt leeres Array zurück wenn kein Code bekannt — dann wird kein Hinweis angezeigt.
+ */
+function getBreakHints(frühCode?: string | null, spätCode?: string | null): string[] {
+  const hints: string[] = [];
+  if (frühCode && frühCode in BREAK_MATRIX) {
+    hints.push(BREAK_MATRIX[frühCode]);
+  }
+  if (spätCode && spätCode !== frühCode && spätCode in BREAK_MATRIX) {
+    hints.push(BREAK_MATRIX[spätCode]);
+  }
+  return hints;
+}
+
+/** Dezenter Pausenhinweis unter den Schichtzeiten — nur in der Mitarbeiteransicht. */
+function BreakHint({ frühCode, spätCode, compact = false }: {
+  frühCode?: string | null;
+  spätCode?: string | null;
+  compact?: boolean;
+}) {
+  const hints = getBreakHints(frühCode, spätCode);
+  if (hints.length === 0) return null;
+  return (
+    <div className={cn('flex flex-col gap-0.5', compact ? 'mt-1' : 'mt-1.5')}>
+      {hints.map((hint, i) => (
+        <span key={i} className={cn(
+          'text-muted-foreground/55 tabular-nums',
+          compact ? 'text-[9px]' : 'text-[11px]',
+        )}>
+          Pause: {hint}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // ── Shift chips ───────────────────────────────────────────────────────────────
 
 function ShiftChip({ start, end, large = false }: { start: string; end: string; large?: boolean }) {
@@ -720,6 +778,8 @@ function NextShiftCard({ employee }: { employee: PublicEmployee }) {
               </span>
             </div>
           )}
+          {/* Pausenhinweis — nur Mitarbeiteransicht */}
+          <BreakHint frühCode={upcoming.frühCode} spätCode={upcoming.spätCode} />
         </div>
         {countdown && (
           <div className="text-right shrink-0 pb-0.5">
@@ -905,6 +965,11 @@ function PersonalView({
                 )}
 
                 <DayContent day={day} showHours={vis.showHours} />
+
+                {/* Pausenhinweis — nur Mitarbeiteransicht, kein Einfluss auf Berechnungen */}
+                {!empty && (day.frühCode || day.spätCode) && (
+                  <BreakHint frühCode={day.frühCode} spätCode={day.spätCode} />
+                )}
 
                 {!empty && (
                   <div className="mt-3 pt-2.5 border-t border-border/20">
