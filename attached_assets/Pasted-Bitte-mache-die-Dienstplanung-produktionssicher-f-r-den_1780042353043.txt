@@ -1,0 +1,152 @@
+Bitte mache die Dienstplanung produktionssicher für den Juni-Dienstplan.
+
+Ziel:
+Ab morgen sollen Abteilungsleiter die Dienstpläne für Juni erstellen und später an Mitarbeiter publizieren können. Dafür müssen Speicherung, Rollen, Stabilität, Publikation und Änderungsverlauf zuverlässig funktionieren.
+
+Bitte zuerst eine Bestandsanalyse machen und nichts unnötig neu bauen.
+
+1. Quelle der Wahrheit prüfen
+
+Prüfe, wo Dienstplan-Einträge gespeichert werden:
+- schedule_entries
+- localStorage
+- Supabase KV
+- andere Tabellen
+
+Ziel:
+Supabase muss die einzige dauerhafte Quelle sein.
+localStorage darf nur Cache sein und niemals Supabase-Daten überschreiben.
+
+2. Persistenz absichern
+
+Beim Speichern eines Dienstplans:
+- muss direkt in Supabase geschrieben werden
+- nach Reload müssen dieselben Werte erscheinen
+- nach Logout/Login müssen dieselben Werte erscheinen
+- keine Demo-/Fallback-Daten dürfen produktive Daten überschreiben
+
+3. Juni 2026 Testmodus
+
+Bitte speziell für Juni 2026 testen:
+- Schicht eintragen
+- mehrere Tage eintragen
+- Woche kopieren
+- Mitarbeiter wechseln
+- Seite neu laden
+- prüfen, ob alles bleibt
+
+4. Rollen und Abteilungen
+
+Abteilungsleiter sollen nur ihre Abteilung bearbeiten dürfen:
+
+Küche:
+- darf nur Küche planen
+- darf keine Service-Mitarbeiter bearbeiten
+- sieht keine Löhne
+
+Service:
+- darf nur Service planen
+- darf keine Küchen-Mitarbeiter bearbeiten
+- sieht keine Löhne
+
+Admin/Inhaber:
+- darf alles sehen und bearbeiten
+
+5. Publikationslogik
+
+Bitte eine klare Publikationsfunktion bauen oder prüfen:
+
+Status pro Monat/Woche:
+- draft
+- published
+- changed_after_publish
+
+Button:
+"Dienstplan publizieren"
+
+Nach Publikation:
+- Mitarbeiteransicht zeigt den publizierten Dienstplan
+- Admin/Manager sieht Status "publiziert"
+
+6. Änderungen nach Publikation
+
+Wenn ein publizierter Dienstplan geändert wird:
+- Status wird "nach Publikation geändert"
+- Änderungsverlauf wird geschrieben
+
+7. Änderungsverlauf
+
+Neue oder bestehende Tabelle verwenden:
+
+schedule_change_log
+
+Felder:
+id
+employee_id
+date
+department
+field_name
+old_value
+new_value
+changed_by
+changed_at
+change_type
+note nullable
+
+Jede Änderung nach Publikation muss protokolliert werden.
+
+8. Snapshot / Backup
+
+Beim Publizieren soll ein Snapshot gespeichert werden:
+
+schedule_publication_snapshots
+
+Felder:
+id
+month
+year
+department
+published_by
+published_at
+snapshot_json
+
+Damit kann später nachvollzogen werden, was genau publiziert wurde.
+
+9. Mitarbeiteransicht
+
+Prüfen oder vorbereiten:
+Mitarbeiter sollen ihren publizierten Dienstplan sehen können, ohne Bearbeitungsrechte.
+
+Falls es noch keine Mitarbeiteransicht gibt:
+Bitte vorbereiten mit Route:
+ /my-schedule
+oder bestehende Route verwenden.
+
+10. Schutz vor Datenverlust
+
+Bitte explizit prüfen und beheben:
+- kein localStorage überschreibt Supabase
+- keine leeren Werte überschreiben bestehende Schichten
+- keine falschen Tenant-Keys
+- keine Race Conditions beim Speichern
+- keine automatischen Reset-Funktionen
+
+11. UI Hinweise
+
+Im Dienstplan anzeigen:
+- Speicherstatus: gespeichert
+- letzter Speichervorgang
+- publiziert/nicht publiziert
+- geändert nach Publikation
+
+12. Nach Umsetzung bitte ausgeben
+
+- Welche Tabelle die Dienstpläne speichert
+- Ob localStorage noch schreiben darf
+- Welche Rollen was dürfen
+- Wie Publizieren funktioniert
+- Wie Mitarbeiter den Plan sehen
+- Wie Änderungen protokolliert werden
+- Wie Snapshots gespeichert werden
+- Welche SQL-Migration nötig ist
+- Welche Tests für Juni 2026 durchgeführt wurden
