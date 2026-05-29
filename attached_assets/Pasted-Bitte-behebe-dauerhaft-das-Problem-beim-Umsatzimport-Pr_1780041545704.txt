@@ -1,0 +1,86 @@
+Bitte behebe dauerhaft das Problem beim Umsatzimport.
+
+Problem:
+Importierte Umsatzzahlen werden später wieder auf falsche Werte zurückgesetzt. Beispiel:
+08.05.2026 darf nicht 539 sein. In der Importdatei "Umsatz Oliv 25.05.2026.xlsx" steht für 08.05.2026 Gesamt: CHF 23'767.30.
+
+Ziel:
+Einmal korrekt importierte Umsatzzahlen müssen dauerhaft gespeichert bleiben und dürfen nicht durch falsche Fallbacks, Demo-Daten, alte LocalStorage-Werte oder fehlerhafte Reberechnungen überschrieben werden.
+
+Bitte prüfen und korrigieren:
+
+1. Quelle der Wahrheit
+Die Supabase-Tabelle für Umsätze muss die einzige Quelle sein.
+Keine Rücksetzung aus:
+- localStorage
+- Demo-Daten
+- Fallback-Werten
+- alten Berechnungen
+- Cache
+
+2. Import als Upsert
+Beim Import pro Datum speichern:
+date
+total_revenue
+food_revenue
+beverage_revenue
+discounts
+tips
+source_file
+imported_at
+import_batch_id
+
+Bei erneutem Import desselben Datums:
+korrekt überschreiben oder mit Importhistorie aktualisieren, aber niemals auf falsche Werte zurückfallen.
+
+3. Import-Historie
+Neue oder bestehende Import-Historie verwenden:
+revenue_import_history
+
+Speichern:
+- Datei
+- Importzeitpunkt
+- Anzahl Tage
+- Summe Gesamtumsatz
+- importierter Zeitraum
+- Benutzer
+
+4. Schutz vor falschem Überschreiben
+Wenn ein Wert bereits aus Excel importiert wurde:
+darf er nur durch einen neuen Umsatzimport überschrieben werden.
+Nicht durch Dashboard-Reload.
+Nicht durch Forecast.
+Nicht durch Planwerte.
+Nicht durch LocalStorage.
+
+5. Debug für 08.05.2026
+Bitte gezielt prüfen:
+- Woher aktuell der Wert 539 kommt
+- Welche Funktion diesen Wert schreibt
+- Ob 08.05.2026 beim Laden überschrieben wird
+- Ob localStorage noch alte revenue Werte enthält
+- Ob es doppelte Umsatzquellen gibt
+
+6. UI Anzeige
+Im Verkaufsdashboard und allen Auswertungen anzeigen:
+- Umsatzwert
+- Quelle: Import
+- letzter Importzeitpunkt
+
+7. Validierung
+Nach Import der Datei muss gelten:
+08.05.2026 Gesamt = 23767.30
+Food = 15323.00
+Beverage = 8480.30
+Rabatte = -116.00
+
+8. Keine stillen Änderungen
+Wenn ein Umsatzwert geändert wird:
+Import-Historie oder Change-Log speichern.
+
+9. Nach Umsetzung bitte ausgeben:
+- Welche Tabelle die Umsatzwerte speichert
+- Welche Funktion den falschen Wert 539 verursacht hat
+- Welche Fallbacks entfernt wurden
+- Wie sichergestellt ist, dass Importwerte dauerhaft bleiben
+- Ob 08.05.2026 korrekt mit CHF 23'767.30 gespeichert ist

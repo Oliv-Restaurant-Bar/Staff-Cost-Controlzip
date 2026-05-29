@@ -14,6 +14,11 @@ const EMPLOYEES_STORAGE_KEY = 'schedule-employees';
 const DAILY_BUDGETS_KEY = 'dailyBudgets';
 const TIME_ENTRIES_KEY = 'timeEntries';
 
+/** Tenant-spezifischer localStorage/KV-Schlüssel für dailyBudgets */
+function dailyBudgetsKey(tenantId: string): string {
+  return tenantId === 'beaulieu' ? 'beaulieu:dailyBudgets' : DAILY_BUDGETS_KEY;
+}
+
 // TimeSlot interface matching ScheduleGrid
 interface TimeSlot {
   start: string;
@@ -402,12 +407,12 @@ const convertScheduleToTimeEntries = (employees: Employee[]): TimeEntry[] => {
   return timeEntries;
 };
 
-// Load daily budgets from localStorage
-const loadDailyBudgetsFromStorage = (): {[key: string]: DailyBudget} => {
+// Load daily budgets from localStorage (tenant-aware key)
+const loadDailyBudgetsFromStorage = (key: string = DAILY_BUDGETS_KEY): {[key: string]: DailyBudget} => {
   if (typeof window === 'undefined') return {};
   
   try {
-    const stored = localStorage.getItem(DAILY_BUDGETS_KEY);
+    const stored = localStorage.getItem(key);
     if (stored) {
       return JSON.parse(stored);
     }
@@ -511,13 +516,42 @@ export const usePersonnelData = () => {
       const supabaseScheduleEntries = await loadScheduleEntriesFromSupabase(supabaseEmployees);
       console.log(`[usePersonnelData] Got ${supabaseScheduleEntries.length} time entries from schedule`);
       
-      // Load budgets and manual entries from localStorage
-      const loadedBudgets = loadDailyBudgetsFromStorage();
+      // Tenant-spezifischer Key für dailyBudgets
+      const budgetKey = dailyBudgetsKey(tenantId);
+
+      // 1. Lokaler Cache (schnell)
+      const localBudgets = loadDailyBudgetsFromStorage(budgetKey);
+
+      // 2. Supabase KV — Quelle der Wahrheit für Umsatzdaten
+      let kvBudgets: Record<string, DailyBudget> = {};
+      try {
+        const { kvGet } = await import('@/lib/supabase-kv');
+        const remote = await kvGet(budgetKey);
+        if (remote && typeof remote === 'object' && !Array.isArray(remote)) {
+          kvBudgets = remote as Record<string, DailyBudget>;
+          console.log(`[usePersonnelData] KV budgets loaded: ${Object.keys(kvBudgets).length} Tage (key: ${budgetKey})`);
+        }
+      } catch (kvErr) {
+        console.warn('[usePersonnelData] KV load failed, using localStorage fallback:', kvErr);
+      }
+
+      // 3. Merge: KV gewinnt für alle bestehenden Einträge (ist der Master).
+      //    Lokale Werte füllen nur Lücken die KV nicht kennt.
+      const mergedBudgets: Record<string, DailyBudget> = { ...localBudgets };
+      for (const [date, kvDay] of Object.entries(kvBudgets)) {
+        const localDay = localBudgets[date] ?? {} as DailyBudget;
+        // KV-Felder überschreiben lokale Felder vollständig
+        mergedBudgets[date] = { ...localDay, ...kvDay } as DailyBudget;
+      }
+
+      // 4. localStorage mit authoritivem Stand synchronisieren
+      try { localStorage.setItem(budgetKey, JSON.stringify(mergedBudgets)); } catch { /* ignore */ }
+
       const loadedManualEntries = loadTimeEntriesFromStorage();
       
       // Set employees from Supabase
       setEmployees(supabaseEmployees);
-      setDailyBudgets(loadedBudgets);
+      setDailyBudgets(mergedBudgets);
       setManualTimeEntries(loadedManualEntries);
       
       // Merge Supabase schedule entries with manual entries
@@ -541,7 +575,7 @@ export const usePersonnelData = () => {
   // Fallback sync from localStorage (if Supabase fails)
   const syncFromStorageFallback = useCallback(() => {
     const loadedEmployees = loadEmployeesFromStorage();
-    const loadedBudgets = loadDailyBudgetsFromStorage();
+    const loadedBudgets = loadDailyBudgetsFromStorage(dailyBudgetsKey(tenantId));
     const loadedManualEntries = loadTimeEntriesFromStorage();
 
     setEmployees(loadedEmployees);
@@ -550,7 +584,7 @@ export const usePersonnelData = () => {
 
     const scheduleEntries = convertScheduleToTimeEntries(loadedEmployees);
     setTimeEntries(mergeTimeEntries(scheduleEntries, loadedManualEntries));
-  }, []);
+  }, [tenantId]);
 
   // Initial load from Supabase
   useEffect(() => {
@@ -566,13 +600,43 @@ export const usePersonnelData = () => {
     return () => window.removeEventListener('schedule-updated', onScheduleUpdated);
   }, [syncFromSupabase]);
 
+  // Tagesumsatz aus KV nachladen wenn ein Import abgeschlossen wurde.
+  // GastronoviImportSection und andere Import-Flows feuern 'supabase-kv-synced'
+  // nach dem Schreiben in Supabase. Ohne diesen Listener würde der Dashboard-
+  // State veraltete Werte zeigen bis zur nächsten vollständigen Seiten-Reload.
+  useEffect(() => {
+    const budgetKey = dailyBudgetsKey(tenantId);
+    const reloadBudgetsFromKV = async () => {
+      try {
+        const { kvGet } = await import('@/lib/supabase-kv');
+        const remote = await kvGet(budgetKey);
+        if (remote && typeof remote === 'object' && !Array.isArray(remote)) {
+          const kvBudgets = remote as Record<string, DailyBudget>;
+          setDailyBudgets(prev => {
+            // KV-Felder gewinnen über lokalen State
+            const merged = { ...prev };
+            for (const [date, kvDay] of Object.entries(kvBudgets)) {
+              merged[date] = { ...(prev[date] ?? {} as DailyBudget), ...kvDay } as DailyBudget;
+            }
+            // Auch localStorage aktualisieren
+            try { localStorage.setItem(budgetKey, JSON.stringify(merged)); } catch { /* ignore */ }
+            return merged;
+          });
+        }
+      } catch { /* ignore – stale state bleibt sichtbar */ }
+    };
+    window.addEventListener('supabase-kv-synced', reloadBudgetsFromKV);
+    return () => window.removeEventListener('supabase-kv-synced', reloadBudgetsFromKV);
+  }, [tenantId]);
+
   // React to changes from other tabs/windows
   useEffect(() => {
+    const budgetKey = dailyBudgetsKey(tenantId);
     const onStorage = (e: StorageEvent) => {
       if (!e.key) return;
       if (
         e.key === EMPLOYEES_STORAGE_KEY ||
-        e.key === DAILY_BUDGETS_KEY ||
+        e.key === budgetKey ||
         e.key === TIME_ENTRIES_KEY ||
         e.key.startsWith('schedule-v2-')
       ) {
@@ -582,7 +646,7 @@ export const usePersonnelData = () => {
 
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [syncFromSupabase]);
+  }, [syncFromSupabase, tenantId]);
 
   // Sync employees to localStorage and Supabase whenever they change (after initial load)
   useEffect(() => {
@@ -595,16 +659,15 @@ export const usePersonnelData = () => {
   // Sync daily budgets to localStorage and Supabase.
   // WICHTIG: Nur schreiben wenn der Blob tatsächlich Daten enthält.
   // Ein leerer Blob (frischer Login) darf den bestehenden Supabase-Stand NICHT überschreiben.
+  // Nur Lohnkosten-Felder werden in KV geschrieben — Revenue-Felder NIEMALS von diesem Hook.
   useEffect(() => {
     if (isInitialized && Object.keys(dailyBudgets).length > 0) {
-      localStorage.setItem(DAILY_BUDGETS_KEY, JSON.stringify(dailyBudgets));
-      // Kein vollständiger Blob-Overwrite: nur Sync via merge (kein Datenverlust durch stale State)
-      // Dieses useEffect synct hauptsächlich Personalkosten-Felder (plannedLaborCost, actualLaborCost).
-      // Umsätze werden separat via safeUpsertDailyBudgets aus GastronoviImportSection / TagesansichtPage geschrieben.
-      // Nur Lohnkosten-Felder in KV schreiben — nie Revenue-Felder aus diesem Hook.
-      // Verhindert, dass usePersonnelData Revenue-Daten mit stale State überschreibt.
+      const budgetKey = dailyBudgetsKey(tenantId);
+      // localStorage aktualisieren — dient als schneller Cache
+      try { localStorage.setItem(budgetKey, JSON.stringify(dailyBudgets)); } catch { /* ignore */ }
+      // KV: nur Lohnkosten-Felder schreiben (Revenue-Felder bleiben aus KV, nie überschreiben)
       import('@/lib/supabase-kv').then(({ kvGet, kvSet }) => {
-        kvGet(DAILY_BUDGETS_KEY).then(remote => {
+        kvGet(budgetKey).then(remote => {
           const base = (remote && typeof remote === 'object' && !Array.isArray(remote))
             ? remote as Record<string, Record<string, unknown>>
             : {};
@@ -619,11 +682,11 @@ export const usePersonnelData = () => {
               actualLaborCost:  (data as Record<string, unknown>).actualLaborCost  ?? existing.actualLaborCost  ?? 0,
             };
           }
-          kvSet(DAILY_BUDGETS_KEY, merged).catch(() => {});
+          kvSet(budgetKey, merged).catch(() => {});
         }).catch(() => {});
       });
     }
-  }, [dailyBudgets, isInitialized]);
+  }, [dailyBudgets, isInitialized, tenantId]);
 
   // Sync manual time entries to localStorage
   useEffect(() => {

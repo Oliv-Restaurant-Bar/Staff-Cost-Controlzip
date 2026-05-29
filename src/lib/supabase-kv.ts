@@ -175,8 +175,16 @@ export async function safeUpsertDailyBudgets(
 
 /**
  * Tages-Level-Merge zweier dailyBudgets-Objekte.
- * Für jeden Tag gewinnt local wenn ein Feld > 0 ist — dadurch werden
- * neue Importe nie durch ältere Supabase-Daten überschrieben.
+ *
+ * WICHTIG – Merge-Strategie: KV (remote) gewinnt für numerische Felder.
+ *
+ * Frühere Logik „local > 0 gewinnt" war fehlerhaft: ein staler localStorage-Wert
+ * (z. B. 539) konnte einen korrekt importierten KV-Wert (23 767.30) dauerhaft
+ * überschreiben, weil 539 > 0 als Bedingung erfüllt war.
+ *
+ * Neue Regel: KV ist der Master. local füllt nur Lücken (KV-Wert = 0 / fehlt).
+ * Alle Schreibpfade gehen über safeUpsertDailyBudgets → KV wird immer zuerst
+ * geschrieben, bevor local aktualisiert wird. Damit ist KV stets ≥ local.
  */
 function mergeDailyBudgets(
   local: Record<string, Record<string, unknown>>,
@@ -187,15 +195,18 @@ function mergeDailyBudgets(
   for (const date of allDates) {
     const l = local[date] ?? {};
     const r = remote[date] ?? {};
-    // Start from remote, let local fields win when they carry a value
-    const merged: Record<string, unknown> = { ...r };
-    for (const field of Object.keys(l)) {
+    // Start from local, then let remote fields win (KV is master)
+    const merged: Record<string, unknown> = { ...l };
+    // Alle Felder aus remote übernehmen — remote gewinnt
+    for (const field of Object.keys(r)) {
       const lv = l[field];
       const rv = r[field];
-      if (typeof lv === 'number' && typeof rv === 'number') {
-        merged[field] = lv > 0 ? lv : rv;
+      if (typeof rv === 'number' && typeof lv === 'number') {
+        // Remote gewinnt wenn > 0; sonst local als Fallback
+        merged[field] = rv > 0 ? rv : lv;
       } else {
-        merged[field] = lv !== undefined && lv !== null ? lv : rv;
+        // Non-numeric: remote gewinnt wenn definiert
+        merged[field] = rv !== undefined && rv !== null ? rv : lv;
       }
     }
     result[date] = merged;
