@@ -2381,3 +2381,68 @@ export async function saveManualDayCorrection(params: {
     return { ok: false, error: msg };
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Schedule Change Log + Publication Snapshots
+// Tabellen: schedule_change_log, schedule_publication_snapshots
+// Migration: supabase/migrations/20260529_schedule_change_log.sql
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ScheduleChangeLogEntry {
+  tenant_id:   string;
+  employee_id: string;
+  date:        string;   // 'yyyy-MM-dd'
+  department:  string | null;
+  field_name:  string;
+  old_value:   string | null;
+  new_value:   string | null;
+  changed_by:  string;
+  change_type: 'first_publish' | 'update_after_publish';
+  note?:       string;
+  revision:    number;
+}
+
+/**
+ * Schreibt mehrere Änderungseinträge in schedule_change_log.
+ * Fehler werden geloggt aber nicht weitergeworfen (non-blocking).
+ */
+export async function insertScheduleChangeLogs(
+  entries: ScheduleChangeLogEntry[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  const { error } = await supabase
+    .from('schedule_change_log')
+    .insert(entries);
+  if (error) {
+    console.error('[supabase-db] insertScheduleChangeLogs error:', error.message, error.code);
+  } else {
+    console.log(`[supabase-db] insertScheduleChangeLogs OK — ${entries.length} rows`);
+  }
+}
+
+export interface SchedulePublicationSnapshot {
+  tenant_id:     string;
+  year:          number;
+  month:         number;
+  department:    string;
+  published_by:  string;
+  revision:      number;
+  snapshot_json: Record<string, unknown>;
+}
+
+/**
+ * Speichert einen vollständigen Publikations-Snapshot in schedule_publication_snapshots.
+ * Fehler werden geloggt aber nicht weitergeworfen (non-blocking).
+ */
+export async function insertSchedulePublicationSnapshot(
+  snap: SchedulePublicationSnapshot,
+): Promise<void> {
+  const { error } = await supabase
+    .from('schedule_publication_snapshots')
+    .insert(snap);
+  if (error) {
+    console.error('[supabase-db] insertSchedulePublicationSnapshot error:', error.message, error.code);
+  } else {
+    console.log(`[supabase-db] insertSchedulePublicationSnapshot OK — ${snap.tenant_id} ${snap.year}-${String(snap.month).padStart(2, '0')} dept=${snap.department} rev=${snap.revision}`);
+  }
+}

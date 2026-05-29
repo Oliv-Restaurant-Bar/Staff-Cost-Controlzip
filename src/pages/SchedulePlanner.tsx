@@ -15,6 +15,9 @@ import {
   saveActualHourEntry,
   seedBeaulieuEmployees,
   runBeaulieuMatchTest,
+  insertScheduleChangeLogs,
+  insertSchedulePublicationSnapshot,
+  type ScheduleChangeLogEntry,
 } from '@/lib/supabase-db';
 import { supabase } from '@/integrations/supabase/client';
 import {
@@ -1676,7 +1679,9 @@ const SchedulePlanner = () => {
             safeUpsertDailyBudgets(tenantKey('dailyBudgets'), laborUpdates, false).catch(() => {})
           );
         }
-        localStorage.setItem(tenantKey('dailyBudgets'), JSON.stringify(dailyBudgets));
+        // Kein Full-Blob-Write nach localStorage: der KV-Write oben übernimmt
+        // die Lohnkosten-Felder. Ein Full-Overwrite würde stale Revenue-Daten
+        // aus dem React-State über einen frisch aus KV geladenen Wert schreiben.
       }
       localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(actualHoursData));
 
@@ -3119,6 +3124,71 @@ const SchedulePlanner = () => {
       setPublishStatus('published');
       setPublishRevision(revision);
       setPublishUpdatedAt(now);
+
+      // ── Fire-and-forget: Snapshot + Change-Log ──────────────────────────
+      // Kein await — UX blockiert nicht, Fehler werden nur geloggt.
+      const publisherEmail = user?.email ?? 'unknown';
+      const pubYear  = currentMonth.getFullYear();
+      const pubMonth = currentMonth.getMonth() + 1;
+
+      // 1. Publikations-Snapshot speichern
+      insertSchedulePublicationSnapshot({
+        tenant_id:     tenantId,
+        year:          pubYear,
+        month:         pubMonth,
+        department:    publishDept,
+        published_by:  publisherEmail,
+        revision,
+        snapshot_json: payload as unknown as Record<string, unknown>,
+      }).catch(() => {});
+
+      // 2. Änderungseinträge für changed-Tage schreiben
+      const changeType: ScheduleChangeLogEntry['change_type'] =
+        revision === 1 ? 'first_publish' : 'update_after_publish';
+      const logEntries: ScheduleChangeLogEntry[] = publishDiffAll.flatMap(diff => {
+        const rows: ScheduleChangeLogEntry[] = [];
+        const base = {
+          tenant_id:   tenantId,
+          employee_id: diff.empId,
+          date:        diff.date,
+          department:  diff.department,
+          changed_by:  publisherEmail,
+          change_type: changeType,
+          revision,
+        } as const;
+        // frueh shift
+        if (JSON.stringify(diff.prevFrüh) !== JSON.stringify(diff.newFrüh)) {
+          rows.push({
+            ...base,
+            field_name: 'frueh_shift',
+            old_value:  diff.prevFrüh ? `${diff.prevFrüh.start}–${diff.prevFrüh.end}` : null,
+            new_value:  diff.newFrüh  ? `${diff.newFrüh.start}–${diff.newFrüh.end}`   : null,
+          });
+        }
+        // spaet shift
+        if (JSON.stringify(diff.prevSpät) !== JSON.stringify(diff.newSpät)) {
+          rows.push({
+            ...base,
+            field_name: 'spaet_shift',
+            old_value:  diff.prevSpät ? `${diff.prevSpät.start}–${diff.prevSpät.end}` : null,
+            new_value:  diff.newSpät  ? `${diff.newSpät.start}–${diff.newSpät.end}`   : null,
+          });
+        }
+        // frueh absence
+        if (diff.prevFrühAbsence !== diff.newFrühAbsence) {
+          rows.push({ ...base, field_name: 'frueh_absence', old_value: diff.prevFrühAbsence, new_value: diff.newFrühAbsence });
+        }
+        // spaet absence
+        if (diff.prevSpätAbsence !== diff.newSpätAbsence) {
+          rows.push({ ...base, field_name: 'spaet_absence', old_value: diff.prevSpätAbsence, new_value: diff.newSpätAbsence });
+        }
+        return rows;
+      });
+      if (logEntries.length > 0) {
+        insertScheduleChangeLogs(logEntries).catch(() => {});
+        console.log(`[publishSchedule] change-log: ${logEntries.length} rows queued`);
+      }
+      // ─────────────────────────────────────────────────────────────────────
 
       if (hasChanges) {
         toast.success(`Dienstplan aktualisiert ✓ – Revision ${revision} · ${publicEmployees.length} Mitarbeitende`, { duration: 5000 });
