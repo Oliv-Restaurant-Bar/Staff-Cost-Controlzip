@@ -40,6 +40,7 @@ interface DayData {
   manually_edited: boolean;
   is_locked:       boolean;
   blocks:          HourBlock[];
+  hasData:         boolean;  // false = calendar placeholder (no actual_hours row)
 }
 
 interface BalanceInfo {
@@ -134,6 +135,34 @@ function isDebugMode(): boolean {
   return new URLSearchParams(window.location.search).get('debug') === '1';
 }
 
+// Erzeugt die vollständige Monatsliste (01.–letzter Tag) und mergt DB-Daten ein.
+// Tage ohne actual_hours-Eintrag erhalten hasData=false (Kalender-Platzhalter).
+type HoursRow = { hours: number; absence_type: string | null; manually_edited: boolean; is_locked: boolean };
+function generateFullMonth(
+  year:      number,
+  month:     number,
+  hoursMap:  Map<string, HoursRow>,
+  blocksMap: Map<string, HourBlock[]>,
+): DayData[] {
+  const pad     = (n: number) => String(n).padStart(2, '0');
+  const lastDay = new Date(year, month, 0).getDate();
+  const result: DayData[] = [];
+  for (let d = 1; d <= lastDay; d++) {
+    const date = `${year}-${pad(month)}-${pad(d)}`;
+    const row  = hoursMap.get(date);
+    result.push({
+      date,
+      hours:           row?.hours           ?? 0,
+      absence_type:    row?.absence_type    ?? null,
+      manually_edited: row?.manually_edited ?? false,
+      is_locked:       row?.is_locked       ?? false,
+      blocks:          blocksMap.get(date)  ?? [],
+      hasData:         !!row,
+    });
+  }
+  return result;
+}
+
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 function AbsenceBadge({ type }: { type: string }) {
@@ -158,12 +187,48 @@ function DayCard({
   hasRequest:     boolean;
   onRequestClick: () => void;
 }) {
-  const d          = new Date(day.date + 'T00:00:00');
-  const weekday    = WEEKDAYS_DE[d.getDay()];
-  const isWeekend  = WEEKENDS.has(d.getDay());
+  const d           = new Date(day.date + 'T00:00:00');
+  const weekday     = WEEKDAYS_DE[d.getDay()];
+  const isWeekend   = WEEKENDS.has(d.getDay());
   const absenceMeta = day.absence_type ? ABSENCE_META[day.absence_type] : null;
   const isAbsenceOnly = !!day.absence_type && day.blocks.length === 0 && day.hours === 0;
 
+  // ── Empty calendar day (no actual_hours row) ─────────────────────────────
+  if (!day.hasData) {
+    return (
+      <div className={cn(
+        'rounded-xl border flex items-center justify-between px-4 py-2.5',
+        isWeekend
+          ? 'border-border/30 bg-muted/10'
+          : 'border-amber-200/60 dark:border-amber-900/40 bg-amber-50/30 dark:bg-amber-950/10',
+      )}>
+        <div className="flex items-center gap-2">
+          <span className={cn(
+            'text-xs font-semibold w-6 shrink-0',
+            isWeekend ? 'text-muted-foreground/40' : 'text-muted-foreground/60',
+          )}>
+            {weekday}
+          </span>
+          <span className={cn(
+            'text-sm',
+            isWeekend ? 'text-muted-foreground/50' : 'text-muted-foreground/70',
+          )}>
+            {fmtDateShort(day.date)}
+          </span>
+        </div>
+        <span className={cn(
+          'text-[11px] font-medium',
+          isWeekend
+            ? 'text-muted-foreground/40'
+            : 'text-amber-600/70 dark:text-amber-500/60',
+        )}>
+          {isWeekend ? 'Wochenende' : 'Kein Stempel'}
+        </span>
+      </div>
+    );
+  }
+
+  // ── Day with data ─────────────────────────────────────────────────────────
   return (
     <div className={cn(
       'rounded-xl border shadow-sm overflow-hidden',
@@ -203,7 +268,7 @@ function DayCard({
         </div>
       </div>
 
-      {/* Blocks (only when not absence-only) */}
+      {/* Blocks */}
       {day.blocks.length > 0 && (
         <div className="px-4 pb-2 space-y-0.5 border-t border-border/30">
           {day.blocks.map((block, i) => {
@@ -236,7 +301,7 @@ function DayCard({
         </div>
       )}
 
-      {/* Request button — only for non-weekend, non-absence-only days, or when there's already a request */}
+      {/* Request button — only for days with data; suppress if absence-only without a request */}
       {(!isAbsenceOnly || hasRequest) && (
         <div className={cn(
           'px-4 pb-3 flex justify-end',
@@ -362,15 +427,21 @@ export default function TimesheetConfirmationPage() {
           });
         }
 
+        // Build hours map from actual_hours rows
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        setDays((rpcData.days ?? []).map((d: any) => ({
-          date:            d.date,
-          hours:           d.hours ?? 0,
-          absence_type:    d.absence_type ?? null,
-          manually_edited: d.manually_edited ?? false,
-          is_locked:       d.is_locked ?? false,
-          blocks:          blocksMap.get(d.date) ?? [],
-        })));
+        const hoursMap = new Map<string, HoursRow>();
+        for (const d of (rpcData.days ?? []) as any[]) {
+          hoursMap.set(d.date, {
+            hours:           d.hours           ?? 0,
+            absence_type:    d.absence_type    ?? null,
+            manually_edited: d.manually_edited ?? false,
+            is_locked:       d.is_locked       ?? false,
+          });
+        }
+
+        // Generate FULL month calendar — every day 01..lastDay, merged with DB data.
+        // Days without actual_hours row get hasData=false (shown as "Kein Stempel"/"Wochenende").
+        setDays(generateFullMonth(conf.year, conf.month, hoursMap, blocksMap));
 
         console.log('[TIMESHEET-DEBUG] RPC OK:', {
           employee:       rpcData.employee?.name,
@@ -415,14 +486,15 @@ export default function TimesheetConfirmationPage() {
         if (daysRes.status === 'fulfilled') {
           dbg.days_error        = daysRes.value.error ? `${daysRes.value.error.code}: ${daysRes.value.error.message}` : null;
           dbg.actual_hours_rows = daysRes.value.data?.length ?? 0;
+          const hMap = new Map<string, HoursRow>();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          setDays((daysRes.value.data ?? []).map((d: any) => ({
-            date: d.date, hours: d.hours ?? 0,
-            absence_type: d.absence_type ?? null,
-            manually_edited: d.manually_edited ?? false,
-            is_locked: d.is_locked ?? false,
-            blocks: [],
-          })));
+          for (const d of (daysRes.value.data ?? []) as any[]) {
+            hMap.set(d.date, {
+              hours: d.hours ?? 0, absence_type: d.absence_type ?? null,
+              manually_edited: d.manually_edited ?? false, is_locked: d.is_locked ?? false,
+            });
+          }
+          setDays(generateFullMonth(conf.year, conf.month, hMap, new Map()));
         }
         if (balRes.status === 'fulfilled') {
           dbg.bal_error = balRes.value.error ? `${balRes.value.error.code}: ${balRes.value.error.message}` : null;
@@ -496,11 +568,22 @@ export default function TimesheetConfirmationPage() {
     : 0;
   const diff           = totalHours - sollHours;
   const hasQuestionOpen = confirmation?.status === 'question_open';
+
+  // Count only days that have actual data (actual_hours row)
   const absenceCounts: Record<string, number> = {};
   for (const d of days) {
-    if (d.absence_type) absenceCounts[d.absence_type] = (absenceCounts[d.absence_type] ?? 0) + 1;
+    if (d.hasData && d.absence_type) {
+      absenceCounts[d.absence_type] = (absenceCounts[d.absence_type] ?? 0) + 1;
+    }
   }
-  const workDays = days.filter(d => !WEEKENDS.has(new Date(d.date + 'T00:00:00').getDay())).length;
+  const calendarDays = days.length;  // always = last day of month (all generated)
+  const workDays     = days.filter(d =>
+    d.hasData && d.hours > 0 && !WEEKENDS.has(new Date(d.date + 'T00:00:00').getDay())
+  ).length;
+  const emptyWeekdays = days.filter(d =>
+    !d.hasData && !WEEKENDS.has(new Date(d.date + 'T00:00:00').getDay())
+  ).length;
+  const weekendDays  = days.filter(d => WEEKENDS.has(new Date(d.date + 'T00:00:00').getDay())).length;
 
   // ── Page states ──────────────────────────────────────────────────────────────
 
@@ -666,10 +749,23 @@ export default function TimesheetConfirmationPage() {
       </div>
 
       {/* Stats row */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-xs text-muted-foreground">
-          <strong className="text-foreground">{workDays}</strong> Arbeitstage
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold border border-border bg-muted/40 text-muted-foreground">
+          <strong className="text-foreground">{calendarDays}</strong>&nbsp;Kalendertage
         </span>
+        <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold border border-border bg-muted/40 text-muted-foreground">
+          <strong className="text-foreground">{workDays}</strong>&nbsp;Arbeitstage
+        </span>
+        {weekendDays > 0 && (
+          <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium border border-border/50 bg-muted/20 text-muted-foreground/60">
+            {weekendDays}× Wochenende
+          </span>
+        )}
+        {emptyWeekdays > 0 && (
+          <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/10 text-amber-700/70 dark:text-amber-500/60">
+            {emptyWeekdays}× kein Stempel
+          </span>
+        )}
         {Object.entries(absenceCounts).map(([type, n]) => {
           const meta = ABSENCE_META[type];
           if (!meta) return null;
@@ -708,7 +804,7 @@ export default function TimesheetConfirmationPage() {
       {/* Day Cards */}
       <div>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-          Tagesdetails · {days.length} Tage
+          Tagesdetails · {calendarDays} Kalendertage
         </h3>
 
         {days.length > 0 ? (
