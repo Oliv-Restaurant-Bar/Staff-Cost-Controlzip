@@ -632,26 +632,37 @@ export const TimeInputCell = ({
     setLocalAdditionalCostPlan(isAdditionalCostPlan ?? false);
   }, [isAdditionalCostPlan]);
 
+  // Called whenever the popover is about to close — saves additional cost flag if changed.
+  const flushAdditionalCostPlan = () => {
+    if (isFixedEmployee && onAdditionalCostPlanChange) {
+      const currentFlag = isAdditionalCostPlan ?? false;
+      if (localAdditionalCostPlan !== currentFlag) {
+        console.log('[ZK-PLAN] flushing on close:', localAdditionalCostPlan);
+        onAdditionalCostPlanChange(localAdditionalCostPlan);
+      }
+    }
+  };
+
+  // Drop-in replacement for setOpen(false) that also flushes the flag.
+  const closePopover = () => {
+    flushAdditionalCostPlan();
+    setBlockedOverride(false);
+    setPickerTarget(null);
+    setOpen(false);
+  };
+
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
       copiedInSession.current = false;
       setSelError('');
-      // Sync local state with current prop when opening
       setLocalAdditionalCostPlan(isAdditionalCostPlan ?? false);
     }
     if (!nextOpen) {
+      flushAdditionalCostPlan();
       setBlockedOverride(false);
       setPickerTarget(null);
       if (copyToIst && onCopyToIst && value?.start && value?.end && !copiedInSession.current) {
         onCopyToIst({ start: value.start, end: value.end });
-      }
-      // Save additional cost plan flag when popover closes
-      if (isFixedEmployee && onAdditionalCostPlanChange) {
-        const currentFlag = isAdditionalCostPlan ?? false;
-        if (localAdditionalCostPlan !== currentFlag) {
-          console.log('[ZK-PLAN] saving on popover close:', localAdditionalCostPlan);
-          onAdditionalCostPlanChange(localAdditionalCostPlan);
-        }
       }
     }
     setOpen(nextOpen);
@@ -693,7 +704,7 @@ export const TimeInputCell = ({
       onCopyToIst({ start: preset.start, end: preset.end });
       copiedInSession.current = true;
     }
-    setOpen(false);
+    closePopover();
   };
 
   // ---------------------------------------------------------------------------
@@ -707,7 +718,7 @@ export const TimeInputCell = ({
     if (!selStart && !selEnd && !selStart2 && !selEnd2) {
       // All empty → clear
       onChange(null, null);
-      setOpen(false);
+      closePopover();
       return;
     }
 
@@ -761,17 +772,24 @@ export const TimeInputCell = ({
         copiedInSession.current = true;
       }
     }
-    setOpen(false);
+    closePopover();
   };
 
   const handleAbsenceSelect = (abbrev: string) => {
     onChange(null, abbrev);
-    setOpen(false);
+    closePopover();
   };
 
   const handleClear = () => {
     onChange(null, null);
     onClearSecondary?.();
+    // Clearing the shift → also clear the additional cost flag
+    setLocalAdditionalCostPlan(false);
+    if (isFixedEmployee && onAdditionalCostPlanChange && (isAdditionalCostPlan ?? false)) {
+      onAdditionalCostPlanChange(false);
+    }
+    setBlockedOverride(false);
+    setPickerTarget(null);
     setOpen(false);
   };
 
@@ -1120,7 +1138,7 @@ export const TimeInputCell = ({
                 {/* ── Copy / Paste ── */}
                 <div className="flex gap-1.5 pt-2 border-t">
                   {value?.start && (
-                    <button onClick={() => { onCopyShift?.({ ...value!, secondary: secondaryValue || null }); setOpen(false); }}
+                    <button onClick={() => { onCopyShift?.({ ...value!, secondary: secondaryValue || null }); closePopover(); }}
                       className="flex-1 text-xs text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 py-1.5 rounded-lg border border-blue-200/70 dark:border-blue-700/60 transition-all font-medium active:scale-95">
                       📋 Kopieren
                     </button>
@@ -1131,7 +1149,7 @@ export const TimeInputCell = ({
                         if (copiedShift.secondary?.start && onSplitTimeSelect) {
                           onSplitTimeSelect({ start: copiedShift.secondary.start, end: copiedShift.secondary.end });
                         }
-                        setOpen(false);
+                        closePopover();
                       }}
                       title={`${copiedShift.start}–${copiedShift.end}${copiedShift.secondary ? ` / ${copiedShift.secondary.start}–${copiedShift.secondary.end}` : ''} einfügen`}
                       className="flex-1 text-xs text-green-700 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/30 py-1.5 rounded-lg border border-green-200/70 dark:border-green-700/60 transition-all font-medium active:scale-95">
