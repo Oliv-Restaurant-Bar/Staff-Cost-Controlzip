@@ -663,11 +663,12 @@ const SchedulePlanner = () => {
             const existing: Record<string, Record<string, unknown>> = existingRaw ? JSON.parse(existingRaw) : {};
             const merged: Record<string, DaySchedule> = { ...supabaseSchedule };
             for (const [cellKey, val] of Object.entries(existing)) {
-              if (val?.isAdditionalCostPlan && merged[cellKey]) {
-                merged[cellKey] = { ...merged[cellKey], isAdditionalCostPlan: true };
+              if (val?.isAdditionalCostPlan) {
+                // Merge flag even if cell has no Supabase entry (localStorage-only cell)
+                merged[cellKey] = { ...(merged[cellKey] ?? {}), isAdditionalCostPlan: true };
               }
-              if (val?.isAdditionalCost && merged[cellKey]) {
-                merged[cellKey] = { ...merged[cellKey], isAdditionalCost: true };
+              if (val?.isAdditionalCost) {
+                merged[cellKey] = { ...(merged[cellKey] ?? {}), isAdditionalCost: true };
               }
             }
             localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(merged));
@@ -1511,6 +1512,7 @@ const SchedulePlanner = () => {
 
   // ── Zusatzkosten-Plan: toggle isAdditionalCostPlan auf einem DaySchedule ─
   const handleAdditionalCostPlanChange = (empId: string, date: string, v: boolean) => {
+    console.log('[ZK-PLAN] handleAdditionalCostPlanChange called', { empId, date, v });
     const cellKey = `${empId}-${date}`;
     setScheduleData(prev => {
       const current = prev[cellKey] || {};

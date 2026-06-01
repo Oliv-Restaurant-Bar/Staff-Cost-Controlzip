@@ -584,7 +584,10 @@ export function ModernScheduleGrid({
                                 : undefined
                             }
                             isFixedEmployee={
-                              (employee.employmentType === 'vollzeit' || employee.employmentType === 'teilzeit')
+                              ((employee.employmentType === 'vollzeit' || employee.employmentType === 'teilzeit' ||
+                                employee.employmentType === 'Vollzeit' || employee.employmentType === 'Teilzeit' ||
+                                employee.employmentType === 'full_time' || employee.employmentType === 'part_time')
+                               || (employee.monthlySalary ?? 0) > 0)
                               && (employee.monthlySalary ?? 0) > 0
                             }
                             isAdditionalCostPlan={daySchedule.isAdditionalCostPlan ?? false}

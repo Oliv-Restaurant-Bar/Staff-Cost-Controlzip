@@ -577,6 +577,7 @@ export const TimeInputCell = ({
   const [copyToIst, setCopyToIst] = useState(false);
   const copiedInSession = useRef(false);
   const [open, setOpen] = useState(false);
+  const [localAdditionalCostPlan, setLocalAdditionalCostPlan] = useState(isAdditionalCostPlan ?? false);
   const [editorOpen, setEditorOpen] = useState(false);
 
   // Always-visible dual time rows
@@ -626,16 +627,31 @@ export const TimeInputCell = ({
     }
   }, [open]);
 
+  // Sync local state when prop changes (e.g. after parent re-renders from another cell's change)
+  useEffect(() => {
+    setLocalAdditionalCostPlan(isAdditionalCostPlan ?? false);
+  }, [isAdditionalCostPlan]);
+
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
       copiedInSession.current = false;
       setSelError('');
+      // Sync local state with current prop when opening
+      setLocalAdditionalCostPlan(isAdditionalCostPlan ?? false);
     }
     if (!nextOpen) {
       setBlockedOverride(false);
       setPickerTarget(null);
       if (copyToIst && onCopyToIst && value?.start && value?.end && !copiedInSession.current) {
         onCopyToIst({ start: value.start, end: value.end });
+      }
+      // Save additional cost plan flag when popover closes
+      if (isFixedEmployee && onAdditionalCostPlanChange) {
+        const currentFlag = isAdditionalCostPlan ?? false;
+        if (localAdditionalCostPlan !== currentFlag) {
+          console.log('[ZK-PLAN] saving on popover close:', localAdditionalCostPlan);
+          onAdditionalCostPlanChange(localAdditionalCostPlan);
+        }
       }
     }
     setOpen(nextOpen);
@@ -1154,8 +1170,11 @@ export const TimeInputCell = ({
                     <input
                       id="isAdditionalCostPlan"
                       type="checkbox"
-                      checked={isAdditionalCostPlan ?? false}
-                      onChange={(e) => onAdditionalCostPlanChange?.(e.target.checked)}
+                      checked={localAdditionalCostPlan}
+                      onChange={(e) => {
+                        console.log('[ZK-PLAN] checkbox clicked, new value=', e.target.checked);
+                        setLocalAdditionalCostPlan(e.target.checked);
+                      }}
                       className="mt-0.5 h-4 w-4 rounded border-orange-400 accent-orange-500 cursor-pointer"
                     />
                     <label htmlFor="isAdditionalCostPlan" className="cursor-pointer text-sm leading-tight">
