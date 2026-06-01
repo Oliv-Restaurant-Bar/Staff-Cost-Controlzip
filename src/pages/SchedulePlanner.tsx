@@ -656,9 +656,24 @@ const SchedulePlanner = () => {
           // Cache Supabase plan data to localStorage so PersonalFix can read
           // plan hours without requiring the user to click "Speichern" first.
           // Only write non-empty results to avoid nuking the cache with a stale 0-row response.
+          // IMPORTANT: Merge existing isAdditionalCostPlan flags from localStorage —
+          // these are stored locally only and must survive a Supabase reload.
           try {
-            localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(supabaseSchedule));
+            const existingRaw = localStorage.getItem(tenantKey(`schedule-v2-${monthKey}`));
+            const existing: Record<string, Record<string, unknown>> = existingRaw ? JSON.parse(existingRaw) : {};
+            const merged: Record<string, DaySchedule> = { ...supabaseSchedule };
+            for (const [cellKey, val] of Object.entries(existing)) {
+              if (val?.isAdditionalCostPlan && merged[cellKey]) {
+                merged[cellKey] = { ...merged[cellKey], isAdditionalCostPlan: true };
+              }
+              if (val?.isAdditionalCost && merged[cellKey]) {
+                merged[cellKey] = { ...merged[cellKey], isAdditionalCost: true };
+              }
+            }
+            localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(merged));
+            return merged;
           } catch { /* quota exceeded – ignore */ }
+          localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(supabaseSchedule));
           return supabaseSchedule;
         });
       } else {
@@ -1511,6 +1526,8 @@ const SchedulePlanner = () => {
       saveScheduleEntry(empId, date, updated).catch(err =>
         console.error('[SCHEDULE] saveScheduleEntry (additionalCostPlan) error:', err)
       );
+      // Notify PersonalFix to re-read plan hours
+      window.dispatchEvent(new CustomEvent('schedule-updated'));
       return newState;
     });
   };

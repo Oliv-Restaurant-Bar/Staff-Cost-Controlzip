@@ -13,6 +13,8 @@ export interface DaySchedule {
   spät?: { start: string; end: string } | null;
   frühAbsence?: string | null;
   spätAbsence?: string | null;
+  isAdditionalCostPlan?: boolean;
+  isAdditionalCost?: boolean;
 }
 
 export interface ActualHourEntry {

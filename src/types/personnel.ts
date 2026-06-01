@@ -156,6 +156,8 @@ export interface DaySchedule {
   spät?: TimeSlot | null;
   frühAbsence?: string | null;
   spätAbsence?: string | null;
+  isAdditionalCostPlan?: boolean;
+  isAdditionalCost?: boolean;
 }
 
 export interface DailySummary {

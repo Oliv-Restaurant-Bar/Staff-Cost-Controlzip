@@ -31,6 +31,8 @@ interface DaySchedule {
   spät?: TimeSlot | null;
   frühAbsence?: string | null;
   spätAbsence?: string | null;
+  isAdditionalCostPlan?: boolean;
+  isAdditionalCost?: boolean;
 }
 
 // Supabase DB employee type
