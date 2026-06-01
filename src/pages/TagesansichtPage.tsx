@@ -22,7 +22,7 @@ import {
 import { de } from 'date-fns/locale';
 import {
   ChevronLeft, ChevronRight, Table2, TrendingUp, TrendingDown,
-  Pencil, CheckCircle2, X, AlertTriangle, CheckCircle, Eye, EyeOff,
+  Pencil, CheckCircle2, X, AlertTriangle, CheckCircle,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -40,7 +40,7 @@ import {
   loadMaisonEnabled, loadMaisonMonthly,
   getMaisonDailySync, loadMaisonDaily, saveMaisonDaily,
 } from '@/lib/maison-store';
-import { useMaisonExclude } from '@/hooks/useMaisonExclude';
+import { useMaison } from '@/contexts/MaisonContext';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -111,19 +111,9 @@ export default function TagesansichtPage() {
   const [maisonEnabled, setMaisonEnabledState] = useState(() => getMaisonEnabledSync(tenantKey));
   const [maisonMonthly, setMaisonMonthly]       = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
   const [maisonDaily,   setMaisonDaily]         = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
-  const [maisonExclude, setMaisonExclude]       = useMaisonExclude();
-
-  // Marketing-Spalte ein-/ausblenden (persistiert in localStorage)
-  const [showMaisonCol, setShowMaisonCol] = useState(
-    () => localStorage.getItem('tagesansicht_show_maison') !== 'false',
-  );
-  const toggleMaisonCol = () => {
-    const next = !showMaisonCol;
-    setShowMaisonCol(next);
-    localStorage.setItem('tagesansicht_show_maison', String(next));
-  };
+  const { showMarketingCol: maisonColPref, maisonExclude, setMaisonExclude } = useMaison();
   // Abgeleitete Variable: Spalte sichtbar wenn Daten vorhanden UND nicht ausgeblendet
-  const showMarketingCol = maisonEnabled && showMaisonCol;
+  const showMarketingCol = maisonEnabled && maisonColPref;
 
   useEffect(() => {
     loadMaisonEnabled(tenantKey).then(setMaisonEnabledState);
@@ -464,24 +454,6 @@ export default function TagesansichtPage() {
             {showNetRevenue ? 'Netto' : 'Brutto'}
             {!hasBud && ' · kein Budget'}
           </span>
-
-          {/* Marketing-Spalte Toggle (nur wenn Daten vorhanden) */}
-          {maisonEnabled && (
-            <button
-              onClick={toggleMaisonCol}
-              title={showMaisonCol ? 'Marketing-Spalte ausblenden' : 'Marketing-Spalte einblenden'}
-              className={cn(
-                'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors border',
-                showMaisonCol
-                  ? 'border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/30 dark:text-violet-400'
-                  : 'border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted',
-              )}
-            >
-              {showMaisonCol
-                ? <><EyeOff className="h-3 w-3" />Marketing</>
-                : <><Eye className="h-3 w-3" />Marketing</>}
-            </button>
-          )}
 
           {/* Vergleichs-Buttons */}
           <div className="ml-auto flex items-center bg-muted rounded-lg p-0.5 gap-0.5">

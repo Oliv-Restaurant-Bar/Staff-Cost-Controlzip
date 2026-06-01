@@ -59,7 +59,7 @@ import {
   saveMaisonEnabled,
   getMaisonDailySync, loadMaisonDaily,
 } from '@/lib/maison-store';
-import { useMaisonExclude } from '@/hooks/useMaisonExclude';
+import { useMaison } from '@/contexts/MaisonContext';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -2154,7 +2154,7 @@ const PLViewPage = () => {
   const [maisonEnabled, setMaisonEnabled] = useState(() => getMaisonEnabledSync(tenantKey));
   const [maisonMonthly]                   = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
   const [maisonDaily,   setMaisonDaily]   = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
-  const [maisonExclude, setMaisonExclude] = useMaisonExclude();
+  const { showMarketingCol: maisonColPref, maisonExclude, setMaisonExclude } = useMaison();
 
   useEffect(() => {
     loadMaisonEnabled(tenantKey).then(setMaisonEnabled);
@@ -2752,7 +2752,7 @@ const PLViewPage = () => {
         )}
 
         {/* ── Marketing/Maison Umsatzkanal ─────────────────────────────────── */}
-        {(mode === 'monthly' || mode === 'budget_pl') && (
+        {(mode === 'monthly' || mode === 'budget_pl') && maisonColPref && (
           <div className={cn(
             'rounded-lg border px-4 py-3 flex items-center gap-3 flex-wrap',
             maisonEnabled

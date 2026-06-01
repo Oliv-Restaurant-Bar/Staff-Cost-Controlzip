@@ -22,7 +22,7 @@ import {
   loadAbsenceOverrides,
 } from '@/lib/absence-utils';
 import { cn } from '@/lib/utils';
-import { useMaisonExclude, getMaisonExcludeSync } from '@/hooks/useMaisonExclude';
+import { useMaison } from '@/contexts/MaisonContext';
 import { getMaisonEnabledSync, getMaisonDailySync, loadMaisonDaily } from '@/lib/maison-store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -237,7 +237,7 @@ const Dashboard = () => {
   } = useStichtag();
   const { showNetRevenue } = useRevenueDisplay();
   const { tenantId, tenantKey } = useTenant();
-  const [maisonExclude, setMaisonExclude] = useMaisonExclude();
+  const { maisonExclude } = useMaison();
   const maisonOn = getMaisonEnabledSync(tenantKey);
   const [maisonDaily, setMaisonDaily] = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
   useEffect(() => { loadMaisonDaily(tenantKey).then(setMaisonDaily); }, [tenantKey]);
@@ -954,21 +954,6 @@ const Dashboard = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              {maisonOn && (
-                <button
-                  onClick={() => setMaisonExclude(!maisonExclude)}
-                  title={maisonExclude ? 'Marketing zum Umsatz hinzuzählen' : 'Marketing vom Umsatz wegzählen'}
-                  className={cn(
-                    'h-7 px-2.5 text-xs rounded border transition-colors font-medium hidden sm:flex items-center gap-1',
-                    maisonExclude
-                      ? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-700'
-                      : 'border-violet-200 text-violet-500 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30',
-                  )}
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
-                  {maisonExclude ? 'exkl. Marketing' : 'inkl. Marketing'}
-                </button>
-              )}
               {isAdmin && (
                 <Badge variant="outline" className="text-xs hidden lg:flex">
                   {deptIcon}

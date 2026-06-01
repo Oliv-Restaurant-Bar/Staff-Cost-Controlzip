@@ -39,6 +39,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
+import { useMaison } from '@/contexts/MaisonContext';
 import { Button } from '@/components/ui/button';
 import { useTenant } from '@/contexts/TenantContext';
 import { TenantSwitcher } from '@/components/TenantSwitcher';
@@ -330,6 +331,7 @@ export const AppSidebar = () => {
   const { role, isAdmin, isManager, isBeaulieuManager, allowedDepartment, canAccessModule } = usePermissions();
   const { isGuest, guestMinutesLeft, clearGuestSession } = useGuestSession();
   const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
+  const { showMarketingCol, setShowMarketingCol, maisonExclude, setMaisonExclude } = useMaison();
   const { tenant } = useTenant();
 
   // Auto-hide sidebar on schedule planner — it has its own inline panel
@@ -489,6 +491,67 @@ export const AppSidebar = () => {
         </p>
       </div>
 
+      {/* Marketing / Maison Toggle */}
+      <div className="border-t border-border px-3 py-2.5">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 px-0.5">
+          Marketing / Maison
+        </p>
+        <div className="flex rounded-md overflow-hidden border border-border text-xs h-7">
+          <button
+            type="button"
+            onClick={() => setShowMarketingCol(true)}
+            className={cn(
+              'flex-1 transition-colors font-medium',
+              showMarketingCol ? 'bg-violet-600 text-white' : 'text-muted-foreground hover:bg-muted',
+            )}
+          >
+            Anzeigen
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowMarketingCol(false)}
+            className={cn(
+              'flex-1 transition-colors font-medium',
+              !showMarketingCol ? 'bg-muted text-foreground font-semibold' : 'text-muted-foreground hover:bg-muted',
+            )}
+          >
+            Ausblenden
+          </button>
+        </div>
+        {showMarketingCol && (
+          <div className="flex rounded-md overflow-hidden border border-border text-xs h-7 mt-1.5">
+            <button
+              type="button"
+              onClick={() => setMaisonExclude(false)}
+              className={cn(
+                'flex-1 transition-colors font-medium',
+                !maisonExclude ? 'bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400' : 'text-muted-foreground hover:bg-muted',
+              )}
+            >
+              inkl. Umsatz
+            </button>
+            <button
+              type="button"
+              onClick={() => setMaisonExclude(true)}
+              className={cn(
+                'flex-1 transition-colors font-medium',
+                maisonExclude ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400' : 'text-muted-foreground hover:bg-muted',
+              )}
+            >
+              exkl. Umsatz
+            </button>
+          </div>
+        )}
+        <p className="text-[9px] mt-1 px-0.5 leading-tight">
+          {!showMarketingCol
+            ? <span className="text-muted-foreground">Überall ausgeblendet</span>
+            : maisonExclude
+              ? <span className="text-amber-600 dark:text-amber-400 font-medium">⚠ Sichtbar · nicht im Betriebsertrag</span>
+              : <span className="text-violet-700 dark:text-violet-400 font-medium">✓ Sichtbar · in Betriebsertrag eingerechnet</span>
+          }
+        </p>
+      </div>
+
       {/* Mandantenauswahl */}
       <TenantSwitcher compact />
 
@@ -552,6 +615,7 @@ export const AppBottomNav = () => {
   const { isAdmin, isBeaulieuManager, canAccessModule } = usePermissions();
   const { isGuest } = useGuestSession();
   const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
+  const { showMarketingCol, setShowMarketingCol, maisonExclude, setMaisonExclude } = useMaison();
   const { tenant } = useTenant();
   const { user, signOut } = useAuth();
   const { isActive: stichtagActive, stichtagYear, stichtagMonth, stichtagDay, stichtag, formatted: stichtagFormatted, setStichtag, clearStichtag } = useStichtag();
@@ -706,6 +770,55 @@ export const AppBottomNav = () => {
                   Brutto
                 </button>
               </div>
+            </div>
+
+            {/* Marketing / Maison Toggle (Mobile) */}
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
+                Marketing / Maison
+              </p>
+              <div className="flex rounded-md overflow-hidden border border-border text-xs h-8">
+                <button
+                  onClick={() => setShowMarketingCol(true)}
+                  className={cn(
+                    'flex-1 transition-colors font-medium',
+                    showMarketingCol ? 'bg-violet-600 text-white' : 'text-muted-foreground hover:bg-muted',
+                  )}
+                >
+                  Anzeigen
+                </button>
+                <button
+                  onClick={() => setShowMarketingCol(false)}
+                  className={cn(
+                    'flex-1 transition-colors font-medium',
+                    !showMarketingCol ? 'bg-muted text-foreground font-semibold' : 'text-muted-foreground hover:bg-muted',
+                  )}
+                >
+                  Ausblenden
+                </button>
+              </div>
+              {showMarketingCol && (
+                <div className="flex rounded-md overflow-hidden border border-border text-xs h-8 mt-1.5">
+                  <button
+                    onClick={() => setMaisonExclude(false)}
+                    className={cn(
+                      'flex-1 transition-colors font-medium',
+                      !maisonExclude ? 'bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400' : 'text-muted-foreground hover:bg-muted',
+                    )}
+                  >
+                    inkl. Umsatz
+                  </button>
+                  <button
+                    onClick={() => setMaisonExclude(true)}
+                    className={cn(
+                      'flex-1 transition-colors font-medium',
+                      maisonExclude ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400' : 'text-muted-foreground hover:bg-muted',
+                    )}
+                  >
+                    exkl. Umsatz
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Stichtag */}

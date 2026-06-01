@@ -52,7 +52,7 @@ import {
   getMaisonDailySync, loadMaisonDaily, saveMaisonDaily,
   saveMaisonEnabled,
 } from '@/lib/maison-store';
-import { useMaisonExclude } from '@/hooks/useMaisonExclude';
+import { useMaison } from '@/contexts/MaisonContext';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -447,7 +447,8 @@ export default function TagesControllingPage() {
   const [maisonEnabled, setMaisonEnabledState] = useState(() => getMaisonEnabledSync(tenantKey));
   const [maisonMonthly, setMaisonMonthly]       = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
   const [maisonDaily,   setMaisonDaily]         = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
-  const [maisonExclude, setMaisonExclude]       = useMaisonExclude();
+  const { showMarketingCol: maisonColPref, maisonExclude, setMaisonExclude } = useMaison();
+  const showMarketingCol = maisonEnabled && maisonColPref;
   const [editingMaisonDate,  setEditingMaisonDate]  = useState<string | null>(null);
   const [editingMaisonValue, setEditingMaisonValue] = useState('');
   useEffect(() => {
@@ -1327,39 +1328,6 @@ export default function TagesControllingPage() {
             ))}
           </div>
 
-          {/* Maison Toggle */}
-          <div className="flex items-center gap-1 border-r border-border pr-3">
-            <button
-              onClick={async () => {
-                const newVal = !maisonEnabled;
-                setMaisonEnabledState(newVal);
-                await saveMaisonEnabled(tenantKey, newVal);
-              }}
-              title={maisonEnabled ? 'Marketing/Maison ausblenden' : 'Marketing/Maison anzeigen'}
-              className={cn(
-                'h-8 px-2.5 text-xs rounded border transition-colors font-medium',
-                maisonEnabled
-                  ? 'bg-violet-600 text-white border-violet-600 hover:bg-violet-700'
-                  : 'border-border text-muted-foreground hover:bg-muted',
-              )}
-            >
-              Marketing
-            </button>
-            {maisonEnabled && (
-              <button
-                onClick={() => setMaisonExclude(!maisonExclude)}
-                title={maisonExclude ? 'Marketing zum Umsatz hinzuzählen' : 'Marketing vom Umsatz wegzählen'}
-                className={cn(
-                  'h-8 px-2 text-xs rounded border transition-colors font-medium',
-                  maisonExclude
-                    ? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-700'
-                    : 'border-border text-muted-foreground hover:bg-muted',
-                )}
-              >
-                {maisonExclude ? 'exkl.' : 'inkl.'}
-              </button>
-            )}
-          </div>
 
           {/* Export-Buttons */}
           <div className="flex items-center gap-1.5">
@@ -1476,7 +1444,7 @@ export default function TagesControllingPage() {
                         </span>
                         <ResizeHandle col="umsatz" />
                       </th>
-                      {maisonEnabled && (
+                      {showMarketingCol && (
                         <th className="px-2 py-2 text-right font-medium text-[10px] text-violet-600 dark:text-violet-400 border-l border-violet-200/50 dark:border-violet-800/50 whitespace-nowrap" style={colStyle('maison')} title="Marketing-Umsatz — klicken zum manuellen Bearbeiten">
                           Marketing
                         </th>
@@ -1554,7 +1522,7 @@ export default function TagesControllingPage() {
                       <td className="px-3 py-2 text-right tabular-nums" style={colStyle('umsatz')}>
                         {fmtN(total.sumUmsatz)}
                       </td>
-                      {maisonEnabled && (
+                      {showMarketingCol && (
                         <td className="px-2 py-2 text-right tabular-nums text-[11px] border-l border-violet-200/40 dark:border-violet-800/40 font-semibold text-violet-700 dark:text-violet-400" style={colStyle('maison')}>
                           {total.sumMaison > 0 ? fmtN(total.sumMaison) : ''}
                         </td>
@@ -1754,7 +1722,7 @@ export default function TagesControllingPage() {
                               )}
                             </td>
                             {viewMode === 'personal' ? (<>
-                              {maisonEnabled && (
+                              {showMarketingCol && (
                                 <td className="px-1 py-0.5 text-right tabular-nums text-[11px] border-l border-violet-200/40 dark:border-violet-800/40 text-violet-600 dark:text-violet-400" style={colStyle('maison')}>
                                   {editingMaisonDate === row.date ? (
                                     <input

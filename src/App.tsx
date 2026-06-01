@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { RevenueDisplayProvider } from "@/contexts/RevenueDisplayContext";
 import { PlanDisplayProvider } from "@/contexts/PlanDisplayContext";
+import { MaisonProvider } from "@/contexts/MaisonContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { StichtagProvider } from "@/contexts/StichtagContext";
 import { GuestSessionProvider, GUEST_SESSION_KEY } from "@/contexts/GuestSessionContext";
@@ -297,6 +298,7 @@ const App = () => {
         <TenantProvider>
         <StichtagProvider>
         <RevenueDisplayProvider>
+        <MaisonProvider>
           <PlanDisplayProvider>
             <GuestSessionProvider>
               <Sonner />
@@ -316,6 +318,7 @@ const App = () => {
               </AuthProvider>
             </GuestSessionProvider>
           </PlanDisplayProvider>
+        </MaisonProvider>
         </RevenueDisplayProvider>
         </StichtagProvider>
         </TenantProvider>
