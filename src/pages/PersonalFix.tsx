@@ -2147,8 +2147,35 @@ export default function PersonalFixPage() {
       };
     });
 
+    // ── Zusatzkosten-Zeilen für Fixlohn-MA ─────────────────────────────────
+    // Fixlohn-MA mit isAdditionalCost=true Einträgen erscheinen als eigene Zeile
+    // im Flex-Kosten-Block (Plan = 0, Ist = berechnete Zusatzkosten)
+    for (const emp of fixedEmployees) {
+      const wage = getEffectiveHourlyRate(emp);
+      if (!wage) continue;
+      const cutoff = proRataDay;
+      const zusatzW = loadZusatzIstDetails(emp.id, selectedYear, selectedMonth, cutoff, wage, tenantKey);
+      if (zusatzW.length === 0) continue;
+      const istH    = zusatzW.reduce((s, r) => s + r.hours, 0);
+      const istWork = zusatzW.reduce((s, r) => s + r.cost, 0);
+      console.log(`[ZUSATZ-ROW] ${emp.name}: ${zusatzW.length} Tage / ${istH.toFixed(1)}h / ${istWork.toFixed(2)} CHF`);
+      rows.push({
+        id:           emp.id,
+        name:         emp.name,
+        dept:         emp.department ?? '–',
+        hourlyWage:   wage,
+        weeklyHours:  emp.weeklyHours ?? 42,
+        planH: 0,     istH,
+        planWork: 0,  istWork,
+        planHoliday: 0, istHoliday: 0,
+        planTotalVar: 0, istTotalVar: istWork,
+        diffWork:     istWork,
+        diffHoliday:  0,
+        diffTotalVar: istWork,
+      });
+    }
+
     // ── [PERSONAL FIX] Debug ────────────────────────────────────────────────
-    const flexEmps = rows.filter(r => r.planWork === 0 && r.istWork === 0);
     console.log(`[PERSONAL FIX] employees total: ${rows.length}`);
     console.log(`[PERSONAL FIX] flex employees: ${rows.length}`);
     console.log(`[CHECK] flex employees visible: ${rows.length > 0 ? 'OK' : 'none'}`);
@@ -2176,8 +2203,8 @@ export default function PersonalFixPage() {
       console.error(`[FLEX-SYNC] MISMATCH istWork: table=${sumIstWork.toFixed(2)} vs pfix=${ref.istWork.toFixed(2)} diff=${(sumIstWork - ref.istWork).toFixed(2)}`);
 
     return rows;
-  }, [variableEmployees, selectedYear, selectedMonth, planHours, istHours,
-      getEmpFerienPlanCHF, getEmpFerienCHF, proRataDay, proRataFactor, pfix]);
+  }, [variableEmployees, fixedEmployees, selectedYear, selectedMonth, planHours, istHours,
+      getEmpFerienPlanCHF, getEmpFerienCHF, proRataDay, proRataFactor, pfix, tenantKey]);
 
   // ── Abweichungsanalyse: tägliche Aggregation aller Flex-Mitarbeiter ──────────
   const pfixAbw = useMemo((): {

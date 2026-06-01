@@ -296,7 +296,7 @@ const SchedulePlanner = () => {
   
   // New state for Plan/Ist toggle
   const [scheduleMode, setScheduleMode] = useState<'plan' | 'ist' | 'compare'>('plan');
-  const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string; absenceType?: 'FE' | 'K' | 'F' }>>({});
+  const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string; start2?: string; end2?: string; absenceType?: 'FE' | 'K' | 'F'; isAdditionalCost?: boolean }>>({});
   const [paintTool, setPaintTool] = useState<string | null>(null);
   const [planningAssistantOpen, setPlanningAssistantOpen]     = useState(false);
   const [bulkActionsOpen, setBulkActionsOpen]                 = useState(false);
@@ -706,8 +706,10 @@ const SchedulePlanner = () => {
         for (const [key, supaVal] of Object.entries(supabaseActual as Record<string, ActualHoursEntry>)) {
           const localVal = (localStored as Record<string, ActualHoursEntry>)[key];
           if (supaVal.hours > 0) {
-            // Real work hours from Supabase always win
-            merged[key] = supaVal;
+            // Real work hours from Supabase always win — but preserve localStorage-only flags
+            merged[key] = localVal?.isAdditionalCost
+              ? { ...supaVal, isAdditionalCost: true }
+              : supaVal;
           } else if (!localVal?.absenceType) {
             // Supabase 0-hours only wins if localStorage has no absenceType (FE/K/F)
             merged[key] = supaVal;
@@ -756,12 +758,14 @@ const SchedulePlanner = () => {
           for (const [key, val] of Object.entries(prev)) {
             if (val.absenceType && !result[key]?.absenceType) {
               // Keep FE/K/F from prev unless merged already has an absenceType entry
-              // (real-hours entries in merged have hours > 0, not absenceType, so they
-              // would already have overwritten via the merged computation above).
               if (!result[key] || result[key].hours === 0) {
                 result[key] = val;
                 console.log(`[FERIEN-IST] race-condition guard: kept prev absenceType entry ${key} type=${val.absenceType}`);
               }
+            }
+            // Preserve isAdditionalCost from prev if the merged entry lost it
+            if (val.isAdditionalCost && result[key] && !result[key].isAdditionalCost) {
+              result[key] = { ...result[key], isAdditionalCost: true };
             }
           }
           return result;
@@ -773,9 +777,11 @@ const SchedulePlanner = () => {
         })();
         const finalForStorage: Record<string, ActualHoursEntry> = { ...freshLocal };
         for (const [key, val] of Object.entries(merged)) {
-          // Let Supabase real-hours win in storage too
+          // Let Supabase real-hours win in storage too — but preserve localStorage-only flags
           if (val.hours > 0 || !freshLocal[key]?.absenceType) {
-            finalForStorage[key] = val;
+            finalForStorage[key] = freshLocal[key]?.isAdditionalCost
+              ? { ...val, isAdditionalCost: true }
+              : val;
           }
         }
         localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(finalForStorage));
@@ -1793,7 +1799,7 @@ const SchedulePlanner = () => {
   };
 
   // Handle actual hours change
-  const handleActualHoursChange = (employeeId: string, date: string, entry: { hours: number; start?: string; end?: string; start2?: string; end2?: string; absenceType?: 'FE' | 'K' | 'F' } | null) => {
+  const handleActualHoursChange = (employeeId: string, date: string, entry: ActualHoursEntry | null) => {
     const cellKey = `${employeeId}-${date}`;
 
     setActualHoursData(prev => {
