@@ -1384,6 +1384,15 @@ export default function PersonalFixPage() {
   const [forecastIstDay,   setForecastIstDay]   = useState<number | null>(null);
   const [flexPeriodPopup,  setFlexPeriodPopup]  = useState<FlexPeriodTarget | null>(null);
   const [expandedFixDepts, setExpandedFixDepts] = useState<Set<string>>(new Set());
+  // Incremented whenever schedule-v2-* localStorage changes (schedule-updated event)
+  // so that pfixPerEmp and planHours re-read the latest data without a page reload.
+  const [scheduleRefreshTick, setScheduleRefreshTick] = useState(0);
+
+  useEffect(() => {
+    const handler = () => setScheduleRefreshTick(t => t + 1);
+    window.addEventListener('schedule-updated', handler);
+    return () => window.removeEventListener('schedule-updated', handler);
+  }, []);
 
   // Contract history for mid-month switch detection
   const contractHistoryMap = useMemo(
@@ -1442,14 +1451,18 @@ export default function PersonalFixPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYear, selectedMonth, tenantId]);
 
-  // Reload Plan/Ist hours whenever month changes.
+  // Reload Plan/Ist hours whenever month changes OR schedule-updated fires.
   // Plan-Stunden: read localStorage first (fast), then enrich with Supabase schedule data.
   // Ist-Stunden: read localStorage first (fast), then enrich with Supabase data.
   // Supabase is the canonical source when both planners write there; localStorage
   // is the fallback/cache for entries that haven't round-tripped through Supabase.
+  // scheduleRefreshTick: incremented by schedule-updated listener → triggers re-read
+  // without full Supabase round-trip (skip the async enrichment on tick-only changes).
   useEffect(() => {
     // Fast local read first (instant, no flicker)
     setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth, tenantKey));
+    setFerienPlanDays(loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey));
+    if (scheduleRefreshTick > 0) return; // tick-only refresh: localStorage is already current
     // FE-Ferientage immer aus localStorage (Supabase speichert kein absenceType)
     const istFE = loadFerienDaysFromStorage(selectedYear, selectedMonth, tenantKey);
     setFerienIstDays(istFE);
@@ -1544,7 +1557,7 @@ export default function PersonalFixPage() {
       }
     }).catch(err => console.error('[IST] Supabase load failed in PersonalFix:', err));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedYear, selectedMonth, tenantId]);
+  }, [selectedYear, selectedMonth, tenantId, scheduleRefreshTick]);
 
   // Mandantenwechsel: varHours/varWeekly/etc. neu laden
   useEffect(() => {
@@ -1987,7 +2000,7 @@ export default function PersonalFixPage() {
     return { month, cutoff, active };
   }, [variableEmployees, fixedEmployees, selectedYear, selectedMonth,
       varArbeitPlanMonat, varArbeitIstMonat, ferienPlanTotalCHF, ferienIstTotalCHF,
-      totalFixCost, proRataDay, proRataFactor, tenantKey]);
+      totalFixCost, proRataDay, proRataFactor, tenantKey, scheduleRefreshTick]);
 
   // ── Monatsumsatz für PKQ-Berechnung ──────────────────────────────────────
   // Summiert Netto-Umsatz (actualRevenue – MWST 8.1%) für PKQ-Berechnung.
