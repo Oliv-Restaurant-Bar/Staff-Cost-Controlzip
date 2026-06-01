@@ -1133,10 +1133,9 @@ const SchedulePlanner = () => {
     if (calendarView === 'day') return [daysInMonth[Math.min(selectedDayOffset, daysInMonth.length - 1)]];
     const weekStart = weeksInMonth[selectedWeekIndex] || weeksInMonth[0];
     const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
-    return eachDayOfInterval({ start: weekStart, end: weekEnd }).filter(
-      d => isWithinInterval(d, { start: monthStart, end: monthEnd })
-    );
-  }, [calendarView, daysInMonth, selectedDayOffset, selectedWeekIndex, weeksInMonth, monthStart, monthEnd]);
+    // No month filter — show all 7 days even when the week spans two months
+    return eachDayOfInterval({ start: weekStart, end: weekEnd });
+  }, [calendarView, daysInMonth, selectedDayOffset, selectedWeekIndex, weeksInMonth]);
 
   // Calculate hours from a time slot
   const calculateSlotHours = (slot: TimeSlot | null | undefined): number => {
@@ -2857,19 +2856,42 @@ const SchedulePlanner = () => {
 
   // Navigations-Handler für den Card-Header (◀ / ▶)
   const handlePrevPeriod = () => {
-    if (calendarView === 'month') setCurrentMonth(prev => subMonths(prev, 1));
-    else if (calendarView === 'week') setSelectedWeekIndex(prev => Math.max(0, prev - 1));
-    else setSelectedDayOffset(prev => Math.max(0, prev - 1));
+    if (calendarView === 'month') {
+      setCurrentMonth(prev => subMonths(prev, 1));
+    } else if (calendarView === 'week') {
+      if (selectedWeekIndex > 0) {
+        setSelectedWeekIndex(prev => prev - 1);
+      } else {
+        // Monatsübergreifend: springe zur letzten Woche des Vormonats
+        const prevMonth = subMonths(currentMonth, 1);
+        const prevWeeks = eachWeekOfInterval(
+          { start: startOfMonth(prevMonth), end: endOfMonth(prevMonth) },
+          { weekStartsOn: 1 },
+        );
+        setCurrentMonth(prevMonth);
+        setSelectedWeekIndex(prevWeeks.length - 1);
+      }
+    } else {
+      setSelectedDayOffset(prev => Math.max(0, prev - 1));
+    }
   };
   const handleNextPeriod = () => {
-    if (calendarView === 'month') setCurrentMonth(prev => addMonths(prev, 1));
-    else if (calendarView === 'week') setSelectedWeekIndex(prev => Math.min(weeksInMonth.length - 1, prev + 1));
-    else setSelectedDayOffset(prev => Math.min(daysInMonth.length - 1, prev + 1));
+    if (calendarView === 'month') {
+      setCurrentMonth(prev => addMonths(prev, 1));
+    } else if (calendarView === 'week') {
+      if (selectedWeekIndex < weeksInMonth.length - 1) {
+        setSelectedWeekIndex(prev => prev + 1);
+      } else {
+        // Monatsübergreifend: springe zur ersten Woche des Folgemonats
+        setCurrentMonth(prev => addMonths(prev, 1));
+        setSelectedWeekIndex(0);
+      }
+    } else {
+      setSelectedDayOffset(prev => Math.min(daysInMonth.length - 1, prev + 1));
+    }
   };
-  const isPrevDisabled = calendarView === 'week' ? selectedWeekIndex === 0
-    : calendarView === 'day' ? selectedDayOffset === 0 : false;
-  const isNextDisabled = calendarView === 'week' ? selectedWeekIndex >= weeksInMonth.length - 1
-    : calendarView === 'day' ? selectedDayOffset >= daysInMonth.length - 1 : false;
+  const isPrevDisabled = calendarView === 'day' ? selectedDayOffset === 0 : false;
+  const isNextDisabled = calendarView === 'day' ? selectedDayOffset >= daysInMonth.length - 1 : false;
 
   const handleNavigateToday = () => {
     const today = new Date();
