@@ -252,6 +252,19 @@ const DEFAULT_SHIFTS: ShiftConfigItem[] = [
     textColor: 'FF374151',
     department: 'all'
   },
+  {
+    name: 'Unfall',
+    start: '',
+    end: '',
+    hours: 8.4,
+    color: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-200 border-orange-300 dark:border-orange-600',
+    isPaid: false,
+    countsToTarget: false,
+    abbrev: 'U',
+    excelColor: 'FFFFEDD5',
+    textColor: 'FFC2410C',
+    department: 'all'
+  },
   { 
     name: 'Frei', 
     start: '', 
@@ -308,8 +321,8 @@ function getExcelColorsFromTailwind(tailwindColor: string): { excelColor: string
 function applyMandatoryMigrations(items: ShiftConfigItem[]): { items: ShiftConfigItem[]; changed: boolean } {
   let changed = false;
   const migrated = items.map(item => {
-    // Ferien (FE), Frei (F) und Krank (K) müssen immer countsToTarget: false haben
-    if ((item.abbrev === 'FE' || item.abbrev === 'F' || item.abbrev === 'K') && item.countsToTarget) {
+    // Ferien (FE), Frei (F), Krank (K) und Unfall (U) müssen immer countsToTarget: false haben
+    if ((item.abbrev === 'FE' || item.abbrev === 'F' || item.abbrev === 'K' || item.abbrev === 'U') && item.countsToTarget) {
       changed = true;
       return { ...item, countsToTarget: false };
     }

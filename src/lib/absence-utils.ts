@@ -10,15 +10,25 @@ import type { DaySchedule } from '@/lib/supabase-db';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-export const VACATION_CODES = new Set(['FE', 'FW', 'Ferien', 'Urlaub', 'U']);
-export const SICK_CODES     = new Set(['K', 'KO', 'Krank', 'Krankheit', 'AUF']);
-export const SKIP_CODES     = new Set(['F', 'Frei']); // day off, not an absence to track
+export const VACATION_CODES  = new Set(['FE', 'FW', 'Ferien', 'Urlaub']);
+export const SICK_CODES      = new Set(['K', 'KO', 'Krank', 'Krankheit', 'AUF']);
+export const ACCIDENT_CODES  = new Set(['U', 'Unfall', 'UNF', 'UNFALL']);
+export const SKIP_CODES      = new Set(['F', 'Frei']); // day off, not an absence to track
 export const DEFAULT_ABSENCE_HOURS = 8.4;
 export const LS_ABSENCE_OVERRIDES  = 'absence_overrides_v1';
 
+/**
+ * Returns true for K (Krank) and U (Unfall) — paid absences for hourly workers.
+ * These generate costs in Forecast/PersonalFIX but are excluded from the
+ * daily operative PKQ (Tages-Personalkostenquote gegen Umsatz).
+ */
+export function isPayableAbsence(code: string): boolean {
+  return SICK_CODES.has(code) || ACCIDENT_CODES.has(code);
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AbsenceKind = 'vacation' | 'sick' | 'other';
+export type AbsenceKind = 'vacation' | 'sick' | 'accident' | 'other';
 
 export interface ReplacementInfo {
   empId:      string;
@@ -58,8 +68,10 @@ export interface Override {
 export interface AbsenceSummary {
   vacationDays:  number;
   sickDays:      number;
+  accidentDays:  number;
   vacationCost:  number;
   sickCost:      number;
+  accidentCost:  number;
   totalCost:     number;
   totalSaving:   number;
   unreplacedHrs: number;
@@ -72,14 +84,16 @@ export interface AbsenceSummary {
 // ─── Classification helpers ───────────────────────────────────────────────────
 
 export function absenceKind(code: string): AbsenceKind {
-  if (VACATION_CODES.has(code)) return 'vacation';
-  if (SICK_CODES.has(code))     return 'sick';
+  if (VACATION_CODES.has(code))  return 'vacation';
+  if (SICK_CODES.has(code))      return 'sick';
+  if (ACCIDENT_CODES.has(code))  return 'accident';
   return 'other';
 }
 
 export function absenceLabel(kind: AbsenceKind): string {
   if (kind === 'vacation') return 'Ferien';
   if (kind === 'sick')     return 'Krank';
+  if (kind === 'accident') return 'Unfall';
   return 'Abwesenheit';
 }
 
@@ -262,6 +276,7 @@ export function resolveAbsenceEvent(
 export function summarizeAbsences(events: ResolvedEvent[]): AbsenceSummary {
   const vacation = events.filter(e => e.kind === 'vacation');
   const sick     = events.filter(e => e.kind === 'sick');
+  const accident = events.filter(e => e.kind === 'accident');
 
   const byDept = {
     service: { cost: 0, saving: 0, days: 0 },
@@ -277,8 +292,10 @@ export function summarizeAbsences(events: ResolvedEvent[]): AbsenceSummary {
   return {
     vacationDays:  vacation.length,
     sickDays:      sick.length,
+    accidentDays:  accident.length,
     vacationCost:  vacation.reduce((s, e) => s + e.replacedCost, 0),
     sickCost:      sick.reduce((s, e) => s + e.replacedCost, 0),
+    accidentCost:  accident.reduce((s, e) => s + e.replacedCost, 0),
     totalCost:     events.reduce((s, e) => s + e.replacedCost, 0),
     totalSaving:   events.reduce((s, e) => s + e.saving, 0),
     unreplacedHrs: events.reduce((s, e) => s + e.unreplacedHours, 0),

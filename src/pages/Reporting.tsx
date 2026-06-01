@@ -1797,15 +1797,16 @@ const AbsenzMonatsBlock = ({ year }: { year: number }) => {
         </div>
       </CardHeader>
       <CardContent className="pt-0">
-        {!absenceSummary || (absenceSummary.vacationDays === 0 && absenceSummary.sickDays === 0) ? (
+        {!absenceSummary || (absenceSummary.vacationDays === 0 && absenceSummary.sickDays === 0 && absenceSummary.accidentDays === 0) ? (
           <p className="text-xs text-muted-foreground/60 italic py-2">
             Keine Absenzen im Dienstplan erfasst.
           </p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
-              { key: 'vacation', label: 'Ferien',      days: absenceSummary.vacationDays, cost: absenceSummary.vacationCost, icon: <Palmtree    className="h-3.5 w-3.5" /> },
-              { key: 'sick',     label: 'Krankheit',   days: absenceSummary.sickDays,     cost: absenceSummary.sickCost,    icon: <Stethoscope  className="h-3.5 w-3.5" /> },
+              { key: 'vacation',  label: 'Ferien',   days: absenceSummary.vacationDays,  cost: absenceSummary.vacationCost,  icon: <Palmtree   className="h-3.5 w-3.5" /> },
+              { key: 'sick',      label: 'Krankheit', days: absenceSummary.sickDays,      cost: absenceSummary.sickCost,      icon: <Stethoscope className="h-3.5 w-3.5" /> },
+              { key: 'accident',  label: 'Unfall',    days: absenceSummary.accidentDays,  cost: absenceSummary.accidentCost,  icon: <Stethoscope className="h-3.5 w-3.5" /> },
             ].filter(r => r.days > 0).map(r => (
               <div key={r.key} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
                 <div className="flex items-center gap-1.5 text-muted-foreground mb-0.5">

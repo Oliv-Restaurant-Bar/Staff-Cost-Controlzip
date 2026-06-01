@@ -1870,6 +1870,15 @@ const Dashboard = () => {
                     icon={<Stethoscope className="h-5 w-5" />}
                     color={absenceData.sickCost > 0 ? 'red' : 'default'}
                   />
+                  {absenceData.accidentDays > 0 && (
+                    <KpiCard
+                      title="Unfallersatzkosten"
+                      value={absenceData.accidentCost > 0 ? formatCHF(absenceData.accidentCost) : '–'}
+                      subtitle={`${absenceData.accidentDays} Unfalltage`}
+                      icon={<Stethoscope className="h-5 w-5" />}
+                      color="red"
+                    />
+                  )}
                   <KpiCard
                     title="Total Ersatzkosten"
                     value={absenceData.totalCost > 0 ? formatCHF(absenceData.totalCost) : '–'}

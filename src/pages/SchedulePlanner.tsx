@@ -1189,9 +1189,35 @@ const SchedulePlanner = () => {
     return totalHours;
   };
 
-  // Like calculateEmployeeHours, but skips Ferien (FE) and Krank (K) absences for cost calculation.
-  // These are covered separately (insurance, separate budget) and should not generate hourly-wage costs.
-  const ABSENCE_NO_COST = new Set(['FE', 'K']);
+  // ── Absence cost sets ───────────────────────────────────────────────────────
+  //
+  // DAILY_ABSENCE_NO_COST: used for the operative Tages-PKQ (column totals).
+  //   K (Krank) and U (Unfall) are excluded — they don't count against the
+  //   daily revenue-based PKQ (only actual worked hours).
+  //
+  // FORECAST_ABSENCE_NO_COST: used for monthly/weekly plan totals and Forecast.
+  //   Only FE (Ferien) is excluded. K and U generate real wage costs for
+  //   hourly workers and must appear in Forecast / PersonalFIX / Monatsübersicht.
+  //   Monthly-salary employees are already covered by their fixed salary —
+  //   no double-counting possible (their cost path uses monthlySalary directly).
+  const DAILY_ABSENCE_NO_COST    = new Set(['FE', 'K', 'U']);
+  const FORECAST_ABSENCE_NO_COST = new Set(['FE']);
+
+  // Returns the K/U absence hours for a single day for forecast purposes.
+  // Returns 0 for FE (vacation) and for employees on monthly salary (no extra cost).
+  const getDayAbsenceHoursForForecast = (ds: { frühAbsence?: string | null; spätAbsence?: string | null } | null | undefined): number => {
+    if (!ds) return 0;
+    const getH = (abbrev: string | null | undefined): number => {
+      if (!abbrev) return 0;
+      if (FORECAST_ABSENCE_NO_COST.has(abbrev)) return 0;
+      const shift = Object.keys(shiftMap).find(k => shiftMap[k].abbrev === abbrev);
+      return shift && shiftMap[shift].hours > 0 ? shiftMap[shift].hours : 0;
+    };
+    return getH(ds.frühAbsence) + getH(ds.spätAbsence);
+  };
+
+  // Like calculateEmployeeHours, but used for the DAILY PKQ display.
+  // Excludes FE, K and U → only actually-worked shift hours count against daily revenue.
   const calculateCostableHours = (employeeId: string): number => {
     let totalHours = 0;
     daysInMonth.forEach(day => {
@@ -1202,7 +1228,7 @@ const SchedulePlanner = () => {
       if (daySchedule.frühAbsence || daySchedule.spätAbsence) {
         const getAbsenceHours = (abbrev: string | null | undefined): number => {
           if (!abbrev) return 0;
-          if (ABSENCE_NO_COST.has(abbrev)) return 0; // Ferien/Krank → keine Kosten
+          if (DAILY_ABSENCE_NO_COST.has(abbrev)) return 0; // FE/K/U → no cost in daily PKQ
           const shift = Object.keys(shiftMap).find(k => shiftMap[k].abbrev === abbrev);
           if (shift && shiftMap[shift].countsToTarget) return shiftMap[shift].hours;
           return 0;
@@ -1210,6 +1236,22 @@ const SchedulePlanner = () => {
         totalHours += getAbsenceHours(daySchedule.frühAbsence);
         totalHours += getAbsenceHours(daySchedule.spätAbsence);
       }
+      totalHours += calculateDayHours(daySchedule);
+    });
+    return totalHours;
+  };
+
+  // Used for Forecast / PersonalFIX / monthly plan totals.
+  // Includes K and U hours for HOURLY workers (they are paid absences).
+  // Monthly-salary employees never call this — their path uses monthlySalary directly.
+  const calculateCostableHoursForForecast = (employeeId: string): number => {
+    let totalHours = 0;
+    daysInMonth.forEach(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const cellKey = `${employeeId}-${dateStr}`;
+      const daySchedule = scheduleData[cellKey];
+      if (!daySchedule) return;
+      totalHours += getDayAbsenceHoursForForecast(daySchedule);
       totalHours += calculateDayHours(daySchedule);
     });
     return totalHours;
@@ -2466,7 +2508,8 @@ const SchedulePlanner = () => {
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
       return sum + emp.monthlySalary;
     }
-    const hrs = calculateCostableHours(emp.id); // Ferien/Krank excluded
+    // K + U included for hourly workers (paid absences in monthly forecast)
+    const hrs = calculateCostableHoursForForecast(emp.id);
     return sum + hrs * emp.hourlyWage;
   }, 0);
 
@@ -2490,10 +2533,10 @@ const SchedulePlanner = () => {
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
       return sum + emp.monthlySalary * (displayDays.length / daysInMonth.length);
     }
+    // K + U absence hours included for hourly workers (paid absences in weekly forecast)
     const hrs = displayDays.reduce((h, day) => {
-      const cellKey = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
-      const ds = scheduleData[cellKey];
-      return h + (ds ? calculateDayHours(ds) : 0);
+      const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
+      return h + (ds ? calculateDayHours(ds) + getDayAbsenceHoursForForecast(ds) : 0);
     }, 0);
     return sum + hrs * emp.hourlyWage;
   }, 0);
@@ -2522,7 +2565,8 @@ const SchedulePlanner = () => {
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
       return sum + emp.monthlySalary;
     }
-    const hrs = calculateCostableHours(emp.id);
+    // K + U included for hourly workers in the monthly forecast total
+    const hrs = calculateCostableHoursForForecast(emp.id);
     return sum + hrs * emp.hourlyWage;
   }, 0);
 
@@ -2530,9 +2574,10 @@ const SchedulePlanner = () => {
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
       return sum + emp.monthlySalary * (displayDays.length / daysInMonth.length);
     }
+    // K + U absence hours included for hourly workers in the weekly forecast total
     const hrs = displayDays.reduce((h, day) => {
       const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
-      return h + (ds ? calculateDayHours(ds) : 0);
+      return h + (ds ? calculateDayHours(ds) + getDayAbsenceHoursForForecast(ds) : 0);
     }, 0);
     return sum + hrs * emp.hourlyWage;
   }, 0);

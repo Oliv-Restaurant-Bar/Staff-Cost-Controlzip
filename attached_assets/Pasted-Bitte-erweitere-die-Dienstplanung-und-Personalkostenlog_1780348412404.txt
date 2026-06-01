@@ -1,0 +1,84 @@
+Bitte erweitere die Dienstplanung und Personalkostenlogik.
+
+Problem:
+Wenn ein Mitarbeiter im Dienstplan als krank markiert wird, müssen diese Stunden weiterhin in den Personalkosten berücksichtigt werden. Zusätzlich soll neu "U = Unfall" verfügbar sein und exakt gleich funktionieren wie "K = Krank".
+
+Ziel:
+Krankheit und Unfall sind bezahlte Abwesenheiten und müssen bei Ist-Stunden, Personal FIX und Personalkosten berücksichtigt werden.
+
+1. Krankheitslogik prüfen und korrigieren
+
+Wenn im Dienstplan "K" gesetzt ist:
+- Stunden sollen weiterhin gezählt werden
+- Kosten sollen berechnet werden
+- Personal FIX soll diese Kosten berücksichtigen
+- Personalkostenquote soll diese Kosten enthalten
+
+Falls aktuell bei K 0 CHF angezeigt wird:
+Bitte korrigieren.
+
+2. Unfall hinzufügen
+
+Neue Abwesenheit:
+U = Unfall
+
+Sichtbar in der Schnellerfassung:
+U = Unfall
+
+Funktional gleich wie K:
+- zählt als bezahlte Abwesenheit
+- Stunden zählen zu Ist-Stunden
+- Kosten werden mit Stundenlohn berechnet
+- wird in Personal FIX und Personalkosten berücksichtigt
+- wird in Auswertungen als Unfall separat ausweisbar
+
+3. Berechnung
+
+Für K und U gilt:
+Wenn ein Mitarbeiter normalerweise Sollstunden oder geplante Schichtstunden an diesem Tag hätte, sollen diese Stunden als bezahlte Abwesenheit zählen.
+
+Falls keine geplante Schicht vorhanden ist:
+Bitte bestehende Krank-Logik verwenden.
+Wenn noch keine Logik existiert, bitte als Fallback Tages-Soll aus Wochenstunden/Arbeitstage berechnen.
+
+4. Darstellung
+
+In der Dienstplanung:
+K = Krank
+U = Unfall
+
+Zelle farblich ähnlich wie Krank, aber unterscheidbar.
+
+In der Kostenansicht:
+- Stunden anzeigen
+- Kosten anzeigen
+- nicht 0 CHF
+
+5. Personal FIX
+
+Bitte prüfen, wo Personal FIX die Stunden und Kosten berechnet.
+Krank und Unfall müssen dort einbezogen werden.
+
+6. Reports / Controlling
+
+Falls Personal-KPIs oder Tages-Controlling bezahlte Abwesenheiten auswerten:
+- K und U einbeziehen
+- optional separat ausweisen:
+  - Arbeitsstunden
+  - Krankheit
+  - Unfall
+
+7. Export / Arbeitszeitblätter
+
+Wenn K oder U aus Dienstplan oder Mirus vorhanden ist:
+- als Typ Krankheit / Unfall anzeigen
+- nicht als normaler Arbeitstag ohne Kosten behandeln
+
+8. Nach Umsetzung bitte ausgeben
+
+- Welche Dateien geändert wurden
+- Wo K bisher mit 0 CHF gerechnet wurde
+- Wie U hinzugefügt wurde
+- Wie Kosten für K und U berechnet werden
+- Ob Personal FIX beide berücksichtigt
+- Ob die Personalkostenquote korrekt steigt

@@ -1066,10 +1066,12 @@ export const TimeInputCell = ({
                         const abbrev = cfg.abbrev;
                         const semanticCls = abbrev === 'F' || abbrev === 'Frei'
                           ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-800/50 shadow-sm'
-                          : abbrev === 'U' || abbrev === 'Urlaub' || abbrev === 'Ferien'
+                          : abbrev === 'Urlaub' || abbrev === 'Ferien' || abbrev === 'FE'
                           ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-800/50 shadow-sm'
                           : abbrev === 'K' || abbrev === 'Krank'
                           ? 'bg-red-50 dark:bg-red-900/30 border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-800/50 shadow-sm'
+                          : abbrev === 'U' || abbrev === 'Unfall'
+                          ? 'bg-orange-50 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300 hover:bg-orange-100 dark:hover:bg-orange-800/50 shadow-sm'
                           : abbrev === 'UB' || abbrev === 'Unbezahlt'
                           ? 'bg-slate-100 dark:bg-slate-800/60 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700/60 shadow-sm'
                           : cn(cfg.color, 'hover:opacity-80 shadow-sm');
