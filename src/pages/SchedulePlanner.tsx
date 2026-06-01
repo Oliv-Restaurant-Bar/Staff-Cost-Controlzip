@@ -28,7 +28,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle, ClipboardPaste, Wand2, QrCode, Smartphone, Loader2, Bell, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle, ClipboardPaste, Wand2, QrCode, Smartphone, Loader2, Bell, RefreshCw, Pin, PinOff } from 'lucide-react';
 import { StaffFeedbackEntry, loadStaffFeedback, updateFeedbackStatus } from '@/lib/staff-feedback-store';
 import { getPublicBaseUrl } from '@/lib/public-url';
 import { useRef } from 'react';
@@ -276,6 +276,10 @@ const SchedulePlanner = () => {
   const [employeeFormOpen, setEmployeeFormOpen] = useState(false);
   const [selectedEmployeeForEdit, setSelectedEmployeeForEdit] = useState<Employee | null>(null);
   const [showFooter, setShowFooter] = useState(true);
+  const [stickyHeader, setStickyHeader] = useState<boolean>(() => {
+    const saved = localStorage.getItem('schedule-sticky-header');
+    return saved === null ? true : saved === 'true';
+  });
   const [showCosts, setShowCosts] = useState(false);
   const [costPasswordDialogOpen, setCostPasswordDialogOpen] = useState(false);
   const [costPassword, setCostPassword] = useState('');
@@ -4244,6 +4248,23 @@ const SchedulePlanner = () => {
                     <span className="hidden sm:inline text-xs">Sortierung</span>
                   </Button>
                 )}
+                {/* Sticky-Header-Toggle — Datum/Wochentag-Zeile fixieren */}
+                {scheduleMode === 'plan' && (
+                  <Button
+                    variant={stickyHeader ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      const next = !stickyHeader;
+                      setStickyHeader(next);
+                      localStorage.setItem('schedule-sticky-header', String(next));
+                    }}
+                    className="h-7 gap-1"
+                    title={stickyHeader ? 'Datum-Zeile lösen (scrollt mit)' : 'Datum-Zeile fixieren (bleibt beim Scrollen sichtbar)'}
+                  >
+                    {stickyHeader ? <Pin className="h-3 w-3" /> : <PinOff className="h-3 w-3" />}
+                    <span className="hidden sm:inline text-xs">{stickyHeader ? 'Fixiert' : 'Fixieren'}</span>
+                  </Button>
+                )}
                 {/* Footer-Toggle */}
                 <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
                   <Button
@@ -4449,6 +4470,7 @@ const SchedulePlanner = () => {
                         multiPlanMode={multiPlanMode}
                         multiPlanPreset={multiPlanPreset ?? undefined}
                         onMultiPlanCell={handleMultiPlanCell}
+                        stickyHeader={stickyHeader}
                       />
                 </>
               ) : (

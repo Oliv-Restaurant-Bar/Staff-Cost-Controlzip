@@ -94,6 +94,7 @@ export interface ModernScheduleGridProps {
   multiPlanMode?: boolean;
   multiPlanPreset?: { label: string; start: string; end: string; start2?: string; end2?: string; absenceCode?: string } | null;
   onMultiPlanCell?: (empId: string, dateStr: string) => void;
+  stickyHeader?: boolean;
 }
 
 // ── Small helper: format a numeric diff as +x.x / −x.x ───────────────────────
@@ -133,6 +134,7 @@ export function ModernScheduleGrid({
   multiPlanMode = false,
   multiPlanPreset,
   onMultiPlanCell,
+  stickyHeader = true,
 }: ModernScheduleGridProps) {
 
   const today = useMemo(() => new Date(), []);
@@ -217,16 +219,15 @@ export function ModernScheduleGrid({
   const empColStyle = { width: colWidth, minWidth: colWidth, maxWidth: colWidth } as const;
 
   return (
-    <div className="overflow-x-auto">
-      <table
-        className="border-separate w-full"
-        style={{ borderSpacing: 0 }}
-      >
+    <table
+      className="border-separate min-w-max w-full"
+      style={{ borderSpacing: 0 }}
+    >
 
-        {/* ══════════════════════════════════════════════════════════════════
-            THEAD — sticky so it stays visible while scrolling vertically
-        ══════════════════════════════════════════════════════════════════ */}
-        <thead className="sticky top-0 z-30">
+      {/* ══════════════════════════════════════════════════════════════════
+          THEAD — sticky so it stays visible while scrolling vertically
+      ══════════════════════════════════════════════════════════════════ */}
+      <thead className={stickyHeader ? "sticky top-0 z-30" : ""}>
           <tr>
 
             {/* ── Employee column header ─────────────────────────────────── */}
@@ -723,7 +724,6 @@ export function ModernScheduleGrid({
           </tfoot>
         )}
 
-      </table>
-    </div>
+    </table>
   );
 }
