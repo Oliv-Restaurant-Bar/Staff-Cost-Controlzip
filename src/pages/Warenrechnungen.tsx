@@ -276,6 +276,9 @@ export default function WarenrechnungenPage() {
   const [monthlyRevBudget, setMonthlyRevBudget] = useState<Record<string, number>>({}); // YYYY-MM → CHF
   const [rangeLoading, setRangeLoading] = useState(false);
 
+  // ─── Erfassung: Lieferanten-Filter ────────────────────────────────────────
+  const [erfassungSupplierFilter, setErfassungSupplierFilter] = useState<string>(''); // '' = alle
+
   // ─── Analyse: Lieferanten-Filter ──────────────────────────────────────────
   const [supplierFilter, setSupplierFilter] = useState<string>(''); // '' = alle
 
@@ -407,6 +410,22 @@ export default function WarenrechnungenPage() {
   const todayPct     = todayRevenue > 0 ? (todayNet / todayRevenue) * 100 : null;
 
   const datesWithEntries = useMemo(() => Array.from(new Set(entries.map(e => e.date))).sort(), [entries]);
+
+  // Gefilterte Einträge für Erfassung-Tab (nach Lieferant)
+  const filteredEntries = useMemo(() => {
+    const sorted = [...entries].sort((a, b) => b.date.localeCompare(a.date));
+    if (!erfassungSupplierFilter) return sorted;
+    return sorted.filter(e => e.supplierName === erfassungSupplierFilter);
+  }, [entries, erfassungSupplierFilter]);
+
+  const filteredTotalNet   = useMemo(() => filteredEntries.reduce((s, e) => s + e.amountNet, 0),   [filteredEntries]);
+  const filteredTotalGross = useMemo(() => filteredEntries.reduce((s, e) => s + e.amountGross, 0), [filteredEntries]);
+
+  // Alle Lieferanten die im aktuellen Monat Einträge haben (für Dropdown)
+  const entrySupplierNames = useMemo(() =>
+    Array.from(new Set(entries.map(e => e.supplierName))).sort(),
+    [entries],
+  );
 
   const tableDates = useMemo(() => {
     const all  = getDaysInMonth(year, month);
@@ -1306,9 +1325,38 @@ export default function WarenrechnungenPage() {
                   </div>
                 ) : (
                   <section className="bg-card border border-border rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between">
+                    <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between flex-wrap gap-2">
                       <h2 className="text-sm font-semibold">Einträge {monthLabel}</h2>
-                      <span className="text-xs text-muted-foreground">{entries.length} Einträge · CHF {fmtChf(stats.totalNet)} netto</span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Lieferanten-Filter Dropdown */}
+                        <div className="flex items-center gap-1.5">
+                          <Filter className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                          <select
+                            value={erfassungSupplierFilter}
+                            onChange={e => setErfassungSupplierFilter(e.target.value)}
+                            className="h-7 rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring min-w-[140px]"
+                          >
+                            <option value="">Alle Lieferanten</option>
+                            {entrySupplierNames.map(name => (
+                              <option key={name} value={name}>{name}</option>
+                            ))}
+                          </select>
+                          {erfassungSupplierFilter && (
+                            <button
+                              onClick={() => setErfassungSupplierFilter('')}
+                              className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                              title="Filter zurücksetzen"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {erfassungSupplierFilter
+                            ? `${filteredEntries.length} von ${entries.length} Einträgen · CHF ${fmtChf(filteredTotalNet)} netto`
+                            : `${entries.length} Einträge · CHF ${fmtChf(stats.totalNet)} netto`}
+                        </span>
+                      </div>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -1327,7 +1375,7 @@ export default function WarenrechnungenPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {[...entries].sort((a, b) => b.date.localeCompare(a.date)).map((e, i) => (
+                          {filteredEntries.map((e, i) => (
                             <tr key={e.id} className={cn('border-b border-border/40 hover:bg-muted/20 transition-colors', i % 2 === 1 && 'bg-muted/10')}>
                               <td className="px-4 py-2.5 text-sm text-muted-foreground">{formatDateLong(e.date)}</td>
                               <td className="px-4 py-2.5 font-medium">{e.supplierName}</td>
@@ -1393,11 +1441,13 @@ export default function WarenrechnungenPage() {
                         </tbody>
                         <tfoot>
                           <tr className="border-t-2 border-border bg-muted/20 font-bold">
-                            <td className="px-4 py-2.5 text-xs text-muted-foreground uppercase tracking-wide" colSpan={2}>Total</td>
-                            <td className="px-4 py-2.5 text-right tabular-nums font-bold">CHF {fmtChf(stats.totalNet)}</td>
-                            <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(stats.totalGross)}</td>
+                            <td className="px-4 py-2.5 text-xs text-muted-foreground uppercase tracking-wide" colSpan={2}>
+                              {erfassungSupplierFilter ? erfassungSupplierFilter : 'Total'}
+                            </td>
+                            <td className="px-4 py-2.5 text-right tabular-nums font-bold">CHF {fmtChf(erfassungSupplierFilter ? filteredTotalNet : stats.totalNet)}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(erfassungSupplierFilter ? filteredTotalGross : stats.totalGross)}</td>
                             <td colSpan={4} className="px-4 py-2.5 text-right">
-                              {monthPct !== null && <PctBadge pct={monthPct} />}
+                              {!erfassungSupplierFilter && monthPct !== null && <PctBadge pct={monthPct} />}
                             </td>
                           </tr>
                         </tfoot>
