@@ -95,6 +95,7 @@ export interface ModernScheduleGridProps {
   multiPlanPreset?: { label: string; start: string; end: string; start2?: string; end2?: string; absenceCode?: string } | null;
   onMultiPlanCell?: (empId: string, dateStr: string) => void;
   stickyHeader?: boolean;
+  onAdditionalCostPlanChange?: (empId: string, date: string, v: boolean) => void;
 }
 
 // ── Small helper: format a numeric diff as +x.x / −x.x ───────────────────────
@@ -135,6 +136,7 @@ export function ModernScheduleGrid({
   multiPlanPreset,
   onMultiPlanCell,
   stickyHeader = true,
+  onAdditionalCostPlanChange,
 }: ModernScheduleGridProps) {
 
   const today = useMemo(() => new Date(), []);
@@ -579,6 +581,16 @@ export function ModernScheduleGrid({
                             onCopyToIst={
                               onCopyToIst
                                 ? (slot) => onCopyToIst(employee.id, dateStr, primarySlot, slot)
+                                : undefined
+                            }
+                            isFixedEmployee={
+                              (employee.employmentType === 'vollzeit' || employee.employmentType === 'teilzeit')
+                              && (employee.monthlySalary ?? 0) > 0
+                            }
+                            isAdditionalCostPlan={daySchedule.isAdditionalCostPlan ?? false}
+                            onAdditionalCostPlanChange={
+                              onAdditionalCostPlanChange
+                                ? (v) => onAdditionalCostPlanChange(employee.id, dateStr, v)
                                 : undefined
                             }
                           />

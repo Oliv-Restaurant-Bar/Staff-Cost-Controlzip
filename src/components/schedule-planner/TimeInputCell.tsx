@@ -52,6 +52,10 @@ interface TimeInputCellProps {
   onSplitTimeSelect?: (secondary: TimeSlot | null) => void;
   /** Called when the primary "Löschen" should also clear the secondary slot */
   onClearSecondary?: () => void;
+  /** Fixlohn-MA (Vollzeit/Teilzeit mit Monatslohn): zeigt Zusatzkosten-Checkbox */
+  isFixedEmployee?: boolean;
+  isAdditionalCostPlan?: boolean;
+  onAdditionalCostPlanChange?: (v: boolean) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -565,6 +569,9 @@ export const TimeInputCell = ({
   onCopyToIst,
   onSplitTimeSelect,
   onClearSecondary,
+  isFixedEmployee,
+  isAdditionalCostPlan,
+  onAdditionalCostPlanChange,
 }: TimeInputCellProps) => {
   const [blockedOverride, setBlockedOverride] = useState(false);
   const [copyToIst, setCopyToIst] = useState(false);
@@ -851,6 +858,13 @@ export const TimeInputCell = ({
 
   return (
     <>
+      <div className="relative">
+        {isAdditionalCostPlan && (
+          <span
+            className="absolute -top-1 -right-1 z-10 inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-orange-500 text-white text-[8px] font-bold leading-none pointer-events-none select-none"
+            title="Zusatzkosten (Plan)"
+          >+</span>
+        )}
       <Popover open={open} onOpenChange={handleOpenChange}>
         <PopoverTrigger asChild>
           <button
@@ -1134,6 +1148,25 @@ export const TimeInputCell = ({
                   </div>
                 )}
 
+                {/* ── Zusatzkosten (Plan) ── */}
+                {isFixedEmployee && (
+                  <div className="mt-3 flex items-start gap-2.5 rounded-md border border-orange-200 bg-orange-50 dark:border-orange-700/50 dark:bg-orange-900/20 px-3 py-2.5">
+                    <input
+                      id="isAdditionalCostPlan"
+                      type="checkbox"
+                      checked={isAdditionalCostPlan ?? false}
+                      onChange={(e) => onAdditionalCostPlanChange?.(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-orange-400 accent-orange-500 cursor-pointer"
+                    />
+                    <label htmlFor="isAdditionalCostPlan" className="cursor-pointer text-sm leading-tight">
+                      <span className="font-semibold text-orange-700 dark:text-orange-400">Als Zusatzkosten planen</span>
+                      <span className="block text-xs text-muted-foreground mt-0.5">
+                        Schicht als variable Zusatzkosten im Personal FIX berücksichtigen.
+                      </span>
+                    </label>
+                  </div>
+                )}
+
                 {/* ── Delete ── */}
                 {(value?.start || absenceType) && (
                   <button onClick={handleClear}
@@ -1146,6 +1179,8 @@ export const TimeInputCell = ({
           </div>
         </PopoverContent>
       </Popover>
+
+      </div>{/* end relative wrapper for badge */}
 
       <QuickTimesEditorDialog
         open={editorOpen}

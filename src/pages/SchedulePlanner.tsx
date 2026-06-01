@@ -1491,37 +1491,66 @@ const SchedulePlanner = () => {
     // ── Ende Auto-Kopie ────────────────────────────────────────────────────
 
     // ── Angebot: IST-Eintrag löschen wenn er aus Plan übernommen wurde ──────
-    if (willBeEmpty && planCopiedKeys.has(cellKey)) {
-      toast('Plan-Schicht gelöscht', {
-        description: 'Soll auch der automatisch übernommene IST-Eintrag gelöscht werden?',
-        action: {
-          label: 'IST löschen',
-          onClick: () => {
-            setActualHoursData(prev => {
-              const next = { ...prev };
-              delete next[cellKey];
-              const mk = format(currentMonth, 'yyyy-MM');
-              localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify(next));
-              return next;
-            });
-            saveActualHourEntry(employeeId, date, null).catch(console.error);
-            setPlanCopiedKeys(prev => {
-              const next = new Set(prev);
-              next.delete(cellKey);
-              const mk = format(currentMonth, 'yyyy-MM');
-              try {
-                const stored = JSON.parse(localStorage.getItem(tenantKey(`actual-hours-source-${mk}`)) || '{}');
-                delete stored[cellKey];
-                localStorage.setItem(tenantKey(`actual-hours-source-${mk}`), JSON.stringify(stored));
-              } catch { /* ignore */ }
-              return next;
-            });
-            toast.success('IST-Eintrag gelöscht');
-          },
-        },
-      });
-    }
+    _offerDeleteIst(willBeEmpty, cellKey);
   };
+
+  // ── Zusatzkosten-Plan: toggle isAdditionalCostPlan auf einem DaySchedule ─
+  const handleAdditionalCostPlanChange = (empId: string, date: string, v: boolean) => {
+    const cellKey = `${empId}-${date}`;
+    setScheduleData(prev => {
+      const current = prev[cellKey] || {};
+      const updated: DaySchedule = { ...current };
+      if (v) {
+        updated.isAdditionalCostPlan = true;
+      } else {
+        delete updated.isAdditionalCostPlan;
+      }
+      const newState = { ...prev, [cellKey]: updated };
+      const monthKey = format(currentMonth, 'yyyy-MM');
+      localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(newState));
+      saveScheduleEntry(empId, date, updated).catch(err =>
+        console.error('[SCHEDULE] saveScheduleEntry (additionalCostPlan) error:', err)
+      );
+      return newState;
+    });
+  };
+
+  // ── handleSlotChange continued: IST-Eintrag löschen Angebot ─────────────
+  // NOTE: this is called implicitly inside handleSlotChange via hoisting; 
+  // keep the closure vars (willBeEmpty, planCopiedKeys, cellKey) in scope.
+  function _offerDeleteIst(willBeEmpty: boolean, cellKey: string) {
+    if (!willBeEmpty || !planCopiedKeys.has(cellKey)) return;
+    const employeeId2 = cellKey.slice(0, -11);
+    const date2       = cellKey.slice(-10);
+    toast('Plan-Schicht gelöscht', {
+      description: 'Soll auch der automatisch übernommene IST-Eintrag gelöscht werden?',
+      action: {
+        label: 'IST löschen',
+        onClick: () => {
+          setActualHoursData(prev => {
+            const next = { ...prev };
+            delete next[cellKey];
+            const mk = format(currentMonth, 'yyyy-MM');
+            localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify(next));
+            return next;
+          });
+          saveActualHourEntry(employeeId2, date2, null).catch(console.error);
+          setPlanCopiedKeys(prev => {
+            const next = new Set(prev);
+            next.delete(cellKey);
+            const mk = format(currentMonth, 'yyyy-MM');
+            try {
+              const stored = JSON.parse(localStorage.getItem(tenantKey(`actual-hours-source-${mk}`)) || '{}');
+              delete stored[cellKey];
+              localStorage.setItem(tenantKey(`actual-hours-source-${mk}`), JSON.stringify(stored));
+            } catch { /* ignore */ }
+            return next;
+          });
+          toast.success('IST-Eintrag gelöscht');
+        },
+      },
+    });
+  }
 
   // ── Phase 1B: Cell + Week clipboard handlers ────────────────────────────
 
@@ -4574,6 +4603,7 @@ const SchedulePlanner = () => {
                         multiPlanPreset={multiPlanPreset ?? undefined}
                         onMultiPlanCell={handleMultiPlanCell}
                         stickyHeader={stickyHeader}
+                        onAdditionalCostPlanChange={handleAdditionalCostPlanChange}
                       />
                 </>
               ) : (

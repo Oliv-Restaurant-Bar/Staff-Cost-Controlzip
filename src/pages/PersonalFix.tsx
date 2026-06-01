@@ -566,6 +566,33 @@ interface BreakdownTarget {
 interface DayEntry  { date: string; hours: number; cost: number; }
 interface FerienDay { date: string; dailyH: number; cost: number; }
 
+/** Zusatzkosten plan-tagged days for a fixed-salary employee (isAdditionalCostPlan) */
+function loadZusatzPlanDetails(
+  empId: string, year: number, month: number, cutoffDay: number | null, wage: number,
+  keyFn: (k: string) => string = k => k,
+): DayEntry[] {
+  const key = keyFn(`schedule-v2-${year}-${String(month).padStart(2, '0')}`);
+  const prefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const data: Record<string, any> = JSON.parse(raw);
+    const entries: DayEntry[] = [];
+    for (const [cellKey, ds] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(prefix)) continue;
+      if (cellKey.slice(0, cellKey.length - 11) !== empId) continue;
+      if (typeof ds !== 'object' || !ds?.isAdditionalCostPlan) continue;
+      const day = parseInt(date.slice(-2), 10);
+      if (cutoffDay !== null && day > cutoffDay) continue;
+      const gross = calcSlotHours(ds?.früh) + calcSlotHours(ds?.spät);
+      const net = Math.max(0, gross - calculateBreakDeduction(gross));
+      if (net > 0) entries.push({ date, hours: Math.round(net * 100) / 100, cost: Math.round(net * wage * 100) / 100 });
+    }
+    return entries.sort((a, b) => a.date.localeCompare(b.date));
+  } catch { return []; }
+}
+
 /** Daily plan hours for one employee from schedule-v2-YYYY-MM */
 function loadDailyPlanDetails(
   empId: string, year: number, month: number, cutoffDay: number | null, wage: number,
@@ -2157,24 +2184,28 @@ export default function PersonalFixPage() {
       const wage = getEffectiveHourlyRate(emp);
       if (!wage) continue;
       const cutoff = proRataDay;
-      const zusatzW = loadZusatzIstDetails(emp.id, selectedYear, selectedMonth, cutoff, wage, tenantKey);
-      if (zusatzW.length === 0) continue;
+      const zusatzW    = loadZusatzIstDetails(emp.id, selectedYear, selectedMonth, cutoff, wage, tenantKey);
+      const zusatzPlanW = loadZusatzPlanDetails(emp.id, selectedYear, selectedMonth, cutoff, wage, tenantKey);
+      if (zusatzW.length === 0 && zusatzPlanW.length === 0) continue;
       const istH    = zusatzW.reduce((s, r) => s + r.hours, 0);
       const istWork = zusatzW.reduce((s, r) => s + r.cost, 0);
-      console.log(`[ZUSATZ-ROW] ${emp.name}: ${zusatzW.length} Tage / ${istH.toFixed(1)}h / ${istWork.toFixed(2)} CHF`);
+      const planH   = zusatzPlanW.reduce((s, r) => s + r.hours, 0);
+      const planWork = zusatzPlanW.reduce((s, r) => s + r.cost, 0);
+      console.log(`[ZUSATZ-ROW] ${emp.name}: IST ${zusatzW.length}T/${istH.toFixed(1)}h/${istWork.toFixed(2)} CHF | PLAN ${zusatzPlanW.length}T/${planH.toFixed(1)}h/${planWork.toFixed(2)} CHF`);
       rows.push({
         id:           emp.id,
         name:         emp.name,
         dept:         emp.department ?? '–',
         hourlyWage:   wage,
         weeklyHours:  emp.weeklyHours ?? 42,
-        planH: 0,     istH,
-        planWork: 0,  istWork,
+        planH,   istH,
+        planWork, istWork,
         planHoliday: 0, istHoliday: 0,
-        planTotalVar: 0, istTotalVar: istWork,
-        diffWork:     istWork,
+        planTotalVar: planWork, istTotalVar: istWork,
+        diffWork:     istWork - planWork,
         diffHoliday:  0,
-        diffTotalVar: istWork,
+        diffTotalVar: istWork - planWork,
+        isFixedAdditional: true,
       });
     }
 
@@ -3106,12 +3137,22 @@ export default function PersonalFixPage() {
                                 : <span className="text-muted-foreground font-mono">–</span>}
                             </td>
                           );
+                          const isZusatz = (row as any).isFixedAdditional === true;
                           return (
-                            <tr key={row.id} className={i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'}>
+                            <tr key={row.id + (isZusatz ? '-zusatz' : '')} className={
+                              isZusatz
+                                ? 'bg-orange-50/60 dark:bg-orange-900/10 hover:bg-orange-100/50 dark:hover:bg-orange-900/20 border-l-2 border-orange-400'
+                                : i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'
+                            }>
                               <td className="px-3 py-1.5 font-medium">
                                 <div className="flex items-center gap-2">
                                   {row.name}
-                                  {row.hourlyWage === 0 && (
+                                  {isZusatz && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">
+                                      Zusatzkosten
+                                    </span>
+                                  )}
+                                  {!isZusatz && row.hourlyWage === 0 && (
                                     <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
                                       Lohn fehlt
                                     </span>

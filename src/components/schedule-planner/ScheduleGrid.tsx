@@ -41,6 +41,8 @@ export interface DaySchedule {
   spät?: TimeSlot | null;
   frühAbsence?: string | null;
   spätAbsence?: string | null;
+  /** Geplanter Zusatzkosten-Tag: Plan-Stunden dieses Fixlohn-MA als variable Kosten zählen */
+  isAdditionalCostPlan?: boolean;
 }
 
 interface ScheduleGridProps {
