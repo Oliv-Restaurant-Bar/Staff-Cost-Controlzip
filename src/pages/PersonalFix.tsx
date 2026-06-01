@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth } from '@/lib/supabase-db';
 import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract-history-store';
 import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
-import { Employee } from '@/types/personnel';
+import { Employee, grossToNet } from '@/types/personnel';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1909,8 +1909,10 @@ export default function PersonalFixPage() {
       totalFixCost, proRataDay, proRataFactor]);
 
   // ── Monatsumsatz für PKQ-Berechnung ──────────────────────────────────────
-  // Summiert actualRevenue (+ takeawayRevenue wenn Marketing nicht ausgeblendet)
-  // für den gewählten Monat; bei Stichtag nur bis proRataDay.
+  // Summiert Netto-Umsatz (actualRevenue – MWST 8.1%) für PKQ-Berechnung.
+  // Takeaway-Anteil (val.takeawayRevenue) wird mit 2.6% MWST konvertiert.
+  // Marketing (maisonExclude) wird berücksichtigt.
+  // Bei Stichtag nur bis proRataDay.
   const monthRevenue = useMemo(() => {
     let total = 0;
     const prefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-`;
@@ -1920,10 +1922,10 @@ export default function PersonalFixPage() {
         const day = parseInt(date.slice(-2), 10);
         if (day > proRataDay) continue;
       }
-      total += val.actualRevenue ?? 0;
-      if (!maisonExclude) {
-        total += val.takeawayRevenue ?? 0;
-      }
+      const gross    = val.actualRevenue   ?? 0;
+      const takeaway = maisonExclude ? 0 : (val.takeawayRevenue ?? 0);
+      // Nettoumsatz: takeaway@2.6%, Rest@8.1%
+      total += grossToNet(gross, takeaway);
     }
     return total;
   }, [monthlyRevenues, proRataDay, maisonExclude, selectedYear, selectedMonth]);
