@@ -52,6 +52,7 @@ import { toast } from 'sonner';
 import {
   ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
+  Filter, X, Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -274,6 +275,9 @@ export default function WarenrechnungenPage() {
   const [rangeRevenue, setRangeRevenue] = useState<Record<string, number>>({});
   const [monthlyRevBudget, setMonthlyRevBudget] = useState<Record<string, number>>({}); // YYYY-MM → CHF
   const [rangeLoading, setRangeLoading] = useState(false);
+
+  // ─── Analyse: Lieferanten-Filter ──────────────────────────────────────────
+  const [supplierFilter, setSupplierFilter] = useState<string>(''); // '' = alle
 
   // ─── Forecast Umsatz (per Zeitraum, localStorage) ─────────────────────────
   const [forecastRevs, setForecastRevs] = useState<Record<string, number>>({});
@@ -617,6 +621,22 @@ export default function WarenrechnungenPage() {
       .map(([name, v]) => ({ name, net: v.net, gross: v.gross }))
       .sort((a, b) => b.net - a.net);
   }, [analysisEntries, analyseDates, todayStr]);
+
+  // Einzel-Rechnungen des gefilterten Lieferanten im gewählten Zeitraum
+  const supplierDetailEntries = useMemo(() => {
+    if (!supplierFilter) return [];
+    const effectiveTo = analyseDates.to > todayStr ? todayStr : analyseDates.to;
+    return analysisEntries
+      .filter(e => e.supplierName === supplierFilter && e.date <= effectiveTo)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [analysisEntries, supplierFilter, analyseDates, todayStr]);
+
+  // Summen für den gefilterten Lieferanten
+  const supplierFilterTotals = useMemo(() => {
+    const net   = supplierDetailEntries.reduce((s, e) => s + e.amountNet, 0);
+    const gross = supplierDetailEntries.reduce((s, e) => s + e.amountGross, 0);
+    return { net, gross };
+  }, [supplierDetailEntries]);
 
   // Tages-Chart (Woche / Monat)
   interface AChartPoint { date: string; label: string; dayNet: number; dayRev: number; dayPct: number | null; cumNet: number; cumRev: number; cumPct: number | null; hasEntry: boolean; }
@@ -1922,9 +1942,25 @@ export default function WarenrechnungenPage() {
                     {analyseSuppliers.length > 0 && (
                     <section className="bg-card border border-border rounded-xl overflow-hidden">
                       <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between flex-wrap gap-2">
-                        <h2 className="text-sm font-semibold">Lieferanten · {analyseRangeLabel}</h2>
+                        <div className="flex items-center gap-2">
+                          <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+                          <h2 className="text-sm font-semibold">Lieferanten · {analyseRangeLabel}</h2>
+                          {supplierFilter && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-foreground text-background">
+                              {supplierFilter}
+                              <button
+                                onClick={() => setSupplierFilter('')}
+                                className="ml-0.5 hover:opacity-70 transition-opacity"
+                                title="Filter zurücksetzen"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          )}
+                        </div>
                         <span className="text-xs text-muted-foreground">
                           Total CHF {fmtChf(analyseKPIs.totalCost)} · {analyseSuppliers.length} Lieferanten
+                          {!supplierFilter && <span className="ml-1 opacity-60">· Zeile anklicken zum Filtern</span>}
                         </span>
                       </div>
                       <div className="overflow-x-auto">
@@ -1940,9 +1976,24 @@ export default function WarenrechnungenPage() {
                           <tbody>
                             {analyseSuppliers.map((s, i) => {
                               const pct = analyseKPIs.totalCost > 0 ? (s.net / analyseKPIs.totalCost) * 100 : 0;
+                              const isSelected = supplierFilter === s.name;
                               return (
-                                <tr key={s.name} className={cn('border-b border-border/40 hover:bg-muted/20 transition-colors', i % 2 === 1 && 'bg-muted/10')}>
-                                  <td className="px-4 py-2.5 font-medium">{s.name}</td>
+                                <tr
+                                  key={s.name}
+                                  onClick={() => setSupplierFilter(isSelected ? '' : s.name)}
+                                  className={cn(
+                                    'border-b border-border/40 cursor-pointer transition-colors',
+                                    isSelected
+                                      ? 'bg-foreground/5 ring-1 ring-inset ring-foreground/20'
+                                      : i % 2 === 1 ? 'bg-muted/10 hover:bg-muted/30' : 'hover:bg-muted/20',
+                                  )}
+                                >
+                                  <td className="px-4 py-2.5 font-medium">
+                                    <div className="flex items-center gap-2">
+                                      {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-foreground flex-shrink-0" />}
+                                      {s.name}
+                                    </div>
+                                  </td>
                                   <td className="px-4 py-2.5 text-right tabular-nums font-semibold">CHF {fmtChf(s.net)}</td>
                                   <td className="px-4 py-2.5 text-right">
                                     <div className="flex items-center justify-end gap-2">
@@ -1963,6 +2014,76 @@ export default function WarenrechnungenPage() {
                               <td className="px-4 py-3 text-right tabular-nums font-bold">CHF {fmtChf(analyseKPIs.totalCost)}</td>
                               <td className="px-4 py-3 text-right"><PctBadge pct={analyseKPIs.pct} /></td>
                               <td className="px-4 py-3 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(analyseSuppliers.reduce((s, x) => s + x.gross, 0))}</td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </section>
+                    )}
+
+                    {/* ── Lieferanten-Detail (wenn gefiltert) ──────────── */}
+                    {supplierFilter && supplierDetailEntries.length > 0 && (
+                    <section className="bg-card border border-border rounded-xl overflow-hidden">
+                      <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <Receipt className="h-3.5 w-3.5 text-muted-foreground" />
+                          <h2 className="text-sm font-semibold">Einzelrechnungen · {supplierFilter}</h2>
+                          <span className="text-xs text-muted-foreground">· {analyseRangeLabel}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-semibold tabular-nums">CHF {fmtChf(supplierFilterTotals.net)} netto</span>
+                          <span className="text-xs text-muted-foreground tabular-nums">{fmtChf(supplierFilterTotals.gross)} brutto</span>
+                          <span className="text-xs text-muted-foreground">{supplierDetailEntries.length} Rechnung{supplierDetailEntries.length !== 1 ? 'en' : ''}</span>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/10 text-xs text-muted-foreground">
+                              <th className="px-4 py-2.5 text-left font-medium w-[110px]">Datum</th>
+                              <th className="px-4 py-2.5 text-left font-medium">Referenz / Notiz</th>
+                              <th className="px-4 py-2.5 text-left font-medium">Kategorie</th>
+                              <th className="px-4 py-2.5 text-left font-medium">Konto</th>
+                              <th className="px-4 py-2.5 text-right font-medium">Netto</th>
+                              <th className="px-4 py-2.5 text-right font-medium text-muted-foreground/70">Brutto</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {supplierDetailEntries.map((e, i) => {
+                              const kontoLabel = e.kontoSplits && e.kontoSplits.length > 0
+                                ? e.kontoSplits.map(k => k.warenkonto).join(' + ')
+                                : e.warenkonto || '–';
+                              const kat = e.kategorie ?? 'Sonstiges';
+                              const katColor: Record<string, string> = {
+                                Food:      'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400',
+                                Beverage:  'bg-blue-100 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400',
+                                Sonstiges: 'bg-muted text-muted-foreground',
+                              };
+                              return (
+                                <tr key={e.id} className={cn('border-b border-border/40 hover:bg-muted/20 transition-colors', i % 2 === 1 && 'bg-muted/10')}>
+                                  <td className="px-4 py-2.5 font-medium text-sm">{formatDateLong(e.date)}</td>
+                                  <td className="px-4 py-2.5 text-muted-foreground text-xs max-w-[200px]">
+                                    {e.reference && <span className="font-mono text-foreground/80 mr-1.5">{e.reference}</span>}
+                                    {e.note && <span className="italic">{e.note}</span>}
+                                    {!e.reference && !e.note && <span className="opacity-30">–</span>}
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <span className={cn('inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium', katColor[kat])}>
+                                      {kat}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono">{kontoLabel}</td>
+                                  <td className="px-4 py-2.5 text-right tabular-nums font-semibold">CHF {fmtChf(e.amountNet)}</td>
+                                  <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(e.amountGross)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t-2 border-border bg-muted/20">
+                              <td className="px-4 py-3 text-xs text-muted-foreground uppercase tracking-wide font-medium" colSpan={4}>Total</td>
+                              <td className="px-4 py-3 text-right tabular-nums font-bold">CHF {fmtChf(supplierFilterTotals.net)}</td>
+                              <td className="px-4 py-3 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(supplierFilterTotals.gross)}</td>
                             </tr>
                           </tfoot>
                         </table>
