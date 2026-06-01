@@ -475,9 +475,10 @@ const Dashboard = () => {
   );
   const revenueMonthBase = revenueMonthDaily > 0 ? revenueMonthDaily : reportingActualRevenue;
 
-  // Maison-Korrektur: Summe der Tages-Marketingwerte für aktive Tage / Monat
+  // Maison-Aufschlag: Marketing-Tageswerte werden zum Basisumsatz addiert
+  // (Das reguläre Umsatzfile enthält KEIN Marketing — es wird separat importiert)
   const maisonSumGross = (days: string[]) =>
-    maisonOn && maisonExclude
+    maisonOn && !maisonExclude
       ? days.reduce((s, d) => s + (maisonDaily[d] ?? 0), 0)
       : 0;
   const maisonActiveGross = maisonSumGross(activeDays);
@@ -486,7 +487,7 @@ const Dashboard = () => {
   const maisonActiveNet = showNetRevenue ? maisonActiveGross / 1.081 : maisonActiveGross;
   const maisonMonthNet  = showNetRevenue ? maisonMonthGross  / 1.081 : maisonMonthGross;
 
-  const revenueMonth = revenueMonthBase - maisonMonthNet;
+  const revenueMonth = revenueMonthBase + maisonMonthNet;
 
   // Fallback Vorjahr: zuerst revenuePreviousYear im aktuellen Datensatz (manuell eingegeben),
   // dann Vorjahres-Ist aus reporting_v1 des Vorjahres.
@@ -516,7 +517,7 @@ const Dashboard = () => {
   const revenueActiveBase = (period === 'month' && revenueActiveDailyRaw === 0)
     ? reportingActualRevenue
     : revenueActiveDailyRaw;
-  const revenueActive = revenueActiveBase - maisonActiveNet;
+  const revenueActive = revenueActiveBase + maisonActiveNet;
   const revenuePrevYearDailyRaw = sumRevenuePrevYear(activeDays);
   const revenuePrevYearActive = revenuePrevYearDailyRaw > 0
     ? revenuePrevYearDailyRaw
