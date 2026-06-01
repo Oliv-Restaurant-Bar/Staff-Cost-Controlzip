@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Plus, Clock, ChevronUp, AlertCircle, CheckCircle2, Loader2, History } from 'lucide-react';
+import { Plus, Clock, ChevronUp, AlertCircle, CheckCircle2, Loader2, History, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import {
   getWageHistory,
   addWageEntry,
+  deleteWageEntry,
   formatWage,
   type WageEntry,
 } from '@/lib/wage-history';
@@ -66,6 +67,8 @@ export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHist
   const [loading,    setLoading]    = useState(true);
   const [showForm,   setShowForm]   = useState(false);
   const [saving,     setSaving]     = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting,   setDeleting]   = useState(false);
 
   // Formularfelder
   const [wageType,   setWageType]   = useState<'hourly' | 'monthly'>('hourly');
@@ -164,6 +167,22 @@ export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHist
     resetForm();
 
     // Liste neu laden
+    setLoading(true);
+    const fresh = await getWageHistory(String(employee.id), restaurantId);
+    setHistory(fresh);
+    setLoading(false);
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeleting(true);
+    const { error } = await deleteWageEntry(id);
+    setDeleting(false);
+    setConfirmDeleteId(null);
+    if (error) {
+      toast.error(`Löschen fehlgeschlagen: ${error}`);
+      return;
+    }
+    toast.success('Lohneintrag gelöscht');
     setLoading(true);
     const fresh = await getWageHistory(String(employee.id), restaurantId);
     setHistory(fresh);
@@ -407,9 +426,38 @@ export function WageHistorySection({ employee, restaurantId, isAdmin }: WageHist
                     {formatWage(entry)}
                   </span>
                 </div>
-                <div className="text-[10px] text-muted-foreground flex items-center gap-1">
-                  <Clock className="h-3 w-3" />
-                  ab {fmtDate(entry.validFrom)}
+                <div className="flex items-center gap-2">
+                  <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    ab {fmtDate(entry.validFrom)}
+                  </div>
+                  {isAdmin && (
+                    confirmDeleteId === entry.id ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleDelete(entry.id)}
+                          disabled={deleting}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 font-medium"
+                        >
+                          {deleting ? '…' : 'Ja, löschen'}
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="text-[10px] px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:bg-muted"
+                        >
+                          Abbrechen
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmDeleteId(entry.id)}
+                        className="text-muted-foreground/40 hover:text-red-500 transition-colors p-0.5 rounded"
+                        title="Lohneintrag löschen"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )
+                  )}
                 </div>
               </div>
               {entry.notes && (

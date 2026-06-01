@@ -63,7 +63,7 @@ import { ContractDraft, defaultContractDraft } from '@/types/contract';
 import { calcSL, calcML, LGAV } from '@/lib/salaryCalc';
 import { toast } from 'sonner';
 import { VertragswechselDialog } from '@/components/VertragswechselDialog';
-import { loadContractHistory, ContractPhase } from '@/lib/contract-history-store';
+import { loadContractHistory, ContractPhase, deleteContractPhase } from '@/lib/contract-history-store';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -403,6 +403,7 @@ const Personalstamm = () => {
   const [openContractF,  setOpenContractF]  = useState(false);
   const [showVertragswechsel, setShowVertragswechsel] = useState(false);
   const [contractHistory,     setContractHistory]     = useState<ContractPhase[]>([]);
+  const [deleteContractTarget, setDeleteContractTarget] = useState<ContractPhase | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1587,7 +1588,7 @@ CREATE POLICY "Anon self-register new employee"
                 <div className="flex items-center gap-2 flex-wrap">
                   {!editMode && canEditEmployees && selectedId && (
                     <>
-                      {editActive ? (
+                      {editActive && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -1595,15 +1596,6 @@ CREATE POLICY "Anon self-register new employee"
                           onClick={() => selectedEmp && toggleActive(selectedEmp, false)}
                         >
                           Deaktivieren
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 text-xs text-green-600 border-green-200 hover:bg-green-50"
-                          onClick={() => selectedEmp && toggleActive(selectedEmp, true)}
-                        >
-                          Aktivieren
                         </Button>
                       )}
                       <Button variant="outline" size="sm" className="h-8" onClick={startEdit}>
@@ -2528,6 +2520,13 @@ CREATE POLICY "Anon self-register new employee"
                             <p className="text-[11px] text-muted-foreground italic mt-0.5">{phase.note}</p>
                           )}
                         </div>
+                        <button
+                          onClick={() => setDeleteContractTarget(phase)}
+                          className="shrink-0 text-muted-foreground/40 hover:text-red-500 transition-colors p-0.5 rounded mt-0.5"
+                          title="Vertragsphase löschen"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     ))}
                   </CardContent>
@@ -3053,6 +3052,42 @@ CREATE POLICY "Anon self-register new employee"
           )}
         </main>
       </div>
+
+      {/* Vertragsphase löschen-Dialog */}
+      <AlertDialog open={!!deleteContractTarget} onOpenChange={open => !open && setDeleteContractTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Vertragsphase löschen?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteContractTarget && (
+                <>
+                  Die Phase <strong>
+                    {deleteContractTarget.contractType === 'monthly' ? 'Monatslohn (FIX)' : 'Stundenlohn (Flex)'}
+                  </strong> ab <strong>{deleteContractTarget.effectiveFrom.split('-').reverse().join('.')}</strong> wird dauerhaft entfernt.
+                  {contractHistory[0]?.id === deleteContractTarget.id && contractHistory.length > 1 && (
+                    <> Die vorherige Phase wird automatisch als aktive Phase gesetzt.</>
+                  )}
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (!deleteContractTarget || !selectedId) return;
+                deleteContractPhase(tenantKey, selectedId, deleteContractTarget.id);
+                setContractHistory(loadContractHistory(tenantKey, selectedId));
+                setDeleteContractTarget(null);
+                toast.success('Vertragsphase gelöscht');
+              }}
+            >
+              Löschen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Löschen-Dialog */}
       <AlertDialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>

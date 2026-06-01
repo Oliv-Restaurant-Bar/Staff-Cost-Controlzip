@@ -337,6 +337,25 @@ export async function addWageEntry(
   }
 }
 
+/**
+ * Lohneintrag löschen (anhand der ID).
+ */
+export async function deleteWageEntry(
+  id: string,
+): Promise<{ error: string | null }> {
+  try {
+    const { error } = await (supabase as any)
+      .from('employee_wages')
+      .delete()
+      .eq('id', id);
+    if (error) return { error: error.message };
+    console.log(`[WAGE-HISTORY] deleteWageEntry OK | id: ${id}`);
+    return { error: null };
+  } catch (e) {
+    return { error: String(e) };
+  }
+}
+
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────────
 
 /** Formatiert ein Datum als YYYY-MM-DD */

@@ -122,6 +122,41 @@ export function archiveContractPhase(
   return newPhase;
 }
 
+/**
+ * Löscht eine einzelne Vertragsphase anhand ihrer ID.
+ * Wenn die neueste (aktive) Phase gelöscht wird, wird die vorherige Phase wieder geöffnet.
+ */
+export function deleteContractPhase(
+  tenantKeyFn: (k: string) => string,
+  empId: string,
+  phaseId: string,
+): void {
+  const map = loadAllContractHistory(tenantKeyFn);
+  const phases = (map[empId] ?? []).sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
+
+  const idx = phases.findIndex(p => p.id === phaseId);
+  if (idx === -1) return;
+
+  const filtered = phases.filter(p => p.id !== phaseId);
+
+  // Wenn die neueste Phase gelöscht wird → vorherige Phase wieder öffnen (effectiveTo entfernen)
+  if (idx === 0 && filtered.length > 0) {
+    const { effectiveTo: _removed, ...rest } = filtered[0];
+    filtered[0] = rest;
+  }
+
+  map[empId] = filtered;
+
+  try {
+    localStorage.setItem(storageKey(tenantKeyFn), JSON.stringify(map));
+    saveSetting(storageKey(tenantKeyFn), map).catch(e =>
+      console.error('[contractHistory] Supabase backup failed:', e),
+    );
+  } catch (e) {
+    console.error('[contractHistory] localStorage write failed:', e);
+  }
+}
+
 // ─── Analyse ─────────────────────────────────────────────────────────────────
 
 /**
