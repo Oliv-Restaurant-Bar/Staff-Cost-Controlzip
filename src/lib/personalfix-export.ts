@@ -139,6 +139,21 @@ export interface PersonalFixExportData {
   proRataTotal: number;
   proRataVarByEmp: ProRataEmpRow[];
   daysInSelectedMonth: number;
+
+  // PKQ — Personalkosten-Quote (% vom Nettoumsatz)
+  pkqPlan:     number | null;
+  pkqIst:      number | null;
+  pkqFlexPlan: number | null;
+  pkqFlexIst:  number | null;
+  pkqFix:      number | null;
+  monthRevenue: number;
+  revenueLabel: string;
+
+  // pfix Plan/Ist Werte für PKQ-Tabelle
+  pfixPlanWork:  number;
+  pfixIstWork:   number;
+  pfixPlanTotal: number;
+  pfixIstTotal:  number;
 }
 
 // ── Interne Helfer ─────────────────────────────────────────────────────────────
@@ -346,6 +361,8 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
     deptSummary,
     proRataDay, proRataFactor, proRataFixCost, proRataVarCost, proRataTotal,
     proRataVarByEmp, daysInSelectedMonth,
+    pkqPlan, pkqIst, pkqFlexPlan, pkqFlexIst, pkqFix,
+    monthRevenue, revenueLabel,
   } = data;
 
   const monthLabel = getMonthLabel(selectedYear, selectedMonth);
@@ -639,6 +656,110 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
       setFont(pdf, 'normal', 6.5, hTx);
       pdf.text(line2, M + 5, curY + 11);
       curY += hintH + SP_BLOCK;
+    }
+  }
+
+  // ── 3b. PKQ — Plan vs. Ist Vergleich ─────────────────────────────────────
+  if (monthRevenue > 0 && (pkqPlan !== null || pkqIst !== null)) {
+    needsPage(52);
+    drawSectionTitle(pdf, M, curY, W,
+      `Personalkosten-Quote (PKQ) — ${monthLabel}  ·  Nettoumsatz: ${fmtCHF(monthRevenue)} (${revenueLabel})`,
+      [109, 40, 217] as [number, number, number]);
+    curY += SP_SECTION;
+
+    const fmtPkq = (v: number | null) => v !== null ? `${v.toFixed(1)} %` : '—';
+
+    const tableRows = [
+      { label: 'Flex Arbeit',    planCHF: data.pfixPlanWork,  istCHF: data.pfixIstWork,  pkqP: pkqFlexPlan, pkqI: pkqFlexIst },
+      { label: 'Personal FIX',   planCHF: totalFixCost,        istCHF: totalFixCost,       pkqP: pkqFix,      pkqI: pkqFix },
+      { label: 'Total Personal', planCHF: data.pfixPlanTotal,  istCHF: data.pfixIstTotal,  pkqP: pkqPlan,     pkqI: pkqIst },
+    ];
+
+    const COL_W = [50, 30, 30, 28, 22, 22] as const;
+
+    autoTable(pdf, {
+      startY: curY,
+      margin: { left: M, right: M },
+      head: [['Bereich', 'Plan CHF', 'Ist CHF', 'Diff. CHF', 'PKQ Plan', 'PKQ Ist']],
+      body: tableRows.map(r => {
+        const diff = r.istCHF - r.planCHF;
+        return [
+          r.label,
+          fmtCHF(r.planCHF),
+          fmtCHF(r.istCHF),
+          diff === 0 ? '–' : `${diff > 0 ? '+' : ''}${fmtCHF(diff)}`,
+          fmtPkq(r.pkqP),
+          fmtPkq(r.pkqI),
+        ];
+      }),
+      theme: 'plain',
+      styles: { fontSize: 8.5, cellPadding: CP, lineColor: C.borderGray, lineWidth: 0.2 },
+      headStyles: {
+        fillColor: [109, 40, 217] as [number, number, number],
+        textColor: C.white, fontStyle: 'bold', fontSize: 7.5,
+        cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
+      },
+      alternateRowStyles: { fillColor: C.rowGray },
+      footStyles: {
+        fillColor: [237, 233, 254] as [number, number, number],
+        textColor: [109, 40, 217] as [number, number, number],
+        fontStyle: 'bold',
+      },
+      columnStyles: {
+        0: { cellWidth: COL_W[0], fontStyle: 'bold' },
+        1: { cellWidth: COL_W[1], halign: 'right', textColor: C.textBlue },
+        2: { cellWidth: COL_W[2], halign: 'right', textColor: C.textOrange },
+        3: { cellWidth: COL_W[3], halign: 'right' },
+        4: { cellWidth: COL_W[4], halign: 'right', textColor: C.textBlue },
+        5: { cellWidth: COL_W[5], halign: 'right', fontStyle: 'bold' },
+      },
+      didParseCell(h) {
+        if (h.section === 'body') {
+          const label = (h.row.raw as string[])[0];
+          const isTotal = label === 'Total Personal';
+          if (isTotal) {
+            h.cell.styles.fillColor = [240, 253, 244] as [number, number, number];
+            if (h.column.index === 0) h.cell.styles.textColor = C.textGreen;
+          }
+          // Colour PKQ Ist column by deviation
+          if (h.column.index === 5) {
+            const rowIdx = h.row.index;
+            const r = tableRows[rowIdx];
+            if (r && r.pkqP !== null && r.pkqI !== null) {
+              const dev = r.pkqI - r.pkqP;
+              if (dev > 0.5)       h.cell.styles.textColor = C.textRed;
+              else if (dev < -0.5) h.cell.styles.textColor = C.textGreen;
+              else                 h.cell.styles.textColor = C.textOrange;
+            }
+          }
+        }
+      },
+    });
+    curY = (pdf as any).lastAutoTable.finalY + SP_BLOCK;
+
+    // PKQ Ziel-Info-Balken
+    if (pkqPlan !== null && pkqIst !== null) {
+      const deviation = pkqIst - pkqPlan;
+      const isOver = deviation > 0.5;
+      const isUnder = deviation < -0.5;
+      const barBg: [number, number, number] = isOver ? C.lightRed : isUnder ? C.lightGreen : [240, 253, 244];
+      const barTx: [number, number, number] = isOver ? C.textRed  : isUnder ? C.textGreen  : C.textGreen;
+      const barH = 10;
+      pdf.setFillColor(...barBg);
+      pdf.setDrawColor(...barTx);
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(M, curY, W, barH, 1.5, 1.5, 'FD');
+      pdf.setFillColor(...barTx);
+      pdf.rect(M, curY, 2, barH, 'F');
+      const sign = deviation >= 0 ? '+' : '';
+      const msg = isOver
+        ? `⚠  PKQ Ist liegt ${sign}${deviation.toFixed(1)} % über Plan — Personalkosten im Verhältnis zum Umsatz zu hoch.`
+        : isUnder
+        ? `✓  PKQ Ist liegt ${Math.abs(deviation).toFixed(1)} % unter Plan — Personalkosten effizienter als geplant.`
+        : `✓  PKQ Ist entspricht dem Plan (Abweichung: ${sign}${deviation.toFixed(1)} %).`;
+      setFont(pdf, 'bold', 7.5, barTx);
+      pdf.text(msg, M + 5, curY + 6.5);
+      curY += barH + SP_SECTION;
     }
   }
 

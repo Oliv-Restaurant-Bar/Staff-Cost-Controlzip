@@ -2358,6 +2358,18 @@ export default function PersonalFixPage() {
         proRataTotal,
         proRataVarByEmp,
         daysInSelectedMonth,
+        // PKQ
+        pkqPlan,
+        pkqIst,
+        pkqFlexPlan,
+        pkqFlexIst,
+        pkqFix,
+        monthRevenue,
+        revenueLabel,
+        pfixPlanWork:  pfix.active.planWork,
+        pfixIstWork:   pfix.active.istWork,
+        pfixPlanTotal: pfix.active.planTotal,
+        pfixIstTotal:  pfix.active.istTotal,
       });
       toast.success('PDF erfolgreich exportiert');
     } catch (err) {
