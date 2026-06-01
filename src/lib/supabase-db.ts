@@ -19,6 +19,8 @@ export interface ActualHourEntry {
   hours: number;
   start?: string;
   end?: string;
+  start2?: string;
+  end2?: string;
   absenceType?: string | null;
 }
 

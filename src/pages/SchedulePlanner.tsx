@@ -1631,12 +1631,41 @@ const SchedulePlanner = () => {
     slot: TimeSlot,
   ) => {
     const cellKey = `${employeeId}-${date}`;
-    const [sh, sm] = slot.start.split(':').map(Number);
-    const [eh, em] = slot.end.split(':').map(Number);
-    let h = eh - sh + (em - sm) / 60;
-    if (h < 0) h += 24;
-    const hours = Math.round(h * 100) / 100;
-    const entry: ActualHoursEntry = { hours, start: slot.start, end: slot.end };
+
+    // Use the full day schedule so that split shifts (früh + spät) are correctly summed
+    const daySchedule = scheduleData[cellKey];
+    let hours: number;
+    let start: string | undefined;
+    let end: string | undefined;
+    let start2: string | undefined;
+    let end2: string | undefined;
+
+    if (daySchedule && (daySchedule.früh || daySchedule.spät)) {
+      // calculateDayHours sums both blocks and applies a single break deduction
+      hours = calculateDayHours(daySchedule);
+      if (daySchedule.früh) {
+        start = daySchedule.früh.start;
+        end   = daySchedule.früh.end;
+        if (daySchedule.spät) {
+          start2 = daySchedule.spät.start;
+          end2   = daySchedule.spät.end;
+        }
+      } else if (daySchedule.spät) {
+        start = daySchedule.spät.start;
+        end   = daySchedule.spät.end;
+      }
+    } else {
+      // Fallback: only the passed slot is available (should rarely happen)
+      const [sh, sm] = slot.start.split(':').map(Number);
+      const [eh, em] = slot.end.split(':').map(Number);
+      let h = eh - sh + (em - sm) / 60;
+      if (h < 0) h += 24;
+      hours = Math.round(h * 100) / 100;
+      start = slot.start;
+      end   = slot.end;
+    }
+
+    const entry: ActualHoursEntry = { hours, start, end, start2, end2 };
 
     const existing = actualHoursData[cellKey];
     const hasRealIst =
@@ -1656,7 +1685,8 @@ const SchedulePlanner = () => {
     }
 
     doSavePlanToIst(employeeId, date, cellKey, entry);
-  }, [actualHoursData, planCopiedKeys, doSavePlanToIst]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actualHoursData, planCopiedKeys, doSavePlanToIst, scheduleData]);
 
   const handleAddAushilfe = (employee: Omit<Employee, 'id'>) => {
     const newEmployee: Employee = {
@@ -1763,7 +1793,7 @@ const SchedulePlanner = () => {
   };
 
   // Handle actual hours change
-  const handleActualHoursChange = (employeeId: string, date: string, entry: { hours: number; start?: string; end?: string; absenceType?: 'FE' | 'K' | 'F' } | null) => {
+  const handleActualHoursChange = (employeeId: string, date: string, entry: { hours: number; start?: string; end?: string; start2?: string; end2?: string; absenceType?: 'FE' | 'K' | 'F' } | null) => {
     const cellKey = `${employeeId}-${date}`;
 
     setActualHoursData(prev => {

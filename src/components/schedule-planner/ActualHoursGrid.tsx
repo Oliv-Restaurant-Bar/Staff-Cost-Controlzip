@@ -23,6 +23,8 @@ export interface ActualHoursEntry {
   hours: number;
   start?: string;
   end?: string;
+  start2?: string;
+  end2?: string;
   absenceType?: AbsenceCode;
 }
 
@@ -253,7 +255,10 @@ const ActualHoursCell = ({
             </span>
             {entry?.start && entry?.end && (
               <span className="text-[9px] text-muted-foreground">
-                {entry.start}-{entry.end}
+                {entry.start}–{entry.end}
+                {entry.start2 && entry.end2 && (
+                  <> / {entry.start2}–{entry.end2}</>
+                )}
               </span>
             )}
             {showCosts && (
