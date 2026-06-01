@@ -377,6 +377,14 @@ export default function WarenrechnungenPage() {
 
   useEffect(() => { void loadAnalyseRange(); }, [loadAnalyseRange]);
 
+  // Analyse-Monat folgt dem Haupt-Monatspicker (oben) wenn im Monat-Modus
+  useEffect(() => {
+    if (analyseMode === 'month') {
+      setAYear(year);
+      setAMonth(month);
+    }
+  }, [year, month, analyseMode]);
+
   const prevMonth = () => {
     if (month === 1) { setYear(y => y - 1); setMonth(12); }
     else setMonth(m => m - 1);
