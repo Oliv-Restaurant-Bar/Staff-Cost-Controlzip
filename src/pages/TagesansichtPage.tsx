@@ -22,7 +22,7 @@ import {
 import { de } from 'date-fns/locale';
 import {
   ChevronLeft, ChevronRight, Table2, TrendingUp, TrendingDown,
-  Pencil, CheckCircle2, X, AlertTriangle, CheckCircle,
+  Pencil, CheckCircle2, X, AlertTriangle, CheckCircle, Eye, EyeOff,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -112,6 +112,19 @@ export default function TagesansichtPage() {
   const [maisonMonthly, setMaisonMonthly]       = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
   const [maisonDaily,   setMaisonDaily]         = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
   const [maisonExclude, setMaisonExclude]       = useMaisonExclude();
+
+  // Marketing-Spalte ein-/ausblenden (persistiert in localStorage)
+  const [showMaisonCol, setShowMaisonCol] = useState(
+    () => localStorage.getItem('tagesansicht_show_maison') !== 'false',
+  );
+  const toggleMaisonCol = () => {
+    const next = !showMaisonCol;
+    setShowMaisonCol(next);
+    localStorage.setItem('tagesansicht_show_maison', String(next));
+  };
+  // Abgeleitete Variable: Spalte sichtbar wenn Daten vorhanden UND nicht ausgeblendet
+  const showMarketingCol = maisonEnabled && showMaisonCol;
+
   useEffect(() => {
     loadMaisonEnabled(tenantKey).then(setMaisonEnabledState);
     loadMaisonMonthly(tenantKey).then(setMaisonMonthly);
@@ -452,6 +465,24 @@ export default function TagesansichtPage() {
             {!hasBud && ' · kein Budget'}
           </span>
 
+          {/* Marketing-Spalte Toggle (nur wenn Daten vorhanden) */}
+          {maisonEnabled && (
+            <button
+              onClick={toggleMaisonCol}
+              title={showMaisonCol ? 'Marketing-Spalte ausblenden' : 'Marketing-Spalte einblenden'}
+              className={cn(
+                'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors border',
+                showMaisonCol
+                  ? 'border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/30 dark:text-violet-400'
+                  : 'border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted',
+              )}
+            >
+              {showMaisonCol
+                ? <><EyeOff className="h-3 w-3" />Marketing</>
+                : <><Eye className="h-3 w-3" />Marketing</>}
+            </button>
+          )}
+
           {/* Vergleichs-Buttons */}
           <div className="ml-auto flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
             {MODES.map(m => (
@@ -608,7 +639,7 @@ export default function TagesansichtPage() {
                 {/* ── Gruppen-Header ─────────────────────────────────────── */}
                 <thead>
                   <tr className="bg-muted/30 border-b border-border/40 text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">
-                    <th colSpan={2 + (showVjCols ? 1 : 0) + (showVjCols ? 1 : 0) + (showDevVj ? 1 : 0) + (showBudCol ? 1 : 0) + (showDevBud ? 1 : 0) + 1}
+                    <th colSpan={2 + (showMarketingCol ? 1 : 0) + (showVjCols ? 1 : 0) + (showVjCols ? 1 : 0) + (showDevVj ? 1 : 0) + (showBudCol ? 1 : 0) + (showDevBud ? 1 : 0) + 1}
                       className="text-left px-3 py-1">
                       Tagesvergleich
                     </th>
@@ -628,7 +659,7 @@ export default function TagesansichtPage() {
                     <th className={thL}>Datum</th>
                     <th className={thL}>WT</th>
                     <th className={thR}>Ist</th>
-                    {maisonEnabled && (
+                    {showMarketingCol && (
                       <th className="px-2 py-[3px] text-right text-[10px] font-medium border-l border-violet-200/40 dark:border-violet-800/40 whitespace-nowrap">
                         <button
                           onClick={() => setMaisonExclude(!maisonExclude)}
@@ -723,7 +754,7 @@ export default function TagesansichtPage() {
                           )}
                         </td>
                         {/* Maison Infospalte — editierbar */}
-                        {maisonEnabled && (() => {
+                        {showMarketingCol && (() => {
                           const d = format(row.day, 'yyyy-MM-dd');
                           const grossVal = maisonDaily[d] ?? 0;
                           return (
@@ -848,7 +879,7 @@ export default function TagesansichtPage() {
                     <tr className="border-t-2 border-border bg-muted/50 font-semibold text-xs">
                       <td className={cn(tdL, 'text-muted-foreground text-[11px]')} colSpan={2}>Gesamt</td>
                       <td className={tdR}>{fmtN(lastRow.cumIst)}</td>
-                      {maisonEnabled && <td />}
+                      {showMarketingCol && <td />}
                       {showVjCols && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(lastRow.cumVj)}</td>}
                       {showVjCols && <td className={tdL} />}
                       {showDevVj  && <td className={cn(tdR, devCls(lastRow.cumDevVj, lastRow.cumIst > 0))}>{fmtDev(lastRow.cumDevVj)}</td>}
