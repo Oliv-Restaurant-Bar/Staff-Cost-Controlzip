@@ -1908,6 +1908,36 @@ export default function PersonalFixPage() {
       varArbeitPlanMonat, varArbeitIstMonat, ferienPlanTotalCHF, ferienIstTotalCHF,
       totalFixCost, proRataDay, proRataFactor]);
 
+  // ── Monatsumsatz für PKQ-Berechnung ──────────────────────────────────────
+  // Summiert actualRevenue (+ takeawayRevenue wenn Marketing nicht ausgeblendet)
+  // für den gewählten Monat; bei Stichtag nur bis proRataDay.
+  const monthRevenue = useMemo(() => {
+    let total = 0;
+    const prefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-`;
+    for (const [date, val] of Object.entries(monthlyRevenues)) {
+      if (!date.startsWith(prefix)) continue;
+      if (proRataDay !== null) {
+        const day = parseInt(date.slice(-2), 10);
+        if (day > proRataDay) continue;
+      }
+      total += val.actualRevenue ?? 0;
+      if (!maisonExclude) {
+        total += val.takeawayRevenue ?? 0;
+      }
+    }
+    return total;
+  }, [monthlyRevenues, proRataDay, maisonExclude, selectedYear, selectedMonth]);
+
+  // PKQ = Personalkosten / Umsatz × 100
+  const pkqPlan = monthRevenue > 0 ? (pfix.active.planTotal / monthRevenue) * 100 : null;
+  const pkqIst  = monthRevenue > 0 ? (pfix.active.istTotal  / monthRevenue) * 100 : null;
+  const pkqFlexPlan = monthRevenue > 0 ? (pfix.active.planWork / monthRevenue) * 100 : null;
+  const pkqFlexIst  = monthRevenue > 0 ? (pfix.active.istWork  / monthRevenue) * 100 : null;
+  const pkqFix      = monthRevenue > 0 ? (pfix.active.fix      / monthRevenue) * 100 : null;
+  const revenueLabel = maisonOn
+    ? (maisonExclude ? 'exkl. Marketing' : 'inkl. Marketing')
+    : 'Ist-Umsatz';
+
   // ── pfix-derived budget comparison (always uses Ist actuals as "spend") ────
   // When a cutoff (Stichtag) is active, scale the budget pro rata to that day
   // so that "Ist bis Stichtag" is compared against "Budget bis Stichtag".
@@ -2582,18 +2612,18 @@ export default function PersonalFixPage() {
             color={pfix.active.istWork > 0 ? 'orange' : 'default'}
           />
           <KpiCard
-            title={proRataDay !== null ? `Ferien Plan bis ${proRataDay}.` : 'Ferien Plan'}
-            value={fmtCHF(pfix.active.planHoliday)}
-            sub="FE-Tage × Tagessatz (Plan)"
-            icon={<Calendar className="h-5 w-5" />}
-            color={pfix.active.planHoliday > 0 ? 'blue' : 'default'}
+            title={proRataDay !== null ? `PKQ Plan bis ${proRataDay}.` : 'PKQ Plan'}
+            value={pkqPlan !== null ? `${pkqPlan.toFixed(1)} %` : '—'}
+            sub={monthRevenue > 0 ? `${fmtCHF(pfix.active.planTotal)} / ${fmtCHF(monthRevenue)}` : 'Kein Umsatz erfasst'}
+            icon={<TrendingDown className="h-5 w-5" />}
+            color="blue"
           />
           <KpiCard
-            title={proRataDay !== null ? `Ferien Ist bis ${proRataDay}.` : 'Ferien Ist'}
-            value={fmtCHF(pfix.active.istHoliday)}
-            sub="FE-Tage × Tagessatz (Ist)"
-            icon={<Calendar className="h-5 w-5" />}
-            color={pfix.active.istHoliday > 0 ? 'orange' : 'default'}
+            title={proRataDay !== null ? `PKQ Ist bis ${proRataDay}.` : 'PKQ Ist'}
+            value={pkqIst !== null ? `${pkqIst.toFixed(1)} %` : '—'}
+            sub={monthRevenue > 0 ? `${fmtCHF(pfix.active.istTotal)} / ${fmtCHF(monthRevenue)} · ${revenueLabel}` : 'Kein Umsatz erfasst'}
+            icon={<TrendingDown className="h-5 w-5" />}
+            color={pkqIst !== null && pkqPlan !== null ? (pkqIst > pkqPlan + 1 ? 'red' : pkqIst < pkqPlan - 1 ? 'green' : 'default') : 'default'}
           />
           <KpiCard
             title={proRataDay !== null ? `Total Flex Plan bis ${proRataDay}.` : 'Total Flex Plan'}
@@ -2647,40 +2677,23 @@ export default function PersonalFixPage() {
               <thead>
                 <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
                   <th className="text-left px-4 py-2 font-medium">Bereich</th>
-                  <th className="text-right px-4 py-2 font-medium text-blue-600">Plan</th>
-                  <th className="text-right px-4 py-2 font-medium text-orange-600">Ist</th>
+                  <th className="text-right px-4 py-2 font-medium text-blue-600">Plan CHF</th>
+                  <th className="text-right px-4 py-2 font-medium text-orange-600">Ist CHF</th>
                   <th className="text-right px-4 py-2 font-medium">Diff. CHF</th>
-                  <th className="text-right px-4 py-2 font-medium">Diff. %</th>
+                  <th className="text-right px-4 py-2 font-medium text-blue-600">PKQ Plan</th>
+                  <th className="text-right px-4 py-2 font-medium text-orange-600">PKQ Ist</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {([
-                  { label: 'Flex Arbeit Plan / Ist', plan: pfix.active.planWork,  ist: pfix.active.istWork,  diff: pfix.active.diffWork,  bold: true },
-                  { label: 'Ferienabbau (nur Info)', plan: pfix.active.planHoliday, ist: pfix.active.istHoliday, diff: pfix.active.diffHoliday, infoOnly: true },
-                  { label: 'Personal FIX',           plan: pfix.active.fix,        ist: pfix.active.fix,      diff: 0,                     fixed: true },
-                  { label: 'Total Personal',         plan: pfix.active.planTotal,  ist: pfix.active.istTotal, diff: pfix.active.diffTotal,  bold: true, highlight: true },
-                ] as Array<{ label: string; plan: number; ist: number; diff: number; bold?: boolean; fixed?: boolean; highlight?: boolean; infoOnly?: boolean }>)
+                  { label: 'Flex Arbeit Plan / Ist', plan: pfix.active.planWork, ist: pfix.active.istWork, diff: pfix.active.diffWork,  bold: true,  pkqP: pkqFlexPlan, pkqI: pkqFlexIst },
+                  { label: 'Personal FIX',           plan: pfix.active.fix,      ist: pfix.active.fix,     diff: 0,                     fixed: true, pkqP: pkqFix,      pkqI: pkqFix },
+                  { label: 'Total Personal',         plan: pfix.active.planTotal, ist: pfix.active.istTotal,diff: pfix.active.diffTotal, bold: true,  highlight: true, pkqP: pkqPlan, pkqI: pkqIst },
+                ] as Array<{ label: string; plan: number; ist: number; diff: number; bold?: boolean; fixed?: boolean; highlight?: boolean; pkqP: number | null; pkqI: number | null }>)
                   .map((row, i) => {
-                    const pct = row.plan > 0 ? (row.diff / row.plan) * 100 : null;
                     const over = row.diff > 0;
-                    if (row.infoOnly) {
-                      return (
-                        <tr key={i} className="bg-muted/5 opacity-70">
-                          <td className="px-4 py-1.5 text-xs text-muted-foreground italic">
-                            {row.label}
-                            <span className="ml-1.5 text-[10px] not-italic opacity-70">nicht budgetwirksam</span>
-                          </td>
-                          <td className="px-4 py-1.5 text-right font-mono text-xs text-muted-foreground">{fmtCHF(row.plan)}</td>
-                          <td className="px-4 py-1.5 text-right font-mono text-xs text-muted-foreground">{fmtCHF(row.ist)}</td>
-                          <td className="px-4 py-1.5 text-right font-mono text-xs text-muted-foreground">
-                            {row.diff === 0 ? '–' : `${over ? '+' : ''}${fmtCHF(row.diff)}`}
-                          </td>
-                          <td className="px-4 py-1.5 text-right font-mono text-xs text-muted-foreground">
-                            {pct === null || row.diff === 0 ? '–' : `${over ? '+' : ''}${pct.toFixed(1)} %`}
-                          </td>
-                        </tr>
-                      );
-                    }
+                    const pkqOver = row.pkqI !== null && row.pkqP !== null && row.pkqI > row.pkqP + 0.5;
+                    const pkqUnder = row.pkqI !== null && row.pkqP !== null && row.pkqI < row.pkqP - 0.5;
                     return (
                       <tr key={i} className={cn('hover:bg-muted/20', row.highlight && 'bg-emerald-50/40 dark:bg-emerald-950/20')}>
                         <td className={cn('px-4 py-2.5', row.bold ? 'font-bold' : 'font-medium',
@@ -2700,9 +2713,15 @@ export default function PersonalFixPage() {
                           row.diff === 0 ? 'text-muted-foreground' : over ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')}>
                           {row.diff === 0 ? '–' : `${over ? '+' : ''}${fmtCHF(row.diff)}`}
                         </td>
-                        <td className={cn('px-4 py-2.5 text-right font-mono text-xs',
-                          pct === null || row.diff === 0 ? 'text-muted-foreground' : over ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')}>
-                          {pct === null || row.diff === 0 ? '–' : `${over ? '+' : ''}${pct.toFixed(1)} %`}
+                        <td className="px-4 py-2.5 text-right font-mono text-xs text-blue-700 dark:text-blue-400">
+                          {row.pkqP !== null ? `${row.pkqP.toFixed(1)} %` : '—'}
+                        </td>
+                        <td className={cn('px-4 py-2.5 text-right font-mono text-xs font-semibold',
+                          row.pkqI === null ? 'text-muted-foreground'
+                          : pkqOver  ? 'text-red-600 dark:text-red-400'
+                          : pkqUnder ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-orange-700 dark:text-orange-400')}>
+                          {row.pkqI !== null ? `${row.pkqI.toFixed(1)} %` : '—'}
                         </td>
                       </tr>
                     );
@@ -2726,6 +2745,7 @@ export default function PersonalFixPage() {
                           ? `✓ ${fmtCHF(Math.abs(diffBgt))} unter Budget`
                           : `↑ ${fmtCHF(diffBgt)} über Budget`}
                       </td>
+                      <td className="px-4 py-2.5 text-right text-xs text-muted-foreground font-mono">–</td>
                       <td className="px-4 py-2.5 text-right text-xs text-muted-foreground font-mono">
                         {budget > 0 ? `${((pfix.active.istTotal / budget) * 100).toFixed(1)} %` : '–'}
                       </td>
