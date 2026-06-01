@@ -122,8 +122,10 @@ const ActualHoursCell = ({
   const [endInput, setEndInput] = useState('');
   const [isAdditionalCost, setIsAdditionalCost] = useState(false);
 
-  // Ist dieser MA ein Fixlohn-MA (Monatslohn, kein Stundenansatz)?
-  const isFixedEmployee = !!(employee.monthlySalary && employee.monthlySalary > 0 && !(employee.hourlyWage && employee.hourlyWage > 0));
+  // Ist dieser MA ein Fixlohn-MA (Vollzeit/Teilzeit mit Monatslohn)?
+  // Exakt identisch mit hasFixedSalary() in PersonalFix.tsx — nur diese MA zählen zu den fixen Monatskosten.
+  const isFixedEmployee = (employee.employmentType === 'vollzeit' || employee.employmentType === 'teilzeit')
+    && (employee.monthlySalary ?? 0) > 0;
 
   const isWeekendDay = isWeekend(day);
   const isSundayDay = isSunday(day);
