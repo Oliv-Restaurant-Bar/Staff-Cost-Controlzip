@@ -1499,7 +1499,10 @@ export default function PersonalFixPage() {
           const localEntry = mergedRaw[key] as Record<string, unknown> | undefined;
           if ((val as { hours?: number })?.hours > 0 || !localEntry?.absenceType) {
             // Supabase wins: real working hours OR no FE in local
-            mergedRaw[key] = val;
+            // But preserve localStorage-only flags (isAdditionalCost) from local
+            mergedRaw[key] = localEntry?.isAdditionalCost
+              ? { ...(val as object), isAdditionalCost: true }
+              : val;
           } else {
             // Local FE/K/F entry protected — Supabase must not erase it
             fePreserved++;
