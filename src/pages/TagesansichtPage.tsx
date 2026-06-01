@@ -848,6 +848,7 @@ export default function TagesansichtPage() {
                     <tr className="border-t-2 border-border bg-muted/50 font-semibold text-xs">
                       <td className={cn(tdL, 'text-muted-foreground text-[11px]')} colSpan={2}>Gesamt</td>
                       <td className={tdR}>{fmtN(lastRow.cumIst)}</td>
+                      {maisonEnabled && <td />}
                       {showVjCols && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(lastRow.cumVj)}</td>}
                       {showVjCols && <td className={tdL} />}
                       {showDevVj  && <td className={cn(tdR, devCls(lastRow.cumDevVj, lastRow.cumIst > 0))}>{fmtDev(lastRow.cumDevVj)}</td>}
