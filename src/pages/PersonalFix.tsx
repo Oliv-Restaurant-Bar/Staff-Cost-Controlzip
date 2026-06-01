@@ -21,6 +21,7 @@ import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleFor
 import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract-history-store';
 import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
+import { getEffectiveHourlyRate } from '@/components/schedule-planner/ActualHoursGrid';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -614,6 +615,35 @@ function loadDailyIstDetails(
       const absenceType = typeof val === 'object' ? val?.absenceType : undefined;
       if (absenceType === 'FE') continue; // FE is vacation, not work
       const h = typeof val === 'number' ? val : (val?.hours ?? 0);
+      if (h > 0) entries.push({ date, hours: Math.round(h * 100) / 100, cost: Math.round(h * wage * 100) / 100 });
+    }
+    return entries.sort((a, b) => a.date.localeCompare(b.date));
+  } catch { return []; }
+}
+
+/**
+ * Liest Zusatzkosten-IST-Einträge für einen Mitarbeiter (isAdditionalCost: true).
+ * Identisch zu loadDailyIstDetails, aber nur Einträge mit isAdditionalCost = true.
+ */
+function loadZusatzIstDetails(
+  empId: string, year: number, month: number, cutoffDay: number | null, wage: number,
+  keyFn: (k: string) => string = k => k,
+): DayEntry[] {
+  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
+  const prefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const data: Record<string, any> = JSON.parse(raw);
+    const entries: DayEntry[] = [];
+    for (const [cellKey, val] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(prefix)) continue;
+      if (cellKey.slice(0, cellKey.length - 11) !== empId) continue;
+      if (typeof val !== 'object' || !val?.isAdditionalCost) continue;
+      const day = parseInt(date.slice(-2), 10);
+      if (cutoffDay !== null && day > cutoffDay) continue;
+      const h = val?.hours ?? 0;
       if (h > 0) entries.push({ date, hours: Math.round(h * 100) / 100, cost: Math.round(h * wage * 100) / 100 });
     }
     return entries.sort((a, b) => a.date.localeCompare(b.date));
@@ -1712,6 +1742,20 @@ export default function PersonalFixPage() {
     [variableEmployees, istHours],
   );
 
+  // Zusatzkosten-IST: Fixlohn-MA Tage mit isAdditionalCost=true → fliessen als variable Flex-Kosten ein
+  const zusatzIstCHF = useMemo(() => {
+    let total = 0;
+    for (const emp of fixedEmployees) {
+      const wage = getEffectiveHourlyRate(emp);
+      if (!wage) continue;
+      const days = loadZusatzIstDetails(emp.id, selectedYear, selectedMonth, null, wage, tenantKey);
+      const cost = days.reduce((s, r) => s + r.cost, 0);
+      if (cost > 0) console.log(`[ZUSATZ-IST] ${emp.name}: ${days.length} Tage / ${cost.toFixed(2)} CHF`);
+      total += cost;
+    }
+    return total;
+  }, [fixedEmployees, selectedYear, selectedMonth, tenantKey]);
+
   // ── Ferienabbau-Berechnungen ───────────────────────────────────────────────
   // FE-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn
   // IST: aus actual-hours-* (localStorage), PLAN: aus schedule-v2-* (localStorage)
@@ -1790,8 +1834,8 @@ export default function PersonalFixPage() {
   // Stichtag-unabhängige Plan- und Ist-Totale (für Stichtag-Controlling):
   // Variable Arbeit Plan (immer Dienstplan-Plan-Stunden)
   const varArbeitPlanMonat  = varPlanTotalCHF;
-  // Variable Arbeit Ist (immer Mirus-Ist-Stunden)
-  const varArbeitIstMonat   = varIstTotalCHF;
+  // Variable Arbeit Ist = variable MA-Stunden + Zusatzkosten von Fixlohn-MA (isAdditionalCost-Tage)
+  const varArbeitIstMonat   = varIstTotalCHF + zusatzIstCHF;
   // Total Variabel Plan = Variable Arbeit Plan + Ferienabbau Plan
   const totalVarPlanMonat   = varArbeitPlanMonat + ferienPlanTotalCHF;
   // Total Variabel Ist  = Variable Arbeit Ist  + Ferienabbau Ist
@@ -1876,6 +1920,13 @@ export default function PersonalFixPage() {
         cutoffPlanWork += planW.reduce((s, r) => s + r.cost, 0);
         cutoffIstWork  += istW.reduce((s, r)  => s + r.cost, 0);
       }
+      // Zusatzkosten von Fixlohn-MA bis Stichtag ebenfalls einrechnen
+      for (const emp of fixedEmployees) {
+        const wage = getEffectiveHourlyRate(emp);
+        if (!wage) continue;
+        const zusatzW = loadZusatzIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
+        cutoffIstWork += zusatzW.reduce((s, r) => s + r.cost, 0);
+      }
       // Holiday + FIX: proportional (calendar-uniform costs)
       const f = proRataFactor;
       cutoff = buildSlice(
@@ -1904,9 +1955,9 @@ export default function PersonalFixPage() {
     console.log(`[PFIX] diff total:    ${active.diffTotal.toFixed(2)}`);
 
     return { month, cutoff, active };
-  }, [variableEmployees, selectedYear, selectedMonth,
+  }, [variableEmployees, fixedEmployees, selectedYear, selectedMonth,
       varArbeitPlanMonat, varArbeitIstMonat, ferienPlanTotalCHF, ferienIstTotalCHF,
-      totalFixCost, proRataDay, proRataFactor]);
+      totalFixCost, proRataDay, proRataFactor, tenantKey]);
 
   // ── Monatsumsatz für PKQ-Berechnung ──────────────────────────────────────
   // Summiert Netto-Umsatz (actualRevenue – MWST 8.1%) für PKQ-Berechnung.

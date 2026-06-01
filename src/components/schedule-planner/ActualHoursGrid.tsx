@@ -26,6 +26,8 @@ export interface ActualHoursEntry {
   start2?: string;
   end2?: string;
   absenceType?: AbsenceCode;
+  /** Markiert als Zusatzkosten-Tag: Stunden eines Fixlohn-MA die als variable Flex-Kosten gezählt werden sollen */
+  isAdditionalCost?: boolean;
 }
 
 interface ActualHoursGridProps {
@@ -118,6 +120,10 @@ const ActualHoursCell = ({
   const [chfInput, setChfInput] = useState('');
   const [startInput, setStartInput] = useState('');
   const [endInput, setEndInput] = useState('');
+  const [isAdditionalCost, setIsAdditionalCost] = useState(false);
+
+  // Ist dieser MA ein Fixlohn-MA (Monatslohn, kein Stundenansatz)?
+  const isFixedEmployee = !!(employee.monthlySalary && employee.monthlySalary > 0 && !(employee.hourlyWage && employee.hourlyWage > 0));
 
   const isWeekendDay = isWeekend(day);
   const isSundayDay = isSunday(day);
@@ -147,21 +153,24 @@ const ActualHoursCell = ({
       setStartInput(entry.start || '');
       setEndInput(entry.end || '');
       setInputMode(entry.start && entry.end ? 'times' : 'hours');
+      setIsAdditionalCost(entry.isAdditionalCost ?? false);
     } else {
       setHoursInput('');
       setChfInput('');
       setStartInput('');
       setEndInput('');
       setInputMode('hours');
+      setIsAdditionalCost(false);
     }
     setIsEditing(true);
   };
 
   const handleSave = () => {
+    const zusatz = isFixedEmployee && isAdditionalCost ? true : undefined;
     if (inputMode === 'hours') {
       const hours = parseFloat(hoursInput.replace(',', '.'));
       if (!isNaN(hours) && hours > 0) {
-        onSave({ hours });
+        onSave({ hours, isAdditionalCost: zusatz });
       } else if (hoursInput === '' || hours === 0) {
         onSave(null);
       }
@@ -169,14 +178,14 @@ const ActualHoursCell = ({
       const chf = parseFloat(chfInput.replace(',', '.'));
       if (!isNaN(chf) && chf > 0 && effectiveRate > 0) {
         const hours = chf / effectiveRate;
-        onSave({ hours: Math.round(hours * 100) / 100 });
+        onSave({ hours: Math.round(hours * 100) / 100, isAdditionalCost: zusatz });
       } else if (chfInput === '' || chf === 0) {
         onSave(null);
       }
     } else {
       if (startInput && endInput) {
         const hours = calculateHoursFromTimes(startInput, endInput);
-        onSave({ hours, start: startInput, end: endInput });
+        onSave({ hours, start: startInput, end: endInput, isAdditionalCost: zusatz });
       }
     }
     setIsEditing(false);
@@ -250,9 +259,16 @@ const ActualHoursCell = ({
           </div>
         ) : hours > 0 ? (
           <div className="flex flex-col items-center gap-0.5">
-            <span className="font-medium text-green-700 dark:text-green-400">
-              {hours.toFixed(1)}h
-            </span>
+            <div className="flex items-center gap-0.5">
+              <span className="font-medium text-green-700 dark:text-green-400">
+                {hours.toFixed(1)}h
+              </span>
+              {entry?.isAdditionalCost && (
+                <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-orange-500 text-white text-[8px] font-bold leading-none" title="Zusatzkosten">
+                  +
+                </span>
+              )}
+            </div>
             {entry?.start && entry?.end && (
               <span className="text-[9px] text-muted-foreground">
                 {entry.start}–{entry.end}
@@ -262,8 +278,8 @@ const ActualHoursCell = ({
               </span>
             )}
             {showCosts && (
-              <span className="text-[9px] text-muted-foreground">
-                {cost.toFixed(0)} CHF
+              <span className={cn("text-[9px]", entry?.isAdditionalCost ? "text-orange-600 dark:text-orange-400 font-semibold" : "text-muted-foreground")}>
+                {cost.toFixed(0)} CHF{entry?.isAdditionalCost ? ' ✚' : ''}
               </span>
             )}
           </div>
@@ -477,6 +493,25 @@ const ActualHoursCell = ({
                   = {calculateHoursFromTimes(startInput, endInput).toFixed(1)} Stunden
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Zusatzkosten-Checkbox: nur für Fixlohn-Mitarbeiter */}
+          {isFixedEmployee && (
+            <div className="mt-3 flex items-start gap-2.5 rounded-md border border-orange-200 bg-orange-50 dark:border-orange-700/50 dark:bg-orange-900/20 px-3 py-2.5">
+              <input
+                id="isAdditionalCost"
+                type="checkbox"
+                checked={isAdditionalCost}
+                onChange={(e) => setIsAdditionalCost(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-orange-400 accent-orange-500 cursor-pointer"
+              />
+              <label htmlFor="isAdditionalCost" className="cursor-pointer text-sm leading-tight">
+                <span className="font-semibold text-orange-700 dark:text-orange-400">Als Zusatzkosten erfassen</span>
+                <span className="block text-xs text-muted-foreground mt-0.5">
+                  Diese Stunden werden in der Flex-Kostenrechnung (PersonalFix) als variable Kosten ausgewiesen.
+                </span>
+              </label>
             </div>
           )}
 
