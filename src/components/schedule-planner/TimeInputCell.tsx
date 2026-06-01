@@ -650,9 +650,21 @@ export const TimeInputCell = ({
   // Quick-select handler
   // ---------------------------------------------------------------------------
   const handlePresetSelect = (preset: { start: string; end: string; start2?: string; end2?: string }) => {
-    onChange({ start: preset.start, end: preset.end }, null);
-    if (preset.start2 && preset.end2 && onSplitTimeSelect) {
-      onSplitTimeSelect({ start: preset.start2, end: preset.end2 });
+    if (preset.start2 && preset.end2) {
+      // Split-Schicht: 1. Block muss immer in den früh-Slot, 2. Block in den spät-Slot.
+      // Wenn slotType === 'früh' ist die Reihenfolge bereits korrekt.
+      // Wenn slotType === 'spät' (leere Zelle, weil noch kein früh vorhanden),
+      // müssen die Blöcke getauscht werden: secondary-Callback → früh, onChange → spät.
+      if (slotType === 'früh') {
+        onChange({ start: preset.start, end: preset.end }, null);
+        onSplitTimeSelect?.({ start: preset.start2, end: preset.end2 });
+      } else {
+        // primarySlot ist 'spät' → secondary (früh) bekommt den 1. Block, primary (spät) den 2.
+        onSplitTimeSelect?.({ start: preset.start, end: preset.end });
+        onChange({ start: preset.start2, end: preset.end2 }, null);
+      }
+    } else {
+      onChange({ start: preset.start, end: preset.end }, null);
     }
     if (copyToIst && onCopyToIst) {
       onCopyToIst({ start: preset.start, end: preset.end });
@@ -699,8 +711,16 @@ export const TimeInputCell = ({
         setSelError('Die zwei Einsätze überschneiden sich'); return;
       }
       setSelError('');
-      onChange({ start: ns, end: ne }, null);
-      if (onSplitTimeSelect) onSplitTimeSelect({ start: ns2, end: ne2 });
+      // Split-Schicht: 1. Zeile → früh-Slot, 2. Zeile → spät-Slot.
+      // Wenn slotType === 'spät' (leere Zelle), sind primary/secondary vertauscht →
+      // secondary-Callback (→ früh) bekommt Row 1, onChange (→ spät) bekommt Row 2.
+      if (slotType === 'früh') {
+        onChange({ start: ns, end: ne }, null);
+        if (onSplitTimeSelect) onSplitTimeSelect({ start: ns2, end: ne2 });
+      } else {
+        if (onSplitTimeSelect) onSplitTimeSelect({ start: ns, end: ne });
+        onChange({ start: ns2, end: ne2 }, null);
+      }
       if (copyToIst && onCopyToIst) {
         onCopyToIst({ start: ns, end: ne });
         copiedInSession.current = true;
