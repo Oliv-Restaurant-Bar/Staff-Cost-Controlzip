@@ -1,0 +1,68 @@
+Bitte korrigiere die Personal FIX + Variable Berechnung für Zusatzkosten-Mitarbeiter.
+
+Problem:
+In der Ansicht Personal FIX + Variable erscheinen fixe Mitarbeiter wie Mejdi und Micky unten als "Zusatzkosten".
+Bei Ist-Stunden werden die Kosten korrekt berechnet.
+Bei Plan-Stunden / Flex Plan erscheinen jedoch keine Plan-Kosten, obwohl im Dienstplan im Plan-Modus eine Zusatzkosten-Schicht ausgewählt werden kann.
+
+Beispiel:
+Mejdi und Micky:
+- Ist Std und Flex Ist werden angezeigt
+- Plan Std und Flex Plan bleiben leer
+Das ist falsch, wenn im Plan-Modus Zusatzkosten-Schichten eingetragen sind.
+
+Ziel:
+Zusatzkosten-Schichten im Plan-Modus müssen auch in den Flexkosten Plan berücksichtigt werden.
+
+Bitte prüfen und korrigieren:
+
+1. Datenquelle
+Prüfe, wo Zusatzkosten-Schichten im Dienstplan gespeichert werden:
+- schedule_entries
+- plan mode
+- Zusatzkosten Flag
+- employee_id
+- frueh/spaet Zeiten
+- absence codes
+
+2. Plan-Berechnung
+Die Funktion, welche Flex Plan berechnet, muss Zusatzkosten-Mitarbeiter berücksichtigen, wenn im Plan-Modus eine Schicht eingetragen ist.
+
+Für Zusatzkosten-Mitarbeiter gilt:
+Plan Std = geplante Zusatzkosten-Stunden
+Flex Plan = Plan Std × CHF/h
+
+3. Ist-Berechnung nicht beschädigen
+Flex Ist funktioniert bereits.
+Bitte nicht verändern, ausser nötig.
+
+4. Monatslohn / Fixlohn Schutz
+Normale Monatslohn-Mitarbeiter dürfen weiterhin nicht doppelt als Flex Plan gerechnet werden.
+Nur wenn sie explizit als Zusatzkosten-Schicht geplant sind, sollen sie im Bereich Zusatzkosten/Flexkosten erscheinen.
+
+5. Split-Schichten
+Falls Zusatzkosten-Schicht aus zwei Blöcken besteht:
+früh + spät addieren.
+
+6. UI
+In der Tabelle soll bei Mejdi/Micky sichtbar sein:
+Plan Std
+Flex Plan
+Ist Std
+Flex Ist
+Diff.
+
+Wenn keine Plan-Zusatzkosten eingetragen sind:
+Plan Std bleibt leer.
+
+7. Debug
+Bitte speziell prüfen:
+- Mejdi Mai 2026
+- Micky Mai 2026
+Warum Ist-Kosten erscheinen, Plan-Kosten aber nicht.
+
+8. Nach Umsetzung ausgeben:
+- Welche Funktion Flex Plan berechnet
+- Warum Zusatzkosten im Plan bisher ignoriert wurden
+- Welche Dateien geändert wurden
+- Ob Mejdi/Micky Plan Std und Flex Plan jetzt erscheinen

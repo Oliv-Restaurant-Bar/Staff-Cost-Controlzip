@@ -1494,7 +1494,22 @@ export default function PersonalFixPage() {
         return;
       }
       const scheduleKey = tenantKey(`schedule-v2-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
-      try { localStorage.setItem(scheduleKey, JSON.stringify(supabaseSchedule)); } catch { /* quota exceeded */ }
+      try {
+        // Merge existing isAdditionalCostPlan / isAdditionalCost flags from localStorage
+        // before overwriting — these are stored locally only and must survive a Supabase reload.
+        const existingRaw = localStorage.getItem(scheduleKey);
+        const existing: Record<string, Record<string, unknown>> = existingRaw ? JSON.parse(existingRaw) : {};
+        const merged: Record<string, unknown> = { ...supabaseSchedule };
+        for (const [cellKey, val] of Object.entries(existing)) {
+          if (val?.isAdditionalCostPlan) {
+            (merged[cellKey] as Record<string, unknown>) = { ...((merged[cellKey] as Record<string, unknown>) ?? {}), isAdditionalCostPlan: true };
+          }
+          if (val?.isAdditionalCost) {
+            (merged[cellKey] as Record<string, unknown>) = { ...((merged[cellKey] as Record<string, unknown>) ?? {}), isAdditionalCost: true };
+          }
+        }
+        localStorage.setItem(scheduleKey, JSON.stringify(merged));
+      } catch { /* quota exceeded */ }
       // Re-read plan hours and ferien plan from the freshly written cache
       setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth, tenantKey));
       setFerienPlanDays(loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey));
@@ -2251,7 +2266,7 @@ export default function PersonalFixPage() {
 
     return rows;
   }, [variableEmployees, fixedEmployees, selectedYear, selectedMonth, planHours, istHours,
-      getEmpFerienPlanCHF, getEmpFerienCHF, proRataDay, proRataFactor, pfix, tenantKey]);
+      getEmpFerienPlanCHF, getEmpFerienCHF, proRataDay, proRataFactor, pfix, tenantKey, scheduleRefreshTick]);
 
   // ── Abweichungsanalyse: tägliche Aggregation aller Flex-Mitarbeiter ──────────
   const pfixAbw = useMemo((): {
