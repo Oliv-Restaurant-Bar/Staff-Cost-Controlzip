@@ -39,16 +39,40 @@ const DATE_RANGE_PATTERNS: RegExp[] = [
 // ── Cell helpers ──────────────────────────────────────────────────────────
 
 function inferYear(rows: unknown[][]): number {
+  const currentYear = new Date().getFullYear();
   for (let i = 0; i < Math.min(rows.length, 50); i++) {
-    const m = (rows[i] || []).map(c => String(c ?? '')).join(' ').match(/\b(20\d{2})\b/);
-    if (m) return Number(m[1]);
+    // Skip Date objects — they may have wrong years if the XLS uses the 1904 date system.
+    // Only scan plain string/number cells for a 4-digit year in the range 2020-2099.
+    const rowStr = (rows[i] || [])
+      .filter(c => !(c instanceof Date))
+      .map(c => String(c ?? ''))
+      .join(' ');
+    const m = rowStr.match(/\b(20[2-9]\d)\b/);
+    if (m) {
+      const y = Number(m[1]);
+      // Sanity check: reject years more than 3 years in the future
+      if (y <= currentYear + 3) return y;
+    }
   }
-  return new Date().getFullYear();
+  return currentYear;
 }
 
 function cellToDateObj(cell: unknown, year: number): Date | null {
   if (!cell) return null;
-  if (cell instanceof Date && !isNaN(cell.getTime())) return cell;
+
+  // Date objects can be produced by XLSX cellDates:true — but may have wrong years
+  // due to the Excel 1904 date-system bug (off by exactly 1462 days = 4 years).
+  // Accept them only if the year is within ±3 of the inferred/current year.
+  if (cell instanceof Date && !isNaN(cell.getTime())) {
+    const cellYear = cell.getFullYear();
+    const currentYear = new Date().getFullYear();
+    if (Math.abs(cellYear - year) <= 3 && cellYear >= 2020 && cellYear <= currentYear + 3) {
+      return cell;
+    }
+    // Year looks wrong (e.g. 2028 when we expect 2026) — fall through to text parsing
+    console.warn(`[MIRUS] cellToDateObj: rejected Date with suspicious year ${cellYear} (expected ~${year})`);
+    return null;
+  }
 
   if (typeof cell === 'number' && cell > 20000) {
     const dc = XLSX.SSF.parse_date_code(cell);
@@ -528,6 +552,45 @@ function runReportParser(
   return { entries, dateRange: resolved.dateColumns.map(dc => dc.date) };
 }
 
+// ── Post-parse date sanity check ──────────────────────────────────────────
+
+/**
+ * Filters out entries whose dates are implausible (> 2 years in the future or
+ * more than 10 years in the past). This is a last-resort guard against the
+ * Excel 1904-date-system bug or any other date-conversion anomaly.
+ */
+function sanitizeEntries(
+  result: { entries: MirusDailyImportEntry[]; dateRange: string[] },
+  inferredYear: number,
+): { entries: MirusDailyImportEntry[]; dateRange: string[] } {
+  const currentYear = new Date().getFullYear();
+  const minYear = currentYear - 10;
+  const maxYear = currentYear + 2;
+
+  const bad: string[] = [];
+  const good = result.entries.filter(e => {
+    const y = parseInt(e.date.slice(0, 4), 10);
+    if (isNaN(y) || y < minYear || y > maxYear) {
+      bad.push(`${e.name}/${e.date}`);
+      return false;
+    }
+    return true;
+  });
+
+  if (bad.length > 0) {
+    console.warn(
+      `[MIRUS] sanitizeEntries: discarded ${bad.length} entries with out-of-range years ` +
+      `(inferredYear=${inferredYear}, allowed ${minYear}–${maxYear}):`,
+      bad.slice(0, 10),
+    );
+  }
+  if (good.length === 0 && result.entries.length > 0) {
+    console.error('[MIRUS] sanitizeEntries: ALL entries discarded — date parsing is completely wrong. Check XLSX date system.');
+  }
+
+  return { entries: good, dateRange: result.dateRange };
+}
+
 // ── Main export ───────────────────────────────────────────────────────────
 
 export async function parseMirusDailyExcel(
@@ -535,7 +598,12 @@ export async function parseMirusDailyExcel(
 ): Promise<{ entries: MirusDailyImportEntry[]; dateRange: string[] }> {
   try {
     const arrayBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+    // Do NOT use cellDates:true — it converts date-serial cells to JS Date objects
+    // using the workbook's date system (1900 vs 1904). If the 1904 system is detected
+    // (or mis-detected), all dates shift by exactly 1462 days (4 years), producing
+    // dates like "November 2028" for a file that contains "November 2024" data.
+    // Instead we keep raw numeric values and convert them ourselves via XLSX.SSF.parse_date_code.
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
 
@@ -561,7 +629,7 @@ export async function parseMirusDailyExcel(
     const classic = runClassicParser(rows, year, file.name);
     if (classic.entries.length > 0) {
       console.log(`[MIRUS] classic parser succeeded: ${classic.entries.length} entries`);
-      return classic;
+      return sanitizeEntries(classic, year);
     }
 
     // Phase 2: Report parser
@@ -569,7 +637,7 @@ export async function parseMirusDailyExcel(
     const report = runReportParser(rows, year);
     if (report.entries.length > 0) {
       console.log(`[MIRUS] report parser succeeded: ${report.entries.length} entries`);
-      return report;
+      return sanitizeEntries(report, year);
     }
 
     console.warn('[MIRUS] both parsers found 0 entries');
