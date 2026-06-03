@@ -948,7 +948,7 @@ export const TimeInputCell = ({
           </button>
         </PopoverTrigger>
 
-        <PopoverContent className="w-80 p-3 z-50" align="center">
+        <PopoverContent className="w-80 p-3 z-50 max-h-[85vh] overflow-y-auto" align="center">
           <div className="space-y-2">
 
             {/* ── Wunschfrei warning ── */}
