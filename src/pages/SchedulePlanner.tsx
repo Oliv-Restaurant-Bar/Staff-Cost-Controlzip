@@ -1742,6 +1742,12 @@ const SchedulePlanner = () => {
   }, [actualHoursData, planCopiedKeys, doSavePlanToIst, scheduleData]);
 
   const handleAddAushilfe = (employee: Omit<Employee, 'id'>) => {
+    // Guard: never create a duplicate by name
+    const existing = employees.find(e => e.name.toLowerCase().trim() === employee.name.toLowerCase().trim());
+    if (existing) {
+      toast.warning(`"${employee.name}" existiert bereits — kein Duplikat erstellt`);
+      return;
+    }
     const newEmployee: Employee = {
       ...employee,
       id: `aush_${Date.now()}`,
@@ -2108,11 +2114,24 @@ const SchedulePlanner = () => {
     saveFullScheduleForMonth(currentMonth, newScheduleData);
 
     if (newEmployees && newEmployees.length > 0) {
-      const updatedEmployees = [...employees, ...newEmployees];
-      setEmployees(updatedEmployees);
-      newEmployees.forEach(emp => upsertEmployee(emp, tenantId));
-      localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
-      toast.success(`${newEmployees.length} neue Mitarbeiter hinzugefügt: ${newEmployees.map(e => e.name).join(', ')}`);
+      // Deduplicate: never create an employee whose name already exists (case-insensitive).
+      // This prevents phantom employees when the same import is run multiple times.
+      const existingNames = new Set(employees.map(e => e.name.toLowerCase().trim()));
+      const trulyNew = newEmployees.filter(emp => !existingNames.has(emp.name.toLowerCase().trim()));
+      const skipped  = newEmployees.filter(emp =>  existingNames.has(emp.name.toLowerCase().trim()));
+      if (skipped.length > 0) {
+        console.warn(`[IMPORT] Duplikat übersprungen (Name bereits vorhanden): ${skipped.map(e => e.name).join(', ')}`);
+        toast.warning(`${skipped.map(e => e.name).join(', ')} bereits vorhanden – kein Duplikat erstellt`);
+      }
+      if (trulyNew.length > 0) {
+        const updatedEmployees = [...employees, ...trulyNew];
+        setEmployees(updatedEmployees);
+        trulyNew.forEach(emp => upsertEmployee(emp, tenantId));
+        localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
+        toast.success(`${trulyNew.length} neue Mitarbeiter hinzugefügt: ${trulyNew.map(e => e.name).join(', ')}`);
+      } else {
+        toast.success('Dienstplan erfolgreich importiert');
+      }
     } else {
       toast.success('Dienstplan erfolgreich importiert');
     }
@@ -2352,7 +2371,13 @@ const SchedulePlanner = () => {
       localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
       toast.success(`${employeeData.name} aktualisiert`);
     } else {
-      // Add new employee
+      // Add new employee — guard against duplicates by name
+      const existing = employees.find(e => e.name.toLowerCase().trim() === (employeeData.name ?? '').toLowerCase().trim());
+      if (existing) {
+        toast.warning(`"${employeeData.name}" existiert bereits — kein Duplikat erstellt`);
+        setSelectedEmployeeForEdit(null);
+        return;
+      }
       const newEmployee: Employee = {
         ...employeeData,
         id: `emp_${Date.now()}`,

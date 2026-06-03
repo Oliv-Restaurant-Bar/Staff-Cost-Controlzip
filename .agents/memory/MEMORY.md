@@ -1,0 +1,2 @@
+- [Mirus XLS date-system bug](mirus-date-bug.md) — Excel 1904 flag causes +4yr date shift; fix: never use `cellDates:true` in XLSX.read.
+- [Ghost employee prevention](ghost-employees.md) — Import paths create duplicate employees via `Date.now()` IDs; dedup by name required in applyImportResult and handleAddAushilfe.

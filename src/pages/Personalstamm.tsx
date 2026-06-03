@@ -1154,6 +1154,66 @@ CREATE POLICY "Anon self-register new employee"
         );
       })()}
 
+      {/* ── Duplikat-Warnung ─────────────────────────────────────────────────── */}
+      {isAdmin && (() => {
+        // Find all employee names that appear more than once (case-insensitive)
+        const nameGroups = new Map<string, Employee[]>();
+        employees.forEach(emp => {
+          const key = emp.name.toLowerCase().trim();
+          if (!nameGroups.has(key)) nameGroups.set(key, []);
+          nameGroups.get(key)!.push(emp);
+        });
+        const duplicateGroups = [...nameGroups.values()].filter(g => g.length > 1);
+        if (duplicateGroups.length === 0) return null;
+
+        return (
+          <div className="flex-shrink-0 border-b border-red-200 bg-red-50 overflow-y-auto" style={{ maxHeight: '260px' }}>
+            <div className="max-w-7xl mx-auto px-4 py-3">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
+                <h2 className="text-sm font-semibold text-red-800">
+                  Doppelte Mitarbeiter gefunden — bitte aufräumen
+                </h2>
+                <span className="bg-red-600 text-white text-[11px] font-bold rounded-full px-2 py-0.5 leading-none">
+                  {duplicateGroups.reduce((s, g) => s + g.length - 1, 0)} Duplikat{duplicateGroups.reduce((s, g) => s + g.length - 1, 0) > 1 ? 'e' : ''}
+                </span>
+              </div>
+              <div className="flex flex-col gap-3">
+                {duplicateGroups.map(group => (
+                  <div key={group[0].name.toLowerCase()} className="bg-white border border-red-200 rounded-lg p-3 shadow-sm">
+                    <p className="text-xs font-semibold text-red-700 mb-2">
+                      «{group[0].name}» — {group.length}× vorhanden:
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                      {group.map((emp, idx) => (
+                        <div key={emp.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-[10px]">{emp.id}</span>
+                          <span>{emp.department}</span>
+                          {emp.hourlyWage ? <span>{emp.hourlyWage} CHF/h</span> : null}
+                          {emp.monthlySalary ? <span>{emp.monthlySalary} CHF/M</span> : null}
+                          {!emp.hourlyWage && !emp.monthlySalary && (
+                            <span className="text-red-500 font-medium">kein Lohn</span>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-[10px] border-red-300 text-red-700 hover:bg-red-100 ml-auto"
+                            onClick={() => setDeleteTarget(emp)}
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            {idx === 0 ? 'Löschen' : 'Duplikat löschen'}
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── Ausstehende Anmeldungen (vollbreite Kartenansicht) ──────────────── */}
       {isAdmin && submissions.length > 0 && (
         <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 overflow-y-auto" style={{ maxHeight: '320px' }}>
