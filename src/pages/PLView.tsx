@@ -2281,7 +2281,7 @@ const PLViewPage = () => {
   // Take-Away monatliche Werte (Record<'YYYY-MM', grossCHF>)
   const [takeawayMonthlyMap, setTakeawayMonthlyMap] = useState<Record<string, number>>({});
   useEffect(() => {
-    kvGet(`${tenantId}:takeaway-monthly-${year}`).then(v => {
+    kvGet(tenantKey(`takeaway-monthly-${year}`)).then(v => {
       setTakeawayMonthlyMap((v as Record<string, number> | null) ?? {});
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
