@@ -159,6 +159,7 @@ function safeQuote(num: number | null | undefined, denom: number | null | undefi
 function buildMonthlyKPIs(
   effectiveMonths: MonthlyFinancialRecord[],
   plResults?: PLMonthResult[],
+  plResultsClean?: PLMonthResult[], // PLEngine OHNE personnelCostActual → identisch mit Erfolgsrechnung
 ): MonthlyKPI[] {
   return effectiveMonths.map((m, idx) => {
     // PLView-kompatible Umsatz-Berechnung: plResult.net_revenue.actual ist die autoritative Quelle
@@ -183,15 +184,22 @@ function buildMonthlyKPIs(
       : null;
 
     // P&L-basierte Werte (authoritative, identisch mit PLView)
-    const plCogs      = plResult?.rows.find(r => r.def.id === 'total_cogs');
-    const plPersonnel = plResult?.rows.find(r => r.def.id === 'total_personnel');
+    const plCogs = plResult?.rows.find(r => r.def.id === 'total_cogs');
     const rawWaren = plCogs?.values.actual ?? null;
-    const rawPers  = plPersonnel?.values.actual ?? null;
     const warenaufwandPL = rawWaren != null && rawWaren > 0 ? rawWaren : null;
 
-    // personalaufwandPL + pkIst: beides direkt aus PLEngine total_personnel — identisch mit ER.
-    const personalaufwandPL = rawPers != null && rawPers > 0 ? rawPers : null;
-    const pkIst             = personalaufwandPL; // Total (Löhne + Sozial + Übriges), nicht nur Lohnkosten
+    // personalaufwandPL: aus PLEngine OHNE personnelCostActual → rein 5xxx-basiert, identisch mit Erfolgsrechnung.
+    // Wenn kein plResultsClean übergeben, Fallback auf plResult (rückwärtskompatibel).
+    const plResultClean  = plResultsClean?.[idx] ?? plResult;
+    const plPersonnelClean = plResultClean?.rows.find(r => r.def.id === 'total_personnel');
+    const rawPersClean     = plPersonnelClean?.values.actual ?? null;
+    const personalaufwandPL = rawPersClean != null && rawPersClean > 0 ? rawPersClean : null;
+
+    // pkIst = roher Dienstplan-/Manualeintrag (Löhne ohne Sozialkosten), identisch mit Tabellenspalte "PK Ist".
+    // Fallback auf personalaufwandPL wenn kein expliziter Wert gesetzt.
+    const pkIst = (m.personnelCostActual != null && m.personnelCostActual > 0)
+      ? m.personnelCostActual
+      : personalaufwandPL;
 
     return {
       month:            idx + 1,
@@ -2124,10 +2132,16 @@ const Reporting = () => {
     [effectiveMonths],
   );
 
+  // ── P&L-Berechnungen OHNE personnelCostActual (für Personalaufwand-Spalte = identisch mit ER) ──
+  const plResultsClean = useMemo<PLMonthResult[]>(
+    () => effectiveMonths.map(rec => computePLForMonth({ ...rec, personnelCostActual: undefined })),
+    [effectiveMonths],
+  );
+
   // ── Zentrales KPI-Array (alle Charts nutzen dasselbe Objekt) ────────────
   const monthlyKPIs = useMemo(
-    () => buildMonthlyKPIs(effectiveMonths, plResults),
-    [effectiveMonths, plResults],
+    () => buildMonthlyKPIs(effectiveMonths, plResults, plResultsClean),
+    [effectiveMonths, plResults, plResultsClean],
   );
 
   // ── Monatsauswahl ────────────────────────────────────────────────────────
