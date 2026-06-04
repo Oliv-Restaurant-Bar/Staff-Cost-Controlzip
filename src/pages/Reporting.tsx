@@ -142,38 +142,38 @@ function sumWarenaufwand(rec: MonthlyFinancialRecord): number {
 
 // ─── Personalaufwand-Extraktion (PLView-kompatibel) ───────────────────────────
 /**
- * Summiert den Personalaufwand direkt aus expenseCategories — identisch mit
- * PLView Budget P&L (BPL_CAT_RANGES).
+ * Summiert den Personalaufwand — identisch mit PLView «Klassisch»-Modus:
  *
- * Bereiche:
- *   pl_wages           [5000, 5019]  Löhne inkl. Zulagen / Aushilfe
- *   pl_social          [5700, 5799]  AHV / BVG / UVG / KTG
- *   pl_personnel_other [5800, 5899]  Übriger Personalaufwand
+ *   Löhne (pl_wages):
+ *     • Wenn personnelCostActual gesetzt → diesen Wert verwenden (gleich wie
+ *       pl-engine, der 5000-5019-Journal-Konten überspringt wenn der Wert
+ *       bereits direkt gesetzt ist — Anti-Doppelzählung).
+ *     • Sonst: Summe 5000-5019 aus Journal.
+ *   Sozialkosten (pl_social)   [5700, 5799] → immer aus Journal
+ *   Übriger Personal (pl_personnel_other) [5800, 5899] → immer aus Journal
  *
- * Gibt 0 zurück wenn keine Lohnkonten (5000-5019) vorhanden sind, damit
- * der PLEngine-Fallback (personnelCostActual) greift.
- *
- * Warum: Der PLEngine überspringt Konten wie 5005 «Personal Aushilfe», wenn
- * personnelCostActual bereits gesetzt ist (Anti-Doppelzählung für 5000-Löhne).
- * Diese Funktion umgeht den Skip und liest das Journal direkt — so stimmt
- * personalaufwandPL mit der Erfolgsrechnung überein.
+ * Gibt 0 zurück wenn keine Lohnquelle vorhanden (kein personnelCostActual
+ * und keine 5000-5019-Konten im Journal) — damit greift der PLEngine-Fallback.
  */
 function sumPersonalFromJournal(rec: MonthlyFinancialRecord): number {
-  let wages = 0;
+  // Wenn personnelCostActual gesetzt: PLEngine-kompatibel — 5000-5019 Journal
+  // überspringen, nur Social/Other aus Journal addieren (kein Double-Count).
+  const hasOverride = rec.personnelCostActual !== undefined;
+  let wages = hasOverride ? rec.personnelCostActual! : 0;
+  let hasWageSource = hasOverride;
   let socialAndOther = 0;
-  let hasWageAccount = false;
 
   for (const cat of rec.expenseCategories) {
     const raw = cat.categoryId?.trim() ?? '';
     if (!raw) continue;
-    // 5-stellige Konten auf 4 Stellen kürzen (z.B. «61409» → 6140)
+    // 5-stellige Konten auf 4 Stellen kürzen (z.B. «50010» → 5001)
     const s = raw.length > 4 ? raw.slice(0, 4) : raw;
     const n = parseInt(s);
     if (isNaN(n)) continue;
 
-    if (n >= 5000 && n <= 5019) {
+    if (!hasOverride && n >= 5000 && n <= 5019) {
       wages += cat.amount ?? 0;
-      hasWageAccount = true;
+      hasWageSource = true;
     } else if (n >= 5700 && n <= 5799) {
       socialAndOther += cat.amount ?? 0;
     } else if (n >= 5800 && n <= 5899) {
@@ -181,9 +181,8 @@ function sumPersonalFromJournal(rec: MonthlyFinancialRecord): number {
     }
   }
 
-  // Nur zurückgeben, wenn echte Lohnkonten vorhanden — verhindert, dass
-  // ein reiner Sozialkosten-Import den PLEngine-Fallback verdrängt.
-  return hasWageAccount ? wages + socialAndOther : 0;
+  // Nur zurückgeben, wenn echte Lohnquelle vorhanden.
+  return hasWageSource ? wages + socialAndOther : 0;
 }
 
 /**
