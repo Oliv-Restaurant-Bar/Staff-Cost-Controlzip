@@ -2320,8 +2320,9 @@ const PLViewPage = () => {
   };
 
   // Marketing-Nettobetrag für den aktuell gewählten Monat (aus Tagesdaten)
+  // Gibt 0 zurück wenn "Ausblenden" (maisonColPref=false) → Marketing-Zeile verschwindet
   const maisonMonthNet = useMemo(() => {
-    if (!maisonEnabled) return 0;
+    if (!maisonEnabled || !maisonColPref) return 0;
     const mm   = String(month).padStart(2, '0');
     const days = new Date(year, month, 0).getDate();
     let total  = 0;
@@ -2330,7 +2331,7 @@ const PLViewPage = () => {
       if (gross > 0) total += gross / 1.081;
     }
     return total;
-  }, [maisonEnabled, maisonDaily, year, month]);
+  }, [maisonEnabled, maisonColPref, maisonDaily, year, month]);
 
   // Stichtag — wenn aktiv, springt die Ansicht automatisch zu Jahr/Monat des Stichtags
   const { isActive: stichtagActive, stichtagYear, stichtagMonth } = useStichtag();
@@ -2400,7 +2401,8 @@ const PLViewPage = () => {
       });
       if (!hasIndivRev) {
         const mm = String(m).padStart(2, '0');
-        const maisonArg = maisonEnabled && !maisonExclude ? maisonDaily : undefined;
+        // "Anzeigen" (showMarketingCol) = immer inkl. Umsatz; ignoriert maisonExclude
+        const maisonArg = maisonEnabled && maisonColPref ? maisonDaily : undefined;
         const taMonthly = takeawayMonthlyMap[`${year}-${mm}`] ?? 0;
         const tagesansichtRev = showNetRevenue
           ? computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonArg, taMonthly > 0 ? taMonthly : undefined)
@@ -2413,17 +2415,16 @@ const PLViewPage = () => {
               `(diff=${(tagesansichtRev - r.revenueActual).toFixed(0)}) → verwende Tagesansicht`,
             );
           }
-          // Wenn monatlicher Take-Away (Kto. 3010 Netto) bekannt: 3000/3010 aufteilen,
-          // damit die Budget-P&L zwei separate Kontenzeilen zeigt.
-          if (showNetRevenue && taMonthly > 0) {
-            const kto3010 = taMonthly;
+          // Kto. 3000/3010 aufteilen: Netto = direkt; Brutto = Netto × 1.026
+          if (taMonthly > 0) {
+            const kto3010 = showNetRevenue ? taMonthly : Math.round(taMonthly * 1.026 * 100) / 100;
             const kto3000 = tagesansichtRev - kto3010;
             r = {
               ...r,
               revenueActual: tagesansichtRev,
               expenseCategories: [
                 ...r.expenseCategories,
-                { categoryId: '3000', amount: kto3000, label: 'Betriebsertrag Netto' },
+                { categoryId: '3000', amount: kto3000, label: showNetRevenue ? 'Betriebsertrag Netto' : 'Betriebsertrag Brutto' },
                 { categoryId: '3010', amount: kto3010, label: 'Take-Away Umsatz' },
               ],
             };
@@ -2450,7 +2451,7 @@ const PLViewPage = () => {
 
       return r;
     });
-  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonDaily, maisonExclude, takeawayMonthlyMap, showNetRevenue]);
+  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonColPref, maisonDaily, takeawayMonthlyMap, showNetRevenue]);
 
   // Effektiver Datensatz für den ausgewählten Monat
   const effectiveMonthRecord = useMemo(
@@ -3005,24 +3006,10 @@ const PLViewPage = () => {
               )}>Maison</span>
             </button>
 
-            {maisonEnabled && (
-              <button
-                onClick={() => setMaisonExclude(!maisonExclude)}
-                title={maisonExclude ? 'Marketing zum Umsatz hinzuzählen' : 'Marketing vom Umsatz wegzählen'}
-                className={cn(
-                  'h-7 px-2.5 text-xs rounded border transition-colors font-medium shrink-0',
-                  maisonExclude
-                    ? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-700'
-                    : 'border-violet-200 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-950/40',
-                )}
-              >
-                {maisonExclude ? 'exkl. Umsatz' : 'inkl. Umsatz'}
-              </button>
-            )}
             {maisonEnabled ? (
               <span className="text-xs text-violet-700 dark:text-violet-400">
                 {maisonMonthNet > 0
-                  ? `${MONTH_NAMES_DE[month]} ${year}: ${Math.round(maisonMonthNet).toLocaleString('de-CH')} CHF netto${maisonExclude ? ' — nicht im Betriebsertrag' : ' — in Betriebsertrag eingerechnet'}`
+                  ? `${MONTH_NAMES_DE[month]} ${year}: ${Math.round(maisonMonthNet).toLocaleString('de-CH')} CHF netto — in Betriebsertrag eingerechnet`
                   : `Keine Marketing-Tagesdaten für ${MONTH_NAMES_DE[month]} ${year} — Werte im Tages-Controlling erfassen`}
               </span>
             ) : (
@@ -3094,7 +3081,7 @@ const PLViewPage = () => {
                 revenuePrevYear={bplPrevYearRevenue}
                 compareMode={compareMode}
                 pctIsBudgetBased={pctIsBudgetBased}
-                maisonEnabled={maisonEnabled}
+                maisonEnabled={maisonEnabled && maisonColPref}
                 maisonNet={maisonMonthNet}
                 karateUnlocked={karateUnlocked}
                 karateAmount={karateAmount}
