@@ -17,8 +17,9 @@ export interface MonatsdatenRow {
   warenPct: number | null;
   personalaufwand: number | null;
   personalPct: number | null;
-  pkIst: number | null;
-  pkPlan: number | null;
+  pkIst: number | null;       // Dienstplan (PersonalFix + Zusatzkosten + Flex)
+  pkER: number | null;        // Erfolgsrechnung: total_personnel aus PLEngine
+  pkPlan: number | null;      // Geplante PK (Budget)
   vollstaendigkeit: number;
 }
 
@@ -77,6 +78,7 @@ export function exportMonatsdatenToPDF(
       FCHF(r.personalaufwand),
       FPCT(r.personalPct),
       FCHF(r.pkIst),
+      FCHF(r.pkER),
       FCHF(r.pkPlan),
       r.vollstaendigkeit > 0 ? `${Math.round(r.vollstaendigkeit)} %` : '–',
     ];
@@ -95,6 +97,7 @@ export function exportMonatsdatenToPDF(
   const totalWaren     = sumField('warenaufwand');
   const totalPersonal  = sumField('personalaufwand');
   const totalPkIst     = sumField('pkIst');
+  const totalPkER      = sumField('pkER');
   const totalPkPlan    = sumField('pkPlan');
 
   const safeQ = (num: number | null, denom: number | null): number | null =>
@@ -115,6 +118,7 @@ export function exportMonatsdatenToPDF(
     FCHF(totalPersonal),
     FPCT(safeQ(totalPersonal, totalUmsatz)),
     FCHF(totalPkIst),
+    FCHF(totalPkER),
     FCHF(totalPkPlan),
     '',
   ]);
@@ -131,7 +135,7 @@ export function exportMonatsdatenToPDF(
       'Monat', 'Umsatz Ist', 'Budget', 'Vorjahr',
       'Warenaufw.', 'Waren %',
       'Personalaufw.', 'Personal %',
-      'PK Ist', 'PK Plan', 'Vollst.',
+      'PK Dienstpl.', 'PK ER', 'PK Geplant', 'Vollst.',
     ]],
     body,
     theme: 'striped',
@@ -149,16 +153,17 @@ export function exportMonatsdatenToPDF(
     },
     columnStyles: {
       0:  { cellWidth: 13, halign: 'left',   fontStyle: 'bold' },
-      1:  { cellWidth: 23, halign: 'right' },
-      2:  { cellWidth: 20, halign: 'right',  textColor: [100, 100, 100] },
-      3:  { cellWidth: 20, halign: 'right',  textColor: [100, 100, 100] },
-      4:  { cellWidth: 21, halign: 'right' },
-      5:  { cellWidth: 11, halign: 'right' },
-      6:  { cellWidth: 21, halign: 'right' },
-      7:  { cellWidth: 11, halign: 'right' },
-      8:  { cellWidth: 19, halign: 'right',  textColor: [100, 100, 100] },
-      9:  { cellWidth: 19, halign: 'right',  textColor: [100, 100, 100] },
-      10: { cellWidth: 12, halign: 'center' },
+      1:  { cellWidth: 22, halign: 'right' },
+      2:  { cellWidth: 18, halign: 'right',  textColor: [100, 100, 100] },
+      3:  { cellWidth: 18, halign: 'right',  textColor: [100, 100, 100] },
+      4:  { cellWidth: 18, halign: 'right' },
+      5:  { cellWidth: 10, halign: 'right' },
+      6:  { cellWidth: 18, halign: 'right' },
+      7:  { cellWidth: 10, halign: 'right' },
+      8:  { cellWidth: 16, halign: 'right',  textColor: [100, 100, 100] },
+      9:  { cellWidth: 16, halign: 'right',  fontStyle: 'bold' },
+      10: { cellWidth: 16, halign: 'right',  textColor: [100, 100, 100] },
+      11: { cellWidth: 12, halign: 'center' },
     },
     didParseCell: (data) => {
       const rowIdx  = data.row.index;
@@ -310,6 +315,7 @@ export function exportReportingToPDF(
   totals: ReportingTotals,
   year: number,
   threshold = 40,
+  pkERByMonth?: (number | null)[],
 ) {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
@@ -357,14 +363,17 @@ export function exportReportingToPDF(
   doc.text(`${monthsWithData.length} von 12 Monaten mit Daten`, 14, kpiY + 38);
 
   // Kompakte Jahresübersicht-Tabelle
-  const head1 = [['Monat', 'Umsatz Ist', 'Budget', 'Abw. Budget', 'Vorjahr', 'Abw. VJ', 'PK Ist', 'PK Geplant', 'PK-Quote']];
-  const body1: (string | number)[][] = months.map(m => {
+  const totalPkER1 = pkERByMonth ? pkERByMonth.reduce((s, v) => s + (v ?? 0), 0) : null;
+  const pkERTotal  = totalPkER1 && totalPkER1 > 0 ? totalPkER1 : null;
+  const head1 = [['Monat', 'Umsatz Ist', 'Budget', 'Abw. Budget', 'Vorjahr', 'Abw. VJ', 'PK Dienstpl.', 'PK ER', 'PK Geplant', 'PK-Quote ER']];
+  const body1: (string | number)[][] = months.map((m, idx) => {
     const abwBudget = m.revenueActual != null && m.revenueBudget != null && m.revenueBudget > 0
       ? ((m.revenueActual / m.revenueBudget - 1) * 100) : null;
     const abwVJ = m.revenueActual != null && m.revenuePreviousYear != null && m.revenuePreviousYear > 0
       ? ((m.revenueActual / m.revenuePreviousYear - 1) * 100) : null;
-    const pkQ = m.revenueActual && m.personnelCostActual
-      ? (m.personnelCostActual / m.revenueActual) * 100 : null;
+    const pkER = pkERByMonth?.[idx] ?? null;
+    const pkQER = m.revenueActual && pkER
+      ? (pkER / m.revenueActual) * 100 : null;
     return [
       MONTH_NAMES_SHORT_DE[m.month],
       CHF(m.revenueActual),
@@ -373,10 +382,13 @@ export function exportReportingToPDF(
       CHF(m.revenuePreviousYear),
       abwVJ != null ? `${abwVJ >= 0 ? '+' : ''}${abwVJ.toFixed(1)} %` : '–',
       CHF(m.personnelCostActual),
+      CHF(pkER),
       CHF(m.personnelCostPlanned),
-      pkQ != null ? `${pkQ.toFixed(1)} %` : '–',
+      pkQER != null ? `${pkQER.toFixed(1)} %` : '–',
     ];
   });
+  const pkRatioER = totals.revenueActual > 0 && pkERTotal
+    ? (pkERTotal / totals.revenueActual) * 100 : 0;
   body1.push([
     'Total',
     CHF(totals.revenueActual),
@@ -385,8 +397,9 @@ export function exportReportingToPDF(
     CHF(totals.revenuePreviousYear),
     totals.revenuePreviousYear > 0 ? `${((totals.revenueActual / totals.revenuePreviousYear - 1) * 100).toFixed(1)} %` : '–',
     CHF(totals.personnelCostActual),
+    CHF(pkERTotal),
     CHF(totals.personnelCostPlanned),
-    pkRatioTotal > 0 ? `${pkRatioTotal.toFixed(1)} %` : '–',
+    pkRatioER > 0 ? `${pkRatioER.toFixed(1)} %` : '–',
   ]);
 
   autoTable(doc, {
@@ -397,15 +410,16 @@ export function exportReportingToPDF(
     headStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: 'bold', fontSize: 8 },
     bodyStyles: { fontSize: 7.5 },
     columnStyles: {
-      0: { cellWidth: 18 },
+      0: { cellWidth: 16 },
       1: { halign: 'right' },
       2: { halign: 'right' },
       3: { halign: 'right' },
       4: { halign: 'right' },
       5: { halign: 'right' },
-      6: { halign: 'right' },
-      7: { halign: 'right' },
-      8: { halign: 'right' },
+      6: { halign: 'right', textColor: [100, 100, 100] },
+      7: { halign: 'right', fontStyle: 'bold' },
+      8: { halign: 'right', textColor: [100, 100, 100] },
+      9: { halign: 'right' },
     },
     didParseCell: (data) => {
       const rowIdx = data.row.index;
@@ -421,14 +435,11 @@ export function exportReportingToPDF(
         if ((colIdx === 3 || colIdx === 5) && rawVal !== '–') {
           const num = parseFloat(rawVal);
           if (!isNaN(num)) {
-            if (num >= 0) {
-              data.cell.styles.textColor = [21, 128, 61];
-            } else {
-              data.cell.styles.textColor = [153, 27, 27];
-            }
+            data.cell.styles.textColor = num >= 0 ? [21, 128, 61] : [153, 27, 27];
           }
         }
-        if (colIdx === 8 && rawVal !== '–') {
+        // PK-Quote ER (col 9) — Ampelfarbe
+        if (colIdx === 9 && rawVal !== '–') {
           const num = parseFloat(rawVal);
           if (!isNaN(num)) {
             if (num > threshold + 2) {
@@ -453,28 +464,34 @@ export function exportReportingToPDF(
   addPageHeader(doc, `Personalkosten-Analyse ${year}`, `Ziel: ≤ ${threshold} %`, pageW);
 
   // PK-Ampel Tabelle
-  const head2 = [['Monat', 'Umsatz Ist', 'PK Ist', 'PK Geplant', 'PK-Quote Ist', 'PK-Quote Geplant', 'Abw. PK', 'Status']];
-  const body2: (string | number)[][] = months.map(m => {
-    const pkQ = m.revenueActual && m.personnelCostActual
+  const head2 = [['Monat', 'Umsatz Ist', 'PK Ist\n(Dienstpl.)', 'PK ER', 'PK Geplant', 'PK-Quote Ist', 'PK-Quote ER', 'PK-Quote Geplant', 'Abw. PK (ER)', 'Status']];
+  const body2: (string | number)[][] = months.map((m, idx) => {
+    const pkER   = pkERByMonth?.[idx] ?? null;
+    const pkQ    = m.revenueActual && m.personnelCostActual
       ? (m.personnelCostActual / m.revenueActual) * 100 : null;
+    const pkQER  = m.revenueActual && pkER
+      ? (pkER / m.revenueActual) * 100 : null;
     const pkQPlan = m.revenueActual && m.personnelCostPlanned
       ? (m.personnelCostPlanned / m.revenueActual) * 100 : null;
-    const abwPK = m.personnelCostActual != null && m.personnelCostPlanned != null
-      ? m.personnelCostActual - m.personnelCostPlanned : null;
+    const abwPK  = pkER != null && m.personnelCostPlanned != null
+      ? pkER - m.personnelCostPlanned : null;
     let status = '–';
-    if (pkQ != null) {
-      if (pkQ <= threshold - 2) status = '✓ Gut';
-      else if (pkQ <= threshold + 2) status = '≈ OK';
+    const refQ = pkQER ?? pkQ;
+    if (refQ != null) {
+      if (refQ <= threshold - 2) status = '✓ Gut';
+      else if (refQ <= threshold + 2) status = '≈ OK';
       else status = '↑ Hoch';
     }
     return [
       MONTH_NAMES_DE[m.month] ?? MONTH_NAMES_SHORT_DE[m.month],
       CHF(m.revenueActual),
       CHF(m.personnelCostActual),
+      CHF(pkER),
       CHF(m.personnelCostPlanned),
-      pkQ != null ? `${pkQ.toFixed(1)} %` : '–',
+      pkQ    != null ? `${pkQ.toFixed(1)} %`    : '–',
+      pkQER  != null ? `${pkQER.toFixed(1)} %`  : '–',
       pkQPlan != null ? `${pkQPlan.toFixed(1)} %` : '–',
-      abwPK != null ? CHF(abwPK) : '–',
+      abwPK  != null ? CHF(abwPK) : '–',
       status,
     ];
   });
@@ -484,23 +501,26 @@ export function exportReportingToPDF(
     head: head2,
     body: body2,
     theme: 'grid',
-    headStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: 'bold', fontSize: 9 },
-    bodyStyles: { fontSize: 8.5 },
+    headStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
+    bodyStyles: { fontSize: 8 },
     columnStyles: {
-      0: { cellWidth: 28 },
+      0: { cellWidth: 24 },
       1: { halign: 'right' },
-      2: { halign: 'right' },
-      3: { halign: 'right' },
-      4: { halign: 'right', fontStyle: 'bold' },
+      2: { halign: 'right', textColor: [100, 100, 100] },
+      3: { halign: 'right', fontStyle: 'bold' },
+      4: { halign: 'right', textColor: [100, 100, 100] },
       5: { halign: 'right' },
-      6: { halign: 'right' },
-      7: { halign: 'center', fontStyle: 'bold' },
+      6: { halign: 'right', fontStyle: 'bold' },
+      7: { halign: 'right' },
+      8: { halign: 'right' },
+      9: { halign: 'center', fontStyle: 'bold' },
     },
     didParseCell: (data) => {
       if (data.section !== 'body') return;
       const colIdx = data.column.index;
       const rawVal = String(data.cell.raw ?? '');
-      if (colIdx === 4 && rawVal !== '–') {
+      // PK-Quote ER (col 6) — Ampelfarbe
+      if (colIdx === 6 && rawVal !== '–') {
         const num = parseFloat(rawVal);
         if (!isNaN(num)) {
           if (num > threshold + 2) {
@@ -515,7 +535,15 @@ export function exportReportingToPDF(
           }
         }
       }
-      if (colIdx === 7) {
+      // Abw. PK (ER) (col 8) — Farbe
+      if (colIdx === 8 && rawVal !== '–') {
+        const raw = rawVal.replace(/[^0-9.-]/g, '');
+        const num = parseFloat(raw);
+        if (!isNaN(num)) {
+          data.cell.styles.textColor = num > 0 ? [153, 27, 27] : [21, 128, 61];
+        }
+      }
+      if (colIdx === 9) {
         if (rawVal.startsWith('✓')) {
           data.cell.styles.fillColor = [220, 252, 231];
           data.cell.styles.textColor = [21, 128, 61];
@@ -525,12 +553,6 @@ export function exportReportingToPDF(
         } else if (rawVal.startsWith('↑')) {
           data.cell.styles.fillColor = [254, 226, 226];
           data.cell.styles.textColor = [153, 27, 27];
-        }
-      }
-      if (colIdx === 6 && rawVal !== '–') {
-        const num = parseFloat(rawVal.replace(/[^0-9.-]/g, ''));
-        if (!isNaN(num)) {
-          data.cell.styles.textColor = num > 0 ? [153, 27, 27] : [21, 128, 61];
         }
       }
     },

@@ -2177,7 +2177,8 @@ const Reporting = () => {
 
   const handleExportPDF = () => {
     try {
-      exportReportingToPDF(effectiveMonths, totals, year, threshold);
+      const pkERByMonth = monthlyKPIs.map(k => k.pkIst ?? null);
+      exportReportingToPDF(effectiveMonths, totals, year, threshold, pkERByMonth);
       toast.success('PDF exportiert');
     } catch { toast.error('PDF-Export fehlgeschlagen'); }
   };
@@ -2199,6 +2200,7 @@ const Reporting = () => {
           personalaufwand: kpi.personalaufwandPL,
           personalPct:     kpi.personalaufwandPLPct,
           pkIst:           m.personnelCostActual  ?? null,
+          pkER:            kpi.pkIst              ?? null,
           pkPlan:          m.personnelCostPlanned ?? null,
           vollstaendigkeit: completeness.completenessPercent,
         };
@@ -2231,6 +2233,7 @@ const Reporting = () => {
         personalaufwand: kpi.personalaufwandPL,
         personalPct:     kpi.personalaufwandPLPct,
         pkIst:           m.personnelCostActual  ?? null,
+        pkER:            kpi.pkIst              ?? null,
         pkPlan:          m.personnelCostPlanned ?? null,
         vollstaendigkeit: completeness.completenessPercent,
       };
