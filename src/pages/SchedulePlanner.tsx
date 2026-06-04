@@ -7,7 +7,7 @@ import {
   loadEmployees,
   upsertEmployee,
   upsertAllEmployees,
-  deleteEmployee as dbDeleteEmployee,
+  archiveEmployee as dbArchiveEmployee,
   loadScheduleForMonth,
   saveScheduleEntry,
   saveFullScheduleForMonth,
@@ -1763,12 +1763,14 @@ const SchedulePlanner = () => {
 
   const handleRemoveEmployee = (employeeId: string) => {
     const emp = employees.find(e => e.id === employeeId);
+    // Soft-Delete: Mitarbeiter aus lokaler Ansicht entfernen, in Supabase archivieren (employment_end_date = heute).
+    // Physisches Löschen ist verboten — historische Dienstpläne müssen weiterhin auf diesen Mitarbeiter zeigen.
     const updatedEmployees = employees.filter(e => e.id !== employeeId);
     setEmployees(updatedEmployees);
-    dbDeleteEmployee(employeeId);
+    dbArchiveEmployee(employeeId);
     localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
     if (emp) {
-      toast.success(`${emp.name} entfernt`);
+      toast.success(`${emp.name} archiviert (Austrittsdatum gesetzt)`);
     }
   };
 
@@ -2117,20 +2119,36 @@ const SchedulePlanner = () => {
 
     if (newEmployees && newEmployees.length > 0) {
       // Deduplicate: never create an employee whose name already exists (case-insensitive).
-      // This prevents phantom employees when the same import is run multiple times.
       const existingNames = new Set(employees.map(e => e.name.toLowerCase().trim()));
       const trulyNew = newEmployees.filter(emp => !existingNames.has(emp.name.toLowerCase().trim()));
       const skipped  = newEmployees.filter(emp =>  existingNames.has(emp.name.toLowerCase().trim()));
+
       if (skipped.length > 0) {
         console.warn(`[IMPORT] Duplikat übersprungen (Name bereits vorhanden): ${skipped.map(e => e.name).join(', ')}`);
         toast.warning(`${skipped.map(e => e.name).join(', ')} bereits vorhanden – kein Duplikat erstellt`);
       }
+
       if (trulyNew.length > 0) {
-        const updatedEmployees = [...employees, ...trulyNew];
-        setEmployees(updatedEmployees);
-        trulyNew.forEach(emp => upsertEmployee(emp, tenantId));
-        localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
-        toast.success(`${trulyNew.length} neue Mitarbeiter hinzugefügt: ${trulyNew.map(e => e.name).join(', ')}`);
+        // Sicherheitscheck: Employees mit auto-generierten Import-IDs dürfen NICHT ohne
+        // explizite Benutzerbestätigung in Supabase geschrieben werden.
+        // Diese entstehen nur wenn der Preview-Dialog umgangen wurde.
+        const safeToSave = trulyNew.filter(emp => !emp.id.startsWith('imported-'));
+        const blocked    = trulyNew.filter(emp =>  emp.id.startsWith('imported-'));
+
+        if (blocked.length > 0) {
+          console.error(`[IMPORT] Auto-Import BLOCKIERT für ${blocked.length} Mitarbeiter ohne explizite Bestätigung: ${blocked.map(e => e.name).join(', ')}`);
+          toast.error(`Import blockiert: ${blocked.map(e => e.name).join(', ')} müssen im Vorschau-Dialog bestätigt werden`);
+        }
+
+        if (safeToSave.length > 0) {
+          const updatedEmployees = [...employees, ...safeToSave];
+          setEmployees(updatedEmployees);
+          safeToSave.forEach(emp => upsertEmployee(emp, tenantId));
+          localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
+          toast.success(`${safeToSave.length} neue Mitarbeiter hinzugefügt: ${safeToSave.map(e => e.name).join(', ')}`);
+        } else {
+          toast.success('Dienstplan erfolgreich importiert');
+        }
       } else {
         toast.success('Dienstplan erfolgreich importiert');
       }

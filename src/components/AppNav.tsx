@@ -30,7 +30,7 @@ import {
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
   Wallet, BarChart3, ShoppingCart, LineChart, TrendingUp,
-  Menu, ClipboardCheck,
+  Menu, ClipboardCheck, ShieldAlert,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -238,6 +238,13 @@ const NAV_GROUPS: NavGroup[] = [
         icon: Settings,
         adminOnly: true,
         beaulieuAllowed: true,
+      },
+      {
+        path: '/employee-integrity',
+        label: 'Datenintegrität MA',
+        shortLabel: 'Integrität',
+        icon: ShieldAlert,
+        adminOnly: true,
       },
     ],
   },

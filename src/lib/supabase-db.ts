@@ -266,7 +266,38 @@ export async function activateSubmissionAsEmployee(
   return { id: sub.id, errorMessage: null };
 }
 
+/**
+ * Soft-Delete: Setzt employment_end_date auf heute.
+ * Mitarbeiter bleibt in Supabase erhalten und ist über historische Pläne
+ * weiterhin referenzierbar. Physisches Löschen ist VERBOTEN ausser für Tests.
+ */
+export async function archiveEmployee(id: string): Promise<boolean> {
+  try {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any)
+      .from('employees')
+      .update({ employment_end_date: today })
+      .eq('id', id);
+    if (error) { console.error('[supabase-db] archiveEmployee:', error); return false; }
+    console.log(`[supabase-db] archiveEmployee OK: id=${id} end=${today}`);
+    return true;
+  } catch (e) {
+    console.error('[supabase-db] archiveEmployee exception:', e);
+    return false;
+  }
+}
+
+/**
+ * @deprecated Physisches Löschen ist VERBOTEN für echte Mitarbeiter.
+ * Nur für automatische Test-Cleanup-Routinen verwenden.
+ * Für alle UI-initierten Löschungen stattdessen archiveEmployee() verwenden.
+ */
 export async function deleteEmployee(id: string): Promise<boolean> {
+  if (!id.startsWith('test-') && !id.startsWith('__test')) {
+    console.error(`[supabase-db] deleteEmployee BLOCKED for non-test id="${id}" — use archiveEmployee() instead`);
+    return archiveEmployee(id);
+  }
   try {
     const { error } = await supabase.from('employees').delete().eq('id', id);
     if (error) { console.error('[supabase-db] deleteEmployee:', error); return false; }

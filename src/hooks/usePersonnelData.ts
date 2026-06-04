@@ -113,10 +113,9 @@ const defaultEmployees: Employee[] = [
 ];
 
 // Load employees from Supabase — tenant-filtered
+// WICHTIG: Kein Fallback auf Demo-/Defaultdaten. Supabase ist einzige Quelle der Wahrheit.
+// Bei Fehler oder leerem Ergebnis → leeres Array zurückgeben (nicht defaultEmployees).
 const loadEmployeesFromSupabase = async (restaurantId?: TenantId): Promise<Employee[]> => {
-  // Tenant-appropriate fallback: never use Oliv defaults for Beaulieu
-  const tenantFallback = restaurantId === 'beaulieu' ? [] : defaultEmployees;
-
   try {
     console.log(`[CONSISTENCY] tenant: ${restaurantId ?? 'alle'}`);
     console.log('[usePersonnelData] Loading employees from Supabase...');
@@ -132,13 +131,13 @@ const loadEmployeesFromSupabase = async (restaurantId?: TenantId): Promise<Emplo
     const { data, error } = await query;
 
     if (error) {
-      console.error('[usePersonnelData] Error loading employees from Supabase:', error);
-      return tenantFallback;
+      console.error('[usePersonnelData] Error loading employees from Supabase — returning empty list (no demo fallback):', error);
+      return [];
     }
 
     if (!data || data.length === 0) {
-      console.log('[usePersonnelData] No employees found in Supabase, using tenant fallback');
-      return tenantFallback;
+      console.log('[usePersonnelData] No employees found in Supabase — returning empty list (no demo fallback)');
+      return [];
     }
 
     console.log(`[usePersonnelData] Loaded ${data.length} employees from Supabase`);
@@ -269,16 +268,18 @@ const calculateSlotHoursInternal = (slot: TimeSlot | null | undefined): number =
   return Math.round(hours * 100) / 100;
 };
 
-// Legacy: Load employees from localStorage (for fallback/compatibility)
+// Legacy: Load employees from localStorage (Cache-only — KEIN Merge mit defaultEmployees)
+// WICHTIG: Nur bereits gecachte Supabase-Daten lesen. Niemals defaultEmployees einmischen.
+// Nur für Connectivity-Fallback wenn Supabase temporär nicht erreichbar.
 const loadEmployeesFromStorage = (): Employee[] => {
-  if (typeof window === 'undefined') return defaultEmployees;
-  
+  if (typeof window === 'undefined') return [];
+
   try {
     const stored = localStorage.getItem(EMPLOYEES_STORAGE_KEY);
-    if (!stored) return defaultEmployees;
-    
+    if (!stored) return [];
+
     const storedEmployees: Employee[] = JSON.parse(stored);
-    
+
     // One-time migration: update socialCostFactor from 1.13 → 1.03
     let migrated = false;
     for (const emp of storedEmployees) {
@@ -291,23 +292,18 @@ const loadEmployeesFromStorage = (): Employee[] => {
       localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(storedEmployees));
     }
 
-    // Merge: use stored data for existing employees, add new defaults if missing
-    const mergedEmployees: Employee[] = [];
-    const storedIds = new Set(storedEmployees.map(e => e.id));
-    
-    // First add all stored employees
-    mergedEmployees.push(...storedEmployees);
-    
-    // Then add any default employees that aren't in storage (new employees)
-    for (const defaultEmp of defaultEmployees) {
-      if (!storedIds.has(defaultEmp.id)) {
-        mergedEmployees.push(defaultEmp);
-      }
+    // Guard: Demo-/Default-Mitarbeiter (IDs 1–24) aus dem Cache filtern falls vorhanden.
+    // Diese dürfen niemals als echte Mitarbeiter erscheinen.
+    const defaultIds = new Set(['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24']);
+    const safeEmployees = storedEmployees.filter(e => !defaultIds.has(e.id));
+    if (safeEmployees.length !== storedEmployees.length) {
+      console.warn(`[loadEmployeesFromStorage] ${storedEmployees.length - safeEmployees.length} Demo-Mitarbeiter aus localStorage-Cache entfernt`);
+      localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(safeEmployees));
     }
-    
-    return mergedEmployees;
+
+    return safeEmployees;
   } catch {
-    return defaultEmployees;
+    return [];
   }
 };
 

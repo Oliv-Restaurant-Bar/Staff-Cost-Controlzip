@@ -1,41 +1,42 @@
 ---
 name: Ghost employee prevention
-description: Duplicate and disappearing employees in SchedulePlanner; dedup by name and tenant-prefixed IDs required.
+description: Root causes of phantom/disappearing employees and all fixes applied.
 ---
 
-## Problem 1 — Ghost duplicates via Date.now() IDs
-`applyImportResult`, `handleAddAushilfe`, and `handleEmployeeFormSubmit` in SchedulePlanner.tsx all create new employees using `id: \`emp_${Date.now()}\`` / `id: \`aush_${Date.now()}\``. If the same import runs N times, N separate employee records with the same name but different IDs are created.
+## Root causes identified
 
-**Why:** Timestamp IDs are unique, so upsertEmployee never overwrites — each call inserts a new row.
+1. **`defaultEmployees` fallback** (`usePersonnelData.ts`): 21 hardcoded Oliv employees (IDs 1–24) returned when Supabase empty/error → ghost employees when connectivity lost.
 
-## Fix (applied)
-All three creation paths now do a name-dedup check first (case-insensitive):
-```typescript
-const existing = employees.find(e => e.name.toLowerCase().trim() === name.toLowerCase().trim());
-if (existing) { toast.warning(...); return; }
-```
+2. **`loadEmployeesFromStorage` merged `defaultEmployees`**: Added any missing default-ID employees to every localStorage load — ghost employees on every load.
 
-`applyImportResult` filters `newEmployees` array before inserting — skipped names get a warning toast.
+3. **Physical `deleteEmployee`** (`supabase-db.ts`): Hard-delete on employees table. Schedule entry references became orphaned.
 
-## Cleanup UI
-`Personalstamm.tsx` now shows a red banner ("Doppelte Mitarbeiter gefunden") for any group of employees with the same name. Each row has a "Duplikat löschen" button that triggers the existing `deleteEmployee` + `deleteTarget` AlertDialog flow.
+4. **Auto-creation from schedule import** (`schedule-export-import.ts` + `applyImportResult`): Unmatched names created `imported-{timestamp}-{random}` IDs and persisted to Supabase without user confirmation.
 
----
+5. **Tenant-prefixed IDs** (earlier fix): Beaulieu employees need `b-` prefix or they're invisible after reload (`loadEmployees('beaulieu')` filters by `id LIKE 'b-%'`).
 
-## Problem 2 — Beaulieu Aushilfen disappear after reload
+## Fixes applied (data-integrity audit session)
 
-**Rule:** All employees belonging to the Beaulieu tenant MUST have IDs starting with `b-`.
+### Fix 1 — defaultEmployees fallback removed
+`loadEmployeesFromSupabase`: returns `[]` on empty/error. Never uses `defaultEmployees`.  
+`loadEmployeesFromStorage`: returns only stored employees; actively filters IDs 1–24 (demo guard + auto-cleanup).
 
-**Why:** `loadEmployees('beaulieu')` queries Supabase with `id LIKE 'b-%'`. Any employee saved with a non-prefixed ID (e.g. `aush_1717496000000`) is invisible after page reload because Supabase filters it out.
+### Fix 2 — Soft delete replaces physical delete
+`archiveEmployee(id)` in `supabase-db.ts`: sets `employment_end_date = today` (UPDATE, no DELETE).  
+`deleteEmployee()` redirects non-test IDs to `archiveEmployee()` with console.error.  
+`handleRemoveEmployee` in `SchedulePlanner.tsx` uses `dbArchiveEmployee`.
 
-**How to apply:** In every employee creation path, check `tenantId === 'beaulieu'` and prepend `b-`:
-- Aushilfe dialog → `b-aush_${Date.now()}`
-- Employee form → `b-emp_${Date.now()}`
-- Import / seed paths already use explicit `b-` IDs from the seed data.
+### Fix 3 — Auto-import guard in applyImportResult
+Employees with `id.startsWith('imported-')` are blocked from Supabase upsert — error toast shown.  
+Preview dialog already required explicit "Neu erfassen" confirmation; this is a final backstop.
 
----
+## Diagnostic panel
+Route: `/employee-integrity` — admin-only.  
+Checks: Demo IDs in Supabase, `imported-*` IDs, missing dept/type, tenant isolation violations, name duplicates, localStorage-only employees, demo data in localStorage.  
+Each critical issue has an "Archivieren" button.
 
-## How to apply (general)
-- Any new employee creation path must check name uniqueness before calling `upsertEmployee`.
-- Any new employee creation path must use tenant-aware IDs (`b-` prefix for Beaulieu).
-- The Personalstamm duplicate banner is always visible to admins — auto-dismisses once no duplicates remain.
+## How to apply (general rules)
+- Any new employee creation path: name-dedup check first (case-insensitive).
+- Any new employee creation path: tenant-aware IDs (`b-` prefix for Beaulieu, `aush_` for Oliv).
+- Never call `deleteEmployee()` from UI — always `archiveEmployee()`.
+- Never use `defaultEmployees` as fallback — Supabase empty result is valid.

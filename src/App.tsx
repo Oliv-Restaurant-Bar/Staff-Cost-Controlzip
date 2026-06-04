@@ -63,6 +63,7 @@ import MirusReview from "./pages/MirusReview";
 import StaffSchedulePage from "./pages/StaffSchedulePage";
 import ArbeitszeitblaetterPage from "./pages/ArbeitszeitblaetterPage";
 import TimesheetConfirmationPage from "./pages/TimesheetConfirmationPage";
+import EmployeeIntegrityPanel from "./pages/EmployeeIntegrityPanel";
 
 const queryClient = new QueryClient();
 
@@ -219,6 +220,7 @@ const AppContent = () => {
             />
             <Route path="/arbeitszeitblaetter" element={<ArbeitszeitblaetterPage />} />
             <Route path="/integrity-test" element={<DataIntegrityTest />} />
+            <Route path="/employee-integrity" element={<EmployeeIntegrityPanel />} />
             <Route path="/produkte"
               element={<ProdukteSeite />}
             />
