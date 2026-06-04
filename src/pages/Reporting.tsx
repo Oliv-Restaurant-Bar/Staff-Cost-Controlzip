@@ -67,6 +67,7 @@ import { Navigate } from 'react-router-dom';
 import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue-import';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
+import { ReportingExportDialog } from '@/components/ReportingExportDialog';
 
 // ── NEU: korrekte Netto-Umsatz-Berechnungen (identisch mit PLView) ───────────
 import {
@@ -1997,7 +1998,7 @@ function calcCumulated(kpis: MonthlyKPI[], selected: Set<number>): CumulatedTota
 
 const Reporting = () => {
   const { isAdmin }          = usePermissions();
-  const { tenantId, tenantKey } = useTenant();
+  const { tenantId, tenantKey, tenant } = useTenant();
 
   if (!isAdmin) return <Navigate to="/" replace />;
 
@@ -2107,13 +2108,11 @@ const Reporting = () => {
         if (bp > 0) r = { ...r, personnelCostPlanned: bp };
       }
 
-      // 4) PK Ist aus 5xxx-Konten wenn nicht manuell
-      if (!r.personnelCostActual && r.expenseCategories.length > 0) {
-        const pkFromCats = r.expenseCategories
-          .filter(cat => { const n = parseInt(cat.categoryId); return !isNaN(n) && n >= 5000 && n <= 5999; })
-          .reduce((sum, cat) => sum + (cat.amount ?? 0), 0);
-        if (pkFromCats > 0) r = { ...r, personnelCostActual: pkFromCats };
-      }
+      // Schritt 4 (5xxx-Fallback für personnelCostActual) wurde entfernt:
+      // PLView setzt personnelCostActual nicht aus expenseCategories-Summen.
+      // PLEngine verteilt 5xxx-Konten via resolveRowId auf personnel_wages /
+      // personnel_social / personnel_other — identisch mit der Erfolgsrechnung.
+      // Früher blähte der Fallback total_personnel auf wenn Konten kein Mapping hatten.
 
       return r;
     });
@@ -2166,6 +2165,33 @@ const Reporting = () => {
   const hasAnyData = effectiveMonths.some(m => m.revenueActual !== undefined || m.personnelCostActual !== undefined);
   const totals     = useMemo(() => calcEffectiveTotals(effectiveMonths), [effectiveMonths]);
 
+  // ── Maison-Nettobetrag pro Monat (für Export-Anpassung) ──────────────────
+  // Entspricht der PLView-Logik: Tages-Bruttobeträge / 1.081 = Netto
+  const maisonMonthlyNet = useMemo<number[]>(() => {
+    return Array.from({ length: 12 }, (_, idx) => {
+      const m = idx + 1;
+      if (!maisonEnabled || !maisonColPref) return 0;
+      const daysInMonth = new Date(year, m, 0).getDate();
+      let total = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const key = `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const gross = maisonDaily[key] ?? 0;
+        if (gross > 0) total += gross / 1.081;
+      }
+      return Math.round(total * 100) / 100;
+    });
+  }, [year, maisonEnabled, maisonColPref, maisonDaily]);
+
+  const maisonYearTotal = useMemo(
+    () => maisonMonthlyNet.reduce((s, v) => s + v, 0),
+    [maisonMonthlyNet],
+  );
+  const maisonAvailableForExport = maisonEnabled && maisonColPref && maisonYearTotal > 0;
+
+  // ── Export-Dialog-State ──────────────────────────────────────────────────
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportDialogType, setExportDialogType] = useState<'pdf' | 'monatsdaten'>('pdf');
+
   const reload = useCallback(() => {
     setMonths(loadYear(year, tenantKey('reporting_v1')));
   }, [year, tenantId]);
@@ -2175,40 +2201,59 @@ const Reporting = () => {
     setMonths(loadYear(y, tenantKey('reporting_v1')));
   };
 
+  // Erzeugt eine angepasste Kopie von effectiveMonths mit optionalem Maison-Abzug
+  const getExportMonths = useCallback((includeMaison: boolean) => {
+    if (includeMaison || !maisonAvailableForExport) return effectiveMonths;
+    return effectiveMonths.map((m, idx) => {
+      if (m.revenueActual == null) return m;
+      const delta = maisonMonthlyNet[idx] ?? 0;
+      if (delta <= 0) return m;
+      return { ...m, revenueActual: Math.max(0, m.revenueActual - delta) };
+    });
+  }, [effectiveMonths, maisonMonthlyNet, maisonAvailableForExport]);
+
   const handleExportPDF = () => {
-    try {
-      const pkERByMonth = monthlyKPIs.map(k => k.pkIst ?? null);
-      exportReportingToPDF(effectiveMonths, totals, year, threshold, pkERByMonth);
-      toast.success('PDF exportiert');
-    } catch { toast.error('PDF-Export fehlgeschlagen'); }
+    if (maisonAvailableForExport) {
+      setExportDialogType('pdf');
+      setExportDialogOpen(true);
+    } else {
+      try {
+        const pkERByMonth = monthlyKPIs.map(k => k.pkIst ?? null);
+        exportReportingToPDF(effectiveMonths, totals, year, threshold, pkERByMonth);
+        toast.success('PDF exportiert');
+      } catch { toast.error('PDF-Export fehlgeschlagen'); }
+    }
   };
 
   const handleExportMonatsdaten = () => {
-    try {
-      const rows: MonatsdatenRow[] = effectiveMonths.map((m, idx) => {
-        const kpi = monthlyKPIs[idx];
-        const completeness = calcCompleteness(m);
-        return {
-          monat:           MONTH_NAMES_SHORT_DE[m.month],
-          umsatzIst:       m.revenueActual        ?? null,
-          umsatzBudget:    m.revenueBudget        ?? null,
-          umsatzVorjahr:   m.revenuePreviousYear  ?? null,
-          abwBudgetPct:    kpi.abwBudgetPct,
-          abwVorjahrPct:   kpi.abwVorjahrPct,
-          warenaufwand:    kpi.warenaufwandPL,
-          warenPct:        kpi.warenaufwandPLPct,
-          personalaufwand: kpi.personalaufwandPL,
-          personalPct:     kpi.personalaufwandPLPct,
-          pkIst:           m.personnelCostActual  ?? null,
-          pkER:            kpi.pkIst              ?? null,
-          pkPlan:          m.personnelCostPlanned ?? null,
-          vollstaendigkeit: completeness.completenessPercent,
-        };
-      });
-      exportMonatsdatenToPDF(rows, year, tenant.name, threshold, tenantId);
-      toast.success('Monatsdaten PDF exportiert');
-    } catch { toast.error('Monatsdaten PDF fehlgeschlagen'); }
+    if (maisonAvailableForExport) {
+      setExportDialogType('monatsdaten');
+      setExportDialogOpen(true);
+    } else {
+      try {
+        const rows = buildMonatsdatenRows(effectiveMonths);
+        exportMonatsdatenToPDF(rows, year, tenant.name, threshold, tenantId);
+        toast.success('Monatsdaten PDF exportiert');
+      } catch { toast.error('Monatsdaten PDF fehlgeschlagen'); }
+    }
   };
+
+  // Wird vom Dialog aufgerufen mit der Maison-Entscheidung
+  const handleConfirmExport = useCallback((includeMaison: boolean) => {
+    const adjMonths = getExportMonths(includeMaison);
+    const adjTotals = calcEffectiveTotals(adjMonths);
+    try {
+      if (exportDialogType === 'pdf') {
+        const pkERByMonth = monthlyKPIs.map(k => k.pkIst ?? null);
+        exportReportingToPDF(adjMonths, adjTotals, year, threshold, pkERByMonth);
+        toast.success('PDF exportiert');
+      } else {
+        const rows = buildMonatsdatenRows(adjMonths);
+        exportMonatsdatenToPDF(rows, year, tenant.name, threshold, tenantId);
+        toast.success('Monatsdaten PDF exportiert');
+      }
+    } catch { toast.error('PDF-Export fehlgeschlagen'); }
+  }, [getExportMonths, exportDialogType, monthlyKPIs, year, threshold, tenant.name, tenantId]);
 
   const handleExportExcel = () => {
     try {
@@ -2217,8 +2262,8 @@ const Reporting = () => {
     } catch { toast.error('Excel-Export fehlgeschlagen'); }
   };
 
-  const buildMonatsdatenRows = (): MonatsdatenRow[] =>
-    effectiveMonths.map((m, idx) => {
+  const buildMonatsdatenRows = (srcMonths?: typeof effectiveMonths): MonatsdatenRow[] =>
+    (srcMonths ?? effectiveMonths).map((m, idx) => {
       const kpi = monthlyKPIs[idx];
       const completeness = calcCompleteness(m);
       return {
@@ -2318,6 +2363,16 @@ const Reporting = () => {
       <div className="flex-1 max-w-6xl mx-auto w-full px-4 py-5 space-y-5 pb-20">
 
         <StichtagBanner />
+
+        <ReportingExportDialog
+          open={exportDialogOpen}
+          onClose={() => setExportDialogOpen(false)}
+          year={year}
+          exportType={exportDialogType}
+          maisonAvailable={maisonAvailableForExport}
+          maisonYearTotal={maisonYearTotal}
+          onExport={handleConfirmExport}
+        />
 
         {/* Datenbasis-Info */}
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/20 dark:border-emerald-800 p-3 flex items-start gap-2">

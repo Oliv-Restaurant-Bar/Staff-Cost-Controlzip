@@ -1,0 +1,187 @@
+Bitte mache eine vollständige Datenintegritätsprüfung für Mitarbeiter, Personalstamm und Dienstplanung.
+
+Problem:
+Es erscheinen immer wieder neue Mitarbeiter im Personalstamm, die nie erfasst wurden.
+Gleichzeitig verschwinden erfasste Mitarbeiter oder Aushilfen später wieder, obwohl sie im Dienstplan geplant wurden.
+
+Das ist ein kritisches Datenstabilitätsproblem zwischen Webapp, Supabase, localStorage, Importen und eventuell Fallback-/Demo-Daten.
+
+Ziel:
+Mitarbeiterdaten müssen dauerhaft stabil bleiben.
+Supabase muss die einzige Quelle der Wahrheit sein.
+Die Webapp darf nie automatisch echte Mitarbeiter löschen, überschreiben oder aus localStorage/Demo-Daten neu erzeugen.
+
+Bitte priorisiert analysieren und fixen:
+
+1. Alle Schreibpfade auf employees prüfen
+
+Suche im gesamten Projekt nach allen Stellen, die employees schreiben:
+- insert
+- upsert
+- update
+- delete
+- saveEmployees
+- localStorage employees
+- seed/demo/fallback employees
+- Import aus Mirus
+- Mitarbeiter-Onboarding
+- Pending registrations
+- Zusatzkosten/Aushilfen
+- Dienstplan-Aushilfe erstellen
+
+Bitte eine Liste ausgeben:
+Datei
+Funktion
+was wird geschrieben
+wann wird geschrieben
+
+2. Supabase als Master erzwingen
+
+Regel:
+employees aus Supabase sind Master.
+localStorage darf nur Cache sein.
+
+Beim App-Start:
+- erst Supabase laden
+- localStorage niemals über Supabase schreiben
+- localStorage nur mit Supabase-Daten aktualisieren
+
+3. Keine automatischen Mitarbeiter aus Importen
+
+Mirus Import darf unbekannte Mitarbeiter NICHT automatisch dauerhaft in employees erstellen, ausser Admin bestätigt explizit "Mitarbeiter neu erfassen".
+
+Falls aktuell automatische Anlage passiert:
+sofort deaktivieren.
+
+Unbekannte Import-Mitarbeiter sollen nur in der Import-Vorschau erscheinen:
+- zuordnen
+- neu erfassen
+- ausschliessen
+
+4. Keine Demo-/Fallback-Mitarbeiter in Produktion
+
+Alle Demo-, Beispiel-, Seed- oder Fallback-Mitarbeiter dürfen in Produktion niemals in Supabase oder den Personalstamm geschrieben werden.
+
+Bitte prüfen:
+- demoEmployees
+- defaultEmployees
+- sampleStaff
+- fallbackStaff
+- initialEmployees
+- seededEmployees
+
+In Produktion:
+nur anzeigen falls Supabase komplett leer UND explizit Demo-Modus aktiv.
+Sonst niemals speichern.
+
+5. Keine Deletes ohne Soft Delete
+
+Mitarbeiter dürfen nicht physisch gelöscht werden, wenn sie:
+- im Dienstplan vorkommen
+- Arbeitszeitdaten haben
+- Importdaten haben
+- Historie haben
+
+Statt Delete:
+is_active = false
+archived_at
+employment_end_date
+
+Bitte prüfen ob delete() auf employees verwendet wird.
+Wenn ja:
+durch Soft-Delete ersetzen.
+
+6. Mitarbeiter dürfen nicht verschwinden
+
+Wenn ein Mitarbeiter nicht aktiv ist:
+- aus aktueller Planung ggf. ausblenden
+- aber im Personalstamm mit Status inaktiv/archiviert weiterhin auffindbar lassen
+- historische Dienstpläne müssen ihn weiterhin anzeigen können
+
+7. Fremde oder falsche Mitarbeiter identifizieren
+
+Bitte ein Diagnose-Panel oder Admin-Tool erstellen:
+
+"Datenintegrität Mitarbeiter"
+
+Anzeigen:
+- Mitarbeiter ohne created_at / created_by
+- Mitarbeiter ohne Abteilung
+- Mitarbeiter ohne Anstellungsart
+- Mitarbeiter mit Dienstplan-Einträgen aber nicht im Personalstamm
+- Mitarbeiter im Personalstamm ohne Supabase-ID
+- Dubletten nach Name
+- Mitarbeiter nur in localStorage
+- Mitarbeiter nur in Supabase
+- Mitarbeiter durch Import erstellt
+- Mitarbeiter durch Onboarding erstellt
+
+8. Audit Log für Mitarbeiter
+
+Neue Tabelle falls nötig:
+
+employee_change_log
+
+Felder:
+id uuid primary key
+employee_id text nullable
+employee_name text nullable
+change_type text not null
+old_value jsonb nullable
+new_value jsonb nullable
+source text nullable
+changed_by uuid nullable
+changed_at timestamptz default now()
+
+Jede Erstellung, Änderung, Archivierung protokollieren.
+
+9. Schreibschutz für kritische Felder
+
+Beim normalen Laden der App dürfen nie automatisch überschrieben werden:
+- Name
+- Abteilung
+- Anstellungsart
+- Stundenlohn
+- Wochenstunden
+- Eintritt
+- Austritt
+- Status
+
+Diese dürfen nur geändert werden durch:
+- Personalstamm-Formular
+- Admin-Onboarding-Freigabe
+- explizite Import-Neuerfassung
+
+10. Dienstplanung absichern
+
+Wenn ein Mitarbeiter im Dienstplan geplant wurde:
+- darf er nicht durch einen späteren Sync verschwinden
+- schedule_entries müssen immer auf gültige employee_id zeigen
+- falls Mitarbeiter archiviert ist, historische Einträge trotzdem laden
+
+11. Tenant-Isolation prüfen
+
+Bitte sicherstellen:
+- employees werden immer mit tenant_id gespeichert
+- alle Queries filtern nach tenant_id
+- keine Vermischung zwischen Oliv, Beaulieu oder anderen Tenants
+- localStorage Keys tenant-spezifisch sind
+
+12. Sofortmassnahme
+
+Bis das sauber ist:
+- automatische Mitarbeiter-Erstellung aus Importen deaktivieren
+- physische employee deletes deaktivieren
+- localStorage-to-Supabase sync für employees deaktivieren
+
+13. Nach Umsetzung ausgeben
+
+Bitte genau auflisten:
+- Welche Stellen employees bisher geschrieben haben
+- Wo falsche Mitarbeiter entstanden sind
+- Warum Mitarbeiter verschwinden konnten
+- Welche Fallbacks/Demo-Daten deaktiviert wurden
+- Ob employees jetzt nur noch aus Supabase kommen
+- Welche SQL-Migration nötig ist
+- Wie das Diagnose-Panel geöffnet wird
+- Wie man falsche Mitarbeiter sicher archiviert
