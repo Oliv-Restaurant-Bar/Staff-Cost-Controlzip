@@ -619,6 +619,7 @@ export async function loadScheduleForMonth(month: Date): Promise<Record<string, 
           : null,
         frühAbsence: row.frueh_absence ?? null,
         spätAbsence: row.spaet_absence ?? null,
+        ...(row.is_additional_cost_plan ? { isAdditionalCostPlan: true } : {}),
       };
     }
     return result;
@@ -653,6 +654,7 @@ export async function saveScheduleEntry(
         spaet_start: schedule?.spät?.start ?? null,
         spaet_end: schedule?.spät?.end ?? null,
         spaet_absence: schedule?.spätAbsence ?? null,
+        is_additional_cost_plan: schedule?.isAdditionalCostPlan ?? false,
       }, { onConflict: 'employee_id,date' });
     }
   } catch (e) {
@@ -695,6 +697,7 @@ export async function saveFullScheduleForMonth(
       spaet_start:  s.spät?.start   ?? null,
       spaet_end:    s.spät?.end     ?? null,
       spaet_absence: s.spätAbsence  ?? null,
+      is_additional_cost_plan: s.isAdditionalCostPlan ?? false,
     }));
 
   console.log(`[SCHEDULE] save start – month=${monthKey} payload=${rows.length} rows`);
