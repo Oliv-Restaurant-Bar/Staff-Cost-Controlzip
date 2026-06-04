@@ -2425,6 +2425,20 @@ const PLViewPage = () => {
         }
       }
 
+      // ── Personalkosten: Buchhaltung hat Vorrang vor Dienstplan ────────────
+      // Wenn 5xxx-Lohnkonten (5000–5009) in expenseCategories vorhanden sind,
+      // personnelCostActual entfernen → PLEngine nutzt direkt die Buchhaltungs-
+      // konten (identisch mit Reporting / plResultsClean). Additiv-Konten wie
+      // 5004/5005 werden dann normal summiert, nicht als Override behandelt.
+      // Ohne Buchhaltungsdaten bleibt personnelCostActual als Fallback erhalten.
+      const hasAccountingWages = r.expenseCategories.some(c => {
+        const n = parseInt(c.categoryId);
+        return !isNaN(n) && n >= 5000 && n <= 5009;
+      });
+      if (hasAccountingWages && r.personnelCostActual !== undefined) {
+        r = { ...r, personnelCostActual: undefined };
+      }
+
       return r;
     });
   }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonColPref, maisonDaily, takeawayMonthlyMap, showNetRevenue]);
