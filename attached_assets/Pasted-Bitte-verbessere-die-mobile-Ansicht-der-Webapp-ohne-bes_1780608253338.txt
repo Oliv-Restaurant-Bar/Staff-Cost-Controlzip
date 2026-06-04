@@ -1,0 +1,125 @@
+Bitte verbessere die mobile Ansicht der Webapp ohne bestehende Desktop-Funktionen zu entfernen oder zu verändern.
+
+Fokusbereiche:
+- Erfolgsrechnung
+- Analyse / Reporting
+- Produktanalyse
+- Personal FIX
+- Personal FIX + Variable
+- relevante Auswertungen und Tabellen
+
+Ziel:
+Auf dem Handy sollen diese Bereiche besser lesbar und bedienbar sein. Desktop-Ansicht muss unverändert stabil bleiben.
+
+Wichtig:
+Keine Datenlogik ändern.
+Keine Berechnungen ändern.
+Keine bestehenden Features entfernen.
+Nur responsive UI / mobile Darstellung verbessern.
+
+1. Mobile Layout allgemein
+
+Für Screens unter ca. 768px:
+- Tabellen nicht einfach abgeschnitten anzeigen
+- wichtige Kennzahlen als Cards anzeigen
+- horizontales Scrollen nur dort, wo es wirklich nötig ist
+- Header und Filter kompakter machen
+- Buttons grösser und gut klickbar machen
+- keine überlappenden Elemente
+- keine abgeschnittenen Zahlen
+
+2. Erfolgsrechnung
+
+Mobile Ansicht:
+- KPI Cards oben
+- danach Sektionen:
+  Umsatz
+  Warenkosten
+  Personalkosten
+  Fixkosten
+  Ergebnis
+- Tabellenzeilen als mobile Cards darstellen:
+  Bezeichnung
+  Ist
+  Budget
+  Vorjahr
+  Abweichung
+- Desktop-Tabelle unverändert lassen.
+
+3. Analyse / Reporting
+
+Mobile:
+- Filter oben als kompakte Dropdowns
+- wichtigste KPIs als Cards
+- Diagramme untereinander statt nebeneinander
+- Tabellen als Cards oder horizontal scrollbare Tabelle
+- keine Inhalte verlieren.
+
+4. Produktanalyse
+
+Mobile:
+- Produktliste als Cards
+- Suchfeld sticky oben
+- Kennzahlen pro Produkt sichtbar:
+  Umsatz
+  Menge
+  WES
+  Marge
+  Anteil
+- Tabellenkopf auf Mobile vermeiden oder sticky machen
+- Detailansicht pro Produkt gut antippbar machen.
+
+5. Personal FIX
+
+Mobile:
+- Monatsübersicht als KPI Cards
+- Mitarbeiterkosten als Cards statt breite Tabelle
+- Pro Mitarbeiter anzeigen:
+  Name
+  Abteilung
+  Monatslohn / Stundenlohn
+  Soll
+  Ist
+  Kosten
+  Differenz
+- Totalzeile prominent unten oder oben anzeigen.
+
+6. Personal FIX + Variable
+
+Mobile:
+- Fixkosten und variable Kosten getrennt als Sektionen
+- Mitarbeiter-Zeilen als Cards
+- Zusatzkosten sichtbar markieren
+- Totals immer gut sichtbar
+- Export Button weiterhin erreichbar.
+
+7. Sticky mobile navigation
+
+Falls sinnvoll:
+- obere Filterleiste sticky machen
+- wichtige Actions wie Export / Aktualisieren / Monat wechseln erreichbar halten
+
+8. Responsive Komponenten
+
+Bitte bestehende Komponenten so erweitern:
+- Desktop bleibt Tabelle
+- Mobile wird Card Layout
+
+Nicht zwei komplett getrennte Logiken bauen, nur UI-Rendering abhängig von Breakpoint.
+
+9. QA
+
+Bitte testen:
+- iPhone Breite 390px
+- Android Breite 412px
+- Tablet Breite 768px
+- Desktop unverändert
+
+10. Nach Umsetzung ausgeben
+
+Bitte genau auflisten:
+- Welche Dateien geändert wurden
+- Welche Seiten mobile verbessert wurden
+- Welche Desktop-Ansichten unverändert blieben
+- Ob Berechnungen unverändert sind
+- Welche Breakpoints verwendet wurden

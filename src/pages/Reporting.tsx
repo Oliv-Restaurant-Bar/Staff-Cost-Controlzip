@@ -2014,7 +2014,7 @@ const Reporting = () => {
   const { showMarketingCol: maisonColPref } = useMaison();
   const years = availableYears();
   const [year,        setYear]        = useState(currentYear);
-  const [months,      setMonths]      = useState<MonthlyFinancialRecord[]>(() => loadYear(year));
+  const [months,      setMonths]      = useState<MonthlyFinancialRecord[]>(() => loadYear(year, tenantKey('reporting_v1')));
   const [editRecord,  setEditRecord]  = useState<MonthlyFinancialRecord | null>(null);
   const [highlightVariance, setHighlightVariance] = useState(false);
 
@@ -2041,6 +2041,12 @@ const Reporting = () => {
   const [vjDailyData, setVjDailyData] = useState<Record<string, VjDayRecord>>({});
   useEffect(() => {
     loadVjDailyYear(year - 1, tenantId).then(data => setVjDailyData(data));
+  }, [year, tenantId]);
+
+  // Daten bei Tenant- oder Jahreswechsel neu laden
+  useEffect(() => {
+    setMonths(loadYear(year, tenantKey('reporting_v1')));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year, tenantId]);
 
   // Nach Supabase-Sync Daten neu laden
