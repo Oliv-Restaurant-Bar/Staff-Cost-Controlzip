@@ -18,7 +18,6 @@ import { PersonnelTab } from '@/components/tabs/PersonnelTab';
 import { ScheduleTab } from '@/components/tabs/ScheduleTab';
 import { Employee, TimeEntry } from '@/types/personnel';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { 
   Settings,
   ChevronLeft,
@@ -40,7 +39,7 @@ const Index = () => {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done'>('idle');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
+  const { showNetRevenue } = useRevenueDisplay();
   const [activeTab, setActiveTab] = useState<MainTab>(() => {
     const saved = localStorage.getItem(ACTIVE_TAB_KEY);
     if (saved === 'übersicht' || saved === 'umsatz' || saved === 'personal' || saved === 'dienstplan') {
@@ -243,15 +242,8 @@ const Index = () => {
             {/* Spacer */}
             <div className="flex-1" />
 
-            {/* Right: Brutto/Netto, Export, Sync, Settings */}
+            {/* Right: Export, Sync, Settings */}
             <div className="flex items-center gap-1 flex-shrink-0">
-              <Badge 
-                variant={showNetRevenue ? "default" : "secondary"}
-                className="cursor-pointer text-xs px-2 py-0.5"
-                onClick={() => setShowNetRevenue(!showNetRevenue)}
-              >
-                {showNetRevenue ? 'Netto' : 'Brutto'}
-              </Badge>
               <ExportButtons
                 selectedDate={selectedDate}
                 employees={employees}

@@ -53,7 +53,8 @@ import { PDFExportDialog } from '@/components/PDFExportDialog';
 import { toast } from 'sonner';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
-import { computeMonthlyIstNet, computeMonthlyVjNet } from '@/lib/revenue-sync';
+import { computeMonthlyIstNet, computeMonthlyIstGross, computeMonthlyVjNet } from '@/lib/revenue-sync';
+import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
   loadMaisonEnabled, loadMaisonMonthly,
@@ -2235,6 +2236,7 @@ const PLViewPage = () => {
   const [maisonMonthly]                   = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
   const [maisonDaily,   setMaisonDaily]   = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
   const { showMarketingCol: maisonColPref, maisonExclude, setMaisonExclude } = useMaison();
+  const { showNetRevenue } = useRevenueDisplay();
 
   useEffect(() => {
     loadMaisonEnabled(tenantKey).then(setMaisonEnabled);
@@ -2398,13 +2400,15 @@ const PLViewPage = () => {
       });
       if (!hasIndivRev) {
         const mm = String(m).padStart(2, '0');
-        const monthTakeaway = takeawayMonthlyMap[`${year}-${mm}`] ?? 0;
-        const tagesansichtRev = computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonEnabled && !maisonExclude ? maisonDaily : undefined, monthTakeaway > 0 ? monthTakeaway : undefined);
+        const maisonArg = maisonEnabled && !maisonExclude ? maisonDaily : undefined;
+        const tagesansichtRev = showNetRevenue
+          ? computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonArg, (takeawayMonthlyMap[`${year}-${mm}`] ?? 0) > 0 ? takeawayMonthlyMap[`${year}-${mm}`] : undefined)
+          : computeMonthlyIstGross(year, m, dailyBudgetsData, undefined, maisonArg);
         if (tagesansichtRev > 0) {
           if (r.revenueActual && Math.abs(r.revenueActual - tagesansichtRev) > 1) {
             console.warn(
               `[REVENUE-SYNC] ${year}-${String(m).padStart(2,'0')}: ` +
-              `reporting_v1=${r.revenueActual.toFixed(0)} vs tagesansicht_net=${tagesansichtRev.toFixed(0)} ` +
+              `reporting_v1=${r.revenueActual.toFixed(0)} vs tagesansicht_${showNetRevenue ? 'net' : 'gross'}=${tagesansichtRev.toFixed(0)} ` +
               `(diff=${(tagesansichtRev - r.revenueActual).toFixed(0)}) → verwende Tagesansicht`,
             );
           }
@@ -2429,7 +2433,7 @@ const PLViewPage = () => {
 
       return r;
     });
-  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonDaily, maisonExclude, takeawayMonthlyMap]);
+  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonDaily, maisonExclude, takeawayMonthlyMap, showNetRevenue]);
 
   // Effektiver Datensatz für den ausgewählten Monat
   const effectiveMonthRecord = useMemo(

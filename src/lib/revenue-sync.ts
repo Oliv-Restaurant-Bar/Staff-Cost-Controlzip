@@ -86,6 +86,35 @@ export function computeMonthlyIstNet(
 }
 
 /**
+ * Berechnet den IST-Umsatz BRUTTO für einen Monat (Kassenbetrag inkl. MwSt).
+ * Wird für die Brutto-Kontrollansicht in PLView verwendet.
+ */
+export function computeMonthlyIstGross(
+  year:           number,
+  month:          number,
+  dailyBudgets:   Record<string, DailyEntry>,
+  maisonMonthly?: Record<string, number>,
+  maisonDaily?:   Record<string, number>,
+): number {
+  const days = new Date(year, month, 0).getDate();
+  const mm   = String(month).padStart(2, '0');
+  let total  = 0;
+  for (let d = 1; d <= days; d++) {
+    const key = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+    total += dailyBudgets[key]?.actualRevenue ?? 0;
+  }
+  if (maisonDaily) {
+    for (let d = 1; d <= days; d++) {
+      const key = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+      total += maisonDaily[key] ?? 0;
+    }
+  } else if (maisonMonthly) {
+    total += maisonMonthly[`${year}-${mm}`] ?? 0;
+  }
+  return total;
+}
+
+/**
  * Prüft ob für einen Monat überhaupt Tagesdaten in dailyBudgets vorhanden sind
  * (mindestens ein Tag mit actualRevenue > 0).
  */
