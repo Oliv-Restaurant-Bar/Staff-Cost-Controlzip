@@ -1752,7 +1752,7 @@ const SchedulePlanner = () => {
     }
     const newEmployee: Employee = {
       ...employee,
-      id: `aush_${Date.now()}`,
+      id: tenantId === 'beaulieu' ? `b-aush_${Date.now()}` : `aush_${Date.now()}`,
     };
     const updatedEmployees = [...employees, newEmployee];
     setEmployees(updatedEmployees);
@@ -2382,7 +2382,7 @@ const SchedulePlanner = () => {
       }
       const newEmployee: Employee = {
         ...employeeData,
-        id: `emp_${Date.now()}`,
+        id: tenantId === 'beaulieu' ? `b-emp_${Date.now()}` : `emp_${Date.now()}`,
       };
       const updatedEmployees = [...employees, newEmployee];
       setEmployees(updatedEmployees);
