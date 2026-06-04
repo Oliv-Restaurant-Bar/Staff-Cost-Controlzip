@@ -1056,7 +1056,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   revenueActual?: number;
   revenueBudget?: number;
   revenuePrevYear?: number;
-  compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr';
+  compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr' | 'monat_vs_monat';
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
 }) => {
@@ -1065,7 +1065,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   const py = compact ? 'py-1' : 'py-2';
   const pyResult = compact ? 'py-1' : 'py-2.5';
   const pyItem = compact ? 'py-0.5' : 'py-1.5';
-  const showBudget   = compareMode !== 'ist_vorjahr';
+  const showBudget   = compareMode !== 'ist_vorjahr' && compareMode !== 'monat_vs_monat';
   const showPrevYear = compareMode !== 'ist_budget';
 
   const pctVal = (actual: number) =>
@@ -1256,6 +1256,7 @@ const BudgetPLView = ({
   pctIsBudgetBased = false,
   maisonEnabled = false,
   maisonNet = 0,
+  prevYearLabel = 'Vorjahr',
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
@@ -1269,12 +1270,13 @@ const BudgetPLView = ({
   revenueActual?: number;
   revenueBudget?: number;
   revenuePrevYear?: number;
-  compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr';
+  compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr' | 'monat_vs_monat';
   pctIsBudgetBased?: boolean;
   maisonEnabled?: boolean;
   maisonNet?: number;
+  prevYearLabel?: string;
 }) => {
-  const showBudget   = compareMode !== 'ist_vorjahr';
+  const showBudget   = compareMode !== 'ist_vorjahr' && compareMode !== 'monat_vs_monat';
   const showPrevYear = compareMode !== 'ist_budget';
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
 
@@ -1305,9 +1307,9 @@ const BudgetPLView = ({
           {showBudget && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Budget (CHF)</th>}
           {showBudget && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', compact ? 'py-1.5' : 'py-2.5', 'text-[#c8d9b8]')} title="% vom Budget-Umsatz">% Bud.</th>}
           {showBudget && <th className={cn('text-right px-2 min-w-[130px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. Budget</th>}
-          {showPrevYear && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Vorjahr (CHF)</th>}
-          {showPrevYear && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', compact ? 'py-1.5' : 'py-2.5', 'text-[#c8d9b8]')} title="% vom Vorjahr-Umsatz">% VJ</th>}
-          {showPrevYear && <th className={cn('text-right px-2 min-w-[120px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. VJ</th>}
+          {showPrevYear && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>{prevYearLabel} (CHF)</th>}
+          {showPrevYear && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', compact ? 'py-1.5' : 'py-2.5', 'text-[#c8d9b8]')} title={`% vom ${prevYearLabel}-Umsatz`}>% {prevYearLabel.length > 6 ? 'Vgl.' : prevYearLabel}</th>}
+          {showPrevYear && <th className={cn('text-right px-2 min-w-[120px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. {prevYearLabel.length > 6 ? 'Vgl.' : prevYearLabel}</th>}
         </tr>
       </thead>
       <tbody>
@@ -2256,7 +2258,9 @@ const PLViewPage = () => {
   const [compact,          setCompact]          = useState(false);
   const [highlightVariance, setHighlightVariance] = useState(false);
   const [pctMode,          setPctMode]          = useState<'off' | 'normal' | 'subtle'>('off');
-  const [compareMode,      setCompareMode]      = useState<'all' | 'ist_budget' | 'ist_vorjahr'>('all');
+  const [compareMode,      setCompareMode]      = useState<'all' | 'ist_budget' | 'ist_vorjahr' | 'monat_vs_monat'>('all');
+  const [cmpMonth,         setCmpMonth]         = useState<number>(() => month > 1 ? month - 1 : 12);
+  const [cmpYear,          setCmpYear]          = useState<number>(() => month > 1 ? new Date().getFullYear() : new Date().getFullYear() - 1);
   const [refreshKey,       setRefreshKey]       = useState(0);
   const [addKontoOpen,    setAddKontoOpen]    = useState(false);
 
@@ -2522,19 +2526,58 @@ const PLViewPage = () => {
     [budgetData, effectiveMonthRecord, month, prevYearRecords],
   );
 
+  // ── Monat-vs-Monat Vergleich ─────────────────────────────────────────────
+  const cmpRecord = useMemo(() => {
+    if (compareMode !== 'monat_vs_monat') return undefined;
+    const idx = cmpMonth - 1;
+    if (cmpYear === year) return effectiveAllRecords[idx] as MonthlyFinancialRecord | undefined;
+    if (cmpYear === year - 1) return prevYearRecords[idx] as MonthlyFinancialRecord | undefined;
+    return undefined;
+  }, [compareMode, cmpMonth, cmpYear, year, effectiveAllRecords, prevYearRecords]);
+
+  const cmpBplRows = useMemo<BPLRowWithValues[]>(() => {
+    if (!cmpRecord) return [];
+    return computeBPLRows(budgetData, cmpRecord, cmpMonth - 1, undefined);
+  }, [budgetData, cmpRecord, cmpMonth]);
+
+  // effectiveBplRows: bplRows mit injizierten Vergleichsmonat-Werten als prevYear
+  const effectiveBplRows = useMemo<BPLRowWithValues[]>(() => {
+    if (compareMode !== 'monat_vs_monat' || cmpBplRows.length === 0) return bplRows;
+    const cmpMap = new Map<string, number>();
+    for (const row of cmpBplRows) {
+      const key = row.isCategory ? `cat:${row.catId}` : `item:${row.catId}:${row.itemId}`;
+      cmpMap.set(key, row.values.actual);
+    }
+    return bplRows.map(row => {
+      const key = row.isCategory ? `cat:${row.catId}` : `item:${row.catId}:${row.itemId}`;
+      const cmpActual = cmpMap.get(key);
+      if (cmpActual === undefined) return row;
+      const newVsPrevYear = row.values.actual - cmpActual;
+      return {
+        ...row,
+        values: {
+          ...row.values,
+          prevYear: cmpActual,
+          vsPrevYear: newVsPrevYear,
+          vsPrevYearPct: cmpActual !== 0 ? (newVsPrevYear / Math.abs(cmpActual)) * 100 : undefined,
+        },
+      };
+    });
+  }, [compareMode, bplRows, cmpBplRows]);
+
   const bplRevenue = useMemo(
-    () => bplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.actual ?? 0,
-    [bplRows],
+    () => effectiveBplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.actual ?? 0,
+    [effectiveBplRows],
   );
 
   // Wenn kein Ist-Umsatz vorhanden → Budget-Umsatz als Fallback für %-Berechnung
   const bplBudgetRevenue = useMemo(
-    () => bplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.budget ?? 0,
-    [bplRows],
+    () => effectiveBplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.budget ?? 0,
+    [effectiveBplRows],
   );
   const bplPrevYearRevenue = useMemo(
-    () => bplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.prevYear ?? 0,
-    [bplRows],
+    () => effectiveBplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.prevYear ?? 0,
+    [effectiveBplRows],
   );
   const bplEffectiveRevenue = bplRevenue > 0 ? bplRevenue : bplBudgetRevenue;
   const pctIsBudgetBased = pctMode !== 'off' && bplRevenue === 0 && bplBudgetRevenue > 0;
@@ -2572,12 +2615,34 @@ const PLViewPage = () => {
   const gp2     = monthResult.rows.find(r => r.def.id === 'gross_profit_2')?.values;
   const ebit    = monthResult.rows.find(r => r.def.id === 'ebit')?.values;
 
-  const kpis = [
+  // Budget-P&L KPIs direkt aus effectiveBplRows (enthält manualIstValues → stimmt mit Tabelle überein)
+  const bplKpiNetRev = effectiveBplRows.find(r => r.catId === 'pl_revenue'  && r.isCategory)?.values;
+  const bplKpiGross1 = effectiveBplRows.find(r => r.catId === 'pl_gross_1'  && r.isCategory)?.values;
+  const bplKpiGross2 = effectiveBplRows.find(r => r.catId === 'pl_gross_2'  && r.isCategory)?.values;
+  const bplKpiEbitda = effectiveBplRows.find(r => r.catId === 'pl_ebitda'   && r.isCategory)?.values;
+
+  // PLCellValues-kompatible Objekte für BPL-KPIs
+  const toBPLKpiVal = (c: BPLCell | undefined): { actual?: number; budget?: number; prevYear?: number } | undefined =>
+    c ? { actual: c.actual || undefined, budget: c.budget || undefined, prevYear: c.prevYear || undefined } : undefined;
+
+  // prevYearLabel für Budget-P&L Tabellenkopf (Monat-vs-Monat → Vergleichsmonat-Name)
+  const prevYearColLabel = compareMode === 'monat_vs_monat'
+    ? `${MONTH_NAMES_DE[cmpMonth]?.slice(0, 3) ?? `M${cmpMonth}`} ${cmpYear}`
+    : 'Vorjahr';
+
+  // In budget_pl mode: KPI-Karten aus bplRows (konsistent mit Tabelle)
+  // In anderen Modi: KPI-Karten aus pl-engine (klassisch/jahr)
+  const kpis = (mode === 'budget_pl' ? [
+    { label: 'Betriebsertrag',          values: toBPLKpiVal(bplKpiNetRev), suffix: '' },
+    { label: 'Bruttogewinn 1',          values: toBPLKpiVal(bplKpiGross1), suffix: bplKpiNetRev?.actual ? ` (${((bplKpiGross1?.actual ?? 0) / bplKpiNetRev.actual * 100).toFixed(1)} %)` : '' },
+    { label: 'Deckungsbeitrag',         values: toBPLKpiVal(bplKpiGross2), suffix: bplKpiNetRev?.actual ? ` (${((bplKpiGross2?.actual ?? 0) / bplKpiNetRev.actual * 100).toFixed(1)} %)` : '' },
+    { label: 'Betriebsergebnis (EBIT)', values: toBPLKpiVal(bplKpiEbitda), suffix: bplKpiNetRev?.actual ? ` (${((bplKpiEbitda?.actual ?? 0) / bplKpiNetRev.actual * 100).toFixed(1)} %)` : '' },
+  ] : [
     { label: 'Betriebsertrag netto', values: netRev, suffix: '' },
     { label: 'Bruttogewinn 1',       values: gp1,   suffix: netRev?.actual ? ` (${((gp1?.actual ?? 0) / netRev.actual * 100).toFixed(1)} %)` : '' },
     { label: 'Deckungsbeitrag',       values: gp2,   suffix: netRev?.actual ? ` (${((gp2?.actual ?? 0) / netRev.actual * 100).toFixed(1)} %)` : '' },
     { label: 'Betriebsergebnis EBIT', values: ebit,  suffix: netRev?.actual ? ` (${((ebit?.actual ?? 0) / netRev.actual * 100).toFixed(1)} %)` : '' },
-  ];
+  ]) as Array<{ label: string; values: { actual?: number } | undefined; suffix: string }>;
 
   // KPI-Karten Jahresansicht (Summe über alle Monate)
   const yearNetRevTotal  = useMemo(() => yearResult.months.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'net_revenue')?.values.actual ?? 0), 0), [yearResult]);
@@ -2757,24 +2822,59 @@ const PLViewPage = () => {
             {/* Vergleichsmodus */}
             {mode === 'budget_pl' && (
               <button
-                title="Vergleichsmodus wechseln: Alles / Ist vs Budget / Ist vs Vorjahr"
-                onClick={() => setCompareMode(m => m === 'all' ? 'ist_budget' : m === 'ist_budget' ? 'ist_vorjahr' : 'all')}
+                title="Vergleichsmodus wechseln: Alles / Ist vs Budget / Ist vs Vorjahr / Ist vs Monat"
+                onClick={() => setCompareMode(m =>
+                  m === 'all' ? 'ist_budget'
+                  : m === 'ist_budget' ? 'ist_vorjahr'
+                  : m === 'ist_vorjahr' ? 'monat_vs_monat'
+                  : 'all'
+                )}
                 className={cn(
                   'h-8 px-2 flex items-center gap-1 rounded border text-xs transition-colors',
                   compareMode === 'ist_budget'
                     ? 'bg-blue-500 text-white border-blue-500'
                     : compareMode === 'ist_vorjahr'
                     ? 'bg-purple-500 text-white border-purple-500'
+                    : compareMode === 'monat_vs_monat'
+                    ? 'bg-amber-500 text-white border-amber-500'
                     : 'bg-card border-border hover:bg-muted text-muted-foreground',
                 )}
               >
                 <span className="hidden sm:inline">
-                  {compareMode === 'ist_budget' ? 'Ist vs Budget' : compareMode === 'ist_vorjahr' ? 'Ist vs Vorjahr' : 'Vergleich'}
+                  {compareMode === 'ist_budget' ? 'Ist vs Budget'
+                    : compareMode === 'ist_vorjahr' ? 'Ist vs Vorjahr'
+                    : compareMode === 'monat_vs_monat' ? 'Ist vs Monat'
+                    : 'Vergleich'}
                 </span>
                 <span className="sm:hidden">
-                  {compareMode === 'ist_budget' ? 'B' : compareMode === 'ist_vorjahr' ? 'VJ' : 'Vgl'}
+                  {compareMode === 'ist_budget' ? 'B'
+                    : compareMode === 'ist_vorjahr' ? 'VJ'
+                    : compareMode === 'monat_vs_monat' ? 'M'
+                    : 'Vgl'}
                 </span>
               </button>
+            )}
+
+            {/* Vergleichsmonat-Selektor (nur Monat-vs-Monat) */}
+            {mode === 'budget_pl' && compareMode === 'monat_vs_monat' && (
+              <>
+                <Select value={String(cmpYear)} onValueChange={v => setCmpYear(Number(v))}>
+                  <SelectTrigger className="h-8 w-20 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[year - 1, year].map(y => (
+                      <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={String(cmpMonth)} onValueChange={v => setCmpMonth(Number(v))}>
+                  <SelectTrigger className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {MONTH_NAMES_DE.slice(1).map((name, i) => (
+                      <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
             )}
 
             {/* Analyse-Link */}
@@ -2977,7 +3077,7 @@ const PLViewPage = () => {
           {/* Tabelle */}
           {mode === 'budget_pl'
             ? <BudgetPLView
-                rows={bplRows}
+                rows={effectiveBplRows}
                 onRowClick={row => {
                   if (row.isCategory || row.catId === 'pl_revenue') {
                     setBplDrilldown(row);
@@ -3002,6 +3102,7 @@ const PLViewPage = () => {
                 pctIsBudgetBased={pctIsBudgetBased}
                 maisonEnabled={maisonEnabled && maisonColPref}
                 maisonNet={maisonMonthNet}
+                prevYearLabel={prevYearColLabel}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
