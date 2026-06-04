@@ -166,7 +166,6 @@ function buildMonthlyKPIs(
     const umsatzIst     = revFrom3xxx > 0 ? revFrom3xxx : (m.revenueActual ?? null);
     const umsatzBudget  = m.revenueBudget        ?? null;
     const umsatzVorjahr = m.revenuePreviousYear  ?? null;
-    const pkIst         = m.personnelCostActual  ?? null;
     const pkBudget      = m.personnelCostPlanned ?? null;
     const warenRaw      = sumWarenaufwand(m);
     const warenIst      = warenRaw > 0 ? warenRaw : null;
@@ -187,8 +186,9 @@ function buildMonthlyKPIs(
     const rawPers  = plPersonnel?.values.actual ?? null;
     const warenaufwandPL = rawWaren != null && rawWaren > 0 ? rawWaren : null;
 
-    // personalaufwandPL: direkt aus PLEngine (total_personnel) — identisch mit ER.
+    // personalaufwandPL + pkIst: beides direkt aus PLEngine total_personnel — identisch mit ER.
     const personalaufwandPL = rawPers != null && rawPers > 0 ? rawPers : null;
+    const pkIst             = personalaufwandPL; // Total (Löhne + Sozial + Übriges), nicht nur Lohnkosten
 
     return {
       month:            idx + 1,
@@ -812,15 +812,6 @@ const PKCombinedTooltip = ({
           </span>
           <span className="font-semibold">{fmtCHF(entry?.personalaufwandPL)}</span>
         </div>
-        {entry?.pkIst != null && (
-          <div className="flex justify-between gap-6">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-slate-500 inline-block" />
-              <span className="text-muted-foreground">PK Ist (Dienstplan)</span>
-            </span>
-            <span className="font-semibold">{fmtCHF(entry.pkIst)}</span>
-          </div>
-        )}
         <div className="flex justify-between gap-6 pt-1 border-t border-border">
           <span className="font-medium">PK-Quote (ER)</span>
           <span className="font-bold text-[13px]" style={{ color: pkBarColor(quote, threshold) }}>
@@ -1260,10 +1251,7 @@ interface PKKombinierteProps {
   threshold: number;
 }
 
-const C_DIENSTPLAN = '#64748b'; // slate-500 → Dienstplan Ist (3. Balken)
-
 const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
-  const [showDienstplan, setShowDienstplan] = useState(false);
 
   const chartData           = data.filter(d => (d.umsatzIst ?? 0) > 0);
   const chartDataWithTarget = chartData.map(d => ({ ...d, pkTargetPct: threshold }));
@@ -1321,41 +1309,6 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
     );
   };
 
-  // Dienstplan-Balken: Quote = pkIst / umsatzIst × 100, quer im Balken
-  const renderDienstplanLabel = (props: Record<string, unknown>) => {
-    const { x, y, width, height, index } = props as {
-      x: number; y: number; width: number; height: number; index: number;
-    };
-    const entry = chartDataWithTarget[index];
-    if (!entry?.pkIst || !entry?.umsatzIst) return null;
-    const quote = (entry.pkIst / entry.umsatzIst) * 100;
-
-    const cx = (x as number) + (width as number) / 2;
-    const barH = height as number;
-    const cy = (y as number) + barH / 2;
-
-    if (barH >= 42) {
-      return (
-        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
-          fontSize={11} fontWeight="700" fill="#ffffff"
-          transform={`rotate(-90, ${cx}, ${cy})`}
-        >
-          {quote.toFixed(1)}%
-        </text>
-      );
-    }
-    if (barH >= 16) {
-      return (
-        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
-          fontSize={9} fontWeight="700" fill="#ffffff"
-        >
-          {quote.toFixed(1)}%
-        </text>
-      );
-    }
-    return null;
-  };
-
   return (
     <Card>
       <CardHeader className="pb-2 pt-4 px-5">
@@ -1389,21 +1342,6 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
                   <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" /> über Ziel
                 </span>
               </span>
-              {/* Dienstplan Ist – Link-Schalter */}
-              <button
-                onClick={() => setShowDienstplan(v => !v)}
-                className={cn(
-                  'ml-1 text-[10px] font-semibold underline underline-offset-2 transition-colors',
-                  showDienstplan
-                    ? 'text-slate-600 dark:text-slate-400'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: C_DIENSTPLAN }} />
-                  {showDienstplan ? 'Dienstplan ausblenden' : '+ Dienstplan Ist einblenden'}
-                </span>
-              </button>
             </div>
           </div>
 
@@ -1434,7 +1372,7 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
           <ResponsiveContainer width="100%" height={400}>
             <ComposedChart
               data={chartDataWithTarget}
-              barGap={5} barCategoryGap={showDienstplan ? '22%' : '28%'}
+              barGap={5} barCategoryGap="28%"
               margin={{ top: 36, right: 48, bottom: 0, left: 0 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
@@ -1462,10 +1400,6 @@ const PKKombinierteChart = ({ data, year, threshold }: PKKombinierteProps) => {
                   <Cell key={i} fill={entry.personalaufwandPLPct == null ? 'hsl(var(--muted))' : pkBarColor(entry.personalaufwandPLPct, threshold)} />
                 ))}
               </Bar>
-              {showDienstplan && (
-                <Bar yAxisId="left" dataKey="pkIst" name="PK Ist (Dienstplan)" fill={C_DIENSTPLAN} radius={[5,5,0,0]} isAnimationActive={false}
-                  label={renderDienstplanLabel as any} />
-              )}
               <Line
                 yAxisId="right" dataKey="pkTargetPct" name={`Ziel ${threshold} %`}
                 stroke={C_RED} strokeDasharray="6 3" strokeWidth={1.5}
