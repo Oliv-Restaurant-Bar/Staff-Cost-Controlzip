@@ -2283,8 +2283,11 @@ export const exportDashboardPDF = (
   dailyBudgets: DailyBudget[],
   selectedDate: Date
 ) => {
-  const doc = new jsPDF();
-  
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const ml = 14;
+  const mr = 14;
+  const cw = 210 - ml - mr; // 182 mm content width
+
   // Calculate data for all periods
   const currentMonth = calculatePeriodStats(employees, timeEntries, dailyBudgets, selectedDate);
   const prevMonth = calculatePeriodStats(employees, timeEntries, dailyBudgets, subMonths(selectedDate, 1));
@@ -2296,15 +2299,13 @@ export const exportDashboardPDF = (
   const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
 
   const departments = {
-    Service: { plannedHours: 0, actualHours: 0, laborCost: 0, revenue: 0 },
-    Küche: { plannedHours: 0, actualHours: 0, laborCost: 0, revenue: 0 },
+    Service: { plannedHours: 0, actualHours: 0, laborCost: 0 },
+    Küche: { plannedHours: 0, actualHours: 0, laborCost: 0 },
   };
 
   daysInMonth.forEach((day) => {
     const dateStr = format(day, 'yyyy-MM-dd');
     const dayEntries = timeEntries.filter((entry) => entry.date === dateStr);
-    const dayBudget = dailyBudgets.find((b) => b.date === dateStr);
-
     dayEntries.forEach((entry) => {
       const employee = employees.find((e) => e.id === entry.employeeId);
       if (employee) {
@@ -2314,140 +2315,330 @@ export const exportDashboardPDF = (
         departments[deptName].laborCost += (entry.actualHours || 0) * employee.hourlyWage * 1.22;
       }
     });
+  });
 
-    if (dayBudget) {
-      const dayRevenue = dayBudget.actualRevenue || dayBudget.plannedRevenue || 0;
-      const totalDayLaborCost = departments.Service.laborCost + departments.Küche.laborCost;
-      if (totalDayLaborCost > 0) {
-        departments.Service.revenue += dayRevenue * (departments.Service.laborCost / totalDayLaborCost);
-        departments.Küche.revenue += dayRevenue * (departments.Küche.laborCost / totalDayLaborCost);
-      }
+  // Helper: signed percent change string + color
+  const changeInfo = (current: number, previous: number): { text: string; color: [number, number, number] } => {
+    if (previous === 0) {
+      const t = current > 0 ? '+100%' : '—';
+      return { text: t, color: OLIV_COLORS.gray };
     }
-  });
-
-  // Helper functions
-  const getQuoteColor = (quote: number): [number, number, number] => {
-    if (quote <= 28) return [34, 197, 94];
-    if (quote <= 35) return [234, 179, 8];
-    return [239, 68, 68];
+    const pct = ((current - previous) / previous) * 100;
+    const text = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+    const color = pct >= 0 ? OLIV_COLORS.success : OLIV_COLORS.danger;
+    return { text, color };
   };
 
-  const formatChange = (current: number, previous: number): string => {
-    if (previous === 0) return current > 0 ? '+100%' : '0%';
-    const change = ((current - previous) / previous) * 100;
-    const prefix = change >= 0 ? '+' : '';
-    return `${prefix}${change.toFixed(1)}%`;
-  };
+  // Quote color (good ≤30, warning ≤35, danger >35)
+  const quoteColor = (q: number): [number, number, number] =>
+    q <= 30 ? OLIV_COLORS.success : q <= 35 ? OLIV_COLORS.warning : OLIV_COLORS.danger;
 
-  // ==================== PAGE 1: Dashboard ====================
-  
-  // Title
-  doc.setFontSize(24);
+  // ── TOP ACCENT BAR ──────────────────────────────────────────────────
+  doc.setFillColor(...OLIV_COLORS.sage);
+  doc.rect(0, 0, 210, 3, 'F');
+
+  // ── HEADER ──────────────────────────────────────────────────────────
+  const periodLabel = format(selectedDate, 'MMMM yyyy', { locale: de });
+  doc.setFontSize(22);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(30, 41, 59);
-  doc.text('KPI Dashboard', 14, 25);
-  
-  doc.setFontSize(14);
+  doc.setTextColor(...OLIV_COLORS.charcoal);
+  doc.text('KPI Dashboard', ml, 16);
+
+  doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
-  doc.text(format(selectedDate, 'MMMM yyyy', { locale: de }), 14, 34);
-  
-  // Current Month Summary Box
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(14, 42, 182, 50, 3, 3, 'FD');
-  
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(30, 41, 59);
-  doc.text('Monatszusammenfassung', 20, 52);
-  
-  // Metrics in 4 columns
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
-  
-  // Column 1: Revenue
-  doc.text('Umsatz', 20, 62);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.setTextColor(30, 41, 59);
-  doc.text(`CHF ${currentMonth.revenue.toLocaleString('de-CH')}`, 20, 70);
-  
-  // Column 2: Labor Cost
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
-  doc.text('Personalkosten', 65, 62);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.setTextColor(30, 41, 59);
-  doc.text(`CHF ${currentMonth.laborCost.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`, 65, 70);
-  
-  // Column 3: Labor Cost Quote
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
-  doc.text('Personalkostenquote', 115, 62);
-  const quoteColor = getQuoteColor(currentMonth.laborCostQuote);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.setTextColor(quoteColor[0], quoteColor[1], quoteColor[2]);
-  doc.text(`${currentMonth.laborCostQuote}%`, 115, 70);
-  
-  // Column 4: Hours
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
-  doc.text('Arbeitsstunden', 160, 62);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.setTextColor(30, 41, 59);
-  doc.text(`${currentMonth.hours.toFixed(1)}h`, 160, 70);
-  
-  // Comparison section
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(30, 41, 59);
-  doc.text('Vergleich', 14, 105);
-  
-  // vs Previous Month
-  doc.setFontSize(9);
-  doc.text('vs. Vormonat:', 20, 115);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Umsatz ${formatChange(currentMonth.revenue, prevMonth.revenue)}`, 60, 115);
-  doc.text(`Quote ${formatChange(currentMonth.laborCostQuote, prevMonth.laborCostQuote)}`, 120, 115);
-  
-  // vs Previous Year
-  doc.setFont('helvetica', 'bold');
-  doc.text('vs. Vorjahr:', 20, 125);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Umsatz ${formatChange(currentMonth.revenue, prevYear.revenue)}`, 60, 125);
-  doc.text(`Quote ${formatChange(currentMonth.laborCostQuote, prevYear.laborCostQuote)}`, 120, 125);
-  
-  // Department comparison
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(30, 41, 59);
-  doc.text('Abteilungen', 14, 145);
-  
-  autoTable(doc, {
-    startY: 150,
-    head: [['Abteilung', 'Stunden', 'Kosten', 'Anteil']],
-    body: [
-      ['Service', `${departments.Service.actualHours.toFixed(1)}h`, `CHF ${departments.Service.laborCost.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`, `${((departments.Service.laborCost / (currentMonth.laborCost || 1)) * 100).toFixed(0)}%`],
-      ['Küche', `${departments.Küche.actualHours.toFixed(1)}h`, `CHF ${departments.Küche.laborCost.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`, `${((departments.Küche.laborCost / (currentMonth.laborCost || 1)) * 100).toFixed(0)}%`],
-    ],
-    theme: 'striped',
-    headStyles: { fillColor: [51, 65, 85], fontSize: 9 },
-    styles: { fontSize: 9 },
-  });
-  
-  // Footer
+  doc.setTextColor(...OLIV_COLORS.sage);
+  doc.text(periodLabel, ml, 23);
+
   doc.setFontSize(7);
-  doc.setTextColor(156, 163, 175);
-  doc.text(`Erstellt: ${format(new Date(), 'dd.MM.yyyy HH:mm', { locale: de })}`, 14, 285);
-  
-  // Save
-  doc.save(`Dashboard_${format(selectedDate, 'yyyy-MM', { locale: de })}.pdf`);
+  doc.setTextColor(...OLIV_COLORS.silver);
+  doc.text(
+    `Erstellt: ${format(new Date(), 'dd.MM.yyyy HH:mm', { locale: de })}`,
+    210 - mr, 16, { align: 'right' }
+  );
+
+  // Separator line
+  doc.setDrawColor(...OLIV_COLORS.sageLight);
+  doc.setLineWidth(0.4);
+  doc.line(ml, 27, 210 - mr, 27);
+
+  // ── SECTION LABEL HELPER ────────────────────────────────────────────
+  const sectionLabel = (text: string, y: number) => {
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...OLIV_COLORS.sageDark);
+    doc.text(text.toUpperCase(), ml, y);
+    doc.setDrawColor(...OLIV_COLORS.sageLight);
+    doc.setLineWidth(0.3);
+    doc.line(ml + doc.getTextWidth(text.toUpperCase()) + 2, y - 1, 210 - mr, y - 1);
+  };
+
+  // ── KPI CARDS ROW ───────────────────────────────────────────────────
+  sectionLabel('Kennzahlen', 33);
+
+  const cardGap = 3;
+  const cardW = (cw - cardGap * 3) / 4;
+  const cardH = 38;
+  const cardY = 36;
+
+  const kpiCards = [
+    {
+      label: 'Umsatz',
+      value: `CHF ${currentMonth.revenue.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`,
+      changeM: changeInfo(currentMonth.revenue, prevMonth.revenue),
+      changeY: changeInfo(currentMonth.revenue, prevYear.revenue),
+      valueColor: OLIV_COLORS.charcoal as [number, number, number],
+    },
+    {
+      label: 'Personalkosten',
+      value: `CHF ${currentMonth.laborCost.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`,
+      changeM: changeInfo(currentMonth.laborCost, prevMonth.laborCost),
+      changeY: changeInfo(currentMonth.laborCost, prevYear.laborCost),
+      valueColor: OLIV_COLORS.charcoal as [number, number, number],
+    },
+    {
+      label: 'PK-Quote',
+      value: `${currentMonth.laborCostQuote.toFixed(1)}%`,
+      changeM: (() => {
+        const diff = currentMonth.laborCostQuote - prevMonth.laborCostQuote;
+        return { text: `${diff >= 0 ? '+' : ''}${diff.toFixed(1)} PP`, color: diff <= 0 ? OLIV_COLORS.success : OLIV_COLORS.danger } as { text: string; color: [number, number, number] };
+      })(),
+      changeY: (() => {
+        const diff = currentMonth.laborCostQuote - prevYear.laborCostQuote;
+        return { text: `${diff >= 0 ? '+' : ''}${diff.toFixed(1)} PP`, color: diff <= 0 ? OLIV_COLORS.success : OLIV_COLORS.danger } as { text: string; color: [number, number, number] };
+      })(),
+      valueColor: quoteColor(currentMonth.laborCostQuote),
+    },
+    {
+      label: 'Arbeitsstunden',
+      value: `${currentMonth.hours.toFixed(1)} h`,
+      changeM: changeInfo(currentMonth.hours, prevMonth.hours),
+      changeY: changeInfo(currentMonth.hours, prevYear.hours),
+      valueColor: OLIV_COLORS.charcoal as [number, number, number],
+    },
+  ];
+
+  kpiCards.forEach((card, i) => {
+    const x = ml + i * (cardW + cardGap);
+    // Card background
+    doc.setFillColor(...OLIV_COLORS.white);
+    doc.setDrawColor(...OLIV_COLORS.sageLight);
+    doc.setLineWidth(0.4);
+    doc.roundedRect(x, cardY, cardW, cardH, 2, 2, 'FD');
+    // Top accent
+    doc.setFillColor(...OLIV_COLORS.sage);
+    doc.roundedRect(x, cardY, cardW, 2, 1, 1, 'F');
+
+    // Label
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...OLIV_COLORS.gray);
+    doc.text(card.label, x + 4, cardY + 9);
+
+    // Main value
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...card.valueColor);
+    const valLines = doc.splitTextToSize(card.value, cardW - 6);
+    doc.text(valLines[0], x + 4, cardY + 19);
+
+    // vs Vormonat
+    doc.setFontSize(6.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...OLIV_COLORS.silver);
+    doc.text('vs. Vormonat', x + 4, cardY + 27);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...card.changeM.color);
+    doc.text(card.changeM.text, x + cardW - 4, cardY + 27, { align: 'right' });
+
+    // vs Vorjahr
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...OLIV_COLORS.silver);
+    doc.text('vs. Vorjahr', x + 4, cardY + 33);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...card.changeY.color);
+    doc.text(card.changeY.text, x + cardW - 4, cardY + 33, { align: 'right' });
+  });
+
+  // ── PERIODENVERGLEICH TABLE ─────────────────────────────────────────
+  const compY = cardY + cardH + 8;
+  sectionLabel('Periodenvergleich', compY);
+
+  const compBoxY = compY + 3;
+  const compBoxH = 52;
+  doc.setFillColor(...OLIV_COLORS.sagePale);
+  doc.setDrawColor(...OLIV_COLORS.sageLight);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(ml, compBoxY, cw, compBoxH, 2, 2, 'FD');
+
+  // Table header row
+  const colW = [50, 42, 42, 42];
+  const colX = [ml + 4, ml + 54, ml + 96, ml + 138];
+  const rowH = 10;
+
+  doc.setFillColor(...OLIV_COLORS.tableHeader);
+  doc.roundedRect(ml, compBoxY, cw, rowH, 2, 2, 'F');
+
+  const headers = ['Kennzahl', periodLabel, format(subMonths(selectedDate, 1), 'MMM yyyy', { locale: de }), format(subYears(selectedDate, 1), 'MMM yyyy', { locale: de })];
+  headers.forEach((h, i) => {
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...OLIV_COLORS.white);
+    doc.text(h, colX[i], compBoxY + 6.5);
+  });
+
+  // Table rows
+  const compRows = [
+    {
+      label: 'Umsatz',
+      current: `CHF ${currentMonth.revenue.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`,
+      prevM: `CHF ${prevMonth.revenue.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`,
+      prevY: `CHF ${prevYear.revenue.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`,
+      prevMChange: changeInfo(currentMonth.revenue, prevMonth.revenue),
+      prevYChange: changeInfo(currentMonth.revenue, prevYear.revenue),
+    },
+    {
+      label: 'Personalkosten',
+      current: `CHF ${currentMonth.laborCost.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`,
+      prevM: `CHF ${prevMonth.laborCost.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`,
+      prevY: `CHF ${prevYear.laborCost.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`,
+      prevMChange: changeInfo(currentMonth.laborCost, prevMonth.laborCost),
+      prevYChange: changeInfo(currentMonth.laborCost, prevYear.laborCost),
+    },
+    {
+      label: 'PK-Quote',
+      current: `${currentMonth.laborCostQuote.toFixed(1)}%`,
+      prevM: `${prevMonth.laborCostQuote.toFixed(1)}%`,
+      prevY: `${prevYear.laborCostQuote.toFixed(1)}%`,
+      prevMChange: (() => { const d = currentMonth.laborCostQuote - prevMonth.laborCostQuote; return { text: `${d >= 0 ? '+' : ''}${d.toFixed(1)} PP`, color: d <= 0 ? OLIV_COLORS.success : OLIV_COLORS.danger } as { text: string; color: [number, number, number] }; })(),
+      prevYChange: (() => { const d = currentMonth.laborCostQuote - prevYear.laborCostQuote; return { text: `${d >= 0 ? '+' : ''}${d.toFixed(1)} PP`, color: d <= 0 ? OLIV_COLORS.success : OLIV_COLORS.danger } as { text: string; color: [number, number, number] }; })(),
+    },
+    {
+      label: 'Stunden',
+      current: `${currentMonth.hours.toFixed(1)} h`,
+      prevM: `${prevMonth.hours.toFixed(1)} h`,
+      prevY: `${prevYear.hours.toFixed(1)} h`,
+      prevMChange: changeInfo(currentMonth.hours, prevMonth.hours),
+      prevYChange: changeInfo(currentMonth.hours, prevYear.hours),
+    },
+  ];
+
+  compRows.forEach((row, ri) => {
+    const ry = compBoxY + rowH + ri * rowH + 1;
+    if (ri % 2 === 1) {
+      doc.setFillColor(...OLIV_COLORS.white);
+      doc.rect(ml, ry - 1, cw, rowH, 'F');
+    }
+
+    // Label
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...OLIV_COLORS.charcoal);
+    doc.text(row.label, colX[0], ry + 6);
+
+    // Current value
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...OLIV_COLORS.charcoal);
+    doc.text(row.current, colX[1], ry + 6);
+
+    // Prev month: value + change
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...OLIV_COLORS.slate);
+    doc.text(row.prevM, colX[2], ry + 4.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...row.prevMChange.color);
+    doc.text(`(${row.prevMChange.text})`, colX[2], ry + 9);
+
+    // Prev year: value + change
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...OLIV_COLORS.slate);
+    doc.text(row.prevY, colX[3], ry + 4.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...row.prevYChange.color);
+    doc.text(`(${row.prevYChange.text})`, colX[3], ry + 9);
+  });
+
+  // ── ABTEILUNGEN ─────────────────────────────────────────────────────
+  const deptY = compBoxY + compBoxH + 8;
+  sectionLabel('Abteilungen', deptY);
+
+  // Split bar
+  const barY = deptY + 3;
+  const totalCost = departments.Service.laborCost + departments.Küche.laborCost;
+  const servicePct = totalCost > 0 ? (departments.Service.laborCost / totalCost) * 100 : 50;
+  const serviceBarW = cw * (servicePct / 100);
+
+  doc.setFillColor(...OLIV_COLORS.sage);
+  doc.roundedRect(ml, barY, serviceBarW, 7, 0, 0, 'F');
+  doc.setFillColor(...OLIV_COLORS.charcoal);
+  doc.roundedRect(ml + serviceBarW, barY, cw - serviceBarW, 7, 0, 0, 'F');
+
+  doc.setFontSize(6.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...OLIV_COLORS.white);
+  if (servicePct > 12) doc.text(`Service ${servicePct.toFixed(0)}%`, ml + 3, barY + 5);
+  if ((100 - servicePct) > 12) doc.text(`Küche ${(100 - servicePct).toFixed(0)}%`, ml + cw - 3, barY + 5, { align: 'right' });
+
+  autoTable(doc, {
+    startY: barY + 10,
+    margin: { left: ml, right: mr },
+    head: [['Abteilung', 'MA', 'Plan Std', 'Ist Std', 'Kosten Ist', 'Anteil']],
+    body: [
+      [
+        'Service',
+        employees.filter(e => e.department === 'service').length.toString(),
+        `${departments.Service.plannedHours.toFixed(1)} h`,
+        `${departments.Service.actualHours.toFixed(1)} h`,
+        `CHF ${departments.Service.laborCost.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`,
+        `${totalCost > 0 ? ((departments.Service.laborCost / totalCost) * 100).toFixed(0) : '—'}%`,
+      ],
+      [
+        'Küche',
+        employees.filter(e => e.department !== 'service').length.toString(),
+        `${departments.Küche.plannedHours.toFixed(1)} h`,
+        `${departments.Küche.actualHours.toFixed(1)} h`,
+        `CHF ${departments.Küche.laborCost.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`,
+        `${totalCost > 0 ? ((departments.Küche.laborCost / totalCost) * 100).toFixed(0) : '—'}%`,
+      ],
+      [
+        'GESAMT',
+        employees.length.toString(),
+        `${(departments.Service.plannedHours + departments.Küche.plannedHours).toFixed(1)} h`,
+        `${currentMonth.hours.toFixed(1)} h`,
+        `CHF ${currentMonth.laborCost.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`,
+        '100%',
+      ],
+    ],
+    theme: 'grid',
+    headStyles: { fillColor: [40, 45, 42], fontSize: 7.5, cellPadding: 2.5, textColor: [255, 255, 255] },
+    styles: { fontSize: 7.5, cellPadding: 2.5 },
+    columnStyles: { 0: { fontStyle: 'bold' }, 4: { halign: 'right' }, 5: { halign: 'right' } },
+    didParseCell: (data) => {
+      if (data.row.index === 2 && data.section === 'body') {
+        data.cell.styles.fontStyle = 'bold';
+        data.cell.styles.fillColor = [235, 240, 236];
+      }
+    },
+  });
+
+  // ── FOOTER ──────────────────────────────────────────────────────────
+  const pageH = 297;
+  doc.setDrawColor(...OLIV_COLORS.sageLight);
+  doc.setLineWidth(0.4);
+  doc.line(ml, pageH - 14, 210 - mr, pageH - 14);
+
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...OLIV_COLORS.silver);
+  doc.text('oLÍV Restaurant & Bar', ml, pageH - 9);
+  doc.text(
+    `${periodLabel} | Erstellt: ${format(new Date(), 'dd.MM.yyyy HH:mm', { locale: de })}`,
+    105, pageH - 9, { align: 'center' }
+  );
+  doc.text('Seite 1 von 1', 210 - mr, pageH - 9, { align: 'right' });
+
+  // ── SAVE ────────────────────────────────────────────────────────────
+  doc.save(`Dashboard_${format(selectedDate, 'yyyy-MM-dd', { locale: de })}.pdf`);
 };
