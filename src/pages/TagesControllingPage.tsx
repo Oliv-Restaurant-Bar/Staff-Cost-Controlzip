@@ -35,7 +35,8 @@ import { cn } from '@/lib/utils';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
-import { safeUpsertDailyBudgets } from '@/lib/supabase-kv';
+import { safeUpsertDailyBudgets, kvGet } from '@/lib/supabase-kv';
+import { computeMonthlyIstNet } from '@/lib/revenue-sync';
 import { loadMonthInvoices, kategorieFromKonto, type WarenKategorie } from '@/lib/waren-db';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import {
@@ -559,6 +560,20 @@ export default function TagesControllingPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
+  // ── Monatliches Take-Away (Kto. 3010 Netto) – für Gesamt-Korrektur ────────
+  const [monthlyTakeaway, setMonthlyTakeaway] = useState(0);
+  useEffect(() => {
+    if (period !== 'monat') { setMonthlyTakeaway(0); return; }
+    const yr = anchor.getFullYear();
+    const mo = anchor.getMonth() + 1;
+    const mm = String(mo).padStart(2, '0');
+    kvGet(tenantKey(`takeaway-monthly-${yr}`)).then(raw => {
+      const val = (raw as Record<string, number> | null)?.[`${yr}-${mm}`] ?? 0;
+      setMonthlyTakeaway(val);
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, anchor, tenantId]);
+
   // Tage der Periode
   const dates = useMemo(() => getPeriodDates(period, anchor), [period, anchor]);
 
@@ -715,17 +730,38 @@ export default function TagesControllingPage() {
     const revRowsBev    = baseRows.filter(r => r.umsatzBev > 0);
     const revUmsatzBev  = revRowsBev.reduce((s, r) => s + r.umsatzBev, 0);
     const revWesBev     = revRowsBev.reduce((s, r) => s + r.wesBev, 0);
-    const pkPlanPct     = revUmsatz > 0 ? (revPkPlan / revUmsatz) * 100 : 0;
-    const pkIstPct      = revUmsatz > 0 ? (revPkIst  / revUmsatz) * 100 : 0;
-    const wesPct        = revUmsatz > 0 ? (revWes    / revUmsatz) * 100 : 0;
-    const wesFoodPct    = revUmsatzFood > 0 ? (revWesFood / revUmsatzFood) * 100 : 0;
-    const wesBevPct     = revUmsatzBev  > 0 ? (revWesBev  / revUmsatzBev)  * 100 : 0;
+    let pkPlanPct  = revUmsatz > 0 ? (revPkPlan / revUmsatz) * 100 : 0;
+    let pkIstPct   = revUmsatz > 0 ? (revPkIst  / revUmsatz) * 100 : 0;
+    let wesPct     = revUmsatz > 0 ? (revWes    / revUmsatz) * 100 : 0;
+    const wesFoodPct = revUmsatzFood > 0 ? (revWesFood / revUmsatzFood) * 100 : 0;
+    const wesBevPct  = revUmsatzBev  > 0 ? (revWesBev  / revUmsatzBev)  * 100 : 0;
+    // ── Monatliches Take-Away Korrektur (Kto. 3010 Netto) ──────────────────
+    // Wenn ein monatlicher Take-Away-Betrag erfasst ist, überschreibt der
+    // korrigierte Netto-Wert (computeMonthlyIstNet) die Tagessumme.
+    let correctedUmsatz      = sumUmsatz;
+    let correctedUmsatzTotal = sumUmsatzTotal;
+    if (showNetRevenue && period === 'monat' && monthlyTakeaway > 0) {
+      const yr = anchor.getFullYear();
+      const mo = anchor.getMonth() + 1;
+      const maisonArg = maisonEnabled && !maisonExclude ? maisonDaily : undefined;
+      const netCorrected = computeMonthlyIstNet(yr, mo, dailyBudgets, undefined, maisonArg, monthlyTakeaway);
+      if (netCorrected > 0) {
+        const diff = netCorrected - sumUmsatzTotal;
+        correctedUmsatzTotal = netCorrected;
+        correctedUmsatz      = sumUmsatz + diff;
+        if (correctedUmsatz > 0) {
+          pkPlanPct = (sumPkPlan / correctedUmsatz) * 100;
+          pkIstPct  = (sumPkIst  / correctedUmsatz) * 100;
+          wesPct    = (sumWes    / correctedUmsatz) * 100;
+        }
+      }
+    }
     return {
-      sumUmsatz, sumUmsatzTotal, sumUmsatzFood, sumUmsatzBev,
+      sumUmsatz: correctedUmsatz, sumUmsatzTotal: correctedUmsatzTotal, sumUmsatzFood, sumUmsatzBev,
       sumPkPlan, sumPkIst, sumWes, sumWesFood, sumWesBev, sumMaison,
       pkPlanPct, pkIstPct, wesPct, wesFoodPct, wesBevPct,
     };
-  }, [rows, effectiveCutoffDay]);
+  }, [rows, effectiveCutoffDay, showNetRevenue, period, monthlyTakeaway, anchor, dailyBudgets, maisonEnabled, maisonDaily, maisonExclude]);
 
   // Monatszeilen für Jahresansicht
   const monthRows = useMemo((): MonthRow[] => {
