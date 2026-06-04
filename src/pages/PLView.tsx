@@ -1248,9 +1248,7 @@ const BudgetPLView = ({
   pctIsBudgetBased = false,
   maisonEnabled = false,
   maisonNet = 0,
-  karateUnlocked = false,
   karateAmount = 0,
-  onKarateUnlockClick,
   onKarateEditClick,
 }: {
   rows: BPLRowWithValues[];
@@ -1269,9 +1267,7 @@ const BudgetPLView = ({
   pctIsBudgetBased?: boolean;
   maisonEnabled?: boolean;
   maisonNet?: number;
-  karateUnlocked?: boolean;
   karateAmount?: number;
-  onKarateUnlockClick?: () => void;
   onKarateEditClick?: () => void;
 }) => {
   const showBudget   = compareMode !== 'ist_vorjahr';
@@ -1318,46 +1314,30 @@ const BudgetPLView = ({
             !row.isCategory && row.catType !== 'result' && collapsedCats.has(row.catId);
           if (isHiddenByCollapse) return null;
 
-          // ── Personal-Karate (5004) – immer sichtbar, PIN nur zum Bearbeiten ──
+          // ── Personal-Karate (5004) – normale Darstellung, direkt bearbeitbar ──
           if (row.isKarate) {
             const py = compact ? 'py-0.5' : 'py-1.5';
             return (
               <tr
                 key={`karate-${i}`}
-                className={cn(
-                  'border-b border-slate-100 dark:border-slate-800/50',
-                  (karateAmount ?? 0) > 0
-                    ? 'bg-amber-50/40 dark:bg-amber-950/10'
-                    : 'bg-slate-50/20 dark:bg-slate-900/10',
-                )}
+                className="border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50/60 dark:hover:bg-slate-800/20"
               >
-                <td className={cn('px-3 text-xs', py, 'pl-8')}>
+                <td className={cn('px-3 text-xs text-slate-700 dark:text-slate-300', py, 'pl-8')}>
                   <span className="flex items-center gap-1.5">
-                    <span className={cn(
-                      'font-medium',
-                      (karateAmount ?? 0) > 0
-                        ? 'text-amber-700 dark:text-amber-400'
-                        : 'text-slate-500 dark:text-slate-400',
-                    )}>
-                      Personal-Karate
-                    </span>
+                    <span>Personal-Karate</span>
                     <span className="text-[10px] text-slate-400">5004</span>
                   </span>
                 </td>
                 <td className={py}>
                   <button
-                    onClick={karateUnlocked ? onKarateEditClick : onKarateUnlockClick}
-                    className="text-[10px] px-1.5 py-0.5 rounded text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
-                    title={karateUnlocked ? 'Wert bearbeiten' : 'PIN eingeben um zu bearbeiten'}
+                    onClick={onKarateEditClick}
+                    className="text-[10px] px-1.5 py-0.5 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700/40 transition-colors"
+                    title="Wert bearbeiten"
                   >
                     <Pencil className="h-2.5 w-2.5 inline" />
                   </button>
                 </td>
-                <td className={cn('px-2 text-right text-xs font-mono tabular-nums', py,
-                  (karateAmount ?? 0) > 0
-                    ? 'text-amber-700 dark:text-amber-400 font-semibold'
-                    : 'text-slate-400 dark:text-slate-500',
-                )}>
+                <td className="px-2 text-right text-xs font-mono tabular-nums text-slate-700 dark:text-slate-300">
                   {(karateAmount ?? 0) > 0 ? fmt(karateAmount ?? 0) : '–'}
                 </td>
                 {pctMode !== 'off' && <td />}
@@ -2237,26 +2217,14 @@ const PLViewPage = () => {
     await saveMaisonEnabled(tenantKey, newVal);
   };
 
-  // ── Personal-Karate (5004) – passwortgeschütztes Konto ───────────────────
-  const [karateUnlocked,  setKarateUnlocked]  = useState(false);
-  const [karateStoredPin, setKarateStoredPin] = useState<string | null>(null);
+  // ── Personal-Karate (5004) ────────────────────────────────────────────────
   const [karateValues,    setKarateValues]    = useState<Record<string, number>>({});
-  const [karatePinOpen,   setKaratePinOpen]   = useState(false);
   const [karateEditOpen,  setKarateEditOpen]  = useState(false);
-  const [karatePin,       setKaratePin]       = useState('');
-  const [karatePinError,  setKaratePinError]  = useState('');
   const [karateEditInput, setKarateEditInput] = useState('');
 
-  const karatePinKey    = `${tenantId}:karate-pin`;
   const karateValuesKey = `${tenantId}:karate-values-${year}`;
   const karateMonthKey  = `${year}-${String(month).padStart(2, '0')}`;
-  // Immer sichtbar — PIN nur noch zum Bearbeiten nötig, nicht mehr zum Anzeigen
   const karateAmount    = karateValues[karateMonthKey] ?? 0;
-
-  useEffect(() => {
-    kvGet(karatePinKey).then(v => setKarateStoredPin(v as string | null ?? null));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId]);
 
   useEffect(() => {
     kvGet(karateValuesKey).then(v => setKarateValues((v as Record<string, number>) ?? {}));
@@ -2271,26 +2239,6 @@ const PLViewPage = () => {
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, year]);
-
-  const handleKarateUnlock = () => {
-    if (!karatePin.trim()) { setKaratePinError('Bitte PIN eingeben'); return; }
-    if (karateStoredPin === null) {
-      if (karatePin.length < 4) { setKaratePinError('PIN muss mind. 4 Zeichen lang sein'); return; }
-      kvSet(karatePinKey, karatePin);
-      setKarateStoredPin(karatePin);
-      setKarateUnlocked(true);
-      setKaratePinOpen(false);
-      setKaratePin('');
-      setKaratePinError('');
-      toast.success('PIN gesetzt — Personal-Karate entsperrt');
-    } else {
-      if (karatePin !== karateStoredPin) { setKaratePinError('Falscher PIN'); return; }
-      setKarateUnlocked(true);
-      setKaratePinOpen(false);
-      setKaratePin('');
-      setKaratePinError('');
-    }
-  };
 
   const handleKarateSave = async () => {
     const cleaned = karateEditInput.trim().replace(/['\s]/g, '').replace(',', '.');
@@ -3071,9 +3019,7 @@ const PLViewPage = () => {
                 pctIsBudgetBased={pctIsBudgetBased}
                 maisonEnabled={maisonEnabled && maisonColPref}
                 maisonNet={maisonMonthNet}
-                karateUnlocked={karateUnlocked}
                 karateAmount={karateAmount}
-                onKarateUnlockClick={() => { setKaratePin(''); setKaratePinError(''); setKaratePinOpen(true); }}
                 onKarateEditClick={() => { setKarateEditInput(karateAmount > 0 ? String(karateAmount) : ''); setKarateEditOpen(true); }}
               />
             : mode === 'monthly'
@@ -3147,50 +3093,6 @@ const PLViewPage = () => {
         karateAmount={karateAmount}
         onExport={handlePdfExport}
       />
-
-      {/* Personal-Karate – PIN-Dialog */}
-      {karatePinOpen && (
-        <Dialog open={karatePinOpen} onOpenChange={open => { setKaratePinOpen(open); if (!open) { setKaratePin(''); setKaratePinError(''); } }}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Lock className="h-4 w-4 text-amber-600" />
-                Personal-Karate entsperren
-              </DialogTitle>
-              <DialogDescription>
-                {karateStoredPin === null
-                  ? 'Erstmalig: PIN festlegen (mind. 4 Zeichen). Dieser PIN schützt das Konto 5004.'
-                  : 'PIN eingeben um das Konto 5004 in dieser Session zu entsperren.'}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3 py-2">
-              <Input
-                type="password"
-                value={karatePin}
-                onChange={e => { setKaratePin(e.target.value); setKaratePinError(''); }}
-                onKeyDown={e => { if (e.key === 'Enter') handleKarateUnlock(); }}
-                placeholder={karateStoredPin === null ? 'Neuen PIN eingeben…' : 'PIN eingeben…'}
-                autoFocus
-                className="font-mono tracking-widest"
-              />
-              {karatePinError && (
-                <p className="text-xs text-red-600 flex items-center gap-1">
-                  <AlertTriangle className="h-3 w-3" />
-                  {karatePinError}
-                </p>
-              )}
-              <div className="flex gap-2 justify-end pt-1">
-                <Button variant="outline" size="sm" onClick={() => { setKaratePinOpen(false); setKaratePin(''); setKaratePinError(''); }}>
-                  Abbrechen
-                </Button>
-                <Button size="sm" onClick={handleKarateUnlock} className="bg-amber-600 hover:bg-amber-700 text-white">
-                  {karateStoredPin === null ? 'PIN setzen & entsperren' : 'Entsperren'}
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
 
       {/* Personal-Karate – Wert-Eingabe-Dialog */}
       {karateEditOpen && (
