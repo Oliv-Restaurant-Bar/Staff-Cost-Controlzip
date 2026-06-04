@@ -47,6 +47,8 @@ import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
 import { WesMarginWidget } from '@/components/WesMarginWidget';
 import { resolveZielwert } from '@/lib/zielwerte-store';
+import { kvGet } from '@/lib/supabase-kv';
+import { computeMonthlyIstNet } from '@/lib/revenue-sync';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -418,6 +420,19 @@ const Dashboard = () => {
   // ── Budget-Daten (aus Budget-Modul, budget_v1) ───────────────────────────────
   const currentYear  = referenceDate.getFullYear();
   const currentMonth = referenceDate.getMonth() + 1;
+
+  // ── Monatliches Take-Away (Kto. 3010 Netto) – für Umsatz-Korrektur ──────────
+  const [monthlyTakeaway, setMonthlyTakeaway] = useState(0);
+  useEffect(() => {
+    if (period !== 'month') { setMonthlyTakeaway(0); return; }
+    const mm = String(currentMonth).padStart(2, '0');
+    kvGet(tenantKey(`takeaway-monthly-${currentYear}`)).then(raw => {
+      const val = (raw as Record<string, number> | null)?.[`${currentYear}-${mm}`] ?? 0;
+      setMonthlyTakeaway(val);
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, currentYear, currentMonth, tenantId]);
+
   const laborCostThreshold = resolveZielwert(currentYear, currentMonth).targetPercent;
   const budgetData   = useBudgetMonth(currentYear, currentMonth);
 
@@ -558,10 +573,19 @@ const Dashboard = () => {
     console.log('[UMSATZBASIS] restaurant gross ->', reg.toFixed(0), '-> net:', (reg / 1.081).toFixed(0));
     if (ta > 0) console.log('[UMSATZBASIS] takeaway gross ->', ta.toFixed(0), '-> net:', (ta / 1.026).toFixed(0));
   }
-  const revenueActiveB         = toBase(revenueActive, takeawayActiveSum);
+  // Monatliches Take-Away Korrektur (Kto. 3010 Netto)
+  // Wenn ein buchhaltungsseitiger Monats-Take-Away bekannt ist, überschreibt der
+  // korrekt berechnete Netto-Wert die per-Tag-Summe (identisch zu TagesansichtPage).
+  const maisonArg = maisonOn && !maisonExclude ? maisonDaily : undefined;
+  const revenueMonthCorrected = showNetRevenue && monthlyTakeaway > 0
+    ? computeMonthlyIstNet(currentYear, currentMonth, dailyBudgets as Record<string, { actualRevenue?: number; takeawayRevenue?: number }>, undefined, maisonArg, monthlyTakeaway)
+    : 0;
+
+  let revenueActiveB = toBase(revenueActive, takeawayActiveSum);
+  if (showNetRevenue && period === 'month' && revenueMonthCorrected > 0) revenueActiveB = revenueMonthCorrected;
   const revenuePrevYearActiveB = toBase(revenuePrevYearActive);
   const budgetActiveB          = toBase(budgetActive);
-  const revenueMonthB          = toBase(revenueMonth, takeawayMonthSum);
+  const revenueMonthB          = revenueMonthCorrected > 0 ? revenueMonthCorrected : toBase(revenueMonth, takeawayMonthSum);
   const revenuePlannedMonthB   = toBase(revenuePlannedMonth, takeawayMonthSum);
 
   // ── Personalkosten-Berechnungen ─────────────────────────────────────────────

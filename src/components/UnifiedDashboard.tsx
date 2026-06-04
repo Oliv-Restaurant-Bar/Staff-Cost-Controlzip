@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee, TimeEntry, DailyBudget, grossToNet } from '@/types/personnel';
@@ -16,6 +16,9 @@ import {
   ChevronDown, BarChart3, Percent, AlertTriangle, CheckCircle2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTenant } from '@/contexts/TenantContext';
+import { kvGet } from '@/lib/supabase-kv';
+import { computeMonthlyIstNet } from '@/lib/revenue-sync';
 import { 
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, 
   ReferenceLine, ComposedChart, Line, PieChart, Pie, Legend
@@ -51,6 +54,8 @@ export const UnifiedDashboard = ({
     return showNetRevenue ? grossToNet(grossRevenue, takeawayRevenue) : grossRevenue;
   };
   
+  const { tenantId, tenantKey } = useTenant();
+
   const { 
     currentWeekStart,
     currentMonthStart,
@@ -58,6 +63,20 @@ export const UnifiedDashboard = ({
     weekRange,
     monthLabel,
   } = useWeekSync('UnifiedDashboard', selectedDate);
+
+  // ── Monatliches Take-Away (Kto. 3010 Netto) für Gesamt-Korrektur ──────────
+  const [monthlyTakeaway, setMonthlyTakeaway] = useState(0);
+  useEffect(() => {
+    if (viewMode !== 'month') { setMonthlyTakeaway(0); return; }
+    const yr = currentMonthStart.getFullYear();
+    const mo = currentMonthStart.getMonth() + 1;
+    const mm = String(mo).padStart(2, '0');
+    kvGet(tenantKey(`takeaway-monthly-${yr}`)).then(raw => {
+      const val = (raw as Record<string, number> | null)?.[`${yr}-${mm}`] ?? 0;
+      setMonthlyTakeaway(val);
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, currentMonthStart, tenantId]);
 
   // Calculate date ranges
   const dateRanges = useMemo(() => {
@@ -102,6 +121,15 @@ export const UnifiedDashboard = ({
         totalActualRevenue += getDisplayRevenue(budget.actualRevenue || 0, budget.takeawayRevenue || 0);
       }
     });
+
+    // Monatliches Take-Away Korrektur (Kto. 3010 Netto)
+    // Identisch zur Logik in TagesControllingPage / TagesansichtPage.
+    if (showNetRevenue && viewMode === 'month' && monthlyTakeaway > 0) {
+      const yr = currentMonthStart.getFullYear();
+      const mo = currentMonthStart.getMonth() + 1;
+      const corrected = computeMonthlyIstNet(yr, mo, dailyBudgets as Record<string, { actualRevenue?: number; takeawayRevenue?: number }>, undefined, undefined, monthlyTakeaway);
+      if (corrected > 0) totalActualRevenue = corrected;
+    }
 
     // Employee data by department
     const serviceEmployees = employees.filter(e => e.department === 'service');
@@ -240,7 +268,7 @@ export const UnifiedDashboard = ({
       plannedQuote,
       dailyBreakdown,
     };
-  }, [employees, timeEntries, dailyBudgets, viewMode, dateRanges, showNetRevenue]);
+  }, [employees, timeEntries, dailyBudgets, viewMode, dateRanges, showNetRevenue, monthlyTakeaway, currentMonthStart]);
 
   const getPeriodLabel = () => {
     switch (viewMode) {

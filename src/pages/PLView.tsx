@@ -2401,8 +2401,9 @@ const PLViewPage = () => {
       if (!hasIndivRev) {
         const mm = String(m).padStart(2, '0');
         const maisonArg = maisonEnabled && !maisonExclude ? maisonDaily : undefined;
+        const taMonthly = takeawayMonthlyMap[`${year}-${mm}`] ?? 0;
         const tagesansichtRev = showNetRevenue
-          ? computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonArg, (takeawayMonthlyMap[`${year}-${mm}`] ?? 0) > 0 ? takeawayMonthlyMap[`${year}-${mm}`] : undefined)
+          ? computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonArg, taMonthly > 0 ? taMonthly : undefined)
           : computeMonthlyIstGross(year, m, dailyBudgetsData, undefined, maisonArg);
         if (tagesansichtRev > 0) {
           if (r.revenueActual && Math.abs(r.revenueActual - tagesansichtRev) > 1) {
@@ -2412,7 +2413,23 @@ const PLViewPage = () => {
               `(diff=${(tagesansichtRev - r.revenueActual).toFixed(0)}) → verwende Tagesansicht`,
             );
           }
-          r = { ...r, revenueActual: tagesansichtRev };
+          // Wenn monatlicher Take-Away (Kto. 3010 Netto) bekannt: 3000/3010 aufteilen,
+          // damit die Budget-P&L zwei separate Kontenzeilen zeigt.
+          if (showNetRevenue && taMonthly > 0) {
+            const kto3010 = taMonthly;
+            const kto3000 = tagesansichtRev - kto3010;
+            r = {
+              ...r,
+              revenueActual: tagesansichtRev,
+              expenseCategories: [
+                ...r.expenseCategories,
+                { categoryId: '3000', amount: kto3000, label: 'Betriebsertrag Netto' },
+                { categoryId: '3010', amount: kto3010, label: 'Take-Away Umsatz' },
+              ],
+            };
+          } else {
+            r = { ...r, revenueActual: tagesansichtRev };
+          }
         }
       }
 
