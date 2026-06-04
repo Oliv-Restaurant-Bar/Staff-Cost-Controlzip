@@ -20,6 +20,7 @@ import {
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
   Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle, FileDown,
+  Lock, LockOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -60,6 +61,7 @@ import {
   getMaisonDailySync, loadMaisonDaily,
 } from '@/lib/maison-store';
 import { useMaison } from '@/contexts/MaisonContext';
+import { kvGet, kvSet } from '@/lib/supabase-kv';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -585,6 +587,7 @@ interface BPLRow {
   itemAccountNumber?: string;
   itemId?: string;
   isInternal?: boolean;
+  isKarate?: boolean;
 }
 
 interface BPLRowWithValues extends BPLRow {
@@ -1244,6 +1247,10 @@ const BudgetPLView = ({
   pctIsBudgetBased = false,
   maisonEnabled = false,
   maisonNet = 0,
+  karateUnlocked = false,
+  karateAmount = 0,
+  onKarateUnlockClick,
+  onKarateEditClick,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
@@ -1261,6 +1268,10 @@ const BudgetPLView = ({
   pctIsBudgetBased?: boolean;
   maisonEnabled?: boolean;
   maisonNet?: number;
+  karateUnlocked?: boolean;
+  karateAmount?: number;
+  onKarateUnlockClick?: () => void;
+  onKarateEditClick?: () => void;
 }) => {
   const showBudget   = compareMode !== 'ist_vorjahr';
   const showPrevYear = compareMode !== 'ist_budget';
@@ -1305,6 +1316,75 @@ const BudgetPLView = ({
           const isHiddenByCollapse =
             !row.isCategory && row.catType !== 'result' && collapsedCats.has(row.catId);
           if (isHiddenByCollapse) return null;
+
+          // ── Personal-Karate (5004) – spezielle gesperrte Zeile ────────────
+          if (row.isKarate) {
+            const py = compact ? 'py-0.5' : 'py-1.5';
+            return (
+              <tr
+                key={`karate-${i}`}
+                className={cn(
+                  'border-b border-slate-100 dark:border-slate-800/50',
+                  karateUnlocked
+                    ? 'bg-amber-50/40 dark:bg-amber-950/10'
+                    : 'bg-slate-50/30 dark:bg-slate-900/20',
+                )}
+              >
+                <td className={cn('px-3 text-xs', py, 'pl-8')}>
+                  <span className="flex items-center gap-1.5">
+                    {karateUnlocked
+                      ? <LockOpen className="h-3 w-3 text-amber-500 shrink-0" />
+                      : <Lock className="h-3 w-3 text-slate-400 shrink-0" />
+                    }
+                    <span className={cn(
+                      karateUnlocked
+                        ? 'text-amber-700 dark:text-amber-400 font-medium'
+                        : 'text-slate-400 italic tracking-widest',
+                    )}>
+                      {karateUnlocked ? 'Personal-Karate' : '• • • • • •'}
+                    </span>
+                    {karateUnlocked && (
+                      <span className="text-[10px] text-slate-400">5004</span>
+                    )}
+                  </span>
+                </td>
+                <td className={py}>
+                  {!karateUnlocked ? (
+                    <button
+                      onClick={onKarateUnlockClick}
+                      className="text-[10px] px-1.5 py-0.5 rounded text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors flex items-center gap-0.5"
+                      title="PIN eingeben um zu entsperren"
+                    >
+                      <Lock className="h-2.5 w-2.5" />
+                      <span>Entsperren</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={onKarateEditClick}
+                      className="text-[10px] px-1.5 py-0.5 rounded text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
+                      title="Wert bearbeiten"
+                    >
+                      <Pencil className="h-2.5 w-2.5 inline" />
+                    </button>
+                  )}
+                </td>
+                <td className={cn('px-2 text-right text-xs font-mono tabular-nums', py,
+                  karateUnlocked && (karateAmount ?? 0) > 0
+                    ? 'text-amber-700 dark:text-amber-400 font-semibold'
+                    : 'text-slate-300 dark:text-slate-700',
+                )}>
+                  {karateUnlocked ? fmt(karateAmount ?? 0) : '—'}
+                </td>
+                {pctMode !== 'off' && <td />}
+                {showBudget && <td />}
+                {showBudget && pctMode !== 'off' && <td />}
+                {showBudget && <td />}
+                {showPrevYear && <td />}
+                {showPrevYear && pctMode !== 'off' && <td />}
+                {showPrevYear && <td />}
+              </tr>
+            );
+          }
 
           const isLastRevItem =
             row.catId === 'pl_revenue' && !row.isCategory && row.catType !== 'result' &&
@@ -2166,7 +2246,66 @@ const PLViewPage = () => {
   const handleMaisonToggle = async () => {
     const newVal = !maisonEnabled;
     setMaisonEnabled(newVal);
+    // Feature 2: Bei Aktivierung Marketing immer in Nettoumsatz einrechnen
+    if (newVal) setMaisonExclude(false);
     await saveMaisonEnabled(tenantKey, newVal);
+  };
+
+  // ── Personal-Karate (5004) – passwortgeschütztes Konto ───────────────────
+  const [karateUnlocked,  setKarateUnlocked]  = useState(false);
+  const [karateStoredPin, setKarateStoredPin] = useState<string | null>(null);
+  const [karateValues,    setKarateValues]    = useState<Record<string, number>>({});
+  const [karatePinOpen,   setKaratePinOpen]   = useState(false);
+  const [karateEditOpen,  setKarateEditOpen]  = useState(false);
+  const [karatePin,       setKaratePin]       = useState('');
+  const [karatePinError,  setKaratePinError]  = useState('');
+  const [karateEditInput, setKarateEditInput] = useState('');
+
+  const karatePinKey    = `${tenantId}:karate-pin`;
+  const karateValuesKey = `${tenantId}:karate-values-${year}`;
+  const karateMonthKey  = `${year}-${String(month).padStart(2, '0')}`;
+  const karateAmount    = karateUnlocked ? (karateValues[karateMonthKey] ?? 0) : 0;
+
+  useEffect(() => {
+    kvGet(karatePinKey).then(v => setKarateStoredPin(v as string | null ?? null));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
+  useEffect(() => {
+    kvGet(karateValuesKey).then(v => setKarateValues((v as Record<string, number>) ?? {}));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, year]);
+
+  const handleKarateUnlock = () => {
+    if (!karatePin.trim()) { setKaratePinError('Bitte PIN eingeben'); return; }
+    if (karateStoredPin === null) {
+      if (karatePin.length < 4) { setKaratePinError('PIN muss mind. 4 Zeichen lang sein'); return; }
+      kvSet(karatePinKey, karatePin);
+      setKarateStoredPin(karatePin);
+      setKarateUnlocked(true);
+      setKaratePinOpen(false);
+      setKaratePin('');
+      setKaratePinError('');
+      toast.success('PIN gesetzt — Personal-Karate entsperrt');
+    } else {
+      if (karatePin !== karateStoredPin) { setKaratePinError('Falscher PIN'); return; }
+      setKarateUnlocked(true);
+      setKaratePinOpen(false);
+      setKaratePin('');
+      setKaratePinError('');
+    }
+  };
+
+  const handleKarateSave = async () => {
+    const cleaned = karateEditInput.trim().replace(/['\s]/g, '').replace(',', '.');
+    const num = parseFloat(cleaned);
+    if (isNaN(num)) { toast.error('Bitte eine gültige Zahl eingeben'); return; }
+    const newValues = { ...karateValues, [karateMonthKey]: num };
+    setKarateValues(newValues);
+    await kvSet(karateValuesKey, newValues);
+    setKarateEditOpen(false);
+    setRefreshKey(k => k + 1);
+    toast.success(`Personal-Karate gespeichert: CHF ${fmt(num)} für ${MONTH_NAMES_DE[month]} ${year}`);
   };
 
   // Marketing-Nettobetrag für den aktuell gewählten Monat (aus Tagesdaten)
@@ -2377,6 +2516,58 @@ const PLViewPage = () => {
     () => computeBPLRows(budgetData, effectiveMonthRecord, month - 1, prevYearRecords[month - 1]),
     [budgetData, effectiveMonthRecord, month, prevYearRecords],
   );
+
+  // Personal-Karate Zeile einfügen (zwischen 5003 und 5010) und ggf. pl_wages Summe korrigieren
+  const bplRowsWithKarate = useMemo(() => {
+    const rows = [...bplRows];
+
+    // Einfügeposition: nach dem letzten pl_wages-Item mit Kontonummer < 5010
+    let insertIdx = -1;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (r.catId === 'pl_wages' && !r.isCategory && r.catType !== 'result') {
+        const acc = parseInt(r.itemAccountNumber ?? '9999');
+        if (acc < 5010) insertIdx = i + 1;
+      }
+    }
+    if (insertIdx === -1) {
+      const catIdx = rows.findIndex(r => r.catId === 'pl_wages' && r.isCategory);
+      if (catIdx !== -1) insertIdx = catIdx + 1;
+    }
+
+    const karateRow: BPLRowWithValues = {
+      catId: 'pl_wages',
+      catLabel: 'Löhne inkl. Zulagen',
+      catType: 'items',
+      isExpense: true,
+      isCategory: false,
+      itemId: 'karate_5004',
+      itemLabel: 'Personal-Karate',
+      itemAccountNumber: '5004',
+      isKarate: true,
+      values: makeCell(karateUnlocked ? karateAmount : 0, 0, 0, true),
+    };
+
+    if (insertIdx >= 0) {
+      rows.splice(insertIdx, 0, karateRow);
+    } else {
+      rows.push(karateRow);
+    }
+
+    // Wenn entsperrt und Betrag > 0: pl_wages Kategorie-Summe (Ist) anpassen
+    if (karateUnlocked && karateAmount > 0) {
+      const wagesCatIdx = rows.findIndex(r => r.catId === 'pl_wages' && r.isCategory);
+      if (wagesCatIdx >= 0) {
+        const wCat = rows[wagesCatIdx];
+        rows[wagesCatIdx] = {
+          ...wCat,
+          values: { ...wCat.values, actual: (wCat.values.actual ?? 0) + karateAmount },
+        };
+      }
+    }
+
+    return rows;
+  }, [bplRows, karateUnlocked, karateAmount]);
 
   const bplRevenue = useMemo(
     () => bplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.actual ?? 0,
@@ -2847,8 +3038,9 @@ const PLViewPage = () => {
           {/* Tabelle */}
           {mode === 'budget_pl'
             ? <BudgetPLView
-                rows={bplRows}
+                rows={bplRowsWithKarate}
                 onRowClick={row => {
+                  if (row.isKarate) return;
                   if (row.isCategory || row.catId === 'pl_revenue') {
                     setBplDrilldown(row);
                   } else {
@@ -2872,6 +3064,10 @@ const PLViewPage = () => {
                 pctIsBudgetBased={pctIsBudgetBased}
                 maisonEnabled={maisonEnabled}
                 maisonNet={maisonMonthNet}
+                karateUnlocked={karateUnlocked}
+                karateAmount={karateAmount}
+                onKarateUnlockClick={() => { setKaratePin(''); setKaratePinError(''); setKaratePinOpen(true); }}
+                onKarateEditClick={() => { setKarateEditInput(karateAmount > 0 ? String(karateAmount) : ''); setKarateEditOpen(true); }}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
@@ -2943,6 +3139,95 @@ const PLViewPage = () => {
         mode={mode}
         onExport={handlePdfExport}
       />
+
+      {/* Personal-Karate – PIN-Dialog */}
+      {karatePinOpen && (
+        <Dialog open={karatePinOpen} onOpenChange={open => { setKaratePinOpen(open); if (!open) { setKaratePin(''); setKaratePinError(''); } }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Lock className="h-4 w-4 text-amber-600" />
+                Personal-Karate entsperren
+              </DialogTitle>
+              <DialogDescription>
+                {karateStoredPin === null
+                  ? 'Erstmalig: PIN festlegen (mind. 4 Zeichen). Dieser PIN schützt das Konto 5004.'
+                  : 'PIN eingeben um das Konto 5004 in dieser Session zu entsperren.'}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <Input
+                type="password"
+                value={karatePin}
+                onChange={e => { setKaratePin(e.target.value); setKaratePinError(''); }}
+                onKeyDown={e => { if (e.key === 'Enter') handleKarateUnlock(); }}
+                placeholder={karateStoredPin === null ? 'Neuen PIN eingeben…' : 'PIN eingeben…'}
+                autoFocus
+                className="font-mono tracking-widest"
+              />
+              {karatePinError && (
+                <p className="text-xs text-red-600 flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" />
+                  {karatePinError}
+                </p>
+              )}
+              <div className="flex gap-2 justify-end pt-1">
+                <Button variant="outline" size="sm" onClick={() => { setKaratePinOpen(false); setKaratePin(''); setKaratePinError(''); }}>
+                  Abbrechen
+                </Button>
+                <Button size="sm" onClick={handleKarateUnlock} className="bg-amber-600 hover:bg-amber-700 text-white">
+                  {karateStoredPin === null ? 'PIN setzen & entsperren' : 'Entsperren'}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Personal-Karate – Wert-Eingabe-Dialog */}
+      {karateEditOpen && (
+        <Dialog open={karateEditOpen} onOpenChange={setKarateEditOpen}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <LockOpen className="h-4 w-4 text-amber-500" />
+                Personal-Karate — Wert erfassen
+              </DialogTitle>
+              <DialogDescription>
+                {MONTH_NAMES_DE[month]} {year} · Konto 5004 · Wird in Lohnaufwand eingerechnet
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Ist-Wert (CHF)</label>
+                <Input
+                  type="number"
+                  value={karateEditInput}
+                  onChange={e => setKarateEditInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleKarateSave(); }}
+                  placeholder="0"
+                  autoFocus
+                  className="font-mono"
+                />
+              </div>
+              {karateAmount > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Aktueller Wert: CHF {fmt(karateAmount)}
+                </p>
+              )}
+              <div className="flex gap-2 justify-end pt-1">
+                <Button variant="outline" size="sm" onClick={() => setKarateEditOpen(false)}>
+                  Abbrechen
+                </Button>
+                <Button size="sm" onClick={handleKarateSave} className="bg-amber-600 hover:bg-amber-700 text-white">
+                  <Check className="h-3.5 w-3.5 mr-1" />
+                  Speichern
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 };
