@@ -287,6 +287,11 @@ export interface BudgetPLLineItem {
    * Wird gesetzt wenn der Benutzer ein Konto aktiv hinzufügt oder einblendet.
    */
   isForceVisible?: boolean;
+  /**
+   * Manuell eingegebene Ist-Werte pro Monat (Index 0 = Januar).
+   * Wird nur verwendet wenn keine Sage-Buchungen für dieses Konto vorliegen.
+   */
+  manualIstValues?: number[];
 }
 
 // ─── Standard P&L Kategorien – Oliv Gastro AG (Kontoplan 2026) ───────────────

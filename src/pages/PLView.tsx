@@ -783,6 +783,15 @@ function computeBPLRows(
       catB[cat.id] = its.reduce((s, i) => s + (i.monthlyValues[mIdx] ?? 0), 0);
       catA[cat.id] = getCatActual(cat.id, rec);
       catP[cat.id] = getCatPY(cat.id, rec, prevRec);
+      // Manuell eingegebene Ist-Werte für Positionen ohne Sage-Buchungen zum Kategorie-Total addieren
+      for (const item of its) {
+        const manualVal = item.manualIstValues?.[mIdx] ?? 0;
+        if (!manualVal) continue;
+        const hasSage = (rec?.expenseCategories ?? []).some(
+          c => c.categoryId === item.accountNumber && (c.amount ?? 0) !== 0,
+        );
+        if (!hasSage) catA[cat.id] = (catA[cat.id] ?? 0) + manualVal;
+      }
     }
   }
   for (const cat of cats) {
@@ -820,6 +829,7 @@ function computeBPLRows(
         }
         const iB = item.monthlyValues[mIdx] ?? 0;
         const iA_ec = (rec?.expenseCategories ?? []).find(c => c.categoryId === item.accountNumber)?.amount ?? 0;
+        const manualIst = item.manualIstValues?.[mIdx] ?? 0;
         const iP_ec =
           (prevRec?.expenseCategories ?? []).find(c => c.categoryId === item.accountNumber)?.amount
           ?? (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === item.accountNumber)?.amount
@@ -830,7 +840,7 @@ function computeBPLRows(
         const isPrimaryRevenueItem = cat.id === 'pl_revenue' && item.accountNumber === '3000';
         const iA = isPrimaryRevenueItem && !catHas3xxxActual && iA_ec === 0
           ? (catA[cat.id] ?? 0)
-          : iA_ec;
+          : (iA_ec !== 0 ? iA_ec : manualIst);
         const iP = isPrimaryRevenueItem && !catHas3xxxPY && iP_ec === 0
           ? (catP[cat.id] ?? 0)
           : iP_ec;
@@ -1642,12 +1652,14 @@ const BudgetPLDrilldownDialog = ({
 const AccountActionDialog = ({
   row,
   year,
+  month,
   onClose,
   onRefresh,
   onOpenDrilldown,
 }: {
   row: BPLRowWithValues;
   year: number;
+  month: number;
   onClose: () => void;
   onRefresh: () => void;
   onOpenDrilldown: () => void;
@@ -1658,6 +1670,52 @@ const AccountActionDialog = ({
   const mapping    = result.mapping;
   const isActive   = mapping?.isActive !== false;
   const isBudgetItem = !!(row.itemId && !row.itemId.startsWith('actual_'));
+
+  const mIdx = month - 1;
+
+  // Manuellen Ist-Wert aus dem Budget-Item lesen
+  const budgetItem = useMemo<BudgetPLLineItem | undefined>(() => {
+    if (!isBudgetItem || !row.itemId) return undefined;
+    const bd = loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY));
+    return bd.plLineItems?.find(i => i.id === row.itemId);
+  }, [isBudgetItem, row.itemId, year, tenantKey]);
+
+  const currentManualIst = budgetItem?.manualIstValues?.[mIdx] ?? 0;
+  const [manualIstInput, setManualIstInput] = useState(() =>
+    currentManualIst !== 0 ? String(currentManualIst) : '',
+  );
+  const [isSavingIst, setIsSavingIst] = useState(false);
+
+  useEffect(() => {
+    setManualIstInput(currentManualIst !== 0 ? String(currentManualIst) : '');
+  }, [currentManualIst]);
+
+  const handleSaveManualIst = () => {
+    if (!budgetItem) return;
+    const val = parseFloat(manualIstInput.replace(',', '.'));
+    if (isNaN(val)) return;
+    setIsSavingIst(true);
+    try {
+      const newManualIst = [...(budgetItem.manualIstValues ?? Array(12).fill(0))];
+      newManualIst[mIdx] = val;
+      savePLLineItem(year, { ...budgetItem, manualIstValues: newManualIst }, tenantKey(BUDGET_STORAGE_KEY));
+      toast.success(`Manueller Ist-Wert für ${MONTH_NAMES_DE[mIdx]} gespeichert`);
+      onRefresh();
+      onClose();
+    } finally {
+      setIsSavingIst(false);
+    }
+  };
+
+  const handleClearManualIst = () => {
+    if (!budgetItem) return;
+    const newManualIst = [...(budgetItem.manualIstValues ?? Array(12).fill(0))];
+    newManualIst[mIdx] = 0;
+    savePLLineItem(year, { ...budgetItem, manualIstValues: newManualIst }, tenantKey(BUDGET_STORAGE_KEY));
+    toast.success(`Manueller Ist-Wert für ${MONTH_NAMES_DE[mIdx]} gelöscht`);
+    onRefresh();
+    onClose();
+  };
 
   // Buchungszeilen für dieses Konto laden
   const bookings = useMemo<SageJournalEntry[]>(() => {
@@ -1783,6 +1841,56 @@ const AccountActionDialog = ({
             </div>
           )}
         </div>
+
+        {/* Manueller Ist-Wert */}
+        {isBudgetItem && budgetItem && (
+          <div className="border-t border-border pt-3 space-y-2">
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+              Manueller Ist-Wert — {MONTH_NAMES_DE[mIdx]} {year}
+            </p>
+            {bookings.length > 0 ? (
+              <p className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 rounded px-2 py-1.5 border border-amber-200 dark:border-amber-800">
+                Sage-Buchungen vorhanden — manueller Wert wird ignoriert solange Sage-Daten vorliegen.
+              </p>
+            ) : null}
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                step="0.01"
+                className="h-8 text-sm w-36 font-mono"
+                value={manualIstInput}
+                onChange={e => setManualIstInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSaveManualIst(); }}
+                placeholder="0.00"
+              />
+              <span className="text-xs text-muted-foreground">CHF</span>
+              <Button
+                size="sm"
+                className="h-8 text-xs gap-1"
+                onClick={handleSaveManualIst}
+                disabled={isSavingIst || !manualIstInput.trim()}
+              >
+                <Check className="h-3 w-3" />
+                {isSavingIst ? 'Speichern…' : 'Speichern'}
+              </Button>
+              {currentManualIst !== 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 text-xs text-red-600 hover:text-red-700 gap-1"
+                  onClick={handleClearManualIst}
+                >
+                  <X className="h-3 w-3" /> Löschen
+                </Button>
+              )}
+            </div>
+            {currentManualIst !== 0 && bookings.length === 0 && (
+              <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                Gespeicherter Wert: {fmtCHF(currentManualIst)} — wird als Ist-Wert verwendet.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Trennlinie + Konto-Aktionen */}
         <div className="border-t border-border pt-3 space-y-1.5">
@@ -2940,6 +3048,7 @@ const PLViewPage = () => {
         <AccountActionDialog
           row={accountAction}
           year={year}
+          month={month}
           onClose={() => setAccountAction(null)}
           onRefresh={() => setRefreshKey(k => k + 1)}
           onOpenDrilldown={() => { setAccountAction(null); setBplDrilldown(accountAction); }}
