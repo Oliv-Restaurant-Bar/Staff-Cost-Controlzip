@@ -36,23 +36,39 @@ interface DailyEntry {
  *   Wenn übergeben, hat maisonDaily Priorität über maisonMonthly.
  */
 export function computeMonthlyIstNet(
-  year:           number,
-  month:          number,
-  dailyBudgets:   Record<string, DailyEntry>,
-  maisonMonthly?: Record<string, number>,
-  maisonDaily?:   Record<string, number>,
+  year:             number,
+  month:            number,
+  dailyBudgets:     Record<string, DailyEntry>,
+  maisonMonthly?:   Record<string, number>,
+  maisonDaily?:     Record<string, number>,
+  monthlyTakeaway?: number,
 ): number {
   const days = new Date(year, month, 0).getDate();
   const mm   = String(month).padStart(2, '0');
   let total  = 0;
-  for (let d = 1; d <= days; d++) {
-    const key  = `${year}-${mm}-${String(d).padStart(2, '0')}`;
-    const e    = dailyBudgets[key];
-    if (!e) continue;
-    const gross    = e.actualRevenue   ?? 0;
-    const takeaway = e.takeawayRevenue ?? 0;
-    if (gross === 0 && takeaway === 0) continue;
-    total += grossToNet(gross, takeaway);
+
+  if (monthlyTakeaway !== undefined && monthlyTakeaway > 0) {
+    // Monats-Takeaway-Override: Tagesbrutto summieren, dann Split-MwSt anwenden.
+    // takeaway-Anteil (2.6%) ist BEREITS in totalGross enthalten — nicht addieren!
+    let totalGross = 0;
+    for (let d = 1; d <= days; d++) {
+      const key = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+      totalGross += dailyBudgets[key]?.actualRevenue ?? 0;
+    }
+    if (totalGross > 0) {
+      const ta = Math.min(monthlyTakeaway, totalGross);
+      total = grossToNet(totalGross, ta);
+    }
+  } else {
+    for (let d = 1; d <= days; d++) {
+      const key  = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+      const e    = dailyBudgets[key];
+      if (!e) continue;
+      const gross    = e.actualRevenue   ?? 0;
+      const takeaway = e.takeawayRevenue ?? 0;
+      if (gross === 0 && takeaway === 0) continue;
+      total += grossToNet(gross, takeaway);
+    }
   }
   // Marketing/Maison-Umsatz: Tageswerte haben Priorität über monatlichen Blob
   if (maisonDaily) {

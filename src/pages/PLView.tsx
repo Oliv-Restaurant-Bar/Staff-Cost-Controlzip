@@ -2276,6 +2276,15 @@ const PLViewPage = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, year]);
 
+  // Take-Away monatliche Werte (Record<'YYYY-MM', grossCHF>)
+  const [takeawayMonthlyMap, setTakeawayMonthlyMap] = useState<Record<string, number>>({});
+  useEffect(() => {
+    kvGet(`${tenantId}:takeaway-monthly-${year}`).then(v => {
+      setTakeawayMonthlyMap((v as Record<string, number> | null) ?? {});
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, year]);
+
   const handleKarateUnlock = () => {
     if (!karatePin.trim()) { setKaratePinError('Bitte PIN eingeben'); return; }
     if (karateStoredPin === null) {
@@ -2388,7 +2397,9 @@ const PLViewPage = () => {
         return !isNaN(n) && n >= 3000 && n <= 3999;
       });
       if (!hasIndivRev) {
-        const tagesansichtRev = computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonEnabled && !maisonExclude ? maisonDaily : undefined);
+        const mm = String(m).padStart(2, '0');
+        const monthTakeaway = takeawayMonthlyMap[`${year}-${mm}`] ?? 0;
+        const tagesansichtRev = computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonEnabled && !maisonExclude ? maisonDaily : undefined, monthTakeaway > 0 ? monthTakeaway : undefined);
         if (tagesansichtRev > 0) {
           if (r.revenueActual && Math.abs(r.revenueActual - tagesansichtRev) > 1) {
             console.warn(
@@ -2418,7 +2429,7 @@ const PLViewPage = () => {
 
       return r;
     });
-  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonDaily]);
+  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonDaily, maisonExclude, takeawayMonthlyMap]);
 
   // Effektiver Datensatz für den ausgewählten Monat
   const effectiveMonthRecord = useMemo(
