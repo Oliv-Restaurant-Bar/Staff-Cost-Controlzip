@@ -191,6 +191,7 @@ export const DEFAULT_ACCOUNTS: AccountMapping[] = [
   { accountNumber: '5002', accountName: '13. Monatslohn',                plCategory: 'personnel_kitchen', plSection: 'personnel', department: 'kitchen', sign: 'expense', canOverride: true,  isActive: true, source: 'default' },
   { accountNumber: '5003', accountName: 'Ferien- und Feiertage',         plCategory: 'personnel_kitchen', plSection: 'personnel', department: 'kitchen', sign: 'expense', canOverride: true,  isActive: true, source: 'default' },
   { accountNumber: '5004', accountName: 'Personal-Karate',               plCategory: 'personnel_kitchen', plSection: 'personnel', department: 'general', sign: 'expense', canOverride: true,  isActive: true, source: 'default' },
+  { accountNumber: '5005', accountName: 'Personal-Karate',               plCategory: 'personnel_kitchen', plSection: 'personnel', department: 'general', sign: 'expense', canOverride: true,  isActive: true, source: 'default' },
   { accountNumber: '5010', accountName: 'Zulagen / Soz. Vergütungen',    plCategory: 'personnel_social',  plSection: 'personnel', department: 'general', sign: 'expense', canOverride: true,  isActive: true, source: 'default' },
   { accountNumber: '5020', accountName: 'Provisionen',                   plCategory: 'personnel_other',   plSection: 'personnel', department: 'general', sign: 'expense', canOverride: true,  isActive: true, source: 'default' },
   // Sozialabgaben (5700–5799) — exakte Sage-Kontonummern
