@@ -673,8 +673,10 @@ const SchedulePlanner = () => {
             }
             localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(merged));
             return merged;
-          } catch { /* quota exceeded – ignore */ }
-          localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(supabaseSchedule));
+          } catch {
+            // Quota exceeded oder Parse-Fehler: Supabase-Daten ohne Merge schreiben,
+            // aber localStorage NICHT mit unfullständigen Daten überschreiben.
+          }
           return supabaseSchedule;
         });
       } else {

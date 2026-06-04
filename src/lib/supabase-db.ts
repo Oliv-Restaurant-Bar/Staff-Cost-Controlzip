@@ -645,7 +645,7 @@ export async function saveScheduleEntry(
         .eq('employee_id', employeeId)
         .eq('date', date);
     } else {
-      await supabase.from('schedule_entries').upsert({
+      const basePayload = {
         employee_id: employeeId,
         date,
         frueh_start: schedule?.früh?.start ?? null,
@@ -654,8 +654,20 @@ export async function saveScheduleEntry(
         spaet_start: schedule?.spät?.start ?? null,
         spaet_end: schedule?.spät?.end ?? null,
         spaet_absence: schedule?.spätAbsence ?? null,
-        is_additional_cost_plan: schedule?.isAdditionalCostPlan ?? false,
-      }, { onConflict: 'employee_id,date' });
+      };
+      const { error } = await supabase.from('schedule_entries').upsert(
+        { ...basePayload, is_additional_cost_plan: schedule?.isAdditionalCostPlan ?? false },
+        { onConflict: 'employee_id,date' },
+      );
+      if (error) {
+        // Migration 20260604 evtl. noch nicht ausgeführt → Retry ohne Spalte
+        console.warn('[supabase-db] saveScheduleEntry mit is_additional_cost_plan fehlgeschlagen, retry ohne Spalte:', error.message);
+        const { error: err2 } = await supabase.from('schedule_entries').upsert(
+          basePayload,
+          { onConflict: 'employee_id,date' },
+        );
+        if (err2) console.error('[supabase-db] saveScheduleEntry retry fehlgeschlagen:', err2.message);
+      }
     }
   } catch (e) {
     console.error('[supabase-db] saveScheduleEntry exception:', e);
