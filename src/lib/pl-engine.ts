@@ -507,8 +507,14 @@ export function computePLForMonth(
     // → hasIndividualRevenueAccounts=true: individuelle Konten verarbeiten (kein Skip)
     // → hasIndividualRevenueAccounts=false: revenueActual ist direkt gesetzt, also Skip
     if (rowId === 'revenue_total' && !hasIndividualRevenueAccounts && record.revenueActual !== undefined) continue;
-    // Personalkonten (personnel_wages) überspringen – bereits via personnelCostActual gesetzt
-    if (rowId === 'personnel_wages' && record.personnelCostActual !== undefined) continue;
+    // Personalkonten (personnel_wages) überspringen – bereits via personnelCostActual gesetzt.
+    // Ausnahme: Konten die NICHT im Dienstplan erfasst werden (z.B. 5004 Trinkgeld/Zulagen)
+    // sollen immer additiv dazugezählt werden → kein Skip für diese Konten.
+    if (rowId === 'personnel_wages' && record.personnelCostActual !== undefined) {
+      const acctKey = (cat.categoryId?.trim() ?? '').slice(0, 4);
+      const ADDITIVE_WAGE_ACCOUNTS = new Set(['5004']);
+      if (!ADDITIVE_WAGE_ACCOUNTS.has(acctKey)) continue;
+    }
 
     const pyMatch = numericPY.find(p => p.categoryId === cat.categoryId);
     addCategoryToRow(rowId, cat, pyMatch ?? null, 'csv_import');
