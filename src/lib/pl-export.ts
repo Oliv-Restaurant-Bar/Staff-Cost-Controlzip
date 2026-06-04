@@ -1076,8 +1076,7 @@ export async function exportPLToPDF(
     const isBPL = mode === 'budget_pl';
 
     if (opts.includeMonthReport) {
-      const maisonSuffix = maisonLabel ? ` · ${maisonLabel}` : '';
-      const reportType = (isBPL ? 'Erfolgsrechnung – Budget P&L' : 'Erfolgsrechnung – Monatsansicht') + maisonSuffix;
+      const reportType = isBPL ? 'Erfolgsrechnung – Budget P&L' : 'Erfolgsrechnung – Monatsansicht';
       const yH = addPageHeader(doc, reportType, activeBranding, logoDataUrl, now, month, year, PAGE_W);
       const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
 
