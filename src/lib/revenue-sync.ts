@@ -49,15 +49,16 @@ export function computeMonthlyIstNet(
 
   if (monthlyTakeaway !== undefined && monthlyTakeaway > 0) {
     // Monats-Takeaway-Override: Tagesbrutto summieren, dann Split-MwSt anwenden.
-    // takeaway-Anteil (2.6%) ist BEREITS in totalGross enthalten — nicht addieren!
+    // monthlyTakeaway ist der NETTO-Betrag aus der Buchhaltung (Kontoblatt Haben).
+    // Umrechnung: Netto → Brutto mit 2.6%-Satz, damit grossToNet() korrekt splittet.
     let totalGross = 0;
     for (let d = 1; d <= days; d++) {
       const key = `${year}-${mm}-${String(d).padStart(2, '0')}`;
       totalGross += dailyBudgets[key]?.actualRevenue ?? 0;
     }
     if (totalGross > 0) {
-      const ta = Math.min(monthlyTakeaway, totalGross);
-      total = grossToNet(totalGross, ta);
+      const ta_brutto = Math.min(monthlyTakeaway * (1 + 0.026), totalGross);
+      total = grossToNet(totalGross, ta_brutto);
     }
   } else {
     for (let d = 1; d <= days; d++) {

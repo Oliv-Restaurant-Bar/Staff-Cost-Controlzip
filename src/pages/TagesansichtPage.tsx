@@ -463,10 +463,13 @@ export default function TagesansichtPage() {
       totalGross += dailyBudgets[d]?.actualRevenue ?? 0;
     });
     if (totalGross <= 0) return null;
-    const ta          = Math.min(monthlyTakeaway, totalGross);
-    const withTA      = grossToNet(totalGross, ta);
-    const withoutTA   = totalGross / 1.081;
-    return { totalGross, ta, withTA, withoutTA, diff: withTA - withoutTA };
+    // monthlyTakeaway ist der NETTO-Betrag aus der Buchhaltung (Konto 3010 Haben)
+    // Für den Brutto-Split wird er mit 1.026 multipliziert.
+    const ta_netto  = monthlyTakeaway;
+    const ta_brutto = Math.min(ta_netto * 1.026, totalGross);
+    const withTA    = grossToNet(totalGross, ta_brutto);
+    const withoutTA = totalGross / 1.081;
+    return { totalGross, ta_netto, ta: ta_brutto, withTA, withoutTA, diff: withTA - withoutTA };
   }, [monthlyTakeaway, monthDays, dailyBudgets]);
 
   return (
@@ -650,7 +653,7 @@ export default function TagesansichtPage() {
                 Take-Away Umsatz {format(refDate, 'MMMM yyyy', { locale: de })}
               </span>
               <span className="text-[11px] text-orange-700/70 dark:text-orange-400/70">
-                (bereits im Gesamtumsatz enthalten · MwSt. 2.6%)
+                (Netto-Betrag Kto. 3010 · bereits im Gesamtumsatz enthalten)
               </span>
             </div>
 
@@ -705,9 +708,13 @@ export default function TagesansichtPage() {
             {adjustedMonthlyNet && showNetRevenue && (
               <div className="mt-1.5 text-[11px] text-orange-700/80 dark:text-orange-400/70 space-y-0.5">
                 <div>
-                  Netto Take-Away:&nbsp;
-                  <span className="font-medium">CHF {NUM.format(Math.round(adjustedMonthlyNet.ta / 1.026))}</span>
+                  Netto Kto. 3010 (Take-Away):&nbsp;
+                  <span className="font-medium">CHF {NUM.format(Math.round(adjustedMonthlyNet.ta_netto))}</span>
                   &ensp;·&ensp;
+                  Netto Kto. 3000 (Restaurant):&nbsp;
+                  <span className="font-medium">CHF {NUM.format(Math.round(adjustedMonthlyNet.withTA - adjustedMonthlyNet.ta_netto))}</span>
+                </div>
+                <div>
                   Netto Gesamt:&nbsp;
                   <span className="font-medium">CHF {NUM.format(Math.round(adjustedMonthlyNet.withTA))}</span>
                   &ensp;
@@ -716,8 +723,8 @@ export default function TagesansichtPage() {
                   </span>
                 </div>
                 <div className="text-orange-600/60 dark:text-orange-500/60">
-                  Formel: ({NUM.format(Math.round(adjustedMonthlyNet.totalGross))} – {NUM.format(Math.round(adjustedMonthlyNet.ta))}) / 1.081
-                  &thinsp;+&thinsp;{NUM.format(Math.round(adjustedMonthlyNet.ta))} / 1.026
+                  Formel: ({NUM.format(Math.round(adjustedMonthlyNet.totalGross))} – {NUM.format(Math.round(adjustedMonthlyNet.ta_netto))}×1.026) / 1.081
+                  &thinsp;+&thinsp;{NUM.format(Math.round(adjustedMonthlyNet.ta_netto))}
                   &thinsp;=&thinsp;{NUM.format(Math.round(adjustedMonthlyNet.withTA))} Netto
                 </div>
               </div>
