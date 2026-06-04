@@ -84,6 +84,7 @@ import {
   loadMaisonDaily,
 } from '@/lib/maison-store';
 import { useMaison } from '@/contexts/MaisonContext';
+import { kvGet } from '@/lib/supabase-kv';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -159,11 +160,13 @@ function buildMonthlyKPIs(
   plResults?: PLMonthResult[],
 ): MonthlyKPI[] {
   return effectiveMonths.map((m, idx) => {
-    // PLView-kompatible Umsatz-Berechnung: 3xxx-Journalkonten haben Priorität (identisch mit getCatActual)
-    const revFrom3xxx = m.expenseCategories
-      .filter(c => { const n = parseInt(c.categoryId); return !isNaN(n) && n >= 3000 && n <= 3999; })
-      .reduce((s, c) => s + (c.amount ?? 0), 0);
-    const umsatzIst     = revFrom3xxx > 0 ? revFrom3xxx : (m.revenueActual ?? null);
+    // PLView-kompatible Umsatz-Berechnung: plResult.net_revenue.actual ist die autoritative Quelle
+    // (identisch mit PLView-Darstellung — computeMonthlyIstNet hat Vorrang vor 3xxx-Rohsummen)
+    const plResult = plResults?.[idx];
+    const plNetRevActual = plResult?.rows.find(r => r.def.id === 'net_revenue')?.values.actual;
+    const umsatzIst = (plNetRevActual != null && plNetRevActual > 0)
+      ? plNetRevActual
+      : (m.revenueActual ?? null);
     const umsatzBudget  = m.revenueBudget        ?? null;
     const umsatzVorjahr = m.revenuePreviousYear  ?? null;
     const pkBudget      = m.personnelCostPlanned ?? null;
@@ -179,7 +182,6 @@ function buildMonthlyKPIs(
       : null;
 
     // P&L-basierte Werte (authoritative, identisch mit PLView)
-    const plResult = plResults?.[idx];
     const plCogs      = plResult?.rows.find(r => r.def.id === 'total_cogs');
     const plPersonnel = plResult?.rows.find(r => r.def.id === 'total_personnel');
     const rawWaren = plCogs?.values.actual ?? null;
@@ -2016,6 +2018,16 @@ const Reporting = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
+  // Takeaway-Monatskorrektur (identisch mit PLView / TagesControlling)
+  const [takeawayMonthlyMap, setTakeawayMonthlyMap] = useState<Record<string, number>>({});
+  useEffect(() => {
+    kvGet(tenantKey(`takeaway-monthly-${year}`)).then(v => {
+      if (v && typeof v === 'object') setTakeawayMonthlyMap(v as Record<string, number>);
+      else setTakeawayMonthlyMap({});
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, tenantId]);
+
   // VJ-Tages-Supabase-Daten (wie PLView)
   const [vjDailyData, setVjDailyData] = useState<Record<string, VjDayRecord>>({});
   useEffect(() => {
@@ -2057,7 +2069,7 @@ const Reporting = () => {
       const m = idx + 1;
       let r = rec;
 
-      // 1) IST-Umsatz: computeMonthlyIstNet (NETTO – identisch mit PLView, inkl. Maison)
+      // 1) IST-Umsatz: computeMonthlyIstNet (NETTO – identisch mit PLView, inkl. Maison + Takeaway)
       const hasIndivRev = r.expenseCategories.some(c => {
         const n = parseInt(c.categoryId);
         return !isNaN(n) && n >= 3000 && n <= 3999;
@@ -2065,7 +2077,8 @@ const Reporting = () => {
       if (!hasIndivRev) {
         // Maison (Marketing-Umsatzkanal): nur einrechnen wenn aktiviert und "Anzeigen" aktiv
         const maisonArg = maisonEnabled && maisonColPref ? maisonDaily : undefined;
-        const net = computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonArg);
+        const taMonthly = takeawayMonthlyMap[`${year}-${String(m).padStart(2, '0')}`] ?? 0;
+        const net = computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonArg, taMonthly > 0 ? taMonthly : undefined);
         if (net > 0) r = { ...r, revenueActual: net };
       }
 
@@ -2104,7 +2117,7 @@ const Reporting = () => {
 
       return r;
     });
-  }, [months, year, dailyBudgetsData, vjDailyData, resolvedBudget, prevYearMonths, maisonEnabled, maisonColPref, maisonDaily]);
+  }, [months, year, dailyBudgetsData, vjDailyData, resolvedBudget, prevYearMonths, maisonEnabled, maisonColPref, maisonDaily, takeawayMonthlyMap]);
 
   // ── P&L-Berechnungen pro Monat (identisch mit PLView) ───────────────────
   const plResults = useMemo<PLMonthResult[]>(
