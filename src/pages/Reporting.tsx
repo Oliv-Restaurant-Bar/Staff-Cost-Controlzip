@@ -2559,7 +2559,7 @@ const Reporting = () => {
 
           <div className="rounded-lg border border-border overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs">
+              <table className="w-full text-xs min-w-[860px]">
                 <thead>
                   <tr className="bg-muted/50 border-b border-border">
                     <th className="text-left px-3 py-2.5 font-semibold text-muted-foreground w-20 sticky left-0 bg-muted/50">Monat</th>

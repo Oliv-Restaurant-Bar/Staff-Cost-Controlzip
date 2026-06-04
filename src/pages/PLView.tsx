@@ -2750,23 +2750,23 @@ const PLViewPage = () => {
             {/* Ansicht */}
             <div className="flex rounded-md border border-border overflow-hidden text-xs">
               <button
-                className={cn('px-3 py-1.5 flex items-center gap-1',
+                className={cn('px-2 py-1.5 flex items-center gap-1',
                   mode === 'budget_pl' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'
                 )}
                 onClick={() => setMode('budget_pl')}
               >
-                <BarChart2 className="h-3 w-3" /> Budget P&L
+                <BarChart2 className="h-3 w-3" /><span className="hidden sm:inline">Budget P&L</span><span className="sm:hidden">Budg.</span>
               </button>
               <button
-                className={cn('px-3 py-1.5 flex items-center gap-1',
+                className={cn('px-2 py-1.5 flex items-center gap-1',
                   mode === 'monthly' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'
                 )}
                 onClick={() => setMode('monthly')}
               >
-                <Calendar className="h-3 w-3" /> Klassisch
+                <Calendar className="h-3 w-3" /><span className="hidden sm:inline">Klassisch</span><span className="sm:hidden">Monat</span>
               </button>
               <button
-                className={cn('px-3 py-1.5 flex items-center gap-1',
+                className={cn('px-2 py-1.5 flex items-center gap-1',
                   mode === 'yearly' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'
                 )}
                 onClick={() => setMode('yearly')}

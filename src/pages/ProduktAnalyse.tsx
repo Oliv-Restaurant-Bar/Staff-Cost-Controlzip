@@ -146,7 +146,7 @@ function RankTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="w-full text-sm min-w-[480px]">
         <thead>
           {/* ── Spalten-Header ───────────────────────────────────────── */}
           <tr className="border-b bg-muted/40">
