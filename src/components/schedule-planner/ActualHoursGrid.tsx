@@ -122,10 +122,10 @@ const ActualHoursCell = ({
   const [endInput, setEndInput] = useState('');
   const [isAdditionalCost, setIsAdditionalCost] = useState(false);
 
-  // Ist dieser MA ein Fixlohn-MA (Vollzeit/Teilzeit mit Monatslohn)?
-  // Exakt identisch mit hasFixedSalary() in PersonalFix.tsx — nur diese MA zählen zu den fixen Monatskosten.
-  const isFixedEmployee = (employee.employmentType === 'vollzeit' || employee.employmentType === 'teilzeit')
-    && (employee.monthlySalary ?? 0) > 0;
+  // Ist dieser MA ein Fixlohn-MA (hat Monatslohn)?
+  // Identisch mit ModernScheduleGrid: Nur monthlySalary > 0 entscheidet,
+  // unabhängig vom employmentType – gilt für beide Mandanten (Oliv + Beaulieu).
+  const isFixedEmployee = (employee.monthlySalary ?? 0) > 0;
 
   const isWeekendDay = isWeekend(day);
   const isSundayDay = isSunday(day);

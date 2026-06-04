@@ -312,29 +312,30 @@ const SollIstAnalyse = () => {
   );
 
   useEffect(() => {
-    if (monthKey === loadedMonth) return;
+    const loadId = `${tenantId}__${monthKey}`;
+    if (loadId === loadedMonth) return;
     const load = async () => {
       setLoading(true);
       const [emps, sched, actual] = await Promise.all([
-        loadEmployees(),
+        loadEmployees(tenantId),
         loadScheduleForMonth(selDate),
         loadActualHoursForMonth(selDate),
       ]);
       if (emps)   setEmployees(emps);
       if (sched)  setScheduleData(sched);
       if (actual) setActualData(actual);
-      setLoadedMonth(monthKey);
+      setLoadedMonth(loadId);
       setLoading(false);
     };
     load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthKey]);
+  }, [monthKey, tenantId]);
 
-  // dailyBudgets aus localStorage
+  // dailyBudgets aus localStorage – neu berechnen wenn Mandant wechselt
   const dailyBudgets = useMemo<Record<string, DailyBudget>>(() => {
     try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
     catch { return {}; }
-  }, []);
+  }, [tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const laborCostThreshold = Number(localStorage.getItem(tenantKey('labor_cost_threshold')) || 40);
 
