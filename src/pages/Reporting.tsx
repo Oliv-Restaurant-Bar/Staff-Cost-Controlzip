@@ -140,51 +140,6 @@ function sumWarenaufwand(rec: MonthlyFinancialRecord): number {
   return total;
 }
 
-// ─── Personalaufwand-Extraktion (PLView-kompatibel) ───────────────────────────
-/**
- * Summiert den Personalaufwand — identisch mit PLView «Klassisch»-Modus:
- *
- *   Löhne (pl_wages):
- *     • Wenn personnelCostActual gesetzt → diesen Wert verwenden (gleich wie
- *       pl-engine, der 5000-5019-Journal-Konten überspringt wenn der Wert
- *       bereits direkt gesetzt ist — Anti-Doppelzählung).
- *     • Sonst: Summe 5000-5019 aus Journal.
- *   Sozialkosten (pl_social)   [5700, 5799] → immer aus Journal
- *   Übriger Personal (pl_personnel_other) [5800, 5899] → immer aus Journal
- *
- * Gibt 0 zurück wenn keine Lohnquelle vorhanden (kein personnelCostActual
- * und keine 5000-5019-Konten im Journal) — damit greift der PLEngine-Fallback.
- */
-function sumPersonalFromJournal(rec: MonthlyFinancialRecord): number {
-  // Wenn personnelCostActual gesetzt: PLEngine-kompatibel — 5000-5019 Journal
-  // überspringen, nur Social/Other aus Journal addieren (kein Double-Count).
-  const hasOverride = rec.personnelCostActual !== undefined;
-  let wages = hasOverride ? rec.personnelCostActual! : 0;
-  let hasWageSource = hasOverride;
-  let socialAndOther = 0;
-
-  for (const cat of rec.expenseCategories) {
-    const raw = cat.categoryId?.trim() ?? '';
-    if (!raw) continue;
-    // 5-stellige Konten auf 4 Stellen kürzen (z.B. «50010» → 5001)
-    const s = raw.length > 4 ? raw.slice(0, 4) : raw;
-    const n = parseInt(s);
-    if (isNaN(n)) continue;
-
-    if (!hasOverride && n >= 5000 && n <= 5019) {
-      wages += cat.amount ?? 0;
-      hasWageSource = true;
-    } else if (n >= 5700 && n <= 5799) {
-      socialAndOther += cat.amount ?? 0;
-    } else if (n >= 5800 && n <= 5899) {
-      socialAndOther += cat.amount ?? 0;
-    }
-  }
-
-  // Nur zurückgeben, wenn echte Lohnquelle vorhanden.
-  return hasWageSource ? wages + socialAndOther : 0;
-}
-
 /**
  * Quote berechnen mit Null-Schutz.
  * Gibt null zurück wenn:
@@ -232,15 +187,8 @@ function buildMonthlyKPIs(
     const rawPers  = plPersonnel?.values.actual ?? null;
     const warenaufwandPL = rawWaren != null && rawWaren > 0 ? rawWaren : null;
 
-    // personalaufwandPL: PLView-kompatible Berechnung aus Sage-Journal (Priorität 1)
-    // Warum: PLEngine überspringt z.B. Konto 5005 «Personal Aushilfe», wenn
-    // personnelCostActual gesetzt ist → Abweichung zur Erfolgsrechnung.
-    // sumPersonalFromJournal liest die BPL_CAT_RANGES direkt wie PLView Budget P&L.
-    // Fallback auf PLEngine-Ergebnis wenn keine Lohnkonten im Journal vorhanden.
-    const journalPersonal = sumPersonalFromJournal(m);
-    const personalaufwandPL = journalPersonal > 0
-      ? journalPersonal
-      : (rawPers != null && rawPers > 0 ? rawPers : null);
+    // personalaufwandPL: direkt aus PLEngine (total_personnel) — identisch mit ER.
+    const personalaufwandPL = rawPers != null && rawPers > 0 ? rawPers : null;
 
     return {
       month:            idx + 1,
