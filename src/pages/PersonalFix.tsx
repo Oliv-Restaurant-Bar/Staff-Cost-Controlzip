@@ -76,70 +76,92 @@ function hasFixedSalary(emp: Employee): boolean {
 /**
  * Pro-rata-Berechnung des Fixlohns für einen Monat.
  *
- * Logik:
+ * Logik Eintritt (contractStart):
+ * - Kein Eintrittsdatum → voller Monatslohn
+ * - Eintritt nach diesem Monat → CHF 0, ausgeblendet
+ * - Eintritt IM Monat → Lohn × ((Tage im Monat − Eintrittst. + 1) / Tage im Monat)
+ * - Eintritt vor oder im Monatsersten → voller Monatslohn
+ *
+ * Logik Austritt (employmentEndDate):
  * - Kein Austrittsdatum → voller Monatslohn
- * - Austritt vor diesem Monat → CHF 0, Mitarbeiter wird ausgeblendet
- * - Austritt IM Monat → Lohn × (gearbeitete Tage / Tage im Monat)
+ * - Austritt vor diesem Monat → CHF 0, ausgeblendet
+ * - Austritt IM Monat → Lohn × (Austrittstag / Tage im Monat)
  * - Austritt nach diesem Monat → voller Monatslohn
+ *
+ * Beide Pro-rata-Faktoren werden multipliziert falls Eintritt und Austritt im selben Monat.
  */
 function getProRataFixCost(
   emp: Employee, year: number, month: number
 ): { cost: number; label: string | null; excluded: boolean } {
   const full = getFixCost(emp);
   if (!full) return { cost: 0, label: null, excluded: false };
-  if (!emp.employmentEndDate) return { cost: full, label: null, excluded: false };
 
-  const exit = new Date(emp.employmentEndDate + 'T00:00:00');
-  const ey = exit.getFullYear();
-  const em = exit.getMonth() + 1;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const labels: string[] = [];
+  let entryFactor = 1;
+  let exitFactor  = 1;
 
-  if (ey < year || (ey === year && em < month)) {
-    return { cost: 0, label: 'Ausgetreten', excluded: true };
+  // ── Eintrittsdatum ──────────────────────────────────────────────────────
+  if (emp.contractStart) {
+    const entry = new Date(emp.contractStart + 'T00:00:00');
+    const eny = entry.getFullYear();
+    const enm = entry.getMonth() + 1;
+    const end = entry.getDate();
+
+    if (eny > year || (eny === year && enm > month)) {
+      return { cost: 0, label: 'Noch nicht eingetreten', excluded: true };
+    }
+    if (eny === year && enm === month && end > 1) {
+      entryFactor = (daysInMonth - end + 1) / daysInMonth;
+      const dd = String(end).padStart(2, '0');
+      const mm = String(enm).padStart(2, '0');
+      labels.push(`Pro rata ab ${dd}.${mm}.`);
+    }
   }
-  if (ey === year && em === month) {
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const daysWorked = exit.getDate();
-    const factor = daysWorked / daysInMonth;
-    const cost = Math.round(full * factor * 100) / 100;
-    const dd = String(exit.getDate()).padStart(2, '0');
-    const mm = String(em).padStart(2, '0');
-    return { cost, label: `Pro rata bis ${dd}.${mm}.`, excluded: false };
+
+  // ── Austrittsdatum ──────────────────────────────────────────────────────
+  if (emp.employmentEndDate) {
+    const exit = new Date(emp.employmentEndDate + 'T00:00:00');
+    const ey = exit.getFullYear();
+    const em = exit.getMonth() + 1;
+    const ed = exit.getDate();
+
+    if (ey < year || (ey === year && em < month)) {
+      return { cost: 0, label: 'Ausgetreten', excluded: true };
+    }
+    if (ey === year && em === month) {
+      exitFactor = ed / daysInMonth;
+      const dd = String(ed).padStart(2, '0');
+      const mm = String(em).padStart(2, '0');
+      labels.push(`Pro rata bis ${dd}.${mm}.`);
+    }
   }
-  return { cost: full, label: null, excluded: false };
+
+  const factor = entryFactor * exitFactor;
+  if (factor >= 1) return { cost: full, label: null, excluded: false };
+
+  const cost = Math.round(full * factor * 100) / 100;
+  return { cost, label: labels.join(' / '), excluded: false };
 }
 
 /**
  * Jahreskosten-Berechnung für den Fixlohn eines Mitarbeiters.
  *
- * Formel für das gewählte Jahr:
- *   - Austritt vor dem Jahr           → 0
- *   - Austritt nach dem Jahr / kein Datum → Monatslohn × 12
- *   - Austritt IM Jahr               →
- *       (Austrittsmonat − 1) × volles Monatslohn    [alle vollen Monate davor]
- *     + Monatslohn × (Austrittsstag / Tage im Monat) [Pro-rata Austrittsmonat]
+ * Berücksichtigt sowohl Eintrittsdatum (contractStart) als auch Austrittsdatum (employmentEndDate).
  *
- * Beispiel: David, Austritt 04.03.2026, Monatslohn CHF 4 000
- *   Jan (voll) + Feb (voll) + Mär (pro rata 4/31)
- *   = 2 × 4 000 + 4 000 × (4/31) = 8 000 + 516.13 = CHF 8 516
+ * Formel: Summe über alle 12 Monate, wobei jeder Monat den pro-rata-Faktor aus
+ * getProRataFixCost verwendet.
  */
 function getYearlyFixCost(emp: Employee, year: number): number {
   const full = getFixCost(emp);
   if (!full) return 0;
-  if (!emp.employmentEndDate) return full * 12;
 
-  const exit = new Date(emp.employmentEndDate + 'T00:00:00');
-  const ey = exit.getFullYear();
-  const em = exit.getMonth() + 1; // 1-based
-  const ed = exit.getDate();
-
-  if (ey < year) return 0;               // schon vor dem Jahr ausgetreten
-  if (ey > year) return full * 12;       // tritt erst nach dem Jahr aus
-
-  // Austritt im gewählten Jahr
-  const fullMonths  = em - 1;                               // Jan … (Austrittsmonat-1)
-  const daysInExitMonth = new Date(year, em, 0).getDate();  // Tage im Austrittsmonat
-  const proRata     = full * (ed / daysInExitMonth);
-  return Math.round((fullMonths * full + proRata) * 100) / 100;
+  let total = 0;
+  for (let m = 1; m <= 12; m++) {
+    const { cost, excluded } = getProRataFixCost(emp, year, m);
+    if (!excluded) total += cost;
+  }
+  return Math.round(total * 100) / 100;
 }
 
 // ── Slot-Stunden-Rechner (für schedule-v2 Plan-Stunden) ───────────────────────
