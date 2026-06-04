@@ -472,6 +472,27 @@ export default function TagesansichtPage() {
     return { totalGross, ta_netto, ta: ta_brutto, withTA, withoutTA, diff: withTA - withoutTA };
   }, [monthlyTakeaway, monthDays, dailyBudgets]);
 
+  // Korrigierte Gesamt-Zeile: cumIst mit Take-Away-Netto-Korrektur überschreiben
+  // (nur wenn Netto-Anzeige aktiv + monatlicher Take-Away erfasst)
+  const gesamtRow = useMemo(() => {
+    if (!lastRow) return null;
+    if (!showNetRevenue || !adjustedMonthlyNet) return lastRow;
+    const c   = adjustedMonthlyNet.withTA;
+    const vj  = lastRow.cumVj;
+    const bud = lastRow.cumBud;
+    return {
+      ...lastRow,
+      cumIst:       c,
+      cumDevVj:     c - vj,
+      cumDevVjPct:  vj  > 0 ? ((c - vj)  / vj)  * 100 : 0,
+      cumDevBud:    c - bud,
+      cumDevBudPct: bud > 0 ? ((c - bud) / bud) * 100 : 0,
+    };
+  }, [lastRow, showNetRevenue, adjustedMonthlyNet]);
+
+  // KPI-Cards: bei zurückliegenden Monaten korrigierten Wert nutzen
+  const kpiRow = isCurrentMonth ? lastDataRow : (gesamtRow ?? lastDataRow);
+
   return (
     <div className="min-h-screen bg-background">
 
@@ -563,7 +584,7 @@ export default function TagesansichtPage() {
         )}
 
         {/* ── KPI-Banner ───────────────────────────────────────────────────── */}
-        {lastDataRow && (showKumDevVj || showKumDevBud) && (
+        {kpiRow && (showKumDevVj || showKumDevBud) && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
 
             {/* Kum. Ist bis heute */}
@@ -572,7 +593,7 @@ export default function TagesansichtPage() {
                 Kumuliert Ist{isCurrentMonth ? ' bis heute' : ''}
               </p>
               <p className="text-base font-bold mt-0.5">
-                {fmtN(lastDataRow.cumIst)}
+                {fmtN(kpiRow.cumIst)}
               </p>
             </Card>
 
@@ -583,7 +604,7 @@ export default function TagesansichtPage() {
                   Kumuliert VJ
                 </p>
                 <p className="text-base font-bold mt-0.5 text-muted-foreground">
-                  {hasPrevYearData ? fmtN(lastDataRow.cumVj) : '—'}
+                  {hasPrevYearData ? fmtN(kpiRow.cumVj) : '—'}
                 </p>
               </Card>
             )}
@@ -594,23 +615,23 @@ export default function TagesansichtPage() {
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
                   Abw. vs. Vorjahr
                 </p>
-                <p className={cn('text-base font-bold mt-0.5', devCls(lastDataRow.cumDevVj))}>
-                  {fmtDev(lastDataRow.cumDevVj)}
+                <p className={cn('text-base font-bold mt-0.5', devCls(kpiRow.cumDevVj))}>
+                  {fmtDev(kpiRow.cumDevVj)}
                 </p>
               </Card>
             )}
 
             {/* Kum. Abw. VJ % */}
-            {showKumDevVj && hasPrevYearData && lastDataRow.cumVj > 0 && (
+            {showKumDevVj && hasPrevYearData && kpiRow.cumVj > 0 && (
               <Card className="px-3 py-2.5">
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
                   Abw. vs. Vorjahr %
                 </p>
-                <p className={cn('text-base font-bold mt-0.5 flex items-center gap-1', devCls(lastDataRow.cumDevVjPct))}>
-                  {lastDataRow.cumDevVjPct >= 0
+                <p className={cn('text-base font-bold mt-0.5 flex items-center gap-1', devCls(kpiRow.cumDevVjPct))}>
+                  {kpiRow.cumDevVjPct >= 0
                     ? <TrendingUp className="h-3.5 w-3.5" />
                     : <TrendingDown className="h-3.5 w-3.5" />}
-                  {fmtPct(lastDataRow.cumDevVjPct)}
+                  {fmtPct(kpiRow.cumDevVjPct)}
                 </p>
               </Card>
             )}
@@ -621,23 +642,23 @@ export default function TagesansichtPage() {
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
                   Abw. vs. Budget
                 </p>
-                <p className={cn('text-base font-bold mt-0.5', devCls(lastDataRow.cumDevBud))}>
-                  {fmtDev(lastDataRow.cumDevBud)}
+                <p className={cn('text-base font-bold mt-0.5', devCls(kpiRow.cumDevBud))}>
+                  {fmtDev(kpiRow.cumDevBud)}
                 </p>
               </Card>
             )}
 
             {/* Kum. Abw. Budget % */}
-            {showKumDevBud && hasBud && lastDataRow.cumBud > 0 && (
+            {showKumDevBud && hasBud && kpiRow.cumBud > 0 && (
               <Card className="px-3 py-2.5">
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
                   Abw. vs. Budget %
                 </p>
-                <p className={cn('text-base font-bold mt-0.5 flex items-center gap-1', devCls(lastDataRow.cumDevBudPct))}>
-                  {lastDataRow.cumDevBudPct >= 0
+                <p className={cn('text-base font-bold mt-0.5 flex items-center gap-1', devCls(kpiRow.cumDevBudPct))}>
+                  {kpiRow.cumDevBudPct >= 0
                     ? <TrendingUp className="h-3.5 w-3.5" />
                     : <TrendingDown className="h-3.5 w-3.5" />}
-                  {fmtPct(lastDataRow.cumDevBudPct)}
+                  {fmtPct(kpiRow.cumDevBudPct)}
                 </p>
               </Card>
             )}
@@ -992,27 +1013,30 @@ export default function TagesansichtPage() {
                 </tbody>
 
                 {/* ── Gesamt-Zeile ────────────────────────────────────────── */}
-                {lastRow && (
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/50 font-semibold text-xs">
-                      <td className={cn(tdL, 'text-muted-foreground text-[11px]')} colSpan={2}>Gesamt</td>
-                      <td className={tdR}>{fmtN(lastRow.cumIst)}</td>
-                      {showMarketingCol && <td />}
-                      {showVjCols && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(lastRow.cumVj)}</td>}
-                      {showVjCols && <td className={tdL} />}
-                      {showDevVj  && <td className={cn(tdR, devCls(lastRow.cumDevVj, lastRow.cumIst > 0))}>{fmtDev(lastRow.cumDevVj)}</td>}
-                      {showBudCol && <td className={cn(tdR, 'text-muted-foreground')}>{hasBud ? fmtN(lastRow.cumBud) : '–'}</td>}
-                      {showDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBud, hasBud))}>{hasBud ? fmtDev(lastRow.cumDevBud) : '–'}</td>}
-                      {showKum    && <td className={cn(tdRK)}>{fmtN(lastRow.cumIst)}</td>}
-                      {showKumVj  && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(lastRow.cumVj)}</td>}
-                      {showKumDevVj  && <td className={cn(tdR, devCls(lastRow.cumDevVj, lastRow.cumIst > 0))}>{fmtDev(lastRow.cumDevVj)}</td>}
-                      {showKumDevVj  && <td className={cn(tdR, devCls(lastRow.cumDevVjPct, lastRow.cumVj > 0))}>{lastRow.cumVj > 0 ? fmtPct(lastRow.cumDevVjPct) : '–'}</td>}
-                      {showKumBud    && <td className={cn(tdR, 'text-muted-foreground')}>{hasBud ? fmtN(lastRow.cumBud) : '–'}</td>}
-                      {showKumDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBud, hasBud))}>{hasBud ? fmtDev(lastRow.cumDevBud) : '–'}</td>}
-                      {showKumDevBud && <td className={cn(tdR, devCls(lastRow.cumDevBudPct, hasBud && lastRow.cumBud > 0))}>{hasBud && lastRow.cumBud > 0 ? fmtPct(lastRow.cumDevBudPct) : '–'}</td>}
-                    </tr>
-                  </tfoot>
-                )}
+                {lastRow && (() => {
+                  const gr = gesamtRow ?? lastRow;
+                  return (
+                    <tfoot>
+                      <tr className="border-t-2 border-border bg-muted/50 font-semibold text-xs">
+                        <td className={cn(tdL, 'text-muted-foreground text-[11px]')} colSpan={2}>Gesamt</td>
+                        <td className={tdR}>{fmtN(gr.cumIst)}</td>
+                        {showMarketingCol && <td />}
+                        {showVjCols && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(gr.cumVj)}</td>}
+                        {showVjCols && <td className={tdL} />}
+                        {showDevVj  && <td className={cn(tdR, devCls(gr.cumDevVj, gr.cumIst > 0))}>{fmtDev(gr.cumDevVj)}</td>}
+                        {showBudCol && <td className={cn(tdR, 'text-muted-foreground')}>{hasBud ? fmtN(gr.cumBud) : '–'}</td>}
+                        {showDevBud && <td className={cn(tdR, devCls(gr.cumDevBud, hasBud))}>{hasBud ? fmtDev(gr.cumDevBud) : '–'}</td>}
+                        {showKum    && <td className={cn(tdRK)}>{fmtN(gr.cumIst)}</td>}
+                        {showKumVj  && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(gr.cumVj)}</td>}
+                        {showKumDevVj  && <td className={cn(tdR, devCls(gr.cumDevVj, gr.cumIst > 0))}>{fmtDev(gr.cumDevVj)}</td>}
+                        {showKumDevVj  && <td className={cn(tdR, devCls(gr.cumDevVjPct, gr.cumVj > 0))}>{gr.cumVj > 0 ? fmtPct(gr.cumDevVjPct) : '–'}</td>}
+                        {showKumBud    && <td className={cn(tdR, 'text-muted-foreground')}>{hasBud ? fmtN(gr.cumBud) : '–'}</td>}
+                        {showKumDevBud && <td className={cn(tdR, devCls(gr.cumDevBud, hasBud))}>{hasBud ? fmtDev(gr.cumDevBud) : '–'}</td>}
+                        {showKumDevBud && <td className={cn(tdR, devCls(gr.cumDevBudPct, hasBud && gr.cumBud > 0))}>{hasBud && gr.cumBud > 0 ? fmtPct(gr.cumDevBudPct) : '–'}</td>}
+                      </tr>
+                    </tfoot>
+                  );
+                })()}
               </table>
             </div>
           </CardContent>
