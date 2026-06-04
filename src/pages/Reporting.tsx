@@ -77,6 +77,13 @@ import { computePLForMonth } from '@/lib/pl-engine';
 import type { PLMonthResult } from '@/types/pl';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
+import {
+  getMaisonEnabledSync,
+  getMaisonDailySync,
+  loadMaisonEnabled,
+  loadMaisonDaily,
+} from '@/lib/maison-store';
+import { useMaison } from '@/contexts/MaisonContext';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -2112,11 +2119,21 @@ const Reporting = () => {
   if (!isAdmin) return <Navigate to="/" replace />;
 
   const { isInScope, isActive: stichtagActive } = useStichtag();
+  const { showMarketingCol: maisonColPref } = useMaison();
   const years = availableYears();
   const [year,        setYear]        = useState(currentYear);
   const [months,      setMonths]      = useState<MonthlyFinancialRecord[]>(() => loadYear(year));
   const [editRecord,  setEditRecord]  = useState<MonthlyFinancialRecord | null>(null);
   const [highlightVariance, setHighlightVariance] = useState(false);
+
+  // Maison-Umsatz (identisch mit PLView)
+  const [maisonEnabled, setMaisonEnabled] = useState(() => getMaisonEnabledSync(tenantKey));
+  const [maisonDaily,   setMaisonDaily]   = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
+  useEffect(() => {
+    loadMaisonEnabled(tenantKey).then(setMaisonEnabled);
+    loadMaisonDaily(tenantKey).then(setMaisonDaily);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   // VJ-Tages-Supabase-Daten (wie PLView)
   const [vjDailyData, setVjDailyData] = useState<Record<string, VjDayRecord>>({});
@@ -2159,13 +2176,15 @@ const Reporting = () => {
       const m = idx + 1;
       let r = rec;
 
-      // 1) IST-Umsatz: computeMonthlyIstNet (NETTO – identisch mit PLView)
+      // 1) IST-Umsatz: computeMonthlyIstNet (NETTO – identisch mit PLView, inkl. Maison)
       const hasIndivRev = r.expenseCategories.some(c => {
         const n = parseInt(c.categoryId);
         return !isNaN(n) && n >= 3000 && n <= 3999;
       });
       if (!hasIndivRev) {
-        const net = computeMonthlyIstNet(year, m, dailyBudgetsData);
+        // Maison (Marketing-Umsatzkanal): nur einrechnen wenn aktiviert und "Anzeigen" aktiv
+        const maisonArg = maisonEnabled && maisonColPref ? maisonDaily : undefined;
+        const net = computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonArg);
         if (net > 0) r = { ...r, revenueActual: net };
       }
 
@@ -2204,7 +2223,7 @@ const Reporting = () => {
 
       return r;
     });
-  }, [months, year, dailyBudgetsData, vjDailyData, resolvedBudget, prevYearMonths]);
+  }, [months, year, dailyBudgetsData, vjDailyData, resolvedBudget, prevYearMonths, maisonEnabled, maisonColPref, maisonDaily]);
 
   // ── P&L-Berechnungen pro Monat (identisch mit PLView) ───────────────────
   const plResults = useMemo<PLMonthResult[]>(
