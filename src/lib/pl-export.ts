@@ -30,35 +30,6 @@ export interface PLExportOptions {
   includeCumulative:     boolean;
   includeSelectedMonths: boolean;
   selectedMonths:        number[];  // 1-basiert (1 = Jan … 12 = Dez)
-  includeKarate?:        boolean;
-  karateAmount?:         number;
-}
-
-// ── Karate-Zeile (5004) in PLComputedRow-Array injizieren ────────────────────
-
-function injectKarateRow(rows: PLComputedRow[], karateAmount: number): PLComputedRow[] {
-  if (!(karateAmount > 0)) return rows;
-  const karateRow: PLComputedRow = {
-    def: {
-      id:          'karate_5004',
-      type:        'line',
-      label:       '  5004 Personal-Karate',
-      indent:      2,
-      showPercent: true,
-      valueRole:   'negative',
-    },
-    values: { actual: karateAmount },
-    sourceCategories: [],
-  };
-  // Nach dem personnel_wages-Summenblock einfügen
-  const idx = rows.findIndex(r => r.def.id === 'personnel_wages');
-  const copy = [...rows];
-  if (idx >= 0) {
-    copy.splice(idx + 1, 0, karateRow);
-  } else {
-    copy.push(karateRow);
-  }
-  return copy;
 }
 
 // ── Farb-Palette ──────────────────────────────────────────────────────────────
@@ -1098,11 +1069,6 @@ export async function exportPLToPDF(
   const revB  = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.budget;
   const revPY = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values.prevYear;
 
-  // Karate-Zeile (5004) einbinden wenn vom Benutzer gewählt
-  const exportRows = opts.includeKarate && opts.karateAmount
-    ? injectKarateRow(monthResult.rows, opts.karateAmount)
-    : monthResult.rows;
-
   // ──── Budget P&L ─────────────────────────────────────────────────────────
   if (mode === 'budget_pl' || mode === 'monthly') {
     const isBPL = mode === 'budget_pl';
@@ -1113,7 +1079,7 @@ export async function exportPLToPDF(
       const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
 
       if (isBPL) {
-        const body = buildBPLBody(exportRows, revA, revB, revPY);
+        const body = buildBPLBody(monthResult.rows, revA, revB, revPY);
         autoTable(doc, {
           startY: yK,
           margin: { top: 22, bottom: 15 },

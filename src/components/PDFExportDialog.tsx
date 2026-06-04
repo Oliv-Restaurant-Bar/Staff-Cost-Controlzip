@@ -1,12 +1,5 @@
 /**
  * PDFExportDialog – Konfigurationsdialog für den PDF-Export der Erfolgsrechnung
- *
- * Erlaubt dem Benutzer zu wählen:
- *   1. Monatsreport (aktueller Monat)
- *   2. Vormonatsvergleich
- *   3. Kumulierte Übersicht (Jan bis aktueller Monat)
- *   4. Kennzahlen ausgewählte Monate (flexible Monatsauswahl)
- *   5. Personal-Karate (5004) einschliessen
  */
 
 import React, { useState, useEffect } from 'react';
@@ -20,29 +13,26 @@ import { MONTH_NAMES_SHORT_DE, MONTH_NAMES_DE } from '@/types/reporting';
 import type { PLExportOptions } from '@/lib/pl-export';
 
 interface PDFExportDialogProps {
-  open:          boolean;
-  onClose:       () => void;
-  year:          number;
-  month:         number;  // 1-based, aktuell ausgewählter Monat
-  mode:          'budget_pl' | 'monthly' | 'yearly';
-  karateAmount?: number;
-  onExport:      (opts: PLExportOptions) => void;
+  open:     boolean;
+  onClose:  () => void;
+  year:     number;
+  month:    number;
+  mode:     'budget_pl' | 'monthly' | 'yearly';
+  onExport: (opts: PLExportOptions) => void;
 }
 
 export function PDFExportDialog({
-  open, onClose, year, month, mode, karateAmount = 0, onExport,
+  open, onClose, year, month, mode, onExport,
 }: PDFExportDialogProps) {
   const [includeMonthReport,    setIncludeMonthReport]    = useState(true);
   const [includePrevMonth,      setIncludePrevMonth]      = useState(month > 1);
   const [includeCumulative,     setIncludeCumulative]     = useState(month > 1);
   const [includeSelectedMonths, setIncludeSelectedMonths] = useState(false);
-  const [includeKarate,         setIncludeKarate]         = useState(false);
   const [selectedMonths,        setSelectedMonths]        = useState<number[]>(
     Array.from({ length: month }, (_, i) => i + 1),
   );
   const [loading, setLoading] = useState(false);
 
-  // Defaults zurücksetzen wenn Monat sich ändert
   useEffect(() => {
     setIncludePrevMonth(month > 1);
     setIncludeCumulative(month > 1);
@@ -65,7 +55,6 @@ export function PDFExportDialog({
         includeCumulative:     includeCumulative && month > 1,
         includeSelectedMonths: includeSelectedMonths && selectedMonths.length > 0,
         selectedMonths,
-        includeKarate,
       });
       setLoading(false);
       onClose();
@@ -73,7 +62,6 @@ export function PDFExportDialog({
   };
 
   const monthName = MONTH_NAMES_DE[month] ?? '';
-  const fmt = (n: number) => Math.round(n).toLocaleString('de-CH');
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
@@ -88,51 +76,30 @@ export function PDFExportDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-1">
-
-          {/* ── Inhalte ── */}
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Inhalte</p>
             <div className="space-y-2.5">
 
-              {/* Block 1 */}
-              <label className="flex items-start gap-2.5 cursor-pointer group">
-                <Checkbox
-                  checked={includeMonthReport}
-                  onCheckedChange={v => setIncludeMonthReport(!!v)}
-                  className="mt-0.5"
-                />
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <Checkbox checked={includeMonthReport} onCheckedChange={v => setIncludeMonthReport(!!v)} className="mt-0.5" />
                 <div>
                   <p className="text-sm font-medium leading-tight">Monatsreport</p>
                   <p className="text-xs text-muted-foreground">{monthName} {year} – vollständige Erfolgsrechnung</p>
                 </div>
               </label>
 
-              {/* Block 2 */}
               <label className={`flex items-start gap-2.5 cursor-pointer ${month <= 1 ? 'opacity-40 pointer-events-none' : ''}`}>
-                <Checkbox
-                  checked={includePrevMonth && month > 1}
-                  onCheckedChange={v => setIncludePrevMonth(!!v)}
-                  disabled={month <= 1}
-                  className="mt-0.5"
-                />
+                <Checkbox checked={includePrevMonth && month > 1} onCheckedChange={v => setIncludePrevMonth(!!v)} disabled={month <= 1} className="mt-0.5" />
                 <div>
                   <p className="text-sm font-medium leading-tight">Vormonatsvergleich</p>
                   <p className="text-xs text-muted-foreground">
-                    {month > 1
-                      ? `${monthName} vs. ${MONTH_NAMES_DE[month - 1]} ${year}`
-                      : 'Kein Vormonat (Januar)'}
+                    {month > 1 ? `${monthName} vs. ${MONTH_NAMES_DE[month - 1]} ${year}` : 'Kein Vormonat (Januar)'}
                   </p>
                 </div>
               </label>
 
-              {/* Block 3 */}
               <label className={`flex items-start gap-2.5 cursor-pointer ${month <= 1 ? 'opacity-40 pointer-events-none' : ''}`}>
-                <Checkbox
-                  checked={includeCumulative && month > 1}
-                  onCheckedChange={v => setIncludeCumulative(!!v)}
-                  disabled={month <= 1}
-                  className="mt-0.5"
-                />
+                <Checkbox checked={includeCumulative && month > 1} onCheckedChange={v => setIncludeCumulative(!!v)} disabled={month <= 1} className="mt-0.5" />
                 <div>
                   <p className="text-sm font-medium leading-tight">Kumulierte Übersicht</p>
                   <p className="text-xs text-muted-foreground">
@@ -141,13 +108,8 @@ export function PDFExportDialog({
                 </div>
               </label>
 
-              {/* Block 4 */}
               <label className="flex items-start gap-2.5 cursor-pointer">
-                <Checkbox
-                  checked={includeSelectedMonths}
-                  onCheckedChange={v => setIncludeSelectedMonths(!!v)}
-                  className="mt-0.5"
-                />
+                <Checkbox checked={includeSelectedMonths} onCheckedChange={v => setIncludeSelectedMonths(!!v)} className="mt-0.5" />
                 <div>
                   <p className="text-sm font-medium leading-tight">Monatsvergleich</p>
                   <p className="text-xs text-muted-foreground">Ausgewählte Monate nebeneinander als Verlauf</p>
@@ -156,29 +118,18 @@ export function PDFExportDialog({
             </div>
           </div>
 
-          {/* ── Monatsauswahl (nur wenn Block 4 aktiv) ── */}
           {includeSelectedMonths && (
             <div className="border rounded-lg p-3 bg-slate-50">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                Monatsauswahl
-              </p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Monatsauswahl</p>
               <div className="grid grid-cols-4 gap-1.5">
                 {Array.from({ length: 12 }, (_, i) => {
                   const m = i + 1;
-                  const shortName = MONTH_NAMES_SHORT_DE[m] ?? String(m);
-                  const checked   = selectedMonths.includes(m);
+                  const checked = selectedMonths.includes(m);
                   return (
-                    <label
-                      key={m}
-                      className={`flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer text-xs border transition-colors
-                        ${checked ? 'bg-blue-50 border-blue-300 font-medium text-blue-800' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'}`}
-                    >
-                      <Checkbox
-                        checked={checked}
-                        onCheckedChange={() => toggleMonth(m)}
-                        className="h-3.5 w-3.5"
-                      />
-                      {shortName}
+                    <label key={m} className={`flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer text-xs border transition-colors
+                      ${checked ? 'bg-blue-50 border-blue-300 font-medium text-blue-800' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+                      <Checkbox checked={checked} onCheckedChange={() => toggleMonth(m)} className="h-3.5 w-3.5" />
+                      {MONTH_NAMES_SHORT_DE[m]}
                     </label>
                   );
                 })}
@@ -194,36 +145,10 @@ export function PDFExportDialog({
               )}
             </div>
           )}
-
-          {/* ── Vertrauliche Positionen ── */}
-          <div className="border-t border-border pt-3">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-              Vertrauliche Positionen
-            </p>
-            <label className="flex items-start gap-2.5 cursor-pointer">
-              <Checkbox
-                checked={includeKarate}
-                onCheckedChange={v => setIncludeKarate(!!v)}
-                className="mt-0.5"
-              />
-              <div>
-                <p className="text-sm font-medium leading-tight">Personal-Karate einschliessen</p>
-                <p className="text-xs text-muted-foreground">
-                  {karateAmount > 0
-                    ? `Konto 5004 · CHF ${fmt(karateAmount)} – im Export sichtbar`
-                    : 'Konto 5004 · kein Wert für diesen Monat erfasst'}
-                </p>
-              </div>
-            </label>
-          </div>
-
         </div>
 
-        {/* ── Aktionen ── */}
         <div className="flex justify-end gap-2 pt-1">
-          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={onClose}>
-            Abbrechen
-          </Button>
+          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={onClose}>Abbrechen</Button>
           <Button
             size="sm"
             className="h-8 text-xs gap-1 bg-rose-700 hover:bg-rose-800 text-white"

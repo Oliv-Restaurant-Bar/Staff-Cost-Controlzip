@@ -20,7 +20,6 @@ import {
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
   Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle, FileDown,
-  Lock, LockOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -62,7 +61,7 @@ import {
   getMaisonDailySync, loadMaisonDaily,
 } from '@/lib/maison-store';
 import { useMaison } from '@/contexts/MaisonContext';
-import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { kvGet } from '@/lib/supabase-kv';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -588,7 +587,6 @@ interface BPLRow {
   itemAccountNumber?: string;
   itemId?: string;
   isInternal?: boolean;
-  isKarate?: boolean;
 }
 
 interface BPLRowWithValues extends BPLRow {
@@ -1248,8 +1246,6 @@ const BudgetPLView = ({
   pctIsBudgetBased = false,
   maisonEnabled = false,
   maisonNet = 0,
-  karateAmount = 0,
-  onKarateEditClick,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
@@ -1267,8 +1263,6 @@ const BudgetPLView = ({
   pctIsBudgetBased?: boolean;
   maisonEnabled?: boolean;
   maisonNet?: number;
-  karateAmount?: number;
-  onKarateEditClick?: () => void;
 }) => {
   const showBudget   = compareMode !== 'ist_vorjahr';
   const showPrevYear = compareMode !== 'ist_budget';
@@ -1313,43 +1307,6 @@ const BudgetPLView = ({
           const isHiddenByCollapse =
             !row.isCategory && row.catType !== 'result' && collapsedCats.has(row.catId);
           if (isHiddenByCollapse) return null;
-
-          // ── Personal-Karate (5004) – normale Darstellung, direkt bearbeitbar ──
-          if (row.isKarate) {
-            const py = compact ? 'py-0.5' : 'py-1.5';
-            return (
-              <tr
-                key={`karate-${i}`}
-                className="border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50/60 dark:hover:bg-slate-800/20"
-              >
-                <td className={cn('px-3 text-xs text-slate-700 dark:text-slate-300', py, 'pl-8')}>
-                  <span className="flex items-center gap-1.5">
-                    <span>Personal-Karate</span>
-                    <span className="text-[10px] text-slate-400">5004</span>
-                  </span>
-                </td>
-                <td className={py}>
-                  <button
-                    onClick={onKarateEditClick}
-                    className="text-[10px] px-1.5 py-0.5 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700/40 transition-colors"
-                    title="Wert bearbeiten"
-                  >
-                    <Pencil className="h-2.5 w-2.5 inline" />
-                  </button>
-                </td>
-                <td className="px-2 text-right text-xs font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                  {(karateAmount ?? 0) > 0 ? fmt(karateAmount ?? 0) : '–'}
-                </td>
-                {pctMode !== 'off' && <td />}
-                {showBudget && <td />}
-                {showBudget && pctMode !== 'off' && <td />}
-                {showBudget && <td />}
-                {showPrevYear && <td />}
-                {showPrevYear && pctMode !== 'off' && <td />}
-                {showPrevYear && <td />}
-              </tr>
-            );
-          }
 
           const isLastRevItem =
             row.catId === 'pl_revenue' && !row.isCategory && row.catType !== 'result' &&
@@ -2217,20 +2174,6 @@ const PLViewPage = () => {
     await saveMaisonEnabled(tenantKey, newVal);
   };
 
-  // ── Personal-Karate (5004) ────────────────────────────────────────────────
-  const [karateValues,    setKarateValues]    = useState<Record<string, number>>({});
-  const [karateEditOpen,  setKarateEditOpen]  = useState(false);
-  const [karateEditInput, setKarateEditInput] = useState('');
-
-  const karateValuesKey = `${tenantId}:karate-values-${year}`;
-  const karateMonthKey  = `${year}-${String(month).padStart(2, '0')}`;
-  const karateAmount    = karateValues[karateMonthKey] ?? 0;
-
-  useEffect(() => {
-    kvGet(karateValuesKey).then(v => setKarateValues((v as Record<string, number>) ?? {}));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, year]);
-
   // Take-Away monatliche Werte (Record<'YYYY-MM', grossCHF>)
   const [takeawayMonthlyMap, setTakeawayMonthlyMap] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -2239,18 +2182,6 @@ const PLViewPage = () => {
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, year]);
-
-  const handleKarateSave = async () => {
-    const cleaned = karateEditInput.trim().replace(/['\s]/g, '').replace(',', '.');
-    const num = parseFloat(cleaned);
-    if (isNaN(num)) { toast.error('Bitte eine gültige Zahl eingeben'); return; }
-    const newValues = { ...karateValues, [karateMonthKey]: num };
-    setKarateValues(newValues);
-    await kvSet(karateValuesKey, newValues);
-    setKarateEditOpen(false);
-    setRefreshKey(k => k + 1);
-    toast.success(`Personal-Karate gespeichert: CHF ${fmt(num)} für ${MONTH_NAMES_DE[month]} ${year}`);
-  };
 
   // Marketing-Nettobetrag für den aktuell gewählten Monat (aus Tagesdaten)
   // Gibt 0 zurück wenn "Ausblenden" (maisonColPref=false) → Marketing-Zeile verschwindet
@@ -2483,58 +2414,6 @@ const PLViewPage = () => {
     [budgetData, effectiveMonthRecord, month, prevYearRecords],
   );
 
-  // Personal-Karate Zeile einfügen (zwischen 5003 und 5010) und ggf. pl_wages Summe korrigieren
-  const bplRowsWithKarate = useMemo(() => {
-    const rows = [...bplRows];
-
-    // Einfügeposition: nach dem letzten pl_wages-Item mit Kontonummer < 5010
-    let insertIdx = -1;
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-      if (r.catId === 'pl_wages' && !r.isCategory && r.catType !== 'result') {
-        const acc = parseInt(r.itemAccountNumber ?? '9999');
-        if (acc < 5010) insertIdx = i + 1;
-      }
-    }
-    if (insertIdx === -1) {
-      const catIdx = rows.findIndex(r => r.catId === 'pl_wages' && r.isCategory);
-      if (catIdx !== -1) insertIdx = catIdx + 1;
-    }
-
-    const karateRow: BPLRowWithValues = {
-      catId: 'pl_wages',
-      catLabel: 'Löhne inkl. Zulagen',
-      catType: 'items',
-      isExpense: true,
-      isCategory: false,
-      itemId: 'karate_5004',
-      itemLabel: 'Personal-Karate',
-      itemAccountNumber: '5004',
-      isKarate: true,
-      values: makeCell(karateAmount, 0, 0, true),
-    };
-
-    if (insertIdx >= 0) {
-      rows.splice(insertIdx, 0, karateRow);
-    } else {
-      rows.push(karateRow);
-    }
-
-    // Betrag > 0: pl_wages Kategorie-Summe (Ist) anpassen
-    if (karateAmount > 0) {
-      const wagesCatIdx = rows.findIndex(r => r.catId === 'pl_wages' && r.isCategory);
-      if (wagesCatIdx >= 0) {
-        const wCat = rows[wagesCatIdx];
-        rows[wagesCatIdx] = {
-          ...wCat,
-          values: { ...wCat.values, actual: (wCat.values.actual ?? 0) + karateAmount },
-        };
-      }
-    }
-
-    return rows;
-  }, [bplRows, karateAmount]);
-
   const bplRevenue = useMemo(
     () => bplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.actual ?? 0,
     [bplRows],
@@ -2566,16 +2445,13 @@ const PLViewPage = () => {
   const handlePdfExport = useCallback(async (opts: PLExportOptions) => {
     const branding = getBranding(tenantId);
     try {
-      await exportPLToPDF(monthResult, yearResult, year, month, mode, {
-        ...opts,
-        karateAmount: opts.includeKarate ? karateAmount : 0,
-      }, branding);
+      await exportPLToPDF(monthResult, yearResult, year, month, mode, opts, branding);
       toast.success('PDF erstellt');
     } catch (e) {
       console.error(e);
       toast.error('PDF-Export fehlgeschlagen');
     }
-  }, [monthResult, yearResult, year, month, mode, tenantId, karateAmount]);
+  }, [monthResult, yearResult, year, month, mode, tenantId]);
 
   const handleYearMonthClick = useCallback((m: number) => {
     setMonth(m);
@@ -2993,9 +2869,8 @@ const PLViewPage = () => {
           {/* Tabelle */}
           {mode === 'budget_pl'
             ? <BudgetPLView
-                rows={bplRowsWithKarate}
+                rows={bplRows}
                 onRowClick={row => {
-                  if (row.isKarate) return;
                   if (row.isCategory || row.catId === 'pl_revenue') {
                     setBplDrilldown(row);
                   } else {
@@ -3019,8 +2894,6 @@ const PLViewPage = () => {
                 pctIsBudgetBased={pctIsBudgetBased}
                 maisonEnabled={maisonEnabled && maisonColPref}
                 maisonNet={maisonMonthNet}
-                karateAmount={karateAmount}
-                onKarateEditClick={() => { setKarateEditInput(karateAmount > 0 ? String(karateAmount) : ''); setKarateEditOpen(true); }}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
@@ -3090,54 +2963,9 @@ const PLViewPage = () => {
         year={year}
         month={month}
         mode={mode}
-        karateAmount={karateAmount}
         onExport={handlePdfExport}
       />
 
-      {/* Personal-Karate – Wert-Eingabe-Dialog */}
-      {karateEditOpen && (
-        <Dialog open={karateEditOpen} onOpenChange={setKarateEditOpen}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <LockOpen className="h-4 w-4 text-amber-500" />
-                Personal-Karate — Wert erfassen
-              </DialogTitle>
-              <DialogDescription>
-                {MONTH_NAMES_DE[month]} {year} · Konto 5004 · Wird in Lohnaufwand eingerechnet
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3 py-2">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Ist-Wert (CHF)</label>
-                <Input
-                  type="number"
-                  value={karateEditInput}
-                  onChange={e => setKarateEditInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleKarateSave(); }}
-                  placeholder="0"
-                  autoFocus
-                  className="font-mono"
-                />
-              </div>
-              {karateAmount > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Aktueller Wert: CHF {fmt(karateAmount)}
-                </p>
-              )}
-              <div className="flex gap-2 justify-end pt-1">
-                <Button variant="outline" size="sm" onClick={() => setKarateEditOpen(false)}>
-                  Abbrechen
-                </Button>
-                <Button size="sm" onClick={handleKarateSave} className="bg-amber-600 hover:bg-amber-700 text-white">
-                  <Check className="h-3.5 w-3.5 mr-1" />
-                  Speichern
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
     </div>
   );
 };

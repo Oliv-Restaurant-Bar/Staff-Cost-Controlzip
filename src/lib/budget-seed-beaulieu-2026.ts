@@ -146,6 +146,16 @@ export const SEED_BEAULIEU_2026_LINE_ITEMS: BudgetPLLineItem[] = [
     monthlyValues: mv(2400, 2600, 3000, 4000, 3400, 3200, 2400, 2800, 2600, 3400, 4000, 4000),
   },
   {
+    id: 'pli_karate',
+    categoryId: 'pl_wages',
+    accountNumber: '5004',
+    label: 'Personal-Karate',
+    valueType: 'chf',
+    sortOrder: 4,
+    isDefault: true,
+    monthlyValues: mv(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+  },
+  {
     id: 'pli_zulagen',
     categoryId: 'pl_wages',
     accountNumber: '5010',

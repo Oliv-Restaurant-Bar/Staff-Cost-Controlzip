@@ -154,6 +154,16 @@ export const SEED_2026_LINE_ITEMS: BudgetPLLineItem[] = [
     isDefault: true,
     monthlyValues: mv(2400, 2200, 2500, 2200, 3000, 2500, 3000, 2500, 2600, 3300, 4300, 4200),
   },
+  {
+    id: 'pli_karate',
+    categoryId: 'pl_wages',
+    accountNumber: '5004',
+    label: 'Personal-Karate',
+    valueType: 'chf',
+    sortOrder: 5,
+    isDefault: true,
+    monthlyValues: mv(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+  },
 
   // ── Sozialversicherungsaufwand ─────────────────────────────────────────────
   {
