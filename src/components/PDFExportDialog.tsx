@@ -6,6 +6,7 @@
  *   2. Vormonatsvergleich
  *   3. Kumulierte Übersicht (Jan bis aktueller Monat)
  *   4. Kennzahlen ausgewählte Monate (flexible Monatsauswahl)
+ *   5. Personal-Karate (5004) einschliessen
  */
 
 import React, { useState, useEffect } from 'react';
@@ -19,21 +20,23 @@ import { MONTH_NAMES_SHORT_DE, MONTH_NAMES_DE } from '@/types/reporting';
 import type { PLExportOptions } from '@/lib/pl-export';
 
 interface PDFExportDialogProps {
-  open:        boolean;
-  onClose:     () => void;
-  year:        number;
-  month:       number;  // 1-based, aktuell ausgewählter Monat
-  mode:        'budget_pl' | 'monthly' | 'yearly';
-  onExport:    (opts: PLExportOptions) => void;
+  open:          boolean;
+  onClose:       () => void;
+  year:          number;
+  month:         number;  // 1-based, aktuell ausgewählter Monat
+  mode:          'budget_pl' | 'monthly' | 'yearly';
+  karateAmount?: number;
+  onExport:      (opts: PLExportOptions) => void;
 }
 
 export function PDFExportDialog({
-  open, onClose, year, month, mode, onExport,
+  open, onClose, year, month, mode, karateAmount = 0, onExport,
 }: PDFExportDialogProps) {
   const [includeMonthReport,    setIncludeMonthReport]    = useState(true);
   const [includePrevMonth,      setIncludePrevMonth]      = useState(month > 1);
   const [includeCumulative,     setIncludeCumulative]     = useState(month > 1);
   const [includeSelectedMonths, setIncludeSelectedMonths] = useState(false);
+  const [includeKarate,         setIncludeKarate]         = useState(false);
   const [selectedMonths,        setSelectedMonths]        = useState<number[]>(
     Array.from({ length: month }, (_, i) => i + 1),
   );
@@ -62,6 +65,7 @@ export function PDFExportDialog({
         includeCumulative:     includeCumulative && month > 1,
         includeSelectedMonths: includeSelectedMonths && selectedMonths.length > 0,
         selectedMonths,
+        includeKarate,
       });
       setLoading(false);
       onClose();
@@ -69,6 +73,7 @@ export function PDFExportDialog({
   };
 
   const monthName = MONTH_NAMES_DE[month] ?? '';
+  const fmt = (n: number) => Math.round(n).toLocaleString('de-CH');
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
@@ -189,6 +194,28 @@ export function PDFExportDialog({
               )}
             </div>
           )}
+
+          {/* ── Vertrauliche Positionen ── */}
+          <div className="border-t border-border pt-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+              Vertrauliche Positionen
+            </p>
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <Checkbox
+                checked={includeKarate}
+                onCheckedChange={v => setIncludeKarate(!!v)}
+                className="mt-0.5"
+              />
+              <div>
+                <p className="text-sm font-medium leading-tight">Personal-Karate einschliessen</p>
+                <p className="text-xs text-muted-foreground">
+                  {karateAmount > 0
+                    ? `Konto 5004 · CHF ${fmt(karateAmount)} – im Export sichtbar`
+                    : 'Konto 5004 · kein Wert für diesen Monat erfasst'}
+                </p>
+              </div>
+            </label>
+          </div>
 
         </div>
 

@@ -1318,7 +1318,7 @@ const BudgetPLView = ({
             !row.isCategory && row.catType !== 'result' && collapsedCats.has(row.catId);
           if (isHiddenByCollapse) return null;
 
-          // ── Personal-Karate (5004) – spezielle gesperrte Zeile ────────────
+          // ── Personal-Karate (5004) – immer sichtbar, PIN nur zum Bearbeiten ──
           if (row.isKarate) {
             const py = compact ? 'py-0.5' : 'py-1.5';
             return (
@@ -1326,55 +1326,39 @@ const BudgetPLView = ({
                 key={`karate-${i}`}
                 className={cn(
                   'border-b border-slate-100 dark:border-slate-800/50',
-                  karateUnlocked
+                  (karateAmount ?? 0) > 0
                     ? 'bg-amber-50/40 dark:bg-amber-950/10'
-                    : 'bg-slate-50/30 dark:bg-slate-900/20',
+                    : 'bg-slate-50/20 dark:bg-slate-900/10',
                 )}
               >
                 <td className={cn('px-3 text-xs', py, 'pl-8')}>
                   <span className="flex items-center gap-1.5">
-                    {karateUnlocked
-                      ? <LockOpen className="h-3 w-3 text-amber-500 shrink-0" />
-                      : <Lock className="h-3 w-3 text-slate-400 shrink-0" />
-                    }
                     <span className={cn(
-                      karateUnlocked
-                        ? 'text-amber-700 dark:text-amber-400 font-medium'
-                        : 'text-slate-400 italic tracking-widest',
+                      'font-medium',
+                      (karateAmount ?? 0) > 0
+                        ? 'text-amber-700 dark:text-amber-400'
+                        : 'text-slate-500 dark:text-slate-400',
                     )}>
-                      {karateUnlocked ? 'Personal-Karate' : '• • • • • •'}
+                      Personal-Karate
                     </span>
-                    {karateUnlocked && (
-                      <span className="text-[10px] text-slate-400">5004</span>
-                    )}
+                    <span className="text-[10px] text-slate-400">5004</span>
                   </span>
                 </td>
                 <td className={py}>
-                  {!karateUnlocked ? (
-                    <button
-                      onClick={onKarateUnlockClick}
-                      className="text-[10px] px-1.5 py-0.5 rounded text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors flex items-center gap-0.5"
-                      title="PIN eingeben um zu entsperren"
-                    >
-                      <Lock className="h-2.5 w-2.5" />
-                      <span>Entsperren</span>
-                    </button>
-                  ) : (
-                    <button
-                      onClick={onKarateEditClick}
-                      className="text-[10px] px-1.5 py-0.5 rounded text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
-                      title="Wert bearbeiten"
-                    >
-                      <Pencil className="h-2.5 w-2.5 inline" />
-                    </button>
-                  )}
+                  <button
+                    onClick={karateUnlocked ? onKarateEditClick : onKarateUnlockClick}
+                    className="text-[10px] px-1.5 py-0.5 rounded text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
+                    title={karateUnlocked ? 'Wert bearbeiten' : 'PIN eingeben um zu bearbeiten'}
+                  >
+                    <Pencil className="h-2.5 w-2.5 inline" />
+                  </button>
                 </td>
                 <td className={cn('px-2 text-right text-xs font-mono tabular-nums', py,
-                  karateUnlocked && (karateAmount ?? 0) > 0
+                  (karateAmount ?? 0) > 0
                     ? 'text-amber-700 dark:text-amber-400 font-semibold'
-                    : 'text-slate-300 dark:text-slate-700',
+                    : 'text-slate-400 dark:text-slate-500',
                 )}>
-                  {karateUnlocked ? fmt(karateAmount ?? 0) : '—'}
+                  {(karateAmount ?? 0) > 0 ? fmt(karateAmount ?? 0) : '–'}
                 </td>
                 {pctMode !== 'off' && <td />}
                 {showBudget && <td />}
@@ -2266,7 +2250,8 @@ const PLViewPage = () => {
   const karatePinKey    = `${tenantId}:karate-pin`;
   const karateValuesKey = `${tenantId}:karate-values-${year}`;
   const karateMonthKey  = `${year}-${String(month).padStart(2, '0')}`;
-  const karateAmount    = karateUnlocked ? (karateValues[karateMonthKey] ?? 0) : 0;
+  // Immer sichtbar — PIN nur noch zum Bearbeiten nötig, nicht mehr zum Anzeigen
+  const karateAmount    = karateValues[karateMonthKey] ?? 0;
 
   useEffect(() => {
     kvGet(karatePinKey).then(v => setKarateStoredPin(v as string | null ?? null));
@@ -2578,7 +2563,7 @@ const PLViewPage = () => {
       itemLabel: 'Personal-Karate',
       itemAccountNumber: '5004',
       isKarate: true,
-      values: makeCell(karateUnlocked ? karateAmount : 0, 0, 0, true),
+      values: makeCell(karateAmount, 0, 0, true),
     };
 
     if (insertIdx >= 0) {
@@ -2587,8 +2572,8 @@ const PLViewPage = () => {
       rows.push(karateRow);
     }
 
-    // Wenn entsperrt und Betrag > 0: pl_wages Kategorie-Summe (Ist) anpassen
-    if (karateUnlocked && karateAmount > 0) {
+    // Betrag > 0: pl_wages Kategorie-Summe (Ist) anpassen
+    if (karateAmount > 0) {
       const wagesCatIdx = rows.findIndex(r => r.catId === 'pl_wages' && r.isCategory);
       if (wagesCatIdx >= 0) {
         const wCat = rows[wagesCatIdx];
@@ -2600,7 +2585,7 @@ const PLViewPage = () => {
     }
 
     return rows;
-  }, [bplRows, karateUnlocked, karateAmount]);
+  }, [bplRows, karateAmount]);
 
   const bplRevenue = useMemo(
     () => bplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.actual ?? 0,
@@ -2633,13 +2618,16 @@ const PLViewPage = () => {
   const handlePdfExport = useCallback(async (opts: PLExportOptions) => {
     const branding = getBranding(tenantId);
     try {
-      await exportPLToPDF(monthResult, yearResult, year, month, mode, opts, branding);
+      await exportPLToPDF(monthResult, yearResult, year, month, mode, {
+        ...opts,
+        karateAmount: opts.includeKarate ? karateAmount : 0,
+      }, branding);
       toast.success('PDF erstellt');
     } catch (e) {
       console.error(e);
       toast.error('PDF-Export fehlgeschlagen');
     }
-  }, [monthResult, yearResult, year, month, mode, tenantId]);
+  }, [monthResult, yearResult, year, month, mode, tenantId, karateAmount]);
 
   const handleYearMonthClick = useCallback((m: number) => {
     setMonth(m);
@@ -3156,6 +3144,7 @@ const PLViewPage = () => {
         year={year}
         month={month}
         mode={mode}
+        karateAmount={karateAmount}
         onExport={handlePdfExport}
       />
 
