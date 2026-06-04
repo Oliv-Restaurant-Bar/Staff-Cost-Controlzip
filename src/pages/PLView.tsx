@@ -2595,14 +2595,59 @@ const PLViewPage = () => {
 
   const handlePdfExport = useCallback(async (opts: PLExportOptions) => {
     const branding = getBranding(tenantId);
+    const currentlyIncludes = maisonEnabled && maisonColPref;
+
+    let exportMonthResult = monthResult;
+    let exportYearResult  = yearResult;
+
+    // If the export Maison setting differs from the current view state, recompute
+    if (opts.includeMaison !== undefined && !!opts.includeMaison !== !!currentlyIncludes) {
+      const delta = opts.includeMaison ? 1 : -1;
+
+      // Compute net Maison revenue for a given month from daily gross values (/1.081)
+      const getMaisonNetForMonth = (m: number): number => {
+        const mm   = String(m).padStart(2, '0');
+        const days = new Date(year, m, 0).getDate();
+        let net    = 0;
+        for (let d = 1; d <= days; d++) {
+          const key   = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+          const gross = maisonDaily[key] ?? 0;
+          if (gross > 0) net += gross / 1.081;
+        }
+        return net;
+      };
+
+      // Adjust the selected month
+      const monthMaisonNet = getMaisonNetForMonth(month);
+      if (monthMaisonNet > 0 && effectiveMonthRecord) {
+        const adjRec = {
+          ...effectiveMonthRecord,
+          revenueActual: (effectiveMonthRecord.revenueActual ?? 0) + delta * monthMaisonNet,
+        };
+        exportMonthResult = computePLForMonth(adjRec, allMonthOverrides[month - 1]);
+      }
+
+      // Adjust all months for yearResult (cumulative/prevMonth sections)
+      const adjAllRecs = effectiveAllRecords.map((rec, idx) => {
+        const mNet = getMaisonNetForMonth(idx + 1);
+        if (mNet <= 0) return rec;
+        return { ...rec, revenueActual: (rec.revenueActual ?? 0) + delta * mNet };
+      });
+      exportYearResult = computePLForYear(adjAllRecs, allMonthOverrides);
+    }
+
+    const exportMaisonLabel = opts.includeMaison && maisonMonthNet > 0
+      ? `inkl. Maison CHF ${Math.round(maisonMonthNet).toLocaleString('de-CH')}`
+      : undefined;
+
     try {
-      await exportPLToPDF(monthResult, yearResult, year, month, mode, opts, branding);
+      await exportPLToPDF(exportMonthResult, exportYearResult, year, month, mode, opts, branding, exportMaisonLabel);
       toast.success('PDF erstellt');
     } catch (e) {
       console.error(e);
       toast.error('PDF-Export fehlgeschlagen');
     }
-  }, [monthResult, yearResult, year, month, mode, tenantId]);
+  }, [monthResult, yearResult, effectiveMonthRecord, effectiveAllRecords, allMonthOverrides, year, month, mode, tenantId, maisonEnabled, maisonColPref, maisonDaily, maisonMonthNet]);
 
   const handleYearMonthClick = useCallback((m: number) => {
     setMonth(m);
@@ -3174,6 +3219,8 @@ const PLViewPage = () => {
         month={month}
         mode={mode}
         onExport={handlePdfExport}
+        maisonAvailable={maisonEnabled && maisonColPref}
+        maisonMonthNet={maisonMonthNet}
       />
 
     </div>

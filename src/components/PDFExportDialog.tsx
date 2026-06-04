@@ -13,16 +13,20 @@ import { MONTH_NAMES_SHORT_DE, MONTH_NAMES_DE } from '@/types/reporting';
 import type { PLExportOptions } from '@/lib/pl-export';
 
 interface PDFExportDialogProps {
-  open:     boolean;
-  onClose:  () => void;
-  year:     number;
-  month:    number;
-  mode:     'budget_pl' | 'monthly' | 'yearly';
-  onExport: (opts: PLExportOptions) => void;
+  open:           boolean;
+  onClose:        () => void;
+  year:           number;
+  month:          number;
+  mode:           'budget_pl' | 'monthly' | 'yearly';
+  onExport:       (opts: PLExportOptions) => void;
+  maisonAvailable?: boolean;
+  maisonMonthNet?:  number;
 }
 
 export function PDFExportDialog({
   open, onClose, year, month, mode, onExport,
+  maisonAvailable = false,
+  maisonMonthNet  = 0,
 }: PDFExportDialogProps) {
   const [includeMonthReport,    setIncludeMonthReport]    = useState(true);
   const [includePrevMonth,      setIncludePrevMonth]      = useState(month > 1);
@@ -31,6 +35,7 @@ export function PDFExportDialog({
   const [selectedMonths,        setSelectedMonths]        = useState<number[]>(
     Array.from({ length: month }, (_, i) => i + 1),
   );
+  const [includeMaison, setIncludeMaison] = useState(maisonAvailable);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -38,6 +43,10 @@ export function PDFExportDialog({
     setIncludeCumulative(month > 1);
     setSelectedMonths(Array.from({ length: month }, (_, i) => i + 1));
   }, [month]);
+
+  useEffect(() => {
+    setIncludeMaison(maisonAvailable);
+  }, [maisonAvailable]);
 
   const toggleMonth = (m: number) => {
     setSelectedMonths(prev =>
@@ -55,6 +64,7 @@ export function PDFExportDialog({
         includeCumulative:     includeCumulative && month > 1,
         includeSelectedMonths: includeSelectedMonths && selectedMonths.length > 0,
         selectedMonths,
+        includeMaison:         maisonAvailable ? includeMaison : undefined,
       });
       setLoading(false);
       onClose();
@@ -143,6 +153,27 @@ export function PDFExportDialog({
                   {selectedMonths.map(m => MONTH_NAMES_SHORT_DE[m]).join(', ')}
                 </p>
               )}
+            </div>
+          )}
+
+          {maisonAvailable && (
+            <div className="border rounded-lg p-3 bg-violet-50 border-violet-200">
+              <p className="text-xs font-semibold text-violet-700 uppercase tracking-wider mb-2">Marketing-Kanal</p>
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <Checkbox
+                  checked={includeMaison}
+                  onCheckedChange={v => setIncludeMaison(!!v)}
+                  className="mt-0.5 border-violet-400 data-[state=checked]:bg-violet-600 data-[state=checked]:border-violet-600"
+                />
+                <div>
+                  <p className="text-sm font-medium leading-tight text-violet-900">Maison einschliessen</p>
+                  <p className="text-xs text-violet-600">
+                    {maisonMonthNet > 0
+                      ? `${monthName} ${year}: CHF ${Math.round(maisonMonthNet).toLocaleString('de-CH')} netto`
+                      : 'Marketing-Umsatz in Betriebsertrag einrechnen'}
+                  </p>
+                </div>
+              </label>
             </div>
           )}
         </div>

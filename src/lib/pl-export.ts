@@ -30,6 +30,7 @@ export interface PLExportOptions {
   includeCumulative:     boolean;
   includeSelectedMonths: boolean;
   selectedMonths:        number[];  // 1-basiert (1 = Jan … 12 = Dez)
+  includeMaison?:        boolean;   // Maison/Marketing-Umsatzkanal einschliessen
 }
 
 // ── Farb-Palette ──────────────────────────────────────────────────────────────
@@ -1044,6 +1045,7 @@ export async function exportPLToPDF(
   mode: 'budget_pl' | 'monthly' | 'yearly' = 'budget_pl',
   options?: PLExportOptions,
   branding?: RestaurantBranding,
+  maisonLabel?: string,
 ): Promise<void> {
   // ── Branding laden ──────────────────────────────────────────────────────
   const { getBranding: _getBranding, renderLogoDataUrl } = await import('@/lib/pl-branding');
@@ -1074,7 +1076,8 @@ export async function exportPLToPDF(
     const isBPL = mode === 'budget_pl';
 
     if (opts.includeMonthReport) {
-      const reportType = isBPL ? 'Erfolgsrechnung – Budget P&L' : 'Erfolgsrechnung – Monatsansicht';
+      const maisonSuffix = maisonLabel ? ` · ${maisonLabel}` : '';
+      const reportType = (isBPL ? 'Erfolgsrechnung – Budget P&L' : 'Erfolgsrechnung – Monatsansicht') + maisonSuffix;
       const yH = addPageHeader(doc, reportType, activeBranding, logoDataUrl, now, month, year, PAGE_W);
       const yK = addKpiSection(doc, monthResult, yH, PAGE_W);
 
