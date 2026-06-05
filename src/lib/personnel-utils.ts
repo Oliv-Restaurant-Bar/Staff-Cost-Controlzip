@@ -55,6 +55,31 @@ export function isEmployeeActiveInMonth(
   return true;
 }
 
+/**
+ * Prüft ob ein Mitarbeiter an einem bestimmten Datum aktiv ist.
+ * Tages-granular — für Personalstamm-Standardansicht (Stand: heute).
+ *
+ * Regeln (per Spezifikation):
+ *  - isActive === false → ausgetreten (explizit archiviert)
+ *  - kein Austrittsdatum → aktiv
+ *  - Austrittsdatum >= referenceDate → aktiv (letzter Arbeitstag gilt noch)
+ *  - Austrittsdatum <  referenceDate → ausgetreten
+ *
+ * Beispiel: Ali, Austritt 2026-03-31, referenceDate = 2026-04-01 → ausgetreten
+ *           Ali, Austritt 2026-03-31, referenceDate = 2026-03-31 → aktiv (letzter Tag)
+ */
+export function isEmployeeActiveForDate(
+  emp: { employmentEndDate?: string | null; isActive?: boolean },
+  referenceDate: Date,
+): boolean {
+  if (emp.isActive === false) return false;
+  if (!emp.employmentEndDate) return true;
+  const exit = new Date(emp.employmentEndDate + 'T00:00:00');
+  // Datumsvergleich ohne Uhrzeit
+  const ref = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+  return exit >= ref;
+}
+
 export const formatCurrency = (value: number): string => {
   return new Intl.NumberFormat('de-CH', {
     style: 'currency',

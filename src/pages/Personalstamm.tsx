@@ -57,6 +57,7 @@ import {
 } from '@/lib/supabase-db';
 import type { HarteTestResult } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
+import { isEmployeeActiveForDate } from '@/lib/personnel-utils';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { generateContract, detectContractTemplate } from '@/lib/generateContract';
 import { ContractDraft, defaultContractDraft } from '@/types/contract';
@@ -574,17 +575,24 @@ const Personalstamm = () => {
       .filter(e => e.employeeStatus !== 'pending_review'),
   [employees, allowedDepartment]);
 
+  // Heutiges Datum ohne Uhrzeit — stabil für den gesamten Render-Zyklus
+  const today = useMemo(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }, []);
+
   const filtered = useMemo(() => {
     return visibleBase.filter(emp => {
-      const local = getLocalEntry(localData, emp.id);
-      if (filterActive === 'active'   && !local.active)  return false;
-      if (filterActive === 'inactive' && local.active)   return false;
+      // Aktiv/Ausgetreten: Quelle der Wahrheit = employment_end_date aus Supabase
+      const active = isEmployeeActiveForDate(emp, today);
+      if (filterActive === 'active'   && !active) return false;
+      if (filterActive === 'inactive' && active)  return false;
       if (filterDept !== 'all' && emp.department !== filterDept) return false;
       if (filterType !== 'all' && emp.employmentType !== filterType) return false;
       if (search && !emp.name.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
-  }, [visibleBase, localData, filterActive, filterDept, filterType, search]);
+  }, [visibleBase, filterActive, filterDept, filterType, search, today]);
 
   // ── Mitarbeiter auswählen ──────────────────────────────────────────────────
   const selectEmployee = (emp: Employee) => {
@@ -1151,7 +1159,7 @@ const Personalstamm = () => {
                     : 'hover:bg-muted text-muted-foreground',
                 )}
               >
-                {v === 'active' ? 'Aktiv' : v === 'inactive' ? 'Inaktiv' : 'Alle'}
+                {v === 'active' ? 'Aktiv' : v === 'inactive' ? 'Ausgetreten' : 'Alle'}
               </button>
             ))}
           </div>
