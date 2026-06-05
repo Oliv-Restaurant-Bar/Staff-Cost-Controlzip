@@ -582,12 +582,20 @@ const Personalstamm = () => {
       : [],
   [employees, canEditEmployees]);
 
+  // IDs die bereits in schedule_extra_cost_people existieren → aus Hauptliste + Ghost-Panel ausblenden
+  const migratedExtraCostIds = useMemo(
+    () => new Set(extraCostPeople.map(p => p.id)),
+    [extraCostPeople]
+  );
+
   const visibleBase = useMemo(() =>
     (allowedDepartment === 'all'
       ? employees
       : employees.filter(e => e.department === allowedDepartment))
-      .filter(e => e.employeeStatus !== 'pending_review'),
-  [employees, allowedDepartment]);
+      .filter(e => e.employeeStatus !== 'pending_review')
+      // Bereits migrierte Aushilfen nicht nochmals als normaler Mitarbeiter zeigen
+      .filter(e => !migratedExtraCostIds.has(e.id)),
+  [employees, allowedDepartment, migratedExtraCostIds]);
 
   // Heutiges Datum ohne Uhrzeit — stabil für den gesamten Render-Zyklus
   const today = useMemo(() => {
@@ -1278,7 +1286,10 @@ CREATE POLICY "Anon self-register new employee"
 
       {/* ── Ghost-ID Diagnose-Panel (aush_*) ────────────────────────────────── */}
       {canEditEmployees && (() => {
-        const ghostEmployees = employees.filter(e => String(e.id).includes('aush_'));
+        // Nur echte Ghosts: in employees, aber NICHT in schedule_extra_cost_people
+        const ghostEmployees = employees.filter(
+          e => String(e.id).includes('aush_') && !migratedExtraCostIds.has(e.id)
+        );
         if (ghostEmployees.length === 0) return null;
 
         const handleArchiveGhost = async (emp: Employee) => {
