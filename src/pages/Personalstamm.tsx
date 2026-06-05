@@ -18,7 +18,7 @@ import { Link } from 'react-router-dom';
 import {
   Search, X, Plus, Save, Trash2, Upload, ChevronRight,
   LayoutDashboard, Users, ChefHat, Utensils, FileText,
-  AlertTriangle, CheckCircle2, Edit3, ArrowLeft,
+  AlertTriangle, CheckCircle2, Edit3, ArrowLeft, Lock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -1027,9 +1027,19 @@ const Personalstamm = () => {
                 )}
               </Button>
             )}
-            {canEditEmployees && (
+            {canEditEmployees ? (
               <Button size="sm" onClick={handleNew} className="h-8">
                 <Plus className="h-3.5 w-3.5 mr-1" />
+                Neuer Mitarbeiter
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                disabled
+                className="h-8 opacity-60 cursor-not-allowed"
+                title="Sie haben keine Berechtigung zum Erfassen von Mitarbeitern"
+              >
+                <Lock className="h-3.5 w-3.5 mr-1" />
                 Neuer Mitarbeiter
               </Button>
             )}
@@ -1454,10 +1464,15 @@ CREATE POLICY "Anon self-register new employee"
                 <div className="flex flex-col items-center justify-center py-12 px-6 text-center gap-2">
                   <Users className="h-8 w-8 text-muted-foreground/40" />
                   <p className="text-sm text-muted-foreground">Keine Mitarbeiter gefunden</p>
-                  {canEditEmployees && (
+                  {canEditEmployees ? (
                     <Button variant="outline" size="sm" onClick={handleNew} className="mt-2">
                       <Plus className="h-3.5 w-3.5 mr-1" /> Neuer Mitarbeiter
                     </Button>
+                  ) : (
+                    <p className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1 mt-2">
+                      <Lock className="h-3 w-3 shrink-0" />
+                      Sie haben keine Berechtigung zum Erfassen von Mitarbeitern
+                    </p>
                   )}
                 </div>
               ) : (
@@ -1622,10 +1637,15 @@ CREATE POLICY "Anon self-register new employee"
               <p className="text-sm text-muted-foreground">
                 Mitarbeiter aus der Liste auswählen
               </p>
-              {canEditEmployees && (
+              {canEditEmployees ? (
                 <Button variant="outline" size="sm" onClick={handleNew}>
                   <Plus className="h-3.5 w-3.5 mr-1" /> Neuen Mitarbeiter anlegen
                 </Button>
+              ) : (
+                <p className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                  <Lock className="h-3 w-3 shrink-0" />
+                  Sie haben keine Berechtigung zum Erfassen von Mitarbeitern
+                </p>
               )}
             </div>
           ) : (
