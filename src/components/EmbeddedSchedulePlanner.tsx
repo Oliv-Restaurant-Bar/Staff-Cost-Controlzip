@@ -37,6 +37,10 @@ import { useWeekSync } from '@/hooks/useWeekSync';
 import { useSupabaseSchedule, Employee as SupabaseEmployee } from '@/hooks/useSupabaseSchedule';
 import { useTenant } from '@/contexts/TenantContext';
 import { saveActualHourEntry } from '@/lib/supabase-db';
+import {
+  loadExtraCostPeople, upsertExtraCostPerson, type ExtraCostPerson,
+  extraCostPersonToEmployee,
+} from '@/lib/extra-cost-people-db';
 import { Input } from '@/components/ui/input';
 import { formatCurrency } from '@/lib/personnel-utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -105,11 +109,19 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     restaurantId: tenantId,   // ← Tenant-Filter
   });
 
-  // Convert to local Employee type
-  const employees = useMemo(() => 
-    supabaseEmployees.map(toLocalEmployee),
-    [supabaseEmployees]
-  );
+  // Externe Aushilfen (schedule_extra_cost_people)
+  const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
+  useEffect(() => {
+    loadExtraCostPeople(tenantId).then(setExtraCostPeople);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
+  // Convert to local Employee type + merge external helpers
+  const employees = useMemo(() => {
+    const base = supabaseEmployees.map(toLocalEmployee);
+    const extra = extraCostPeople.map(extraCostPersonToEmployee);
+    return [...base, ...extra];
+  }, [supabaseEmployees, extraCostPeople]);
   
   const [activeDepartment, setActiveDepartment] = useState<ViewMode>('service');
   const [calendarView, setCalendarView] = useState<CalendarView>('week');
@@ -399,10 +411,28 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     await updateScheduleEntry(employeeId, date, slotType, value, absenceType);
   };
 
-  const handleAddAushilfe = (_employee: Omit<Employee, 'id'>) => {
-    // BLOCKIERT: Neue Mitarbeiter ausschliesslich über den Personalstamm erfassen.
-    // addSupabaseEmployee würde direkt in employees-Tabelle schreiben — ohne Quellenprüfung.
-    toast.error('Neue Mitarbeiter können hier nicht erfasst werden. Bitte im Personalstamm anlegen.');
+  const handleAddAushilfe = async (employee: Omit<Employee, 'id'>) => {
+    // Guard: keine Duplikate
+    const existing = employees.find(e => e.name.toLowerCase().trim() === employee.name.toLowerCase().trim());
+    if (existing) {
+      toast.warning(`"${employee.name}" existiert bereits — kein Duplikat erstellt`);
+      return;
+    }
+    const id = tenantId === 'beaulieu' ? `b-aush_${Date.now()}` : `aush_${Date.now()}`;
+    const saved = await upsertExtraCostPerson({
+      id,
+      name: employee.name,
+      department: employee.department === 'küche' ? 'kueche' : 'service',
+      hourlyWage: employee.hourlyWage,
+      tenantId: tenantId,
+      isActive: true,
+    }, tenantId);
+    if (!saved) {
+      toast.error(`${employee.name} konnte nicht gespeichert werden — bitte erneut versuchen.`);
+      return;
+    }
+    setExtraCostPeople(prev => [...prev, saved]);
+    toast.success(`${employee.name} als externe Aushilfe erfasst und dauerhaft gespeichert`);
   };
 
   const handleRemoveEmployee = async (employeeId: string) => {
