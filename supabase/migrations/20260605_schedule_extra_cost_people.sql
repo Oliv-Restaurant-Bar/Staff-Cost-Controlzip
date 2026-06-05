@@ -47,12 +47,19 @@ COMMENT ON COLUMN public.schedule_extra_cost_people.tenant_id IS
 -- 3. Row Level Security
 ALTER TABLE public.schedule_extra_cost_people ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "auth_extracost_select" ON public.schedule_extra_cost_people;
 CREATE POLICY "auth_extracost_select" ON public.schedule_extra_cost_people
   FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "auth_extracost_insert" ON public.schedule_extra_cost_people;
 CREATE POLICY "auth_extracost_insert" ON public.schedule_extra_cost_people
   FOR INSERT TO authenticated WITH CHECK (true);
+
+DROP POLICY IF EXISTS "auth_extracost_update" ON public.schedule_extra_cost_people;
 CREATE POLICY "auth_extracost_update" ON public.schedule_extra_cost_people
   FOR UPDATE TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "auth_extracost_delete" ON public.schedule_extra_cost_people;
 CREATE POLICY "auth_extracost_delete" ON public.schedule_extra_cost_people
   FOR DELETE TO authenticated USING (true);
 
