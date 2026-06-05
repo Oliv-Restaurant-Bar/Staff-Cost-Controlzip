@@ -562,15 +562,17 @@ const Personalstamm = () => {
 
   // ── Gefilterte Mitarbeiter ─────────────────────────────────────────────────
   const pendingEmployees = useMemo(() =>
-    isAdmin
+    canEditEmployees
       ? employees.filter(e => e.employeeStatus === 'pending_review')
       : [],
-  [employees, isAdmin]);
+  [employees, canEditEmployees]);
 
   const visibleBase = useMemo(() =>
-    (isAdmin ? employees : employees.filter(e => e.department === allowedDepartment))
+    (allowedDepartment === 'all'
+      ? employees
+      : employees.filter(e => e.department === allowedDepartment))
       .filter(e => e.employeeStatus !== 'pending_review'),
-  [employees, isAdmin, allowedDepartment]);
+  [employees, allowedDepartment]);
 
   const filtered = useMemo(() => {
     return visibleBase.filter(emp => {
@@ -1008,7 +1010,7 @@ const Personalstamm = () => {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {isAdmin && (
+            {canEditEmployees && (
               <Button
                 variant="outline"
                 size="sm"
@@ -1109,8 +1111,8 @@ const Personalstamm = () => {
             )}
           </div>
 
-          {/* Abteilung (nur Admin) */}
-          {isAdmin && (
+          {/* Abteilung (Admin + GF Beaulieu) */}
+          {canEditEmployees && (
             <Select value={filterDept} onValueChange={v => setFilterDept(v as Department | 'all')}>
               <SelectTrigger className="h-8 text-xs w-36">
                 <SelectValue placeholder="Abteilung" />
@@ -1253,7 +1255,7 @@ CREATE POLICY "Anon self-register new employee"
       })()}
 
       {/* ── Duplikat-Warnung ─────────────────────────────────────────────────── */}
-      {isAdmin && (() => {
+      {canEditEmployees && (() => {
         // Find all employee names that appear more than once (case-insensitive)
         const nameGroups = new Map<string, Employee[]>();
         employees.forEach(emp => {
@@ -1313,7 +1315,7 @@ CREATE POLICY "Anon self-register new employee"
       })()}
 
       {/* ── Ausstehende Anmeldungen (vollbreite Kartenansicht) ──────────────── */}
-      {isAdmin && submissions.length > 0 && (
+      {canEditEmployees && submissions.length > 0 && (
         <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 overflow-y-auto" style={{ maxHeight: '320px' }}>
           <div className="max-w-7xl mx-auto px-4 py-3">
             <div className="flex items-center gap-2 mb-3">
@@ -1418,7 +1420,7 @@ CREATE POLICY "Anon self-register new employee"
           ) : (
             <>
               {/* ── Legacy: Mitarbeiter mit employee_status = pending_review ── */}
-              {isAdmin && pendingEmployees.length > 0 && (
+              {canEditEmployees && pendingEmployees.length > 0 && (
                 <div className="border-b border-amber-200">
                   <div className="px-4 py-2 bg-amber-50 sticky top-0 z-10 flex items-center gap-2">
                     <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
@@ -1924,7 +1926,7 @@ CREATE POLICY "Anon self-register new employee"
                           Mitarbeiter aktiv
                         </Label>
                       </div>
-                      {isAdmin && (
+                      {canEditEmployees && (
                         <div className="flex items-start gap-2 mt-1 pt-2 border-t border-border/40">
                           <input
                             type="checkbox"
@@ -1956,7 +1958,7 @@ CREATE POLICY "Anon self-register new employee"
                           : <DataRow label="Wochenstunden" value={selectedEmp?.weeklyHours ? `${selectedEmp.weeklyHours} h` : '–'} />
                         }
                       </div>
-                      {isAdmin && selectedLocal.no_time_tracking_required && (
+                      {canEditEmployees && selectedLocal.no_time_tracking_required && (
                         <div className="flex items-center gap-1.5 text-[11px] text-blue-700 bg-blue-50 border border-blue-200 rounded px-2.5 py-1.5">
                           <Shield className="h-3 w-3 shrink-0" />
                           Keine Zeiterfassung erforderlich
@@ -1999,8 +2001,8 @@ CREATE POLICY "Anon self-register new employee"
                 </CardContent>
               </Card>
 
-              {/* ── Abschnitt 2: Persönliche Daten (Admin) ─────────────────── */}
-              {isAdmin && (
+              {/* ── Abschnitt 2: Persönliche Daten (Admin + GF Beaulieu) ───────── */}
+              {canEditEmployees && (
                 <Card>
                   <CardHeader
                     className="pb-2 pt-4 cursor-pointer select-none"
@@ -2011,7 +2013,7 @@ CREATE POLICY "Anon self-register new employee"
                         <UserCheck className="h-4 w-4 text-emerald-600" />
                         Persönliche Daten
                         <span className="text-[10px] font-normal text-muted-foreground bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 px-1.5 py-0.5 rounded">
-                          Nur Admin
+                          {isAdmin ? 'Admin' : 'GF Beaulieu'}
                         </span>
                       </span>
                       <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', openPersonal && 'rotate-180')} />
@@ -2073,7 +2075,7 @@ CREATE POLICY "Anon self-register new employee"
                               value={editData?.addressCity ?? ''}
                               onChange={e => setEditData(d => d ? { ...d, addressCity: e.target.value || undefined } : d)} />
                           </div>
-                          {isAdmin && (
+                          {canEditEmployees && (
                             <>
                               <div>
                                 <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
@@ -2105,10 +2107,10 @@ CREATE POLICY "Anon self-register new employee"
                           {selectedEmp?.addressStreet && (
                             <DataRow label="Adresse" value={`${selectedEmp.addressStreet}, ${selectedEmp.addressZip ?? ''} ${selectedEmp.addressCity ?? ''}`} />
                           )}
-                          {isAdmin && selectedEmp?.ahvNumber && (
+                          {canEditEmployees && selectedEmp?.ahvNumber && (
                             <DataRow label="AHV-Nummer" value={selectedEmp.ahvNumber} />
                           )}
-                          {isAdmin && selectedEmp?.iban && (
+                          {canEditEmployees && selectedEmp?.iban && (
                             <DataRow label="IBAN" value={`****${selectedEmp.iban.slice(-4)}`} />
                           )}
                           {!selectedEmp?.phone && !selectedEmp?.email && !selectedEmp?.birthDate && (
@@ -2121,8 +2123,8 @@ CREATE POLICY "Anon self-register new employee"
                 </Card>
               )}
 
-              {/* ── Abschnitt 3: Vertragliche Grundlagen (Admin) ─────────────── */}
-              {isAdmin && (
+              {/* ── Abschnitt 3: Vertragliche Grundlagen (Admin + GF Beaulieu) ── */}
+              {canEditEmployees && (
                 <Card>
                   <CardHeader
                     className="pb-2 pt-4 cursor-pointer select-none"
@@ -2133,7 +2135,7 @@ CREATE POLICY "Anon self-register new employee"
                         <Briefcase className="h-4 w-4 text-blue-600" />
                         Vertragliche Grundlagen
                         <span className="text-[10px] font-normal text-muted-foreground bg-blue-50 dark:bg-blue-950/20 border border-blue-200 px-1.5 py-0.5 rounded">
-                          Nur Admin
+                          {isAdmin ? 'Admin' : 'GF Beaulieu'}
                         </span>
                       </span>
                       <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', openContractF && 'rotate-180')} />
@@ -2796,7 +2798,7 @@ CREATE POLICY "Anon self-register new employee"
                 <TabsContent value="vertrag" className="space-y-4 mt-0">
 
               {/* ── Abschnitt 7: Arbeitsvertrag ───────────────────────────── */}
-              {isAdmin && selectedEmp && contractDraft && (
+              {canEditEmployees && selectedEmp && contractDraft && (
                 <Card>
                   <CardHeader className="pb-2 pt-4">
                     <CardTitle className="text-sm flex items-center justify-between">

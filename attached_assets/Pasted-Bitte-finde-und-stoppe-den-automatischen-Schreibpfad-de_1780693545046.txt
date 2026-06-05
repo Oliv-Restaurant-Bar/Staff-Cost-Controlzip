@@ -1,0 +1,62 @@
+Bitte finde und stoppe den automatischen Schreibpfad, der Mitarbeiter mit IDs wie aush_1780653197781 oder aush_1780653153674 erstellt.
+
+Problem:
+Im Personalstamm erscheinen Mitarbeiter "Gaumen" und "Nuri", die nie manuell erfasst wurden.
+Ihre IDs beginnen mit "aush_", z.B.:
+aush_1780653197781
+aush_1780653153674
+
+Das bedeutet vermutlich:
+Eine Aushilfen-/Zusatzkosten-/Dienstplan-Funktion schreibt automatisch Datensätze in employees.
+
+Das darf nicht passieren.
+
+Neue harte Regel:
+IDs mit aush_* dürfen NICHT automatisch in employees gespeichert werden, ausser der Admin erstellt sie ausdrücklich im Personalstamm.
+
+Bitte prüfen:
+
+1. Suche im gesamten Code nach:
+- aush_
+- Aushilfe
+- addTempEmployee
+- temporaryEmployee
+- Zusatzkosten
+- createHelper
+- saveHelper
+- upsertEmployee
+- saveEmployees
+- employees.insert
+- employees.upsert
+
+2. Finde exakt:
+- welche Funktion Gaumen und Nuri erstellt hat
+- wann diese Funktion läuft
+- ob sie beim Dienstplan, Zusatzkosten oder Import ausgelöst wird
+
+3. Sofort blockieren:
+Wenn source nicht personalstamm_form oder admin_explicit_create ist:
+- kein Insert/Upsert in employees
+- stattdessen nur temporär im Dienstplan anzeigen oder als Zusatzkosten-Position speichern
+
+4. Zusatzkosten/Aushilfen trennen:
+Aushilfen im Dienstplan dürfen nicht automatisch echte employees werden.
+Wenn nötig eigene Tabelle verwenden:
+schedule_extra_cost_people
+oder direkt in schedule_entries als freie Zusatzkostenposition speichern.
+
+5. Bestehende falsche Datensätze:
+Bitte im Diagnose-Panel anzeigen:
+- IDs mit aush_*
+- Button "Archivieren"
+- Hinweis: "Automatisch erzeugte Aushilfe, nicht manuell erfasst"
+
+6. Reaktivierung verhindern:
+Wenn aush_* bereits employment_end_date gesetzt hat, darf kein Code diesen wieder auf NULL setzen.
+
+7. Nach Umsetzung ausgeben:
+- Welche Datei/Funktion aush_* erzeugt hat
+- Warum Gaumen/Nuri in employees gelandet sind
+- Welche automatische Erstellung deaktiviert wurde
+- Wie Zusatzkosten künftig gespeichert werden
+- Ob aush_* künftig blockiert wird
