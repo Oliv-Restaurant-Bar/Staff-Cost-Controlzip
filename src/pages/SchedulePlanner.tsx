@@ -1,19 +1,20 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTenant } from '@/contexts/TenantContext';
-import { defaultEmployeesBeaulieu } from '@/data/defaultEmployeesBeaulieu';
+// defaultEmployeesBeaulieu wurde entfernt – auto-seed ist dauerhaft deaktiviert.
+// Mitarbeiter werden ausschliesslich über den Personalstamm erfasst.
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/hooks/useAuth';
 import {
   loadEmployees,
   upsertEmployee,
-  upsertAllEmployees,
+  // upsertAllEmployees: BLOCKIERT — employees werden ausschliesslich via Personalstamm geschrieben
   archiveEmployee as dbArchiveEmployee,
   loadScheduleForMonth,
   saveScheduleEntry,
   saveFullScheduleForMonth,
   loadActualHoursForMonth,
   saveActualHourEntry,
-  seedBeaulieuEmployees,
+  // seedBeaulieuEmployees: DAUERHAFT DEAKTIVIERT — kein auto-seed in Produktion
   runBeaulieuMatchTest,
   insertScheduleChangeLogs,
   insertSchedulePublicationSnapshot,
@@ -199,7 +200,7 @@ const SchedulePlanner = () => {
   // newer call has already started.  If so, the older call's results are
   // discarded — avoiding stale-empty overwrites of good data.
   const fetchGenRef = useRef(0);
-  const hasAutoSeededBeaulieu = useRef(false);
+  // hasAutoSeededBeaulieu entfernt – auto-seed dauerhaft deaktiviert
   const {
     isAdmin,
     isServiceManager,
@@ -481,28 +482,11 @@ const SchedulePlanner = () => {
       const supabaseEmployees = await loadEmployees(tenantId);
       if (fetchGenRef.current !== gen) { console.log('[ROUTE] gen=' + gen + ' superseded after employees – aborting'); return; }
 
-      // Beaulieu: wenn Supabase leer → automatisch seeden (einmalig pro Session)
+      // AUTO-SEED DAUERHAFT DEAKTIVIERT.
+      // Mitarbeiter werden ausschliesslich über den Personalstamm erfasst.
+      // Kein automatisches Seeden bei leerer Datenbank.
       if (tenantId === 'beaulieu' && supabaseEmployees !== null && supabaseEmployees.length === 0) {
-        if (!hasAutoSeededBeaulieu.current) {
-          hasAutoSeededBeaulieu.current = true;
-          console.log('[BEAULIEU-STAFF] auto-seed triggered – Supabase ist leer');
-          console.log(`[BEAULIEU-STAFF] active employees parsed: ${defaultEmployeesBeaulieu.length}`);
-          const seedResult = await seedBeaulieuEmployees(defaultEmployeesBeaulieu);
-          if (seedResult.errors.length > 0) {
-            seedResult.errors.forEach(e => console.warn('[BEAULIEU-STAFF] seed error:', e));
-          }
-          // Nach Seed: Mitarbeitende erneut laden
-          if (seedResult.count > 0) {
-            const freshEmps = await loadEmployees('beaulieu');
-            if (freshEmps && freshEmps.length > 0) {
-              console.log(`[BEAULIEU-STAFF] visible in app: ${freshEmps.length}`);
-              freshEmps.forEach(e => console.log(`[BEAULIEU-STAFF] "${e.name}" dept=${e.department} id=${e.id} wage=${e.monthlySalaryWith13th ?? e.monthlySalary ?? e.hourlyWage ?? 0}`));
-              setEmployees(freshEmps);
-              return;
-            }
-          }
-        }
-        console.log('[BEAULIEU-STAFF] employees loaded: 0 – Seed fehlgeschlagen oder keine Mitarbeitenden');
+        console.warn('[BEAULIEU-STAFF] Keine Mitarbeiter in Supabase gefunden. Bitte im Personalstamm erfassen.');
         setEmployees([]);
       }
 
@@ -869,7 +853,6 @@ const SchedulePlanner = () => {
   // Beaulieu: kein Placeholder-Fallback – echte Mitarbeitende kommen aus Supabase.
   useEffect(() => {
     console.log(`[TENANT] SchedulePlanner reset für ${tenantId}`);
-    hasAutoSeededBeaulieu.current = false;
     if (tenantId === 'beaulieu') {
       console.log('[BEAULIEU] tenant active: beaulieu – clearing to empty until Supabase loads');
       setEmployees([]);
@@ -1756,9 +1739,10 @@ const SchedulePlanner = () => {
     };
     const updatedEmployees = [...employees, newEmployee];
     setEmployees(updatedEmployees);
-    upsertEmployee(newEmployee);
+    // upsertEmployee BLOCKIERT: Neue Mitarbeiter nur über Personalstamm erfassen.
+    // upsertEmployee(newEmployee);
     localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
-    toast.success(`${employee.name} hinzugefügt`);
+    toast.success(`${employee.name} lokal hinzugefügt (nur diese Sitzung). Für dauerhafte Erfassung → Personalstamm`);
   };
 
   const handleRemoveEmployee = (employeeId: string) => {
@@ -1796,7 +1780,8 @@ const SchedulePlanner = () => {
     try {
       // Safe upsert-only save (no delete-all)
       await saveFullScheduleForMonth(currentMonth, scheduleData);
-      await upsertAllEmployees(employees, tenantId);
+      // upsertAllEmployees BLOCKIERT: employees-Schreibpfad ausschliesslich via Personalstamm.
+      // await upsertAllEmployees(employees, tenantId);
 
       // localStorage backup
       localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(scheduleData));
@@ -2143,9 +2128,10 @@ const SchedulePlanner = () => {
         if (safeToSave.length > 0) {
           const updatedEmployees = [...employees, ...safeToSave];
           setEmployees(updatedEmployees);
-          safeToSave.forEach(emp => upsertEmployee(emp, tenantId));
+          // upsertEmployee BLOCKIERT: Neue Mitarbeiter nur über Personalstamm erfassen.
+          // safeToSave.forEach(emp => upsertEmployee(emp, tenantId));
           localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
-          toast.success(`${safeToSave.length} neue Mitarbeiter hinzugefügt: ${safeToSave.map(e => e.name).join(', ')}`);
+          toast.success(`${safeToSave.length} Mitarbeiter lokal hinzugefügt (nur diese Sitzung). Für dauerhafte Erfassung → Personalstamm`);
         } else {
           toast.success('Dienstplan erfolgreich importiert');
         }
@@ -2398,15 +2384,11 @@ const SchedulePlanner = () => {
         setSelectedEmployeeForEdit(null);
         return;
       }
-      const newEmployee: Employee = {
-        ...employeeData,
-        id: tenantId === 'beaulieu' ? `b-emp_${Date.now()}` : `emp_${Date.now()}`,
-      };
-      const updatedEmployees = [...employees, newEmployee];
-      setEmployees(updatedEmployees);
-      upsertEmployee(newEmployee);
-      localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
-      toast.success(`${employeeData.name} hinzugefügt`);
+      // Neuer Mitarbeiter über SchedulePlanner BLOCKIERT.
+      // Neue Mitarbeiter ausschliesslich über den Personalstamm erfassen.
+      toast.error(`"${employeeData.name}" kann hier nicht erfasst werden. Bitte im Personalstamm neu anlegen.`);
+      setSelectedEmployeeForEdit(null);
+      return;
     }
     setSelectedEmployeeForEdit(null);
   };

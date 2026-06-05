@@ -29,10 +29,13 @@ export function getEmployeeDisplayName(
  *  - Eintrittsdatum im oder vor dem Monat → aktiv (z.B. Eintritt 15.05 → Mai = aktiv)
  */
 export function isEmployeeActiveInMonth(
-  emp: { employmentEndDate?: string | null; contractStart?: string | null },
+  emp: { employmentEndDate?: string | null; contractStart?: string | null; isActive?: boolean },
   year: number,
   month: number,
 ): boolean {
+  // Explizit deaktiviert (archiveEmployee hat is_active=false gesetzt) → nie aktiv
+  if (emp.isActive === false) return false;
+
   if (emp.employmentEndDate) {
     const exit = new Date(emp.employmentEndDate + 'T00:00:00');
     const exitYear  = exit.getFullYear();

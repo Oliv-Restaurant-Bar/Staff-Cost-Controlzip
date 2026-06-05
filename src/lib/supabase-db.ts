@@ -64,8 +64,16 @@ const employeeToDb = (emp: Employee) => ({
   contract_type:            emp.contractType            ?? null,
   position_title:           emp.positionTitle           ?? null,
   contract_start:           emp.contractStart           ?? null,
-  employment_end_date:      emp.employmentEndDate       ?? null,
-  contract_end:             emp.contractEnd             ?? null,
+  // ── KRITISCH: employment_end_date und contract_end dürfen NIEMALS mit null
+  // überschrieben werden, wenn der Wert im Formular nicht explizit gesetzt wurde.
+  // undefined = Feld war nicht im Formular → bestehenden DB-Wert BEWAHREN (kein Senden).
+  // null/''/Datum = explizit gesetzt/geleert → senden.
+  ...(emp.employmentEndDate !== undefined
+    ? { employment_end_date: emp.employmentEndDate || null }
+    : {}),
+  ...(emp.contractEnd !== undefined
+    ? { contract_end: emp.contractEnd || null }
+    : {}),
   is_limited_contract:      emp.isLimitedContract       ?? false,
   trial_period_months:      emp.trialPeriodMonths       ?? null,
   // notice_period_weeks entfernt (wird jetzt automatisch abgeleitet)
@@ -141,6 +149,9 @@ const dbToEmployee = (row: any): Employee => {
   onboardingStatus:       row.onboarding_status         ?? undefined,
   onboardingToken:        row.onboarding_token          ?? undefined,
   onboardingDocuments:    row.onboarding_documents      ?? undefined,
+  // ── Integritätsfelder (Migration 20260605) ────────────────────────────────
+  isActive:               row.is_active                 ?? undefined,
+  archivedAt:             row.archived_at               ?? undefined,
   };
 };
 
@@ -284,6 +295,7 @@ export async function activateSubmissionAsEmployee(
 export async function archiveEmployee(id: string): Promise<boolean> {
   try {
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    // ── Schritt 1: employment_end_date setzen (immer vorhanden) ──────────────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any)
       .from('employees')
@@ -291,6 +303,17 @@ export async function archiveEmployee(id: string): Promise<boolean> {
       .eq('id', id);
     if (error) { console.error('[supabase-db] archiveEmployee:', error); return false; }
     console.log(`[supabase-db] archiveEmployee OK: id=${id} end=${today}`);
+    // ── Schritt 2: is_active + archived_at setzen (falls Migration gelaufen) ─
+    // Graceful: Fehler hier sind nicht kritisch (employment_end_date ist gesetzt).
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any)
+        .from('employees')
+        .update({ is_active: false, archived_at: new Date().toISOString() })
+        .eq('id', id);
+    } catch {
+      console.warn(`[supabase-db] archiveEmployee: is_active/archived_at konnten nicht gesetzt werden – Migration 20260605 noch nicht ausgeführt?`);
+    }
     return true;
   } catch (e) {
     console.error('[supabase-db] archiveEmployee exception:', e);

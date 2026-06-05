@@ -2,3 +2,5 @@
 - [Ghost employee prevention](ghost-employees.md) — Import paths create duplicate employees via `Date.now()` IDs; dedup by name required in applyImportResult and handleAddAushilfe.
 - [Employees table schema](employees-schema.md) — `employees` table has NO `restaurant_id` column; tenant = ID prefix (`b-*`=beaulieu). Never add `restaurant_id` to `employeeToDb`.
 - [seedBeaulieuEmployees delete scope](seed-beaulieu-delete-scope.md) — seed function must only delete IDs b-1…b-10 (old placeholders), never arbitrary b-* IDs; manually-added employees must be preserved.
+- [Employees write gate](employees-write-gate.md) — Only Personalstamm form may write employees to Supabase. All auto-sync, SchedulePlanner, and seed paths are blocked.
+- [Ali reactivation root cause](ali-reactivation.md) — employeeToDb sent employment_end_date:null when undefined → cleared archived dates. usePersonnelData also called upsertAllEmployees on every state change. Both fixed.

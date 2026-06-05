@@ -671,11 +671,17 @@ export const usePersonnelData = () => {
     return () => window.removeEventListener('storage', onStorage);
   }, [syncFromSupabase, tenantId]);
 
-  // Sync employees to localStorage and Supabase whenever they change (after initial load)
+  // Sync employees to localStorage whenever they change (after initial load).
+  // WICHTIG: Kein Supabase-Schreibzugriff hier!
+  // employees darf nur noch über explizite Admin-Aktionen im Personalstamm geschrieben werden.
+  // Ein automatischer upsertAllEmployees-Aufruf hier kann:
+  //  a) Veraltete localStorage-Daten (ohne employment_end_date) nach Supabase schreiben
+  //  b) Archivierte Mitarbeiter (z.B. Ali) reaktivieren
+  //  c) Unbekannte Demo/Seed-Einträge ins System einschleusen
   useEffect(() => {
     if (isInitialized) {
       localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(employees));
-      upsertAllEmployees(employees, tenantId);
+      // upsertAllEmployees(employees, tenantId); // BLOCKIERT — nur Personalstamm schreibt employees
     }
   }, [employees, isInitialized, tenantId]);
 

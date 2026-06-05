@@ -60,6 +60,11 @@ export interface Employee {
 
   // ─── Mitarbeiterstatus ──────────────────────────────────────────────────
   employeeStatus?: 'active' | 'pending_review'; // pending_review = neue Selbst-Anmeldung (noch nicht aktiviert)
+  // ─── Integritätsfelder (Migration 20260605) ─────────────────────────────
+  /** false = archiviert/deaktiviert; undefined/true = aktiv. Gesetzt von archiveEmployee(). */
+  isActive?: boolean;
+  /** ISO-Timestamp des Archivierungszeitpunkts. Nur für archivierte Mitarbeiter gesetzt. */
+  archivedAt?: string;
 
   // ─── Onboarding ────────────────────────────────────────────────────────
   onboardingStatus?: 'none' | 'prepared' | 'sent' | 'in_progress' | 'completed';

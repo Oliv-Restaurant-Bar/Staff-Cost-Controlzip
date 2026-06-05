@@ -1,0 +1,144 @@
+STOPP: Bitte behebe das Personalstamm-Datenintegritätsproblem endgültig.
+
+Problem:
+Im Oliv erscheinen immer wieder Mitarbeiter, die nie erfasst wurden. Zudem wird Ali immer wieder aktiv angezeigt, obwohl er seit 31.03.2026 nicht mehr arbeitet und bereits mehrfach deaktiviert wurde.
+
+Das ist kritisch. Der Personalstamm darf niemals durch Seed-Daten, Demo-Daten, Import-Daten, localStorage oder automatische Sync-Prozesse verändert werden.
+
+Neue harte Regel:
+employees darf nur noch durch diese expliziten Aktionen verändert werden:
+1. Admin erfasst Mitarbeiter im Personalstamm
+2. Admin bearbeitet Mitarbeiter im Personalstamm
+3. Admin deaktiviert/archiviert Mitarbeiter im Personalstamm
+4. Admin bestätigt im Import ausdrücklich "Mitarbeiter neu erfassen"
+
+Alles andere darf employees NICHT schreiben.
+
+Bitte sofort umsetzen:
+
+1. Alle Seed-Funktionen dauerhaft deaktivieren
+Suche und deaktiviere alle Funktionen wie:
+- seedEmployees
+- seedOlivEmployees
+- seedBeaulieuEmployees
+- ensureDefaultEmployees
+- createDefaultEmployees
+- demoEmployees
+- defaultEmployees
+- initialEmployees
+- fallbackEmployees
+
+Diese Funktionen dürfen in Produktion niemals employees schreiben, upserten, löschen oder reaktivieren.
+
+2. Ali dauerhaft schützen
+Suche den Mitarbeiter Ali in employees.
+
+Wenn employment_end_date = 2026-03-31 oder früher:
+- darf er nicht mehr als aktiv geladen werden
+- darf nicht durch Seed/Sync reaktiviert werden
+- darf nicht in Arbeitszeitblätter für spätere Monate
+- darf nicht im Dienstplan für spätere Monate erscheinen
+
+Bitte prüfen, welcher Code Ali wieder reaktiviert oder neu schreibt.
+
+3. Kein Upsert darf Austrittsdatum überschreiben
+Beim Speichern oder Sync von Mitarbeitern:
+Wenn bestehender Mitarbeiter employment_end_date gesetzt hat,
+darf ein Upsert diesen Wert niemals mit null überschreiben,
+ausser der Admin setzt ihn explizit im Personalstamm-Formular zurück.
+
+4. localStorage darf employees nie zurückschreiben
+localStorage darf nur Anzeige-Cache sein.
+Beim App-Start:
+- Supabase laden
+- localStorage mit Supabase überschreiben
+- niemals localStorage → Supabase für employees
+
+Bitte alle localStorage-to-Supabase Schreibpfade für employees entfernen.
+
+5. Import darf keine Mitarbeiter automatisch erstellen
+Mirus, Dienstplan-Import oder andere Importe dürfen keine employees automatisch erstellen.
+Unbekannte Namen nur in Vorschau anzeigen:
+- zuordnen
+- neu erfassen
+- ausschliessen
+
+6. Mitarbeiter-Archivierung robust machen
+Deaktivieren darf nicht nur employment_end_date setzen, sondern zusätzlich falls Spalten vorhanden:
+- is_active = false
+- archived_at = now()
+- status = 'inactive'
+
+Wenn Spalten fehlen, Migration ergänzen.
+
+7. Aktive Mitarbeiter-Filter zentralisieren
+Baue eine zentrale Funktion:
+
+isEmployeeActiveForMonth(employee, year, month)
+
+Logik:
+- Eintritt leer oder Eintritt <= Monatsende
+- Austritt leer oder Austritt >= Monatsbeginn
+- status nicht inactive
+- is_active nicht false
+- archived_at leer
+
+Alle Module müssen diese Funktion nutzen:
+- Personalstamm aktive Ansicht
+- Dienstplan
+- Arbeitszeitblätter
+- Personal FIX
+- Imports
+- Mitarbeiterlisten
+
+8. Employee Audit Log
+Erstelle oder nutze employee_change_log.
+
+Jeder Schreibvorgang auf employees muss protokolliert werden:
+- employee_id
+- name
+- action: create/update/archive/reactivate
+- old_value
+- new_value
+- source
+- changed_by
+- changed_at
+
+source muss klar sein:
+personalstamm_form
+mirus_import_manual_create
+onboarding_admin_approval
+system_seed_blocked
+unknown
+
+9. Schreibschutz für unerlaubte Quellen
+Falls irgendein Code versucht, employees aus seed/demo/import/localStorage zu schreiben:
+- blockieren
+- console.error
+- optional Toast für Admin
+- employee_change_log Eintrag mit source = blocked_write
+
+10. Datenbereinigung
+Bitte ein Admin-Panel oder SQL-Diagnose ausgeben:
+
+Finde:
+- Mitarbeiter mit Namen, die nicht manuell erstellt wurden
+- Mitarbeiter mit Ali / ähnlichen Namen
+- Mitarbeiter mit employment_end_date gesetzt, die trotzdem aktiv angezeigt werden
+- Mitarbeiter, die nach Austritt noch in aktuellen Monatslisten erscheinen
+- Mitarbeiter, deren employment_end_date nachträglich auf null gesetzt wurde
+
+11. Nach Umsetzung konkret ausgeben:
+- Welche Funktionen bisher Mitarbeiter automatisch erstellt/reaktiviert haben
+- Warum Ali wieder aufgetaucht ist
+- Welche Seed-/Fallback-Funktionen deaktiviert wurden
+- Welche localStorage-Schreibpfade entfernt wurden
+- Welche zentrale Aktivitätslogik jetzt genutzt wird
+- Welche Dateien geändert wurden
+- Welche SQL Migration nötig ist
+- Wie ich prüfen kann, dass Ali nach 31.03.2026 nie mehr aktiv erscheint
+
+Wichtig:
+Bitte keine kosmetische Lösung.
+Das muss dauerhaft gelöst werden.
+Der Personalstamm ist Masterdatenbestand und darf nie automatisch verändert werden.
