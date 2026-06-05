@@ -1,0 +1,71 @@
+Das Beaulieu-Mitarbeiterproblem ist noch NICHT behoben.
+
+Bitte debugge jetzt den kompletten Speichern-und-Neuladen-Prozess mit einem echten Beaulieu-Testmitarbeiter.
+
+Problem:
+Mitarbeiter im Beaulieu verschwinden weiterhin nach dem Erfassen.
+
+Bitte nicht nur Annahmen prüfen, sondern konkret testen:
+
+1. Beim Klick auf "Mitarbeiter speichern" im Beaulieu loggen:
+- aktueller tenantId
+- aktueller restaurantId
+- erzeugte employee.id
+- employee.name
+- kompletter Payload an Supabase
+- Supabase insert/upsert response
+- Supabase error falls vorhanden
+
+2. Direkt nach dem Speichern aus Supabase zurücklesen:
+SELECT id, name, restaurant_id, employment_end_date
+FROM employees
+WHERE id = neu_erstellte_id
+
+Wenn nicht gefunden:
+Fehler anzeigen: "Mitarbeiter wurde nicht in Supabase gespeichert"
+
+3. Nach dem Reload prüfen:
+Welche Query lädt Beaulieu-Mitarbeiter genau?
+Bitte loggen:
+- verwendeter Filter
+- Anzahl Datensätze
+- ob neu erstellte ID enthalten ist
+
+4. Ganz wichtig:
+Nicht nur ID-Präfix prüfen.
+Prüfen ob irgendwo zusätzlich gefiltert wird nach:
+- restaurant_id
+- tenant_id
+- department
+- is_active
+- employment_end_date
+- status
+
+5. Prüfen, ob der Mitarbeiter direkt nach dem Speichern wieder archiviert wird:
+- employment_end_date gesetzt?
+- is_active false?
+- status inactive?
+- archiveEmployee aufgerufen?
+
+6. Prüfen, ob localStorage nach dem Speichern die Liste überschreibt:
+- localStorage key
+- localStorage count vor Save
+- localStorage count nach Save
+- enthält localStorage die neue ID?
+
+7. Temporär ein sichtbares Debug-Banner im Beaulieu Personalstamm anzeigen:
+"Letzter Save"
+- ID
+- Supabase gespeichert: ja/nein
+- Reload enthalten: ja/nein
+- localStorage enthalten: ja/nein
+
+8. Falls die ID b-emp_... korrekt ist, aber trotzdem verschwindet:
+Dann muss der konkrete Filter gefunden werden, der sie entfernt.
+
+9. Nach Umsetzung bitte ausgeben:
+- Wird der Mitarbeiter wirklich in Supabase gespeichert?
+- Mit welcher ID?
+- Mit welchem restaurant_id?
+- Warum erscheint er nach Reload nicht?
+- Welche Datei/Funktion hat ihn entfernt oder ausgefiltert?

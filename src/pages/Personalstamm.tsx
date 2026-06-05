@@ -366,6 +366,15 @@ const Personalstamm = () => {
   const [e2eResult,     setE2eResult]     = useState<HarteTestResult | null>(null);
   const [e2eOpen,       setE2eOpen]       = useState(false);
 
+  // ── Debug-Banner (letzter Save) ────────────────────────────────────────────
+  const [lastSaveDebug, setLastSaveDebug] = useState<{
+    id: string; name: string; tenantId: string;
+    supabaseSaved: boolean; reloadFound: boolean;
+    reloadCount: number; localStorageFound: boolean;
+    localStorageKey: string; error?: string;
+    timestamp: string;
+  } | null>(null);
+
   // ── Selbst-Anmeldungen (onboarding_submissions Tabelle) ───────────────────
   const [submissions, setSubmissions]                 = useState<OnboardingSubmission[]>([]);
   const [selectedSubmission, setSelectedSubmission]   = useState<OnboardingSubmission | null>(null);
@@ -762,14 +771,21 @@ const Personalstamm = () => {
       setSelectedId(freshId);
     }
 
+    // ── Vollständiges Debug-Logging für neuen Mitarbeiter ──────────────────
     if (isNew) {
-      console.log(`[EMPLOYEE SAVE] inserting employee... id=${finalData.id} name="${finalData.name}"`);
-      console.log(`[EMPLOYEE SAVE] restaurant_id=${tenantId}`);
-      console.log(`[EMPLOYEE SAVE] department=${finalData.department} type=${finalData.employmentType}`);
+      console.log(`[EMPLOYEE SAVE] ===== INSERT START =====`);
+      console.log(`[EMPLOYEE SAVE] tenant_id: ${tenantId}`);
+      console.log(`[EMPLOYEE SAVE] employee_id: ${finalData.id}`);
+      console.log(`[EMPLOYEE SAVE] employee_name: "${finalData.name}"`);
+      console.log(`[EMPLOYEE SAVE] department: ${finalData.department} | type: ${finalData.employmentType}`);
+      console.log(`[EMPLOYEE SAVE] hourlyWage: ${finalData.hourlyWage} | monthlySalary: ${finalData.monthlySalary ?? 'n/a'}`);
+      console.log(`[EMPLOYEE SAVE] id_prefix_ok: ${String(finalData.id).startsWith('b-') === (tenantId === 'beaulieu')}`);
     }
+
     const ok = await upsertEmployee(finalData, tenantId);
+
     if (isNew) {
-      console.log(`[EMPLOYEE SAVE] ${ok ? 'success' : 'FAILED'} id=${finalData.id}`);
+      console.log(`[EMPLOYEE SAVE] supabase upsert result: ${ok ? 'SUCCESS ✓' : 'FAILED ✗'}`);
     }
     if (canEditWages) {
       console.log(`[WAGE-EDIT] save success: ${ok ? 'yes' : 'no'} — ${editData.name}`);
@@ -790,40 +806,72 @@ const Personalstamm = () => {
 
       if (isNew) {
         // Neuer Mitarbeiter: Komplette Liste aus Supabase neu laden → Persistenz-Check
-        console.log(`[EMPLOYEE SAVE] reloading employees from Supabase after insert...`);
+        console.log(`[EMPLOYEE SAVE] reloading from Supabase after insert...`);
         const reloaded = await loadEmployees(tenantId);
+        const reloadFound = !!(reloaded?.find(e => e.id === finalData.id));
+        const reloadCount = reloaded?.length ?? 0;
+        console.log(`[EMPLOYEE SAVE] reload count: ${reloadCount}`);
+        console.log(`[EMPLOYEE SAVE] new employee in reload: ${reloadFound ? 'YES ✓' : 'NO ✗ — MISSING!'}`);
+        if (!reloadFound) {
+          console.error(`[EMPLOYEE SAVE] CRITICAL: employee id=${finalData.id} not found after reload — may have been filtered or not saved`);
+        }
+
+        // localStorage Check
+        const lsKey = tenantId === 'beaulieu' ? 'beaulieu:schedule-employees' : 'schedule-employees';
+        const lsRaw = localStorage.getItem(lsKey);
+        const lsList: Employee[] = lsRaw ? JSON.parse(lsRaw) : [];
+        const lsFound = lsList.some(e => e.id === finalData.id);
+        console.log(`[EMPLOYEE SAVE] localStorage key: "${lsKey}"`);
+        console.log(`[EMPLOYEE SAVE] localStorage count before update: ${lsList.length}`);
+        console.log(`[EMPLOYEE SAVE] new id in localStorage before update: ${lsFound ? 'yes' : 'no'}`);
+
         if (reloaded) {
           setEmployees(reloaded);
-          const saved = reloaded.find(e => e.id === finalData.id);
-          console.log(`[CHECK] employees saved in DB: ${saved ? 'OK' : 'MISSING – not found after reload'}`);
-          console.log(`[CHECK] employees reload after refresh: OK`);
-          console.log(`[CHECK] beaulieu count: ${reloaded.length}`);
-          // Dienstplan-Cache aktualisieren: nächster Remount hat aktuelle Liste
-          try {
-            const cacheKey = tenantId === 'beaulieu' ? 'beaulieu:schedule-employees' : 'schedule-employees';
-            localStorage.setItem(cacheKey, JSON.stringify(reloaded));
-          } catch { /* ignore quota errors */ }
+          // Dienstplan-Cache aktualisieren
+          try { localStorage.setItem(lsKey, JSON.stringify(reloaded)); } catch { /* quota */ }
+          const lsAfterRaw = localStorage.getItem(lsKey);
+          const lsAfterList: Employee[] = lsAfterRaw ? JSON.parse(lsAfterRaw) : [];
+          const lsAfterFound = lsAfterList.some(e => e.id === finalData.id);
+          console.log(`[EMPLOYEE SAVE] localStorage count after update: ${lsAfterList.length}`);
+          console.log(`[EMPLOYEE SAVE] new id in localStorage after update: ${lsAfterFound ? 'YES ✓' : 'NO ✗'}`);
+
+          // Debug-Banner aktualisieren
+          setLastSaveDebug({
+            id: finalData.id,
+            name: finalData.name,
+            tenantId,
+            supabaseSaved: ok,
+            reloadFound,
+            reloadCount,
+            localStorageFound: lsAfterFound,
+            localStorageKey: lsKey,
+            timestamp: new Date().toLocaleTimeString('de-CH'),
+          });
         } else {
           console.warn(`[EMPLOYEE SAVE] reload returned null after insert`);
-          // Fallback: lokal hinzufügen
           setEmployees(prev => [...prev, finalData]);
+          setLastSaveDebug({
+            id: finalData.id, name: finalData.name, tenantId,
+            supabaseSaved: ok, reloadFound: false, reloadCount: 0,
+            localStorageFound: false, localStorageKey: lsKey,
+            error: 'Reload returned null',
+            timestamp: new Date().toLocaleTimeString('de-CH'),
+          });
         }
-        // Signal für Dienstplan (anderer Tab via storage event)
+        console.log(`[EMPLOYEE SAVE] ===== INSERT END =====`);
+        // Signal für Dienstplan (anderer Tab + gleicher Tab)
         localStorage.setItem('employees-updated-at', String(Date.now()));
-        // Signal für Dienstplan (gleicher Tab via CustomEvent — storage event feuert nur in anderen Tabs)
         window.dispatchEvent(new CustomEvent('employees-updated', { detail: { tenantId, isNew: true } }));
       } else {
         // Bestehender Mitarbeiter: lokal aktualisieren
         setEmployees(prev => {
           const next = prev.map(e => e.id === finalData.id ? finalData : e);
-          // Dienstplan-Cache aktualisieren
           try {
             const cacheKey = tenantId === 'beaulieu' ? 'beaulieu:schedule-employees' : 'schedule-employees';
             localStorage.setItem(cacheKey, JSON.stringify(next));
           } catch { /* ignore quota errors */ }
           return next.some(e => e.id === finalData.id) ? next : [...next, finalData];
         });
-        // Signal für Dienstplan in anderen Tabs + gleichem Tab
         localStorage.setItem('employees-updated-at', String(Date.now()));
         window.dispatchEvent(new CustomEvent('employees-updated', { detail: { tenantId, isNew: false } }));
       }
@@ -832,7 +880,18 @@ const Personalstamm = () => {
       setEditMode(false);
       toast.success('Mitarbeiter gespeichert');
     } else {
-      toast.error('Fehler beim Speichern — Supabase nicht erreichbar oder fehlende Berechtigung');
+      const errMsg = `Fehler beim Speichern — Supabase nicht erreichbar oder fehlende Berechtigung (id=${finalData.id} tenant=${tenantId})`;
+      console.error(`[EMPLOYEE SAVE] ${errMsg}`);
+      toast.error('Fehler beim Speichern — bitte Konsole prüfen');
+      if (isNew) {
+        setLastSaveDebug({
+          id: finalData.id, name: finalData.name, tenantId,
+          supabaseSaved: false, reloadFound: false, reloadCount: 0,
+          localStorageFound: false, localStorageKey: '',
+          error: 'upsertEmployee returned false',
+          timestamp: new Date().toLocaleTimeString('de-CH'),
+        });
+      }
     }
     setSaving(false);
   };
@@ -991,6 +1050,35 @@ const Personalstamm = () => {
           </div>
         </div>
       </header>
+
+      {/* ── Debug-Banner (letzter Save) — nur für Admins sichtbar ─────────────── */}
+      {isAdmin && lastSaveDebug && (
+        <div className={`flex-shrink-0 border-b px-4 py-2 text-xs font-mono ${lastSaveDebug.supabaseSaved && lastSaveDebug.reloadFound ? 'bg-green-50 border-green-200 text-green-900 dark:bg-green-950 dark:border-green-800 dark:text-green-200' : 'bg-red-50 border-red-300 text-red-900 dark:bg-red-950 dark:border-red-700 dark:text-red-200'}`}>
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="font-semibold">[DEBUG] Letzter Save {lastSaveDebug.timestamp}</span>
+            <span>ID: <strong>{lastSaveDebug.id}</strong></span>
+            <span>Name: <strong>{lastSaveDebug.name}</strong></span>
+            <span>Tenant: <strong>{lastSaveDebug.tenantId}</strong></span>
+            <span className={lastSaveDebug.supabaseSaved ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}>
+              Supabase: {lastSaveDebug.supabaseSaved ? '✓ gespeichert' : '✗ FEHLER'}
+            </span>
+            <span className={lastSaveDebug.reloadFound ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}>
+              Reload: {lastSaveDebug.reloadFound ? `✓ gefunden (${lastSaveDebug.reloadCount} total)` : '✗ NICHT GEFUNDEN'}
+            </span>
+            <span className={lastSaveDebug.localStorageFound ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'}>
+              localStorage [{lastSaveDebug.localStorageKey}]: {lastSaveDebug.localStorageFound ? '✓' : '✗'}
+            </span>
+            {lastSaveDebug.error && (
+              <span className="text-red-700 dark:text-red-300 font-bold">Fehler: {lastSaveDebug.error}</span>
+            )}
+            <button
+              onClick={() => setLastSaveDebug(null)}
+              className="ml-auto text-muted-foreground hover:text-foreground"
+              title="Banner schliessen"
+            >✕</button>
+          </div>
+        </div>
+      )}
 
       {/* Filter-Bar */}
       <div className="bg-card border-b border-border flex-shrink-0">

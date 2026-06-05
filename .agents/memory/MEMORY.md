@@ -1,2 +1,4 @@
 - [Mirus XLS date-system bug](mirus-date-bug.md) — Excel 1904 flag causes +4yr date shift; fix: never use `cellDates:true` in XLSX.read.
 - [Ghost employee prevention](ghost-employees.md) — Import paths create duplicate employees via `Date.now()` IDs; dedup by name required in applyImportResult and handleAddAushilfe.
+- [Employees table schema](employees-schema.md) — `employees` table has NO `restaurant_id` column; tenant = ID prefix (`b-*`=beaulieu). Never add `restaurant_id` to `employeeToDb`.
+- [seedBeaulieuEmployees delete scope](seed-beaulieu-delete-scope.md) — seed function must only delete IDs b-1…b-10 (old placeholders), never arbitrary b-* IDs; manually-added employees must be preserved.

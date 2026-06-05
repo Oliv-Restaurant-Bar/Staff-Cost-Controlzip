@@ -33,9 +33,8 @@ const employeeToDb = (emp: Employee) => ({
   id:                       emp.id,
   name:                     emp.name,
   department:               emp.department === 'küche' ? 'kueche' : 'service',
-  // restaurant_id aus ID-Präfix ableiten: b-* = beaulieu, sonst = oliv.
-  // Wird beim Upsert immer korrekt gesetzt, damit beide Filterstrategien funktionieren.
-  restaurant_id:            String(emp.id).startsWith('b-') ? 'beaulieu' : 'oliv',
+  // Hinweis: restaurant_id-Spalte existiert NICHT in der employees-Tabelle.
+  // Tenant-Zuordnung erfolgt ausschliesslich über den ID-Präfix: b-* = beaulieu.
   employment_type:          emp.employmentType,
   // ── Arbeitszeit & Lohn ────────────────────────────────────────────────────
   hourly_wage:              emp.hourlyWage,
@@ -379,14 +378,28 @@ export async function seedBeaulieuEmployees(
   const errors: string[] = [];
   let count = 0;
 
-  // ── Schritt 1: Alte Platzhalter löschen (b-1 bis b-10) ─────────────────────
+  // ── Schritt 1: Nur echte Platzhalter-IDs löschen (b-1 bis b-10) ─────────────
+  // WICHTIG: Niemals manuell erfasste Mitarbeiter löschen!
+  // "Alte Platzhalter" = b-1 bis b-10 (kleine numerische IDs vor dem echten Seed).
+  // Manuell erfasste Mitarbeiter (b-emp_*, b-211, b-212 …) bleiben unberührt.
+  const OLD_PLACEHOLDER_IDS = new Set(['b-1','b-2','b-3','b-4','b-5','b-6','b-7','b-8','b-9','b-10']);
   const newIds = new Set(employees.map(e => e.id));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: oldEmps } = await (supabase as any)
     .from('employees')
     .select('id')
     .like('id', 'b-%');
-  const oldToDelete = (oldEmps ?? []).filter((r: { id: string }) => !newIds.has(r.id));
+  // Nur löschen wenn: NICHT im Seed UND war ein bekannter Platzhalter (b-1..b-10)
+  const oldToDelete = (oldEmps ?? []).filter(
+    (r: { id: string }) => !newIds.has(r.id) && OLD_PLACEHOLDER_IDS.has(r.id)
+  );
+  // Manuell erfasste Mitarbeiter werden NIEMALS gelöscht
+  const manuallyKept = (oldEmps ?? []).filter(
+    (r: { id: string }) => !newIds.has(r.id) && !OLD_PLACEHOLDER_IDS.has(r.id)
+  );
+  if (manuallyKept.length > 0) {
+    console.log(`[BEAULIEU-STAFF] preserving ${manuallyKept.length} manually-added employee(s): ${manuallyKept.map((r: { id: string }) => r.id).join(', ')}`);
+  }
   if (oldToDelete.length > 0) {
     console.log(`[BEAULIEU-STAFF] removing old placeholder IDs: ${oldToDelete.map((r: { id: string }) => r.id).join(', ')}`);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
