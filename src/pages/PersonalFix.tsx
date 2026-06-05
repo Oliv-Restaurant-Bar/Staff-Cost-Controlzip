@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth } from '@/lib/supabase-db';
+import { loadExtraCostPeople, type ExtraCostPerson } from '@/lib/extra-cost-people-db';
 import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract-history-store';
 import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
@@ -1378,6 +1379,7 @@ export default function PersonalFixPage() {
   const [selectedYear, setSelectedYear] = useState(today.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [varHours, setVarHours] = useState<Record<string, number>>(() => loadVarHours(tenantKey));
@@ -1461,6 +1463,12 @@ export default function PersonalFixPage() {
       }
       setLoading(false);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
+  // Externe Aushilfen laden (persistent aus schedule_extra_cost_people)
+  useEffect(() => {
+    loadExtraCostPeople(tenantId).then(setExtraCostPeople);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
@@ -3233,6 +3241,79 @@ export default function PersonalFixPage() {
                   </div>
                 </>
               )}
+            </section>
+          );
+        })()}
+
+        {/* ── Externe Aushilfen (schedule_extra_cost_people) ───────────────── */}
+        {extraCostPeople.length > 0 && (() => {
+          const totalPlanH   = extraCostPeople.reduce((s, p) => s + (planHours[p.id] ?? 0), 0);
+          const totalIstH    = extraCostPeople.reduce((s, p) => s + (istHours[p.id]  ?? 0), 0);
+          const totalPlanCHF = extraCostPeople.reduce((s, p) => s + (planHours[p.id] ?? 0) * p.hourlyWage, 0);
+          const totalIstCHF  = extraCostPeople.reduce((s, p) => s + (istHours[p.id]  ?? 0) * p.hourlyWage, 0);
+          return (
+            <section className="rounded-xl border border-orange-200 bg-card shadow-sm overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-orange-50/40 dark:bg-orange-900/10">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <span className="text-lg">🤝</span>
+                  Externe Aushilfen
+                  <Badge variant="secondary" className="text-xs">{extraCostPeople.length}</Badge>
+                </div>
+                <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
+                  <span className="whitespace-nowrap text-blue-600 font-mono">Plan: {fmtCHF(totalPlanCHF)}</span>
+                  <span className="whitespace-nowrap text-orange-600 font-mono">Ist: {fmtCHF(totalIstCHF)}</span>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-[540px]">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
+                      <th className="text-left px-3 py-2 font-medium">Name</th>
+                      <th className="text-center px-3 py-2 font-medium">Abt.</th>
+                      <th className="text-right px-3 py-2 font-medium">CHF/h</th>
+                      <th className="text-right px-3 py-2 font-medium text-blue-500">Plan Std</th>
+                      <th className="text-right px-3 py-2 font-medium text-orange-500">Ist Std</th>
+                      <th className="text-right px-3 py-2 font-medium text-blue-700">Flex Plan</th>
+                      <th className="text-right px-3 py-2 font-medium text-orange-700">Flex Ist</th>
+                      <th className="text-right px-3 py-2 font-medium">Diff.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {extraCostPeople.map((person, i) => {
+                      const pH   = planHours[person.id] ?? 0;
+                      const iH   = istHours[person.id]  ?? 0;
+                      const pCHF = pH * person.hourlyWage;
+                      const iCHF = iH * person.hourlyWage;
+                      const diff = iCHF - pCHF;
+                      const dc   = (v: number) => v === 0 ? 'text-muted-foreground' : v > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
+                      return (
+                        <tr key={person.id} className={i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'}>
+                          <td className="px-3 py-1.5 font-medium">{person.name}</td>
+                          <td className="px-3 py-1.5 text-center text-muted-foreground">
+                            {person.department === 'kueche' ? 'Küche' : 'Service'}
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{person.hourlyWage.toFixed(2)}</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-blue-500">{pH > 0 ? `${pH.toFixed(1)} h` : '–'}</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-orange-500">{iH > 0 ? `${iH.toFixed(1)} h` : '–'}</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-blue-700">{pCHF > 0 ? fmtCHF(pCHF) : '–'}</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-orange-700">{iCHF > 0 ? fmtCHF(iCHF) : '–'}</td>
+                          <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', dc(diff))}>{diff === 0 ? '–' : `${diff > 0 ? '+' : ''}${fmtCHF(diff)}`}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/30 font-bold text-xs">
+                      <td className="px-3 py-2" colSpan={3}>Total</td>
+                      <td className="px-3 py-2 text-right font-mono text-blue-500">{totalPlanH.toFixed(1)} h</td>
+                      <td className="px-3 py-2 text-right font-mono text-orange-500">{totalIstH.toFixed(1)} h</td>
+                      <td className="px-3 py-2 text-right font-mono text-blue-700">{fmtCHF(totalPlanCHF)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-orange-700">{fmtCHF(totalIstCHF)}</td>
+                      <td className="px-3 py-2" />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             </section>
           );
         })()}

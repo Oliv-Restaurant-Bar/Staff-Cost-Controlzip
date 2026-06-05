@@ -44,8 +44,12 @@ import {
   Building, Phone, Mail, MapPin, CreditCard, Shield,
   Briefcase, Calendar, Clock, Link as LinkIcon,
   Paperclip, FileCheck, FileClock, FileSignature,
-  Download, RefreshCw, History, Archive,
+  Download, RefreshCw, History, Archive, UserPlus, Euro,
 } from 'lucide-react';
+import {
+  loadExtraCostPeople, upsertExtraCostPerson, archiveExtraCostPerson as archiveExtCostPerson,
+  type ExtraCostPerson,
+} from '@/lib/extra-cost-people-db';
 import { WageHistorySection } from '@/components/WageHistorySection';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
@@ -362,6 +366,10 @@ const Personalstamm = () => {
   const [saving, setSaving]               = useState(false);
   const [deleteTarget, setDeleteTarget]   = useState<Employee | null>(null);
   const [aushArchiving, setAushArchiving] = useState<Set<string>>(new Set());
+  const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
+  const [extraCostArchiving, setExtraCostArchiving] = useState<Set<string>>(new Set());
+  const [newExtPerson, setNewExtPerson] = useState<{ name: string; department: 'service' | 'kueche'; hourlyWage: string } | null>(null);
+  const [savingExtPerson, setSavingExtPerson] = useState(false);
 
   // ── System-Check ───────────────────────────────────────────────────────────
   const [e2eRunning,    setE2eRunning]    = useState(false);
@@ -537,6 +545,11 @@ const Personalstamm = () => {
         console.warn('[Personalstamm] loadEmployees returned null — employees will stay empty');
       }
       setLocalData(local);
+
+      // Externe Aushilfen laden
+      const extPeople = await loadExtraCostPeople(tenantId);
+      setExtraCostPeople(extPeople);
+      console.log(`[Personalstamm] ${extPeople.length} externe Aushilfen geladen`);
 
       // Submissions laden (nur für Admin)
       if (isAdminRef.current) {
@@ -1270,10 +1283,23 @@ CREATE POLICY "Anon self-register new employee"
 
         const handleArchiveGhost = async (emp: Employee) => {
           setAushArchiving(prev => new Set(prev).add(emp.id));
+          // Zuerst in schedule_extra_cost_people migrieren (falls noch nicht vorhanden)
+          const alreadyMigrated = extraCostPeople.some(p => p.id === emp.id);
+          if (!alreadyMigrated) {
+            const saved = await upsertExtraCostPerson({
+              id: emp.id,
+              name: emp.name,
+              department: emp.department === 'küche' ? 'kueche' : 'service',
+              hourlyWage: emp.hourlyWage ?? 0,
+              tenantId: tenantId,
+              isActive: true,
+            }, tenantId);
+            if (saved) setExtraCostPeople(prev => [...prev, saved]);
+          }
           const ok = await archiveEmployee(emp.id);
           if (ok) {
             setEmployees(prev => prev.filter(e => e.id !== emp.id));
-            toast.success(`${emp.name} archiviert`);
+            toast.success(`${emp.name} nach Externe Aushilfen verschoben`);
           } else {
             toast.error(`Fehler beim Archivieren von ${emp.name}`);
           }
@@ -1325,6 +1351,155 @@ CREATE POLICY "Anon self-register new employee"
           </div>
         );
       })()}
+
+      {/* ── Externe Aushilfen / Zusatzkosten-Ressourcen ──────────────────────── */}
+      {canEditEmployees && (
+        <div className="flex-shrink-0 border-b border-orange-200 bg-orange-50/40 overflow-y-auto" style={{ maxHeight: '400px' }}>
+          <div className="max-w-7xl mx-auto px-4 py-3">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-base">🤝</span>
+              <h2 className="text-sm font-semibold text-orange-800">Externe Aushilfen</h2>
+              <span className="bg-orange-500 text-white text-[11px] font-bold rounded-full px-2 py-0.5 leading-none">
+                {extraCostPeople.length}
+              </span>
+              <span className="text-xs text-orange-600 ml-1">— persistent, planbar, kein Personalstamm</span>
+            </div>
+
+            {extraCostPeople.length === 0 ? (
+              <p className="text-xs text-orange-700 italic">
+                Noch keine externen Aushilfen erfasst. Über «+ Neue Aushilfe» hinzufügen oder Ghost-IDs oben migrieren.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2 mb-3">
+                {extraCostPeople.map(person => (
+                  <div key={person.id} className="bg-white border border-orange-200 rounded-lg px-3 py-2 flex items-center gap-3 shadow-sm">
+                    <span className="font-mono bg-muted text-[10px] px-1.5 py-0.5 rounded shrink-0">{person.id}</span>
+                    <span className="text-sm font-medium text-foreground">{person.name}</span>
+                    <span className="text-xs text-muted-foreground capitalize">
+                      {person.department === 'kueche' ? 'Küche' : 'Service'}
+                    </span>
+                    {person.hourlyWage > 0 && (
+                      <span className="text-xs text-muted-foreground flex items-center gap-0.5">
+                        <Euro className="h-3 w-3" />{person.hourlyWage.toFixed(2)}/h
+                      </span>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-[10px] border-red-300 text-red-700 hover:bg-red-50 ml-auto shrink-0"
+                      disabled={extraCostArchiving.has(person.id)}
+                      onClick={async () => {
+                        setExtraCostArchiving(prev => new Set(prev).add(person.id));
+                        const ok = await archiveExtCostPerson(person.id);
+                        if (ok) {
+                          setExtraCostPeople(prev => prev.filter(p => p.id !== person.id));
+                          toast.success(`${person.name} archiviert`);
+                        } else {
+                          toast.error(`Fehler beim Archivieren von ${person.name}`);
+                        }
+                        setExtraCostArchiving(prev => { const s = new Set(prev); s.delete(person.id); return s; });
+                      }}
+                    >
+                      {extraCostArchiving.has(person.id) ? (
+                        <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3 w-3 mr-1" />
+                      )}
+                      Archivieren
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Neue Aushilfe hinzufügen */}
+            {newExtPerson === null ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-3 text-xs border-orange-400 text-orange-800 hover:bg-orange-100"
+                onClick={() => setNewExtPerson({ name: '', department: 'service', hourlyWage: '' })}
+              >
+                <UserPlus className="h-3.5 w-3.5 mr-1" />
+                Neue Aushilfe erfassen
+              </Button>
+            ) : (
+              <div className="bg-white border border-orange-300 rounded-lg p-3 flex flex-col gap-2 shadow-sm">
+                <p className="text-xs font-semibold text-orange-800">Neue externe Aushilfe</p>
+                <div className="flex flex-wrap gap-2 items-end">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground">Name</label>
+                    <input
+                      className="border rounded px-2 py-1 text-xs w-36 focus:outline-none focus:ring-1 focus:ring-orange-400"
+                      placeholder="Vorname Nachname"
+                      value={newExtPerson.name}
+                      onChange={e => setNewExtPerson(p => p ? { ...p, name: e.target.value } : null)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground">Abteilung</label>
+                    <select
+                      className="border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-orange-400"
+                      value={newExtPerson.department}
+                      onChange={e => setNewExtPerson(p => p ? { ...p, department: e.target.value as 'service' | 'kueche' } : null)}
+                    >
+                      <option value="service">Service</option>
+                      <option value="kueche">Küche</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground">CHF/h</label>
+                    <input
+                      className="border rounded px-2 py-1 text-xs w-20 focus:outline-none focus:ring-1 focus:ring-orange-400"
+                      placeholder="25.00"
+                      type="number"
+                      min="0"
+                      step="0.50"
+                      value={newExtPerson.hourlyWage}
+                      onChange={e => setNewExtPerson(p => p ? { ...p, hourlyWage: e.target.value } : null)}
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    className="h-7 px-3 text-xs"
+                    disabled={savingExtPerson || !newExtPerson.name.trim()}
+                    onClick={async () => {
+                      if (!newExtPerson.name.trim()) return;
+                      setSavingExtPerson(true);
+                      const saved = await upsertExtraCostPerson({
+                        name: newExtPerson.name.trim(),
+                        department: newExtPerson.department,
+                        hourlyWage: parseFloat(newExtPerson.hourlyWage) || 0,
+                        tenantId: tenantId,
+                        isActive: true,
+                      }, tenantId);
+                      if (saved) {
+                        setExtraCostPeople(prev => [...prev, saved]);
+                        toast.success(`${saved.name} als externe Aushilfe erfasst`);
+                        setNewExtPerson(null);
+                      } else {
+                        toast.error('Fehler beim Speichern — bitte erneut versuchen.');
+                      }
+                      setSavingExtPerson(false);
+                    }}
+                  >
+                    {savingExtPerson ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : <UserPlus className="h-3 w-3 mr-1" />}
+                    Speichern
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setNewExtPerson(null)}
+                  >
+                    Abbrechen
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Duplikat-Warnung ─────────────────────────────────────────────────── */}
       {canEditEmployees && (() => {

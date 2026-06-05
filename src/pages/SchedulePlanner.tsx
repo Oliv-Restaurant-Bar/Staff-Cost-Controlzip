@@ -20,6 +20,10 @@ import {
   insertSchedulePublicationSnapshot,
   type ScheduleChangeLogEntry,
 } from '@/lib/supabase-db';
+import {
+  loadExtraCostPeople, upsertExtraCostPerson, type ExtraCostPerson,
+  extraCostPersonToEmployee,
+} from '@/lib/extra-cost-people-db';
 import { supabase } from '@/integrations/supabase/client';
 import {
   saveMonthAbsences, loadMonthAbsences,
@@ -227,6 +231,7 @@ const SchedulePlanner = () => {
     return defaultEmployees;
   });
   const [scheduleData, setScheduleData] = useState<{[key: string]: DaySchedule}>({});
+  const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
   const [activeDepartment, setActiveDepartment] = useState<ViewMode>('all');
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [empFilterOpen, setEmpFilterOpen] = useState(false);
@@ -559,8 +564,19 @@ const SchedulePlanner = () => {
             } catch { /* ignore */ }
           }
         }
-        setEmployees(supabaseEmployees);
-        // Cache aktualisieren: nächster Fallback hat immer die aktuellsten Mitarbeitenden
+        // Externe Aushilfen laden und in Mitarbeiterliste mergen
+        const extraPeople = await loadExtraCostPeople(tenantId);
+        if (fetchGenRef.current !== gen) {
+          console.log('[ROUTE] gen=' + gen + ' superseded after extraCostPeople – aborting');
+          return;
+        }
+        setExtraCostPeople(extraPeople);
+        const mergedEmps = extraPeople.length > 0
+          ? [...supabaseEmployees, ...extraPeople.map(extraCostPersonToEmployee)]
+          : supabaseEmployees;
+        console.log(`[extra-cost-people] ${extraPeople.length} externe Aushilfen geladen, merged: ${mergedEmps.length} Mitarbeiter total`);
+        setEmployees(mergedEmps);
+        // Cache: nur normale Mitarbeiter cachen (extra cost people direkt aus Supabase)
         try {
           localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(supabaseEmployees));
         } catch { /* ignore quota errors */ }
@@ -1726,23 +1742,31 @@ const SchedulePlanner = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actualHoursData, planCopiedKeys, doSavePlanToIst, scheduleData]);
 
-  const handleAddAushilfe = (employee: Omit<Employee, 'id'>) => {
-    // Guard: never create a duplicate by name
+  const handleAddAushilfe = async (employee: Omit<Employee, 'id'>) => {
+    // Guard: keine Duplikate
     const existing = employees.find(e => e.name.toLowerCase().trim() === employee.name.toLowerCase().trim());
     if (existing) {
       toast.warning(`"${employee.name}" existiert bereits — kein Duplikat erstellt`);
       return;
     }
-    const newEmployee: Employee = {
-      ...employee,
-      id: tenantId === 'beaulieu' ? `b-aush_${Date.now()}` : `aush_${Date.now()}`,
-    };
-    const updatedEmployees = [...employees, newEmployee];
-    setEmployees(updatedEmployees);
-    // aush_-IDs: KEIN localStorage-Write — session-only, niemals persistiert.
-    // Kein upsertEmployee: aush_-Guard in supabase-db.ts würde den Write sowieso blockieren.
-    // Persistente Erfassung ausschliesslich über den Personalstamm.
-    toast.success(`${employee.name} temporär hinzugefügt (nur diese Sitzung — nicht gespeichert). Für dauerhafte Erfassung → Personalstamm`);
+    const id = tenantId === 'beaulieu' ? `b-aush_${Date.now()}` : `aush_${Date.now()}`;
+    // Direkt in schedule_extra_cost_people persistieren (überlebt Reload)
+    const saved = await upsertExtraCostPerson({
+      id,
+      name: employee.name,
+      department: employee.department === 'küche' ? 'kueche' : 'service',
+      hourlyWage: employee.hourlyWage,
+      tenantId: tenantId,
+      isActive: true,
+    }, tenantId);
+    if (!saved) {
+      toast.error(`${employee.name} konnte nicht gespeichert werden — bitte erneut versuchen.`);
+      return;
+    }
+    const newEmployee: Employee = { ...employee, id };
+    setEmployees(prev => [...prev, newEmployee]);
+    setExtraCostPeople(prev => [...prev, saved]);
+    toast.success(`${employee.name} als externe Aushilfe erfasst und dauerhaft gespeichert`);
   };
 
   const handleRemoveEmployee = (employeeId: string) => {

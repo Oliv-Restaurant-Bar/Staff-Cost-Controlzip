@@ -1,0 +1,119 @@
+Bitte implementiere Zusatzkosten bei Fix-Mitarbeitern dauerhaft und sauber getrennt vom Personalstamm.
+
+Problem:
+Wenn ich im Dienstplan bei einem Fix-Mitarbeiter eine Schicht als Zusatzkosten markiere, soll diese Zusatzkosten-Schicht dauerhaft unten bei Personal FIX + Variabel unter Flexkosten erscheinen und auch nach Reload erhalten bleiben.
+
+Wichtig:
+Nicht der Mitarbeiter selbst wird zu Flex.
+Nur die einzelne geplante Schicht / der einzelne Tag wird als Zusatzkosten gezählt.
+
+Ziel:
+Fix-Mitarbeiter bleiben normale Fix-Mitarbeiter.
+Zusatzkosten-Schichten von Fix-Mitarbeitern werden dauerhaft gespeichert und in Personal FIX + Variabel als variable Zusatzkosten ausgewiesen.
+
+1. Datenmodell
+
+Bitte schedule_entries erweitern oder vorhandenes Feld nutzen:
+
+is_additional_cost_plan boolean default false
+is_additional_cost_ist boolean default false
+
+Falls Felder fehlen, Migration erstellen:
+
+ALTER TABLE schedule_entries
+ADD COLUMN IF NOT EXISTS is_additional_cost_plan BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS is_additional_cost_ist BOOLEAN DEFAULT FALSE;
+
+2. Dienstplanung
+
+Wenn ich bei einem Fix-Mitarbeiter im Plan-Modus eine Schicht als Zusatzkosten markiere:
+- schedule_entries.is_additional_cost_plan = true speichern
+- Mitarbeiter bleibt Fix-Mitarbeiter
+- normale employee-Daten werden nicht verändert
+
+Wenn ich im Ist-Modus eine Schicht als Zusatzkosten markiere:
+- schedule_entries.is_additional_cost_ist = true speichern
+
+3. Persistenz
+
+Die Zusatzkosten-Markierung muss in Supabase gespeichert werden.
+Nach Reload muss sie weiterhin vorhanden sein.
+
+localStorage darf diese Flags nicht löschen oder überschreiben.
+
+4. Personal FIX + Variabel
+
+In der Tabelle unten sollen diese Zusatzkosten erscheinen:
+
+Name
+Abteilung
+CHF/h
+Plan Std
+Ist Std
+Flex Plan
+Flex Ist
+Diff.
+
+Nur die Stunden der markierten Zusatzkosten-Schichten zählen.
+
+Beispiel:
+Mejdi ist Fix-Mitarbeiter.
+Im Dienstplan wird eine Schicht als Zusatzkosten markiert.
+Dann erscheint unten:
+Mejdi · Zusatzkosten
+Plan Std / Ist Std nur für diese markierten Schichten
+Flex Plan / Flex Ist = Zusatzkosten-Stunden × interner Stundenansatz
+
+5. Nicht doppelt rechnen
+
+Bei Fix-Mitarbeitern:
+- normale Fixlohnkosten bleiben im Fixbereich
+- Zusatzkosten-Schichten werden zusätzlich als variable Kosten ausgewiesen
+- normale nicht markierte Schichten dürfen nicht in Flexkosten erscheinen
+
+Bei Flex-Mitarbeitern:
+- normale Flexkostenlogik bleibt wie bisher
+- Zusatzkosten-Flag darf keine Doppelzählung erzeugen
+
+6. Anzeige
+
+In Personal FIX + Variabel:
+Zusatzkosten-Zeilen klar markieren mit Badge:
+"Zusatzkosten"
+
+7. Rechenlogik
+
+Plan:
+Nur schedule_entries mit is_additional_cost_plan = true
+
+Ist:
+Nur schedule_entries mit is_additional_cost_ist = true
+
+Falls es aktuell nur ein gemeinsames Zusatzkosten-Flag gibt:
+Bitte sauber auf Plan/Ist trennen oder konsistent mappen.
+
+8. Bestehende Daten migrieren
+
+Falls bestehende Zusatzkosten bereits irgendwo gespeichert sind:
+- vorhandenes Flag übernehmen
+- nicht verlieren
+- in neue Felder mappen
+
+9. Debug speziell prüfen
+
+Bitte testen mit:
+- Mejdi
+- Micky
+- Nahuel
+- Arber
+
+Diese sollen unten nur mit den explizit markierten Zusatzkostenstunden erscheinen.
+
+10. Nach Umsetzung ausgeben
+
+- Welche Tabelle/Felder Zusatzkosten speichern
+- Wie das Flag im Dienstplan gesetzt wird
+- Wie Personal FIX + Variabel die Zusatzkosten lädt
+- Wie Doppelzählung verhindert wird
+- Ob Zusatzkosten nach Reload erhalten bleiben
+- Welche SQL-Migration nötig ist

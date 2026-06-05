@@ -4,3 +4,4 @@
 - [seedBeaulieuEmployees delete scope](seed-beaulieu-delete-scope.md) — seed function must only delete IDs b-1…b-10 (old placeholders), never arbitrary b-* IDs; manually-added employees must be preserved.
 - [Employees write gate](employees-write-gate.md) — Only Personalstamm form may write employees to Supabase. All auto-sync, SchedulePlanner, and seed paths are blocked.
 - [Ali reactivation root cause](ali-reactivation.md) — employeeToDb sent employment_end_date:null when undefined → cleared archived dates. usePersonnelData also called upsertAllEmployees on every state change. Both fixed.
+- [External helpers architecture](external-helpers.md) — External cost people (aush_* IDs) live in schedule_extra_cost_people, NOT employees. FK on schedule_entries.employee_id was dropped in migration. See extra-cost-people-db.ts.
