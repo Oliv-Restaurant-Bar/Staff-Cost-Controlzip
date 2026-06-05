@@ -399,8 +399,10 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     await updateScheduleEntry(employeeId, date, slotType, value, absenceType);
   };
 
-  const handleAddAushilfe = async (employee: Omit<Employee, 'id'>) => {
-    await addSupabaseEmployee(employee);
+  const handleAddAushilfe = (_employee: Omit<Employee, 'id'>) => {
+    // BLOCKIERT: Neue Mitarbeiter ausschliesslich über den Personalstamm erfassen.
+    // addSupabaseEmployee würde direkt in employees-Tabelle schreiben — ohne Quellenprüfung.
+    toast.error('Neue Mitarbeiter können hier nicht erfasst werden. Bitte im Personalstamm anlegen.');
   };
 
   const handleRemoveEmployee = async (employeeId: string) => {
@@ -511,12 +513,10 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
   };
 
   const applyImportResult = async (newScheduleData: Record<string, DaySchedule>, newEmployees: Employee[]) => {
-    // Add new employees to Supabase
+    // BLOCKIERT: Neue Mitarbeiter aus Import dürfen nicht automatisch in employees gespeichert werden.
+    // Neue Mitarbeiter ausschliesslich über den Personalstamm erfassen.
     if (newEmployees?.length) {
-      for (const emp of newEmployees) {
-        await addSupabaseEmployee(emp);
-      }
-      toast.success(`${newEmployees.length} neue Mitarbeiter hinzugefügt`);
+      toast.warning(`Import: ${newEmployees.length} unbekannte Mitarbeiter-Namen gefunden. Bitte zuerst im Personalstamm anlegen.`);
     }
     
     // Update schedule entries in Supabase
@@ -686,9 +686,11 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
 
   const handleEmployeeFormSubmit = async (employeeData: Omit<Employee, 'id'> | Employee) => {
     if ('id' in employeeData) {
+      // Update bestehender Mitarbeiter — erlaubt
       await updateSupabaseEmployee(employeeData as any);
     } else {
-      await addSupabaseEmployee(employeeData);
+      // BLOCKIERT: Neue Mitarbeiter ausschliesslich über den Personalstamm erfassen.
+      toast.error('Neue Mitarbeiter können hier nicht erfasst werden. Bitte im Personalstamm anlegen.');
     }
     setSelectedEmployeeForEdit(null);
   };

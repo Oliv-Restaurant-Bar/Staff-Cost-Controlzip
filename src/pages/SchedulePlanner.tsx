@@ -1739,10 +1739,10 @@ const SchedulePlanner = () => {
     };
     const updatedEmployees = [...employees, newEmployee];
     setEmployees(updatedEmployees);
-    // upsertEmployee BLOCKIERT: Neue Mitarbeiter nur über Personalstamm erfassen.
-    // upsertEmployee(newEmployee);
-    localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
-    toast.success(`${employee.name} lokal hinzugefügt (nur diese Sitzung). Für dauerhafte Erfassung → Personalstamm`);
+    // aush_-IDs: KEIN localStorage-Write — session-only, niemals persistiert.
+    // Kein upsertEmployee: aush_-Guard in supabase-db.ts würde den Write sowieso blockieren.
+    // Persistente Erfassung ausschliesslich über den Personalstamm.
+    toast.success(`${employee.name} temporär hinzugefügt (nur diese Sitzung — nicht gespeichert). Für dauerhafte Erfassung → Personalstamm`);
   };
 
   const handleRemoveEmployee = (employeeId: string) => {

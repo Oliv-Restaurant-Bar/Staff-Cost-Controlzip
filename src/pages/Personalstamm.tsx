@@ -44,13 +44,13 @@ import {
   Building, Phone, Mail, MapPin, CreditCard, Shield,
   Briefcase, Calendar, Clock, Link as LinkIcon,
   Paperclip, FileCheck, FileClock, FileSignature,
-  Download, RefreshCw, History,
+  Download, RefreshCw, History, Archive,
 } from 'lucide-react';
 import { WageHistorySection } from '@/components/WageHistorySection';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
 import {
-  loadEmployees, upsertEmployee, deleteEmployee, activateEmployee,
+  loadEmployees, upsertEmployee, deleteEmployee, activateEmployee, archiveEmployee,
   loadOnboardingSubmissions, deleteOnboardingSubmission, activateSubmissionAsEmployee,
   runPersonalstammE2ETest,
   OnboardingSubmission,
@@ -361,6 +361,7 @@ const Personalstamm = () => {
   const [loading, setLoading]             = useState(true);
   const [saving, setSaving]               = useState(false);
   const [deleteTarget, setDeleteTarget]   = useState<Employee | null>(null);
+  const [aushArchiving, setAushArchiving] = useState<Set<string>>(new Set());
 
   // ── System-Check ───────────────────────────────────────────────────────────
   const [e2eRunning,    setE2eRunning]    = useState(false);
@@ -1256,6 +1257,69 @@ CREATE POLICY "Anon self-register new employee"
                     Kopieren
                   </Button>
                 </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Ghost-ID Diagnose-Panel (aush_*) ────────────────────────────────── */}
+      {canEditEmployees && (() => {
+        const ghostEmployees = employees.filter(e => String(e.id).includes('aush_'));
+        if (ghostEmployees.length === 0) return null;
+
+        const handleArchiveGhost = async (emp: Employee) => {
+          setAushArchiving(prev => new Set(prev).add(emp.id));
+          const ok = await archiveEmployee(emp.id);
+          if (ok) {
+            setEmployees(prev => prev.filter(e => e.id !== emp.id));
+            toast.success(`${emp.name} archiviert`);
+          } else {
+            toast.error(`Fehler beim Archivieren von ${emp.name}`);
+          }
+          setAushArchiving(prev => { const s = new Set(prev); s.delete(emp.id); return s; });
+        };
+
+        return (
+          <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 overflow-y-auto" style={{ maxHeight: '260px' }}>
+            <div className="max-w-7xl mx-auto px-4 py-3">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                <h2 className="text-sm font-semibold text-amber-800">
+                  Ghost-IDs gefunden — temporäre Dienstplan-Einträge in der Datenbank
+                </h2>
+                <span className="bg-amber-600 text-white text-[11px] font-bold rounded-full px-2 py-0.5 leading-none">
+                  {ghostEmployees.length}
+                </span>
+              </div>
+              <p className="text-xs text-amber-700 mb-3">
+                Diese Einträge haben <code className="font-mono bg-amber-100 px-1 rounded">aush_</code>-IDs — sie wurden fälschlicherweise aus dem Dienstplan in die Datenbank geschrieben.
+                Bitte archivieren und bei Bedarf korrekt im Personalstamm neu anlegen.
+              </p>
+              <div className="flex flex-col gap-2">
+                {ghostEmployees.map(emp => (
+                  <div key={emp.id} className="bg-white border border-amber-200 rounded-lg px-3 py-2 flex items-center gap-3 shadow-sm">
+                    <span className="font-mono bg-muted text-[10px] px-1.5 py-0.5 rounded shrink-0">{emp.id}</span>
+                    <span className="text-sm font-medium text-foreground">{emp.name}</span>
+                    <span className="text-xs text-muted-foreground">{emp.department}</span>
+                    {emp.hourlyWage ? <span className="text-xs text-muted-foreground">{emp.hourlyWage} CHF/h</span> : null}
+                    {emp.monthlySalary ? <span className="text-xs text-muted-foreground">{emp.monthlySalary} CHF/M</span> : null}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-[10px] border-amber-400 text-amber-800 hover:bg-amber-100 ml-auto shrink-0"
+                      disabled={aushArchiving.has(emp.id)}
+                      onClick={() => handleArchiveGhost(emp)}
+                    >
+                      {aushArchiving.has(emp.id) ? (
+                        <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                      ) : (
+                        <Archive className="h-3 w-3 mr-1" />
+                      )}
+                      Archivieren
+                    </Button>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

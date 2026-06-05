@@ -212,6 +212,12 @@ export async function loadEmployees(restaurantId?: TenantId): Promise<Employee[]
 }
 
 export async function upsertEmployee(emp: Employee, restaurantId: TenantId = 'oliv'): Promise<boolean> {
+  // aush_-Guard: temporäre Aushilfen-IDs dürfen NIE in die employees-Tabelle geschrieben werden.
+  // Diese IDs entstehen im Dienstplan als session-only Hilfskräfte. Einziger Erfassungsweg: Personalstamm.
+  if (String(emp.id).includes('aush_')) {
+    console.error(`[ID-INTEGRITY] BLOCKED upsertEmployee: aush_-IDs dürfen nicht in employees gespeichert werden. id=${emp.id} name="${emp.name}" — bitte im Personalstamm erfassen.`);
+    return false;
+  }
   // Präfix-Guard: falsches ID-Format für den Tenant blockiert den Schreibvorgang.
   const isBeaulieuId = String(emp.id).startsWith('b-');
   if (restaurantId === 'beaulieu' && !isBeaulieuId) {

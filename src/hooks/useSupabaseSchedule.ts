@@ -539,8 +539,10 @@ export const migrateLocalStorageToSupabase = async (): Promise<{ success: boolea
     // Load employees from localStorage
     const savedEmployees = localStorage.getItem('schedule-employees');
     if (savedEmployees) {
-      const localEmployees = JSON.parse(savedEmployees) as Employee[];
-      
+      const localEmployees = (JSON.parse(savedEmployees) as Employee[])
+        // aush_-IDs niemals nach Supabase migrieren — session-only Hilfskräfte aus dem Dienstplan
+        .filter(emp => !String(emp.id).includes('aush_'));
+
       // Insert employees
       for (const emp of localEmployees) {
         const dbData = {

@@ -1,0 +1,128 @@
+Bitte behebe dauerhaft das Problem mit Zusatzkosten-Mitarbeitern / Aushilfen.
+
+Problem:
+Zusatzkosten wie Arber, Mejdi, Micky, Nahuel werden im Dienstplan / Personal FIX + Variabel erfasst, verschwinden aber später wieder.
+Gleichzeitig dürfen solche Zusatzkosten nicht unkontrolliert als normale Mitarbeiter im Personalstamm auftauchen.
+
+Ziel:
+Zusatzkosten müssen dauerhaft gespeichert bleiben, aber getrennt und sauber gekennzeichnet sein.
+
+Neue Regel:
+Zusatzkosten-Personen sind keine normalen aktiven Mitarbeiter, sondern eigene planbare Zusatzkosten-Ressourcen.
+
+1. Datenmodell
+
+Bitte prüfen, ob Zusatzkosten aktuell in employees gespeichert werden.
+Falls ja:
+Sie dürfen nicht mehr durch Seed, Cleanup oder Filter gelöscht werden.
+
+Besser:
+Neue Tabelle erstellen:
+
+schedule_extra_cost_people
+
+Felder:
+id text primary key
+name text not null
+department text nullable
+hourly_wage numeric not null
+is_active boolean default true
+created_at timestamptz default now()
+created_by uuid nullable
+archived_at timestamptz nullable
+
+Optional:
+tenant_id text nullable
+
+2. Migration bestehender Zusatzkosten
+
+Bestehende Zusatzkosten-Mitarbeiter erkennen über:
+- ID beginnt mit aush_
+- oder is_additional_cost = true
+- oder Badge Zusatzkosten
+- oder Zusatzkosten-Flag in schedule_entries
+
+Diese sollen in schedule_extra_cost_people übernommen werden.
+
+Nicht löschen.
+
+3. Dienstplanung
+
+Wenn im Dienstplan eine Zusatzkosten-Person ausgewählt wird:
+- nicht automatisch normalen employees-Datensatz erstellen
+- stattdessen aus schedule_extra_cost_people laden
+- Plan-/Ist-Schichten bleiben dauerhaft gespeichert
+
+4. Personal FIX + Variabel
+
+Die Tabelle muss Zusatzkosten dauerhaft anzeigen:
+
+- Name
+- Abteilung
+- CHF/h
+- Plan Std
+- Ist Std
+- Flex Plan
+- Flex Ist
+- Diff.
+
+Auch nach Reload.
+
+5. Persistenz
+
+Beim Erfassen einer Zusatzkosten-Person:
+- sofort in Supabase speichern
+- nach Reload wieder laden
+- localStorage darf sie nicht löschen
+- Seed/Cleanup darf sie nicht löschen
+
+6. Abgrenzung zum Personalstamm
+
+Im normalen Personalstamm:
+Zusatzkosten nicht als aktive normale Mitarbeiter anzeigen.
+
+Optional:
+eigene Sektion:
+"Zusatzkosten / externe Aushilfen"
+
+Oder Badge:
+"Zusatzkosten"
+
+7. Schutz vor Datenverlust
+
+Keine automatische Löschung von:
+- aush_*
+- Zusatzkosten
+- is_additional_cost = true
+
+Wenn archivieren nötig:
+nur is_active=false oder archived_at setzen.
+
+8. Bereits erfasste Zusatzkosten erhalten
+
+Bitte speziell prüfen:
+- Arber Zusatzkosten
+- Mejdi Zusatzkosten
+- Micky Zusatzkosten
+- Nahuel Zusatzkosten
+- Gaumen
+- Nuri
+
+Nicht einfach löschen.
+Falls sie falsche normale Mitarbeiter sind:
+in Zusatzkosten-Ressourcen migrieren oder archivieren, aber nicht still entfernen.
+
+9. schedule_entries prüfen
+
+Wenn Zusatzkosten bereits im Dienstplan geplant sind:
+Diese Einträge dürfen nicht verwaisen.
+Die Referenz muss weiterhin funktionieren.
+
+10. Nach Umsetzung ausgeben
+
+- Wo Zusatzkosten bisher gespeichert wurden
+- Warum sie verschwunden sind
+- Welche Tabelle sie künftig speichert
+- Wie sie in Personal FIX + Variabel geladen werden
+- Ob Arber/Mejdi/Micky/Nahuel nach Reload erhalten bleiben
+- Welche SQL-Migration nötig ist
