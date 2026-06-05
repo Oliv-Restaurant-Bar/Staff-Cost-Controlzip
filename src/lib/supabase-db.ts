@@ -202,9 +202,17 @@ export async function loadEmployees(restaurantId?: TenantId): Promise<Employee[]
 }
 
 export async function upsertEmployee(emp: Employee, restaurantId: TenantId = 'oliv'): Promise<boolean> {
+  // Präfix-Guard: falsches ID-Format für den Tenant blockiert den Schreibvorgang.
+  const isBeaulieuId = String(emp.id).startsWith('b-');
+  if (restaurantId === 'beaulieu' && !isBeaulieuId) {
+    console.error(`[ID-INTEGRITY] BLOCKED upsertEmployee: Beaulieu-Mitarbeiter hat kein b-Präfix! id=${emp.id} name="${emp.name}"`);
+    return false;
+  }
+  if (restaurantId === 'oliv' && isBeaulieuId) {
+    console.error(`[ID-INTEGRITY] BLOCKED upsertEmployee: Oliv-Mitarbeiter hat b-Präfix! id=${emp.id} name="${emp.name}"`);
+    return false;
+  }
   try {
-    // Hinweis: restaurant_id-Spalte existiert noch nicht in Supabase.
-    // Tenant-Zuordnung erfolgt über den ID-Präfix: b-* = beaulieu, numerisch = oliv.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any)
       .from('employees')
@@ -312,14 +320,28 @@ export async function deleteEmployee(id: string): Promise<boolean> {
 }
 
 export async function upsertAllEmployees(employees: Employee[], restaurantId: TenantId = 'oliv'): Promise<boolean> {
+  // Präfix-Guard: Mitarbeiter mit falschem ID-Format für den Tenant herausfiltern und blockieren.
+  const blocked: Employee[] = [];
+  const allowed = employees.filter(emp => {
+    const isBeaulieuId = String(emp.id).startsWith('b-');
+    if (restaurantId === 'beaulieu' && !isBeaulieuId) { blocked.push(emp); return false; }
+    if (restaurantId === 'oliv'     &&  isBeaulieuId) { blocked.push(emp); return false; }
+    return true;
+  });
+  if (blocked.length > 0) {
+    console.error(
+      `[ID-INTEGRITY] BLOCKED upsertAllEmployees: ${blocked.length} Mitarbeiter mit falschem Präfix für tenant=${restaurantId}`,
+      blocked.map(e => `id=${e.id} name="${e.name}"`)
+    );
+  }
+  if (allowed.length === 0) return true; // nichts zu schreiben
   try {
-    // Hinweis: restaurant_id-Spalte existiert noch nicht in Supabase – ID-Präfix als Diskriminator.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any)
       .from('employees')
-      .upsert(employees.map(e => employeeToDb(e)), { onConflict: 'id' });
+      .upsert(allowed.map(e => employeeToDb(e)), { onConflict: 'id' });
     if (error) { console.error('[supabase-db] upsertAllEmployees:', error); return false; }
-    console.log(`[supabase-db] upsertAllEmployees OK: ${employees.length} employees tenant=${restaurantId}`);
+    console.log(`[supabase-db] upsertAllEmployees OK: ${allowed.length} employees tenant=${restaurantId}`);
     return true;
   } catch (e) {
     console.error('[supabase-db] upsertAllEmployees exception:', e);

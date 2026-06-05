@@ -149,6 +149,25 @@ const loadEmployeesFromSupabase = async (restaurantId?: TenantId): Promise<Emplo
     console.log(`[usePersonnelData] Loaded ${data.length} employees from Supabase`);
     const frontendEmployees = data.map(dbToFrontendEmployee);
 
+    // Präfix-Integritätsprüfung: Warnung bei falschem ID-Format
+    if (restaurantId === 'beaulieu') {
+      const wrongPrefix = frontendEmployees.filter(e => !String(e.id).startsWith('b-'));
+      if (wrongPrefix.length > 0) {
+        console.warn(
+          `[ID-INTEGRITY] WARNUNG: ${wrongPrefix.length} Beaulieu-Mitarbeiter ohne b-Präfix gefunden!`,
+          wrongPrefix.map(e => `id=${e.id} name="${e.name}"`)
+        );
+      }
+    } else if (restaurantId === 'oliv') {
+      const wrongPrefix = frontendEmployees.filter(e => String(e.id).startsWith('b-'));
+      if (wrongPrefix.length > 0) {
+        console.warn(
+          `[ID-INTEGRITY] WARNUNG: ${wrongPrefix.length} Oliv-Mitarbeiter mit b-Präfix gefunden!`,
+          wrongPrefix.map(e => `id=${e.id} name="${e.name}"`)
+        );
+      }
+    }
+
     // Oliv-Leak-Check wenn Beaulieu aktiv
     if (restaurantId === 'beaulieu') {
       const names = frontendEmployees.map(e => e.name);
