@@ -33,6 +33,9 @@ const employeeToDb = (emp: Employee) => ({
   id:                       emp.id,
   name:                     emp.name,
   department:               emp.department === 'küche' ? 'kueche' : 'service',
+  // restaurant_id aus ID-Präfix ableiten: b-* = beaulieu, sonst = oliv.
+  // Wird beim Upsert immer korrekt gesetzt, damit beide Filterstrategien funktionieren.
+  restaurant_id:            String(emp.id).startsWith('b-') ? 'beaulieu' : 'oliv',
   employment_type:          emp.employmentType,
   // ── Arbeitszeit & Lohn ────────────────────────────────────────────────────
   hourly_wage:              emp.hourlyWage,

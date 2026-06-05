@@ -1,0 +1,66 @@
+Bitte behebe dringend das Problem im Beaulieu-Tenant: Mitarbeiter können nicht dauerhaft erfasst werden, sie verschwinden wieder.
+
+Problem:
+Im Beaulieu kann man Mitarbeiter erfassen, aber sie werden danach wieder aus der App entfernt/überschrieben.
+
+Ziel:
+Mitarbeiter im Beaulieu müssen dauerhaft in Supabase gespeichert bleiben und nach Reload/Login/Monatswechsel sichtbar bleiben.
+
+Bitte gezielt prüfen:
+
+1. Tenant-ID / Restaurant-ID
+Prüfe, welche tenant_id / restaurant_id Beaulieu verwendet.
+Beim Erstellen eines Beaulieu-Mitarbeiters muss exakt diese ID gespeichert werden.
+Beim Laden muss exakt dieselbe ID gefiltert werden.
+
+2. Employee Save-Funktion
+Prüfe die Funktion zum Erfassen von Mitarbeitern:
+- Wird tenant_id gesetzt?
+- Wird restaurant_id gesetzt?
+- Wird eventuell Oliv als Default verwendet?
+- Wird eine temporäre ID benutzt?
+- Wird nach dem Speichern sofort aus Supabase neu geladen?
+
+3. Load-Funktion
+Prüfe, ob loadEmployeesFromSupabase für Beaulieu korrekt filtert.
+Keine falschen Präfix-Regeln wie b-* verwenden, falls die echten IDs anders sind.
+Keine Mitarbeiter wegen ID-Format herausfiltern.
+
+4. localStorage
+Prüfe alle employee localStorage Keys:
+- tenant-spezifisch?
+- Beaulieu-spezifisch?
+- Wird Beaulieu eventuell mit Oliv überschrieben?
+- Wird ein leerer Cache über Supabase gelegt?
+
+Regel:
+Supabase gewinnt immer.
+localStorage darf Beaulieu-Mitarbeiter nie löschen oder überschreiben.
+
+5. Soft Delete / Archive
+Prüfe, ob nach dem Erstellen versehentlich archiveEmployee oder employment_end_date gesetzt wird.
+
+6. Diagnose
+Bitte in der Konsole beim Erfassen eines Beaulieu-Mitarbeiters loggen:
+- tenant_id
+- restaurant_id
+- employee id
+- employee name
+- insert result
+- reload result count
+- localStorage key
+
+7. Test
+Bitte einen Testmitarbeiter in Beaulieu erfassen:
+- speichern
+- Seite neu laden
+- Monat wechseln
+- zurück wechseln
+- prüfen, ob er bleibt
+
+8. Nach Umsetzung ausgeben:
+- Warum Beaulieu-Mitarbeiter verschwunden sind
+- Welche Datei/Funktion den falschen Sync verursacht hat
+- Welche Tenant-ID Beaulieu verwendet
+- Welche Dateien geändert wurden
+- Ob Mitarbeiter nach Reload dauerhaft bleiben

@@ -123,8 +123,14 @@ const loadEmployeesFromSupabase = async (restaurantId?: TenantId): Promise<Emplo
     let query = supabase.from('employees').select('*').order('name');
 
     // ─── TENANT FILTER ──────────────────────────────────────────────────────
-    if (restaurantId) {
-      query = query.eq('restaurant_id', restaurantId);
+    // ID-Präfix-Methode: Beaulieu = b-*, Oliv = numerisch (kein b-* Präfix).
+    // restaurant_id-Spalte existiert, kann aber NULL sein → ID-Präfix ist zuverlässiger.
+    if (restaurantId === 'beaulieu') {
+      query = query.like('id', 'b-%');
+      console.log('[loadEmployeesFromSupabase] tenant=beaulieu → filter id LIKE b-%');
+    } else if (restaurantId === 'oliv') {
+      query = query.not('id', 'like', 'b-%');
+      console.log('[loadEmployeesFromSupabase] tenant=oliv → filter id NOT LIKE b-%');
     }
     // ────────────────────────────────────────────────────────────────────────
 
@@ -650,9 +656,9 @@ export const usePersonnelData = () => {
   useEffect(() => {
     if (isInitialized) {
       localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(employees));
-      upsertAllEmployees(employees);
+      upsertAllEmployees(employees, tenantId);
     }
-  }, [employees, isInitialized]);
+  }, [employees, isInitialized, tenantId]);
 
   // Sync daily budgets to localStorage and Supabase.
   // WICHTIG: Nur schreiben wenn der Blob tatsächlich Daten enthält.
@@ -694,10 +700,14 @@ export const usePersonnelData = () => {
   }, [manualTimeEntries, isInitialized]);
 
   const addEmployee = useCallback((employee: Omit<Employee, 'id'>) => {
-    const id = `emp_${Date.now()}`;
+    // Beaulieu-Mitarbeiter müssen eine b-* ID bekommen, sonst filtert
+    // loadEmployees('beaulieu') sie beim nächsten Laden heraus (id LIKE 'b-%').
+    const prefix = tenantId === 'beaulieu' ? 'b-emp_' : 'emp_';
+    const id = `${prefix}${Date.now()}`;
+    console.log(`[addEmployee] tenant=${tenantId} id=${id} name=${employee.name}`);
     setEmployees((prev) => [...prev, { ...employee, id }]);
     return id;
-  }, []);
+  }, [tenantId]);
 
   const updateEmployee = useCallback((employee: Employee) => {
     setEmployees((prev) =>
