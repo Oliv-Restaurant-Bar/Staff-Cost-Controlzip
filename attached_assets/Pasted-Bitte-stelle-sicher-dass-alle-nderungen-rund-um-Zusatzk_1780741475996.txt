@@ -1,0 +1,88 @@
+Bitte stelle sicher, dass alle Änderungen rund um Zusatzkosten, Flex-Mitarbeiter und Aushilfen mandantenfähig für beide Mandanten funktionieren: Oliv und Beaulieu.
+
+Wichtig:
+Alle Logiken müssen tenant-spezifisch getrennt sein.
+
+Mandanten:
+- Oliv
+- Beaulieu
+
+Bitte prüfen und umsetzen:
+
+1. Kawtar/Party Migration nur für Oliv
+Kawtar und Party betreffen Oliv.
+Diese Migration darf keine Beaulieu-Daten verändern.
+
+2. Beaulieu nicht beschädigen
+Falls Beaulieu eigene Aushilfen/Zusatzkosten hat:
+- nicht löschen
+- nicht überschreiben
+- nicht mit Oliv vermischen
+
+3. Tenant-Isolation
+Bitte alle relevanten Tabellen/Queries prüfen:
+
+employees
+schedule_entries
+actual_hours
+schedule_extra_cost_people
+Personal FIX + Variabel
+Dienstplanung
+Personalstamm
+
+Jede Query muss korrekt nach Tenant/Mandant filtern.
+
+4. Zusatzkosten-Logik für beide Mandanten
+Für beide Mandanten gilt:
+
+A) Normale Aushilfen/Flex-Mitarbeiter
+- gehören in employees
+- erscheinen normal im Personalstamm
+- erscheinen normal in Personal FIX + Variabel
+- werden normal im Dienstplan geplant
+
+B) Zusatzkosten bei Fix-Mitarbeitern
+- bleiben auf schedule_entries/actual_hours als Zusatzkosten-Flag
+- zählen nur für markierte Schichten zusätzlich zu Flexkosten
+- bleiben nach Reload erhalten
+
+5. schedule_extra_cost_people
+Diese Tabelle nur verwenden, falls wirklich externe Ressourcen nötig sind.
+Nicht als Ersatz für normale Aushilfen verwenden.
+Wenn verwendet, immer tenant_id beachten.
+
+6. ID-Regeln
+Oliv:
+- keine Beaulieu-Mitarbeiter laden
+- keine b-* IDs ausserhalb Beaulieu
+
+Beaulieu:
+- Beaulieu-Mitarbeiter korrekt laden
+- b-* IDs bleiben Beaulieu
+- neue Beaulieu-Mitarbeiter müssen b-* ID erhalten
+
+7. Tests für beide Mandanten
+
+Bitte testen:
+
+Oliv:
+- Kawtar/Party als normale Flex-Mitarbeiter sichtbar
+- keine separate Externe-Aushilfen-Sektion
+- Zusatzkosten bei Mejdi/Micky bleiben nach Reload
+
+Beaulieu:
+- neuer Mitarbeiter bleibt nach Reload
+- Aushilfe/Flex-Mitarbeiter bleibt nach Reload
+- Zusatzkosten bei Fix-Mitarbeiter bleiben nach Reload
+- keine Oliv-Mitarbeiter sichtbar
+
+8. Abschluss bitte zwingend mit:
+
+SUPABASE AKTION ERFORDERLICH: JA/NEIN
+
+Wenn JA:
+- genaue SQL-Datei
+- Zweck
+- welche Mandanten betroffen sind
+- ob Daten migriert werden
+- ob Gefahr für bestehende Daten besteht

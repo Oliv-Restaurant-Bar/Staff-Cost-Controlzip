@@ -186,7 +186,14 @@ export async function loadEmployees(restaurantId?: TenantId): Promise<Employee[]
       return null;
     }
 
-    const result = (data ?? []).map(dbToEmployee);
+    const allLoaded = (data ?? []).map(dbToEmployee);
+    // Archivierte Mitarbeiter (is_active=false) ausschliessen.
+    // Normale Mitarbeiter haben is_active=true oder undefined (vor der Migration).
+    // aush_*-Alteinträge haben nach der Kawtar/Party-Migration is_active=false → werden gefiltert.
+    const result = allLoaded.filter(e => e.isActive !== false);
+    if (result.length !== allLoaded.length) {
+      console.log(`[loadEmployees] ${allLoaded.length - result.length} archivierte Mitarbeiter ausgeblendet (is_active=false)`);
+    }
     if (restaurantId) {
       console.log(`[TENANT] employees count for ${restaurantId}: ${result.length}`);
       if (restaurantId === 'beaulieu') {
