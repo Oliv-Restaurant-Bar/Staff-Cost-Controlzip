@@ -1,0 +1,72 @@
+Bitte korrigiere die Zusatzkosten-Logik fachlich.
+
+Aktuelles Problem:
+Es wurde eine separate Sektion "Externe Aushilfen" gebaut. Das ist falsch.
+
+Gewünschte Logik:
+
+1. Aushilfen/Teilzeit-Mitarbeiter wie Kawtar und Party
+- gehören ganz normal zu den flexiblen Mitarbeitern
+- sollen in der normalen Flexkosten-Mitarbeiterliste erscheinen
+- keine separate Sektion "Externe Aushilfen"
+- keine eigene Zusatzkosten-Aufstellung
+
+2. Fixe Mitarbeiter wie Mejdi, Micky, Nahuel, Arber
+Wenn bei diesen im Dienstplan eine einzelne Schicht als "Zusatzkosten" markiert wird:
+- nur diese markierte Schicht zählt zusätzlich als Flexkosten
+- der Mitarbeiter bleibt Fix-Mitarbeiter
+- nur die markierten Plan-/Ist-Schichten erscheinen unten in Personal FIX + Variabel mit Badge "Zusatzkosten"
+- normale nicht markierte Schichten dieses Mitarbeiters bleiben im Fixlohn und werden nicht als Flexkosten gerechnet
+
+3. Das eigentliche Problem
+Früher hat diese Logik funktioniert, aber nach Reload/Neustart gingen die markierten Zusatzkosten-Schichten verloren.
+
+Bitte daher:
+- keine neue separate externe Aushilfen-Liste anzeigen
+- Zusatzkosten-Markierung direkt auf schedule_entries speichern
+- Felder verwenden:
+  is_additional_cost_plan
+  is_additional_cost_ist
+- diese Flags müssen dauerhaft in Supabase bleiben
+- nach Reload müssen sie erhalten bleiben
+
+4. Personal FIX + Variabel Anzeige
+Eine einzige Flexkosten-Tabelle.
+
+Darin:
+- normale Flex-Mitarbeiter: Kawtar, Party, Sadete, Joana, Momand Sajed usw.
+- fixe Mitarbeiter mit Zusatzkosten-Schichten: Mejdi, Micky, Nahuel, Arber mit Badge "Zusatzkosten"
+
+Aber keine separate Sektion "Externe Aushilfen".
+
+5. Berechnung
+Für Flex-Mitarbeiter:
+- normale Flex Plan/Ist Logik wie bisher
+
+Für Fix-Mitarbeiter mit Zusatzkosten-Flag:
+- Plan Std = nur Stunden aus schedule_entries mit is_additional_cost_plan = true
+- Ist Std = nur Stunden aus schedule_entries mit is_additional_cost_ist = true
+- Flex Plan/Ist = diese Stunden × interner Stundenansatz
+
+6. Persistenz
+Beim Markieren einer Schicht als Zusatzkosten:
+- sofort in schedule_entries speichern
+- nach Reload sichtbar
+- nach App-Neustart sichtbar
+- nicht in localStorage verlieren
+
+7. Rückbau
+Bitte entferne oder verstecke die separate "Externe Aushilfen" Sektion in Personal FIX + Variabel.
+Die Tabelle schedule_extra_cost_people wird für diesen Fall nicht benötigt oder soll nicht in dieser Auswertung separat angezeigt werden.
+
+8. Tests
+Bitte prüfen:
+- Kawtar erscheint wieder normal in Flexkosten-Mitarbeiterliste
+- Party erscheint wieder normal in Flexkosten-Mitarbeiterliste
+- Mejdi erscheint nur mit Zusatzkosten, wenn eine Schicht als Zusatzkosten markiert ist
+- Micky/Nahuel/Arber gleich
+- Reload verliert Zusatzkosten-Flags nicht
+
+9. Abschluss bitte mit:
+SUPABASE AKTION ERFORDERLICH: JA/NEIN
+Falls JA: genaue SQL-Datei und Zweck nennen.
