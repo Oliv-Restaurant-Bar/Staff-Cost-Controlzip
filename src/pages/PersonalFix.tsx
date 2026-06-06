@@ -18,7 +18,8 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth } from '@/lib/supabase-db';
-import { loadExtraCostPeople, type ExtraCostPerson } from '@/lib/extra-cost-people-db';
+import { loadExtraCostPeople, extraCostPersonToEmployee, type ExtraCostPerson } from '@/lib/extra-cost-people-db';
+import type { ActualHourEntry } from '@/lib/supabase-db';
 import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract-history-store';
 import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
@@ -1380,6 +1381,8 @@ export default function PersonalFixPage() {
   const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
+  // Vollständige Supabase IST-Einträge (inkl. isAdditionalCost-Flag) für persistente Zusatzkosten-Berechnung
+  const [supabaseActualHours, setSupabaseActualHours] = useState<Record<string, ActualHourEntry>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [varHours, setVarHours] = useState<Record<string, number>>(() => loadVarHours(tenantKey));
@@ -1553,6 +1556,8 @@ export default function PersonalFixPage() {
     const monthDate = new Date(selectedYear, selectedMonth - 1, 1);
     loadActualHoursForMonth(monthDate).then(supabaseRaw => {
       if (!supabaseRaw) return; // Supabase error – keep local result
+      // Vollständige Einträge speichern (inkl. isAdditionalCost für Zusatzkosten-Berechnung)
+      setSupabaseActualHours(supabaseRaw);
       // Aggregate by empId (same logic as loadIstHoursFromStorage)
       const supabaseAgg: Record<string, number> = {};
       for (const [cellKey, entry] of Object.entries(supabaseRaw)) {
@@ -1690,11 +1695,20 @@ export default function PersonalFixPage() {
     [employees, selectedYear, selectedMonth],
   );
 
+  // Alle Employees inkl. ExtraCostPeople (Kawtar, Party etc.) für Flex-Berechnung
+  const allEmployeesForFix = useMemo(() => {
+    const converted = extraCostPeople.map(extraCostPersonToEmployee);
+    // Deduplizieren: falls ein ExtraCostPerson bereits als normaler Employee existiert, nicht doppelt hinzufügen
+    const existingIds = new Set(employees.map(e => e.id));
+    const newOnly = converted.filter(e => !existingIds.has(e.id));
+    return [...employees, ...newOnly];
+  }, [employees, extraCostPeople]);
+
   const variableEmployees = useMemo(() =>
-    employees
+    allEmployeesForFix
       .filter(e => !hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth))
       .sort((a, b) => a.name.localeCompare(b.name, 'de')),
-    [employees, selectedYear, selectedMonth],
+    [allEmployeesForFix, selectedYear, selectedMonth],
   );
 
   // Beaulieu: Mitarbeiter ohne hinterlegten Lohn (weder Stunden- noch Monatslohn)
@@ -1831,18 +1845,31 @@ export default function PersonalFixPage() {
   );
 
   // Zusatzkosten-IST: Fixlohn-MA Tage mit isAdditionalCost=true → fliessen als variable Flex-Kosten ein
+  // Liest direkt aus supabaseActualHours (persistent nach Reload, keine localStorage-Abhängigkeit)
   const zusatzIstCHF = useMemo(() => {
+    const yearMonthPrefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
     let total = 0;
     for (const emp of fixedEmployees) {
       const wage = getEffectiveHourlyRate(emp);
       if (!wage) continue;
-      const days = loadZusatzIstDetails(emp.id, selectedYear, selectedMonth, null, wage, tenantKey);
-      const cost = days.reduce((s, r) => s + r.cost, 0);
-      if (cost > 0) console.log(`[ZUSATZ-IST] ${emp.name}: ${days.length} Tage / ${cost.toFixed(2)} CHF`);
+      let cost = 0;
+      let dayCount = 0;
+      for (const [cellKey, entry] of Object.entries(supabaseActualHours)) {
+        const empIdFromKey = cellKey.slice(0, cellKey.length - 11);
+        const date = cellKey.slice(-10);
+        if (empIdFromKey !== emp.id) continue;
+        if (!date.startsWith(yearMonthPrefix)) continue;
+        if (!entry.isAdditionalCost) continue;
+        const h = entry.hours ?? 0;
+        if (h <= 0) continue;
+        cost += Math.round(h * wage * 100) / 100;
+        dayCount++;
+      }
+      if (cost > 0) console.log(`[ZUSATZ-IST] ${emp.name}: ${dayCount} Tage / ${cost.toFixed(2)} CHF`);
       total += cost;
     }
     return total;
-  }, [fixedEmployees, selectedYear, selectedMonth, tenantKey]);
+  }, [fixedEmployees, selectedYear, selectedMonth, supabaseActualHours]);
 
   // ── Ferienabbau-Berechnungen ───────────────────────────────────────────────
   // FE-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn
@@ -2008,12 +2035,22 @@ export default function PersonalFixPage() {
         cutoffPlanWork += planW.reduce((s, r) => s + r.cost, 0);
         cutoffIstWork  += istW.reduce((s, r)  => s + r.cost, 0);
       }
-      // Zusatzkosten von Fixlohn-MA bis Stichtag ebenfalls einrechnen
+      // Zusatzkosten von Fixlohn-MA bis Stichtag ebenfalls einrechnen (direkt aus Supabase-Daten)
+      const yearMonthPrefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
       for (const emp of fixedEmployees) {
         const wage = getEffectiveHourlyRate(emp);
         if (!wage) continue;
-        const zusatzW = loadZusatzIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
-        cutoffIstWork += zusatzW.reduce((s, r) => s + r.cost, 0);
+        for (const [cellKey, entry] of Object.entries(supabaseActualHours)) {
+          const empIdFromKey = cellKey.slice(0, cellKey.length - 11);
+          const date = cellKey.slice(-10);
+          if (empIdFromKey !== emp.id) continue;
+          if (!date.startsWith(yearMonthPrefix)) continue;
+          if (!entry.isAdditionalCost) continue;
+          const day = parseInt(date.slice(-2), 10);
+          if (proRataDay !== null && day > proRataDay) continue;
+          const h = entry.hours ?? 0;
+          if (h > 0) cutoffIstWork += Math.round(h * wage * 100) / 100;
+        }
       }
       // Holiday + FIX: proportional (calendar-uniform costs)
       const f = proRataFactor;
@@ -2045,7 +2082,8 @@ export default function PersonalFixPage() {
     return { month, cutoff, active };
   }, [variableEmployees, fixedEmployees, selectedYear, selectedMonth,
       varArbeitPlanMonat, varArbeitIstMonat, ferienPlanTotalCHF, ferienIstTotalCHF,
-      totalFixCost, proRataDay, proRataFactor, tenantKey, scheduleRefreshTick]);
+      totalFixCost, proRataDay, proRataFactor, tenantKey, scheduleRefreshTick,
+      supabaseActualHours]);
 
   // ── Monatsumsatz für PKQ-Berechnung ──────────────────────────────────────
   // Summiert Netto-Umsatz (actualRevenue – MWST 8.1%) für PKQ-Berechnung.
@@ -2242,7 +2280,22 @@ export default function PersonalFixPage() {
       const wage = getEffectiveHourlyRate(emp);
       if (!wage) continue;
       const cutoff = proRataDay;
-      const zusatzW    = loadZusatzIstDetails(emp.id, selectedYear, selectedMonth, cutoff, wage, tenantKey);
+      // Zusatzkosten IST: direkt aus Supabase-Daten (persistent, nicht localStorage)
+      const yearMonthPrefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+      const zusatzW: DayEntry[] = Object.entries(supabaseActualHours)
+        .flatMap(([cellKey, entry]) => {
+          const empIdFromKey = cellKey.slice(0, cellKey.length - 11);
+          const date = cellKey.slice(-10);
+          if (empIdFromKey !== emp.id) return [];
+          if (!date.startsWith(yearMonthPrefix)) return [];
+          if (!entry.isAdditionalCost) return [];
+          const day = parseInt(date.slice(-2), 10);
+          if (cutoff !== null && day > cutoff) return [];
+          const h = entry.hours ?? 0;
+          if (h <= 0) return [];
+          return [{ date, hours: Math.round(h * 100) / 100, cost: Math.round(h * wage * 100) / 100 }];
+        })
+        .sort((a, b) => a.date.localeCompare(b.date));
       const zusatzPlanW = loadZusatzPlanDetails(emp.id, selectedYear, selectedMonth, cutoff, wage, tenantKey);
       if (zusatzW.length === 0 && zusatzPlanW.length === 0) continue;
       const istH    = zusatzW.reduce((s, r) => s + r.hours, 0);
@@ -2296,7 +2349,8 @@ export default function PersonalFixPage() {
 
     return rows;
   }, [variableEmployees, fixedEmployees, selectedYear, selectedMonth, planHours, istHours,
-      getEmpFerienPlanCHF, getEmpFerienCHF, proRataDay, proRataFactor, pfix, tenantKey, scheduleRefreshTick]);
+      getEmpFerienPlanCHF, getEmpFerienCHF, proRataDay, proRataFactor, pfix, tenantKey,
+      scheduleRefreshTick, supabaseActualHours]);
 
   // ── Abweichungsanalyse: tägliche Aggregation aller Flex-Mitarbeiter ──────────
   const pfixAbw = useMemo((): {
@@ -3245,78 +3299,6 @@ export default function PersonalFixPage() {
           );
         })()}
 
-        {/* ── Externe Aushilfen (schedule_extra_cost_people) ───────────────── */}
-        {extraCostPeople.length > 0 && (() => {
-          const totalPlanH   = extraCostPeople.reduce((s, p) => s + (planHours[p.id] ?? 0), 0);
-          const totalIstH    = extraCostPeople.reduce((s, p) => s + (istHours[p.id]  ?? 0), 0);
-          const totalPlanCHF = extraCostPeople.reduce((s, p) => s + (planHours[p.id] ?? 0) * p.hourlyWage, 0);
-          const totalIstCHF  = extraCostPeople.reduce((s, p) => s + (istHours[p.id]  ?? 0) * p.hourlyWage, 0);
-          return (
-            <section className="rounded-xl border border-orange-200 bg-card shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-orange-50/40 dark:bg-orange-900/10">
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <span className="text-lg">🤝</span>
-                  Externe Aushilfen
-                  <Badge variant="secondary" className="text-xs">{extraCostPeople.length}</Badge>
-                </div>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
-                  <span className="whitespace-nowrap text-blue-600 font-mono">Plan: {fmtCHF(totalPlanCHF)}</span>
-                  <span className="whitespace-nowrap text-orange-600 font-mono">Ist: {fmtCHF(totalIstCHF)}</span>
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs min-w-[540px]">
-                  <thead>
-                    <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
-                      <th className="text-left px-3 py-2 font-medium">Name</th>
-                      <th className="text-center px-3 py-2 font-medium">Abt.</th>
-                      <th className="text-right px-3 py-2 font-medium">CHF/h</th>
-                      <th className="text-right px-3 py-2 font-medium text-blue-500">Plan Std</th>
-                      <th className="text-right px-3 py-2 font-medium text-orange-500">Ist Std</th>
-                      <th className="text-right px-3 py-2 font-medium text-blue-700">Flex Plan</th>
-                      <th className="text-right px-3 py-2 font-medium text-orange-700">Flex Ist</th>
-                      <th className="text-right px-3 py-2 font-medium">Diff.</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {extraCostPeople.map((person, i) => {
-                      const pH   = planHours[person.id] ?? 0;
-                      const iH   = istHours[person.id]  ?? 0;
-                      const pCHF = pH * person.hourlyWage;
-                      const iCHF = iH * person.hourlyWage;
-                      const diff = iCHF - pCHF;
-                      const dc   = (v: number) => v === 0 ? 'text-muted-foreground' : v > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
-                      return (
-                        <tr key={person.id} className={i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'}>
-                          <td className="px-3 py-1.5 font-medium">{person.name}</td>
-                          <td className="px-3 py-1.5 text-center text-muted-foreground">
-                            {person.department === 'kueche' ? 'Küche' : 'Service'}
-                          </td>
-                          <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{person.hourlyWage.toFixed(2)}</td>
-                          <td className="px-3 py-1.5 text-right font-mono text-blue-500">{pH > 0 ? `${pH.toFixed(1)} h` : '–'}</td>
-                          <td className="px-3 py-1.5 text-right font-mono text-orange-500">{iH > 0 ? `${iH.toFixed(1)} h` : '–'}</td>
-                          <td className="px-3 py-1.5 text-right font-mono text-blue-700">{pCHF > 0 ? fmtCHF(pCHF) : '–'}</td>
-                          <td className="px-3 py-1.5 text-right font-mono text-orange-700">{iCHF > 0 ? fmtCHF(iCHF) : '–'}</td>
-                          <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', dc(diff))}>{diff === 0 ? '–' : `${diff > 0 ? '+' : ''}${fmtCHF(diff)}`}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/30 font-bold text-xs">
-                      <td className="px-3 py-2" colSpan={3}>Total</td>
-                      <td className="px-3 py-2 text-right font-mono text-blue-500">{totalPlanH.toFixed(1)} h</td>
-                      <td className="px-3 py-2 text-right font-mono text-orange-500">{totalIstH.toFixed(1)} h</td>
-                      <td className="px-3 py-2 text-right font-mono text-blue-700">{fmtCHF(totalPlanCHF)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-orange-700">{fmtCHF(totalIstCHF)}</td>
-                      <td className="px-3 py-2" />
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </section>
-          );
-        })()}
 
         {/* ── Erklärung ────────────────────────────────────────────────────── */}
         <div className="flex items-start gap-2.5 rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20 p-3 text-xs text-blue-800 dark:text-blue-200">

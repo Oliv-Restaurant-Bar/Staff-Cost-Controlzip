@@ -24,6 +24,8 @@ export interface ActualHourEntry {
   start2?: string;
   end2?: string;
   absenceType?: string | null;
+  /** true = Zusatzkosten-Flag: Fixlohn-MA, diese Stunden zählen als variable Flexkosten */
+  isAdditionalCost?: boolean;
 }
 
 // ─── Hilfsfunktionen ────────────────────────────────────────────────────────
@@ -855,6 +857,7 @@ export async function loadActualHoursForMonth(month: Date): Promise<Record<strin
         hours: Number(row.hours ?? 0),
         start: row.start_time ?? undefined,
         end: row.end_time ?? undefined,
+        ...(row.is_additional_cost_ist ? { isAdditionalCost: true } : {}),
       };
     }
     return result;
@@ -886,12 +889,13 @@ export async function saveActualHourEntry(
       }
     } else {
       const { error } = await supabase.from('actual_hours').upsert({
-        employee_id:  employeeId,
-        date:         isoDate,
-        hours:        entry.hours,
-        start_time:   entry.start ?? null,
-        end_time:     entry.end   ?? null,
-        absence_type: entry.absenceType ?? null,
+        employee_id:            employeeId,
+        date:                   isoDate,
+        hours:                  entry.hours,
+        start_time:             entry.start ?? null,
+        end_time:               entry.end   ?? null,
+        absence_type:           entry.absenceType ?? null,
+        is_additional_cost_ist: entry.isAdditionalCost ?? false,
       }, { onConflict: 'employee_id,date' });
       if (error) {
         console.error('[supabase-db] saveActualHourEntry (upsert):', error);
