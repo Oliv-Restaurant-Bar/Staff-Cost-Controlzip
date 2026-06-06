@@ -20,10 +20,6 @@ import {
   insertSchedulePublicationSnapshot,
   type ScheduleChangeLogEntry,
 } from '@/lib/supabase-db';
-import {
-  loadExtraCostPeople, upsertExtraCostPerson, type ExtraCostPerson,
-  extraCostPersonToEmployee,
-} from '@/lib/extra-cost-people-db';
 import { supabase } from '@/integrations/supabase/client';
 import {
   saveMonthAbsences, loadMonthAbsences,
@@ -54,7 +50,6 @@ import { PlanVsIstGrid } from '@/components/schedule-planner/PlanVsIstGrid';
 import { PlanVsIstTable } from '@/components/schedule-planner/PlanVsIstTable';
 import { EmployeeHoursSummary } from '@/components/schedule-planner/EmployeeHoursSummary';
 import { ShiftLegend } from '@/components/schedule-planner/ShiftLegend';
-import { AddAushilfeDialog } from '@/components/schedule-planner/AddAushilfeDialog';
 import { CopyWeekDialog } from '@/components/schedule-planner/CopyWeekDialog';
 import { PrintScheduleDialog } from '@/components/schedule-planner/PrintScheduleDialog';
 import { DayDetailDialog } from '@/components/schedule-planner/DayDetailDialog';
@@ -231,7 +226,6 @@ const SchedulePlanner = () => {
     return defaultEmployees;
   });
   const [scheduleData, setScheduleData] = useState<{[key: string]: DaySchedule}>({});
-  const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
   const [activeDepartment, setActiveDepartment] = useState<ViewMode>('all');
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [empFilterOpen, setEmpFilterOpen] = useState(false);
@@ -274,9 +268,6 @@ const SchedulePlanner = () => {
   const [daysOffDialogOpen, setDaysOffDialogOpen] = useState(false);
   const [selectedEmployeeForDaysOff, setSelectedEmployeeForDaysOff] = useState<Employee | null>(null);
   const [employeeDetailEmp, setEmployeeDetailEmp] = useState<Employee | null>(null);
-  const [aushilfeDept, setAushilfeDept] = useState<'service' | 'küche' | null>(null);
-  const [aushilfeName, setAushilfeName] = useState('');
-  const [aushilfeWage, setAushilfeWage] = useState('20');
   const [apply8HoursDialogOpen, setApply8HoursDialogOpen] = useState(false);
   const [selectedEmployeeFor8Hours, setSelectedEmployeeFor8Hours] = useState<Employee | null>(null);
   const [employeeFormOpen, setEmployeeFormOpen] = useState(false);
@@ -564,18 +555,7 @@ const SchedulePlanner = () => {
             } catch { /* ignore */ }
           }
         }
-        // Externe Aushilfen laden und in Mitarbeiterliste mergen
-        const extraPeople = await loadExtraCostPeople(tenantId);
-        if (fetchGenRef.current !== gen) {
-          console.log('[ROUTE] gen=' + gen + ' superseded after extraCostPeople – aborting');
-          return;
-        }
-        setExtraCostPeople(extraPeople);
-        const mergedEmps = extraPeople.length > 0
-          ? [...supabaseEmployees, ...extraPeople.map(extraCostPersonToEmployee)]
-          : supabaseEmployees;
-        console.log(`[extra-cost-people] ${extraPeople.length} externe Aushilfen geladen, merged: ${mergedEmps.length} Mitarbeiter total`);
-        setEmployees(mergedEmps);
+        setEmployees(supabaseEmployees);
         // Cache: nur normale Mitarbeiter cachen (extra cost people direkt aus Supabase)
         try {
           localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(supabaseEmployees));
@@ -1742,32 +1722,6 @@ const SchedulePlanner = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actualHoursData, planCopiedKeys, doSavePlanToIst, scheduleData]);
 
-  const handleAddAushilfe = async (employee: Omit<Employee, 'id'>) => {
-    // Guard: keine Duplikate
-    const existing = employees.find(e => e.name.toLowerCase().trim() === employee.name.toLowerCase().trim());
-    if (existing) {
-      toast.warning(`"${employee.name}" existiert bereits — kein Duplikat erstellt`);
-      return;
-    }
-    const id = tenantId === 'beaulieu' ? `b-aush_${Date.now()}` : `aush_${Date.now()}`;
-    // Direkt in schedule_extra_cost_people persistieren (überlebt Reload)
-    const saved = await upsertExtraCostPerson({
-      id,
-      name: employee.name,
-      department: employee.department === 'küche' ? 'kueche' : 'service',
-      hourlyWage: employee.hourlyWage,
-      tenantId: tenantId,
-      isActive: true,
-    }, tenantId);
-    if (!saved) {
-      toast.error(`${employee.name} konnte nicht gespeichert werden — bitte erneut versuchen.`);
-      return;
-    }
-    const newEmployee: Employee = { ...employee, id };
-    setEmployees(prev => [...prev, newEmployee]);
-    setExtraCostPeople(prev => [...prev, saved]);
-    toast.success(`${employee.name} als externe Aushilfe erfasst und dauerhaft gespeichert`);
-  };
 
   const handleRemoveEmployee = (employeeId: string) => {
     const emp = employees.find(e => e.id === employeeId);
@@ -4412,28 +4366,6 @@ const SchedulePlanner = () => {
                     </>
                   )}
                 </CardTitle>
-                {activeDepartment === 'all' ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" className="gap-1">
-                        <UserPlus className="h-3.5 w-3.5" />
-                        Aushilfe
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => { setAushilfeDept('service'); setAushilfeName(''); setAushilfeWage('20'); }}>
-                        <span className="w-2 h-2 rounded-full bg-blue-500 mr-2 shrink-0 inline-block" />
-                        Service Aushilfe
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => { setAushilfeDept('küche'); setAushilfeName(''); setAushilfeWage('20'); }}>
-                        <span className="w-2 h-2 rounded-full bg-orange-500 mr-2 shrink-0 inline-block" />
-                        Küche Aushilfe
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : (
-                  <AddAushilfeDialog department={activeDepartment as 'service' | 'küche'} onAdd={handleAddAushilfe} />
-                )}
               </div>
               
               <div className="flex items-center gap-2">
@@ -6550,62 +6482,6 @@ const SchedulePlanner = () => {
         );
       })()}
 
-      {/* ── Aushilfe Dialog (Alle-Abteilungen-Modus) ─────────────────── */}
-      <Dialog open={aushilfeDept !== null} onOpenChange={open => { if (!open) setAushilfeDept(null); }}>
-        <DialogContent className="sm:max-w-[340px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              {aushilfeDept && (
-                <span className={cn(
-                  "w-2.5 h-2.5 rounded-full shrink-0",
-                  aushilfeDept === 'service' ? "bg-blue-500" : "bg-orange-500"
-                )} />
-              )}
-              Aushilfe hinzufügen ({aushilfeDept === 'service' ? 'Service' : 'Küche'})
-            </DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="aushilfe-name-all">Name</Label>
-              <Input
-                id="aushilfe-name-all"
-                value={aushilfeName}
-                onChange={e => setAushilfeName(e.target.value)}
-                placeholder="Name eingeben"
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && aushilfeName.trim() && aushilfeDept) {
-                    handleAddAushilfe({ name: aushilfeName.trim(), department: aushilfeDept, employmentType: 'aushilfe', hourlyWage: parseFloat(aushilfeWage) || 20 });
-                    setAushilfeDept(null);
-                  }
-                }}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="aushilfe-wage-all">Stundenlohn (CHF)</Label>
-              <Input
-                id="aushilfe-wage-all"
-                type="number"
-                value={aushilfeWage}
-                onChange={e => setAushilfeWage(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAushilfeDept(null)}>Abbrechen</Button>
-            <Button
-              disabled={!aushilfeName.trim()}
-              onClick={() => {
-                if (aushilfeName.trim() && aushilfeDept) {
-                  handleAddAushilfe({ name: aushilfeName.trim(), department: aushilfeDept, employmentType: 'aushilfe', hourlyWage: parseFloat(aushilfeWage) || 20 });
-                  setAushilfeDept(null);
-                }
-              }}
-            >
-              Hinzufügen
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

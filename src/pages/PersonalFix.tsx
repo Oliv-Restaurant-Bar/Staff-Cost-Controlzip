@@ -18,7 +18,6 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth } from '@/lib/supabase-db';
-import { loadExtraCostPeople, extraCostPersonToEmployee, type ExtraCostPerson } from '@/lib/extra-cost-people-db';
 import type { ActualHourEntry } from '@/lib/supabase-db';
 import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract-history-store';
 import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
@@ -1380,7 +1379,6 @@ export default function PersonalFixPage() {
   const [selectedYear, setSelectedYear] = useState(today.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
   // Vollständige Supabase IST-Einträge (inkl. isAdditionalCost-Flag) für persistente Zusatzkosten-Berechnung
   const [supabaseActualHours, setSupabaseActualHours] = useState<Record<string, ActualHourEntry>>({});
   const [loading, setLoading] = useState(true);
@@ -1469,11 +1467,6 @@ export default function PersonalFixPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
-  // Externe Aushilfen laden (persistent aus schedule_extra_cost_people)
-  useEffect(() => {
-    loadExtraCostPeople(tenantId).then(setExtraCostPeople);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId]);
 
   // Tagesumsätze bei Monatswechsel neu laden
   useEffect(() => {
@@ -1695,20 +1688,11 @@ export default function PersonalFixPage() {
     [employees, selectedYear, selectedMonth],
   );
 
-  // Alle Employees inkl. ExtraCostPeople (Kawtar, Party etc.) für Flex-Berechnung
-  const allEmployeesForFix = useMemo(() => {
-    const converted = extraCostPeople.map(extraCostPersonToEmployee);
-    // Deduplizieren: falls ein ExtraCostPerson bereits als normaler Employee existiert, nicht doppelt hinzufügen
-    const existingIds = new Set(employees.map(e => e.id));
-    const newOnly = converted.filter(e => !existingIds.has(e.id));
-    return [...employees, ...newOnly];
-  }, [employees, extraCostPeople]);
-
   const variableEmployees = useMemo(() =>
-    allEmployeesForFix
+    employees
       .filter(e => !hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth))
       .sort((a, b) => a.name.localeCompare(b.name, 'de')),
-    [allEmployeesForFix, selectedYear, selectedMonth],
+    [employees, selectedYear, selectedMonth],
   );
 
   // Beaulieu: Mitarbeiter ohne hinterlegten Lohn (weder Stunden- noch Monatslohn)
