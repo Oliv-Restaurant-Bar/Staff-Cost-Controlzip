@@ -1,29 +1,23 @@
 -- ─── Migration: Kawtar + Party → normale Flex-Mitarbeiter ──────────────────
 -- Datum: 2026-06-06
--- Tenant: Oliv
+-- Tenant: Oliv (kein b-Präfix → Beaulieu unberührt)
 --
 -- Zweck:
---   Kawtar (Service, CHF 20/h) und Party (Küche, CHF 25/h) werden aus
---   schedule_extra_cost_people in die normale employees-Tabelle überführt.
---   Neue saubere IDs: 'kawtar' und 'party'.
---   Bestehende schedule_entries und actual_hours werden auf die neuen IDs
---   umgeschrieben — kein Datenverlust.
---   Alte aush_*-Einträge in schedule_extra_cost_people werden archiviert
---   (is_active=false, archived_at=now()).
+--   Kawtar existiert bereits als normaler employees-Eintrag (id = 107).
+--   Party wird als neuer employees-Eintrag angelegt (id = 'party').
+--   Bestehende schedule_entries und actual_hours werden auf die Ziel-IDs
+--   umgeschrieben. Alte aush_*-Einträge werden archiviert.
 --
 -- SUPABASE AKTION ERFORDERLICH: JA
 -- Dieses Skript im Supabase SQL-Editor ausführen.
--- Idempotent: ON CONFLICT DO UPDATE + INSERT IF NOT EXISTS Logik.
+-- Idempotent: ON CONFLICT DO NOTHING + UPDATE WHERE aktiv.
 --
--- Reihenfolge:
---   0. is_active/archived_at Spalten sicherstellen (idempotent)
---   1. Kawtar → employees 'kawtar'
---   2. Party  → employees 'party'
---   3. schedule_entries migrieren
---   4. actual_hours migrieren
---   5. schedule_extra_cost_people archivieren
---   6. Alte aush_*-employees-Einträge archivieren
---   7. Validierung + Bericht
+-- Bekannte Quell-IDs (aus schedule_extra_cost_people):
+--   Kawtar → aush_1780347607805  (Ziel: employees id = '107')
+--   Party  → aush_1778236182278  (Ziel: employees id = 'party')
+--
+-- Beaulieu-Sicherheit:
+--   Alle WHERE-Klauseln schliessen b-Präfix-IDs und beaulieu-tenant_id aus.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 BEGIN;
@@ -33,129 +27,140 @@ ALTER TABLE public.employees
   ADD COLUMN IF NOT EXISTS is_active   BOOLEAN     NOT NULL DEFAULT true,
   ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ          DEFAULT NULL;
 
--- ── Schritt 1: Kawtar → employees mit ID 'kawtar' ────────────────────────────
-INSERT INTO public.employees (id, name, department, employment_type, hourly_wage, is_active)
-SELECT
-  'kawtar'    AS id,
-  name,
-  'service'   AS department,  -- Service-Abteilung
-  'aushilfe'  AS employment_type,
-  20.00       AS hourly_wage,
-  true        AS is_active
-FROM public.schedule_extra_cost_people
-WHERE name ILIKE '%kawtar%'
-  AND tenant_id = 'oliv'
-LIMIT 1
-ON CONFLICT (id) DO UPDATE SET
-  name            = EXCLUDED.name,
-  department      = 'service',
-  employment_type = 'aushilfe',
-  hourly_wage     = 20.00,
-  is_active       = true,
-  updated_at      = now();
+-- ── Schritt 1: Kawtar — bestehenden employees-Eintrag (id=107) sicherstellen ─
+-- Kawtar hat bereits eine normale ID 107. Nur sicherstellen dass sie aktiv ist.
+UPDATE public.employees
+SET
+  is_active   = true,
+  archived_at = NULL,
+  hourly_wage = CASE WHEN COALESCE(hourly_wage, 0) = 0 THEN 20.00 ELSE hourly_wage END
+WHERE id = '107'
+  AND name ILIKE '%kawtar%';
 
--- Fallback: Falls kein Eintrag in schedule_extra_cost_people gefunden, direkt eintragen
+-- ── Schritt 2: Party — neuen employees-Eintrag anlegen falls noch nicht aktiv ─
 INSERT INTO public.employees (id, name, department, employment_type, hourly_wage, is_active)
-VALUES ('kawtar', 'Kawtar', 'service', 'aushilfe', 20.00, true)
-ON CONFLICT (id) DO NOTHING;
-
--- ── Schritt 2: Party → employees mit ID 'party' ──────────────────────────────
-INSERT INTO public.employees (id, name, department, employment_type, hourly_wage, is_active)
-SELECT
-  'party'     AS id,
-  name,
-  'kueche'    AS department,  -- Küche-Abteilung
-  'aushilfe'  AS employment_type,
-  25.00       AS hourly_wage,
-  true        AS is_active
-FROM public.schedule_extra_cost_people
-WHERE name ILIKE '%party%'
-  AND tenant_id = 'oliv'
-LIMIT 1
+VALUES ('party', 'Party', 'kueche', 'aushilfe', 25.00, true)
 ON CONFLICT (id) DO UPDATE SET
-  name            = EXCLUDED.name,
+  name            = 'Party',
   department      = 'kueche',
   employment_type = 'aushilfe',
   hourly_wage     = 25.00,
   is_active       = true,
-  updated_at      = now();
-
--- Fallback
-INSERT INTO public.employees (id, name, department, employment_type, hourly_wage, is_active)
-VALUES ('party', 'Party', 'kueche', 'aushilfe', 25.00, true)
-ON CONFLICT (id) DO NOTHING;
+  archived_at     = NULL;
 
 -- ── Schritt 3: schedule_entries migrieren ─────────────────────────────────────
--- Kawtar: aush_*-ID → 'kawtar'
+
+-- Kawtar: bekannte aush_-ID → 107
 UPDATE public.schedule_entries
-SET employee_id = 'kawtar'
+SET employee_id = '107'
+WHERE employee_id = 'aush_1780347607805';
+
+-- Kawtar: alle weiteren aush_*-Einträge via schedule_extra_cost_people (Oliv)
+UPDATE public.schedule_entries
+SET employee_id = '107'
 WHERE employee_id IN (
   SELECT id FROM public.schedule_extra_cost_people
-  WHERE name ILIKE '%kawtar%' AND tenant_id = 'oliv'
-);
+  WHERE name ILIKE '%kawtar%'
+    AND tenant_id = 'oliv'
+    AND id NOT LIKE 'b-%'
+)
+AND employee_id != '107';
 
--- Party: aush_*-ID → 'party'
+-- Kawtar: aush_*-Einträge in employees-Tabelle (Oliv, kein b-Präfix)
+UPDATE public.schedule_entries
+SET employee_id = '107'
+WHERE employee_id IN (
+  SELECT id FROM public.employees
+  WHERE name ILIKE '%kawtar%'
+    AND id LIKE 'aush_%'
+    AND id NOT LIKE 'b-%'
+)
+AND employee_id != '107';
+
+-- Party: bekannte aush_-ID → 'party'
+UPDATE public.schedule_entries
+SET employee_id = 'party'
+WHERE employee_id = 'aush_1778236182278';
+
+-- Party: alle weiteren aush_*-Einträge via schedule_extra_cost_people (Oliv)
 UPDATE public.schedule_entries
 SET employee_id = 'party'
 WHERE employee_id IN (
   SELECT id FROM public.schedule_extra_cost_people
-  WHERE name ILIKE '%party%' AND tenant_id = 'oliv'
-);
+  WHERE name ILIKE '%party%'
+    AND tenant_id = 'oliv'
+    AND id NOT LIKE 'b-%'
+)
+AND employee_id != 'party';
 
--- Alte aush_*-Einträge aus employees (falls vorhanden)
-UPDATE public.schedule_entries
-SET employee_id = 'kawtar'
-WHERE employee_id IN (
-  SELECT id FROM public.employees
-  WHERE (id LIKE 'aush_%' OR id LIKE 'b-aush_%')
-    AND name ILIKE '%kawtar%'
-    AND employee_id != 'kawtar'
-);
-
+-- Party: aush_*-Einträge in employees-Tabelle (Oliv, kein b-Präfix)
 UPDATE public.schedule_entries
 SET employee_id = 'party'
 WHERE employee_id IN (
   SELECT id FROM public.employees
-  WHERE (id LIKE 'aush_%' OR id LIKE 'b-aush_%')
-    AND name ILIKE '%party%'
-    AND employee_id != 'party'
-);
+  WHERE name ILIKE '%party%'
+    AND id LIKE 'aush_%'
+    AND id NOT LIKE 'b-%'
+)
+AND employee_id != 'party';
 
 -- ── Schritt 4: actual_hours migrieren ────────────────────────────────────────
--- Kawtar
+
+-- Kawtar: bekannte aush_-ID → 107
 UPDATE public.actual_hours
-SET employee_id = 'kawtar'
+SET employee_id = '107'
+WHERE employee_id = 'aush_1780347607805';
+
+-- Kawtar: alle weiteren via schedule_extra_cost_people
+UPDATE public.actual_hours
+SET employee_id = '107'
 WHERE employee_id IN (
   SELECT id FROM public.schedule_extra_cost_people
-  WHERE name ILIKE '%kawtar%' AND tenant_id = 'oliv'
-);
+  WHERE name ILIKE '%kawtar%'
+    AND tenant_id = 'oliv'
+    AND id NOT LIKE 'b-%'
+)
+AND employee_id != '107';
 
--- Party
+-- Kawtar: aus employees-Tabelle
+UPDATE public.actual_hours
+SET employee_id = '107'
+WHERE employee_id IN (
+  SELECT id FROM public.employees
+  WHERE name ILIKE '%kawtar%'
+    AND id LIKE 'aush_%'
+    AND id NOT LIKE 'b-%'
+)
+AND employee_id != '107';
+
+-- Party: bekannte aush_-ID → 'party'
+UPDATE public.actual_hours
+SET employee_id = 'party'
+WHERE employee_id = 'aush_1778236182278';
+
+-- Party: alle weiteren via schedule_extra_cost_people
 UPDATE public.actual_hours
 SET employee_id = 'party'
 WHERE employee_id IN (
   SELECT id FROM public.schedule_extra_cost_people
-  WHERE name ILIKE '%party%' AND tenant_id = 'oliv'
-);
+  WHERE name ILIKE '%party%'
+    AND tenant_id = 'oliv'
+    AND id NOT LIKE 'b-%'
+)
+AND employee_id != 'party';
 
--- Aus alten aush_*-employees-Einträgen
-UPDATE public.actual_hours
-SET employee_id = 'kawtar'
-WHERE employee_id IN (
-  SELECT id FROM public.employees
-  WHERE (id LIKE 'aush_%' OR id LIKE 'b-aush_%')
-    AND name ILIKE '%kawtar%'
-);
-
+-- Party: aus employees-Tabelle
 UPDATE public.actual_hours
 SET employee_id = 'party'
 WHERE employee_id IN (
   SELECT id FROM public.employees
-  WHERE (id LIKE 'aush_%' OR id LIKE 'b-aush_%')
-    AND name ILIKE '%party%'
-);
+  WHERE name ILIKE '%party%'
+    AND id LIKE 'aush_%'
+    AND id NOT LIKE 'b-%'
+)
+AND employee_id != 'party';
 
--- ── Schritt 5: schedule_extra_cost_people archivieren ────────────────────────
+-- ── Schritt 5: schedule_extra_cost_people archivieren (Oliv) ─────────────────
 UPDATE public.schedule_extra_cost_people
 SET
   is_active   = false,
@@ -163,59 +168,109 @@ SET
 WHERE (name ILIKE '%kawtar%' OR name ILIKE '%party%')
   AND tenant_id = 'oliv';
 
--- ── Schritt 6: Alte aush_*-Einträge in employees archivieren (NUR OLIV) ───────
--- SICHERHEIT: Nur Oliv-IDs (kein 'b-' Präfix) → Beaulieu-Mitarbeiter unberührt.
--- Kawtar und Party sind ausschliesslich Oliv-Mitarbeiter.
+-- ── Schritt 6: Alte aush_*-Einträge in employees archivieren (NUR OLIV) ──────
+-- Sicherheit: id LIKE 'aush_%' schliesst b-aush_* NICHT aus — daher extra NOT LIKE Guard
 UPDATE public.employees
 SET
   is_active   = false,
   archived_at = COALESCE(archived_at, now())
 WHERE id LIKE 'aush_%'
-  AND NOT (id LIKE 'b-%')
+  AND id NOT LIKE 'b-%'
   AND (name ILIKE '%kawtar%' OR name ILIKE '%party%');
 
 -- ── Schritt 7: Validierung + Migrationsbericht ───────────────────────────────
 DO $$
 DECLARE
-  kawtar_in_emp     BOOLEAN;
-  party_in_emp      BOOLEAN;
-  kawtar_dept       TEXT;
-  party_dept        TEXT;
-  kawtar_wage       NUMERIC;
-  party_wage        NUMERIC;
-  kawtar_sch        INT;
-  party_sch         INT;
-  kawtar_act        INT;
-  party_act         INT;
-  kawtar_archived   INT;
-  party_archived    INT;
-  old_kawtar_ids    TEXT;
-  old_party_ids     TEXT;
+  -- Kawtar
+  kawtar_id_found     TEXT;
+  kawtar_dept         TEXT;
+  kawtar_wage         NUMERIC;
+  kawtar_sch_count    INT;
+  kawtar_act_count    INT;
+  kawtar_extra_arch   INT;
+
+  -- Party
+  party_id_found      TEXT;
+  party_dept          TEXT;
+  party_wage          NUMERIC;
+  party_sch_count     INT;
+  party_act_count     INT;
+  party_extra_arch    INT;
+
+  -- Verbleibende alte aush_* Einträge
+  old_sch_kawtar      INT;
+  old_sch_party       INT;
+  old_act_kawtar      INT;
+  old_act_party       INT;
 BEGIN
-  SELECT (COUNT(*) > 0), department, hourly_wage
-    INTO kawtar_in_emp, kawtar_dept, kawtar_wage
-    FROM public.employees WHERE id = 'kawtar' AND is_active = true;
+  -- Kawtar: via LIMIT 1 (kein GROUP BY nötig)
+  SELECT id, department, hourly_wage
+    INTO kawtar_id_found, kawtar_dept, kawtar_wage
+    FROM public.employees
+   WHERE name ILIKE '%kawtar%'
+     AND is_active = true
+   ORDER BY id
+   LIMIT 1;
 
-  SELECT (COUNT(*) > 0), department, hourly_wage
-    INTO party_in_emp, party_dept, party_wage
-    FROM public.employees WHERE id = 'party'  AND is_active = true;
+  -- Party: via LIMIT 1
+  SELECT id, department, hourly_wage
+    INTO party_id_found, party_dept, party_wage
+    FROM public.employees
+   WHERE id = 'party'
+     AND is_active = true
+   LIMIT 1;
 
-  SELECT COUNT(*) INTO kawtar_sch FROM public.schedule_entries WHERE employee_id = 'kawtar';
-  SELECT COUNT(*) INTO party_sch  FROM public.schedule_entries WHERE employee_id = 'party';
-  SELECT COUNT(*) INTO kawtar_act FROM public.actual_hours    WHERE employee_id = 'kawtar';
-  SELECT COUNT(*) INTO party_act  FROM public.actual_hours    WHERE employee_id = 'party';
+  -- Zählungen nach Migration
+  SELECT COUNT(*) INTO kawtar_sch_count FROM public.schedule_entries WHERE employee_id = kawtar_id_found;
+  SELECT COUNT(*) INTO party_sch_count  FROM public.schedule_entries WHERE employee_id = 'party';
+  SELECT COUNT(*) INTO kawtar_act_count FROM public.actual_hours    WHERE employee_id = kawtar_id_found;
+  SELECT COUNT(*) INTO party_act_count  FROM public.actual_hours    WHERE employee_id = 'party';
 
-  SELECT COUNT(*) INTO kawtar_archived
+  SELECT COUNT(*) INTO kawtar_extra_arch
     FROM public.schedule_extra_cost_people
-    WHERE name ILIKE '%kawtar%' AND is_active = false;
-  SELECT COUNT(*) INTO party_archived
-    FROM public.schedule_extra_cost_people
-    WHERE name ILIKE '%party%' AND is_active = false;
+   WHERE name ILIKE '%kawtar%' AND is_active = false;
 
-  SELECT STRING_AGG(id, ', ') INTO old_kawtar_ids
-    FROM public.employees WHERE name ILIKE '%kawtar%' AND is_active = false;
-  SELECT STRING_AGG(id, ', ') INTO old_party_ids
-    FROM public.employees WHERE name ILIKE '%party%' AND is_active = false;
+  SELECT COUNT(*) INTO party_extra_arch
+    FROM public.schedule_extra_cost_people
+   WHERE name ILIKE '%party%' AND is_active = false;
+
+  -- Verbleibende alte aush_*-IDs in schedule_entries (sollten 0 sein)
+  SELECT COUNT(*) INTO old_sch_kawtar
+    FROM public.schedule_entries
+   WHERE employee_id LIKE 'aush_%'
+     AND employee_id NOT LIKE 'b-%'
+     AND employee_id IN (
+       SELECT id FROM public.employees WHERE name ILIKE '%kawtar%'
+       UNION SELECT id FROM public.schedule_extra_cost_people WHERE name ILIKE '%kawtar%'
+     );
+
+  SELECT COUNT(*) INTO old_sch_party
+    FROM public.schedule_entries
+   WHERE employee_id LIKE 'aush_%'
+     AND employee_id NOT LIKE 'b-%'
+     AND employee_id IN (
+       SELECT id FROM public.employees WHERE name ILIKE '%party%'
+       UNION SELECT id FROM public.schedule_extra_cost_people WHERE name ILIKE '%party%'
+     );
+
+  -- Verbleibende alte aush_*-IDs in actual_hours (sollten 0 sein)
+  SELECT COUNT(*) INTO old_act_kawtar
+    FROM public.actual_hours
+   WHERE employee_id LIKE 'aush_%'
+     AND employee_id NOT LIKE 'b-%'
+     AND employee_id IN (
+       SELECT id FROM public.employees WHERE name ILIKE '%kawtar%'
+       UNION SELECT id FROM public.schedule_extra_cost_people WHERE name ILIKE '%kawtar%'
+     );
+
+  SELECT COUNT(*) INTO old_act_party
+    FROM public.actual_hours
+   WHERE employee_id LIKE 'aush_%'
+     AND employee_id NOT LIKE 'b-%'
+     AND employee_id IN (
+       SELECT id FROM public.employees WHERE name ILIKE '%party%'
+       UNION SELECT id FROM public.schedule_extra_cost_people WHERE name ILIKE '%party%'
+     );
 
   RAISE NOTICE '';
   RAISE NOTICE '═══════════════════════════════════════════════════════';
@@ -223,32 +278,44 @@ BEGIN
   RAISE NOTICE '═══════════════════════════════════════════════════════';
   RAISE NOTICE '';
   RAISE NOTICE '  Kawtar:';
-  RAISE NOTICE '    Neue ID:               kawtar';
-  RAISE NOTICE '    In employees (aktiv):  %', kawtar_in_emp;
-  RAISE NOTICE '    Abteilung:             % (soll: service)', kawtar_dept;
-  RAISE NOTICE '    Stundenlohn:           % CHF (soll: 20.00)', kawtar_wage;
-  RAISE NOTICE '    schedule_entries:      % Einträge migriert', kawtar_sch;
-  RAISE NOTICE '    actual_hours:          % Einträge migriert', kawtar_act;
-  RAISE NOTICE '    Archiviert in extra:   %', kawtar_archived;
-  RAISE NOTICE '    Alte aush_*-IDs:       %', COALESCE(old_kawtar_ids, 'keine');
+  RAISE NOTICE '    Ziel-ID (aktiv):       %  (soll: 107)', COALESCE(kawtar_id_found, 'NICHT GEFUNDEN!');
+  RAISE NOTICE '    Abteilung:             %  (soll: service)', COALESCE(kawtar_dept, '-');
+  RAISE NOTICE '    Stundenlohn:           % CHF', COALESCE(kawtar_wage::TEXT, '-');
+  RAISE NOTICE '    schedule_entries:      % auf Ziel-ID migriert', kawtar_sch_count;
+  RAISE NOTICE '    actual_hours:          % auf Ziel-ID migriert', kawtar_act_count;
+  RAISE NOTICE '    extra_cost archiviert: %', kawtar_extra_arch;
+  RAISE NOTICE '    alte aush_* in sched.: % (soll: 0)', old_sch_kawtar;
+  RAISE NOTICE '    alte aush_* in actual: % (soll: 0)', old_act_kawtar;
   RAISE NOTICE '';
   RAISE NOTICE '  Party:';
-  RAISE NOTICE '    Neue ID:               party';
-  RAISE NOTICE '    In employees (aktiv):  %', party_in_emp;
-  RAISE NOTICE '    Abteilung:             % (soll: kueche)', party_dept;
-  RAISE NOTICE '    Stundenlohn:           % CHF (soll: 25.00)', party_wage;
-  RAISE NOTICE '    schedule_entries:      % Einträge migriert', party_sch;
-  RAISE NOTICE '    actual_hours:          % Einträge migriert', party_act;
-  RAISE NOTICE '    Archiviert in extra:   %', party_archived;
-  RAISE NOTICE '    Alte aush_*-IDs:       %', COALESCE(old_party_ids, 'keine');
+  RAISE NOTICE '    Ziel-ID (aktiv):       %  (soll: party)', COALESCE(party_id_found, 'NICHT GEFUNDEN!');
+  RAISE NOTICE '    Abteilung:             %  (soll: kueche)', COALESCE(party_dept, '-');
+  RAISE NOTICE '    Stundenlohn:           % CHF  (soll: 25.00)', COALESCE(party_wage::TEXT, '-');
+  RAISE NOTICE '    schedule_entries:      % auf Ziel-ID migriert', party_sch_count;
+  RAISE NOTICE '    actual_hours:          % auf Ziel-ID migriert', party_act_count;
+  RAISE NOTICE '    extra_cost archiviert: %', party_extra_arch;
+  RAISE NOTICE '    alte aush_* in sched.: % (soll: 0)', old_sch_party;
+  RAISE NOTICE '    alte aush_* in actual: % (soll: 0)', old_act_party;
   RAISE NOTICE '';
   RAISE NOTICE '═══════════════════════════════════════════════════════';
 
-  IF NOT kawtar_in_emp THEN
-    RAISE WARNING 'FEHLER: Kawtar nicht in employees oder is_active=false!';
+  IF kawtar_id_found IS NULL THEN
+    RAISE WARNING 'FEHLER: Kein aktiver Kawtar-Eintrag in employees gefunden!';
   END IF;
-  IF NOT party_in_emp THEN
-    RAISE WARNING 'FEHLER: Party nicht in employees oder is_active=false!';
+  IF party_id_found IS NULL THEN
+    RAISE WARNING 'FEHLER: Party nicht in employees angelegt!';
+  END IF;
+  IF old_sch_kawtar > 0 THEN
+    RAISE WARNING 'WARNUNG: % alte aush_*-Einträge für Kawtar noch in schedule_entries!', old_sch_kawtar;
+  END IF;
+  IF old_sch_party > 0 THEN
+    RAISE WARNING 'WARNUNG: % alte aush_*-Einträge für Party noch in schedule_entries!', old_sch_party;
+  END IF;
+  IF old_act_kawtar > 0 THEN
+    RAISE WARNING 'WARNUNG: % alte aush_*-Einträge für Kawtar noch in actual_hours!', old_act_kawtar;
+  END IF;
+  IF old_act_party > 0 THEN
+    RAISE WARNING 'WARNUNG: % alte aush_*-Einträge für Party noch in actual_hours!', old_act_party;
   END IF;
 END $$;
 
