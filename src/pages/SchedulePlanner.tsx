@@ -587,7 +587,7 @@ const SchedulePlanner = () => {
 
       // ── PLAN-Daten (schedule_entries) ────────────────────────────────────────
       console.log('[PLAN] fetch start', { gen, monthKey });
-      const supabaseSchedule = await loadScheduleForMonth(currentMonth);
+      const supabaseSchedule = await loadScheduleForMonth(currentMonth, tenantId);
       const planKeys = supabaseSchedule !== null ? Object.keys(supabaseSchedule).length : 'error';
       console.log('[PLAN] fetch result', { gen, planKeys, isStale: fetchGenRef.current !== gen });
 
@@ -691,7 +691,7 @@ const SchedulePlanner = () => {
       // ── IST-Daten (actual_hours) ─────────────────────────────────────────────
       console.log('[IST] fetch start', { gen, monthKey });
       const [supabaseActual, kvAbsences, kvCellColors] = await Promise.all([
-        loadActualHoursForMonth(currentMonth),
+        loadActualHoursForMonth(currentMonth, tenantId),
         loadMonthAbsences(monthKey, tenantId),
         loadCellColors(monthKey, tenantId),
       ]);

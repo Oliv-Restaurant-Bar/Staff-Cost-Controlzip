@@ -1507,7 +1507,7 @@ export default function PersonalFixPage() {
     // This ensures plan data is always current even if the user never opened Dienstplanung
     // on this device (Supabase is the canonical write path for the schedule planner).
     const scheduleMonthDate = new Date(selectedYear, selectedMonth - 1, 1);
-    loadScheduleForMonth(scheduleMonthDate).then(supabaseSchedule => {
+    loadScheduleForMonth(scheduleMonthDate, tenantId).then(supabaseSchedule => {
       if (!supabaseSchedule) return; // Supabase error – keep local result
       const totalEntries = Object.keys(supabaseSchedule).length;
       console.log(`[PLAN] personal-fix schedule loaded from Supabase: ${totalEntries} Einträge für ${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
@@ -1554,7 +1554,7 @@ export default function PersonalFixPage() {
 
     // Then enrich with Supabase (async)
     const monthDate = new Date(selectedYear, selectedMonth - 1, 1);
-    loadActualHoursForMonth(monthDate).then(supabaseRaw => {
+    loadActualHoursForMonth(monthDate, tenantId).then(supabaseRaw => {
       if (!supabaseRaw) return; // Supabase error – keep local result
       // Vollständige Einträge speichern (inkl. isAdditionalCost für Zusatzkosten-Berechnung)
       setSupabaseActualHours(supabaseRaw);

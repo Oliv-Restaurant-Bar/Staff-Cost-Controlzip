@@ -163,13 +163,15 @@ SET
 WHERE (name ILIKE '%kawtar%' OR name ILIKE '%party%')
   AND tenant_id = 'oliv';
 
--- ── Schritt 6: Alte aush_*-Einträge in employees archivieren ─────────────────
--- (sollten bereits is_active=false haben, aber zur Sicherheit nochmals setzen)
+-- ── Schritt 6: Alte aush_*-Einträge in employees archivieren (NUR OLIV) ───────
+-- SICHERHEIT: Nur Oliv-IDs (kein 'b-' Präfix) → Beaulieu-Mitarbeiter unberührt.
+-- Kawtar und Party sind ausschliesslich Oliv-Mitarbeiter.
 UPDATE public.employees
 SET
   is_active   = false,
   archived_at = COALESCE(archived_at, now())
-WHERE (id LIKE 'aush_%' OR id LIKE 'b-aush_%')
+WHERE id LIKE 'aush_%'
+  AND NOT (id LIKE 'b-%')
   AND (name ILIKE '%kawtar%' OR name ILIKE '%party%');
 
 -- ── Schritt 7: Validierung + Migrationsbericht ───────────────────────────────

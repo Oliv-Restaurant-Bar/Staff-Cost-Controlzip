@@ -697,23 +697,36 @@ export async function runBeaulieuHarteTest(beaulieuEmployees: Employee[]): Promi
 
 // ─── Dienstplan (schedule_entries) ───────────────────────────────────────────
 
-export async function loadScheduleForMonth(month: Date): Promise<Record<string, DaySchedule> | null> {
+export async function loadScheduleForMonth(month: Date, tenantId?: TenantId): Promise<Record<string, DaySchedule> | null> {
   try {
     const startStr = format(startOfMonth(month), 'yyyy-MM-dd');
     const endStr = format(endOfMonth(month), 'yyyy-MM-dd');
 
-    const { data, error } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query: any = supabase
       .from('schedule_entries')
       .select('*')
       .gte('date', startStr)
       .lte('date', endStr);
 
+    // Tenant-Filter auf SQL-Ebene: verhindert cross-tenant Datenleckage
+    // Beaulieu: employee_id LIKE 'b-%'  |  Oliv: employee_id NOT LIKE 'b-%'
+    if (tenantId === 'beaulieu') {
+      query = query.like('employee_id', 'b-%');
+    } else if (tenantId === 'oliv') {
+      query = query.not('employee_id', 'like', 'b-%');
+    }
+
+    const { data, error } = await query;
+
     if (error) { console.error('[supabase-db] loadScheduleForMonth:', error); return null; }
 
     const result: Record<string, DaySchedule> = {};
-    const beaulieuEntries = (data ?? []).filter(r => String(r.employee_id).startsWith('b-'));
-    const olivEntries     = (data ?? []).filter(r => !String(r.employee_id).startsWith('b-'));
-    console.log(`[CHECK] schedule load: total=${(data ?? []).length} (beaulieu-entries=${beaulieuEntries.length}, oliv-entries=${olivEntries.length})`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const beaulieuEntries = (data ?? []).filter((r: any) => String(r.employee_id).startsWith('b-'));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const olivEntries     = (data ?? []).filter((r: any) => !String(r.employee_id).startsWith('b-'));
+    console.log(`[CHECK] schedule load (tenant=${tenantId ?? 'all'}): total=${(data ?? []).length} (beaulieu=${beaulieuEntries.length}, oliv=${olivEntries.length})`);
 
     for (const row of data ?? []) {
       const key = `${row.employee_id}-${row.date}`;
@@ -844,16 +857,27 @@ export async function saveFullScheduleForMonth(
 
 // ─── Ist-Stunden (actual_hours) ───────────────────────────────────────────────
 
-export async function loadActualHoursForMonth(month: Date): Promise<Record<string, ActualHourEntry> | null> {
+export async function loadActualHoursForMonth(month: Date, tenantId?: TenantId): Promise<Record<string, ActualHourEntry> | null> {
   try {
     const startStr = format(startOfMonth(month), 'yyyy-MM-dd');
     const endStr = format(endOfMonth(month), 'yyyy-MM-dd');
 
-    const { data, error } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query: any = supabase
       .from('actual_hours')
       .select('*')
       .gte('date', startStr)
       .lte('date', endStr);
+
+    // Tenant-Filter auf SQL-Ebene: verhindert cross-tenant Datenleckage
+    // Beaulieu: employee_id LIKE 'b-%'  |  Oliv: employee_id NOT LIKE 'b-%'
+    if (tenantId === 'beaulieu') {
+      query = query.like('employee_id', 'b-%');
+    } else if (tenantId === 'oliv') {
+      query = query.not('employee_id', 'like', 'b-%');
+    }
+
+    const { data, error } = await query;
 
     if (error) { console.error('[supabase-db] loadActualHoursForMonth:', error); return null; }
 

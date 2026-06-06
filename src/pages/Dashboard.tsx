@@ -265,8 +265,8 @@ const Dashboard = () => {
       // Pass tenantId so only the correct tenant's employees are loaded
       const [emps, sched, actual] = await Promise.all([
         loadEmployees(tenantId),
-        loadScheduleForMonth(referenceDate),
-        loadActualHoursForMonth(referenceDate),
+        loadScheduleForMonth(referenceDate, tenantId),
+        loadActualHoursForMonth(referenceDate, tenantId),
       ]);
       if (emps)   setEmployees(emps);
       if (sched)  setScheduleData(sched);

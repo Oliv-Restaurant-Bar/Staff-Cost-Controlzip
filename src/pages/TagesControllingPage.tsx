@@ -590,8 +590,8 @@ export default function TagesControllingPage() {
     });
 
     Promise.all([
-      Promise.all(monthDates.map(md => loadScheduleForMonth(md))),
-      Promise.all(monthDates.map(md => loadActualHoursForMonth(md))),
+      Promise.all(monthDates.map(md => loadScheduleForMonth(md, tenantId))),
+      Promise.all(monthDates.map(md => loadActualHoursForMonth(md, tenantId))),
     ]).then(([schedules, actuals]) => {
       if (loadGenRef.current !== gen) return;
       const combined: Record<string, DaySchedule> = {};

@@ -318,8 +318,8 @@ const SollIstAnalyse = () => {
       setLoading(true);
       const [emps, sched, actual] = await Promise.all([
         loadEmployees(tenantId),
-        loadScheduleForMonth(selDate),
-        loadActualHoursForMonth(selDate),
+        loadScheduleForMonth(selDate, tenantId),
+        loadActualHoursForMonth(selDate, tenantId),
       ]);
       if (emps)   setEmployees(emps);
       if (sched)  setScheduleData(sched);

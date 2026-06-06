@@ -435,7 +435,7 @@ const ForecastPlanung = () => {
 
       const [emps, ...scheds] = await Promise.all([
         loadEmployees(tenantId === 'beaulieu' ? 'beaulieu' : 'oliv'),
-        ...months.map(m => loadScheduleForMonth(m)),
+        ...months.map(m => loadScheduleForMonth(m, tenantId)),
       ]);
       if (cancelled) return;
       if (emps) setEmployees(emps);

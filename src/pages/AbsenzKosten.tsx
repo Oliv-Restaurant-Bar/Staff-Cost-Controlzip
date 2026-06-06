@@ -171,7 +171,7 @@ export default function AbsenzKosten() {
     if (localActual) {
       try { setActualHours(JSON.parse(localActual)); } catch { setActualHours({}); }
     } else {
-      loadActualHoursForMonth(month).then(res => {
+      loadActualHoursForMonth(month, tenantId).then(res => {
         if (res) setActualHours(res as Record<string, { hours: number }>);
       }).catch(() => {});
     }
