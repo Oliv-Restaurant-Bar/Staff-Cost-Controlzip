@@ -846,7 +846,11 @@ export const TimeInputCell = ({
       const alreadySet = !absenceType && !!value?.start
         && value.start === config?.start && value.end === config?.end;
       return (
-        <button onClick={() => onChange(null, null)}
+        <button
+          onClick={() => alreadySet
+            ? onChange(null, null)
+            : onChange(config ? { start: config.start, end: config.end } : null, null)
+          }
           title={alreadySet ? 'Klicken zum Entfernen' : `${shiftName} eintragen`}
           className={cn(
             "w-full h-8 px-1 text-[10px] font-medium border rounded transition-all",
@@ -868,7 +872,11 @@ export const TimeInputCell = ({
       : null;
     const alreadySet = absenceType === activeTool;
     return (
-      <button onClick={() => onChange(null, null)}
+      <button
+        onClick={() => alreadySet
+          ? onChange(null, null)
+          : onChange(null, activeTool)
+        }
         title={alreadySet ? 'Klicken zum Entfernen' : `${activeTool} eintragen`}
         className={cn(
           "w-full h-8 px-1 text-[10px] font-medium border rounded transition-all",
