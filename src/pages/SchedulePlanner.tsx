@@ -704,10 +704,24 @@ const SchedulePlanner = () => {
         for (const [key, supaVal] of Object.entries(supabaseActual as Record<string, ActualHoursEntry>)) {
           const localVal = (localStored as Record<string, ActualHoursEntry>)[key];
           if (supaVal.hours > 0) {
-            // Real work hours from Supabase always win — but preserve localStorage-only flags
-            merged[key] = localVal?.isAdditionalCost
-              ? { ...supaVal, isAdditionalCost: true }
-              : supaVal;
+            // KV store has explicit user-set absence for this key → absence wins over import hours.
+            // This is the authoritative user override (e.g. Ferien the whole week but Mirus still
+            // shows hours). The KV absence is only present when the user deliberately set FE/K/F
+            // on this IST cell; it is removed when the user clears the absence.
+            const kvAbsType = kvAbsences[key];
+            if (kvAbsType) {
+              merged[key] = { hours: 0, absenceType: kvAbsType as ActualHoursEntry['absenceType'] };
+              console.log(`[FE-STABLE] KV absence overrides Supabase hours: ${key} type=${kvAbsType} (supabase had ${supaVal.hours}h)`);
+            } else if (localVal?.absenceType) {
+              // localStorage also has an explicit absence (e.g. set in this session before reload) — keep it
+              console.log(`[FE-STABLE] localStorage absence overrides Supabase hours: ${key} type=${localVal.absenceType} (supabase had ${supaVal.hours}h)`);
+              // merged[key] already = localVal via the spread above — no action needed
+            } else {
+              // No absence override → Supabase real hours win, preserve localStorage-only flags
+              merged[key] = localVal?.isAdditionalCost
+                ? { ...supaVal, isAdditionalCost: true }
+                : supaVal;
+            }
           } else if (!localVal?.absenceType) {
             // Supabase 0-hours only wins if localStorage has no absenceType (FE/K/F)
             merged[key] = supaVal;
@@ -717,8 +731,9 @@ const SchedulePlanner = () => {
 
         // ── KV store restoration ─────────────────────────────────────────────
         // FE/K/F entries saved to KV store survive browser cache clears and
-        // device switches. Merge them in: KV wins over 0-hour entries but
-        // never over real work hours.
+        // device switches. At this point any KV absence that conflicted with
+        // Supabase hours has already been applied in the loop above. Here we
+        // only need to restore KV absences for keys that weren't in Supabase.
         let kvRestored = 0;
         for (const [key, absType] of Object.entries(kvAbsences)) {
           const existing = merged[key];
@@ -733,7 +748,10 @@ const SchedulePlanner = () => {
           } else if (existing.absenceType) {
             console.log(`[FE-STABLE] merge kept existing holiday: ${key} type=${existing.absenceType} (KV has ${absType})`);
           } else {
-            console.log(`[FE-STABLE] holiday replaced by working hours: ${key} hours=${existing.hours} – KV entry ignored`);
+            // This branch should now be unreachable (handled in Supabase loop above)
+            console.log(`[FE-STABLE] holiday restored over working hours: ${key} type=${absType} hours=${existing.hours} (fallback)`);
+            merged[key] = { hours: 0, absenceType: absType as ActualHoursEntry['absenceType'] };
+            kvRestored++;
           }
         }
         if (kvRestored > 0) {
@@ -755,11 +773,10 @@ const SchedulePlanner = () => {
           const result = { ...merged };
           for (const [key, val] of Object.entries(prev)) {
             if (val.absenceType && !result[key]?.absenceType) {
-              // Keep FE/K/F from prev unless merged already has an absenceType entry
-              if (!result[key] || result[key].hours === 0) {
-                result[key] = val;
-                console.log(`[FERIEN-IST] race-condition guard: kept prev absenceType entry ${key} type=${val.absenceType}`);
-              }
+              // Keep FE/K/F from prev — absence always wins over any non-absence entry,
+              // even if merged has hours > 0 (Supabase hours set during in-flight fetch).
+              result[key] = val;
+              console.log(`[FERIEN-IST] race-condition guard: kept prev absenceType entry ${key} type=${val.absenceType}`);
             }
             // Preserve isAdditionalCost from prev if the merged entry lost it
             if (val.isAdditionalCost && result[key] && !result[key].isAdditionalCost) {
@@ -775,7 +792,9 @@ const SchedulePlanner = () => {
         })();
         const finalForStorage: Record<string, ActualHoursEntry> = { ...freshLocal };
         for (const [key, val] of Object.entries(merged)) {
-          // Let Supabase real-hours win in storage too — but preserve localStorage-only flags
+          // Never overwrite a localStorage entry that has absenceType (FE/K/F) with
+          // a non-absence value — that would silently erase a user-set vacation day.
+          if (freshLocal[key]?.absenceType && !val.absenceType) continue;
           if (val.hours > 0 || !freshLocal[key]?.absenceType) {
             finalForStorage[key] = freshLocal[key]?.isAdditionalCost
               ? { ...val, isAdditionalCost: true }
