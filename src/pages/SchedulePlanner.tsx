@@ -1075,6 +1075,25 @@ const SchedulePlanner = () => {
 
   // Ref for scrolling to week
   const scheduleGridRef = useRef<HTMLDivElement>(null);
+  const scrollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startScroll = (dir: 'left' | 'right') => {
+    if (scrollIntervalRef.current) return;
+    const step = () => {
+      if (scheduleGridRef.current) {
+        scheduleGridRef.current.scrollBy({ left: dir === 'right' ? 120 : -120, behavior: 'smooth' });
+      }
+    };
+    step();
+    scrollIntervalRef.current = setInterval(step, 300);
+  };
+
+  const stopScroll = () => {
+    if (scrollIntervalRef.current) {
+      clearInterval(scrollIntervalRef.current);
+      scrollIntervalRef.current = null;
+    }
+  };
 
   // Scroll to selected week when visibleWeekInMonth changes
   useEffect(() => {
@@ -4475,6 +4494,41 @@ const SchedulePlanner = () => {
                 </Button>
               </div>
             )}
+            <div className="relative group/scrollwrap">
+              {/* ── Scroll-Pfeile links / rechts ───────────────────────────── */}
+              <button
+                aria-label="Links scrollen"
+                onMouseDown={() => startScroll('left')}
+                onMouseUp={stopScroll}
+                onMouseLeave={stopScroll}
+                className={[
+                  "absolute left-1 top-1/2 -translate-y-1/2 z-30",
+                  "h-10 w-10 flex items-center justify-center",
+                  "rounded-full bg-background/90 border border-border shadow-md",
+                  "text-foreground opacity-0 group-hover/scrollwrap:opacity-100",
+                  "transition-opacity duration-200 hover:bg-muted cursor-pointer",
+                  "select-none",
+                ].join(' ')}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              </button>
+              <button
+                aria-label="Rechts scrollen"
+                onMouseDown={() => startScroll('right')}
+                onMouseUp={stopScroll}
+                onMouseLeave={stopScroll}
+                className={[
+                  "absolute right-1 top-1/2 -translate-y-1/2 z-30",
+                  "h-10 w-10 flex items-center justify-center",
+                  "rounded-full bg-background/90 border border-border shadow-md",
+                  "text-foreground opacity-0 group-hover/scrollwrap:opacity-100",
+                  "transition-opacity duration-200 hover:bg-muted cursor-pointer",
+                  "select-none",
+                ].join(' ')}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+
             <div ref={scheduleGridRef} className="overflow-x-auto px-6 pb-4">
               {calendarView === 'day' && displayDays[0] ? (
                 // ── Mobile Tagesansicht ────────────────────────────────────
@@ -4657,6 +4711,7 @@ const SchedulePlanner = () => {
                 </>
               )}
             </div>
+            </div> {/* end relative group/scrollwrap */}
           </CardContent>
         </Card>
 
