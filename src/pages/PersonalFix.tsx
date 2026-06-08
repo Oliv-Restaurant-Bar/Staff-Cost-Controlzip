@@ -284,6 +284,9 @@ function loadIstHoursFromStorage(year: number, month: number, keyFn: (k: string)
       }
       const empId = cellKey.slice(0, cellKey.length - 11);
       if (!empId) continue;
+      // Skip FE (Ferien/vacation) absences — same as loadDailyIstDetails
+      const absenceType = typeof val === 'object' ? (val as any)?.absenceType : undefined;
+      if (absenceType === 'FE') continue;
       const h = typeof val === 'number' ? val : (val?.hours ?? 0);
       if (h > 0) out[empId] = (out[empId] ?? 0) + Math.round(h * 100) / 100;
     }
@@ -1551,15 +1554,25 @@ export default function PersonalFixPage() {
       if (!supabaseRaw) return; // Supabase error – keep local result
       // Vollständige Einträge speichern (inkl. isAdditionalCost für Zusatzkosten-Berechnung)
       setSupabaseActualHours(supabaseRaw);
-      // Aggregate by empId (same logic as loadIstHoursFromStorage)
+
+      // Read localStorage now — needed for FE absence check and write-back
+      const monthKey = tenantKey(`actual-hours-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
+      const existingLocal: Record<string, unknown> = (() => {
+        try { return JSON.parse(localStorage.getItem(monthKey) || '{}'); } catch { return {}; }
+      })();
+
+      // Aggregate by empId — skip days where localStorage has FE absence.
+      // Admin FE marking is authoritative over Mirus import data.
       const supabaseAgg: Record<string, number> = {};
       for (const [cellKey, entry] of Object.entries(supabaseRaw)) {
         const empId = cellKey.slice(0, cellKey.length - 11);
         if (!empId) continue;
+        const localEntry = existingLocal[cellKey] as Record<string, unknown> | undefined;
+        if ((localEntry as any)?.absenceType === 'FE') continue; // FE override wins
         const h = entry?.hours ?? 0;
         if (h > 0) supabaseAgg[empId] = (supabaseAgg[empId] ?? 0) + Math.round(h * 100) / 100;
       }
-      // Merge: Supabase wins on conflict
+      // Merge: Supabase (FE-filtered) wins over localStorage aggregation on conflict
       const merged = { ...localIst, ...supabaseAgg };
       const totalH = Object.values(merged).reduce((s, h) => s + h, 0);
       console.log(
@@ -1568,34 +1581,29 @@ export default function PersonalFixPage() {
       );
       setIstHours(merged);
 
-      // Write merged back to localStorage — smart merge: FE/K/F absenceType entries must NEVER be
+      // Write merged back to localStorage — FE/K/F absenceType entries must NEVER be
       // overwritten by Supabase data (Supabase has no absenceType column; FE are localStorage-only).
       if (Object.keys(supabaseRaw).length > 0) {
-        const monthKey = tenantKey(`actual-hours-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
-        const existingLocal: Record<string, unknown> = (() => {
-          try { return JSON.parse(localStorage.getItem(monthKey) || '{}'); } catch { return {}; }
-        })();
         // Start from local (preserves absenceType metadata), let Supabase win only for real hours
         const mergedRaw: Record<string, unknown> = { ...existingLocal };
         let fePreserved = 0;
         for (const [key, val] of Object.entries(supabaseRaw)) {
           const localEntry = mergedRaw[key] as Record<string, unknown> | undefined;
-          if ((val as { hours?: number })?.hours > 0 || !localEntry?.absenceType) {
-            // Supabase wins: real working hours OR no FE in local
-            // But preserve localStorage-only flags (isAdditionalCost) from local
+          if (localEntry?.absenceType) {
+            // Local FE/K/F entry protected — admin override wins over Mirus data
+            fePreserved++;
+            console.log(`[FERIEN] preserved on navigation: ${key} absenceType=${localEntry?.absenceType}`);
+          } else {
+            // No local absence — Supabase wins, preserve localStorage-only flags
             mergedRaw[key] = localEntry?.isAdditionalCost
               ? { ...(val as object), isAdditionalCost: true }
               : val;
-          } else {
-            // Local FE/K/F entry protected — Supabase must not erase it
-            fePreserved++;
-            console.log(`[FERIEN] preserved on navigation: ${key} absenceType=${localEntry?.absenceType}`);
           }
         }
         if (fePreserved > 0) {
           console.log(`[FERIEN] PersonalFix load: preserved ${fePreserved} FE/K/F entries`);
         }
-        localStorage.setItem(tenantKey(`actual-hours-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`), JSON.stringify(mergedRaw));
+        localStorage.setItem(monthKey, JSON.stringify(mergedRaw));
         console.log(`[FERIEN] saved persistently: source=supabase+local merged=${Object.keys(mergedRaw).length}`);
       }
     }).catch(err => console.error('[IST] Supabase load failed in PersonalFix:', err));
