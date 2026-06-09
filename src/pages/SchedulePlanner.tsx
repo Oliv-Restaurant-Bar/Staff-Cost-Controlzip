@@ -29,7 +29,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle, ClipboardPaste, Wand2, QrCode, Smartphone, Loader2, Bell, RefreshCw, Pin, PinOff } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, Info, CalendarClock, TriangleAlert, LogOut, Share2, Globe, Send, CheckCircle2, User, Building2, MessageCircle, ClipboardPaste, Wand2, QrCode, Smartphone, Loader2, Bell, RefreshCw, Pin, PinOff, ShieldCheck } from 'lucide-react';
 import { StaffFeedbackEntry, loadStaffFeedback, updateFeedbackStatus } from '@/lib/staff-feedback-store';
 import { getPublicBaseUrl } from '@/lib/public-url';
 import { useRef } from 'react';
@@ -278,6 +278,7 @@ const SchedulePlanner = () => {
     return saved === null ? true : saved === 'true';
   });
   const [showCosts, setShowCosts] = useState(false);
+  const [showInsuranceCosts, setShowInsuranceCosts] = useState(false);
   const [costPasswordDialogOpen, setCostPasswordDialogOpen] = useState(false);
   const [costPassword, setCostPassword] = useState('');
   const [dailyBudgets, setDailyBudgets] = useState<{[key: string]: { plannedRevenue?: number; actualRevenue?: number; isOverride?: boolean }}>({});
@@ -293,7 +294,7 @@ const SchedulePlanner = () => {
   
   // New state for Plan/Ist toggle
   const [scheduleMode, setScheduleMode] = useState<'plan' | 'ist' | 'compare'>('plan');
-  const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string; start2?: string; end2?: string; absenceType?: 'FE' | 'K' | 'F'; isAdditionalCost?: boolean }>>({});
+  const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string; start2?: string; end2?: string; absenceType?: 'FE' | 'FT' | 'K' | 'U' | 'F'; isAdditionalCost?: boolean }>>({});
   const [paintTool, setPaintTool] = useState<string | null>(null);
   const [planningAssistantOpen, setPlanningAssistantOpen]     = useState(false);
   const [bulkActionsOpen, setBulkActionsOpen]                 = useState(false);
@@ -710,8 +711,13 @@ const SchedulePlanner = () => {
             // user deliberately set FE/K/F on this IST cell.
             const kvAbsType = kvAbsences[key];
             if (kvAbsType) {
-              merged[key] = { hours: 0, absenceType: kvAbsType as ActualHoursEntry['absenceType'] };
-              console.log(`[FE-STABLE] KV absence overrides Supabase hours: ${key} type=${kvAbsType} (supabase had ${supaVal.hours}h)`);
+              // K/U sind bezahlte Abwesenheiten → Supabase-Stunden behalten + absenceType anfügen
+              // FE/FT/F → immer hours=0 (keine Arbeitsstunden)
+              const keepHours = (kvAbsType === 'K' || kvAbsType === 'U') && supaVal.hours > 0;
+              merged[key] = keepHours
+                ? { ...supaVal, absenceType: kvAbsType as ActualHoursEntry['absenceType'] }
+                : { hours: 0, absenceType: kvAbsType as ActualHoursEntry['absenceType'] };
+              console.log(`[FE-STABLE] KV absence overrides Supabase hours: ${key} type=${kvAbsType} keepHours=${keepHours} (supabase had ${supaVal.hours}h)`);
             } else if (localVal?.absenceType) {
               // localStorage also has an explicit absence — keep it
               console.log(`[FE-STABLE] localStorage absence overrides Supabase hours: ${key} type=${localVal.absenceType} (supabase had ${supaVal.hours}h)`);
@@ -737,6 +743,7 @@ const SchedulePlanner = () => {
         let kvRestored = 0;
         for (const [key, absType] of Object.entries(kvAbsences)) {
           const existing = merged[key];
+          const isKUType = absType === 'K' || absType === 'U';
           if (!existing) {
             merged[key] = { hours: 0, absenceType: absType as ActualHoursEntry['absenceType'] };
             kvRestored++;
@@ -747,6 +754,11 @@ const SchedulePlanner = () => {
             console.log(`[FE-STABLE] holiday survived reload: ${key} type=${absType} (from KV – overwrote 0h entry)`);
           } else if (existing.absenceType) {
             console.log(`[FE-STABLE] merge kept existing holiday: ${key} type=${existing.absenceType} (KV has ${absType})`);
+          } else if (isKUType && existing.hours > 0) {
+            // K/U: vorhandene Stunden behalten + absenceType anfügen (bezahlte Abwesenheit)
+            merged[key] = { ...existing, absenceType: absType as ActualHoursEntry['absenceType'] };
+            kvRestored++;
+            console.log(`[FE-STABLE] K/U absence merged with hours: ${key} type=${absType} hours=${existing.hours}`);
           } else {
             // existing has real hours but no absence; KV absence is the authoritative admin
             // override (e.g. Ferien entered after a wrong Mirus import). FE wins.
@@ -808,9 +820,14 @@ const SchedulePlanner = () => {
         const withKvAbsences: Record<string, ActualHoursEntry> = { ...localStored };
         for (const [key, absType] of Object.entries(kvAbsences)) {
           const existing = withKvAbsences[key];
+          const isKUType = absType === 'K' || absType === 'U';
           if (!existing || (existing.hours === 0 && !existing.absenceType)) {
             withKvAbsences[key] = { hours: 0, absenceType: absType as ActualHoursEntry['absenceType'] };
             console.log(`[FE-STABLE] holiday survived reload (offline): ${key} type=${absType}`);
+          } else if (isKUType && existing.hours > 0 && !existing.absenceType) {
+            // K/U: Stunden behalten + absenceType anfügen
+            withKvAbsences[key] = { ...existing, absenceType: absType as ActualHoursEntry['absenceType'] };
+            console.log(`[FE-STABLE] K/U absence merged with hours (offline): ${key} type=${absType} hours=${existing.hours}`);
           }
         }
         setActualHoursData(withKvAbsences);
@@ -1483,14 +1500,16 @@ const SchedulePlanner = () => {
     });
 
     // ── Auto-Kopie Abwesenheit → Ist-Stunden ───────────────────────────────
-    // Wenn Ferien (FE) im Plan gesetzt wird → Ist-Eintrag mit hours=0 + absenceType='FE'.
-    // Andere Abwesenheiten (K, …) → wie bisher mit konfigurierten Stunden, aber NUR
-    // wenn noch keine echten importierten Arbeitsstunden vorhanden sind.
+    // Wenn FE/K/U im Plan gesetzt wird → Ist-Eintrag mit absenceType gesetzt.
+    // FE: hours=0 + absenceType='FE'
+    // K/U: konfigurierte Stunden + absenceType='K'/'U' (bezahlte Abwesenheit)
+    // Andere Abwesenheiten → wie bisher mit konfigurierten Stunden.
     if (absenceType) {
       const isFE = absenceType === 'FE';
+      const isKU = absenceType === 'K' || absenceType === 'U';
       const absShiftCfg = Object.values(shiftMap).find(s => s.abbrev === absenceType);
       const absHours = absShiftCfg?.hours ?? 0;
-      const shouldCopy = isFE || (absHours > 0 && absShiftCfg?.countsToTarget !== false);
+      const shouldCopy = isFE || isKU || (absHours > 0 && absShiftCfg?.countsToTarget !== false);
 
       if (shouldCopy) {
         setActualHoursData(prevActual => {
@@ -1500,15 +1519,17 @@ const SchedulePlanner = () => {
           // Echten Ist-Import (hours > 0, kein absenceType) nicht überschreiben
           if (existing && existing.hours > 0 && !existing.absenceType) return prevActual;
 
-          // Ferien: 0h + absenceType='FE'; andere: konfigurierte Stunden
+          // FE: 0h + absenceType='FE'; K/U: Stunden + absenceType; andere: nur Stunden
           const newEntry: ActualHoursEntry = isFE
             ? { hours: 0, absenceType: 'FE' as const }
+            : isKU
+            ? { hours: absHours, absenceType: absenceType as 'K' | 'U' }
             : { hours: absHours };
 
           console.log(`[FERIEN] plan->ist übernommen: ${employeeId} ${date} absenceType=${absenceType} → Ist hours=${newEntry.hours}`);
 
           // FE-Einträge werden NICHT nach Supabase gespeichert — Supabase hat keine absenceType-Spalte.
-          // Beim nächsten Load würde Supabase (hours:0 ohne absenceType) den localStorage-Eintrag überschreiben.
+          // K/U: Stunden werden nach Supabase gespeichert; absenceType nur lokal/KV.
           if (!isFE) {
             saveActualHourEntry(employeeId, date, newEntry).catch(err =>
               console.error('[SCHEDULE] auto-absence actualHours error:', err)
@@ -3022,8 +3043,24 @@ const SchedulePlanner = () => {
     const actualHrs = Object.entries(actualHoursData)
       .filter(([key]) => monthDateSet.has(key.slice(-10)) && key.startsWith(`${emp.id}-`))
       .reduce((s, [, e]) => s + e.hours, 0);
-    return sum + actualHrs * emp.hourlyWage;
+    return sum + actualHrs * (emp.hourlyWage ?? 0);
   }, 0);
+
+  // ── Lohnkosten Versicherung: K/U-Abwesenheiten zu 80% ─────────────────────
+  // Krank (K) und Unfall (U) in IST → Arbeitgeber wird durch Versicherung entlastet.
+  // Effektive Kosten = 80% des normalen Stundenlohns für diese Tage.
+  const totalKrankUnfallLaborCost = useMemo(() => visibleEmployees.reduce((sum, emp) => {
+    const kuHrs = Object.entries(actualHoursData)
+      .filter(([key]) => monthDateSet.has(key.slice(-10)) && key.startsWith(`${emp.id}-`))
+      .filter(([, e]) => e.absenceType === 'K' || e.absenceType === 'U')
+      .reduce((s, [, e]) => s + e.hours, 0);
+    return sum + kuHrs * (emp.hourlyWage ?? 0);
+  }, 0), [actualHoursData, visibleEmployees, monthDateSet]);
+
+  // 20% Versicherungsersatz (der Anteil den die Versicherung übernimmt)
+  const insuranceCostOffset = totalKrankUnfallLaborCost * 0.20;
+  // Effektive Kosten nach Versicherungsabzug (K/U zu 80%)
+  const totalActualLaborCostWithInsurance = totalActualLaborCost - insuranceCostOffset;
   const actualCostRatio = totalActualRevenue > 0 && totalActualLaborCost > 0
     ? (totalActualLaborCost / totalActualRevenue) * 100
     : null;
@@ -3922,6 +3959,7 @@ const SchedulePlanner = () => {
                   onClick={() => {
                     if (showCosts) {
                       setShowCosts(false);
+                      setShowInsuranceCosts(false);
                     } else if (isBeaulieuManager) {
                       setShowCosts(true);
                       setShowFooter(true);
@@ -3931,9 +3969,23 @@ const SchedulePlanner = () => {
                   }}
                   title={showCosts ? 'Kosten ausblenden' : 'Kosten einblenden'}
                 >
-                  {showCosts ? <Euro className="h-3.5 w-3.5" /> : <Euro className="h-3.5 w-3.5" />}
+                  <Euro className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Kosten</span>
                 </Button>
+                {effectiveShowCosts && (
+                  <Button
+                    variant={showInsuranceCosts ? 'default' : 'outline'}
+                    size="sm"
+                    className={showInsuranceCosts
+                      ? "h-7 gap-1.5 text-xs px-2.5 bg-amber-600 hover:bg-amber-700 border-amber-600"
+                      : "h-7 gap-1.5 text-xs px-2.5 border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950/30"}
+                    onClick={() => setShowInsuranceCosts(v => !v)}
+                    title="Lohnkosten Versicherung: Krank/Unfall zu 80% berechnen"
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Versicherung</span>
+                  </Button>
+                )}
               </>
             )}
           </div>
@@ -4626,6 +4678,7 @@ const SchedulePlanner = () => {
                             { id: 'abs-F', label: 'Frei', absenceCode: 'F' },
                             { id: 'abs-FE', label: 'Ferien', absenceCode: 'FE' },
                             { id: 'abs-K', label: 'Krank', absenceCode: 'K' },
+                            { id: 'abs-U', label: 'Unfall', absenceCode: 'U' },
                           ] as const).map(a => (
                             <button
                               key={a.id}
@@ -4823,13 +4876,22 @@ const SchedulePlanner = () => {
                   <div className="flex justify-between items-baseline">
                     <span className="text-sm text-muted-foreground">Ist (gesch.)</span>
                     <span className="text-base font-bold tabular-nums">
-                      {hasActualHours ? CHF.format(totalActualLaborCost) : '–'}
+                      {hasActualHours ? CHF.format(showInsuranceCosts ? totalActualLaborCostWithInsurance : totalActualLaborCost) : '–'}
                     </span>
                   </div>
+                  {showInsuranceCosts && hasActualHours && insuranceCostOffset > 0 && (
+                    <div className="flex justify-between items-baseline text-amber-700 dark:text-amber-400">
+                      <span className="text-xs">K/U Versicherung −20%</span>
+                      <span className="text-xs font-medium tabular-nums">
+                        {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0, signDisplay: 'always' }).format(-insuranceCostOffset)}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between items-baseline border-t pt-2 mt-1">
                     <span className="text-sm text-muted-foreground">Differenz</span>
                     {(() => {
-                      const diff = totalActualLaborCost - sollPK;
+                      const effCost = showInsuranceCosts ? totalActualLaborCostWithInsurance : totalActualLaborCost;
+                      const diff = effCost - sollPK;
                       return (
                         <span className={cn(
                           "text-base font-bold tabular-nums",
@@ -4845,6 +4907,35 @@ const SchedulePlanner = () => {
                   </div>
                 </div>
               </div>
+
+              {/* Lohnkosten Versicherung (K/U zu 80%) – nur sichtbar wenn Toggle aktiv */}
+              {showInsuranceCosts && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400 mb-3">🛡 Lohnkosten Versicherung</p>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-sm text-muted-foreground">K/U Lohnkosten (100%)</span>
+                      <span className="text-sm font-medium tabular-nums">
+                        {hasActualHours && totalKrankUnfallLaborCost > 0 ? CHF.format(totalKrankUnfallLaborCost) : '–'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-baseline text-amber-700 dark:text-amber-400">
+                      <span className="text-sm">Versicherungsersatz (20%)</span>
+                      <span className="text-sm font-medium tabular-nums">
+                        {hasActualHours && insuranceCostOffset > 0
+                          ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0, signDisplay: 'always' }).format(-insuranceCostOffset)
+                          : '–'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-baseline border-t border-amber-200 dark:border-amber-800 pt-2 mt-1">
+                      <span className="text-sm font-semibold text-amber-800 dark:text-amber-300">Effektiv (80%)</span>
+                      <span className="text-base font-bold tabular-nums text-amber-800 dark:text-amber-300">
+                        {hasActualHours && totalKrankUnfallLaborCost > 0 ? CHF.format(totalKrankUnfallLaborCost * 0.8) : '–'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Ferienabbau CHF */}
               <div className="rounded-lg border bg-card p-4">
@@ -6437,10 +6528,12 @@ const SchedulePlanner = () => {
           const k = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
           return !!(scheduleData[k]?.spät?.start);
         }).length;
-        const absenceDays = { FE: 0, K: 0, F: 0 };
+        const absenceDays = { FE: 0, K: 0, U: 0, F: 0 };
         daysInMonth.forEach(day => {
           const entry = actualHoursData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
-          if (entry?.absenceType) absenceDays[entry.absenceType] = (absenceDays[entry.absenceType] || 0) + 1;
+          if (entry?.absenceType && entry.absenceType in absenceDays) {
+            absenceDays[entry.absenceType as keyof typeof absenceDays]++;
+          }
         });
         const hourlyRate = emp.hourlyWage ?? 0;
         const monthlyRate = emp.monthlySalary ?? 0;
@@ -6508,8 +6601,14 @@ const SchedulePlanner = () => {
                   )}
                   {absenceDays.K > 0 && (
                     <>
-                      <div className="text-muted-foreground">Krankheitstage</div>
-                      <div className="font-medium tabular-nums text-right">{absenceDays.K} Tage</div>
+                      <div className="text-muted-foreground text-red-700 dark:text-red-400">Krankheitstage</div>
+                      <div className="font-medium tabular-nums text-right text-red-700 dark:text-red-400">{absenceDays.K} Tage</div>
+                    </>
+                  )}
+                  {absenceDays.U > 0 && (
+                    <>
+                      <div className="text-muted-foreground text-amber-700 dark:text-amber-400">Unfalltage</div>
+                      <div className="font-medium tabular-nums text-right text-amber-700 dark:text-amber-400">{absenceDays.U} Tage</div>
                     </>
                   )}
                   {absenceDays.F > 0 && (

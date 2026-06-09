@@ -14,8 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb, Zap, CheckCircle2, Minus as MinusIcon } from 'lucide-react';
 
-export type AbsenceCode = 'FE' | 'FT' | 'K' | 'F';
-export const ABSENCE_CODES: ReadonlySet<AbsenceCode> = new Set(['FE', 'FT', 'K', 'F']);
+export type AbsenceCode = 'FE' | 'FT' | 'K' | 'U' | 'F';
+export const ABSENCE_CODES: ReadonlySet<AbsenceCode> = new Set(['FE', 'FT', 'K', 'U', 'F']);
 export const isProductiveEntry = (entry: ActualHoursEntry | undefined): boolean =>
   !!entry && entry.hours > 0 && !entry.absenceType;
 
@@ -235,6 +235,7 @@ const ActualHoursCell = ({
           absenceType === 'FE' && "bg-blue-50 dark:bg-blue-900/20",
           absenceType === 'FT' && "bg-violet-50 dark:bg-violet-900/20",
           absenceType === 'K' && "bg-red-50 dark:bg-red-900/20",
+          absenceType === 'U' && "bg-amber-50 dark:bg-amber-900/20",
           absenceType === 'F' && "bg-slate-100 dark:bg-slate-800/50",
           !absenceType && hours > 0 && "bg-green-50 dark:bg-green-900/20",
           quickHoverClass,
@@ -249,6 +250,7 @@ const ActualHoursCell = ({
               absenceType === 'FE' && "text-blue-600 dark:text-blue-400",
               absenceType === 'FT' && "text-violet-600 dark:text-violet-400",
               absenceType === 'K' && "text-red-600 dark:text-red-400",
+              absenceType === 'U' && "text-amber-600 dark:text-amber-400",
               absenceType === 'F' && "text-slate-500 dark:text-slate-400"
             )}>
               {absenceType}
@@ -302,7 +304,7 @@ const ActualHoursCell = ({
             {format(day, 'EEEE, d. MMMM yyyy', { locale: de })}
           </div>
 
-          {/* FE / FT / K / F Schnellauswahl */}
+          {/* FE / FT / K / U / F Schnellauswahl */}
           <div className="grid grid-cols-2 gap-2 mb-4">
             <Button
               size="sm"
@@ -331,8 +333,16 @@ const ActualHoursCell = ({
             <Button
               size="sm"
               variant="outline"
+              onClick={() => handleAbsenceQuick('U')}
+              className={cn("font-semibold text-amber-600 border-amber-300 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950/30", absenceType === 'U' && "bg-amber-50 border-amber-400 dark:bg-amber-900/30")}
+            >
+              U – Unfall
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => handleAbsenceQuick('F')}
-              className={cn("font-semibold text-slate-500 border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800/30", absenceType === 'F' && "bg-slate-100 border-slate-400 dark:bg-slate-800/50")}
+              className={cn("col-span-2 font-semibold text-slate-500 border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800/30", absenceType === 'F' && "bg-slate-100 border-slate-400 dark:bg-slate-800/50")}
             >
               F – Frei
             </Button>
