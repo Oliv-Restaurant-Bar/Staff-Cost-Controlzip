@@ -363,6 +363,23 @@ function saveVarDayRate(data: Record<string, DayRateData>, keyFn: (k: string) =>
   localStorage.setItem(keyFn(VAR_DAYRATE_KEY), JSON.stringify(data));
 }
 
+// ── Umsatz-Annahme (manuelle Revenue-Eingabe für PKQ) ─────────────────────────
+
+const REVENUE_ASSUMPTION_KEY = 'personal_fix_revenue_assumption_v1';
+function loadRevenueAssumption(year: number, month: number, keyFn: (k: string) => string = k => k): number | null {
+  try {
+    const raw = localStorage.getItem(keyFn(`${REVENUE_ASSUMPTION_KEY}_${year}_${String(month).padStart(2, '0')}`));
+    if (!raw) return null;
+    const v = parseFloat(raw);
+    return isNaN(v) || v <= 0 ? null : v;
+  } catch { return null; }
+}
+function saveRevenueAssumption(year: number, month: number, value: number | null, keyFn: (k: string) => string = k => k) {
+  const key = keyFn(`${REVENUE_ASSUMPTION_KEY}_${year}_${String(month).padStart(2, '0')}`);
+  if (value === null || value <= 0) { try { localStorage.removeItem(key); } catch { /* ignore */ } }
+  else { try { localStorage.setItem(key, String(value)); } catch { /* ignore */ } }
+}
+
 // ── Tagesumsätze aus localStorage (dailyBudgets) ──────────────────────────────
 
 function readDailyBudgetsLocal(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, { actualRevenue?: number; takeawayRevenue?: number }> {
@@ -1399,6 +1416,14 @@ export default function PersonalFixPage() {
   const [ferienPlanDays, setFerienPlanDays] = useState<Record<string, number>>({});
   // Tagesumsätze für den gewählten Monat (für Stichtag Controlling)
   const [monthlyRevenues, setMonthlyRevenues] = useState<Record<string, { actualRevenue?: number; takeawayRevenue?: number }>>({});
+  // Manuelle Umsatz-Annahme für PKQ-Berechnung (gespeichert per Monat/Tenant)
+  const [revenueAssumption, setRevenueAssumption] = useState<number | null>(() =>
+    loadRevenueAssumption(today.getFullYear(), today.getMonth() + 1, tenantKey),
+  );
+  const [revenueAssumptionInput, setRevenueAssumptionInput] = useState(() => {
+    const v = loadRevenueAssumption(today.getFullYear(), today.getMonth() + 1, tenantKey);
+    return v != null ? String(v) : '';
+  });
 
   // ── Pro-Rata-Abgrenzung ────────────────────────────────────────────────────
   // null = aus; Zahl = Stichtag (1–letzter Tag des Monats)
@@ -1619,6 +1644,14 @@ export default function PersonalFixPage() {
     setVarDayRate(loadVarDayRate(tenantKey));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
+
+  // Umsatz-Annahme bei Monat- oder Mandantenwechsel neu laden
+  useEffect(() => {
+    const saved = loadRevenueAssumption(selectedYear, selectedMonth, tenantKey);
+    setRevenueAssumption(saved);
+    setRevenueAssumptionInput(saved != null ? String(saved) : '');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedYear, selectedMonth, tenantId]);
 
   const budgetData = useBudgetMonth(selectedYear, selectedMonth);
   const personnelBudget = budgetData.personnelBudget;
@@ -2099,15 +2132,24 @@ export default function PersonalFixPage() {
     return total;
   }, [monthlyRevenues, proRataDay, maisonExclude, selectedYear, selectedMonth]);
 
+  // Effektiver Umsatz für PKQ: manuelle Annahme überschreibt Ist-Wert wenn kein Ist vorhanden,
+  // oder wird als Override genutzt wenn explizit gesetzt
+  const effectiveRevenue = (revenueAssumption !== null && revenueAssumption > 0)
+    ? revenueAssumption
+    : monthRevenue;
+  const revenueIsAssumed = revenueAssumption !== null && revenueAssumption > 0;
+
   // PKQ = Personalkosten / Umsatz × 100
-  const pkqPlan = monthRevenue > 0 ? (pfix.active.planTotal / monthRevenue) * 100 : null;
-  const pkqIst  = monthRevenue > 0 ? (pfix.active.istTotal  / monthRevenue) * 100 : null;
-  const pkqFlexPlan = monthRevenue > 0 ? (pfix.active.planWork / monthRevenue) * 100 : null;
-  const pkqFlexIst  = monthRevenue > 0 ? (pfix.active.istWork  / monthRevenue) * 100 : null;
-  const pkqFix      = monthRevenue > 0 ? (pfix.active.fix      / monthRevenue) * 100 : null;
-  const revenueLabel = maisonOn
-    ? (maisonExclude ? 'exkl. Marketing' : 'inkl. Marketing')
-    : 'Ist-Umsatz';
+  const pkqPlan = effectiveRevenue > 0 ? (pfix.active.planTotal / effectiveRevenue) * 100 : null;
+  const pkqIst  = effectiveRevenue > 0 ? (pfix.active.istTotal  / effectiveRevenue) * 100 : null;
+  const pkqFlexPlan = effectiveRevenue > 0 ? (pfix.active.planWork / effectiveRevenue) * 100 : null;
+  const pkqFlexIst  = effectiveRevenue > 0 ? (pfix.active.istWork  / effectiveRevenue) * 100 : null;
+  const pkqFix      = effectiveRevenue > 0 ? (pfix.active.fix      / effectiveRevenue) * 100 : null;
+  const revenueLabel = revenueIsAssumed
+    ? 'Annahme'
+    : maisonOn
+      ? (maisonExclude ? 'exkl. Marketing' : 'inkl. Marketing')
+      : 'Ist-Umsatz';
 
   // ── pfix-derived budget comparison (always uses Ist actuals as "spend") ────
   // When a cutoff (Stichtag) is active, scale the budget pro rata to that day
@@ -2824,6 +2866,181 @@ export default function PersonalFixPage() {
           </div>
         </div>
 
+        {/* ── Umsatz-Annahme & Budget-Vergleich ──────────────────────────────── */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+          {/* Umsatz-Annahme */}
+          <div className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <TrendingDown className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold">Umsatz-Basis für PKQ</span>
+              {revenueIsAssumed && (
+                <Badge variant="outline" className="text-[10px] ml-auto border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400">
+                  Annahme aktiv
+                </Badge>
+              )}
+            </div>
+            {monthRevenue > 0 && (
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Erfasster Ist-Umsatz</span>
+                <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">{fmtCHF(monthRevenue)}</span>
+              </div>
+            )}
+            <div className="text-xs text-muted-foreground">
+              {monthRevenue > 0 ? 'Annahme als Override eingeben:' : 'Noch kein Ist-Umsatz erfasst — Annahme eingeben:'}
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium pointer-events-none">CHF</span>
+                <Input
+                  className="pl-10 h-9 font-mono text-sm"
+                  placeholder="z. B. 200000"
+                  value={revenueAssumptionInput}
+                  onChange={e => setRevenueAssumptionInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const v = parseFloat(revenueAssumptionInput.replace(/['\s]/g, '').replace(',', '.'));
+                      const val = !isNaN(v) && v > 0 ? v : null;
+                      setRevenueAssumption(val);
+                      saveRevenueAssumption(selectedYear, selectedMonth, val, tenantKey);
+                    }
+                  }}
+                />
+              </div>
+              <Button
+                size="sm"
+                className="h-9 text-xs shrink-0"
+                onClick={() => {
+                  const v = parseFloat(revenueAssumptionInput.replace(/['\s]/g, '').replace(',', '.'));
+                  const val = !isNaN(v) && v > 0 ? v : null;
+                  setRevenueAssumption(val);
+                  saveRevenueAssumption(selectedYear, selectedMonth, val, tenantKey);
+                }}
+              >
+                Übernehmen
+              </Button>
+              {revenueAssumption !== null && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-9 text-xs text-muted-foreground shrink-0"
+                  onClick={() => {
+                    setRevenueAssumption(null);
+                    setRevenueAssumptionInput('');
+                    saveRevenueAssumption(selectedYear, selectedMonth, null, tenantKey);
+                  }}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+            {effectiveRevenue > 0 && (
+              <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+                <span className="text-xs font-semibold text-muted-foreground">
+                  PKQ-Basis {revenueIsAssumed ? '(Annahme)' : '(Ist-Umsatz)'}
+                </span>
+                <span className="font-mono font-bold text-sm">{fmtCHF(effectiveRevenue)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Budget-Vergleich kompakt */}
+          {personnelBudget > 0 ? (() => {
+            const budget   = personnelBudget * (proRataDay !== null ? proRataFactor : 1);
+            const totalIst = pfix.active.istTotal;
+            const totalPlan = pfix.active.planTotal;
+            const diffIst  = totalIst  - budget;
+            const diffPlan = totalPlan - budget;
+            const istOver  = diffIst  > 0;
+            const planOver = diffPlan > 0;
+            const istPct   = budget > 0 ? Math.min(100, (totalIst  / budget) * 100) : 0;
+            const barColor = istPct < 80 ? 'bg-emerald-500' : istPct < 95 ? 'bg-amber-500' : 'bg-red-500';
+            return (
+              <div className={cn(
+                'rounded-xl border-2 shadow-sm p-4 space-y-3',
+                istOver
+                  ? 'border-red-300 dark:border-red-700 bg-red-50/50 dark:bg-red-950/20'
+                  : 'border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20',
+              )}>
+                <div className="flex items-center gap-2">
+                  <Target className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Budget-Vergleich</span>
+                  <span className={cn(
+                    'ml-auto text-xs font-bold',
+                    istOver ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400',
+                  )}>
+                    {istOver ? '⛔ Über Budget' : '✓ Im Budget'}
+                  </span>
+                </div>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Budget {budgetLabel}</span>
+                    <span className="font-mono font-semibold text-violet-700 dark:text-violet-400">{fmtCHF(budget)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Plan Total (Fix + Flex)</span>
+                    <span className={cn(
+                      'font-mono font-semibold',
+                      planOver ? 'text-red-600 dark:text-red-400' : 'text-blue-700 dark:text-blue-400',
+                    )}>
+                      {planOver ? '↑ ' : ''}{fmtCHF(totalPlan)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Ist Total (Fix + Flex)</span>
+                    <span className={cn(
+                      'font-mono font-semibold',
+                      istOver ? 'text-red-600 dark:text-red-400' : 'text-orange-700 dark:text-orange-400',
+                    )}>
+                      {istOver ? '↑ ' : ''}{fmtCHF(totalIst)}
+                    </span>
+                  </div>
+                </div>
+                {/* Fortschrittsbalken */}
+                <div className="space-y-1">
+                  <div className="relative h-5 rounded-full bg-muted/40 overflow-hidden">
+                    <div
+                      className={cn('h-full rounded-full transition-all duration-500', barColor)}
+                      style={{ width: `${istPct}%` }}
+                    />
+                    <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white drop-shadow pointer-events-none">
+                      {istPct >= 15 ? `${Math.round(istPct)} % genutzt` : ''}
+                    </span>
+                  </div>
+                </div>
+                <div className={cn(
+                  'rounded-lg px-3 py-2 flex justify-between items-center',
+                  istOver ? 'bg-red-100 dark:bg-red-950/40' : 'bg-emerald-100 dark:bg-emerald-950/40',
+                )}>
+                  <span className="text-xs font-bold">
+                    {istOver ? 'Überschreitung Ist' : 'Restbudget Ist'}
+                  </span>
+                  <span className={cn(
+                    'font-mono font-bold text-base',
+                    istOver ? 'text-red-700 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400',
+                  )}>
+                    {istOver ? '+' : ''}{fmtCHF(Math.abs(diffIst))}
+                  </span>
+                </div>
+                {effectiveRevenue > 0 && (
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-border/50">
+                    <span className="text-muted-foreground">PKQ Ist / Plan {revenueIsAssumed ? '(Annahme)' : ''}</span>
+                    <span className="font-mono font-semibold tabular-nums">
+                      {((totalIst / effectiveRevenue) * 100).toFixed(1)} % / {((totalPlan / effectiveRevenue) * 100).toFixed(1)} %
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })() : (
+            <div className="rounded-xl border border-dashed border-border bg-muted/10 p-4 flex flex-col items-center justify-center gap-2 text-center">
+              <Target className="h-8 w-8 text-muted-foreground/30" />
+              <p className="text-sm text-muted-foreground">Kein Personalbudget hinterlegt</p>
+              <p className="text-xs text-muted-foreground/60">Budget in der Budgetplanung erfassen, um Soll/Ist zu vergleichen.</p>
+            </div>
+          )}
+        </div>
+
         {/* ── KPI-Block (8 Karten: Plan + Ist für alle 4 Ebenen) ───────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <KpiCard
@@ -2843,14 +3060,14 @@ export default function PersonalFixPage() {
           <KpiCard
             title={proRataDay !== null ? `PKQ Plan bis ${proRataDay}.` : 'PKQ Plan'}
             value={pkqPlan !== null ? `${pkqPlan.toFixed(1)} %` : '—'}
-            sub={monthRevenue > 0 ? `${fmtCHF(pfix.active.planTotal)} / ${fmtCHF(monthRevenue)}` : 'Kein Umsatz erfasst'}
+            sub={effectiveRevenue > 0 ? `${fmtCHF(pfix.active.planTotal)} / ${fmtCHF(effectiveRevenue)}${revenueIsAssumed ? ' (Annahme)' : ''}` : 'Kein Umsatz erfasst'}
             icon={<TrendingDown className="h-5 w-5" />}
             color="blue"
           />
           <KpiCard
             title={proRataDay !== null ? `PKQ Ist bis ${proRataDay}.` : 'PKQ Ist'}
             value={pkqIst !== null ? `${pkqIst.toFixed(1)} %` : '—'}
-            sub={monthRevenue > 0 ? `${fmtCHF(pfix.active.istTotal)} / ${fmtCHF(monthRevenue)} · ${revenueLabel}` : 'Kein Umsatz erfasst'}
+            sub={effectiveRevenue > 0 ? `${fmtCHF(pfix.active.istTotal)} / ${fmtCHF(effectiveRevenue)} · ${revenueLabel}` : 'Kein Umsatz erfasst'}
             icon={<TrendingDown className="h-5 w-5" />}
             color={pkqIst !== null && pkqPlan !== null ? (pkqIst > pkqPlan + 1 ? 'red' : pkqIst < pkqPlan - 1 ? 'green' : 'default') : 'default'}
           />
