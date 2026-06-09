@@ -52,7 +52,7 @@ import { useTenant } from '@/contexts/TenantContext';
 import {
   loadEmployees, upsertEmployee, deleteEmployee, activateEmployee, archiveEmployee,
   loadOnboardingSubmissions, deleteOnboardingSubmission, activateSubmissionAsEmployee,
-  runPersonalstammE2ETest,
+  runPersonalstammE2ETest, loadAllBeaulieuIds,
   OnboardingSubmission,
 } from '@/lib/supabase-db';
 import type { HarteTestResult } from '@/lib/supabase-db';
@@ -764,10 +764,16 @@ const Personalstamm = () => {
     // ── Beaulieu: vor Insert frische ID aus Supabase ableiten ──────────────
     let finalData = editData;
     if (isNew && tenantId === 'beaulieu') {
-      const freshList = await loadEmployees('beaulieu');
-      const freshId = nextBeaulieuId(freshList ?? employees);
-      // Sicherheits-Check: ID darf nicht bereits vergeben sein
-      const conflict = (freshList ?? employees).some(e => e.id === freshId);
+      // WICHTIG: loadAllBeaulieuIds() liefert ALLE Beaulieu-IDs inkl. archivierter
+      // (is_active=false). Damit erzeugt nextBeaulieuId() niemals eine ID, die
+      // bereits an einen archivierten Mitarbeiter vergeben war — sonst würde der
+      // Upsert (onConflict:'id') den archivierten Datensatz überschreiben ohne
+      // is_active zurückzusetzen, und der neue Mitarbeiter wäre nach Reload unsichtbar.
+      const allIds = await loadAllBeaulieuIds();
+      const allAsEmployees = allIds.map(id => ({ id } as Employee));
+      const freshId = nextBeaulieuId(allAsEmployees.length > 0 ? allAsEmployees : employees);
+      // Sicherheits-Check: ID darf nicht bereits vergeben sein (aktiv oder archiviert)
+      const conflict = allIds.includes(freshId);
       if (conflict) {
         console.error(`[BEAULIEU-ID] conflict detected for ${freshId} — aborting`);
         toast.error(`ID-Konflikt bei ${freshId} — bitte nochmals versuchen`);
@@ -775,7 +781,7 @@ const Personalstamm = () => {
         return;
       }
       finalData = { ...editData, id: freshId };
-      console.log(`[BEAULIEU-ID] employee created with id: ${freshId}`);
+      console.log(`[BEAULIEU-ID] employee created with id: ${freshId} (checked against ${allIds.length} total IDs incl. archived)`);
       // ID in UI synchronisieren
       setEditData(finalData);
       setSelectedId(freshId);

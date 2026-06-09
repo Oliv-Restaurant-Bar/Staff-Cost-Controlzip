@@ -87,6 +87,11 @@ const employeeToDb = (emp: Employee) => ({
   // NOTE: employee_status is intentionally excluded here because the column
   // may not exist yet (migration 20260315_employee_self_registration.sql).
   // Use activateEmployee() to set status once the migration has been applied.
+  // ── Aktivitätsstatus ─────────────────────────────────────────────────────
+  // Explizit true setzen: verhindert dass bei ID-Kollision mit einem archivierten
+  // Mitarbeiter der Upsert das is_active=false stehen lässt (Migration 20260605).
+  // Archivierung erfolgt ausschliesslich via archiveEmployee() — nie via upsertEmployee().
+  is_active:                true,
   // ── Onboarding ───────────────────────────────────────────────────────────
   onboarding_status:        emp.onboardingStatus        ?? 'none',
   onboarding_token:         emp.onboardingToken         ?? null,
@@ -217,6 +222,29 @@ export async function loadEmployees(restaurantId?: TenantId): Promise<Employee[]
   } catch (e) {
     console.error('[supabase-db] loadEmployees exception:', e);
     return null;
+  }
+}
+
+/**
+ * Gibt alle Beaulieu-Mitarbeiter-IDs zurück — inkl. archivierter (is_active=false).
+ * Wird für die ID-Generierung neuer Beaulieu-Mitarbeiter benötigt, damit nextBeaulieuId()
+ * keine Kollision mit bereits (archivierten) vergebenen IDs erzeugt.
+ */
+export async function loadAllBeaulieuIds(): Promise<string[]> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .from('employees')
+      .select('id')
+      .like('id', 'b-%');
+    if (error) {
+      console.error('[supabase-db] loadAllBeaulieuIds:', error);
+      return [];
+    }
+    return (data ?? []).map((r: { id: string }) => r.id);
+  } catch (e) {
+    console.error('[supabase-db] loadAllBeaulieuIds exception:', e);
+    return [];
   }
 }
 
