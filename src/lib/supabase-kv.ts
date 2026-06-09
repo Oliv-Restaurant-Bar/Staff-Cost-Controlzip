@@ -150,7 +150,11 @@ export async function safeUpsertDailyBudgets(
 
   // 5. Zurückschreiben: localStorage sofort (schnell), dann KV (persistent)
   const merged = base;
-  try { localStorage.setItem(storageKey, JSON.stringify(merged)); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(merged));
+    // Alle abonnierten Views (PLView, Dashboard etc.) sofort benachrichtigen
+    window.dispatchEvent(new Event('store-synced'));
+  } catch { /* ignore */ }
 
   try {
     await kvSetStrict(storageKey, merged);

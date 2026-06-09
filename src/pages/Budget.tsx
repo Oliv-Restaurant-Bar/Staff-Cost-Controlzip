@@ -477,7 +477,12 @@ function BudgetContent() {
                           {monthly.map((v, m) => (
                             <td key={m} className={cn('text-right py-2.5 px-2 font-mono font-bold text-xs', style.result,
                               v < 0 ? 'text-red-700 dark:text-red-400' : '')}>
-                              {v !== 0 ? CHF(v) : '–'}
+                              <div className="flex flex-col items-end leading-tight gap-px">
+                                <span>{v !== 0 ? CHF(v) : '–'}</span>
+                                {v !== 0 && revenueByMonth[m] > 0 && (
+                                  <span className="text-[9px] font-normal opacity-55">{(v / revenueByMonth[m] * 100).toFixed(1)}%</span>
+                                )}
+                              </div>
                             </td>
                           ))}
                           <td />
@@ -527,7 +532,12 @@ function BudgetContent() {
                         </td>
                         {monthly.map((v, m) => (
                           <td key={m} className={cn('text-right py-2.5 px-2 font-mono font-semibold text-xs', style.header)}>
-                            {v !== 0 ? CHF(v) : '–'}
+                            <div className="flex flex-col items-end leading-tight gap-px">
+                              <span>{v !== 0 ? CHF(v) : '–'}</span>
+                              {v !== 0 && revenueByMonth[m] > 0 && (
+                                <span className="text-[9px] font-normal opacity-55">{(v / revenueByMonth[m] * 100).toFixed(1)}%</span>
+                              )}
+                            </div>
                           </td>
                         ))}
                         <td />
@@ -611,13 +621,16 @@ function BudgetContent() {
                                       onCancel={() => setEditCell(null)}
                                     />
                                   ) : (
-                                    <div className="flex flex-col items-end leading-tight">
+                                    <div className="flex flex-col items-end leading-tight gap-px">
                                       {item.valueType === 'percent'
                                         ? <span className="text-blue-700 dark:text-blue-300">{PCT(val)}</span>
                                         : <span>{val !== 0 ? CHF(val) : <span className="text-muted-foreground/25">–</span>}</span>
                                       }
                                       {item.valueType === 'percent' && chfVal > 0 && (
                                         <span className="text-[9px] text-muted-foreground">{CHF(chfVal)}</span>
+                                      )}
+                                      {item.valueType !== 'percent' && val !== 0 && revenueByMonth[m] > 0 && (
+                                        <span className="text-[9px] text-muted-foreground/60">{(val / revenueByMonth[m] * 100).toFixed(1)}%</span>
                                       )}
                                     </div>
                                   )}
@@ -672,7 +685,12 @@ function BudgetContent() {
                               </td>
                               {direktMonthly.map((v, m) => (
                                 <td key={m} className="text-right py-1.5 px-2 font-mono text-xs font-semibold text-orange-800 dark:text-orange-200">
-                                  {v !== 0 ? CHF(v) : '–'}
+                                  <div className="flex flex-col items-end leading-tight gap-px">
+                                    <span>{v !== 0 ? CHF(v) : '–'}</span>
+                                    {v !== 0 && revenueByMonth[m] > 0 && (
+                                      <span className="text-[9px] font-normal opacity-55">{(v / revenueByMonth[m] * 100).toFixed(1)}%</span>
+                                    )}
+                                  </div>
                                 </td>
                               ))}
                               <td />

@@ -2378,7 +2378,8 @@ const PLViewPage = () => {
       if (!hasIndivRev) {
         const mm = String(m).padStart(2, '0');
         // "Anzeigen" (showMarketingCol) = immer inkl. Umsatz; ignoriert maisonExclude
-        const maisonArg = maisonEnabled && maisonColPref ? maisonDaily : undefined;
+        // Maison wird immer eingerechnet wenn aktiviert — unabhängig von der Spalten-Anzeige
+        const maisonArg = maisonEnabled ? maisonDaily : undefined;
         const taMonthly = takeawayMonthlyMap[`${year}-${mm}`] ?? 0;
         const tagesansichtRev = showNetRevenue
           ? computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonArg, taMonthly > 0 ? taMonthly : undefined)
