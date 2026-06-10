@@ -3651,7 +3651,15 @@ export default function PersonalFixPage() {
                         <tr className="bg-muted/60 border-b border-border">
                           <th className="px-3 py-2 text-left font-semibold text-muted-foreground w-[90px]">Woche</th>
                           <th className="px-2 py-2 text-left font-semibold text-muted-foreground">Zeitraum</th>
-                          <th className="px-2 py-2 text-right font-semibold text-muted-foreground">Fix</th>
+                          {hasAnyWeekRevenue && (
+                            <th className="px-2 py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400 text-[10px]">
+                              Ist-Ums.<br />netto
+                            </th>
+                          )}
+                          <th className="px-2 py-2 text-right font-semibold text-muted-foreground">
+                            Fix
+                            {hasAnyWeekRevenue && <div className="text-[9px] font-normal text-muted-foreground/60">% Ist-Ums.</div>}
+                          </th>
                           <th className="px-2 py-2 text-right font-semibold text-blue-600 dark:text-blue-400">
                             Flex Plan
                             {hasAnyWeekRevenue && <div className="text-[9px] font-normal text-blue-400/70 dark:text-blue-500/70">% Ist-Ums.</div>}
@@ -3660,11 +3668,6 @@ export default function PersonalFixPage() {
                             Flex Ist
                             {hasAnyWeekRevenue && <div className="text-[9px] font-normal text-orange-400/70 dark:text-orange-500/70">% Ist-Ums.</div>}
                           </th>
-                          {hasAnyWeekRevenue && (
-                            <th className="px-2 py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400 text-[10px]">
-                              Ist-Ums.<br />netto
-                            </th>
-                          )}
                           <th className="px-2 py-2 text-right font-semibold text-foreground">
                             Total
                             {hasAnyWeekRevenue && <div className="text-[9px] font-normal text-muted-foreground/70">% Ist-Ums.</div>}
@@ -3727,8 +3730,26 @@ export default function PersonalFixPage() {
                               {/* Zeitraum */}
                               <td className="px-2 py-2 text-muted-foreground">{w.dateRange}</td>
 
+                              {/* Ist-Umsatz netto (Berechnungsbasis) — ganz links */}
+                              {hasAnyWeekRevenue && (
+                                <td className="px-2 py-2 text-right font-mono text-emerald-700 dark:text-emerald-400">
+                                  {weekNetRev != null
+                                    ? <span className="text-xs">{fmtCHF(weekNetRev)}</span>
+                                    : <span className="opacity-30 text-muted-foreground">—</span>}
+                                </td>
+                              )}
+
                               {/* Fix */}
-                              <td className="px-2 py-2 text-right font-mono text-muted-foreground">{fmtCHF(fix)}</td>
+                              <td className="px-2 py-2 text-right font-mono text-muted-foreground">
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span>{fmtCHF(fix)}</span>
+                                  {weekNetRev != null && weekNetRev > 0 && fix > 0 && (
+                                    <span className="text-[9px] font-normal tabular-nums text-muted-foreground/60">
+                                      {((fix / weekNetRev) * 100).toFixed(1)} %
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
 
                               {/* Flex Plan */}
                               <td className={cn('px-2 py-2 text-right font-mono', !useIst ? 'font-semibold text-blue-700 dark:text-blue-300' : 'text-muted-foreground')}>
@@ -3753,15 +3774,6 @@ export default function PersonalFixPage() {
                                   )}
                                 </div>
                               </td>
-
-                              {/* Ist-Umsatz netto (Berechnungsbasis) */}
-                              {hasAnyWeekRevenue && (
-                                <td className="px-2 py-2 text-right font-mono text-emerald-700 dark:text-emerald-400">
-                                  {weekNetRev != null
-                                    ? <span className="text-xs">{fmtCHF(weekNetRev)}</span>
-                                    : <span className="opacity-30 text-muted-foreground">—</span>}
-                                </td>
-                              )}
 
                               {/* Total (aktiver Wert) */}
                               <td className="px-2 py-2 text-right font-mono">
@@ -3825,7 +3837,23 @@ export default function PersonalFixPage() {
                           return (
                             <tr className="border-t-2 border-border bg-muted/50 font-bold">
                               <td className="px-3 py-2.5 text-foreground" colSpan={2}>Total Monat</td>
-                              <td className="px-2 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(totalFixCost)}</td>
+                              {/* Ist-Umsatz netto total — ganz links */}
+                              {hasAnyWeekRevenue && (
+                                <td className="px-2 py-2.5 text-right font-mono text-emerald-700 dark:text-emerald-400">
+                                  {totalNetRevenue != null ? fmtCHF(totalNetRevenue) : '—'}
+                                </td>
+                              )}
+                              {/* Fix total + % */}
+                              <td className="px-2 py-2.5 text-right font-mono text-muted-foreground">
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span>{fmtCHF(totalFixCost)}</span>
+                                  {totalNetRevenue != null && totalNetRevenue > 0 && totalFixCost > 0 && (
+                                    <span className="text-[9px] font-normal tabular-nums text-muted-foreground/60">
+                                      {((totalFixCost / totalNetRevenue) * 100).toFixed(1)} %
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
                               {/* Flex Plan total + % */}
                               <td className="px-2 py-2.5 text-right font-mono text-blue-700 dark:text-blue-300">
                                 <div className="flex flex-col items-end gap-0.5">
@@ -3848,12 +3876,6 @@ export default function PersonalFixPage() {
                                   )}
                                 </div>
                               </td>
-                              {/* Total Ist-Umsatz netto */}
-                              {hasAnyWeekRevenue && (
-                                <td className="px-2 py-2.5 text-right font-mono text-emerald-700 dark:text-emerald-400">
-                                  {totalNetRevenue != null ? fmtCHF(totalNetRevenue) : '—'}
-                                </td>
-                              )}
                               {/* Grand Total + % */}
                               <td className="px-2 py-2.5 text-right font-mono text-foreground">
                                 <div className="flex flex-col items-end gap-0.5">
