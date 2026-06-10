@@ -411,6 +411,20 @@ function saveWeekIstSet(year: number, month: number, weeks: string[], keyFn: (k:
   try { localStorage.setItem(key, JSON.stringify(weeks)); } catch { /* ignore */ }
 }
 
+const WEEK_REV_OVERRIDE_KEY = 'personal_fix_week_rev_overrides_v1';
+function loadWeekRevOverrides(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(keyFn(`${WEEK_REV_OVERRIDE_KEY}_${year}_${String(month).padStart(2, '0')}`));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+  } catch { return {}; }
+}
+function saveWeekRevOverrides(year: number, month: number, data: Record<string, number>, keyFn: (k: string) => string = k => k) {
+  const key = keyFn(`${WEEK_REV_OVERRIDE_KEY}_${year}_${String(month).padStart(2, '0')}`);
+  try { localStorage.setItem(key, JSON.stringify(data)); } catch { /* ignore */ }
+}
+
 const SCENARIO_PK_KEY = 'personal_fix_scenario_pk_v1';
 function loadScenarioPkCost(year: number, month: number, keyFn: (k: string) => string = k => k): number | null {
   try {
@@ -1657,6 +1671,11 @@ export default function PersonalFixPage() {
   const [weekIstSet, setWeekIstSet] = useState<Set<string>>(() =>
     new Set(loadWeekIstSet(today.getFullYear(), today.getMonth() + 1, tenantKey)),
   );
+  const [weekRevOverrides, setWeekRevOverrides] = useState<Record<string, number>>(() =>
+    loadWeekRevOverrides(today.getFullYear(), today.getMonth() + 1, tenantKey),
+  );
+  const [weekRevEditKey, setWeekRevEditKey] = useState<string | null>(null);
+  const [weekRevEditVal, setWeekRevEditVal] = useState('');
   const [scenarioPkCost, setScenarioPkCost] = useState<number | null>(() =>
     loadScenarioPkCost(today.getFullYear(), today.getMonth() + 1, tenantKey),
   );
@@ -1897,6 +1916,8 @@ export default function PersonalFixPage() {
     setBudgetRevenue(savedBudgetRev);
     setBudgetRevenueInput(savedBudgetRev != null ? String(savedBudgetRev) : '');
     setWeekIstSet(new Set(loadWeekIstSet(selectedYear, selectedMonth, tenantKey)));
+    setWeekRevOverrides(loadWeekRevOverrides(selectedYear, selectedMonth, tenantKey));
+    setWeekRevEditKey(null);
     const savedScPk = loadScenarioPkCost(selectedYear, selectedMonth, tenantKey);
     setScenarioPkCost(savedScPk);
     setScenarioPkCostInput(savedScPk != null ? String(savedScPk) : '');
@@ -2487,6 +2508,8 @@ export default function PersonalFixPage() {
       );
       if (gross > 0) {
         result[w.weekKey] = gross / 1.081;
+      } else if (weekRevOverrides[w.weekKey] != null) {
+        result[w.weekKey] = weekRevOverrides[w.weekKey];
       } else {
         const budgetRev = budgetRevenue ?? budgetData.revenueBudget;
         if (budgetRev > 0 && daysInSelectedMonth > 0) {
@@ -2496,9 +2519,9 @@ export default function PersonalFixPage() {
     }
     return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flexByWeek, monthlyRevenues, budgetRevenue, budgetData.revenueBudget, daysInSelectedMonth]);
+  }, [flexByWeek, monthlyRevenues, weekRevOverrides, budgetRevenue, budgetData.revenueBudget, daysInSelectedMonth]);
 
-  // Welche Wochen nutzen Budget-Schätzung (kein Ist-Umsatz vorhanden)?
+  // Welche Wochen haben keinen Ist-Umsatz (Fallback oder manuell)?
   const weekRevenueIsEstimate = useMemo((): Record<string, boolean> => {
     const result: Record<string, boolean> = {};
     for (const w of flexByWeek) {
@@ -2511,7 +2534,31 @@ export default function PersonalFixPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flexByWeek, monthlyRevenues]);
 
+  // Welche Wochen haben einen manuellen Umsatz-Override?
+  const weekRevenueIsManual = useMemo((): Record<string, boolean> => {
+    const result: Record<string, boolean> = {};
+    for (const w of flexByWeek) {
+      result[w.weekKey] = weekRevOverrides[w.weekKey] != null;
+    }
+    return result;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flexByWeek, weekRevOverrides]);
+
   const hasAnyWeekRevenue = Object.keys(weekActualNetRevenue).length > 0;
+
+  // Manuellen Umsatz-Override speichern / löschen
+  const commitWeekRevEdit = (weekKey: string, rawVal: string) => {
+    const num = parseFloat(rawVal.replace(/[^0-9.,]/g, '').replace(',', '.'));
+    setWeekRevOverrides(prev => {
+      const next = { ...prev };
+      if (!isNaN(num) && num > 0) { next[weekKey] = num; }
+      else { delete next[weekKey]; }
+      saveWeekRevOverrides(selectedYear, selectedMonth, next, tenantKey);
+      return next;
+    });
+    setWeekRevEditKey(null);
+    setWeekRevEditVal('');
+  };
 
   // ── Budget-Umsatz abgeleitete Werte ───────────────────────────────────────
   // basePkqPct: PKQ% aus der Budget-Planung (Basis für Szenario-Berechnungen)
@@ -3714,6 +3761,7 @@ export default function PersonalFixPage() {
                           const deltaB   = budgetW > 0 ? activeTotal - budgetW : null;
                           const weekNetRev  = weekActualNetRevenue[w.weekKey] ?? null;
                           const isEstimate  = weekRevenueIsEstimate[w.weekKey] ?? false;
+                          const isManual    = weekRevenueIsManual[w.weekKey] ?? false;
 
                           const toggleWeek = () => {
                             const next = new Set(weekIstSet);
@@ -3752,23 +3800,78 @@ export default function PersonalFixPage() {
                               {/* Zeitraum */}
                               <td className="px-2 py-2 text-muted-foreground">{w.dateRange}</td>
 
-                              {/* Ist-Umsatz netto (Berechnungsbasis) — ganz links */}
+                              {/* Ist-Umsatz netto (Berechnungsbasis) — ganz links, editierbar für Schätzwochen */}
                               {hasAnyWeekRevenue && (
-                                <td className={cn(
-                                  'px-2 py-2 text-right font-mono',
-                                  isEstimate
-                                    ? 'text-muted-foreground/60'
-                                    : 'text-emerald-700 dark:text-emerald-400',
-                                )}>
-                                  {weekNetRev != null ? (
-                                    <div className="flex flex-col items-end gap-0.5">
-                                      <span className="text-xs">{fmtCHF(weekNetRev)}</span>
-                                      {isEstimate && (
-                                        <span className="text-[9px] font-normal italic opacity-70">Budget p.r.</span>
-                                      )}
+                                <td className="px-2 py-1.5 text-right font-mono">
+                                  {weekRevEditKey === w.weekKey ? (
+                                    /* ── Inline-Editor ── */
+                                    <div className="flex items-center justify-end gap-1">
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        className="w-24 text-xs text-right font-mono border border-border rounded px-1.5 py-0.5 bg-background focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                                        value={weekRevEditVal}
+                                        autoFocus
+                                        placeholder="z.B. 42000"
+                                        onChange={e => setWeekRevEditVal(e.target.value)}
+                                        onKeyDown={e => {
+                                          if (e.key === 'Enter')  commitWeekRevEdit(w.weekKey, weekRevEditVal);
+                                          if (e.key === 'Escape') { setWeekRevEditKey(null); setWeekRevEditVal(''); }
+                                        }}
+                                        onBlur={() => commitWeekRevEdit(w.weekKey, weekRevEditVal)}
+                                      />
                                     </div>
                                   ) : (
-                                    <span className="opacity-30">—</span>
+                                    /* ── Anzeige ── */
+                                    <div className={cn(
+                                      'flex flex-col items-end gap-0.5',
+                                      isManual
+                                        ? 'text-blue-700 dark:text-blue-300'
+                                        : isEstimate
+                                          ? 'text-muted-foreground/60'
+                                          : 'text-emerald-700 dark:text-emerald-400',
+                                    )}>
+                                      {weekNetRev != null ? (
+                                        <>
+                                          <span className="text-xs">{fmtCHF(weekNetRev)}</span>
+                                          {isManual && (
+                                            <div className="flex items-center gap-1">
+                                              <span className="text-[9px] italic opacity-80">Manuell</span>
+                                              <button
+                                                title="Umsatz bearbeiten"
+                                                className="opacity-50 hover:opacity-100 cursor-pointer transition-opacity"
+                                                onClick={() => { setWeekRevEditKey(w.weekKey); setWeekRevEditVal(String(Math.round(weekNetRev))); }}
+                                              >✎</button>
+                                              <button
+                                                title="Override löschen (zurück zu Budget)"
+                                                className="opacity-40 hover:opacity-100 hover:text-red-500 cursor-pointer transition-opacity text-[10px]"
+                                                onClick={() => commitWeekRevEdit(w.weekKey, '')}
+                                              >✕</button>
+                                            </div>
+                                          )}
+                                          {isEstimate && !isManual && (
+                                            <div className="flex items-center gap-1">
+                                              <span className="text-[9px] italic opacity-70">Budget p.r.</span>
+                                              <button
+                                                title="Umsatz manuell setzen"
+                                                className="opacity-40 hover:opacity-100 cursor-pointer transition-opacity text-[10px]"
+                                                onClick={() => { setWeekRevEditKey(w.weekKey); setWeekRevEditVal(String(Math.round(weekNetRev))); }}
+                                              >✎</button>
+                                            </div>
+                                          )}
+                                        </>
+                                      ) : (
+                                        isEstimate ? (
+                                          <button
+                                            title="Umsatz manuell setzen"
+                                            className="text-[10px] opacity-40 hover:opacity-100 cursor-pointer transition-opacity text-muted-foreground"
+                                            onClick={() => { setWeekRevEditKey(w.weekKey); setWeekRevEditVal(''); }}
+                                          >+ Umsatz</button>
+                                        ) : (
+                                          <span className="opacity-30">—</span>
+                                        )
+                                      )}
+                                    </div>
                                   )}
                                 </td>
                               )}
