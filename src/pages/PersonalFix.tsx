@@ -3780,27 +3780,6 @@ export default function PersonalFixPage() {
           </div>
         )}
 
-        {/* ── Management Insights (Beta) ──────────────────────────────────── */}
-        <ManagementInsights
-          selectedYear={selectedYear}
-          selectedMonth={selectedMonth}
-          pfix={pfix}
-          pfixPerEmp={pfixPerEmp}
-          personnelBudget={personnelBudget}
-          forecastDelta={forecastDelta}
-          forecastStatus={forecastStatus}
-          forecastFlexTotal={forecastFlexTotal}
-          forecastAvailableVar={forecastAvailableVar}
-          avgHourlyWage={avgHourlyWage}
-          effectiveForecastCutoff={effectiveForecastCutoff}
-          daysInSelectedMonth={daysInSelectedMonth}
-          deptSummary={deptSummary}
-          abwDays={pfixAbw.days}
-          totalFixCost={totalFixCost}
-          forecastIstDay={forecastIstDay}
-          onForecastIstDayChange={setForecastIstDay}
-          todayDate={today.getDate()}
-        />
 
       </main>
 
