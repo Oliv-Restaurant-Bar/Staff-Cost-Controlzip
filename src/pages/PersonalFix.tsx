@@ -3419,223 +3419,171 @@ export default function PersonalFixPage() {
                 </div>
               </div>
 
-              {/* Wochen-Toggles + Wochenübersicht */}
+              {/* Wochen-Übersicht — integrierte Tabelle mit Plan/Ist-Toggle */}
               {flexByWeek.length > 0 && (
-                <div className="pt-3 pb-1 space-y-3">
-                  {/* Toolbar */}
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs text-muted-foreground">
-                      Personal Flex — Klick wechselt zwischen <strong className="text-blue-600 dark:text-blue-400">Plan</strong> und <strong className="text-orange-600 dark:text-orange-400">Ist</strong>:
-                    </p>
-                    <button
-                      onClick={() => setShowWeekSummary(v => !v)}
-                      className={cn(
-                        'text-[10px] font-semibold px-2.5 py-1 rounded border transition-colors cursor-pointer flex items-center gap-1',
-                        showWeekSummary
-                          ? 'border-violet-400 dark:border-violet-600 bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300'
-                          : 'border-border bg-muted text-muted-foreground hover:text-foreground',
-                      )}
-                    >
-                      <BarChart2 className="h-3 w-3" />
-                      Wochenübersicht
-                    </button>
-                  </div>
-
-                  {/* Wochenübersicht-Tabelle (Fix + Flex pro KW) */}
-                  {showWeekSummary && (
-                    <div className="rounded-lg border border-border overflow-hidden text-xs">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="bg-muted/60">
-                            <th className="px-2.5 py-2 text-left font-semibold text-muted-foreground">KW</th>
-                            <th className="px-2.5 py-2 text-left font-semibold text-muted-foreground">Datum</th>
-                            <th className="px-2.5 py-2 text-right font-semibold text-blue-600 dark:text-blue-400">Fix</th>
-                            <th className="px-2.5 py-2 text-right font-semibold text-blue-400 dark:text-blue-500">Flex Plan</th>
-                            <th className="px-2.5 py-2 text-right font-semibold text-orange-500 dark:text-orange-400">Flex Ist</th>
-                            <th className="px-2.5 py-2 text-right font-semibold text-muted-foreground">Total Plan</th>
-                            <th className="px-2.5 py-2 text-right font-semibold text-muted-foreground">Total Ist</th>
-                            {adjustedPersonnelBudget > 0 && (
-                              <>
-                                <th className="px-2.5 py-2 text-right font-semibold text-violet-600 dark:text-violet-400">Budget</th>
-                                <th className="px-2.5 py-2 text-right font-semibold text-muted-foreground">Δ Budget</th>
-                              </>
-                            )}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {flexByWeek.map((w, i) => {
-                            const fix     = fixByWeek[i]?.fixCost ?? 0;
-                            const totalP  = fix + w.planFlex;
-                            const totalI  = fix + w.istFlex;
-                            const diff    = totalI - totalP;
-                            const budgetW = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
-                              ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth)
-                              : 0;
-                            const useIstRow = weekIstSet.has(w.weekKey);
-                            const deltaB  = budgetW > 0 ? (useIstRow ? totalI : totalP) - budgetW : null;
-                            return (
-                              <tr key={w.weekKey} className="border-t border-border hover:bg-muted/30">
-                                <td className="px-2.5 py-1.5 font-bold">{w.label}</td>
-                                <td className="px-2.5 py-1.5 text-muted-foreground">{w.dateRange}</td>
-                                <td className="px-2.5 py-1.5 text-right font-mono text-blue-700 dark:text-blue-300">{fmtCHF(fix)}</td>
-                                <td className="px-2.5 py-1.5 text-right font-mono">{fmtCHF(w.planFlex)}</td>
-                                <td className="px-2.5 py-1.5 text-right font-mono">{fmtCHF(w.istFlex)}</td>
-                                <td className="px-2.5 py-1.5 text-right font-mono font-semibold">{fmtCHF(totalP)}</td>
-                                <td className={cn('px-2.5 py-1.5 text-right font-mono font-semibold', diff > 0.5 ? 'text-red-600 dark:text-red-400' : diff < -0.5 ? 'text-emerald-600 dark:text-emerald-400' : '')}>{fmtCHF(totalI)}</td>
-                                {adjustedPersonnelBudget > 0 && (
-                                  <>
-                                    <td className="px-2.5 py-1.5 text-right font-mono text-violet-700 dark:text-violet-300">{fmtCHF(budgetW)}</td>
-                                    <td className={cn('px-2.5 py-1.5 text-right font-mono',
-                                      deltaB == null ? 'text-muted-foreground'
-                                        : deltaB > 0.5 ? 'text-red-600 dark:text-red-400'
-                                        : deltaB < -0.5 ? 'text-emerald-600 dark:text-emerald-400'
-                                        : 'text-muted-foreground')}>
-                                      {deltaB == null ? '—' : (
-                                        <div className="flex flex-col items-end gap-0.5">
-                                          <span className="font-semibold">{deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}{fmtCHF(Math.abs(deltaB)).replace('CHF\u00a0','')}</span>
-                                          <span className="text-[9px] font-normal opacity-60">{useIstRow ? 'Basis: Ist' : 'Basis: Plan'}</span>
-                                        </div>
-                                      )}
-                                    </td>
-                                  </>
-                                )}
-                              </tr>
-                            );
-                          })}
-                          <tr className="border-t-2 border-border bg-muted/50 font-bold">
-                            <td className="px-2.5 py-2" colSpan={2}>Total</td>
-                            <td className="px-2.5 py-2 text-right font-mono text-blue-700 dark:text-blue-300">{fmtCHF(totalFixCost)}</td>
-                            <td className="px-2.5 py-2 text-right font-mono">{fmtCHF(flexByWeek.reduce((s,w)=>s+w.planFlex,0))}</td>
-                            <td className="px-2.5 py-2 text-right font-mono">{fmtCHF(flexByWeek.reduce((s,w)=>s+w.istFlex,0))}</td>
-                            <td className="px-2.5 py-2 text-right font-mono">{fmtCHF(totalFixCost + flexByWeek.reduce((s,w)=>s+w.planFlex,0))}</td>
-                            <td className="px-2.5 py-2 text-right font-mono">{fmtCHF(totalFixCost + flexByWeek.reduce((s,w)=>s+w.istFlex,0))}</td>
-                            {adjustedPersonnelBudget > 0 && (
-                              <>
-                                <td className="px-2.5 py-2 text-right font-mono text-violet-700 dark:text-violet-300">{fmtCHF(adjustedPersonnelBudget)}</td>
-                                <td className={cn('px-2.5 py-2 text-right font-mono', (() => {
-                                  const d = (totalFixCost + flexByWeek.reduce((s,w)=>s+w.istFlex,0)) - adjustedPersonnelBudget;
-                                  return d > 0.5 ? 'text-red-600 dark:text-red-400' : d < -0.5 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
-                                })())}>
-                                  {(() => {
-                                    const d = (totalFixCost + flexByWeek.reduce((s,w)=>s+w.istFlex,0)) - adjustedPersonnelBudget;
-                                    return `${d > 0.5 ? '+' : d < -0.5 ? '−' : ''}${fmtCHF(Math.abs(d)).replace('CHF\u00a0','')}`;
-                                  })()}
-                                </td>
-                              </>
-                            )}
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
-                  {/* KW-Boxen */}
-                  <div className="flex flex-wrap gap-2">
-                    {flexByWeek.map((w, i) => {
-                      const useIst = weekIstSet.has(w.weekKey);
-                      const pctDiff = w.planFlex > 0 ? ((w.istFlex - w.planFlex) / w.planFlex) * 100 : null;
-                      const fixW = fixByWeek[i]?.fixCost ?? 0;
-                      const toggleWeek = (e: React.MouseEvent) => {
-                        e.stopPropagation();
-                        const next = new Set(weekIstSet);
-                        if (next.has(w.weekKey)) next.delete(w.weekKey); else next.add(w.weekKey);
-                        setWeekIstSet(next);
-                        saveWeekIstSet(selectedYear, selectedMonth, [...next], tenantKey);
-                      };
-                      const openDetail = (e: React.MouseEvent) => {
-                        e.stopPropagation();
-                        setWeekDetailTarget(w.weekKey);
-                      };
-                      return (
-                        <div
-                          key={w.weekKey}
-                          className={cn(
-                            'flex flex-col items-start rounded-lg border-2 px-3 py-2 text-xs font-semibold min-w-[120px] relative',
-                            useIst
-                              ? 'border-orange-400 bg-orange-50 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300'
-                              : 'border-blue-300 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300',
+                <div className="pt-3 pb-1">
+                  <div className="rounded-lg border border-border overflow-hidden text-xs">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="bg-muted/60 border-b border-border">
+                          <th className="px-3 py-2 text-left font-semibold text-muted-foreground w-[90px]">Woche</th>
+                          <th className="px-2 py-2 text-left font-semibold text-muted-foreground">Zeitraum</th>
+                          <th className="px-2 py-2 text-right font-semibold text-muted-foreground">Fix</th>
+                          <th className="px-2 py-2 text-right font-semibold text-blue-600 dark:text-blue-400">Flex Plan</th>
+                          <th className="px-2 py-2 text-right font-semibold text-orange-500 dark:text-orange-400">Flex Ist</th>
+                          <th className="px-2 py-2 text-right font-semibold text-foreground">Total</th>
+                          {adjustedPersonnelBudget > 0 && (
+                            <>
+                              <th className="px-2 py-2 text-right font-semibold text-violet-600 dark:text-violet-400">Budget</th>
+                              <th className="px-2 py-2 text-right font-semibold text-muted-foreground">Δ Budget</th>
+                            </>
                           )}
-                        >
-                          {/* Header row: label + detail icon */}
-                          <div className="flex items-center justify-between w-full gap-1 mb-0.5">
-                            <span className="font-bold">{w.label}</span>
-                            <div className="flex items-center gap-1">
-                              {/* Info icon → Popup */}
-                              <button
-                                onClick={openDetail}
-                                title="Kostendetail anzeigen"
-                                className={cn(
-                                  'p-0.5 rounded transition-colors cursor-pointer',
-                                  useIst ? 'hover:bg-orange-200 dark:hover:bg-orange-900/40' : 'hover:bg-blue-200 dark:hover:bg-blue-900/40',
-                                )}
-                              >
-                                <Info className="h-3 w-3 opacity-70" />
-                              </button>
-                              {/* Plan/Ist toggle badge */}
-                              <button
-                                onClick={toggleWeek}
-                                className={cn('text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded cursor-pointer transition-colors',
-                                  useIst ? 'bg-orange-200 dark:bg-orange-900/40 hover:bg-orange-300' : 'bg-blue-200 dark:bg-blue-900/40 hover:bg-blue-300')}
-                              >
-                                {useIst ? 'Ist ✓' : 'Plan'}
-                              </button>
-                            </div>
-                          </div>
-                          <span className="text-[10px] font-normal text-muted-foreground">{w.dateRange}</span>
-                          {/* Cost rows */}
-                          {(() => {
-                            const budgetW    = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
-                              ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth) : 0;
-                            const totalIst  = fixW + w.istFlex;
-                            const totalPlan = fixW + w.planFlex;
-                            const deltaB    = budgetW > 0 ? (useIst ? totalIst : totalPlan) - budgetW : null;
-                            return (
-                              <div className="mt-1.5 w-full space-y-0.5">
-                                <div className="flex justify-between text-[10px] text-muted-foreground">
-                                  <span>Fix</span>
-                                  <span className="font-mono">{fmtCHF(fixW)}</span>
+                          <th className="px-2 py-2 text-center font-semibold text-muted-foreground w-[60px]">Detail</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {flexByWeek.map((w, i) => {
+                          const fix      = fixByWeek[i]?.fixCost ?? 0;
+                          const totalP   = fix + w.planFlex;
+                          const totalI   = fix + w.istFlex;
+                          const useIst   = weekIstSet.has(w.weekKey);
+                          const activeTotal = useIst ? totalI : totalP;
+                          const budgetW  = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
+                            ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth) : 0;
+                          const deltaB   = budgetW > 0 ? activeTotal - budgetW : null;
+
+                          const toggleWeek = () => {
+                            const next = new Set(weekIstSet);
+                            if (next.has(w.weekKey)) next.delete(w.weekKey); else next.add(w.weekKey);
+                            setWeekIstSet(next);
+                            saveWeekIstSet(selectedYear, selectedMonth, [...next], tenantKey);
+                          };
+
+                          return (
+                            <tr
+                              key={w.weekKey}
+                              className={cn(
+                                'border-t border-border transition-colors',
+                                useIst ? 'bg-orange-50/40 dark:bg-orange-950/10' : '',
+                              )}
+                            >
+                              {/* KW + Toggle */}
+                              <td className="px-3 py-2">
+                                <div className="flex flex-col gap-1">
+                                  <span className="font-bold text-foreground">{w.label}</span>
+                                  <button
+                                    onClick={toggleWeek}
+                                    title="Zwischen Plan und Ist wechseln"
+                                    className={cn(
+                                      'text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded border cursor-pointer transition-colors w-fit',
+                                      useIst
+                                        ? 'border-orange-400 bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 hover:bg-orange-200'
+                                        : 'border-blue-300 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-100',
+                                    )}
+                                  >
+                                    {useIst ? '● Ist' : '○ Plan'}
+                                  </button>
                                 </div>
-                                <div className={cn('flex justify-between text-[10px]', !useIst && 'font-bold')}>
-                                  <span className="text-blue-600 dark:text-blue-400">Plan Flex</span>
-                                  <span className="font-mono">{fmtCHF(w.planFlex)}</span>
+                              </td>
+
+                              {/* Zeitraum */}
+                              <td className="px-2 py-2 text-muted-foreground">{w.dateRange}</td>
+
+                              {/* Fix */}
+                              <td className="px-2 py-2 text-right font-mono text-muted-foreground">{fmtCHF(fix)}</td>
+
+                              {/* Flex Plan */}
+                              <td className={cn('px-2 py-2 text-right font-mono', !useIst ? 'font-semibold text-blue-700 dark:text-blue-300' : 'text-muted-foreground')}>
+                                {fmtCHF(w.planFlex)}
+                              </td>
+
+                              {/* Flex Ist */}
+                              <td className={cn('px-2 py-2 text-right font-mono', useIst ? 'font-semibold text-orange-700 dark:text-orange-300' : 'text-muted-foreground')}>
+                                {w.istFlex > 0 ? fmtCHF(w.istFlex) : <span className="opacity-40">—</span>}
+                              </td>
+
+                              {/* Total (aktiver Wert) */}
+                              <td className="px-2 py-2 text-right font-mono">
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span className={cn('font-bold', useIst ? 'text-orange-700 dark:text-orange-300' : 'text-blue-700 dark:text-blue-300')}>
+                                    {fmtCHF(activeTotal)}
+                                  </span>
+                                  <span className="text-[9px] text-muted-foreground opacity-60">{useIst ? 'Ist' : 'Plan'}</span>
                                 </div>
-                                <div className={cn('flex justify-between text-[10px]', useIst && 'font-bold')}>
-                                  <span className="text-orange-600 dark:text-orange-400">Ist Flex</span>
-                                  <span className="font-mono">{fmtCHF(w.istFlex)}</span>
+                              </td>
+
+                              {/* Budget + Δ */}
+                              {adjustedPersonnelBudget > 0 && (
+                                <>
+                                  <td className="px-2 py-2 text-right font-mono text-violet-700 dark:text-violet-300">
+                                    {fmtCHF(budgetW)}
+                                  </td>
+                                  <td className={cn('px-2 py-2 text-right font-mono',
+                                    deltaB == null ? 'text-muted-foreground'
+                                      : deltaB > 0.5 ? 'text-red-600 dark:text-red-400'
+                                      : deltaB < -0.5 ? 'text-emerald-600 dark:text-emerald-400'
+                                      : 'text-muted-foreground')}>
+                                    {deltaB == null ? '—' : (
+                                      <span className="font-semibold">
+                                        {deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}{fmtCHF(Math.abs(deltaB)).replace('CHF\u00a0','')}
+                                      </span>
+                                    )}
+                                  </td>
+                                </>
+                              )}
+
+                              {/* Detail-Popup */}
+                              <td className="px-2 py-2 text-center">
+                                <button
+                                  onClick={() => setWeekDetailTarget(w.weekKey)}
+                                  title="Kostendetail anzeigen"
+                                  className="p-1 rounded hover:bg-muted transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+                                >
+                                  <Info className="h-3.5 w-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+
+                        {/* Total-Zeile */}
+                        {(() => {
+                          const totalFlexPlan = flexByWeek.reduce((s, w) => s + w.planFlex, 0);
+                          const totalFlexIst  = flexByWeek.reduce((s, w) => s + w.istFlex, 0);
+                          const grandTotal    = totalFixCost + totalFlexForBudget;
+                          const grandDeltaB   = adjustedPersonnelBudget > 0 ? grandTotal - adjustedPersonnelBudget : null;
+                          return (
+                            <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                              <td className="px-3 py-2.5 text-foreground" colSpan={2}>Total Monat</td>
+                              <td className="px-2 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(totalFixCost)}</td>
+                              <td className="px-2 py-2.5 text-right font-mono text-blue-700 dark:text-blue-300">{fmtCHF(totalFlexPlan)}</td>
+                              <td className="px-2 py-2.5 text-right font-mono text-orange-700 dark:text-orange-300">{fmtCHF(totalFlexIst)}</td>
+                              <td className="px-2 py-2.5 text-right font-mono text-foreground">
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span>{fmtCHF(grandTotal)}</span>
+                                  <span className="text-[9px] font-normal text-muted-foreground">
+                                    {weekIstSet.size === 0 ? 'Plan gesamt' : weekIstSet.size === flexByWeek.length ? 'Ist gesamt' : `${weekIstSet.size}×Ist, ${flexByWeek.length - weekIstSet.size}×Plan`}
+                                  </span>
                                 </div>
-                                {budgetW > 0 && (
-                                  <div className="flex justify-between text-[10px] text-violet-600 dark:text-violet-400 border-t border-dashed border-current/20 pt-0.5 mt-0.5">
-                                    <span>Budget</span>
-                                    <span className="font-mono">{fmtCHF(budgetW)}</span>
-                                  </div>
-                                )}
-                                <div className="flex justify-end gap-1 flex-wrap pt-0.5">
-                                  {pctDiff != null && (
-                                    <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded',
-                                      pctDiff > 5 ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
-                                        : pctDiff < -5 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
-                                        : 'bg-muted text-muted-foreground')}>
-                                      Flex {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(1)} %
-                                    </span>
-                                  )}
-                                  {deltaB != null && (
-                                    <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded flex flex-col items-end leading-tight',
-                                      deltaB > 0.5  ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
-                                      : deltaB < -0.5 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
-                                      : 'bg-muted text-muted-foreground')}>
-                                      <span>vs Bdg {deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}{Math.abs(deltaB) < 1000
-                                        ? Math.round(Math.abs(deltaB))
-                                        : `${(Math.abs(deltaB)/1000).toFixed(1)}k`}</span>
-                                      <span className="opacity-60 font-normal">{useIst ? 'Basis: Ist' : 'Basis: Plan'}</span>
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      );
-                    })}
+                              </td>
+                              {adjustedPersonnelBudget > 0 && (
+                                <>
+                                  <td className="px-2 py-2.5 text-right font-mono text-violet-700 dark:text-violet-300">{fmtCHF(adjustedPersonnelBudget)}</td>
+                                  <td className={cn('px-2 py-2.5 text-right font-mono',
+                                    grandDeltaB == null ? 'text-muted-foreground'
+                                      : grandDeltaB > 0.5 ? 'text-red-600 dark:text-red-400'
+                                      : grandDeltaB < -0.5 ? 'text-emerald-600 dark:text-emerald-400'
+                                      : 'text-muted-foreground')}>
+                                    {grandDeltaB == null ? '—' : `${grandDeltaB > 0.5 ? '+' : grandDeltaB < -0.5 ? '−' : ''}${fmtCHF(Math.abs(grandDeltaB)).replace('CHF\u00a0','')}`}
+                                  </td>
+                                </>
+                              )}
+                              <td />
+                            </tr>
+                          );
+                        })()}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               )}
