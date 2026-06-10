@@ -3823,55 +3823,47 @@ export default function PersonalFixPage() {
                                     </div>
                                   ) : (
                                     /* ── Anzeige ── */
-                                    <div className={cn(
-                                      'flex flex-col items-end gap-0.5',
-                                      isManual
-                                        ? 'text-blue-700 dark:text-blue-300'
-                                        : isEstimate
-                                          ? 'text-muted-foreground/60'
-                                          : 'text-emerald-700 dark:text-emerald-400',
-                                    )}>
-                                      {weekNetRev != null ? (
-                                        <>
-                                          <span className="text-xs">{fmtCHF(weekNetRev)}</span>
-                                          {isManual && (
-                                            <div className="flex items-center gap-1">
-                                              <span className="text-[9px] italic opacity-80">Manuell</span>
-                                              <button
-                                                title="Umsatz bearbeiten"
-                                                className="opacity-50 hover:opacity-100 cursor-pointer transition-opacity"
-                                                onClick={() => { setWeekRevEditKey(w.weekKey); setWeekRevEditVal(String(Math.round(weekNetRev))); }}
-                                              >✎</button>
-                                              <button
-                                                title="Override löschen (zurück zu Budget)"
-                                                className="opacity-40 hover:opacity-100 hover:text-red-500 cursor-pointer transition-opacity text-[10px]"
-                                                onClick={() => commitWeekRevEdit(w.weekKey, '')}
-                                              >✕</button>
-                                            </div>
-                                          )}
-                                          {isEstimate && !isManual && (
-                                            <div className="flex items-center gap-1">
-                                              <span className="text-[9px] italic opacity-70">Budget p.r.</span>
-                                              <button
-                                                title="Umsatz manuell setzen"
-                                                className="opacity-40 hover:opacity-100 cursor-pointer transition-opacity text-[10px]"
-                                                onClick={() => { setWeekRevEditKey(w.weekKey); setWeekRevEditVal(String(Math.round(weekNetRev))); }}
-                                              >✎</button>
-                                            </div>
-                                          )}
-                                        </>
-                                      ) : (
-                                        isEstimate ? (
+                                    isEstimate ? (
+                                      /* Klickbarer Bereich für Budget-Fallback oder manuelle Werte */
+                                      <div
+                                        className={cn(
+                                          'group flex flex-col items-end gap-0.5 rounded px-1 py-0.5 -mx-1',
+                                          'cursor-pointer transition-colors',
+                                          isManual
+                                            ? 'text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30'
+                                            : 'text-muted-foreground/70 hover:bg-muted hover:text-foreground',
+                                        )}
+                                        title="Klicken um Umsatz manuell zu setzen"
+                                        onClick={() => {
+                                          setWeekRevEditKey(w.weekKey);
+                                          setWeekRevEditVal(weekNetRev != null ? String(Math.round(weekNetRev)) : '');
+                                        }}
+                                      >
+                                        <div className="flex items-center gap-1">
+                                          <Edit2 className="h-2.5 w-2.5 opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" />
+                                          <span className="text-xs font-mono">
+                                            {weekNetRev != null ? fmtCHF(weekNetRev) : '+ Umsatz setzen'}
+                                          </span>
+                                        </div>
+                                        <span className="text-[9px] italic opacity-70">
+                                          {isManual ? 'Manuell — klicken' : 'Budget p.r. — klicken'}
+                                        </span>
+                                        {isManual && (
                                           <button
-                                            title="Umsatz manuell setzen"
-                                            className="text-[10px] opacity-40 hover:opacity-100 cursor-pointer transition-opacity text-muted-foreground"
-                                            onClick={() => { setWeekRevEditKey(w.weekKey); setWeekRevEditVal(''); }}
-                                          >+ Umsatz</button>
-                                        ) : (
-                                          <span className="opacity-30">—</span>
-                                        )
-                                      )}
-                                    </div>
+                                            title="Override löschen (zurück zu Budget)"
+                                            className="text-[9px] opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-red-500 transition-opacity"
+                                            onClick={e => { e.stopPropagation(); commitWeekRevEdit(w.weekKey, ''); }}
+                                          >
+                                            ✕ zurücksetzen
+                                          </button>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      /* Actual Ist-Umsatz — nicht editierbar */
+                                      <span className="text-xs font-mono text-emerald-700 dark:text-emerald-400">
+                                        {weekNetRev != null ? fmtCHF(weekNetRev) : <span className="opacity-30">—</span>}
+                                      </span>
+                                    )
                                   )}
                                 </td>
                               )}
