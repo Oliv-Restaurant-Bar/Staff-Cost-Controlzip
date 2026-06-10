@@ -380,6 +380,37 @@ function saveRevenueAssumption(year: number, month: number, value: number | null
   else { try { localStorage.setItem(key, String(value)); } catch { /* ignore */ } }
 }
 
+// ── Budget-Umsatz (manuelle Revenue-Eingabe für PKQ-Budget-Ableitung) ──────────
+
+const BUDGET_REVENUE_KEY = 'personal_fix_budget_revenue_v1';
+function loadBudgetRevenue(year: number, month: number, keyFn: (k: string) => string = k => k): number | null {
+  try {
+    const raw = localStorage.getItem(keyFn(`${BUDGET_REVENUE_KEY}_${year}_${String(month).padStart(2, '0')}`));
+    if (!raw) return null;
+    const v = parseFloat(raw);
+    return isNaN(v) || v <= 0 ? null : v;
+  } catch { return null; }
+}
+function saveBudgetRevenue(year: number, month: number, value: number | null, keyFn: (k: string) => string = k => k) {
+  const key = keyFn(`${BUDGET_REVENUE_KEY}_${year}_${String(month).padStart(2, '0')}`);
+  if (value === null || value <= 0) { try { localStorage.removeItem(key); } catch { /* ignore */ } }
+  else { try { localStorage.setItem(key, String(value)); } catch { /* ignore */ } }
+}
+
+const WEEK_IST_KEY = 'personal_fix_week_ist_v1';
+function loadWeekIstSet(year: number, month: number, keyFn: (k: string) => string = k => k): string[] {
+  try {
+    const raw = localStorage.getItem(keyFn(`${WEEK_IST_KEY}_${year}_${String(month).padStart(2, '0')}`));
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function saveWeekIstSet(year: number, month: number, weeks: string[], keyFn: (k: string) => string = k => k) {
+  const key = keyFn(`${WEEK_IST_KEY}_${year}_${String(month).padStart(2, '0')}`);
+  try { localStorage.setItem(key, JSON.stringify(weeks)); } catch { /* ignore */ }
+}
+
 // ── Tagesumsätze aus localStorage (dailyBudgets) ──────────────────────────────
 
 function readDailyBudgetsLocal(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, { actualRevenue?: number; takeawayRevenue?: number }> {
@@ -1424,6 +1455,16 @@ export default function PersonalFixPage() {
     const v = loadRevenueAssumption(today.getFullYear(), today.getMonth() + 1, tenantKey);
     return v != null ? String(v) : '';
   });
+  const [budgetRevenue, setBudgetRevenue] = useState<number | null>(() =>
+    loadBudgetRevenue(today.getFullYear(), today.getMonth() + 1, tenantKey),
+  );
+  const [budgetRevenueInput, setBudgetRevenueInput] = useState(() => {
+    const v = loadBudgetRevenue(today.getFullYear(), today.getMonth() + 1, tenantKey);
+    return v != null ? String(v) : '';
+  });
+  const [weekIstSet, setWeekIstSet] = useState<Set<string>>(() =>
+    new Set(loadWeekIstSet(today.getFullYear(), today.getMonth() + 1, tenantKey)),
+  );
 
   // ── Pro-Rata-Abgrenzung ────────────────────────────────────────────────────
   // null = aus; Zahl = Stichtag (1–letzter Tag des Monats)
@@ -1645,11 +1686,15 @@ export default function PersonalFixPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
-  // Umsatz-Annahme bei Monat- oder Mandantenwechsel neu laden
+  // Umsatz-Annahme & Budget-Umsatz bei Monat- oder Mandantenwechsel neu laden
   useEffect(() => {
     const saved = loadRevenueAssumption(selectedYear, selectedMonth, tenantKey);
     setRevenueAssumption(saved);
     setRevenueAssumptionInput(saved != null ? String(saved) : '');
+    const savedBudgetRev = loadBudgetRevenue(selectedYear, selectedMonth, tenantKey);
+    setBudgetRevenue(savedBudgetRev);
+    setBudgetRevenueInput(savedBudgetRev != null ? String(savedBudgetRev) : '');
+    setWeekIstSet(new Set(loadWeekIstSet(selectedYear, selectedMonth, tenantKey)));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYear, selectedMonth, tenantId]);
 
@@ -2167,6 +2212,54 @@ export default function PersonalFixPage() {
   // Budget comparison uses only Flex Arbeit Ist — Ferienabbau is NOT budget-relevant
   const pfixIstVarDelta   = pfixBudget > 0 ? pfixAvailableVar - pfix.active.istWork : 0;
   const pfixIstVarOverrun = pfixIstVarDelta < 0;
+
+  // ── ISO-Wochennummer ──────────────────────────────────────────────────────
+  function getISOWeek(d: Date): number {
+    const dt = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    const day = dt.getUTCDay() || 7;
+    dt.setUTCDate(dt.getUTCDate() + 4 - day);
+    const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+    return Math.ceil((((dt.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  }
+
+  // ── Flex-Aufstellung pro Woche (für Budget-Auswertung) ───────────────────
+  const flexByWeek = useMemo((): Array<{ weekKey: string; label: string; planFlex: number; istFlex: number }> => {
+    const weekMap = new Map<string, { planFlex: number; istFlex: number }>();
+    const weekOrder: string[] = [];
+    for (let day = 1; day <= daysInSelectedMonth; day++) {
+      const wk = `KW${getISOWeek(new Date(selectedYear, selectedMonth - 1, day))}`;
+      if (!weekMap.has(wk)) { weekMap.set(wk, { planFlex: 0, istFlex: 0 }); weekOrder.push(wk); }
+    }
+    for (const emp of variableEmployees) {
+      const wage = emp.hourlyWage ?? 0;
+      if (!wage) continue;
+      const planDays = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, null, wage, tenantKey);
+      const istDays  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, null, wage, tenantKey);
+      for (const d of planDays) {
+        const wk = `KW${getISOWeek(new Date(selectedYear, selectedMonth - 1, parseInt(d.date.slice(-2), 10)))}`;
+        const e = weekMap.get(wk); if (e) e.planFlex += d.cost;
+      }
+      for (const d of istDays) {
+        const wk = `KW${getISOWeek(new Date(selectedYear, selectedMonth - 1, parseInt(d.date.slice(-2), 10)))}`;
+        const e = weekMap.get(wk); if (e) e.istFlex += d.cost;
+      }
+    }
+    return weekOrder.map(wk => ({
+      weekKey: wk, label: `KW ${wk.slice(2)}`, planFlex: weekMap.get(wk)!.planFlex, istFlex: weekMap.get(wk)!.istFlex,
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variableEmployees, selectedYear, selectedMonth, daysInSelectedMonth, tenantKey]);
+
+  // ── Budget-Umsatz abgeleitete Werte ───────────────────────────────────────
+  const budgetPkqPct = personnelBudget > 0 && budgetRevenue != null && budgetRevenue > 0
+    ? (personnelBudget / budgetRevenue) * 100 : null;
+  const adjustedPersonnelBudget = budgetRevenue != null && budgetRevenue > 0 && budgetPkqPct != null
+    ? budgetRevenue * (budgetPkqPct / 100) : personnelBudget;
+  const totalFlexForBudget = flexByWeek.reduce(
+    (sum, w) => sum + (weekIstSet.has(w.weekKey) ? w.istFlex : w.planFlex), 0,
+  );
+  const verfügbarFlexBudget = adjustedPersonnelBudget > 0 ? adjustedPersonnelBudget - pfix.active.fix : 0;
+  const budgetResultat       = verfügbarFlexBudget - totalFlexForBudget;
 
   // Operative Status-Logik:
   //   on_track  → Flex Arbeit Ist ≤ verfügbares Flex-Budget (delta ≥ 0)
@@ -2866,180 +2959,194 @@ export default function PersonalFixPage() {
           </div>
         </div>
 
-        {/* ── Umsatz-Annahme & Budget-Vergleich ──────────────────────────────── */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-
-          {/* Umsatz-Annahme */}
-          <div className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <TrendingDown className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-semibold">Umsatz-Basis für PKQ</span>
-              {revenueIsAssumed && (
-                <Badge variant="outline" className="text-[10px] ml-auto border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400">
-                  Annahme aktiv
-                </Badge>
-              )}
-            </div>
-            {monthRevenue > 0 && (
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Erfasster Ist-Umsatz</span>
-                <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">{fmtCHF(monthRevenue)}</span>
-              </div>
-            )}
-            <div className="text-xs text-muted-foreground">
-              {monthRevenue > 0 ? 'Annahme als Override eingeben:' : 'Noch kein Ist-Umsatz erfasst — Annahme eingeben:'}
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium pointer-events-none">CHF</span>
-                <Input
-                  className="pl-10 h-9 font-mono text-sm"
-                  placeholder="z. B. 200000"
-                  value={revenueAssumptionInput}
-                  onChange={e => setRevenueAssumptionInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      const v = parseFloat(revenueAssumptionInput.replace(/['\s]/g, '').replace(',', '.'));
-                      const val = !isNaN(v) && v > 0 ? v : null;
-                      setRevenueAssumption(val);
-                      saveRevenueAssumption(selectedYear, selectedMonth, val, tenantKey);
-                    }
-                  }}
-                />
-              </div>
-              <Button
-                size="sm"
-                className="h-9 text-xs shrink-0"
-                onClick={() => {
-                  const v = parseFloat(revenueAssumptionInput.replace(/['\s]/g, '').replace(',', '.'));
-                  const val = !isNaN(v) && v > 0 ? v : null;
-                  setRevenueAssumption(val);
-                  saveRevenueAssumption(selectedYear, selectedMonth, val, tenantKey);
-                }}
-              >
-                Übernehmen
-              </Button>
-              {revenueAssumption !== null && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-9 text-xs text-muted-foreground shrink-0"
-                  onClick={() => {
-                    setRevenueAssumption(null);
-                    setRevenueAssumptionInput('');
-                    saveRevenueAssumption(selectedYear, selectedMonth, null, tenantKey);
-                  }}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              )}
-            </div>
-            {effectiveRevenue > 0 && (
-              <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
-                <span className="text-xs font-semibold text-muted-foreground">
-                  PKQ-Basis {revenueIsAssumed ? '(Annahme)' : '(Ist-Umsatz)'}
-                </span>
-                <span className="font-mono font-bold text-sm">{fmtCHF(effectiveRevenue)}</span>
-              </div>
-            )}
+        {/* ── Budget-Auswertung ───────────────────────────────────────────────── */}
+        <section className="rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 bg-violet-50/40 dark:bg-violet-950/20 border-b border-border">
+            <Target className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+            <span className="text-sm font-bold">Budget-Auswertung — {getMonthLabel(selectedYear, selectedMonth)}</span>
           </div>
 
-          {/* Budget-Vergleich kompakt */}
-          {personnelBudget > 0 ? (() => {
-            const budget   = personnelBudget * (proRataDay !== null ? proRataFactor : 1);
-            const totalIst = pfix.active.istTotal;
-            const totalPlan = pfix.active.planTotal;
-            const diffIst  = totalIst  - budget;
-            const diffPlan = totalPlan - budget;
-            const istOver  = diffIst  > 0;
-            const planOver = diffPlan > 0;
-            const istPct   = budget > 0 ? Math.min(100, (totalIst  / budget) * 100) : 0;
-            const barColor = istPct < 80 ? 'bg-emerald-500' : istPct < 95 ? 'bg-amber-500' : 'bg-red-500';
-            return (
-              <div className={cn(
-                'rounded-xl border-2 shadow-sm p-4 space-y-3',
-                istOver
-                  ? 'border-red-300 dark:border-red-700 bg-red-50/50 dark:bg-red-950/20'
-                  : 'border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20',
-              )}>
-                <div className="flex items-center gap-2">
-                  <Target className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Budget-Vergleich</span>
+          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* LINKS: Budget-Zahlen */}
+            <div className="space-y-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-3">Budget-Basis</p>
+              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
+                <span className="text-muted-foreground">Budget Umsatz</span>
+                <span className="font-mono font-semibold">
+                  {budgetRevenue != null ? fmtCHF(budgetRevenue) : <span className="text-muted-foreground italic text-xs">nicht hinterlegt</span>}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
+                <span className="text-muted-foreground">Budget Personalkosten</span>
+                <span className="font-mono font-semibold">
+                  {personnelBudget > 0 ? fmtCHF(personnelBudget) : <span className="text-muted-foreground italic text-xs">nicht hinterlegt</span>}
+                </span>
+              </div>
+              {budgetPkqPct != null && (
+                <div className="flex justify-between items-center py-1.5 text-sm">
+                  <span className="text-muted-foreground">Budget PKQ %</span>
                   <span className={cn(
-                    'ml-auto text-xs font-bold',
-                    istOver ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400',
-                  )}>
-                    {istOver ? '⛔ Über Budget' : '✓ Im Budget'}
-                  </span>
+                    'font-mono font-bold',
+                    budgetPkqPct < 30 ? 'text-emerald-600 dark:text-emerald-400'
+                      : budgetPkqPct < 40 ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-red-600 dark:text-red-400',
+                  )}>{budgetPkqPct.toFixed(1)} %</span>
                 </div>
-                <div className="space-y-1.5 text-xs">
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">Budget {budgetLabel}</span>
-                    <span className="font-mono font-semibold text-violet-700 dark:text-violet-400">{fmtCHF(budget)}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">Plan Total (Fix + Flex)</span>
-                    <span className={cn(
-                      'font-mono font-semibold',
-                      planOver ? 'text-red-600 dark:text-red-400' : 'text-blue-700 dark:text-blue-400',
-                    )}>
-                      {planOver ? '↑ ' : ''}{fmtCHF(totalPlan)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">Ist Total (Fix + Flex)</span>
-                    <span className={cn(
-                      'font-mono font-semibold',
-                      istOver ? 'text-red-600 dark:text-red-400' : 'text-orange-700 dark:text-orange-400',
-                    )}>
-                      {istOver ? '↑ ' : ''}{fmtCHF(totalIst)}
-                    </span>
-                  </div>
+              )}
+            </div>
+
+            {/* RECHTS: Manuelle Budget-Umsatz Eingabe */}
+            <div className="space-y-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-3">
+                Budget Umsatz — manuelle Eingabe
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Budget Umsatz überschreiben → PK-Budget passt sich automatisch an (gleiche PKQ %).
+              </p>
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium pointer-events-none">CHF</span>
+                  <Input
+                    className="pl-10 h-9 font-mono text-sm"
+                    placeholder="z. B. 250000"
+                    value={budgetRevenueInput}
+                    onChange={e => setBudgetRevenueInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        const v = parseFloat(budgetRevenueInput.replace(/['\s]/g, '').replace(',', '.'));
+                        const val = !isNaN(v) && v > 0 ? v : null;
+                        setBudgetRevenue(val);
+                        saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey);
+                      }
+                    }}
+                  />
                 </div>
-                {/* Fortschrittsbalken */}
-                <div className="space-y-1">
-                  <div className="relative h-5 rounded-full bg-muted/40 overflow-hidden">
-                    <div
-                      className={cn('h-full rounded-full transition-all duration-500', barColor)}
-                      style={{ width: `${istPct}%` }}
-                    />
-                    <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white drop-shadow pointer-events-none">
-                      {istPct >= 15 ? `${Math.round(istPct)} % genutzt` : ''}
-                    </span>
-                  </div>
-                </div>
-                <div className={cn(
-                  'rounded-lg px-3 py-2 flex justify-between items-center',
-                  istOver ? 'bg-red-100 dark:bg-red-950/40' : 'bg-emerald-100 dark:bg-emerald-950/40',
-                )}>
-                  <span className="text-xs font-bold">
-                    {istOver ? 'Überschreitung Ist' : 'Restbudget Ist'}
-                  </span>
-                  <span className={cn(
-                    'font-mono font-bold text-base',
-                    istOver ? 'text-red-700 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400',
-                  )}>
-                    {istOver ? '+' : ''}{fmtCHF(Math.abs(diffIst))}
-                  </span>
-                </div>
-                {effectiveRevenue > 0 && (
-                  <div className="flex items-center justify-between text-xs pt-1 border-t border-border/50">
-                    <span className="text-muted-foreground">PKQ Ist / Plan {revenueIsAssumed ? '(Annahme)' : ''}</span>
-                    <span className="font-mono font-semibold tabular-nums">
-                      {((totalIst / effectiveRevenue) * 100).toFixed(1)} % / {((totalPlan / effectiveRevenue) * 100).toFixed(1)} %
-                    </span>
-                  </div>
+                <Button size="sm" className="h-9 text-xs shrink-0" onClick={() => {
+                  const v = parseFloat(budgetRevenueInput.replace(/['\s]/g, '').replace(',', '.'));
+                  const val = !isNaN(v) && v > 0 ? v : null;
+                  setBudgetRevenue(val);
+                  saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey);
+                }}>Übernehmen</Button>
+                {budgetRevenue !== null && (
+                  <Button size="sm" variant="ghost" className="h-9 shrink-0 text-muted-foreground" onClick={() => {
+                    setBudgetRevenue(null); setBudgetRevenueInput('');
+                    saveBudgetRevenue(selectedYear, selectedMonth, null, tenantKey);
+                  }}><X className="h-3.5 w-3.5" /></Button>
                 )}
               </div>
-            );
-          })() : (
-            <div className="rounded-xl border border-dashed border-border bg-muted/10 p-4 flex flex-col items-center justify-center gap-2 text-center">
-              <Target className="h-8 w-8 text-muted-foreground/30" />
-              <p className="text-sm text-muted-foreground">Kein Personalbudget hinterlegt</p>
-              <p className="text-xs text-muted-foreground/60">Budget in der Budgetplanung erfassen, um Soll/Ist zu vergleichen.</p>
+              {budgetRevenue != null && budgetPkqPct != null && (
+                <div className="rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 px-3 py-2 space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-violet-700 dark:text-violet-300 font-medium">Budget PKQ</span>
+                    <span className="font-mono font-bold text-violet-700 dark:text-violet-300">{budgetPkqPct.toFixed(1)} %</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">→ PK-Budget bei diesem Umsatz</span>
+                    <span className="font-mono font-bold">{fmtCHF(adjustedPersonnelBudget)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Aufstellung ──────────────────────────────────────────────────── */}
+          {(personnelBudget > 0 || budgetRevenue != null) && (
+            <div className="border-t border-border px-4 py-4 space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-3">Aufstellung</p>
+
+              {/* Zeile 1: Budget Personalkosten */}
+              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
+                <span className="text-muted-foreground">Budget Personalkosten</span>
+                <span className="font-mono font-semibold">{adjustedPersonnelBudget > 0 ? fmtCHF(adjustedPersonnelBudget) : '—'}</span>
+              </div>
+
+              {/* Zeile 2: Personal FIX Ist gesamt */}
+              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
+                <span className="text-muted-foreground">− Personal FIX Ist gesamt</span>
+                <span className="font-mono text-blue-700 dark:text-blue-400">− {fmtCHF(pfix.active.fix)}</span>
+              </div>
+
+              {/* Zeile 3: Verfügbar für Flex */}
+              <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg text-sm font-bold',
+                verfügbarFlexBudget >= 0
+                  ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
+                  : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
+                <span>= Verfügbar für Flex</span>
+                <span className="font-mono text-base">{fmtCHF(verfügbarFlexBudget)}</span>
+              </div>
+
+              {/* Wochen-Toggles */}
+              {flexByWeek.length > 0 && (
+                <div className="pt-2 pb-1">
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Personal Flex — wähle pro Woche ob <strong>Plan</strong>- oder <strong>Ist</strong>-Kosten verwendet werden:
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {flexByWeek.map(w => {
+                      const useIst = weekIstSet.has(w.weekKey);
+                      const toggleWeek = () => {
+                        const next = new Set(weekIstSet);
+                        if (next.has(w.weekKey)) next.delete(w.weekKey); else next.add(w.weekKey);
+                        setWeekIstSet(next);
+                        saveWeekIstSet(selectedYear, selectedMonth, [...next], tenantKey);
+                      };
+                      return (
+                        <button
+                          key={w.weekKey}
+                          onClick={toggleWeek}
+                          className={cn(
+                            'flex flex-col items-center rounded-lg border-2 px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer min-w-[80px]',
+                            useIst
+                              ? 'border-orange-400 bg-orange-50 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300'
+                              : 'border-blue-300 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300',
+                          )}
+                        >
+                          <span className="font-bold">{w.label}</span>
+                          <span className="text-[10px] font-normal mt-0.5">
+                            {useIst
+                              ? `Ist: ${fmtCHF(w.istFlex)}`
+                              : `Plan: ${fmtCHF(w.planFlex)}`}
+                          </span>
+                          <span className={cn('mt-1 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded',
+                            useIst ? 'bg-orange-200 dark:bg-orange-900/40' : 'bg-blue-200 dark:bg-blue-900/40')}>
+                            {useIst ? 'Ist ✓' : 'Plan'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Zeile 4: Personal Flex */}
+              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground">− Personal Flex</span>
+                  <span className="text-[10px] text-muted-foreground/60">
+                    ({weekIstSet.size === 0 ? 'Plan gesamt' : weekIstSet.size === flexByWeek.length ? 'Ist gesamt' : `${weekIstSet.size} Wochen Ist, ${flexByWeek.length - weekIstSet.size} Plan`})
+                  </span>
+                </div>
+                <span className={cn('font-mono', totalFlexForBudget > verfügbarFlexBudget ? 'text-red-600 dark:text-red-400' : 'text-foreground')}>
+                  − {fmtCHF(totalFlexForBudget)}
+                </span>
+              </div>
+
+              {/* Zeile 5: Resultat */}
+              <div className={cn('flex justify-between items-center py-2.5 px-3 rounded-lg mt-1',
+                budgetResultat >= 0
+                  ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800'
+                  : 'bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800')}>
+                <span className={cn('text-sm font-bold', budgetResultat >= 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-red-700 dark:text-red-400')}>
+                  {budgetResultat >= 0 ? '✓ Im Budget' : '⛔ Überschreitung'}
+                </span>
+                <span className={cn('font-mono font-bold text-lg', budgetResultat >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
+                  {budgetResultat >= 0 ? '' : '+'}{fmtCHF(Math.abs(budgetResultat))}
+                  {budgetResultat < 0 && <span className="text-xs font-normal ml-1">zu viel</span>}
+                </span>
+              </div>
             </div>
           )}
-        </div>
+        </section>
 
         {/* ── KPI-Block (8 Karten: Plan + Ist für alle 4 Ebenen) ───────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -3637,429 +3744,7 @@ export default function PersonalFixPage() {
           );
         })}
 
-        {/* ── Variable Budget-Planung ──────────────────────────────────────── */}
-        {personnelBudget > 0 && (
-          <section className="rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-card shadow-sm overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-violet-50/40 dark:bg-violet-950/20">
-              <Target className="h-4 w-4 text-violet-600 dark:text-violet-400" />
-              <span className="text-sm font-bold">
-                Budget-Planung Personal — {getMonthLabel(selectedYear, selectedMonth)}
-              </span>
-              {proRataDay !== null && (
-                <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 text-[11px] font-semibold px-2.5 py-0.5 border border-violet-300 dark:border-violet-700 shrink-0">
-                  {proRataDay}/{daysInSelectedMonth} Tage · {Math.round(proRataFactor * 100)} % Pro Rata
-                </span>
-              )}
-            </div>
 
-            {/* ── Aktuell / Forecast Toggle — immer sichtbar ───────────── */}
-            <div className="flex items-center gap-2 px-4 pb-2 pt-3 border-b border-border">
-              <span className="text-xs text-muted-foreground font-medium">Ansicht:</span>
-              <div className="flex gap-1 rounded-lg bg-muted p-0.5">
-                <button
-                  onClick={() => setForecastViewMode('actual')}
-                  className={cn('rounded px-3 py-1 text-xs font-medium transition-colors',
-                    forecastViewMode === 'actual' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground')}>
-                  {proRataDay !== null ? 'Auf Kurs per Stichtag' : 'Aktuell'}
-                </button>
-                <button
-                  onClick={() => setForecastViewMode('forecast')}
-                  className={cn('rounded px-3 py-1 text-xs font-medium transition-colors',
-                    forecastViewMode === 'forecast' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground')}>
-                  Prognose bis Monatsende
-                </button>
-              </div>
-              {forecastViewMode === 'forecast' && (
-                <span className="flex items-center gap-1.5 ml-2 flex-wrap">
-                  <span className="text-[11px] text-muted-foreground">Ist bis Tag</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={daysInSelectedMonth}
-                    value={forecastIstDay ?? ''}
-                    onChange={e => {
-                      const v = parseInt(e.target.value, 10);
-                      if (!isNaN(v) && v >= 1 && v <= daysInSelectedMonth) setForecastIstDay(v);
-                      else if (e.target.value === '') setForecastIstDay(null);
-                    }}
-                    placeholder={String(today.getDate())}
-                    className="w-12 text-center rounded border border-violet-300 dark:border-violet-600 bg-background text-xs font-semibold px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
-                  />
-                  {forecastIstDay !== null && (
-                    <button
-                      onClick={() => setForecastIstDay(null)}
-                      className="text-[10px] text-muted-foreground/60 hover:text-muted-foreground leading-none"
-                      title="Zurücksetzen">×</button>
-                  )}
-                  <span className="text-[11px] text-violet-600 dark:text-violet-400 font-medium">
-                    → Restkosten ab Tag {effectiveForecastCutoff + 1}
-                  </span>
-                </span>
-              )}
-            </div>
-
-            {/* Budget-Rechnung — AKTUELL */}
-            {forecastViewMode === 'actual' && (() => {
-              const gesamtGenutzt  = pfix.active.fix + pfix.active.istWork;
-              const gesamtPct      = pfixBudget > 0 ? Math.min(100, (gesamtGenutzt / pfixBudget) * 100) : 0;
-              const flexPct        = pfixAvailableVar > 0 ? Math.min(100, (pfix.active.istWork / pfixAvailableVar) * 100) : 0;
-              const barBg = (pct: number) =>
-                pct < 80 ? 'bg-emerald-500' : pct < 95 ? 'bg-amber-500' : 'bg-red-500';
-              const pctColor = (pct: number) =>
-                pct < 80 ? 'text-emerald-600 dark:text-emerald-400'
-                  : pct < 95 ? 'text-amber-600 dark:text-amber-400'
-                  : 'text-red-600 dark:text-red-400';
-              const remainingFlex  = Math.max(0, pfixIstVarDelta);
-              const remainingHours = avgHourlyWage > 0 ? Math.floor(remainingFlex / avgHourlyWage) : 0;
-              const isOver         = pfixIstVarDelta < 0;
-              const isWarning      = !isOver && gesamtPct >= 80;
-              return (
-                <div className="space-y-0">
-
-                  {/* ── Klassische Budgetübersicht (primär) ─────────────── */}
-                  <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-
-                    {/* LINKS: Budget-Aufbau */}
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400 mb-3">
-                        Budget {budgetLabel}
-                        {proRataDay !== null && (
-                          <span className="text-muted-foreground font-normal ml-1">(pro-rata bis {proRataDay}.)</span>
-                        )}
-                      </p>
-                      <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                        <span className="text-sm text-muted-foreground">Budget gesamt</span>
-                        <span className="font-mono font-semibold">{fmtCHF(pfixBudget)}</span>
-                      </div>
-                      <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                        <span className="text-sm text-muted-foreground">− Personal FIX Ist gesamt</span>
-                        <span className="font-mono text-blue-700 dark:text-blue-400">− {fmtCHF(pfix.active.fix)}</span>
-                      </div>
-                      <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg',
-                        pfixAvailableVar > 0
-                          ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
-                          : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
-                        <span className="text-sm font-bold">= Verfügbar für Flex</span>
-                        <span className="font-mono font-bold text-base">{fmtCHF(pfixAvailableVar)}</span>
-                      </div>
-                    </div>
-
-                    {/* RECHTS: Flex Ist-Verbrauch */}
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-orange-600 dark:text-orange-400 mb-3">
-                        Flex Ist{proRataDay !== null ? ` bis ${proRataDay}.` : ''}
-                      </p>
-                      <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                        <span className="text-sm text-muted-foreground">Verfügbar für Flex</span>
-                        <span className="font-mono font-semibold">{fmtCHF(pfixAvailableVar)}</span>
-                      </div>
-                      <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                        <span className="text-sm text-muted-foreground">− Flex Arbeit Ist gesamt</span>
-                        <span className="font-mono text-orange-700 dark:text-orange-400">− {fmtCHF(pfix.active.istWork)}</span>
-                      </div>
-                      <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg',
-                        !isOver
-                          ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
-                          : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
-                        <span className="text-sm font-bold">
-                          {isOver ? 'Überschreitung' : 'Auf Kurs — Verbleibend'}
-                        </span>
-                        <span className="font-mono font-bold text-base">
-                          {isOver ? '⛔ ' : '✓ '}{fmtCHF(Math.abs(pfixIstVarDelta))}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* ── Status-Box ──────────────────────────────────────── */}
-                  <div className={cn(
-                    'mx-4 mb-4 p-3 rounded-lg border',
-                    isOver
-                      ? 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
-                      : isWarning
-                        ? 'border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20'
-                        : 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20',
-                  )}>
-                    {(avgHourlyWage > 0 || remainingHours > 0) && (
-                      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs mb-2">
-                        {avgHourlyWage > 0 && (
-                          <span className="text-muted-foreground">
-                            Ø Stundenlohn <strong className="font-mono text-foreground">{fmtCHFDec(avgHourlyWage)}/h</strong>
-                          </span>
-                        )}
-                        {pfixMaxVarHours > 0 && (
-                          <span className="text-muted-foreground">
-                            Max. planbare Stunden <strong className="font-mono text-foreground">{pfixMaxVarHours} h</strong>
-                          </span>
-                        )}
-                        {!isOver && remainingHours > 0 && (
-                          <span className="text-muted-foreground">
-                            Verbleibend <strong className="font-mono text-foreground">{remainingHours} h</strong>
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    <p className={cn('text-sm font-bold',
-                      isOver    ? 'text-red-700 dark:text-red-400'
-                        : isWarning ? 'text-amber-700 dark:text-amber-400'
-                        : 'text-emerald-700 dark:text-emerald-400')}>
-                      {isOver
-                        ? `⛔ Flexbudget überschritten — ${fmtCHF(Math.abs(pfixIstVarDelta))} zu viel`
-                        : isWarning
-                          ? `⚠ Personalbudget fast ausgeschöpft — noch ${fmtCHF(remainingFlex)} verfügbar`
-                          : `✓ Auf Kurs — noch ${fmtCHF(remainingFlex)} Flexbudget verfügbar`}
-                    </p>
-                  </div>
-
-                  {/* ── Fortschrittsbalken (visuelle Ergänzung) ─────────── */}
-                  <div className="px-4 pb-4 space-y-3 border-t border-dashed border-border pt-3">
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 font-semibold">Visuelle Übersicht</p>
-
-                    {/* Balken A: Gesamtbudget genutzt */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Gesamtbudget genutzt</span>
-                        <span className={cn('text-sm font-bold', pctColor(gesamtPct))}>{Math.round(gesamtPct)} %</span>
-                      </div>
-                      <div className="relative h-7 rounded-full bg-muted/40 overflow-hidden">
-                        <div
-                          className={cn('h-full rounded-full transition-all duration-500', barBg(gesamtPct))}
-                          style={{ width: `${gesamtPct}%` }}
-                        />
-                        <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold text-white drop-shadow pointer-events-none">
-                          {gesamtPct >= 10 ? `${fmtCHF(gesamtGenutzt)} / ${fmtCHF(pfixBudget)}` : ''}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Balken B: Flexbudget genutzt */}
-                    {pfixAvailableVar > 0 && (
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Flexbudget genutzt</span>
-                          <span className={cn('text-sm font-bold', pctColor(flexPct))}>{Math.round(flexPct)} %</span>
-                        </div>
-                        <div className="relative h-7 rounded-full bg-muted/40 overflow-hidden">
-                          <div
-                            className={cn('h-full rounded-full transition-all duration-500', barBg(flexPct))}
-                            style={{ width: `${flexPct}%` }}
-                          />
-                          <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold text-white drop-shadow pointer-events-none">
-                            {flexPct >= 10 ? `${fmtCHF(pfix.active.istWork)} / ${fmtCHF(pfixAvailableVar)}` : ''}
-                          </span>
-                        </div>
-                        {pfixIstVarDelta >= 0 ? (
-                          <p className="text-xs text-emerald-700 dark:text-emerald-400">
-                            ✓ Noch <strong>{fmtCHF(remainingFlex)}</strong> verfügbar
-                            {remainingHours > 0 && ` — ca. ${remainingHours} h zusätzlich planbar`}
-                          </p>
-                        ) : (
-                          <p className="text-xs text-red-600 dark:text-red-400 font-semibold">
-                            ⛔ {fmtCHF(Math.abs(pfixIstVarDelta))} über Flexbudget
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Budget-Rechnung — FORECAST MONATSENDE */}
-            {forecastViewMode === 'forecast' && (<>
-            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* LEFT: Monatsbudget gesamt */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-3">
-                  Budget gesamt Monat
-                </p>
-                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">Budget gesamt Monat</span>
-                  <span className="font-mono font-semibold">{fmtCHF(personnelBudget)}</span>
-                </div>
-                <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">− Personal FIX gesamt Monat</span>
-                  <span className="font-mono text-blue-700 dark:text-blue-400 shrink-0">− {fmtCHF(pfix.month.fix)}</span>
-                </div>
-                <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg',
-                  forecastAvailableVar > 0
-                    ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
-                    : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
-                  <span className="text-sm font-bold">= Verfügbar für Flex (Monat)</span>
-                  <span className="font-mono font-bold text-base">{fmtCHF(forecastAvailableVar)}</span>
-                </div>
-              </div>
-
-              {/* RIGHT: Forecast Flex gesamt */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-3">
-                  Prognose Flex bis Monatsende
-                </p>
-                <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border">
-                  <span className="text-sm text-muted-foreground">Flex Arbeit Ist {forecastIstLabel}</span>
-                  <span className="font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfix.active.istWork)}</span>
-                </div>
-                <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border">
-                  <div className="flex flex-col">
-                    <span className="text-sm text-muted-foreground">+ geplante Restkosten (Tag {effectiveForecastCutoff + 1}–{daysInSelectedMonth})</span>
-                    <span className="text-[10px] text-muted-foreground/60">aus Dienstplan, ohne Ferien</span>
-                  </div>
-                  <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">+ {fmtCHF(forecastRemainingPlanFlex)}</span>
-                </div>
-                {(pfix.active.istHoliday > 0 || pfix.month.planHoliday > 0) && (
-                  <div className="flex justify-between items-baseline py-1.5 border-b border-dashed border-border/60">
-                    <div className="flex flex-col">
-                      <span className="text-xs text-muted-foreground/60 italic">Ferienabbau (nur Information)</span>
-                      <span className="text-[10px] text-muted-foreground/50">nicht budgetwirksam</span>
-                    </div>
-                    <span className="font-mono text-xs text-muted-foreground/50 shrink-0">{fmtCHF(pfix.month.planHoliday)}</span>
-                  </div>
-                )}
-                <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg',
-                  forecastStatus === 'on_track'
-                    ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
-                    : forecastStatus === 'warning'
-                      ? 'bg-yellow-50 dark:bg-yellow-950/30 text-yellow-800 dark:text-yellow-300'
-                      : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold">
-                      {forecastStatus === 'on_track' ? '✓ Prognose: Auf Kurs'
-                        : forecastStatus === 'warning' ? '⚠ Prognose: Leicht überzogen'
-                        : '✗ Prognose: Nicht auf Kurs'}
-                    </span>
-                    <span className="text-[10px] font-normal opacity-70">Forecast Flex Monat: {fmtCHF(forecastFlexTotal)}</span>
-                  </div>
-                  <span className="font-mono font-bold text-base">
-                    {forecastDelta >= 0 ? '+ ' : '− '}{fmtCHF(Math.abs(forecastDelta))}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* ── Forecast Kernsatz ─────────────────────────────────────── */}
-            <div className={cn(
-              'mx-4 mb-4 py-3 px-4 rounded-lg text-center font-semibold text-sm',
-              forecastDelta >= 0
-                ? 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200'
-                : 'bg-red-100 dark:bg-red-950/40 text-red-800 dark:text-red-200'
-            )}>
-              {forecastDelta >= 0
-                ? `Voraussichtlich ${fmtCHF(forecastDelta)} unter Budget`
-                : `Voraussichtlich ${fmtCHF(Math.abs(forecastDelta))} über Budget`}
-            </div>
-            </>)}
-
-            {/* ── Tagesübersicht Heatmap ───────────────────────────────── */}
-            {pfixAbw.days.length > 0 && (
-              <div className="px-4 pb-2">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Tagesübersicht — Flex Plan vs. Ist
-                  </p>
-                  <span className="text-[10px] text-muted-foreground/60 italic">Tag anklicken für Details</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {Array.from({ length: daysInSelectedMonth }, (_, i) => {
-                    const day     = i + 1;
-                    const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                    const entry   = pfixAbw.days.find(d => d.date === dateStr);
-                    const diff    = entry?.diff ?? 0;
-                    const pct     = entry?.diffPct ?? 0;
-                    const hasData = !!entry;
-                    const tileCls = !hasData
-                      ? 'bg-muted/40 text-muted-foreground cursor-default'
-                      : pct > 20
-                        ? 'bg-red-500 text-white cursor-pointer hover:ring-2 hover:ring-red-300 hover:scale-110'
-                        : pct > 8
-                          ? 'bg-amber-500 text-white cursor-pointer hover:ring-2 hover:ring-amber-300 hover:scale-110'
-                          : diff > 0.01
-                            ? 'bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-white cursor-pointer hover:ring-2 hover:ring-yellow-300 hover:scale-110'
-                            : 'bg-emerald-500 text-white cursor-pointer hover:ring-2 hover:ring-emerald-300 hover:scale-110';
-                    return (
-                      <button
-                        key={day}
-                        type="button"
-                        disabled={!hasData}
-                        onClick={() => { if (hasData && entry) setDayDetailModal(entry); }}
-                        className={cn(
-                          'h-9 w-9 rounded-md flex items-center justify-center text-[11px] font-bold transition-all relative z-0',
-                          tileCls,
-                        )}
-                      >
-                        {day}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="flex flex-wrap items-center gap-4 mt-2 text-[10px] text-muted-foreground">
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-500 inline-block" />Im Plan</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-yellow-400 inline-block" />Leicht über</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-500 inline-block" />Über Plan</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-red-500 inline-block" />Stark über</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-muted/40 border border-border inline-block" />Keine Daten</span>
-                </div>
-              </div>
-            )}
-
-            {/* ── Operativer Status-Banner (vereinfacht) ───────────────── */}
-            {(() => {
-              const isForecast    = forecastViewMode === 'forecast';
-              const gesamtGenutzt = isForecast
-                ? pfix.month.fix + forecastFlexTotal
-                : pfix.active.fix + pfix.active.istWork;
-              const budgetBase    = isForecast ? personnelBudget : pfixBudget;
-              const gesamtPct     = budgetBase > 0 ? (gesamtGenutzt / budgetBase) * 100 : 0;
-              const restPct       = Math.max(0, 100 - gesamtPct);
-              const activeDelta   = isForecast ? forecastDelta : pfixIstVarDelta;
-              const isRed         = gesamtPct >= 95;
-              const isOrange      = gesamtPct >= 80 && gesamtPct < 95;
-              const statusTitle   = isRed
-                ? '⛔ Budget überschritten'
-                : isOrange
-                  ? '⚠ Personalbudget fast ausgeschöpft'
-                  : '✓ Auf Kurs';
-              const statusSub     = isRed
-                ? 'Flexeinsätze reduzieren'
-                : isOrange
-                  ? `Nur noch ${fmtCHF(Math.max(0, activeDelta))} verfügbar`
-                  : `Noch ${restPct.toFixed(0)} % Personalbudget verfügbar`;
-              return (
-                <div className={cn(
-                  'mx-4 mb-4 p-3 rounded-lg border flex items-center gap-3',
-                  isRed
-                    ? 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20'
-                    : isOrange
-                      ? 'border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20'
-                      : 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20'
-                )}>
-                  {/* Ampel */}
-                  <div className="flex flex-col gap-1 items-center shrink-0">
-                    <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
-                      isRed ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)]' : 'bg-red-200 dark:bg-red-900')} />
-                    <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
-                      isOrange ? 'bg-amber-500 shadow-[0_0_6px_rgba(234,179,8,0.7)]' : 'bg-amber-200 dark:bg-amber-900')} />
-                    <div className={cn('h-3.5 w-3.5 rounded-full transition-all',
-                      (!isRed && !isOrange) ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]' : 'bg-emerald-200 dark:bg-emerald-900')} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className={cn('text-sm font-bold',
-                      isRed    ? 'text-red-700 dark:text-red-400'
-                        : isOrange ? 'text-amber-700 dark:text-amber-400'
-                        : 'text-emerald-700 dark:text-emerald-400')}>
-                      {statusTitle}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{statusSub}</p>
-                    {avgHourlyWage > 0 && pfixMaxVarHours > 0 && !isRed && (
-                      <p className="text-[11px] text-muted-foreground/60 mt-1">
-                        Ø Stundenlohn {fmtCHFDec(avgHourlyWage)}/h · max. {pfixMaxVarHours} h Flex planbar
-                      </p>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
-          </section>
-        )}
 
         {/* ── Gesamt-Total FIX + VARIABEL ──────────────────────────────────── */}
         {pfix.active.istTotalVar > 0 && (
