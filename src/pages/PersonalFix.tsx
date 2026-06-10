@@ -411,6 +411,21 @@ function saveWeekIstSet(year: number, month: number, weeks: string[], keyFn: (k:
   try { localStorage.setItem(key, JSON.stringify(weeks)); } catch { /* ignore */ }
 }
 
+const SCENARIO_PK_KEY = 'personal_fix_scenario_pk_v1';
+function loadScenarioPkCost(year: number, month: number, keyFn: (k: string) => string = k => k): number | null {
+  try {
+    const raw = localStorage.getItem(keyFn(`${SCENARIO_PK_KEY}_${year}_${String(month).padStart(2, '0')}`));
+    if (!raw) return null;
+    const v = parseFloat(raw);
+    return isNaN(v) || v <= 0 ? null : v;
+  } catch { return null; }
+}
+function saveScenarioPkCost(year: number, month: number, value: number | null, keyFn: (k: string) => string = k => k) {
+  const key = keyFn(`${SCENARIO_PK_KEY}_${year}_${String(month).padStart(2, '0')}`);
+  if (value === null || value <= 0) { try { localStorage.removeItem(key); } catch { /* ignore */ } }
+  else { try { localStorage.setItem(key, String(value)); } catch { /* ignore */ } }
+}
+
 // ── Tagesumsätze aus localStorage (dailyBudgets) ──────────────────────────────
 
 function readDailyBudgetsLocal(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, { actualRevenue?: number; takeawayRevenue?: number }> {
@@ -1465,6 +1480,14 @@ export default function PersonalFixPage() {
   const [weekIstSet, setWeekIstSet] = useState<Set<string>>(() =>
     new Set(loadWeekIstSet(today.getFullYear(), today.getMonth() + 1, tenantKey)),
   );
+  const [scenarioPkCost, setScenarioPkCost] = useState<number | null>(() =>
+    loadScenarioPkCost(today.getFullYear(), today.getMonth() + 1, tenantKey),
+  );
+  const [scenarioPkCostInput, setScenarioPkCostInput] = useState(() => {
+    const v = loadScenarioPkCost(today.getFullYear(), today.getMonth() + 1, tenantKey);
+    return v != null ? String(v) : '';
+  });
+  const [scenarioPkqInput, setScenarioPkqInput] = useState('');
 
   // ── Pro-Rata-Abgrenzung ────────────────────────────────────────────────────
   // null = aus; Zahl = Stichtag (1–letzter Tag des Monats)
@@ -1695,6 +1718,10 @@ export default function PersonalFixPage() {
     setBudgetRevenue(savedBudgetRev);
     setBudgetRevenueInput(savedBudgetRev != null ? String(savedBudgetRev) : '');
     setWeekIstSet(new Set(loadWeekIstSet(selectedYear, selectedMonth, tenantKey)));
+    const savedScPk = loadScenarioPkCost(selectedYear, selectedMonth, tenantKey);
+    setScenarioPkCost(savedScPk);
+    setScenarioPkCostInput(savedScPk != null ? String(savedScPk) : '');
+    setScenarioPkqInput('');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYear, selectedMonth, tenantId]);
 
@@ -2255,19 +2282,29 @@ export default function PersonalFixPage() {
   }, [variableEmployees, selectedYear, selectedMonth, daysInSelectedMonth, tenantKey]);
 
   // ── Budget-Umsatz abgeleitete Werte ───────────────────────────────────────
-  // basePkqPct: immer aus der Budget-Planung (personnelBudget / revenueBudget aus Budget-Modul)
+  // basePkqPct: PKQ% aus der Budget-Planung (Basis für Szenario-Berechnungen)
   const basePkqPct = personnelBudget > 0 && budgetData.revenueBudget > 0
     ? (personnelBudget / budgetData.revenueBudget) * 100 : null;
-  // effectiveBudgetRevenue: manuelle Überschreibung > Budget-Planung
+  // effectiveBudgetRevenue: Szenario-Umsatz überschreibt Budget-Planung
   const effectiveBudgetRevenue = budgetRevenue ?? budgetData.revenueBudget;
-  // adjustedPersonnelBudget: nur neu berechnen wenn manueller Umsatz gesetzt
-  const adjustedPersonnelBudget = budgetRevenue != null && budgetRevenue > 0 && basePkqPct != null
-    ? budgetRevenue * (basePkqPct / 100) : personnelBudget;
+  // adjustedPersonnelBudget (= Szenario-PK):
+  //   1. Manuell gesetzter PK-Betrag (scenarioPkCost)
+  //   2. Umsatz-Szenario × Basis-PKQ% (wenn nur Umsatz angepasst)
+  //   3. Budget-Plan PK (kein Szenario)
+  const adjustedPersonnelBudget =
+    scenarioPkCost != null && scenarioPkCost > 0 ? scenarioPkCost
+    : budgetRevenue != null && budgetRevenue > 0 && basePkqPct != null ? budgetRevenue * (basePkqPct / 100)
+    : personnelBudget;
+  // effectiveScenarioPkqPct: PKQ% des Szenarios (für Anzeige)
+  const effectiveScenarioPkqPct = effectiveBudgetRevenue > 0 && adjustedPersonnelBudget > 0
+    ? (adjustedPersonnelBudget / effectiveBudgetRevenue) * 100 : basePkqPct;
   const totalFlexForBudget = flexByWeek.reduce(
     (sum, w) => sum + (weekIstSet.has(w.weekKey) ? w.istFlex : w.planFlex), 0,
   );
   const verfügbarFlexBudget = adjustedPersonnelBudget > 0 ? adjustedPersonnelBudget - pfix.active.fix : 0;
   const budgetResultat       = verfügbarFlexBudget - totalFlexForBudget;
+  // Szenario aktiv wenn Umsatz oder PK überschrieben
+  const scenarioActive = budgetRevenue != null || scenarioPkCost != null;
 
   // Operative Status-Logik:
   //   on_track  → Flex Arbeit Ist ≤ verfügbares Flex-Budget (delta ≥ 0)
@@ -2979,143 +3016,162 @@ export default function PersonalFixPage() {
             )}
           </div>
 
-          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* LINKS: Budget-Basis aus Budgetplanung */}
-            <div className="space-y-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-3">Budget-Basis ({selectedYear})</p>
-
-              {/* Budget Umsatz */}
-              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
-                <span className="text-muted-foreground">Budget Umsatz</span>
-                <div className="flex items-center gap-2">
-                  {budgetRevenue != null && (
-                    <span className="text-[10px] text-muted-foreground line-through font-mono">{fmtCHF(budgetData.revenueBudget)}</span>
-                  )}
-                  <span className="font-mono font-semibold">
-                    {effectiveBudgetRevenue > 0
-                      ? fmtCHF(effectiveBudgetRevenue)
-                      : <span className="text-muted-foreground italic text-xs">nicht hinterlegt</span>}
-                  </span>
-                </div>
-              </div>
-
-              {/* Budget Personalkosten + PKQ% */}
-              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
-                <span className="text-muted-foreground">Budget Personalkosten</span>
-                <div className="flex items-center gap-2">
-                  {basePkqPct != null && (
-                    <span className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded',
-                      basePkqPct < 30 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
-                        : basePkqPct < 40 ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400'
-                        : 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400')}>
-                      {basePkqPct.toFixed(1)} %
-                    </span>
-                  )}
-                  <span className="font-mono font-semibold">
-                    {personnelBudget > 0
-                      ? fmtCHF(adjustedPersonnelBudget)
-                      : <span className="text-muted-foreground italic text-xs">nicht hinterlegt</span>}
-                  </span>
-                </div>
-              </div>
-
-              {/* Adjusted info wenn Szenario aktiv */}
-              {budgetRevenue != null && basePkqPct != null && (
-                <div className="rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 px-3 py-2 space-y-1 mt-2">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-amber-700 dark:text-amber-300 font-medium">Szenario PKQ bleibt</span>
-                    <span className="font-mono font-bold text-amber-700 dark:text-amber-300">{basePkqPct.toFixed(1)} %</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-muted-foreground">→ Adj. PK-Budget</span>
-                    <span className="font-mono font-semibold">{fmtCHF(adjustedPersonnelBudget)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-muted-foreground">Differenz zum Plan</span>
-                    <span className={cn('font-mono font-semibold', adjustedPersonnelBudget - personnelBudget >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                      {adjustedPersonnelBudget - personnelBudget >= 0 ? '+' : ''}{fmtCHF(adjustedPersonnelBudget - personnelBudget)}
-                    </span>
-                  </div>
-                </div>
-              )}
+          {/* ── 3-Spalten-Vergleichstabelle ──────────────────────────────────── */}
+          <div className="px-4 pt-4 pb-2">
+            {/* Spalten-Header */}
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 mb-2 pb-1.5 border-b border-border">
+              <div />
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground text-right min-w-[110px]">Geplantes Budget</div>
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400 text-right min-w-[180px]">Szenario</div>
             </div>
 
-            {/* RECHTS: Umsatz-Szenario Eingabe */}
-            <div className="space-y-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-1">
-                Umsatz-Szenario
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Umsatz überschreiben → PK-Budget passt sich an (gleiche PKQ %).
-                Budget-Basis: <span className="font-mono font-semibold text-foreground">
-                  {budgetData.revenueBudget > 0 ? fmtCHF(budgetData.revenueBudget) : '—'}
+            {/* Zeile: Umsatz */}
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 items-start py-2.5 border-b border-dashed border-border">
+              <span className="text-sm text-muted-foreground self-center">Umsatz</span>
+              {/* Plan */}
+              <div className="text-right self-center">
+                <span className="font-mono font-semibold text-sm">
+                  {budgetData.revenueBudget > 0 ? fmtCHF(budgetData.revenueBudget) : <span className="italic text-xs text-muted-foreground">—</span>}
                 </span>
-              </p>
-
-              {/* Quick-Step-Buttons */}
-              {budgetData.revenueBudget > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {[-20000, -10000, -5000, +5000, +10000, +20000].map(delta => {
-                    const target = (budgetRevenue ?? budgetData.revenueBudget) + delta;
+              </div>
+              {/* Szenario: quick buttons + input */}
+              <div className="min-w-[180px] space-y-1.5">
+                <div className="flex flex-wrap justify-end gap-1">
+                  {[-20000, -10000, +10000, +20000].map(delta => {
+                    const base = budgetRevenue ?? budgetData.revenueBudget;
+                    const target = base + delta;
                     if (target <= 0) return null;
                     return (
-                      <button
-                        key={delta}
-                        onClick={() => {
-                          setBudgetRevenue(target);
-                          setBudgetRevenueInput(String(target));
-                          saveBudgetRevenue(selectedYear, selectedMonth, target, tenantKey);
-                        }}
-                        className={cn(
-                          'text-[10px] font-semibold px-2 py-1 rounded border transition-colors cursor-pointer',
-                          delta > 0
-                            ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
-                            : 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40',
-                        )}
-                      >
+                      <button key={delta} onClick={() => {
+                        setBudgetRevenue(target); setBudgetRevenueInput(String(target));
+                        saveBudgetRevenue(selectedYear, selectedMonth, target, tenantKey);
+                      }} className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded border transition-colors cursor-pointer',
+                        delta > 0 ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100'
+                          : 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 hover:bg-red-100')}>
                         {delta > 0 ? '+' : ''}{(delta / 1000).toFixed(0)}k
                       </button>
                     );
                   })}
                   {budgetRevenue != null && (
-                    <button
-                      onClick={() => {
-                        setBudgetRevenue(null); setBudgetRevenueInput('');
-                        saveBudgetRevenue(selectedYear, selectedMonth, null, tenantKey);
-                      }}
-                      className="text-[10px] font-semibold px-2 py-1 rounded border border-border bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                    >
-                      Reset
+                    <button onClick={() => { setBudgetRevenue(null); setBudgetRevenueInput(''); saveBudgetRevenue(selectedYear, selectedMonth, null, tenantKey); }}
+                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-border bg-muted text-muted-foreground hover:text-foreground cursor-pointer">
+                      ↩
                     </button>
                   )}
                 </div>
-              )}
-
-              {/* Manuelle Eingabe */}
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium pointer-events-none">CHF</span>
-                  <Input
-                    className="pl-10 h-9 font-mono text-sm"
-                    placeholder={budgetData.revenueBudget > 0 ? String(Math.round(budgetData.revenueBudget)) : 'z. B. 250000'}
-                    value={budgetRevenueInput}
-                    onChange={e => setBudgetRevenueInput(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        const v = parseFloat(budgetRevenueInput.replace(/['\s]/g, '').replace(',', '.'));
-                        const val = !isNaN(v) && v > 0 ? v : null;
-                        setBudgetRevenue(val);
-                        saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey);
-                      }
-                    }}
-                  />
+                <div className="flex items-center gap-1.5">
+                  <div className="relative flex-1">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none">CHF</span>
+                    <Input className="pl-8 h-7 text-xs font-mono" placeholder={String(Math.round(budgetData.revenueBudget || 0))}
+                      value={budgetRevenueInput} onChange={e => setBudgetRevenueInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { const v = parseFloat(budgetRevenueInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setBudgetRevenue(val); saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey); } }} />
+                  </div>
+                  <Button size="sm" className="h-7 text-[10px] px-2 shrink-0" onClick={() => { const v = parseFloat(budgetRevenueInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setBudgetRevenue(val); saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey); }}>OK</Button>
                 </div>
-                <Button size="sm" className="h-9 text-xs shrink-0" onClick={() => {
-                  const v = parseFloat(budgetRevenueInput.replace(/['\s]/g, '').replace(',', '.'));
-                  const val = !isNaN(v) && v > 0 ? v : null;
-                  setBudgetRevenue(val);
-                  saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey);
-                }}>Setzen</Button>
+                {budgetRevenue != null && (
+                  <div className="text-right">
+                    <span className={cn('text-[10px] font-semibold font-mono', budgetRevenue > budgetData.revenueBudget ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                      {budgetRevenue > budgetData.revenueBudget ? '+' : ''}{fmtCHF(budgetRevenue - budgetData.revenueBudget)} vs. Plan
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Zeile: Personalkosten */}
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 items-start py-2.5 border-b border-dashed border-border">
+              <span className="text-sm text-muted-foreground self-center">Personalkosten</span>
+              {/* Plan */}
+              <div className="text-right self-center space-y-0.5">
+                <div className="font-mono font-semibold text-sm">{personnelBudget > 0 ? fmtCHF(personnelBudget) : '—'}</div>
+                {basePkqPct != null && (
+                  <div className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded text-right',
+                    basePkqPct < 30 ? 'text-emerald-600 dark:text-emerald-400' : basePkqPct < 40 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400')}>
+                    {basePkqPct.toFixed(1)} % des Umsatzes
+                  </div>
+                )}
+              </div>
+              {/* Szenario: CHF-Eingabe + %-Eingabe (linked) */}
+              <div className="min-w-[180px] space-y-1.5">
+                {/* CHF-Eingabe */}
+                <div className="flex items-center gap-1.5">
+                  <div className="relative flex-1">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none">CHF</span>
+                    <Input className={cn('pl-8 h-7 text-xs font-mono', scenarioPkCost != null && 'border-amber-400 dark:border-amber-600')}
+                      placeholder={String(Math.round(adjustedPersonnelBudget || 0))}
+                      value={scenarioPkCostInput}
+                      onChange={e => {
+                        setScenarioPkCostInput(e.target.value);
+                        const v = parseFloat(e.target.value.replace(/['\s]/g,'').replace(',','.'));
+                        if (!isNaN(v) && v > 0 && effectiveBudgetRevenue > 0) {
+                          setScenarioPkqInput(((v / effectiveBudgetRevenue) * 100).toFixed(2));
+                        }
+                      }}
+                      onKeyDown={e => { if (e.key === 'Enter') { const v = parseFloat(scenarioPkCostInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setScenarioPkCost(val); saveScenarioPkCost(selectedYear, selectedMonth, val, tenantKey); } }} />
+                  </div>
+                  <Button size="sm" className="h-7 text-[10px] px-2 shrink-0 bg-amber-600 hover:bg-amber-700" onClick={() => { const v = parseFloat(scenarioPkCostInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setScenarioPkCost(val); saveScenarioPkCost(selectedYear, selectedMonth, val, tenantKey); }}>OK</Button>
+                </div>
+                {/* %-Eingabe */}
+                <div className="flex items-center gap-1.5">
+                  <div className="relative flex-1">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none">%</span>
+                    <Input className="pl-6 h-7 text-xs font-mono"
+                      placeholder={basePkqPct != null ? basePkqPct.toFixed(1) : ''}
+                      value={scenarioPkqInput}
+                      onChange={e => {
+                        setScenarioPkqInput(e.target.value);
+                        const pct = parseFloat(e.target.value.replace(',','.'));
+                        if (!isNaN(pct) && pct > 0 && effectiveBudgetRevenue > 0) {
+                          const chf = Math.round(effectiveBudgetRevenue * pct / 100);
+                          setScenarioPkCostInput(String(chf));
+                        }
+                      }}
+                      onKeyDown={e => { if (e.key === 'Enter') { const pct = parseFloat(scenarioPkqInput.replace(',','.')); if (!isNaN(pct) && pct > 0 && effectiveBudgetRevenue > 0) { const chf = Math.round(effectiveBudgetRevenue * pct / 100); setScenarioPkCost(chf); setScenarioPkCostInput(String(chf)); saveScenarioPkCost(selectedYear, selectedMonth, chf, tenantKey); } } }} />
+                  </div>
+                  <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 shrink-0" onClick={() => { const pct = parseFloat(scenarioPkqInput.replace(',','.')); if (!isNaN(pct) && pct > 0 && effectiveBudgetRevenue > 0) { const chf = Math.round(effectiveBudgetRevenue * pct / 100); setScenarioPkCost(chf); setScenarioPkCostInput(String(chf)); saveScenarioPkCost(selectedYear, selectedMonth, chf, tenantKey); } }}>OK</Button>
+                </div>
+                {scenarioPkCost != null && (
+                  <div className="flex items-center justify-between">
+                    <span className={cn('text-[10px] font-semibold font-mono', adjustedPersonnelBudget - personnelBudget >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                      {adjustedPersonnelBudget - personnelBudget >= 0 ? '+' : ''}{fmtCHF(adjustedPersonnelBudget - personnelBudget)} vs. Plan
+                    </span>
+                    <button onClick={() => { setScenarioPkCost(null); setScenarioPkCostInput(''); setScenarioPkqInput(''); saveScenarioPkCost(selectedYear, selectedMonth, null, tenantKey); }}
+                      className="text-[10px] text-muted-foreground hover:text-foreground cursor-pointer">↩ Reset</button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Zeile: PKQ % */}
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 items-center py-2">
+              <span className="text-sm text-muted-foreground">PKQ %</span>
+              {/* Plan */}
+              <div className="text-right">
+                {basePkqPct != null ? (
+                  <span className={cn('text-sm font-bold font-mono',
+                    basePkqPct < 30 ? 'text-emerald-600 dark:text-emerald-400' : basePkqPct < 40 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400')}>
+                    {basePkqPct.toFixed(1)} %
+                  </span>
+                ) : <span className="text-muted-foreground text-xs italic">—</span>}
+              </div>
+              {/* Szenario */}
+              <div className="min-w-[180px] text-right">
+                {effectiveScenarioPkqPct != null ? (
+                  <div className="flex items-center justify-end gap-2">
+                    {scenarioActive && basePkqPct != null && Math.abs(effectiveScenarioPkqPct - basePkqPct) > 0.05 && (
+                      <span className={cn('text-[10px] font-semibold',
+                        effectiveScenarioPkqPct < basePkqPct ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                        {effectiveScenarioPkqPct < basePkqPct ? '▼' : '▲'} {Math.abs(effectiveScenarioPkqPct - basePkqPct).toFixed(1)} Pkt
+                      </span>
+                    )}
+                    <span className={cn('text-sm font-bold font-mono',
+                      effectiveScenarioPkqPct < 30 ? 'text-emerald-600 dark:text-emerald-400'
+                        : effectiveScenarioPkqPct < 40 ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-red-600 dark:text-red-400')}>
+                      {effectiveScenarioPkqPct.toFixed(1)} %
+                    </span>
+                  </div>
+                ) : <span className="text-muted-foreground text-xs italic">—</span>}
               </div>
             </div>
           </div>
