@@ -3782,7 +3782,16 @@ export default function PersonalFixPage() {
                                     {fmtCHF(activeTotal)}
                                   </span>
                                   {weekNetRev != null && weekNetRev > 0 ? (
-                                    <span className="text-[9px] font-semibold tabular-nums text-muted-foreground">
+                                    <span className={cn(
+                                      'text-[11px] font-bold tabular-nums px-1 py-0.5 rounded',
+                                      deltaB == null
+                                        ? 'text-muted-foreground'
+                                        : deltaB <= 0
+                                          ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40'
+                                          : deltaB <= budgetW * 0.03
+                                            ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40'
+                                            : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40',
+                                    )}>
                                       {((activeTotal / weekNetRev) * 100).toFixed(1)} %
                                     </span>
                                   ) : (
@@ -3881,7 +3890,16 @@ export default function PersonalFixPage() {
                                 <div className="flex flex-col items-end gap-0.5">
                                   <span>{fmtCHF(grandTotal)}</span>
                                   {totalNetRevenue != null && totalNetRevenue > 0 ? (
-                                    <span className="text-[9px] font-semibold tabular-nums text-muted-foreground">
+                                    <span className={cn(
+                                      'text-xs font-bold tabular-nums px-1.5 py-0.5 rounded',
+                                      grandDeltaB == null
+                                        ? 'text-muted-foreground'
+                                        : grandDeltaB <= 0
+                                          ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40'
+                                          : grandDeltaB <= adjustedPersonnelBudget * 0.03
+                                            ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40'
+                                            : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40',
+                                    )}>
                                       {((grandTotal / totalNetRevenue) * 100).toFixed(1)} %
                                     </span>
                                   ) : (
