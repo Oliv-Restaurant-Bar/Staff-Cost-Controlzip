@@ -3576,31 +3576,55 @@ export default function PersonalFixPage() {
                             </div>
                           </div>
                           <span className="text-[10px] font-normal text-muted-foreground">{w.dateRange}</span>
-                          {/* Fix row */}
-                          <div className="mt-1.5 w-full space-y-0.5">
-                            <div className="flex justify-between text-[10px] text-muted-foreground">
-                              <span>Fix</span>
-                              <span className="font-mono">{fmtCHF(fixW)}</span>
-                            </div>
-                            <div className={cn('flex justify-between text-[10px]', !useIst && 'font-bold')}>
-                              <span className="text-blue-600 dark:text-blue-400">Plan Flex</span>
-                              <span className="font-mono">{fmtCHF(w.planFlex)}</span>
-                            </div>
-                            <div className={cn('flex justify-between text-[10px]', useIst && 'font-bold')}>
-                              <span className="text-orange-600 dark:text-orange-400">Ist Flex</span>
-                              <span className="font-mono">{fmtCHF(w.istFlex)}</span>
-                            </div>
-                            {pctDiff != null && (
-                              <div className="flex justify-end">
-                                <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded',
-                                  pctDiff > 5 ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
-                                    : pctDiff < -5 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
-                                    : 'bg-muted text-muted-foreground')}>
-                                  Ist {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(1)} %
-                                </span>
+                          {/* Cost rows */}
+                          {(() => {
+                            const budgetW = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
+                              ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth) : 0;
+                            const totalIst = fixW + w.istFlex;
+                            const deltaB   = budgetW > 0 ? totalIst - budgetW : null;
+                            return (
+                              <div className="mt-1.5 w-full space-y-0.5">
+                                <div className="flex justify-between text-[10px] text-muted-foreground">
+                                  <span>Fix</span>
+                                  <span className="font-mono">{fmtCHF(fixW)}</span>
+                                </div>
+                                <div className={cn('flex justify-between text-[10px]', !useIst && 'font-bold')}>
+                                  <span className="text-blue-600 dark:text-blue-400">Plan Flex</span>
+                                  <span className="font-mono">{fmtCHF(w.planFlex)}</span>
+                                </div>
+                                <div className={cn('flex justify-between text-[10px]', useIst && 'font-bold')}>
+                                  <span className="text-orange-600 dark:text-orange-400">Ist Flex</span>
+                                  <span className="font-mono">{fmtCHF(w.istFlex)}</span>
+                                </div>
+                                {budgetW > 0 && (
+                                  <div className="flex justify-between text-[10px] text-violet-600 dark:text-violet-400 border-t border-dashed border-current/20 pt-0.5 mt-0.5">
+                                    <span>Budget</span>
+                                    <span className="font-mono">{fmtCHF(budgetW)}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-end gap-1 flex-wrap pt-0.5">
+                                  {pctDiff != null && (
+                                    <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded',
+                                      pctDiff > 5 ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
+                                        : pctDiff < -5 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
+                                        : 'bg-muted text-muted-foreground')}>
+                                      Flex {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(1)} %
+                                    </span>
+                                  )}
+                                  {deltaB != null && (
+                                    <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded',
+                                      deltaB > 0.5  ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
+                                      : deltaB < -0.5 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
+                                      : 'bg-muted text-muted-foreground')}>
+                                      Δ Bdg {deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}{Math.abs(deltaB) < 1000
+                                        ? Math.round(Math.abs(deltaB))
+                                        : `${(Math.abs(deltaB)/1000).toFixed(1)}k`}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                            )}
-                          </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}
