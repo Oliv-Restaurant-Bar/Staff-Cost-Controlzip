@@ -3262,7 +3262,18 @@ export default function PersonalFixPage() {
                       value={budgetRevenueInput} onChange={e => setBudgetRevenueInput(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') { const v = parseFloat(budgetRevenueInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setBudgetRevenue(val); saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey); } }} />
                   </div>
-                  <Button size="sm" className="h-7 text-[10px] px-2 shrink-0" onClick={() => { const v = parseFloat(budgetRevenueInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setBudgetRevenue(val); saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey); }}>OK</Button>
+                  <button
+                    title="Wert übernehmen"
+                    onClick={() => { const v = parseFloat(budgetRevenueInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setBudgetRevenue(val); saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey); }}
+                    className={cn(
+                      'h-7 w-7 shrink-0 rounded border-2 flex items-center justify-center transition-colors cursor-pointer',
+                      budgetRevenue != null
+                        ? 'border-emerald-500 bg-emerald-500 text-white'
+                        : 'border-border bg-background text-transparent hover:border-emerald-400',
+                    )}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
                 </div>
                 {budgetRevenue != null && (
                   <div className="text-right">
@@ -3305,7 +3316,18 @@ export default function PersonalFixPage() {
                       }}
                       onKeyDown={e => { if (e.key === 'Enter') { const v = parseFloat(scenarioPkCostInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setScenarioPkCost(val); saveScenarioPkCost(selectedYear, selectedMonth, val, tenantKey); } }} />
                   </div>
-                  <Button size="sm" className="h-7 text-[10px] px-2 shrink-0 bg-amber-600 hover:bg-amber-700" onClick={() => { const v = parseFloat(scenarioPkCostInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setScenarioPkCost(val); saveScenarioPkCost(selectedYear, selectedMonth, val, tenantKey); }}>OK</Button>
+                  <button
+                    title="CHF-Wert übernehmen"
+                    onClick={() => { const v = parseFloat(scenarioPkCostInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setScenarioPkCost(val); saveScenarioPkCost(selectedYear, selectedMonth, val, tenantKey); }}
+                    className={cn(
+                      'h-7 w-7 shrink-0 rounded border-2 flex items-center justify-center transition-colors cursor-pointer',
+                      scenarioPkCost != null
+                        ? 'border-amber-500 bg-amber-500 text-white'
+                        : 'border-border bg-background text-transparent hover:border-amber-400',
+                    )}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
                 </div>
                 {/* %-Eingabe */}
                 <div className="flex items-center gap-1.5">
@@ -3324,7 +3346,18 @@ export default function PersonalFixPage() {
                       }}
                       onKeyDown={e => { if (e.key === 'Enter') { const pct = parseFloat(scenarioPkqInput.replace(',','.')); if (!isNaN(pct) && pct > 0 && effectiveBudgetRevenue > 0) { const chf = Math.round(effectiveBudgetRevenue * pct / 100); setScenarioPkCost(chf); setScenarioPkCostInput(String(chf)); saveScenarioPkCost(selectedYear, selectedMonth, chf, tenantKey); } } }} />
                   </div>
-                  <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 shrink-0" onClick={() => { const pct = parseFloat(scenarioPkqInput.replace(',','.')); if (!isNaN(pct) && pct > 0 && effectiveBudgetRevenue > 0) { const chf = Math.round(effectiveBudgetRevenue * pct / 100); setScenarioPkCost(chf); setScenarioPkCostInput(String(chf)); saveScenarioPkCost(selectedYear, selectedMonth, chf, tenantKey); } }}>OK</Button>
+                  <button
+                    title="%-Wert übernehmen"
+                    onClick={() => { const pct = parseFloat(scenarioPkqInput.replace(',','.')); if (!isNaN(pct) && pct > 0 && effectiveBudgetRevenue > 0) { const chf = Math.round(effectiveBudgetRevenue * pct / 100); setScenarioPkCost(chf); setScenarioPkCostInput(String(chf)); saveScenarioPkCost(selectedYear, selectedMonth, chf, tenantKey); } }}
+                    className={cn(
+                      'h-7 w-7 shrink-0 rounded border-2 flex items-center justify-center transition-colors cursor-pointer',
+                      scenarioPkCost != null
+                        ? 'border-amber-500 bg-amber-500 text-white'
+                        : 'border-border bg-background text-transparent hover:border-amber-400',
+                    )}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
                 </div>
                 {scenarioPkCost != null && (
                   <div className="flex items-center justify-between">
