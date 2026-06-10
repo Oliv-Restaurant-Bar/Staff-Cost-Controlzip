@@ -3263,6 +3263,7 @@ export default function PersonalFixPage() {
                       onKeyDown={e => { if (e.key === 'Enter') { const v = parseFloat(budgetRevenueInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setBudgetRevenue(val); saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey); } }} />
                   </div>
                   <button
+                    type="button"
                     title="Wert übernehmen"
                     onClick={() => { const v = parseFloat(budgetRevenueInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setBudgetRevenue(val); saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey); }}
                     className={cn(
@@ -3317,6 +3318,7 @@ export default function PersonalFixPage() {
                       onKeyDown={e => { if (e.key === 'Enter') { const v = parseFloat(scenarioPkCostInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setScenarioPkCost(val); saveScenarioPkCost(selectedYear, selectedMonth, val, tenantKey); } }} />
                   </div>
                   <button
+                    type="button"
                     title="CHF-Wert übernehmen"
                     onClick={() => { const v = parseFloat(scenarioPkCostInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setScenarioPkCost(val); saveScenarioPkCost(selectedYear, selectedMonth, val, tenantKey); }}
                     className={cn(
@@ -3347,6 +3349,7 @@ export default function PersonalFixPage() {
                       onKeyDown={e => { if (e.key === 'Enter') { const pct = parseFloat(scenarioPkqInput.replace(',','.')); if (!isNaN(pct) && pct > 0 && effectiveBudgetRevenue > 0) { const chf = Math.round(effectiveBudgetRevenue * pct / 100); setScenarioPkCost(chf); setScenarioPkCostInput(String(chf)); saveScenarioPkCost(selectedYear, selectedMonth, chf, tenantKey); } } }} />
                   </div>
                   <button
+                    type="button"
                     title="%-Wert übernehmen"
                     onClick={() => { const pct = parseFloat(scenarioPkqInput.replace(',','.')); if (!isNaN(pct) && pct > 0 && effectiveBudgetRevenue > 0) { const chf = Math.round(effectiveBudgetRevenue * pct / 100); setScenarioPkCost(chf); setScenarioPkCostInput(String(chf)); saveScenarioPkCost(selectedYear, selectedMonth, chf, tenantKey); } }}
                     className={cn(
@@ -3407,48 +3410,59 @@ export default function PersonalFixPage() {
 
           {/* ── Aufstellung ──────────────────────────────────────────────────── */}
           {(personnelBudget > 0 || effectiveBudgetRevenue > 0) && (
-            <div className="border-t border-border px-4 py-4 space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-3">Aufstellung</p>
-
+            <div className="border-t border-border px-4 pt-3 pb-4 space-y-0">
               {/* Zeile 1: Budget Personalkosten */}
-              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
-                <span className="text-muted-foreground">Budget Personalkosten</span>
+              <div className="flex items-center justify-between py-1.5 border-b border-border/50">
+                <span className="text-xs text-muted-foreground">Budget Personalkosten</span>
                 <div className="flex items-center gap-2">
                   {effectiveBudgetRevenue > 0 && adjustedPersonnelBudget > 0 && (
-                    <span className="text-[10px] text-muted-foreground font-mono">
+                    <span className="text-[10px] font-mono text-muted-foreground/70 tabular-nums">
                       {((adjustedPersonnelBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %
                     </span>
                   )}
-                  <span className="font-mono font-semibold">{adjustedPersonnelBudget > 0 ? fmtCHF(adjustedPersonnelBudget) : '—'}</span>
+                  <span className="text-xs font-mono font-semibold tabular-nums text-right min-w-[80px]">
+                    {adjustedPersonnelBudget > 0 ? fmtCHF(adjustedPersonnelBudget) : '—'}
+                  </span>
                 </div>
               </div>
 
               {/* Zeile 2: Personal FIX Ist gesamt */}
-              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
-                <span className="text-muted-foreground">− Personal FIX Ist gesamt</span>
+              <div className="flex items-center justify-between py-1.5 border-b border-border/50">
+                <span className="text-xs text-muted-foreground">− Personal FIX Ist</span>
                 <div className="flex items-center gap-2">
                   {effectiveBudgetRevenue > 0 && pfix.active.fix > 0 && (
-                    <span className="text-[10px] text-muted-foreground font-mono">
+                    <span className="text-[10px] font-mono text-muted-foreground/70 tabular-nums">
                       {((pfix.active.fix / effectiveBudgetRevenue) * 100).toFixed(1)} %
                     </span>
                   )}
-                  <span className="font-mono text-blue-700 dark:text-blue-400">− {fmtCHF(pfix.active.fix)}</span>
+                  <span className="text-xs font-mono tabular-nums text-right min-w-[80px] text-blue-600 dark:text-blue-400">
+                    − {fmtCHF(pfix.active.fix)}
+                  </span>
                 </div>
               </div>
 
               {/* Zeile 3: Verfügbar für Flex */}
-              <div className={cn('flex justify-between items-center py-2 px-3 rounded-lg text-sm font-bold',
+              <div className={cn(
+                'flex items-center justify-between py-1.5 px-2 mt-0.5 rounded',
                 verfügbarFlexBudget >= 0
-                  ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
-                  : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
-                <span>= Verfügbar für Flex</span>
+                  ? 'bg-emerald-50/60 dark:bg-emerald-950/20'
+                  : 'bg-red-50/60 dark:bg-red-950/20',
+              )}>
+                <span className={cn('text-xs font-semibold',
+                  verfügbarFlexBudget >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                  = Verfügbar Flex
+                </span>
                 <div className="flex items-center gap-2">
                   {effectiveBudgetRevenue > 0 && (
-                    <span className="text-xs font-normal opacity-70 font-mono">
+                    <span className={cn('text-[10px] font-mono tabular-nums',
+                      verfügbarFlexBudget >= 0 ? 'text-emerald-600/70 dark:text-emerald-500/70' : 'text-red-500/70 dark:text-red-400/70')}>
                       {((verfügbarFlexBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %
                     </span>
                   )}
-                  <span className="font-mono text-base">{fmtCHF(verfügbarFlexBudget)}</span>
+                  <span className={cn('text-xs font-mono font-bold tabular-nums text-right min-w-[80px]',
+                    verfügbarFlexBudget >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                    {fmtCHF(verfügbarFlexBudget)}
+                  </span>
                 </div>
               </div>
 
