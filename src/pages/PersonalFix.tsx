@@ -3471,7 +3471,8 @@ export default function PersonalFixPage() {
                             const budgetW = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
                               ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth)
                               : 0;
-                            const deltaB  = budgetW > 0 ? totalI - budgetW : null;
+                            const useIstRow = weekIstSet.has(w.weekKey);
+                            const deltaB  = budgetW > 0 ? (useIstRow ? totalI : totalP) - budgetW : null;
                             return (
                               <tr key={w.weekKey} className="border-t border-border hover:bg-muted/30">
                                 <td className="px-2.5 py-1.5 font-bold">{w.label}</td>
@@ -3578,10 +3579,11 @@ export default function PersonalFixPage() {
                           <span className="text-[10px] font-normal text-muted-foreground">{w.dateRange}</span>
                           {/* Cost rows */}
                           {(() => {
-                            const budgetW = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
+                            const budgetW    = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
                               ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth) : 0;
-                            const totalIst = fixW + w.istFlex;
-                            const deltaB   = budgetW > 0 ? totalIst - budgetW : null;
+                            const totalIst  = fixW + w.istFlex;
+                            const totalPlan = fixW + w.planFlex;
+                            const deltaB    = budgetW > 0 ? (useIst ? totalIst : totalPlan) - budgetW : null;
                             return (
                               <div className="mt-1.5 w-full space-y-0.5">
                                 <div className="flex justify-between text-[10px] text-muted-foreground">
