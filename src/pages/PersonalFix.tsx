@@ -3454,14 +3454,24 @@ export default function PersonalFixPage() {
                             <th className="px-2.5 py-2 text-right font-semibold text-orange-500 dark:text-orange-400">Flex Ist</th>
                             <th className="px-2.5 py-2 text-right font-semibold text-muted-foreground">Total Plan</th>
                             <th className="px-2.5 py-2 text-right font-semibold text-muted-foreground">Total Ist</th>
+                            {adjustedPersonnelBudget > 0 && (
+                              <>
+                                <th className="px-2.5 py-2 text-right font-semibold text-violet-600 dark:text-violet-400">Budget</th>
+                                <th className="px-2.5 py-2 text-right font-semibold text-muted-foreground">Δ Budget</th>
+                              </>
+                            )}
                           </tr>
                         </thead>
                         <tbody>
                           {flexByWeek.map((w, i) => {
-                            const fix = fixByWeek[i]?.fixCost ?? 0;
-                            const totalP = fix + w.planFlex;
-                            const totalI = fix + w.istFlex;
-                            const diff = totalI - totalP;
+                            const fix     = fixByWeek[i]?.fixCost ?? 0;
+                            const totalP  = fix + w.planFlex;
+                            const totalI  = fix + w.istFlex;
+                            const diff    = totalI - totalP;
+                            const budgetW = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
+                              ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth)
+                              : 0;
+                            const deltaB  = budgetW > 0 ? totalI - budgetW : null;
                             return (
                               <tr key={w.weekKey} className="border-t border-border hover:bg-muted/30">
                                 <td className="px-2.5 py-1.5 font-bold">{w.label}</td>
@@ -3471,6 +3481,18 @@ export default function PersonalFixPage() {
                                 <td className="px-2.5 py-1.5 text-right font-mono">{fmtCHF(w.istFlex)}</td>
                                 <td className="px-2.5 py-1.5 text-right font-mono font-semibold">{fmtCHF(totalP)}</td>
                                 <td className={cn('px-2.5 py-1.5 text-right font-mono font-semibold', diff > 0.5 ? 'text-red-600 dark:text-red-400' : diff < -0.5 ? 'text-emerald-600 dark:text-emerald-400' : '')}>{fmtCHF(totalI)}</td>
+                                {adjustedPersonnelBudget > 0 && (
+                                  <>
+                                    <td className="px-2.5 py-1.5 text-right font-mono text-violet-700 dark:text-violet-300">{fmtCHF(budgetW)}</td>
+                                    <td className={cn('px-2.5 py-1.5 text-right font-mono font-semibold',
+                                      deltaB == null ? 'text-muted-foreground'
+                                        : deltaB > 0.5 ? 'text-red-600 dark:text-red-400'
+                                        : deltaB < -0.5 ? 'text-emerald-600 dark:text-emerald-400'
+                                        : 'text-muted-foreground')}>
+                                      {deltaB == null ? '—' : `${deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}${fmtCHF(Math.abs(deltaB)).replace('CHF\u00a0','')}`}
+                                    </td>
+                                  </>
+                                )}
                               </tr>
                             );
                           })}
@@ -3481,6 +3503,20 @@ export default function PersonalFixPage() {
                             <td className="px-2.5 py-2 text-right font-mono">{fmtCHF(flexByWeek.reduce((s,w)=>s+w.istFlex,0))}</td>
                             <td className="px-2.5 py-2 text-right font-mono">{fmtCHF(totalFixCost + flexByWeek.reduce((s,w)=>s+w.planFlex,0))}</td>
                             <td className="px-2.5 py-2 text-right font-mono">{fmtCHF(totalFixCost + flexByWeek.reduce((s,w)=>s+w.istFlex,0))}</td>
+                            {adjustedPersonnelBudget > 0 && (
+                              <>
+                                <td className="px-2.5 py-2 text-right font-mono text-violet-700 dark:text-violet-300">{fmtCHF(adjustedPersonnelBudget)}</td>
+                                <td className={cn('px-2.5 py-2 text-right font-mono', (() => {
+                                  const d = (totalFixCost + flexByWeek.reduce((s,w)=>s+w.istFlex,0)) - adjustedPersonnelBudget;
+                                  return d > 0.5 ? 'text-red-600 dark:text-red-400' : d < -0.5 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
+                                })())}>
+                                  {(() => {
+                                    const d = (totalFixCost + flexByWeek.reduce((s,w)=>s+w.istFlex,0)) - adjustedPersonnelBudget;
+                                    return `${d > 0.5 ? '+' : d < -0.5 ? '−' : ''}${fmtCHF(Math.abs(d)).replace('CHF\u00a0','')}`;
+                                  })()}
+                                </td>
+                              </>
+                            )}
                           </tr>
                         </tbody>
                       </table>
