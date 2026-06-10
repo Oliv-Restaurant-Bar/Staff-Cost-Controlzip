@@ -2477,6 +2477,21 @@ export default function PersonalFixPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [flexByWeek, totalFixCost, daysInSelectedMonth, activeFixedEmployees]);
 
+  // ── Wochenweise Ist-Umsatz netto aus dailyBudgets (Brutto ÷ 1.081) ────────
+  const weekActualNetRevenue = useMemo((): Record<string, number> => {
+    const result: Record<string, number> = {};
+    for (const w of flexByWeek) {
+      const gross = w.dates.reduce(
+        (sum, d) => sum + (monthlyRevenues[d]?.actualRevenue ?? 0), 0,
+      );
+      if (gross > 0) result[w.weekKey] = gross / 1.081;
+    }
+    return result;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flexByWeek, monthlyRevenues]);
+
+  const hasAnyWeekRevenue = Object.keys(weekActualNetRevenue).length > 0;
+
   // ── Budget-Umsatz abgeleitete Werte ───────────────────────────────────────
   // basePkqPct: PKQ% aus der Budget-Planung (Basis für Szenario-Berechnungen)
   const basePkqPct = personnelBudget > 0 && budgetData.revenueBudget > 0
@@ -3637,9 +3652,23 @@ export default function PersonalFixPage() {
                           <th className="px-3 py-2 text-left font-semibold text-muted-foreground w-[90px]">Woche</th>
                           <th className="px-2 py-2 text-left font-semibold text-muted-foreground">Zeitraum</th>
                           <th className="px-2 py-2 text-right font-semibold text-muted-foreground">Fix</th>
-                          <th className="px-2 py-2 text-right font-semibold text-blue-600 dark:text-blue-400">Flex Plan</th>
-                          <th className="px-2 py-2 text-right font-semibold text-orange-500 dark:text-orange-400">Flex Ist</th>
-                          <th className="px-2 py-2 text-right font-semibold text-foreground">Total</th>
+                          <th className="px-2 py-2 text-right font-semibold text-blue-600 dark:text-blue-400">
+                            Flex Plan
+                            {hasAnyWeekRevenue && <div className="text-[9px] font-normal text-blue-400/70 dark:text-blue-500/70">% Ist-Ums.</div>}
+                          </th>
+                          <th className="px-2 py-2 text-right font-semibold text-orange-500 dark:text-orange-400">
+                            Flex Ist
+                            {hasAnyWeekRevenue && <div className="text-[9px] font-normal text-orange-400/70 dark:text-orange-500/70">% Ist-Ums.</div>}
+                          </th>
+                          {hasAnyWeekRevenue && (
+                            <th className="px-2 py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400 text-[10px]">
+                              Ist-Ums.<br />netto
+                            </th>
+                          )}
+                          <th className="px-2 py-2 text-right font-semibold text-foreground">
+                            Total
+                            {hasAnyWeekRevenue && <div className="text-[9px] font-normal text-muted-foreground/70">% Ist-Ums.</div>}
+                          </th>
                           {adjustedPersonnelBudget > 0 && (
                             <>
                               <th className="px-2 py-2 text-right font-semibold text-violet-600 dark:text-violet-400">Budget</th>
@@ -3659,6 +3688,7 @@ export default function PersonalFixPage() {
                           const budgetW  = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
                             ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth) : 0;
                           const deltaB   = budgetW > 0 ? activeTotal - budgetW : null;
+                          const weekNetRev = weekActualNetRevenue[w.weekKey] ?? null;
 
                           const toggleWeek = () => {
                             const next = new Set(weekIstSet);
@@ -3702,13 +3732,36 @@ export default function PersonalFixPage() {
 
                               {/* Flex Plan */}
                               <td className={cn('px-2 py-2 text-right font-mono', !useIst ? 'font-semibold text-blue-700 dark:text-blue-300' : 'text-muted-foreground')}>
-                                {fmtCHF(w.planFlex)}
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span>{fmtCHF(w.planFlex)}</span>
+                                  {weekNetRev != null && weekNetRev > 0 && w.planFlex > 0 && (
+                                    <span className="text-[9px] font-normal tabular-nums text-blue-500/80 dark:text-blue-400/70">
+                                      {((w.planFlex / weekNetRev) * 100).toFixed(1)} %
+                                    </span>
+                                  )}
+                                </div>
                               </td>
 
                               {/* Flex Ist */}
                               <td className={cn('px-2 py-2 text-right font-mono', useIst ? 'font-semibold text-orange-700 dark:text-orange-300' : 'text-muted-foreground')}>
-                                {w.istFlex > 0 ? fmtCHF(w.istFlex) : <span className="opacity-40">—</span>}
+                                <div className="flex flex-col items-end gap-0.5">
+                                  {w.istFlex > 0 ? <span>{fmtCHF(w.istFlex)}</span> : <span className="opacity-40">—</span>}
+                                  {weekNetRev != null && weekNetRev > 0 && w.istFlex > 0 && (
+                                    <span className="text-[9px] font-normal tabular-nums text-orange-500/80 dark:text-orange-400/70">
+                                      {((w.istFlex / weekNetRev) * 100).toFixed(1)} %
+                                    </span>
+                                  )}
+                                </div>
                               </td>
+
+                              {/* Ist-Umsatz netto (Berechnungsbasis) */}
+                              {hasAnyWeekRevenue && (
+                                <td className="px-2 py-2 text-right font-mono text-emerald-700 dark:text-emerald-400">
+                                  {weekNetRev != null
+                                    ? <span className="text-xs">{fmtCHF(weekNetRev)}</span>
+                                    : <span className="opacity-30 text-muted-foreground">—</span>}
+                                </td>
+                              )}
 
                               {/* Total (aktiver Wert) */}
                               <td className="px-2 py-2 text-right font-mono">
@@ -3716,7 +3769,13 @@ export default function PersonalFixPage() {
                                   <span className={cn('font-bold', useIst ? 'text-orange-700 dark:text-orange-300' : 'text-blue-700 dark:text-blue-300')}>
                                     {fmtCHF(activeTotal)}
                                   </span>
-                                  <span className="text-[9px] text-muted-foreground opacity-60">{useIst ? 'Ist' : 'Plan'}</span>
+                                  {weekNetRev != null && weekNetRev > 0 ? (
+                                    <span className="text-[9px] font-semibold tabular-nums text-muted-foreground">
+                                      {((activeTotal / weekNetRev) * 100).toFixed(1)} %
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] text-muted-foreground opacity-60">{useIst ? 'Ist' : 'Plan'}</span>
+                                  )}
                                 </div>
                               </td>
 
@@ -3756,22 +3815,58 @@ export default function PersonalFixPage() {
 
                         {/* Total-Zeile */}
                         {(() => {
-                          const totalFlexPlan = flexByWeek.reduce((s, w) => s + w.planFlex, 0);
-                          const totalFlexIst  = flexByWeek.reduce((s, w) => s + w.istFlex, 0);
-                          const grandTotal    = totalFixCost + totalFlexForBudget;
-                          const grandDeltaB   = adjustedPersonnelBudget > 0 ? grandTotal - adjustedPersonnelBudget : null;
+                          const totalFlexPlan    = flexByWeek.reduce((s, w) => s + w.planFlex, 0);
+                          const totalFlexIst     = flexByWeek.reduce((s, w) => s + w.istFlex, 0);
+                          const grandTotal       = totalFixCost + totalFlexForBudget;
+                          const grandDeltaB      = adjustedPersonnelBudget > 0 ? grandTotal - adjustedPersonnelBudget : null;
+                          const totalNetRevenue  = hasAnyWeekRevenue
+                            ? Object.values(weekActualNetRevenue).reduce((s, v) => s + v, 0)
+                            : null;
                           return (
                             <tr className="border-t-2 border-border bg-muted/50 font-bold">
                               <td className="px-3 py-2.5 text-foreground" colSpan={2}>Total Monat</td>
                               <td className="px-2 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(totalFixCost)}</td>
-                              <td className="px-2 py-2.5 text-right font-mono text-blue-700 dark:text-blue-300">{fmtCHF(totalFlexPlan)}</td>
-                              <td className="px-2 py-2.5 text-right font-mono text-orange-700 dark:text-orange-300">{fmtCHF(totalFlexIst)}</td>
+                              {/* Flex Plan total + % */}
+                              <td className="px-2 py-2.5 text-right font-mono text-blue-700 dark:text-blue-300">
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span>{fmtCHF(totalFlexPlan)}</span>
+                                  {totalNetRevenue != null && totalNetRevenue > 0 && totalFlexPlan > 0 && (
+                                    <span className="text-[9px] font-normal tabular-nums text-blue-500/70 dark:text-blue-400/60">
+                                      {((totalFlexPlan / totalNetRevenue) * 100).toFixed(1)} %
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              {/* Flex Ist total + % */}
+                              <td className="px-2 py-2.5 text-right font-mono text-orange-700 dark:text-orange-300">
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span>{fmtCHF(totalFlexIst)}</span>
+                                  {totalNetRevenue != null && totalNetRevenue > 0 && totalFlexIst > 0 && (
+                                    <span className="text-[9px] font-normal tabular-nums text-orange-500/70 dark:text-orange-400/60">
+                                      {((totalFlexIst / totalNetRevenue) * 100).toFixed(1)} %
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              {/* Total Ist-Umsatz netto */}
+                              {hasAnyWeekRevenue && (
+                                <td className="px-2 py-2.5 text-right font-mono text-emerald-700 dark:text-emerald-400">
+                                  {totalNetRevenue != null ? fmtCHF(totalNetRevenue) : '—'}
+                                </td>
+                              )}
+                              {/* Grand Total + % */}
                               <td className="px-2 py-2.5 text-right font-mono text-foreground">
                                 <div className="flex flex-col items-end gap-0.5">
                                   <span>{fmtCHF(grandTotal)}</span>
-                                  <span className="text-[9px] font-normal text-muted-foreground">
-                                    {weekIstSet.size === 0 ? 'Plan gesamt' : weekIstSet.size === flexByWeek.length ? 'Ist gesamt' : `${weekIstSet.size}×Ist, ${flexByWeek.length - weekIstSet.size}×Plan`}
-                                  </span>
+                                  {totalNetRevenue != null && totalNetRevenue > 0 ? (
+                                    <span className="text-[9px] font-semibold tabular-nums text-muted-foreground">
+                                      {((grandTotal / totalNetRevenue) * 100).toFixed(1)} %
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] font-normal text-muted-foreground">
+                                      {weekIstSet.size === 0 ? 'Plan' : weekIstSet.size === flexByWeek.length ? 'Ist' : `${weekIstSet.size}×Ist`}
+                                    </span>
+                                  )}
                                 </div>
                               </td>
                               {adjustedPersonnelBudget > 0 && (
