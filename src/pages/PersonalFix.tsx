@@ -3419,13 +3419,153 @@ export default function PersonalFixPage() {
                 </div>
               </div>
 
-              {/* Wochen-Übersicht — aufklappbare Tabelle + Flex-Zusammenfassung + Resultat */}
+              {/* Wochen-Übersicht — KW-Boxen + Zusammenfassung + aufklappbare Tabelle */}
               {flexByWeek.length > 0 && (
-                <div className="pt-3 pb-1 space-y-2">
-                  {/* Toggle-Button */}
+                <div className="pt-3 pb-1 space-y-3">
+
+                  {/* 1. KW-Boxen */}
+                  <div className="flex flex-wrap gap-2">
+                    {flexByWeek.map((w, i) => {
+                      const useIst  = weekIstSet.has(w.weekKey);
+                      const pctDiff = w.planFlex > 0 ? ((w.istFlex - w.planFlex) / w.planFlex) * 100 : null;
+                      const fixW    = fixByWeek[i]?.fixCost ?? 0;
+                      const toggleWeek = (e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        const next = new Set(weekIstSet);
+                        if (next.has(w.weekKey)) next.delete(w.weekKey); else next.add(w.weekKey);
+                        setWeekIstSet(next);
+                        saveWeekIstSet(selectedYear, selectedMonth, [...next], tenantKey);
+                      };
+                      const openDetail = (e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        setWeekDetailTarget(w.weekKey);
+                      };
+                      return (
+                        <div
+                          key={w.weekKey}
+                          className={cn(
+                            'flex flex-col items-start rounded-lg border-2 px-3 py-2 text-xs font-semibold min-w-[120px] relative',
+                            useIst
+                              ? 'border-orange-400 bg-orange-50 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300'
+                              : 'border-blue-300 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300',
+                          )}
+                        >
+                          <div className="flex items-center justify-between w-full gap-1 mb-0.5">
+                            <span className="font-bold">{w.label}</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={openDetail}
+                                title="Kostendetail anzeigen"
+                                className={cn('p-0.5 rounded transition-colors cursor-pointer',
+                                  useIst ? 'hover:bg-orange-200 dark:hover:bg-orange-900/40' : 'hover:bg-blue-200 dark:hover:bg-blue-900/40')}
+                              >
+                                <Info className="h-3 w-3 opacity-70" />
+                              </button>
+                              <button
+                                onClick={toggleWeek}
+                                className={cn('text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded cursor-pointer transition-colors',
+                                  useIst ? 'bg-orange-200 dark:bg-orange-900/40 hover:bg-orange-300' : 'bg-blue-200 dark:bg-blue-900/40 hover:bg-blue-300')}
+                              >
+                                {useIst ? 'Ist ✓' : 'Plan'}
+                              </button>
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-normal text-muted-foreground">{w.dateRange}</span>
+                          {(() => {
+                            const budgetW   = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
+                              ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth) : 0;
+                            const totalIst  = fixW + w.istFlex;
+                            const totalPlan = fixW + w.planFlex;
+                            const deltaB    = budgetW > 0 ? (useIst ? totalIst : totalPlan) - budgetW : null;
+                            return (
+                              <div className="mt-1.5 w-full space-y-0.5">
+                                <div className="flex justify-between text-[10px] text-muted-foreground">
+                                  <span>Fix</span><span className="font-mono">{fmtCHF(fixW)}</span>
+                                </div>
+                                <div className={cn('flex justify-between text-[10px]', !useIst && 'font-bold')}>
+                                  <span className="text-blue-600 dark:text-blue-400">Plan Flex</span>
+                                  <span className="font-mono">{fmtCHF(w.planFlex)}</span>
+                                </div>
+                                <div className={cn('flex justify-between text-[10px]', useIst && 'font-bold')}>
+                                  <span className="text-orange-600 dark:text-orange-400">Ist Flex</span>
+                                  <span className="font-mono">{fmtCHF(w.istFlex)}</span>
+                                </div>
+                                {budgetW > 0 && (
+                                  <div className="flex justify-between text-[10px] text-violet-600 dark:text-violet-400 border-t border-dashed border-current/20 pt-0.5 mt-0.5">
+                                    <span>Budget</span><span className="font-mono">{fmtCHF(budgetW)}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-end gap-1 flex-wrap pt-0.5">
+                                  {pctDiff != null && (
+                                    <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded',
+                                      pctDiff > 5 ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
+                                        : pctDiff < -5 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
+                                        : 'bg-muted text-muted-foreground')}>
+                                      Flex {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(1)} %
+                                    </span>
+                                  )}
+                                  {deltaB != null && (
+                                    <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded',
+                                      deltaB > 0.5  ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
+                                      : deltaB < -0.5 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
+                                      : 'bg-muted text-muted-foreground')}>
+                                      vs Bdg {deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}{Math.abs(deltaB) < 1000 ? Math.round(Math.abs(deltaB)) : `${(Math.abs(deltaB)/1000).toFixed(1)}k`}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* 2. Personal Flex Zusammenfassung */}
+                  <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-muted-foreground">− Personal Flex</span>
+                      <span className="text-[10px] text-muted-foreground/60">
+                        ({weekIstSet.size === 0 ? 'Plan gesamt' : weekIstSet.size === flexByWeek.length ? 'Ist gesamt' : `${weekIstSet.size} Wo. Ist, ${flexByWeek.length - weekIstSet.size} Plan`})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {effectiveBudgetRevenue > 0 && totalFlexForBudget > 0 && (
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {((totalFlexForBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %
+                        </span>
+                      )}
+                      <span className={cn('font-mono', totalFlexForBudget > verfügbarFlexBudget ? 'text-red-600 dark:text-red-400' : 'text-foreground')}>
+                        − {fmtCHF(totalFlexForBudget)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 3. Resultat */}
+                  <div className={cn('flex justify-between items-center py-2.5 px-3 rounded-lg',
+                    budgetResultat >= 0
+                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800'
+                      : 'bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800')}>
+                    <span className={cn('text-sm font-bold', budgetResultat >= 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-red-700 dark:text-red-400')}>
+                      {budgetResultat >= 0 ? '✓ Im Budget' : '⛔ Überschreitung'}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {effectiveBudgetRevenue > 0 && (
+                        <span className={cn('text-xs font-semibold font-mono', budgetResultat >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                          {((Math.abs(budgetResultat) / effectiveBudgetRevenue) * 100).toFixed(1)} %
+                        </span>
+                      )}
+                      <span className={cn('font-mono font-bold text-lg', budgetResultat >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
+                        {budgetResultat >= 0 ? '' : '+'}{fmtCHF(Math.abs(budgetResultat))}
+                        {budgetResultat < 0 && <span className="text-xs font-normal ml-1">zu viel</span>}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 4. Wochenübersicht Toggle + aufklappbare Tabelle */}
                   <div className="flex items-center justify-between">
                     <p className="text-xs text-muted-foreground">
-                      Flex-Modus pro Woche: <strong className="text-blue-600 dark:text-blue-400">○ Plan</strong> / <strong className="text-orange-600 dark:text-orange-400">● Ist</strong> — per Klick umschalten
+                      Wochendetail: <strong className="text-blue-600 dark:text-blue-400">Plan</strong> / <strong className="text-orange-600 dark:text-orange-400">Ist</strong> pro KW
                     </p>
                     <button
                       onClick={() => setShowWeekSummary(v => !v)}
@@ -3441,7 +3581,6 @@ export default function PersonalFixPage() {
                     </button>
                   </div>
 
-                  {/* Aufklappbare Tabelle */}
                   {showWeekSummary && (
                   <div className="rounded-lg border border-border overflow-hidden text-xs">
                     <table className="w-full">
@@ -3608,46 +3747,6 @@ export default function PersonalFixPage() {
                   </div>
                   )}
 
-                  {/* Zeile 4: Personal Flex — immer sichtbar */}
-                  <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-muted-foreground">− Personal Flex</span>
-                      <span className="text-[10px] text-muted-foreground/60">
-                        ({weekIstSet.size === 0 ? 'Plan gesamt' : weekIstSet.size === flexByWeek.length ? 'Ist gesamt' : `${weekIstSet.size} Wo. Ist, ${flexByWeek.length - weekIstSet.size} Plan`})
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {effectiveBudgetRevenue > 0 && totalFlexForBudget > 0 && (
-                        <span className="text-[10px] text-muted-foreground font-mono">
-                          {((totalFlexForBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %
-                        </span>
-                      )}
-                      <span className={cn('font-mono', totalFlexForBudget > verfügbarFlexBudget ? 'text-red-600 dark:text-red-400' : 'text-foreground')}>
-                        − {fmtCHF(totalFlexForBudget)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Zeile 5: Resultat — immer sichtbar */}
-                  <div className={cn('flex justify-between items-center py-2.5 px-3 rounded-lg',
-                    budgetResultat >= 0
-                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800'
-                      : 'bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800')}>
-                    <span className={cn('text-sm font-bold', budgetResultat >= 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-red-700 dark:text-red-400')}>
-                      {budgetResultat >= 0 ? '✓ Im Budget' : '⛔ Überschreitung'}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {effectiveBudgetRevenue > 0 && (
-                        <span className={cn('text-xs font-semibold font-mono', budgetResultat >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                          {((Math.abs(budgetResultat) / effectiveBudgetRevenue) * 100).toFixed(1)} %
-                        </span>
-                      )}
-                      <span className={cn('font-mono font-bold text-lg', budgetResultat >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
-                        {budgetResultat >= 0 ? '' : '+'}{fmtCHF(Math.abs(budgetResultat))}
-                        {budgetResultat < 0 && <span className="text-xs font-normal ml-1">zu viel</span>}
-                      </span>
-                    </div>
-                  </div>
                 </div>
               )}
             </div>
